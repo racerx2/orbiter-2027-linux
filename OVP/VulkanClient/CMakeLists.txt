@@ -10,6 +10,7 @@ FetchContent_Declare(vma
 	GIT_TAG v3.4.0
 )
 FetchContent_MakeAvailable(vma)
+install(FILES ${vma_SOURCE_DIR}/LICENSE.txt DESTINATION ${ORBITER_INSTALL_DOC_DIR}/Licenses RENAME VulkanMemoryAllocator.txt) # not upstream: licence text (Doc/Licenses/README.txt)
 
 # glslang compiles the shaders at run time, as D3DX did
 find_package(glslang REQUIRED)

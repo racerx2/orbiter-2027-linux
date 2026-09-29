@@ -9,21 +9,21 @@ Below are instructions on how to download and setup and environment to build Orb
 
 
 \subsection{Setup}
-Get the Orbiter source repository from GitHub (\url{https://github.com/orbitersim/orbiter})
+Get the source repository of the Linux version of Orbiter from GitHub (\url{https://github.com/racerx2/orbiter-linux})
 
 \begin{lstlisting}
-git clone --recursive git@github.com:orbitersim/orbiter.git
+git clone git@github.com:racerx2/orbiter-linux.git
 \end{lstlisting}
 
 \noindent
 or
 
 \begin{lstlisting}
-git clone --recursive https://github.com/orbitersim/orbiter.git
+git clone https://github.com/racerx2/orbiter-linux.git
 \end{lstlisting}
 
 \noindent
-The Windows version and the Linux version are built from the same sources. The Linux parts are selected by CMake and the compiler on Linux only.\\
+This is the Linux port of Orbiter; the Windows version is developed upstream at \url{https://github.com/orbitersim/orbiter}.\\
 To compile Orbiter on Linux, you need CMake (3.26 or later), Ninja and GCC with C++20 support, and the development packages of Qt 6, Vulkan (with glslangValidator and glslang), PipeWire, Wayland, FreeType and libpng, as well as Python 3. The file COMPILE.md in the Orbiter sources lists the package names. The remaining libraries (Lua, zlib, Dear ImGui and others) are fetched by CMake.\\
 The Linux version of Orbiter is a 64-bit (x86-64) application. To build it:
 
@@ -48,7 +48,7 @@ If the documentation build fails, try limiting the build to a single thread; som
 
 \subsection{Contribute}
 You can contribute to the development of Orbiter, either by fixing a bug or by adding a new feature. You'll need to create your own fork of Orbiter in GitHub, put your changes in a branch, and then create a "Pull Request" (PR) so that you changes can be analysed by others, before they are merged into Orbiter.\\
-If you find an issue in Orbiter, but you don't know how to fix it, you can open a ticket (\url{https://github.com/orbitersim/orbiter/issues}) to allow others to fix it.
+If you find an issue in the Linux version of Orbiter, but you don't know how to fix it, you can open a ticket (\url{https://github.com/racerx2/orbiter-linux/issues}) to allow others to fix it.
 
 
 \end{document}

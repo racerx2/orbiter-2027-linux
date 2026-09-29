@@ -3,6 +3,8 @@
 
 FetchContent_MakeAvailable(imgui)
 FetchContent_MakeAvailable(implot)
+install(FILES ${imgui_SOURCE_DIR}/LICENSE.txt DESTINATION ${ORBITER_INSTALL_DOC_DIR}/Licenses RENAME ImGui.txt) # not upstream: licence text (Doc/Licenses/README.txt)
+install(FILES ${implot_SOURCE_DIR}/LICENSE DESTINATION ${ORBITER_INSTALL_DOC_DIR}/Licenses RENAME ImPlot.txt) # not upstream: licence text (Doc/Licenses/README.txt)
 
 # Sources for all Orbiter executable targets
 set(common_src

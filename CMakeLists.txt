@@ -274,6 +274,13 @@ INSTALL(FILES readme_linux.txt
 INSTALL(FILES LICENSE
 	DESTINATION ${ORBITER_INSTALL_ROOT_DIR}
 )
+# not upstream: licence texts of the bundled third-party code and fonts (Doc/Licenses/README.txt lists them)
+install(DIRECTORY Doc/Licenses/ DESTINATION ${ORBITER_INSTALL_DOC_DIR}/Licenses)
+install(FILES "Extern/imgui/Lekton - SIL License.txt" Extern/imgui/License-FA.txt "Extern/imgui/architext.regular - FFC License.txt"
+	DESTINATION ${ORBITER_INSTALL_DOC_DIR}/Licenses)
+install(FILES Extern/luafilesystem/LICENSE DESTINATION ${ORBITER_INSTALL_DOC_DIR}/Licenses RENAME LuaFileSystem.txt)
+install(FILES OVP/VulkanClient/GPL.txt DESTINATION ${ORBITER_INSTALL_DOC_DIR}/Licenses RENAME VulkanClient-GPL.txt)
+install(FILES OVP/VulkanClient/LGPL.txt DESTINATION ${ORBITER_INSTALL_DOC_DIR}/Licenses RENAME VulkanClient-LGPL.txt)
 #COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/Doc/TransX\ readme.txt ${ORBITER_BINARY_DOC_DIR}/TransX/TransX\ readme.txt
 
 # Sub-projects
@@ -318,6 +325,11 @@ set(CPACK_RESOURCE_FILE_LICENSE ${ORBITER_SOURCE_ROOT_DIR}/cmake/LICENSE.rtf)
 set(CPACK_RESOURCE_FILE_README ${ORBITER_SOURCE_ROOT_DIR}/README.md)
 # CPACK_WIX_* (banner, dialog, icon, upgrade GUID) left out: no WIX installer on Linux
 set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_BINARY_DIR}/OrbiterCPackOptions.cmake")
+
+# not upstream: package_source leaves out the build trees (out/, also local data there) and LaTeX byproducts; CPack's defaults kept
+string(REGEX REPLACE "([][+.*()^$?|])" "\\\\\\1" ORBITER_SOURCE_RE "${CMAKE_SOURCE_DIR}") # not upstream: out/ of this tree only
+set(ORBITER_SOURCE_IGNORE "/CVS/;/\\.svn/;/\\.bzr/;/\\.hg/;/\\.git/;\\.swp$;\\.#;/#;^${ORBITER_SOURCE_RE}/out/;-eps-converted-to\\.pdf$") # not upstream
+string(REGEX REPLACE "([\\\$\"])" "\\\\\\1" CPACK_SOURCE_IGNORE_FILES "${ORBITER_SOURCE_IGNORE}") # not upstream: CPack unescapes once more (as its own defaults)
 
 include(OrbiterCPackOptions)
 include(CPack)

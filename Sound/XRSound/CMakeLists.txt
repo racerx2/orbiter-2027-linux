@@ -28,6 +28,7 @@ set(BUILD_STATIC ON)
 set(BUILD_SHARED OFF)
 set(LIBXMP_PIC ON)
 FetchContent_MakeAvailable(stb_vorbis dr_mp3 dr_flac libxmp_lite)
+set_property(DIRECTORY ${libxmp_lite_SOURCE_DIR} PROPERTY EXCLUDE_FROM_ALL TRUE) # not upstream: its install rules stay out of Orbiter's install; linked, so still built
 set(AUDIO_DECODER_INCLUDE_DIRS ${stb_vorbis_SOURCE_DIR} ${dr_mp3_SOURCE_DIR} ${dr_flac_SOURCE_DIR})
 set(AUDIO_DECODER_LIBS libxmp-lite::xmp_lite_static)
 

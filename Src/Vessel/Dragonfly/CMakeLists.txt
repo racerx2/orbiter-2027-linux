@@ -8,7 +8,7 @@ set(THUMBNAIL_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Thumbnail)
 find_package(OpenGL)
 find_package(Qt6 COMPONENTS OpenGL)
 
-if(OPENGL_FOUND) # OpenGL is required for this target
+if(OPENGL_FOUND AND OPENGL_GLU_FOUND AND TARGET Qt6::OpenGL) # OpenGL is required for this target; not upstream: GLU and Qt6::OpenGL too, else the vessel is left out
 
 add_library(Dragonfly SHARED
 	Dragonfly.cpp
@@ -52,7 +52,7 @@ add_custom_command(
 
 add_custom_command(
 	TARGET Dragonfly PRE_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${MESH_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Meshes/Dragonfly # not upstream: was Meshes, but the module loads "Dragonfly/Dragonfly" (install uses Meshes/Dragonfly)
+	COMMAND ${CMAKE_COMMAND} -E copy_directory ${MESH_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Meshes/Dragonfly # not upstream: was Meshes, but the module loads "Dragonfly\Dragonfly" (install uses Meshes/Dragonfly)
 )
 
 add_custom_command(
