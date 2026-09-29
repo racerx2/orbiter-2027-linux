@@ -602,6 +602,7 @@ void Vessel::FRecorder_PlayEvent ()
 		int i;
 		DWORD id;
 		FRatc_stream->getline (cbuf, 1024);
+		if (size_t n = strlen (cbuf); n && cbuf[n-1] == '\r') cbuf[n-1] = '\0'; // not upstream: CRLF files (Windows text mode dropped the CR)
 		s = strtok (cbuf, " \t");
 		if (s) {
 			if (!strcasecmp (s, "ENG")) {
@@ -876,6 +877,7 @@ void Orbiter::FRecorder_Play ()
 		char cbuf[1024], *s;
 		int i;
 		FRsys_stream->getline (cbuf, 1024);
+		if (size_t n = strlen (cbuf); n && cbuf[n-1] == '\r') cbuf[n-1] = '\0'; // not upstream: CRLF files (Windows text mode dropped the CR)
 		s = strtok (cbuf, " \t");
 		if (s) {
 			if (!strncasecmp (s, "TACC", 4)) {

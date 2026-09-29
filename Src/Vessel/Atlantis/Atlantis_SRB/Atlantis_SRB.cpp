@@ -47,7 +47,7 @@ Atlantis_SRB::Atlantis_SRB (OBJHANDLE hObj)
 : VESSEL2(hObj)
 {
 	// preload mesh
-	hSRBMesh = oapiLoadMeshGlobal ("Atlantis/Atlantis_srb");
+	hSRBMesh = oapiLoadMeshGlobal ("Atlantis\\Atlantis_srb");
 }
 
 void Atlantis_SRB::SetLaunchElevation (double elev)

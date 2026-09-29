@@ -4,6 +4,7 @@
 #include <iostream>
 #include <algorithm>
 #include <sys/stat.h> // direct.h mkdir -> POSIX mkdir
+#include <cstring> // not upstream: strlen
 #include <dxt_io.h>
 
 int Tile::s_openMode = 0x3;
@@ -15,11 +16,12 @@ std::string Tile::s_root;
 void ensureLayerDir(const char *rootDir, const char *layer, int lvl, int ilat)
 {
 	char path[1024]; // was 256: callers pass 1024-byte roots and Linux paths aren't capped at MAX_PATH
-	sprintf(path, "%s/%s", rootDir, layer);
+	if (strlen(rootDir) + strlen(layer) > sizeof(path) - 20) return; // not upstream: no mkdir of a cut-off path
+	snprintf(path, sizeof(path), "%s/%s", rootDir, layer); // not upstream: snprintf, FORTIFY aborts on overflow
 	mkdir(path, 0777);
-	sprintf(path, "%s/%s/%02d", rootDir, layer, lvl);
+	snprintf(path, sizeof(path), "%s/%s/%02d", rootDir, layer, lvl); // not upstream: snprintf, FORTIFY aborts on overflow
 	mkdir(path, 0777);
-	sprintf(path, "%s/%s/%02d/%06d", rootDir, layer, lvl, ilat);
+	snprintf(path, sizeof(path), "%s/%s/%02d/%06d", rootDir, layer, lvl, ilat); // not upstream: snprintf, FORTIFY aborts on overflow
 	mkdir(path, 0777);
 }
 

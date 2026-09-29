@@ -644,6 +644,7 @@ void SplitBitmap ()
 
 	cout << "Output root path: ";
 	cin >> root;
+	if (strlen (root) > 200) FatalError ("Output root path too long"); // not upstream: tile paths go into 256-byte buffers, FORTIFY aborts on overflow
 
 	cout << "Image dimensions: " << mapw << "(W) x " << maph << "(H) x " << bpp << "(BPP)" << endl;
 	nx = mapw/PS;
@@ -694,7 +695,7 @@ void SplitBitmap ()
 					nwritten++;
 				} else {
 					char cbuf[256];
-					sprintf (cbuf, "%s/%s/%02d/%06d/%06d.dds", root, "Mask", level, ilat0+py, ilng0+px);
+					snprintf (cbuf, sizeof(cbuf), "%s/%s/%02d/%06d/%06d.dds", root, "Mask", level, ilat0+py, ilng0+px); // not upstream: snprintf, FORTIFY aborts on overflow
 					cout << "Skipping patch  " << cbuf << endl;
 					nskipped++;
 				}
@@ -704,7 +705,7 @@ void SplitBitmap ()
 				nwritten++;
 			} else {
 				char cbuf[256];
-				sprintf (cbuf, "%s/%s/%02d/%06d/%06d.dds", root, "Surf", level, ilat0+py, ilng0+px);
+				snprintf (cbuf, sizeof(cbuf), "%s/%s/%02d/%06d/%06d.dds", root, "Surf", level, ilat0+py, ilng0+px); // not upstream: snprintf, FORTIFY aborts on overflow
 				cout << "Skipping patch  " << cbuf << endl;
 				nskipped++;
 			}
@@ -814,6 +815,7 @@ void SplitBitmap_cloud ()
 
 	cout << "Output root path: ";
 	cin >> root;
+	if (strlen (root) > 200) FatalError ("Output root path too long"); // not upstream: tile paths go into 256-byte buffers, FORTIFY aborts on overflow
 
 	cout << "Image dimensions: " << mapw << "(W) x " << maph << "(H)" << endl;
 	nx = mapw/PS;

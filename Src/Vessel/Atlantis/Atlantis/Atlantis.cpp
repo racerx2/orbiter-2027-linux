@@ -310,9 +310,9 @@ Atlantis::~Atlantis ()
 void Atlantis::LoadMeshes()
 {
 	// Retrieve mesh handles
-	hOrbiterMesh        = oapiLoadMeshGlobal ("Atlantis/Atlantis");
-	hOrbiterCockpitMesh = oapiLoadMeshGlobal ("Atlantis/AtlantisCockpit");
-	hOrbiterVCMesh      = oapiLoadMeshGlobal ("Atlantis/AtlantisVC");
+	hOrbiterMesh        = oapiLoadMeshGlobal ("Atlantis\\Atlantis");
+	hOrbiterCockpitMesh = oapiLoadMeshGlobal ("Atlantis\\AtlantisCockpit");
+	hOrbiterVCMesh      = oapiLoadMeshGlobal ("Atlantis\\AtlantisVC");
 
 	// Load meshes
 	mesh_cockpit = AddMesh (hOrbiterCockpitMesh);

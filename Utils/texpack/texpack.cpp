@@ -136,7 +136,7 @@ static dirent *readdir_ext(DIR *h, const char *ext)
 void MemTree::AddLevel(int lvl)
 {
 	char lvlpath[256];
-	sprintf(lvlpath, "%s/%02d", path, lvl);
+	if (snprintf(lvlpath, sizeof(lvlpath), "%s/%02d", path, lvl) >= (int)sizeof(lvlpath)) return; // not upstream: snprintf, FORTIFY aborts on overflow
 	if (access(lvlpath, F_OK) == 0) {
 		dirent *fdata, *fdata2;
 		DIR *h = opendir(lvlpath); // FindFirstFile/FindNextFile -> opendir/readdir
@@ -640,6 +640,7 @@ int main(int narg, char *arg[])
 
 	const char *root = arg[1];
 	const char *layer = arg[2];
+	if (strlen(root) + strlen(layer) > 200) { std::cerr << "Root or layer path too long" << std::endl; exit(1); } // not upstream: tile paths go into 256-byte buffers, FORTIFY aborts on overflow
 
 	for (int i = 3; i < narg; i++) {
 		if (arg[i][0] != '-') continue;

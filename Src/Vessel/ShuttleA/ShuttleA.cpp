@@ -1232,10 +1232,10 @@ void ShuttleA::clbkSetClassCaps (FILEHANDLE cfg)
 
 	// ************************ Meshes ****************************
 
-	SetMeshVisibilityMode (AddMesh (exmesh_tpl = oapiLoadMeshGlobal ("ShuttleA/ShuttleA")), MESHVIS_EXTERNAL);
-	SetMeshVisibilityMode (AddMesh (vcmesh_tpl = oapiLoadMeshGlobal ("ShuttleA/ShuttleA_vc")), MESHVIS_VC);
+	SetMeshVisibilityMode (AddMesh (exmesh_tpl = oapiLoadMeshGlobal ("ShuttleA\\ShuttleA")), MESHVIS_EXTERNAL);
+	SetMeshVisibilityMode (AddMesh (vcmesh_tpl = oapiLoadMeshGlobal ("ShuttleA\\ShuttleA_vc")), MESHVIS_VC);
 	hPanelMesh0 = 0;
-	hPanelMesh1 = oapiLoadMeshGlobal ("ShuttleA/ShuttleA_2dpanel1");
+	hPanelMesh1 = oapiLoadMeshGlobal ("ShuttleA\\ShuttleA_2dpanel1");
 
 
 	// ************************ Blit Ship Name ****************************

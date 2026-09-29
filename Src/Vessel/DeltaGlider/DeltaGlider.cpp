@@ -1218,12 +1218,12 @@ void DeltaGlider::clbkSetClassCaps (FILEHANDLE cfg)
 	}
 	if (ssys_scram) beacon[4].pos = &beaconpos_scram;
 
-	SetMeshVisibilityMode (AddMesh (exmesh_tpl = oapiLoadMeshGlobal (ScramVersion() ? "DG/deltaglider" : "DG/deltaglider_ns")), MESHVIS_EXTERNAL);
+	SetMeshVisibilityMode (AddMesh (exmesh_tpl = oapiLoadMeshGlobal (ScramVersion() ? "DG\\deltaglider" : "DG\\deltaglider_ns")), MESHVIS_EXTERNAL);
 	//SetMeshVisibilityMode (AddMesh (vcmesh_tpl = oapiLoadMeshGlobal ("DG\\deltaglider_vc")), MESHVIS_VC);
-	panelmesh0 = oapiLoadMeshGlobal ("DG/dg_2dpanel0");
-	panelmesh1 = oapiLoadMeshGlobal ("DG/dg_2dpanel1");
+	panelmesh0 = oapiLoadMeshGlobal ("DG\\dg_2dpanel0");
+	panelmesh1 = oapiLoadMeshGlobal ("DG\\dg_2dpanel1");
 
-	vcmesh_tpl = oapiLoadMeshGlobal ("DG/deltaglider_vc");
+	vcmesh_tpl = oapiLoadMeshGlobal ("DG\\deltaglider_vc");
 	SetMeshVisibilityMode (AddMesh (vcmesh_tpl), MESHVIS_VC);
 
 	// **************** vessel-specific insignia ****************

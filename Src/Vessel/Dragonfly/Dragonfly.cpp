@@ -207,7 +207,7 @@ void Dragonfly::SetClassCaps (FILEHANDLE cfg)
     
 	// ******************************** mesh ***************************************
 
-	AddMesh (oapiLoadMeshGlobal ("Dragonfly/Dragonfly"));
+	AddMesh (oapiLoadMeshGlobal ("Dragonfly\\Dragonfly"));
 };
 
 void Dragonfly::LoadState (FILEHANDLE scn, void *vs)

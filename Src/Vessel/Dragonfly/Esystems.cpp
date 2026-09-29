@@ -605,5 +605,5 @@ void Clock::UpdateChar()
   int mm=((timer-hh*3600)/60);
   int ss=(timer-hh*3600-mm*60);
   if (hh>23) while (hh>23) hh-=24;
-  sprintf(time,"%2i:%2i:%2i",hh,mm,ss);
+  snprintf(time,sizeof(time),"%2i:%2i:%2i",hh,mm,ss); // not upstream: snprintf, FORTIFY aborts on overflow (-100 h)
 };

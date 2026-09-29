@@ -219,9 +219,9 @@ void ShuttleA_PL::clbkSetClassCaps (FILEHANDLE cfg)
 
 	EnableTransponder (true);
 
-	mesh_main = oapiLoadMeshGlobal ("ShuttleA/ShuttleA_pl");
-	mesh_drogue = oapiLoadMeshGlobal ("ShuttleA/ShuttleA_chpr");
-	mesh_parachute = oapiLoadMeshGlobal ("ShuttleA/ShuttleA_chmain");
+	mesh_main = oapiLoadMeshGlobal ("ShuttleA\\ShuttleA_pl");
+	mesh_drogue = oapiLoadMeshGlobal ("ShuttleA\\ShuttleA_chpr");
+	mesh_parachute = oapiLoadMeshGlobal ("ShuttleA\\ShuttleA_chmain");
 
 	
 
