@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <climits>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -123,15 +124,16 @@ inline float WavSample(const uint8_t *p, const uint16_t format, const uint16_t s
 {
     if (format == 3)
     {
+        float f;
         if (sampleBytes == 4)
-        {
-            float f;
             memcpy(&f, p, 4);
-            return f;
+        else
+        {
+            double d;
+            memcpy(&d, p, 8);
+            f = static_cast<float>(d);
         }
-        double d;
-        memcpy(&d, p, 8);
-        return static_cast<float>(d);
+        return std::isfinite(f) ? f : 0.0f;     // one NaN or Inf sample would spoil the whole mix
     }
     switch (sampleBytes)
     {
@@ -484,6 +486,11 @@ std::unique_ptr<AudioStream> AudioDecode::OpenStream(const AudioBytes &bytes, st
         error = "sound file without channels or sample rate";
         stream.reset();
     }
+    else if (stream && (stream->channels > 32))
+    {
+        error = "sound file with more than 32 channels";   // a corrupt header; buffers are sized by the channel count
+        stream.reset();
+    }
     return stream;
 }
 
@@ -498,7 +505,7 @@ std::shared_ptr<AudioBuffer> AudioDecode::Decode(const std::vector<uint8_t> &byt
     buffer->channels = stream->channels;
     buffer->sampleRate = stream->sampleRate;
     if (stream->frames > 0)
-        buffer->samples.reserve(stream->frames * stream->channels);
+        buffer->samples.reserve(std::min<uint64_t>(stream->frames * stream->channels, uint64_t(1) << 26));  // the header's length is only a hint
 
     const uint64_t chunk = 16384;
     for (;;)

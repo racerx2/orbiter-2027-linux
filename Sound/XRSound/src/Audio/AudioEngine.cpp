@@ -7,6 +7,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <new>
+#include <stdexcept>
 
 #include <pipewire/pipewire.h>
 #include <spa/param/audio/format-utils.h>
@@ -226,57 +228,73 @@ AudioVoice *AudioEngine::Play(const char *pPath, const bool bLoop, const bool bS
     const std::string key(pPath);
     std::shared_ptr<AudioBuffer> buffer;
     AudioBytes bytes;
-    auto itBuffer = m_bufferCache.find(key);
-    if (itBuffer != m_bufferCache.end())
-        buffer = itBuffer->second;
-    else
+    AudioVoice *pVoice = nullptr;
+    try     // a corrupt header can ask for any size: the caller gets an error text, as for an unreadable file
     {
-        auto itBytes = m_bytesCache.find(key);
-        if (itBytes != m_bytesCache.end())
-            bytes = itBytes->second;
+        auto itBuffer = m_bufferCache.find(key);
+        if (itBuffer != m_bufferCache.end())
+            buffer = itBuffer->second;
         else
         {
-            std::shared_ptr<std::vector<uint8_t>> file = std::make_shared<std::vector<uint8_t>>();
-            if (!AudioDecode::ReadFile(pPath, *file, error))
-                return nullptr;
-            if (file->size() > StreamThreshold)
-            {
-                bytes = file;
-                m_bytesCache[key] = bytes;
-                m_cacheBytes += file->size();
-            }
+            auto itBytes = m_bytesCache.find(key);
+            if (itBytes != m_bytesCache.end())
+                bytes = itBytes->second;
             else
             {
-                buffer = AudioDecode::Decode(*file, error);
-                if (!buffer)
+                std::shared_ptr<std::vector<uint8_t>> file = std::make_shared<std::vector<uint8_t>>();
+                if (!AudioDecode::ReadFile(pPath, *file, error))
                     return nullptr;
-                m_bufferCache[key] = buffer;
-                m_cacheBytes += buffer->samples.size() * sizeof(float);
+                if (file->size() > StreamThreshold)
+                {
+                    bytes = file;
+                    m_bytesCache[key] = bytes;
+                    m_cacheBytes += file->size();
+                }
+                else
+                {
+                    buffer = AudioDecode::Decode(*file, error);
+                    if (!buffer)
+                        return nullptr;
+                    m_bufferCache[key] = buffer;
+                    m_cacheBytes += buffer->samples.size() * sizeof(float);
+                }
             }
         }
-    }
 
-    AudioVoice *pVoice = new AudioVoice(this);
-    if (buffer)
-    {
-        pVoice->m_channels = buffer->channels;
-        pVoice->m_sampleRate = buffer->sampleRate;
-        pVoice->m_frames = buffer->frames;
-        pVoice->m_buffer = buffer;
-    }
-    else
-    {
-        std::unique_ptr<AudioStream> stream = AudioDecode::OpenStream(bytes, error);
-        if (!stream)
+        pVoice = new AudioVoice(this);
+        if (buffer)
         {
-            delete pVoice;
-            return nullptr;
+            pVoice->m_channels = buffer->channels;
+            pVoice->m_sampleRate = buffer->sampleRate;
+            pVoice->m_frames = buffer->frames;
+            pVoice->m_buffer = buffer;
         }
-        pVoice->m_channels = stream->channels;
-        pVoice->m_sampleRate = stream->sampleRate;
-        pVoice->m_frames = stream->frames;
-        pVoice->m_window.resize(WindowFrames * stream->channels);
-        pVoice->m_stream = std::move(stream);
+        else
+        {
+            std::unique_ptr<AudioStream> stream = AudioDecode::OpenStream(bytes, error);
+            if (!stream)
+            {
+                delete pVoice;
+                return nullptr;
+            }
+            pVoice->m_channels = stream->channels;
+            pVoice->m_sampleRate = stream->sampleRate;
+            pVoice->m_frames = stream->frames;
+            pVoice->m_window.resize(WindowFrames * stream->channels);
+            pVoice->m_stream = std::move(stream);
+        }
+    }
+    catch (const std::bad_alloc &)
+    {
+        delete pVoice;
+        error = "not enough memory for this sound file";
+        return nullptr;
+    }
+    catch (const std::length_error &)
+    {
+        delete pVoice;
+        error = "sound file too large";
+        return nullptr;
     }
     pVoice->m_bLoop = bLoop;
     pVoice->m_bPaused = bStartPaused;
@@ -344,7 +362,12 @@ void AudioEngine::Process()
     spa_data &data = pBuffer->buffer->datas[0];
     float *pOut = static_cast<float *>(data.data);
     if (!pOut)
+    {
+        if (data.chunk)
+            data.chunk->size = 0;
+        pw_stream_queue_buffer(m_pw->pStream, pBuffer);     // a dequeued buffer must go back, or the pool runs dry
         return;
+    }
 
     const uint32_t stride = sizeof(float) * Channels;
     uint32_t frames = data.maxsize / stride;
@@ -365,7 +388,7 @@ void AudioEngine::Mix(float *pOut, const uint32_t frames)
     for (AudioVoice *pVoice : m_voices)
         pVoice->Mix(pOut, frames, SampleRate);
     for (uint32_t i = 0; i < frames * Channels; i++)
-        pOut[i] = std::clamp(pOut[i], -1.0f, 1.0f);    // many loud sounds at once must not wrap around
+        pOut[i] = std::isfinite(pOut[i]) ? std::clamp(pOut[i], -1.0f, 1.0f) : 0.0f;    // many loud sounds at once must not wrap around; NaN/Inf never reach the device
 }
 
 AudioVoice::AudioVoice(AudioEngine *pEngine) :
@@ -412,7 +435,7 @@ bool AudioVoice::IsPaused() const
 void AudioVoice::SetVolume(const float volume)
 {
     std::lock_guard<std::mutex> lock(m_pEngine->m_mutex);
-    m_volume = std::clamp(volume, 0.0f, 1.0f);
+    m_volume = std::isfinite(volume) ? std::clamp(volume, 0.0f, 1.0f) : 0.0f;
 }
 
 float AudioVoice::GetVolume() const
@@ -436,7 +459,7 @@ bool AudioVoice::IsLooped() const
 void AudioVoice::SetPan(const float pan)
 {
     std::lock_guard<std::mutex> lock(m_pEngine->m_mutex);
-    m_pan = std::clamp(pan, -1.0f, 1.0f);
+    m_pan = std::isfinite(pan) ? std::clamp(pan, -1.0f, 1.0f) : 0.0f;
 }
 
 float AudioVoice::GetPan() const
@@ -519,8 +542,8 @@ void AudioVoice::Mix(float *pOut, const uint32_t frames, const uint32_t outRate)
         float l0, r0;
         if (!FetchFrame(i0, l0, r0))
         {
-            if ((m_frames == 0) && (i0 > 0))
-                m_frames = i0;      // a stream of unknown length ended, so now it is known
+            if ((i0 > 0) && ((m_frames == 0) || (i0 < m_frames)))
+                m_frames = i0;      // a stream of unknown length ended, or one shorter than its header said: now the length is known
             if (!m_bLoop || (m_frames == 0))
             {
                 m_bFinished = true;
