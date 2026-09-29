@@ -236,7 +236,7 @@ int main (int argc, char *argv[])
 		return 0;
 	}
 
-	setlocale (LC_CTYPE, "");
+	setlocale (LC_CTYPE, "C.UTF-8"); // not upstream: "" makes strcasecmp follow the user's locale (Turkish dotless i)
 
 	g_pOrbiter->Run ();
 	delete g_pOrbiter;

@@ -105,6 +105,7 @@ QWidget *DialogWin::OpenWindow ()
 			return NULL;
 		}
 		newwin = true;
+		hWnd->hide(); // not upstream: WS_VISIBLE, shown below after WM_INITDIALOG and without activation
 	}
 	hWnd->setProperty ("DialogWin", QVariant::fromValue ((void*)this)); // DWLP_USER
 	if (!events) events = new DialogEvents (hWnd);

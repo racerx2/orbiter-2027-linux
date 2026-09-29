@@ -1,5 +1,6 @@
 // not upstream: unit tests for Src/Orbiter/PathResolve (Windows file name semantics on Linux)
 #include <catch2/catch_test_macros.hpp>
+#include <clocale>
 #include <filesystem>
 #include <fstream>
 #include <unistd.h>
@@ -29,6 +30,16 @@ TEST_CASE("Backslashes and case are resolved against the disk", "[resolve]")
 	REQUIRE(oapiResolvePath ("CONFIG\\earth.CFG") == "Config/Earth.cfg");
 	REQUIRE(oapiResolvePath (".\\config\\vessels\\deltaglider.cfg") == "./Config/Vessels/DeltaGlider.cfg");
 	REQUIRE(oapiResolvePath ((t.root.string() + "\\config\\EARTH.cfg").c_str()) == (t.root / "Config" / "Earth.cfg").string());
+}
+
+TEST_CASE("Case folding is ASCII, whatever the locale", "[resolve]")
+{
+	TmpTree t;
+	if (!setlocale (LC_CTYPE, "tr_TR.UTF-8")) SKIP("tr_TR.UTF-8 locale not installed");
+	std::string a = oapiResolvePath ("CONFIG\\VESSELS\\DELTAGLIDER.CFG"), b = oapiResolvePath ("config\\earth.cfg");
+	setlocale (LC_CTYPE, "C");
+	REQUIRE(a == "Config/Vessels/DeltaGlider.cfg"); // Turkish rules would keep I and i apart
+	REQUIRE(b == "Config/Earth.cfg");
 }
 
 TEST_CASE("Unmatched tails are kept for files to be created", "[resolve]")

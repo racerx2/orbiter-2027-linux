@@ -154,7 +154,12 @@ class Preproc:
         return None
 
     def run(self, path, deps):
-        text = open(path, 'rb').read().decode('latin-1').replace('\r\n', '\n').replace('\r', '\n')
+        raw = open(path, 'rb').read()
+        if raw[:2] in (b'\xff\xfe', b'\xfe\xff'): text = raw.decode('utf-16')  # rc.exe reads UTF-16 scripts (Visual Studio's default)
+        elif raw[:3] == b'\xef\xbb\xbf': text = raw.decode('utf-8-sig')
+        else: text = raw.decode('latin-1')
+        if '\0' in text: raise RcError('%s: UTF-16 without a byte order mark' % path)
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
         text = re.sub(r'\\\n', '', text)
         out = []
         stack = []  # (active, taken)
@@ -233,7 +238,7 @@ def tokenize(text):
 
 def rc_string(tok):
     s = tok[1][1:-1].replace('""', '"')
-    s = s.encode('latin-1').decode('cp1252', errors='replace')
+    s = ''.join(bytes([ord(c)]).decode('cp1252', errors='replace') if 0x80 <= ord(c) <= 0x9f else c for c in s)  # cp1252 bytes read as latin-1; Unicode (UTF-16/8 scripts) kept
     out, i = [], 0
     while i < len(s):
         c = s[i]

@@ -4,7 +4,6 @@
 #include "OrbiterAPI.h"
 #include <string>
 #include <vector>
-#include <strings.h>
 #include <sys/stat.h>
 #include <dirent.h>
 
@@ -12,6 +11,15 @@ static bool Exists (const std::string &p)
 {
 	struct stat st;
 	return stat (p.c_str(), &st) == 0;
+}
+
+static bool SameNoCase (const char *a, const char *b) // ASCII only; strcasecmp follows the locale
+{
+	for (; *a && *b; a++, b++) {
+		char ca = (*a >= 'A' && *a <= 'Z') ? *a + 32 : *a, cb = (*b >= 'A' && *b <= 'Z') ? *b + 32 : *b;
+		if (ca != cb) return false;
+	}
+	return *a == *b;
 }
 
 static std::string Join (const std::string &dir, const std::string &name)
@@ -43,7 +51,7 @@ DLLEXPORT std::string oapiResolvePath (const char *path)
 		bool found = false;
 		if (DIR *d = opendir (cur.empty() ? "." : cur.c_str())) {
 			while (struct dirent *e = readdir (d)) {
-				if (!strcasecmp (e->d_name, comp[k].c_str())) {
+				if (SameNoCase (e->d_name, comp[k].c_str())) {
 					cand = Join (cur, e->d_name);
 					found = true;
 					break;

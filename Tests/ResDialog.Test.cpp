@@ -2,6 +2,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
+#include <QDialog>
+#include <QTimer>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -71,8 +74,28 @@ TEST_CASE("every dialog template builds all its controls", "[resdialog]")
 		for (QObject *o : w->children())
 			if (o->isWidgetType() && o->property ("resId").isValid()) n++;
 		REQUIRE(n == d->nctrl);
+		for (QComboBox *cb : w->findChildren<QComboBox*> ())
+			if (cb->isEditable()) REQUIRE(cb->insertPolicy() == QComboBox::NoInsert); // CBS_DROPDOWN keeps typed text out of the list
 		delete w;
 	}
+}
+
+TEST_CASE("a WS_VISIBLE popup runs modal (DialogBox)", "[resdialog]")
+{
+	App();
+	const RESTABLE *t = oapiResourceTable (nullptr);
+	const RESDIALOG *d = nullptr;
+	for (size_t i = 0; i < t->ndlg && !d; i++)
+		if ((t->dlg[i].style & 0x10000000) && !(t->dlg[i].style & 0x40000000)) d = t->dlg + i; // WS_VISIBLE, not WS_CHILD
+	REQUIRE(d);
+	INFO(d->name);
+	QDialog *dlg = qobject_cast<QDialog*> (oapiCreateResDialog (nullptr, d->id, nullptr));
+	REQUIRE(dlg);
+	bool modal = false;
+	QTimer::singleShot (0, dlg, [&]() { modal = (QGuiApplication::modalWindow() == dlg->windowHandle()); dlg->reject(); });
+	dlg->exec();
+	REQUIRE(modal);
+	delete dlg;
 }
 
 TEST_CASE("IDD_MAIN matches its template", "[resdialog]")

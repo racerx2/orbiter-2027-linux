@@ -631,6 +631,7 @@ static QWidget *CreateControl (const RESCONTROL *c, QWidget *dlg, void *hModule,
 		QComboBox *cb = new QComboBox (dlg);
 		DWORD t = st & 0x3;
 		cb->setEditable (t == CBS_DROPDOWN || t == CBS_SIMPLE);
+		cb->setInsertPolicy (QComboBox::NoInsert); // CBS_DROPDOWN never adds typed text to the list
 		cb->setProperty ("resSort", (bool)(st & CBS_SORT));
 		r.setHeight (cb->sizeHint().height()); // the .rc height includes the dropped-down list
 		w = cb;
@@ -852,6 +853,15 @@ QMenuBar *oapiCreateResMenu (void *hModule, int resId, QWidget *hWnd)
 	return bar;
 }
 
+namespace {
+// DialogBox ignores WS_VISIBLE: the dialog shows modal after WM_INITDIALOG (exec on a visible QDialog is not modal)
+class ResPopup : public QDialog {
+public:
+	using QDialog::QDialog;
+	int exec () override { if (isVisible ()) hide (); return QDialog::exec (); }
+};
+}
+
 QWidget *oapiCreateResDialog (void *hModule, int resId, QWidget *parent, QWindow *owner)
 {
 	using namespace rs;
@@ -861,7 +871,7 @@ QWidget *oapiCreateResDialog (void *hModule, int resId, QWidget *parent, QWindow
 	QWidget *dlg;
 	bool popup = !(d->style & WS_CHILD);
 	if (popup) {
-		QDialog *qd = new QDialog (parent);
+		QDialog *qd = new ResPopup (parent);
 		Qt::WindowFlags fl = (d->exstyle & WS_EX_APPWINDOW) ? Qt::Window : (d->exstyle & WS_EX_TOOLWINDOW) ? Qt::Tool : Qt::Dialog;
 		if (!(d->style & WS_CAPTION)) fl |= Qt::FramelessWindowHint;
 		else {
