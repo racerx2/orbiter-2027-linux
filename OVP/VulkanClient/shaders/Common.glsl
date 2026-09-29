@@ -186,6 +186,7 @@ void LocalLightsBeckman(
 		vec4 q = 1.0 / (r2 * d2);
 
 		spe = (att * spt * dif) * w * exp((d2 - 1.0f) * q);
+		for (i = 0; i < 4; i++) if (isnan(spe[i]) || isinf(spe[i])) spe[i] = 0.0f; // D3D9 makes 0 * inf zero here (roughness 0); IEEE gives NaN and the mesh turns invisible
 	}
 
 	dif *= (att * spt);
