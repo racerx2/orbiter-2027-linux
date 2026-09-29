@@ -1,0 +1,54 @@
+// Copyright (c) Martin Schweiger
+// Licensed under the MIT License
+
+// Microsoft Visual C++ generated resource script.
+//
+#include "resource.h"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include "afxres.h"
+
+/////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.K.) resources
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_MYDIALOG DIALOGEX 0, 0, 186, 105
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_TOOLWINDOW
+CAPTION "Orbiter Dialog Template"
+FONT 8, "MS Sans Serif", 0, 0, 0x1
+BEGIN
+    PUSHBUTTON      "Close",IDCANCEL,129,84,50,14
+    PUSHBUTTON      "Who am I?",IDC_WHOAMI,7,7,50,14
+    CTEXT           "",IDC_IAM,7,28,172,22,SS_CENTERIMAGE | SS_SUNKEN
+    LTEXT           "Remember this:",IDC_STATIC,7,60,50,8
+    EDITTEXT        IDC_REMEMBER,62,59,54,14,ES_AUTOHSCROLL | ES_NUMBER
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// String Table
+//
+
+STRINGTABLE 
+BEGIN
+    IDS_INFO                "DIALOG TEMPLATE:\r\n\r\nA simple SDK example which provides a dialog box that can be opened during a simulation session via the ""My dialog"" entry in the Custom Functions list (Ctrl-F4).\r\n\r\nThis addon is not very useful - it is intended as a starting point for developers."
+    IDS_TYPE                "SDK sample plugins"
+END
+
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+

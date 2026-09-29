@@ -1,0 +1,7 @@
+if("${CPACK_GENERATOR}" STREQUAL "TGZ")
+
+	set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
+	set(CPACK_ERROR_ON_ABSOLUTE_INSTALL_DESTINATION OFF)
+
+endif()
+# WIX branch left out: no WIX installer on Linux

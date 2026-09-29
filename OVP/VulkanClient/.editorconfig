@@ -1,0 +1,22 @@
+# https://EditorConfig.org
+root = true
+
+# A newline ending every file
+[*]
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+# RC files are latin1
+[*.rc]
+charset = latin1
+
+# Tab indentation (size 4 spaces)
+[*.{cpp,hpp,c,h,rc}]
+indent_style = tab
+indent_size = 4
+
+# 4 space indentation for txt files
+[*.txt]
+indent_style = space
+indent_size = 4

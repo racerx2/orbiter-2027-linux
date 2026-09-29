@@ -1,0 +1,9 @@
+; === ORBITER Master Configuration File ===
+EchoAllParams = FALSE
+
+; === Subdirectory locations
+PlanetTexDir = ${ORBITER_PLANET_TEXTURE_INSTALL_DIR_W}
+
+; === Font parameters ===
+ImGui_FontFile = Roboto-Medium.ttf
+ImGui_FontSize = 14

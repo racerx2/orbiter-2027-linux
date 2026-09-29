@@ -1,0 +1,37 @@
+// Copyright (c) Martin Schweiger
+// Licensed under the MIT License
+
+// Microsoft Visual C++ generated resource script.
+//
+#include "resource.h"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include "afxres.h"
+
+/////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.K.) resources
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// String Table
+//
+
+STRINGTABLE 
+BEGIN
+    IDS_INFO                "Ascent MFD:\r\n\r\nAdds a new ""Ascent Profile"" MFD mode. Plots altitude, pitch angle, radial and tangential velocity components as a function of time.\r\nThis is an example for a graph-based MFD mode."
+    IDS_TYPE                "SDK sample plugins"
+END
+
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+

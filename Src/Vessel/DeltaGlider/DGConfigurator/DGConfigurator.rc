@@ -1,0 +1,44 @@
+// Copyright (c) Martin Schweiger
+// Licensed under the MIT License
+
+//Microsoft Developer Studio generated resource script.
+//
+#include "DGC_resource.h"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include "winres.h"
+
+/////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.K.) resources
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_DGCONFIG DIALOG DISCARDABLE  0, 0, 186, 79
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "DG Configuration"
+FONT 8, "MS Sans Serif"
+BEGIN
+    DEFPUSHBUTTON   "OK",IDOK,77,58,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,129,58,50,14
+    GROUPBOX        "Texture resolution",IDC_STATIC,7,7,172,41
+    CONTROL         "High (1024x1024)",IDC_RADIO1,"Button",
+                    BS_AUTORADIOBUTTON,18,20,72,10
+    CONTROL         "Low (512x512)",IDC_RADIO2,"Button",BS_AUTORADIOBUTTON,
+                    18,32,63,10
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+

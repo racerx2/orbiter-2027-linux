@@ -1,0 +1,113 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "ninja-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "installDir": "${sourceDir}/out/install/${presetName}"
+    },
+    {
+      "name": "linux-gcc-base",
+      "inherits": "ninja-base",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "ORBITER_MAKE_DOC": false
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-x64-debug",
+      "displayName": "x64 Debug",
+      "inherits": "linux-gcc-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-x64-release",
+      "displayName": "x64 Release",
+      "inherits": "linux-gcc-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-x64-asan",
+      "displayName": "x64 ASan",
+      "inherits": "linux-x64-release",
+      "cacheVariables": {
+        "ORBITER_SANITIZER": true,
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "linux-x64-tracy",
+      "displayName": "x64 Tracy Profiler",
+      "inherits": "linux-x64-release",
+      "cacheVariables": {
+        "ORBITER_TRACY_PROFILER": true,
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux-x64-debug",
+      "displayName": "x64 Debug",
+      "configurePreset": "linux-x64-debug",
+      "jobs": 3
+    },
+    {
+      "name": "linux-x64-release",
+      "displayName": "x64 Release",
+      "configurePreset": "linux-x64-release",
+      "jobs": 3
+    },
+    {
+      "name": "linux-x64-asan",
+      "displayName": "x64 ASan",
+      "configurePreset": "linux-x64-asan",
+      "jobs": 3
+    },
+    {
+      "name": "linux-x64-tracy",
+      "displayName": "x64 Tracy Profiler",
+      "configurePreset": "linux-x64-tracy",
+      "jobs": 3
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "test-base",
+      "description": "Enable output on failure",
+      "configurePreset": "ninja-base",
+      "hidden": true,
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-x64-debug",
+      "configurePreset": "linux-x64-debug",
+      "inherits": "test-base"
+    },
+    {
+      "name": "linux-x64-release",
+      "configurePreset": "linux-x64-release",
+      "inherits": "test-base"
+    },
+    {
+      "name": "linux-x64-asan",
+      "configurePreset": "linux-x64-asan",
+      "inherits": "test-base"
+    }
+  ]
+}

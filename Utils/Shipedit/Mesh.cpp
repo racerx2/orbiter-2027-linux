@@ -1,0 +1,879 @@
+// Copyright (c) Martin Schweiger
+// Licensed under the MIT License
+
+#include "Mesh.h"
+#include "Vecmat.h"
+#include <stdio.h>
+#include <string.h>
+#include <strings.h>
+#include "D3dmath.h"
+
+using namespace std;
+
+// =======================================================================
+// Class Triangle
+
+Triangle::Triangle ()
+{
+	hasNodes = false;
+	hasNormals = false;
+}
+
+Triangle::Triangle (const Triangle &tri)
+{
+	if (hasNodes = tri.hasNodes)
+		for (int i = 0; i < 3; i++) nd[i] = tri.nd[i];
+	if (hasNormals = tri.hasNormals)
+		for (int i = 0; i < 3; i++) nm[i] = tri.nm[i];
+}
+
+Triangle::Triangle (int n0, int n1, int n2)
+{
+	hasNodes = true;
+	hasNormals = false;
+	nd[0] = n0;
+	nd[1] = n1;
+	nd[2] = n2;
+}
+
+void Triangle::SetNodes (int n0, int n1, int n2)
+{
+	hasNodes = true;
+	nd[0] = n0;
+	nd[1] = n1;
+	nd[2] = n2;
+}
+
+// =======================================================================
+// Class Mesh
+
+Mesh::Mesh ()
+{
+	nGrp = nMtrl = nTex = 0;
+	GrpVis   = 0;
+	GrpSetup = false;
+}
+
+Mesh::Mesh (NTVERTEX *vtx, DWORD nvtx, WORD *idx, DWORD nidx, DWORD matidx, DWORD texidx)
+{
+	nGrp = nMtrl = nTex = 0;
+	GrpVis   = 0;
+	GrpSetup = false;
+	AddGroup (vtx, nvtx, idx, nidx, matidx, texidx);
+	Setup();
+}
+
+Mesh::Mesh (const Mesh &mesh)
+{
+	nGrp = nMtrl = nTex = 0;
+	GrpVis   = 0;
+	GrpSetup = false;
+	Set (mesh);
+}
+
+void Mesh::Set (const Mesh &mesh)
+{
+	DWORD i;
+
+	Clear ();
+	if (nGrp = mesh.nGrp) {
+		Grp = new GroupSpec[nGrp];
+		memcpy (Grp, mesh.Grp, nGrp*sizeof(GroupSpec));
+		for (i = 0; i < nGrp; i++) {
+			Grp[i].Vtx = new NTVERTEX[Grp[i].nVtx];
+			memcpy (Grp[i].Vtx, mesh.Grp[i].Vtx, Grp[i].nVtx*sizeof(NTVERTEX));
+			Grp[i].Idx = new WORD[Grp[i].nIdx];
+			memcpy (Grp[i].Idx, mesh.Grp[i].Idx, Grp[i].nIdx*sizeof(WORD)); 
+			if (mesh.Grp[i].Label) {
+				Grp[i].Label = new char[strlen(mesh.Grp[i].Label)+1];
+				strcpy (Grp[i].Label, mesh.Grp[i].Label);
+			} else
+				Grp[i].Label = 0;
+			if (mesh.Grp[i].Comment) {
+				Grp[i].Comment = new char[strlen(mesh.Grp[i].Comment)+1];
+				strcpy (Grp[i].Comment, mesh.Grp[i].Comment);
+			} else
+				Grp[i].Comment = 0;
+		}
+	}
+	if (nMtrl = mesh.nMtrl) {
+		Mtrl = new MATERIAL[nMtrl];
+		memcpy (Mtrl, mesh.Mtrl, nMtrl*sizeof(MATERIAL));
+		Matname = new char*[nMtrl];
+		for (i = 0; i < nMtrl; i++) {
+			Matname[i] = new char[strlen(mesh.Matname[i])+1];
+			strcpy(Matname[i], mesh.Matname[i]);
+		}
+	}
+	if (nTex = mesh.nTex) {
+		Texname = new char*[nTex];
+		for (i = 0; i < nTex; i++) {
+			Texname[i] = new char[strlen(mesh.Texname[i])+1];
+			strcpy(Texname[i], mesh.Texname[i]);
+		}
+	}
+	if (GrpSetup = mesh.GrpSetup) {
+		GrpCnt = new oapi::FVECTOR3[nGrp];
+		memcpy (GrpCnt, mesh.GrpCnt, nGrp*sizeof(oapi::FVECTOR3));
+		GrpRad = new float[nGrp];
+		memcpy (GrpRad, mesh.GrpRad, nGrp*sizeof(float));
+		GrpVis = new DWORD[nGrp];
+		memcpy (GrpVis, mesh.GrpVis, nGrp*sizeof(DWORD));
+	} else {
+		GrpVis = 0;
+	}
+}
+
+Mesh::~Mesh ()
+{
+	Clear ();
+}
+
+void Mesh::Setup ()
+{
+	DWORD g, i;
+	float x, y, z, dx, dy, dz, d2, d2max;
+
+	if (GrpVis) { // allocated already
+		delete []GrpCnt;
+		delete []GrpRad;
+		delete []GrpVis;
+	}
+	GrpCnt  = new oapi::FVECTOR3[nGrp];
+	GrpRad  = new float[nGrp];
+	GrpVis  = new DWORD[nGrp];
+	for (g = 0; g < nGrp; g++) {
+		float invtx = (float)(1.0/Grp[g].nVtx);
+		x = y = z = 0.0f;
+		for (i = 0; i < Grp[g].nVtx; i++) {
+			x += Grp[g].Vtx[i].x;
+			y += Grp[g].Vtx[i].y;
+			z += Grp[g].Vtx[i].z;
+		}
+		GrpCnt[g].x = (x *= invtx);
+		GrpCnt[g].y = (y *= invtx);
+		GrpCnt[g].z = (z *= invtx);
+		d2max = 0.0f;
+		for (i = 0; i < Grp[g].nVtx; i++) {
+			dx = x - Grp[g].Vtx[i].x;
+			dy = y - Grp[g].Vtx[i].y;
+			dz = z - Grp[g].Vtx[i].z;
+			d2 = dx*dx + dy*dy + dz*dz;
+			if (d2 > d2max) d2max = d2;
+		}
+		GrpRad[g] = (FLOAT)sqrt (d2max);
+
+		// check validity of material/texture indices
+		if (Grp[g].MtrlIdx != SPEC_INHERIT && Grp[g].MtrlIdx >= nMtrl) Grp[g].MtrlIdx = SPEC_DEFAULT;
+		if (Grp[g].TexIdx  != SPEC_INHERIT && Grp[g].TexIdx >= nTex)   Grp[g].TexIdx  = SPEC_DEFAULT;
+	}
+	GrpSetup = true;
+}
+
+bool Mesh::GetGroup (DWORD grp, NTVERTEX *&vtx, DWORD &nvtx, WORD *&idx, DWORD &nidx)
+{
+	if (grp < nGrp) {
+		vtx = Grp[grp].Vtx;  nvtx = Grp[grp].nVtx;
+		idx = Grp[grp].Idx;  nidx = Grp[grp].nIdx;
+		return true;
+	} else {
+		return false;
+	}
+}
+
+int Mesh::AddGroup (NTVERTEX *vtx, DWORD nvtx, WORD *idx, DWORD nidx,
+	DWORD mtrl_idx, DWORD tex_idx, WORD zbias)
+{
+	GroupSpec *tmp_Grp = new GroupSpec[nGrp+1];
+	memcpy (tmp_Grp, Grp, sizeof(GroupSpec)*nGrp);
+	if (nGrp) delete []Grp;
+	Grp = tmp_Grp;
+	Grp[nGrp].Vtx = vtx;  Grp[nGrp].nVtx = nvtx;
+	Grp[nGrp].Idx = idx;  Grp[nGrp].nIdx = nidx;
+	Grp[nGrp].MtrlIdx = mtrl_idx;
+	Grp[nGrp].TexIdx = tex_idx;
+	Grp[nGrp].zBias = zbias;
+	Grp[nGrp].Flags = 0;
+	Grp[nGrp].Label = 0;
+	Grp[nGrp].Comment = 0;
+	GrpSetup = false;
+	return nGrp++;
+}
+
+bool Mesh::DeleteGroup (DWORD grp)
+{
+	if (grp < nGrp) {
+		delete []Grp[grp].Vtx;
+		delete []Grp[grp].Idx;
+		if (Grp[grp].Label) delete []Grp[grp].Label;
+		if (Grp[grp].Comment) delete []Grp[grp].Comment;
+		if (nGrp == 1) { // delete the only group
+			delete []Grp;
+		} else {
+			GroupSpec *tmp_Grp = new GroupSpec[nGrp-1];
+			for (DWORD i = 0, j = 0; i < nGrp; i++)
+				if (i != grp) tmp_Grp[j++] = Grp[i];
+			delete []Grp;
+			Grp = tmp_Grp;
+		}
+		nGrp--;
+		return true;
+	} else {
+		return false;
+	}
+}
+
+void Mesh::AddMesh (Mesh &mesh)
+{
+	for (DWORD i = 0; i < mesh.nGroup(); i++) {
+		NTVERTEX *vtx, *vtx2;
+		WORD *idx, *idx2;
+		DWORD nvtx, nidx;
+		mesh.GetGroup (i, vtx, nvtx, idx, nidx);
+		// need to copy the vertex and index lists
+		vtx2 = new NTVERTEX[nvtx];  memcpy (vtx2, vtx, nvtx*sizeof(NTVERTEX));
+		idx2 = new WORD[nidx];       memcpy (idx2, idx, nidx*sizeof(WORD));
+		AddGroup (vtx2, nvtx, idx2, nidx);
+	}
+}
+
+int Mesh::AddMaterial (MATERIAL &mtrl)
+{
+	MATERIAL *tmp_Mtrl = new MATERIAL[nMtrl+1];
+	memcpy (tmp_Mtrl, Mtrl, sizeof(MATERIAL)*nMtrl);
+	memcpy (tmp_Mtrl+nMtrl, &mtrl, sizeof(MATERIAL));
+	if (nMtrl) delete []Mtrl;
+	Mtrl = tmp_Mtrl;
+	return nMtrl++;
+}
+
+void Mesh::Clear ()
+{
+	for (DWORD i = 0; i < nGrp; i++) {
+		delete []Grp[i].Vtx;
+		delete []Grp[i].Idx;
+		if (Grp[i].Label)   delete []Grp[i].Label;
+		if (Grp[i].Comment) delete []Grp[i].Comment;
+	}
+	if (nGrp) {
+		delete []Grp;
+		nGrp = 0;
+	}
+	if (nMtrl) {
+		for (DWORD i = 0; i < nMtrl; i++)
+			delete []Matname[i];
+		delete []Matname;
+		delete []Mtrl;
+		nMtrl = 0;
+	}
+	if (nTex) {
+		for (DWORD i = 0; i < nTex; i++)
+			delete []Texname[i];
+		delete []Texname;
+		nTex = 0;
+	}
+	if (GrpVis) {
+		delete []GrpCnt;
+		delete []GrpRad;
+		delete []GrpVis;
+		GrpVis = 0;
+	}
+	GrpSetup = false;
+}
+
+void Mesh::ScaleGroup (DWORD grp, float sx, float sy, float sz)
+{
+	int i, nv = Grp[grp].nVtx;
+	NTVERTEX *vtx = Grp[grp].Vtx;
+	for (i = 0; i < nv; i++) {
+		vtx[i].x *= sx;
+		vtx[i].y *= sy;
+		vtx[i].z *= sz;
+	}
+	if (sx == sy && sx == sz) return; // no change in normals
+	float snx = sy*sz, sny = sx*sz, snz = sx*sy;
+	for (i = 0; i < nv; i++) {
+		vtx[i].nx *= snx;
+		vtx[i].ny *= sny;
+		vtx[i].nz *= snz;
+		float ilen = (float)(1.0/sqrt (vtx[i].nx*vtx[i].nx + vtx[i].ny*vtx[i].ny + vtx[i].nz*vtx[i].nz));
+		vtx[i].nx *= ilen;
+		vtx[i].ny *= ilen;
+		vtx[i].nz *= ilen;
+	}
+	GrpSetup = false;
+}
+
+void Mesh::Scale (float sx, float sy, float sz)
+{
+	for (DWORD grp = 0; grp < nGrp; grp++)
+		ScaleGroup (grp, sx, sy, sz);
+}
+
+void Mesh::TranslateGroup (DWORD grp, float dx, float dy, float dz)
+{
+	int i, nv = Grp[grp].nVtx;
+	NTVERTEX *vtx = Grp[grp].Vtx;
+	for (i = 0; i < nv; i++) {
+		vtx[i].x += dx;
+		vtx[i].y += dy;
+		vtx[i].z += dz;
+	}
+	GrpSetup = false;
+}
+
+void Mesh::Translate (float dx, float dy, float dz)
+{
+	for (DWORD grp = 0; grp < nGrp; grp++)
+		TranslateGroup (grp, dx, dy, dz);
+}
+
+void Mesh::RotateGroup (DWORD grp, RotAxis axis, float angle)
+{
+	int i, nv = Grp[grp].nVtx;
+	NTVERTEX *vtx = Grp[grp].Vtx;
+	float cosa = (float)cos(angle), sina = (float)sin(angle);
+	switch (axis) {
+	case ROTATE_X:
+		for (i = 0; i < nv; i++) {
+			float y = vtx[i].y, z = vtx[i].z;
+			vtx[i].y = cosa*y - sina*z;
+			vtx[i].z = sina*y + cosa*z;
+			float ny = vtx[i].ny, nz = vtx[i].nz;
+			vtx[i].ny = cosa*ny - sina*nz;
+			vtx[i].nz = sina*ny + cosa*nz;
+		}
+		break;
+	case ROTATE_Y:
+		for (i = 0; i < nv; i++) {
+			float x = vtx[i].x, z = vtx[i].z;
+			vtx[i].x = cosa*x - sina*z;
+			vtx[i].z = sina*x + cosa*z;
+			float nx = vtx[i].nx, nz = vtx[i].nz;
+			vtx[i].nx = cosa*nx - sina*nz;
+			vtx[i].nz = sina*nx + cosa*nz;
+		}
+		break;
+	case ROTATE_Z:
+		for (i = 0; i < nv; i++) {
+			float x = vtx[i].x, y = vtx[i].y;
+			vtx[i].x = cosa*x - sina*y;
+			vtx[i].y = sina*x + cosa*y;
+			float nx = vtx[i].nx, ny = vtx[i].ny;
+			vtx[i].nx = cosa*nx - sina*ny;
+			vtx[i].ny = sina*nx + cosa*ny;
+		}
+		break;
+	}
+	GrpSetup = false;
+}
+
+void Mesh::Rotate (RotAxis axis, float angle)
+{
+	for (DWORD grp = 0; grp < nGrp; grp++)
+		RotateGroup (grp, axis, angle);
+}
+
+void Mesh::MirrorGroup (DWORD grp, MirrorDir dir)
+{
+	DWORD i, nv = Grp[grp].nVtx, ni = Grp[grp].nIdx;
+	WORD *idx = Grp[grp].Idx;
+	NTVERTEX *vtx = Grp[grp].Vtx;
+
+	switch (dir) {
+	case MIRROR_X:
+		for (i = 0; i < nv; i++) {
+			vtx[i].x = - vtx[i].x;
+			vtx[i].nx = -vtx[i].nx;
+		}
+		break;
+	case MIRROR_Y:
+		for (i = 0; i < nv; i++) {
+			vtx[i].y = -vtx[i].y;
+			vtx[i].ny = -vtx[i].ny;
+		}
+		break;
+	case MIRROR_Z:
+		for (i = 0; i < nv; i++) {
+			vtx[i].z = -vtx[i].z;
+			vtx[i].nz = -vtx[i].nz;
+		}
+		break;
+	}
+	for (i = 0; i < ni/3; i++) {
+		WORD tmp = idx[i*3+1];
+		idx[i*3+1] = idx[i*3+2];
+		idx[i*3+2] = tmp;
+	}
+	GrpSetup = false;
+}
+
+void Mesh::Mirror (MirrorDir dir)
+{
+	for (DWORD grp = 0; grp < nGrp; grp++)
+		MirrorGroup (grp, dir);
+}
+
+void Mesh::TexScaleGroup (DWORD grp, float su, float sv)
+{
+	int i, nv = Grp[grp].nVtx;
+	NTVERTEX *vtx = Grp[grp].Vtx;
+	for (i = 0; i < nv; i++) {
+		vtx[i].tu *= su;
+		vtx[i].tv *= sv;
+	}
+}
+
+void Mesh::TexScale (float su, float sv)
+{
+	for (DWORD grp = 0; grp < nGrp; grp++)
+		TexScaleGroup (grp, su, sv);
+}
+
+void Mesh::CalcNormals (DWORD grp, bool missingonly)
+{
+	const float eps = 1e-8f;
+	int i, nv = Grp[grp].nVtx, nt = Grp[grp].nIdx/3;
+	WORD *idx = Grp[grp].Idx;
+	NTVERTEX *vtx = Grp[grp].Vtx;
+	bool *calcNml = new bool[nv];
+	if (missingonly) {
+		for (i = 0; i < nv; i++) {
+			if (vtx[i].nx*vtx[i].nx + vtx[i].ny*vtx[i].ny + vtx[i].nz*vtx[i].nz > 0.1f) {
+				calcNml[i] = false; // vertex already has a normal defined
+			} else {
+				calcNml[i] = true;
+				vtx[i].nx = vtx[i].ny = vtx[i].nz = 0.0f;
+			}
+		}
+	} else {
+		for (i = 0; i < nv; i++) {
+			calcNml[i] = true;
+			vtx[i].nx = vtx[i].ny = vtx[i].nz = 0.0f;
+		}
+	}
+	for (i = 0; i < nt; i++) {
+		DWORD i0 = idx[i*3], i1 = idx[i*3+1], i2 = idx[i*3+2];
+		if (!calcNml[i0] && !calcNml[i1] && !calcNml[i2])
+			continue; // nothing to do for this triangle
+		oapi::FVECTOR3 V01 = { vtx[i1].x - vtx[i0].x, vtx[i1].y - vtx[i0].y, vtx[i1].z - vtx[i0].z };
+		oapi::FVECTOR3 V02 = { vtx[i2].x - vtx[i0].x, vtx[i2].y - vtx[i0].y, vtx[i2].z - vtx[i0].z };
+		oapi::FVECTOR3 V12 = { vtx[i2].x - vtx[i1].x, vtx[i2].y - vtx[i1].y, vtx[i2].z - vtx[i1].z };
+		oapi::FVECTOR3 nm = D3DMath_CrossProduct (V01, V02);
+		float len = D3DMath_Length (nm);
+
+		if (len >= eps) {
+			nm.x /= len, nm.y /= len, nm.z /= len;
+			float d01 = D3DMath_Length(V01);
+			float d02 = D3DMath_Length(V02);
+			float d12 = D3DMath_Length(V12);
+			if (calcNml[i0]) {
+				float a0 = acos((d01 * d01 + d02 * d02 - d12 * d12) / (2.0f * d01 * d02));
+				vtx[i0].nx += nm.x * a0, vtx[i0].ny += nm.y * a0, vtx[i0].nz += nm.z * a0;
+			}
+			if (calcNml[i1]) {
+				float a1 = acos((d01 * d01 + d12 * d12 - d02 * d02) / (2.0f * d01 * d12));
+				vtx[i1].nx += nm.x * a1, vtx[i1].ny += nm.y * a1, vtx[i1].nz += nm.z * a1;
+			}
+			if (calcNml[i2]) {
+				float a2 = acos((d02 * d02 + d12 * d12 - d01 * d01) / (2.0f * d02 * d12));
+				vtx[i2].nx += nm.x * a2, vtx[i2].ny += nm.y * a2, vtx[i2].nz += nm.z * a2;
+			}
+		}
+	}
+	for (i = 0; i < nv; i++)
+		if (calcNml[i]) {
+			oapi::FVECTOR3 nm = { vtx[i].nx, vtx[i].ny, vtx[i].nz };
+			float len = D3DMath_Length( nm );
+			vtx[i].nx /= len, vtx[i].ny /= len, vtx[i].nz /= len;
+		}
+	delete []calcNml;
+}
+
+void Mesh::CalcTexCoords (DWORD grp)
+{
+	// quick hack. not globally usable
+
+	int i, nv = Grp[grp].nVtx;
+	NTVERTEX *vtx = Grp[grp].Vtx;
+	double ipi = 1.0/Pi, i2pi = 0.5/Pi;
+
+	for (i = 0; i < nv; i++) {
+		oapi::FVECTOR3 pos = {vtx[i].x, vtx[i].y, vtx[i].z};
+		D3DMath_Normalise (pos);
+		double tht = acos (pos.y);
+		double phi = atan2 (pos.z, pos.x);
+		vtx[i].tu = (float)(phi >= 0.0 ? phi*i2pi : (phi+Pi2)*i2pi);
+		vtx[i].tv = (float)(tht*ipi);
+	}
+}
+
+void Mesh::ZeroThreshold (float eps, int which)
+{
+	DWORD grp, i;
+	for (grp = 0; grp < nGrp; grp++) {
+		GroupSpec &G = Grp[grp];
+		for (i = 0; i < G.nVtx; i++) {
+			NTVERTEX &vtx = G.Vtx[i];
+			if (which & 1) {
+				if (fabs (vtx.x) < eps) vtx.x = 0.0f;
+				if (fabs (vtx.y) < eps) vtx.y = 0.0f;
+				if (fabs (vtx.z) < eps) vtx.z = 0.0f;
+			}
+			if (which & 2) {
+				if (fabs (vtx.nx) < eps) vtx.nx = 0.0f;
+				if (fabs (vtx.ny) < eps) vtx.ny = 0.0f;
+				if (fabs (vtx.nz) < eps) vtx.nz = 0.0f;
+			}
+			if (which & 4) {
+				if (fabs (vtx.tu) < eps) vtx.tu = 0.0f;
+				if (fabs (vtx.tv) < eps) vtx.tv = 0.0f;
+			}
+		}
+	}
+}
+
+void Mesh::CheckGroup (DWORD grp, DWORD &nd_removed)
+{
+	DWORD i, j, k, nused, nv = Grp[grp].nVtx, ni = Grp[grp].nIdx;
+	bool *nd_used = new bool[nv];
+	for (i = 0; i < nv; i++) nd_used[i] = false;
+	for (i = 0; i < ni; i++) nd_used[Grp[grp].Idx[i]] = true;
+	for (i = nused = 0; i < nv; i++)
+		if (nd_used[i]) nused++;
+	nd_removed = nv-nused;
+	if (nused < nv) {
+		NTVERTEX *tmp = new NTVERTEX[nused];
+		for (i = j = 0; i < nv; i++) {
+			if (nd_used[i]) {
+				tmp[j++] = Grp[grp].Vtx[i];
+			} else {
+				for (k = 0; k < ni; k++)
+					if (Grp[grp].Idx[k] > j) Grp[grp].Idx[k]--;
+			}
+		}
+		delete []Grp[grp].Vtx;
+		Grp[grp].Vtx = tmp;
+		Grp[grp].nVtx = nused;
+	}
+	delete []nd_used;
+}
+
+#ifdef UNDEF
+DWORD Mesh::Render (LPDIRECT3DDEVICE7 dev)
+{
+	DWORD i, mi, pmi, ti, pti, zb, gcount = 0, wrap, owrap = 0;
+
+	if (!GrpSetup) Setup();
+	dev->ComputeSphereVisibility (GrpCnt, GrpRad, nGrp, 0, GrpVis);
+	LPDIRECTDRAWSURFACE7 ptex = 0;
+
+	static D3DMATERIAL7 defmat = {{1,1,1,1},{1,1,1,1},{0,0,0,1},{0,0,0,1},0};
+
+	for (i = 0; i < nGrp; i++) {
+
+		if (GrpVis[i] & D3DSTATUS_DEFAULT)
+			continue; // group outside frustrum
+
+		// set material
+		mi = Grp[i].MtrlIdx;
+		if (mi != SPEC_INHERIT && (!i || mi != pmi)) {
+			dev->SetMaterial (mi != SPEC_DEFAULT ? Mtrl+mi : &defmat);
+			pmi = mi;
+		}
+
+		// set texture
+		ti = Grp[i].TexIdx;
+		if (ti != SPEC_INHERIT && (!i || (ti != pti))) {
+			//dev->SetTexture (0, ti != SPEC_DEFAULT ? Tex[ti] : 0);
+			pti = ti;
+		}
+
+		if (zb = Grp[i].zBias)
+			dev->SetRenderState (D3DRENDERSTATE_ZBIAS, zb);
+
+		wrap = 0;
+		if (Grp[i].Flags & 0x03) { // wrap flag
+			if (Grp[i].Flags & 0x01) wrap |= D3DWRAP_U;
+			if (Grp[i].Flags & 0x02) wrap |= D3DWRAP_V;
+		}
+		if (wrap != owrap)
+			dev->SetRenderState (D3DRENDERSTATE_WRAP0, owrap = wrap);
+
+		dev->DrawIndexedPrimitive (
+			D3DPT_TRIANGLELIST, D3DFVF_VERTEX,
+			Grp[i].Vtx, Grp[i].nVtx, Grp[i].Idx, Grp[i].nIdx, 0);
+		gcount++;
+	}
+
+	//if (nGrp > 1 || Grp[0].MtrlIdx != SPEC_INHERIT)
+	//	g_scene->SetDefaultMaterial();
+	if (zb) dev->SetRenderState (D3DRENDERSTATE_ZBIAS, 0);
+	if (owrap) dev->SetRenderState (D3DRENDERSTATE_WRAP0, 0);
+
+	return gcount;
+}
+#endif
+
+istream &operator>> (istream &is, Mesh &mesh)
+{
+	char cbuf[256], label[256], comment[256];
+	int i, j, g, ngrp, nvtx, ntri, nidx, nmtrl, mtrl_idx, ntex, tex_idx, flag, res;
+	WORD zbias;
+	MATERIAL mtrl;
+	bool term;
+
+	mesh.Clear();
+
+	if (!is.getline (cbuf, 256)) return is;
+	if (strcmp (cbuf, "MSHX1")) return is;
+
+	for (;;) {
+		if (!is.getline (cbuf, 256)) return is;
+		if (!strncasecmp (cbuf, "GROUPS", 6)) {
+			if (sscanf (cbuf+6, "%d", &ngrp) != 1) return is;
+			break;
+		} else if (!strncasecmp (cbuf, "STATICMESH", 10)) {
+			// staticmesh = true;
+		}
+	}
+
+	for (g = 0, term = false; g < ngrp && !term; g++) {
+
+		// set defaults
+		NTVERTEX *vtx;
+		WORD *idx;
+		mtrl_idx = SPEC_INHERIT;
+		tex_idx  = SPEC_INHERIT;
+		zbias    = 0;
+		flag     = 0;
+		label[0] = '\0';
+		comment[0] = '\0';
+		bool bnormal = true, calcnml = false;
+		nvtx = ntri = 0;
+
+		for (;;) {
+			if (!is.getline (cbuf, 256)) { term = true; break; }
+			if (!strncasecmp (cbuf, "MATERIAL", 8)) {       // read material index
+				sscanf (cbuf+8, "%d", &mtrl_idx);
+				mtrl_idx--;
+			} else if (!strncasecmp (cbuf, "TEXTURE", 7)) { // read texture index
+				sscanf (cbuf+7, "%d", &tex_idx);
+				tex_idx--;
+			} else if (!strncasecmp (cbuf, "ZBIAS", 5)) {   // read z-bias
+				sscanf (cbuf+5, "%hd", &zbias);
+			} else if (!strncasecmp (cbuf, "TEXWRAP", 7)) { // read wrap flags
+				char uvstr[10] = "";
+				sscanf (cbuf+7, "%9s", uvstr);
+				if (uvstr[0] == 'U' || uvstr[1] == 'U') flag |= 0x01;
+				if (uvstr[0] == 'V' || uvstr[1] == 'V') flag |= 0x02;
+			} else if (!strncasecmp (cbuf, "NONORMAL", 8)) {
+				bnormal = false; calcnml = true;
+			} else if (!strncasecmp (cbuf, "LABEL", 5)) {
+				strncpy (label, trim_string(cbuf+5), 255);
+			} else if (!strncasecmp (cbuf, "GEOM", 4)) {    // read geometry
+				if (sscanf (cbuf+4, "%d%d", &nvtx, &ntri) != 2) break; // parse error - skip group
+				for (i = 4; cbuf[i]; i++)           // read comment (preceeded by ';')
+					if (cbuf[i] == ';') { strcpy (comment, cbuf+i+1); break; }
+				nidx = ntri*3;
+				vtx = new NTVERTEX[nvtx];
+				memset (vtx, 0, sizeof (NTVERTEX)*nvtx);
+				for (i = 0; i < nvtx; i++) {
+					NTVERTEX &v = vtx[i];
+					if (!is.getline (cbuf, 256)) {
+						delete []vtx;
+						nvtx = 0;
+						break;
+					}
+					if (bnormal) {
+						j = sscanf (cbuf, "%f%f%f%f%f%f%f%f",
+							&v.x, &v.y, &v.z, &v.nx, &v.ny, &v.nz, &v.tu, &v.tv);
+						if (j < 6) calcnml = true;
+					} else {
+						j = sscanf (cbuf, "%f%f%f%f%f",
+							&v.x, &v.y, &v.z, &v.tu, &v.tv);
+					}
+				}
+				idx = new WORD[nidx];
+				memset (idx, 0, sizeof (WORD)*nidx);
+				for (i = j = 0; i < ntri; i++) {
+					if (!is.getline (cbuf, 256)) {
+						delete []vtx;
+						delete []idx;
+						nvtx = nidx = 0;
+						break;
+					}
+					sscanf (cbuf, "%hd%hd%hd", idx+j, idx+j+1, idx+j+2);
+					j += 3;
+				}
+				break;
+			}
+		}
+		if (nvtx && nidx) {
+			mesh.AddGroup (vtx, nvtx, idx, nidx, mtrl_idx, tex_idx, zbias);
+			mesh.Grp[g].Flags = flag;
+			if (label[0]) {
+				mesh.Grp[g].Label = new char[strlen(label)+1];
+				strcpy (mesh.Grp[g].Label, label);
+			}
+			if (comment[0]) {
+				mesh.Grp[g].Comment = new char[strlen(comment)+1];
+				strcpy (mesh.Grp[g].Comment, comment);
+			}
+			if (calcnml) mesh.CalcNormals (g, true);
+		}
+	}
+
+	// read material list
+	if (is.getline (cbuf, 256) && !strncmp (cbuf, "MATERIALS", 9) && (sscanf (cbuf+9, "%d", &nmtrl) == 1)) {
+		mesh.Matname = new char*[nmtrl];
+		for (i = 0; i < nmtrl; i++) {
+			is.getline (cbuf, 256);
+		}
+		for (i = 0; i < nmtrl; i++) {
+			char mnm[256];
+			memset (&mtrl, 0, sizeof (MATERIAL));
+			is.getline (cbuf, 256);
+			sscanf (cbuf+8, "%s", mnm);
+			mesh.Matname[i] = new char[strlen(mnm)+1];
+			strcpy (mesh.Matname[i], mnm);
+			is.getline (cbuf, 256);
+			sscanf (cbuf, "%f%f%f%f", &mtrl.diffuse.r, &mtrl.diffuse.g, &mtrl.diffuse.b, &mtrl.diffuse.a);
+			is.getline (cbuf, 256);
+			sscanf (cbuf, "%f%f%f%f", &mtrl.ambient.r, &mtrl.ambient.g, &mtrl.ambient.b, &mtrl.ambient.a);
+			is.getline (cbuf, 256);
+			res = sscanf (cbuf, "%f%f%f%f%f", &mtrl.specular.r, &mtrl.specular.g, &mtrl.specular.b, &mtrl.specular.a, &mtrl.power);
+			if (res < 5) mtrl.power = 0.0;
+			is.getline (cbuf, 256);
+			sscanf (cbuf, "%f%f%f%f", &mtrl.emissive.r, &mtrl.emissive.g, &mtrl.emissive.b, &mtrl.emissive.a);
+			mesh.AddMaterial (mtrl);
+		}
+	}
+
+	// read texture list
+	if (is.getline (cbuf, 256) && !strncmp (cbuf, "TEXTURES", 8) && (sscanf (cbuf+8, "%d", &ntex) == 1)) {
+		mesh.Texname = new char*[mesh.nTex = ntex];
+		for (i = 0; i < ntex; i++) {
+			is.getline (cbuf, 256);
+			mesh.Texname[i] = new char[strlen(cbuf)+1];
+			strcpy (mesh.Texname[i], cbuf);
+		}
+	}
+
+	mesh.Setup();
+	is.clear();
+	return is;
+}
+
+ostream &operator<< (ostream &os, const Mesh &mesh)
+{
+	DWORD g, i, ntri;
+
+	os << "MSHX1" << endl;
+	os << "GROUPS " << mesh.nGrp << endl;
+	for (g = 0; g < mesh.nGrp; g++) {
+		if (mesh.Grp[g].MtrlIdx != SPEC_INHERIT)
+			os << "MATERIAL "
+			   << (mesh.Grp[g].MtrlIdx == SPEC_DEFAULT ? 0 : mesh.Grp[g].MtrlIdx+1)
+			   << endl;
+		if (mesh.Grp[g].TexIdx != SPEC_INHERIT)
+			os << "TEXTURE "
+			   << (mesh.Grp[g].TexIdx == SPEC_DEFAULT ? 0 : mesh.Grp[g].TexIdx+1)
+			   << endl;
+		if (mesh.Grp[g].zBias)
+			os << "ZBIAS " << mesh.Grp[g].zBias << endl;
+		if (mesh.Grp[g].Flags & 0x03) {
+			os << "TEXWRAP ";
+			if (mesh.Grp[g].Flags & 0x01) os << 'U';
+			if (mesh.Grp[g].Flags & 0x02) os << 'V';
+			os << endl;
+		}
+		if (mesh.Grp[g].Label)
+			os << "LABEL " << mesh.Grp[g].Label << endl;
+		ntri = mesh.Grp[g].nIdx/3;
+		os << "GEOM " << mesh.Grp[g].nVtx << ' ' << ntri;
+		if (mesh.Grp[g].Comment) os << " ;" << mesh.Grp[g].Comment;
+		os << endl;
+		for (i = 0; i < mesh.Grp[g].nVtx; i++)
+			os << mesh.Grp[g].Vtx[i].x << ' '
+			   << mesh.Grp[g].Vtx[i].y << ' '
+			   << mesh.Grp[g].Vtx[i].z << ' '
+			   << mesh.Grp[g].Vtx[i].nx << ' '
+			   << mesh.Grp[g].Vtx[i].ny << ' '
+			   << mesh.Grp[g].Vtx[i].nz << ' '
+			   << mesh.Grp[g].Vtx[i].tu << ' '
+			   << mesh.Grp[g].Vtx[i].tv << endl;
+		for (i = 0; i < ntri; i++)
+			os << mesh.Grp[g].Idx[i*3] << ' '
+			   << mesh.Grp[g].Idx[i*3+1] << ' '
+			   << mesh.Grp[g].Idx[i*3+2] << endl;
+	}
+	if (mesh.nMtrl) {
+		os << "MATERIALS " << mesh.nMtrl << endl;
+		for (i = 0; i < mesh.nMtrl; i++)
+			os << mesh.Matname[i] << endl;
+		for (i = 0; i < mesh.nMtrl; i++) {
+			os << "MATERIAL " << mesh.Matname[i] << endl;
+			os << mesh.Mtrl[i].diffuse.r << ' '
+			   << mesh.Mtrl[i].diffuse.g << ' '
+			   << mesh.Mtrl[i].diffuse.b << ' '
+			   << mesh.Mtrl[i].diffuse.a << endl;
+			os << mesh.Mtrl[i].ambient.r << ' '
+			   << mesh.Mtrl[i].ambient.g << ' '
+			   << mesh.Mtrl[i].ambient.b << ' '
+			   << mesh.Mtrl[i].ambient.a << endl;
+			os << mesh.Mtrl[i].specular.r << ' '
+			   << mesh.Mtrl[i].specular.g << ' '
+			   << mesh.Mtrl[i].specular.b << ' '
+			   << mesh.Mtrl[i].specular.a;
+			if (mesh.Mtrl[i].power) os << ' ' << mesh.Mtrl[i].power;
+			os << endl;
+			os << mesh.Mtrl[i].emissive.r << ' '
+			   << mesh.Mtrl[i].emissive.g << ' '
+			   << mesh.Mtrl[i].emissive.b << ' '
+			   << mesh.Mtrl[i].emissive.a << endl;
+		}
+	}
+	if (mesh.nTex) {
+		os << "TEXTURES " << mesh.nTex << endl;
+		for (i = 0; i < mesh.nTex; i++)
+			os << mesh.Texname[i] << endl;
+	}
+	return os;
+}
+
+#ifdef UNDEF
+// temporary: cut off semi-infinite domain from mesh
+void Mesh::Separate ()
+{
+	int grp, i, j, k;
+	bool remove;
+
+	for (grp = 0; grp < nGrp; grp++) {
+		GroupSpec &G = Grp[grp];
+		for (i = 0; i < G.nVtx;) {
+			if (G.Vtx[i].x < 0.0) {
+				for (j = 0; j < G.nIdx/3; j++) {
+					for (k = 0, remove = false; k < 3; k++) {
+						if (G.Idx[j*3+k] == i)
+							remove = true;
+						else if (G.Idx[j*3+k] > i)
+							G.Idx[j*3+k]--;
+					}
+					if (remove) {
+						for (k = (j+1)*3; k < G.nIdx; k++)
+							G.Idx[k-3] = G.Idx[k];
+						G.nIdx -= 3;
+						j--;
+					}
+				}
+				for (j = i+1; j < G.nVtx; j++)
+					G.Vtx[j-1] = G.Vtx[j];
+				G.nVtx--;
+			} else {
+				i++;
+			}
+		}
+	}
+}
+#endif

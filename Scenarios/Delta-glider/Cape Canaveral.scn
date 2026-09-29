@@ -1,0 +1,92 @@
+BEGIN_HYPERDESC
+<h1>Delta-glider: Cape Canaveral</h1>
+<p>A Delta-glider, parked at the visitor parking lot of the Kennedy Space Center - ready for vertical takeoff.</p>
+<p>For this scenario we use hover engines for vertical liftoff from the pad.</p>
+<p>Note that the main tank is mostly empty. This ensures that the ship is light enough to be able to lift off on hover engines from
+Earth's surface. It is more efficient to launch the glider horizontally from a runway. When taking off from the Moon or Mars, this
+problem doesn't occur because of lower gravity.</p>
+<p>Before engaging hover engines, activate the automatic hover attitude stabilisation (HOVER ATT CTRL to Auto). This causes the
+hover engines to modulate their relative thrust to maintain a stable attitude.</p>
+<p>Now engage the hover engines at about 95% of max thrust, just enough to lift off. Do not push the throttle to 100%, because that
+leaves no reserves for the differential thrust modulation.</p>
+<p>At about 100 m altitude, raise the landing gear, engage main engines and pitch up. Disengage hover thrust.</p>
+
+END_HYPERDESC
+
+BEGIN_ENVIRONMENT
+  System Sol
+  Date MJD 51981.6008401528
+END_ENVIRONMENT
+
+BEGIN_FOCUS
+  Ship GL-01
+END_FOCUS
+
+BEGIN_CAMERA
+  TARGET GL-01
+  MODE Cockpit
+  FOV 60.00
+END_CAMERA
+
+BEGIN_HUD
+  TYPE Surface
+END_HUD
+
+BEGIN_MFD Left
+  TYPE Surface
+END_MFD
+
+BEGIN_MFD Right
+  TYPE Launch
+END_MFD
+
+BEGIN_PANEL
+END_PANEL
+
+BEGIN_SHIPS
+ISS:ProjectAlpha_ISS
+  STATUS Orbiting Earth
+  ELEMENTS 6734918.8 0.00090 74.51300 169.03400 328.27760 375.78523 51981.60000000
+  AROT 30.00 0.00 50.00
+END
+Mir
+  STATUS Orbiting Earth
+  ELEMENTS 6671000.2 0.00060 3.50000 360.00000 0.04937 200.87669 51981.60000000
+  AROT 0.00 -45.00 90.00
+END
+Luna-OB1:Wheel
+  STATUS Orbiting Moon
+  ELEMENTS 2237981.0 0.00000 89.99959 0.00007 0.00007 258.06828 51981.60000000
+  AROT 0.00 0.00 30.25
+  VROT 0 0 10
+END
+GL-01:DeltaGlider
+  STATUS Landed Earth
+  POS -80.6756450 28.5225700
+  HEADING 153.89
+  ALT 2.530
+  AROT -116.545 -30.587 175.262
+  RCSMODE 0
+  AFCMODE 7
+  PRPLEVEL 0:0.15 1:0.5
+  NAVFREQ 402 94 0 0
+  XPDR 0
+  HOVERHOLD 0 1 0.0000e+00 0.0000e+00
+  GEAR 1.0000 0.0000
+  HUDMode 2
+  COMPARTMENT_TEMP 288.76 288.48 289.29 288.22 289.29 288.22 292.85 524.24 295.90 240.03 240.03 240.01 292.98
+  COOLANT_STATE 0 0.500 287.000
+  AAP 0:0 0:0 0:0
+END
+SH-02:ShuttleA
+  STATUS Landed Earth
+  BASE Cape Canaveral:5
+  HEADING 100.00
+  PRPLEVEL 0:1.000 1:1.000
+  NAVFREQ 0 0
+  XPDR 0
+  PODANGLE 0.0000 0.0000
+  DOCKSTATE 0 0.0000
+  AIRLOCK 0 0.0000
+END
+END_SHIPS

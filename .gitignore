@@ -1,0 +1,15 @@
+*.user
+meshres*.h
+out/**
+**/*.bak
+*.log
+/keymap.cfg
+
+# KDevelop-specific files
+*.kdev4
+.kdev/
+[Bb]uild/
+
+Doc/**/*.log
+Doc/**/*.pdf
+Doc/**/*.gz

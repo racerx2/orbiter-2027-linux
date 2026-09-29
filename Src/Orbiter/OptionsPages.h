@@ -1,0 +1,457 @@
+// Copyright (c) Martin Schweiger
+// Licensed under the MIT License
+
+// ======================================================================
+// Template for simulation options pages
+// ======================================================================
+
+/************************************************************************
+ * \file OptionsPages.h
+ * \brief Template for simulation options pages
+ */
+
+#ifndef __OPTIONSPAGES_H
+#define __OPTIONSPAGES_H
+
+#include "OrbiterPlatform.h"
+#include "CustomControls.h"
+#include "OrbiterAPI.h"
+#include <string>
+#include <vector>
+
+class QTreeWidgetItem;
+
+class OptionsPage;
+class Config;
+
+/************************************************************************
+ * \brief Container class for options pages
+ */
+class OptionsPageContainer {
+public:
+	/**
+	 * \brief Enumerates where the options pages are shown.
+	 */
+	enum Originator {
+		LAUNCHPAD, ///< Show in Launchpad dialog
+		INLINE     ///< Show as inline dialog during a simulation session
+	};
+
+	OptionsPageContainer(Originator orig, Config* cfg);
+	~OptionsPageContainer();
+
+	OptionsPage* CurrentPage();
+
+	Originator Environment() const { return m_orig; }
+
+	Config* Cfg() { return m_cfg; }
+
+	void SetWindowHandles(QWidget *hDlg, QWidget *hSplitter, QWidget *hPane1, QWidget *hPane2);
+
+	const GenericCtrl* ContainerControl() const { return &m_container; }
+
+	/**
+	 * \brief Update dialog controls from config settings
+	 */
+	void UpdatePages(bool resetView);
+
+	/**
+	 * \brief Update config object from dialog controls
+	 */
+	void UpdateConfig();
+
+	void SwitchPage(const char* name);
+
+	void OnNotifyPagelist(QTreeWidgetItem *itemNew);
+	// TVN_SELCHANGED of the page list
+
+protected:
+	/**
+     * \brief Adds a new options page.
+     * \param hDlg dialog handle
+     * \param pPage pointer to new page
+     */
+	QTreeWidgetItem *AddPage(OptionsPage* pPage, QTreeWidgetItem *parent = 0);
+
+	const OptionsPage* FindPage(const char* name) const;
+
+	void SwitchPage(size_t page);
+	void SwitchPage(const OptionsPage* page);
+
+	void CreatePages();
+
+	void ExpandAll();
+
+	void SetPageSize(QWidget *hDlg);
+
+	void Clear();
+
+	BOOL VScroll(QWidget *hDlg, int pos, QWidget *hControl);
+	// the page scroll bar moved to pos
+
+	const HELPCONTEXT* HelpContext() const { return m_contextHelp; }
+
+private:
+	Originator m_orig;
+	Config* m_cfg;
+	SplitterCtrl m_splitter;
+	GenericCtrl m_container;
+	std::vector<OptionsPage*> m_pPage;
+	size_t m_pageIdx;
+	QWidget *m_hDlg;
+	QWidget *m_hPageList;
+	QWidget *m_hContainer;
+	int m_vScrollPos;
+	int m_vScrollRange;
+	int m_vScrollPage;
+	const HELPCONTEXT* m_contextHelp;
+};
+
+/************************************************************************
+ * \brief Base class for options dialog pages.
+ */
+class OptionsPage {
+public:
+	/**
+	 * \brief OptionsPage constructor.
+	 * \param container Container owning the page
+	 */
+	OptionsPage(OptionsPageContainer* container);
+
+	/**
+	 * \brief OptionsPage destructor.
+	 */
+	virtual ~OptionsPage();
+
+	/**
+	 * \brief Derived classes return the dialog resource id.
+	 */
+	virtual int ResourceId() const = 0;
+
+	/**
+	 * \brief Derived classes return the page title as it appears in the tree list.
+	 */
+	virtual const char* Name() const = 0;
+
+	/**
+	 * \brief Returns the container object owning the page.
+	 */
+	OptionsPageContainer* Container() { return m_container; }
+
+	Config* Cfg() { return m_container->Cfg(); }
+
+	/**
+	 * \brief Returns the parent dialog handle.
+	 * \return Parent dialog handle
+	 */
+	QWidget *HParent() const;
+
+	/**
+	 * \brief Returns the page window handle.
+	 * \return Page window handle
+	 */
+	QWidget *HPage() const { return m_hPage; }
+
+	/**
+	 * \brief Creates the page window and assigns \ref m_hPage.
+	 */
+	QTreeWidgetItem *CreatePage(QWidget *hDlg, QTreeWidgetItem *parent = 0);
+
+	/**
+	 * \brief Show/hide the page.
+	 * \param bShow Show page if true, hide if false
+	 */
+	void Show(bool bShow);
+
+	/**
+	 * \brief Update the dialog controls from config settings.
+	 * \param hPage dialog page handle
+	 */
+	virtual void UpdateControls(QWidget *hPage) {}
+
+	/**
+	 * \brief Update config object from dialog control states.
+	 *    Only required for pages which don't react directly to controls
+	 *    being modified.
+	 */
+	virtual void UpdateConfig(QWidget *hPage) {}
+
+	/**
+	 * \brief Returns the name of the option page's help page, if applicable.
+	 */
+	virtual const HELPCONTEXT* HelpContext() const { return 0; }
+
+protected:
+	/**
+	 * \brief Default handler for WM_INITDIALOG messages.
+	 * \default Nothing, returns TRUE
+	 */
+	virtual BOOL OnInitDialog(QWidget *hPage);
+
+	/**
+	 * \brief Default handler for control commands (WM_COMMAND).
+	 * \param hPage dialog window handle
+	 * \param ctrlId resource identifier of the control
+	 * \param notification RESNOTIFY code
+	 * \param hCtrl control window handle
+	 * \default Nothing, returns FALSE
+	 */
+	virtual BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl) { return FALSE; }
+
+	/**
+	 * \brief Default handler for gauge control position changes (WM_HSCROLL).
+	 * \param request GAUGEREQUEST code
+	 * \param pos new gauge position
+	 * \default Nothing, returns FALSE
+	 */
+	virtual BOOL OnHScroll(QWidget *hPage, int ctrlId, int request, int pos) { return FALSE; }
+
+	/**
+	 * \brief Default handler for up-down control clicks (WM_NOTIFY UDN_DELTAPOS).
+	 * \param iDelta requested change of the up-down position
+	 * \default Nothing, returns FALSE
+	 */
+	virtual BOOL OnDeltaPos(QWidget *hPage, int ctrlId, int iDelta) { return FALSE; }
+
+	/**
+	 * \brief Default generic event handler.
+	 * \default Nothing, returns FALSE
+	 * \note This method is called for any events of the page window.
+	 */
+	virtual BOOL OnMessage(QWidget *hPage, QEvent *event) { return FALSE; }
+
+	/**
+	 * \Brief connects the page's controls and events to the handlers above (page message loop).
+	 */
+	virtual void DlgProc(QWidget *hWnd);
+
+private:
+	OptionsPageContainer* m_container; ///< container owning the page
+	QWidget *m_hPage;      ///< page window handle (0 before MakePage has been called)
+	QTreeWidgetItem *m_hItem; ///< page title in the tree view control
+};
+
+/************************************************************************
+ * \brief Page for visual parameters
+ */
+class OptionsPage_Visual : public OptionsPage {
+public:
+	OptionsPage_Visual(OptionsPageContainer* container);
+	int ResourceId() const;
+	const char* Name() const;
+	const HELPCONTEXT* HelpContext() const;
+	void UpdateControls(QWidget *hPage);
+	void UpdateConfig(QWidget *hPage);
+
+protected:
+	BOOL OnInitDialog(QWidget *hPage);
+	BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl);
+	void VisualsChanged(QWidget *hPage);
+
+};
+
+/************************************************************************
+* \brief Page for physics engine options
+*/
+class OptionsPage_Physics : public OptionsPage {
+public:
+	OptionsPage_Physics(OptionsPageContainer* container);
+	int ResourceId() const;
+	const char* Name() const;
+	const HELPCONTEXT* HelpContext() const;
+	void UpdateControls(QWidget *hPage);
+	void UpdateConfig(QWidget *hPage);
+
+protected:
+	BOOL OnInitDialog(QWidget *hPage);
+	BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl);
+};
+
+/************************************************************************
+ * \brief Page for instrument and panel options
+ */
+class OptionsPage_Instrument : public OptionsPage {
+public:
+	OptionsPage_Instrument(OptionsPageContainer* container);
+	int ResourceId() const;
+	const char* Name() const;
+	const HELPCONTEXT* HelpContext() const;
+	void UpdateControls(QWidget *hPage);
+
+protected:
+	BOOL OnInitDialog(QWidget *hPage);
+	BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl);
+	BOOL OnDeltaPos(QWidget *hPage, int ctrlId, int iDelta);
+};
+
+/************************************************************************
+ * \brief Page for vessel options
+ */
+class OptionsPage_Vessel : public OptionsPage {
+public:
+	OptionsPage_Vessel(OptionsPageContainer* container);
+	int ResourceId() const;
+	const char* Name() const;
+	const HELPCONTEXT* HelpContext() const;
+	void UpdateControls(QWidget *hPage);
+
+protected:
+	BOOL OnInitDialog(QWidget *hPage);
+	BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl);
+};
+
+/************************************************************************
+* \brief Page for user interface options
+*/
+class OptionsPage_UI : public OptionsPage {
+public:
+	OptionsPage_UI(OptionsPageContainer* container);
+	int ResourceId() const;
+	const char* Name() const;
+	const HELPCONTEXT* HelpContext() const;
+	void UpdateControls(QWidget *hPage);
+
+protected:
+	BOOL OnInitDialog(QWidget *hPage);
+	BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl);
+};
+
+/************************************************************************
+* \brief Page for joystick options
+*/
+class OptionsPage_Joystick : public OptionsPage {
+public:
+	OptionsPage_Joystick(OptionsPageContainer* container);
+	int ResourceId() const;
+	const char* Name() const;
+	const HELPCONTEXT* HelpContext() const;
+	void UpdateControls(QWidget *hPage);
+
+protected:
+	BOOL OnInitDialog(QWidget *hPage);
+	BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl);
+	BOOL OnHScroll(QWidget *hPage, int ctrlId, int request, int pos);
+};
+
+/************************************************************************
+* \brief Page for celestial sphere rendering options.
+*/
+class OptionsPage_CelSphere : public OptionsPage {
+public:
+	OptionsPage_CelSphere(OptionsPageContainer* container);
+	int ResourceId() const;
+	const char* Name() const;
+	const HELPCONTEXT* HelpContext() const;
+	void UpdateControls(QWidget *hPage);
+
+protected:
+	BOOL OnInitDialog(QWidget *hPage);
+	BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl);
+	BOOL OnHScroll(QWidget *hTab, int ctrlId, int request, int pos);
+	BOOL OnDeltaPos(QWidget *hPage, int ctrlId, int iDelta);
+	void PopulateStarmapList(QWidget *hPage);
+	void PopulateBgImageList(QWidget *hPage);
+	void StarPixelActivationChanged(QWidget *hPage);
+	void StarmapActivationChanged(QWidget *hPage);
+	void StarmapImageChanged(QWidget *hPage);
+	void BackgroundActivationChanged(QWidget *hPage);
+	void BackgroundImageChanged(QWidget *hPage);
+	void BackgroundBrightnessChanged(QWidget *hPage, double level);
+
+private:
+	std::vector<std::pair<std::string, std::string>> m_pathStarmap;
+	std::vector<std::pair<std::string, std::string>> m_pathBgImage;
+};
+
+/************************************************************************
+ * \brief Main page for visual helpers options.
+ */
+class OptionsPage_VisHelper : public OptionsPage {
+public:
+	OptionsPage_VisHelper(OptionsPageContainer* container);
+	int ResourceId() const;
+	const char* Name() const;
+	const HELPCONTEXT* HelpContext() const;
+	void UpdateControls(QWidget *hPage);
+
+protected:
+	BOOL OnInitDialog(QWidget *hPage);
+	BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl);
+};
+
+/************************************************************************
+ * \brief Visual helpers "Planetarium" options page.
+ */
+class OptionsPage_Planetarium : public OptionsPage {
+public:
+	OptionsPage_Planetarium(OptionsPageContainer* container);
+	int ResourceId() const;
+	const char* Name() const;
+	const HELPCONTEXT* HelpContext() const;
+	void UpdateControls(QWidget *hPage);
+
+protected:
+	BOOL OnInitDialog(QWidget *hPage);
+	BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl);
+	void RescanMarkerList(QWidget *hPage);
+	void OnItemClicked(QWidget *hPage, WORD ctrlId);
+	BOOL OnMarkerSelectionChanged(QWidget *hPage);
+};
+
+/************************************************************************
+ * \brief Visual helpers "Labels" options page.
+ */
+class OptionsPage_Labels : public OptionsPage {
+public:
+	OptionsPage_Labels(OptionsPageContainer* container);
+	int ResourceId() const;
+	const char* Name() const;
+	const HELPCONTEXT* HelpContext() const;
+	void UpdateControls(QWidget *hPage);
+
+protected:
+	BOOL OnInitDialog(QWidget *hPage);
+	BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl);
+	void OnItemClicked(QWidget *hPage, WORD ctrlId);
+	void ScanPsysBodies(QWidget *hPage);
+	void UpdateFeatureList(QWidget *hPage);
+	void RescanFeatures(QWidget *hPage);
+};
+
+/************************************************************************
+ * \brief Visual helpers "Body force vectors" options page.
+ */
+class OptionsPage_Forces : public OptionsPage {
+public:
+	OptionsPage_Forces(OptionsPageContainer* container);
+	int ResourceId() const;
+	const char* Name() const;
+	const HELPCONTEXT* HelpContext() const;
+	void UpdateControls(QWidget *hPage);
+
+protected:
+	BOOL OnInitDialog(QWidget *hPage);
+	BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl);
+	void OnItemClicked(QWidget *hPage, WORD ctrlId);
+	BOOL OnHScroll(QWidget *hTab, int ctrlId, int request, int pos);
+};
+
+/************************************************************************
+ * \brief Visual helpers "Object frame axes" options page.
+ */
+class OptionsPage_Axes : public OptionsPage {
+public:
+	OptionsPage_Axes(OptionsPageContainer* container);
+	int ResourceId() const;
+	const char* Name() const;
+	const HELPCONTEXT* HelpContext() const;
+	void UpdateControls(QWidget *hPage);
+
+protected:
+	BOOL OnInitDialog(QWidget *hPage);
+	BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl);
+	void OnItemClicked(QWidget *hPage, WORD ctrlId);
+	BOOL OnHScroll(QWidget *hTab, int ctrlId, int request, int pos);
+};
+
+#endif // !__OPTIONSPAGES_H

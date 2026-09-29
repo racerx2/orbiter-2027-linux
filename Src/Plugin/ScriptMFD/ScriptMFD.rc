@@ -1,0 +1,37 @@
+// Copyright (c) Martin Schweiger
+// Licensed under the MIT License
+
+// Microsoft Visual C++ generated resource script.
+//
+#include "resource.h"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include "afxres.h"
+
+/////////////////////////////////////////////////////////////////////////////
+
+/////////////////////////////////////////////////////////////////////////////
+// English (U.K.) resources
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// String Table
+//
+
+STRINGTABLE 
+BEGIN
+    IDS_INFO                "SCRIPT MFD:\r\n\r\nThe driver module for script-based MFD (multifunctional display) modes. By activating this module, all script-based MFD modes become available during the simulation."
+    IDS_TYPE                "Script tools and drivers"
+END
+
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+

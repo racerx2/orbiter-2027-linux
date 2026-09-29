@@ -1,0 +1,122 @@
+# Copyright (c) Martin Schweiger
+# Licensed under the MIT License
+
+cmake_minimum_required(VERSION 3.19)
+
+# Set the project name
+project (OrbiterSamples VERSION 21.7.24)
+
+# not upstream: C++20 per the port plan (upstream uses 17)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED OFF)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+set(CMAKE_SUPPRESS_REGENERATION TRUE)
+set_property(GLOBAL PROPERTY USE_FOLDERS TRUE)
+
+# Some functions to simplify debugging CMake scripts
+include(CMakePrintHelpers)
+
+# Locally defined cmake modules
+set(CMAKE_MODULE_PATH
+	${CMAKE_SOURCE_DIR}/cmake
+	${CMAKE_MODULE_PATH}
+)
+
+# /MP left out: make and Ninja already compile in parallel
+
+# not upstream: Visual Studio always builds a configuration, make and Ninja default to none
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+	set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# Define directories and file paths for some common binaries
+set(ROOT_DIR ${CMAKE_SOURCE_DIR})
+set(SDK_DIR ${ROOT_DIR}/Orbitersdk)
+set(SAMPLES_SRC_DIR ${SDK_DIR}/samples)
+set(MODULE_DIR ${ROOT_DIR}/Modules)
+set(PLUGIN_DIR ${ROOT_DIR}/Modules/Plugin)
+set(STARTUP_DIR ${ROOT_DIR}/Modules/Startup)
+set(INCLUDE_DIR ${SDK_DIR}/include)
+
+set(ORBITER_TOOL_MESHC ${SDK_DIR}/Utils/meshc)
+
+# Default Link Libraries 
+set(DebugLib 
+	#Orbiterd 
+	#Orbitersdkd 
+	#DlgCtrld
+	#Lua/luad 
+	#Lua/LuaInterpreterd
+	# Orbiter left out: no import library on ELF, modules bind the exe's exported symbols when loaded
+	Orbitersdk
+	DlgCtrl
+	${ROOT_DIR}/lua.so # not upstream: the SDK has no lua link library, lua.so sits in the Orbiter folder
+	${SDK_DIR}/lib/Lua/LuaInterpreter.so # not upstream: by path, the name has no lib prefix
+	# UxTheme left out: Windows visual styles library
+	Qt6::Widgets # not upstream: module dialogs and drawing are Qt (the SDK's HWND/HDC are QWidget/QPainter)
+)
+
+set(ReleaseLib 
+	# Orbiter left out: no import library on ELF, modules bind the exe's exported symbols when loaded
+	Orbitersdk 
+	DlgCtrl
+	${ROOT_DIR}/lua.so # not upstream: the SDK has no lua link library, lua.so sits in the Orbiter folder
+	${SDK_DIR}/lib/Lua/LuaInterpreter.so # not upstream: by path, the name has no lib prefix
+	# UxTheme left out: Windows visual styles library
+	Qt6::Widgets # not upstream: module dialogs and drawing are Qt (the SDK's HWND/HDC are QWidget/QPainter)
+)
+
+set(APIHeaders
+    ${INCLUDE_DIR}/OrbiterAPI.h
+	${INCLUDE_DIR}/DrawAPI.h
+	${INCLUDE_DIR}/VesselAPI.h
+	${INCLUDE_DIR}/MFDAPI.h
+	${INCLUDE_DIR}/CelBodyAPI.h
+	${INCLUDE_DIR}/ModuleAPI.h
+	${INCLUDE_DIR}/CamAPI.h
+)
+
+set(IncludeDirs
+	${SAMPLES_SRC_DIR}/Atlantis/Atlantis
+	${SAMPLES_SRC_DIR}/LuaInterpreter
+	${SAMPLES_SRC_DIR}
+)
+
+link_directories(${SDK_DIR}/lib)
+include_directories(${INCLUDE_DIR} ${IncludeDirs})
+
+# not upstream: Qt, module naming, symbol visibility and library lookup as in the Orbiter build
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_SHARED_LIBRARY_PREFIX "")
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_C_VISIBILITY_PRESET hidden)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+set(CMAKE_BUILD_WITH_INSTALL_RPATH true)
+set(CMAKE_INSTALL_RPATH "$ORIGIN" "$ORIGIN/.." "$ORIGIN/../..")
+# not upstream: meshc writes the meshres*.h headers into the build folder
+set(CMAKE_INCLUDE_CURRENT_DIR ON)
+# not upstream: .rc scripts compile to C++ resource tables (cmake/rcresources.cmake)
+set(ORBITER_SOURCE_SDK_INCLUDE_DIR ${INCLUDE_DIR})
+include(rcresources)
+
+
+# Add Projects
+add_subdirectory(${SAMPLES_SRC_DIR}/Atlantis)
+add_subdirectory(${SAMPLES_SRC_DIR}/DeltaGlider)
+add_subdirectory(${SAMPLES_SRC_DIR}/AscentMFD)
+add_subdirectory(${SAMPLES_SRC_DIR}/DialogTemplate)
+add_subdirectory(${SAMPLES_SRC_DIR}/DrawOrbits)
+add_subdirectory(${SAMPLES_SRC_DIR}/DX9ExtMFD)
+add_subdirectory(${SAMPLES_SRC_DIR}/GenericCamera)
+add_subdirectory(${SAMPLES_SRC_DIR}/HST)
+add_subdirectory(${SAMPLES_SRC_DIR}/LaunchpadParamTemplate)
+add_subdirectory(${SAMPLES_SRC_DIR}/MFDTemplate)
+add_subdirectory(${SAMPLES_SRC_DIR}/Quadcopter)
+add_subdirectory(${SAMPLES_SRC_DIR}/LuaConsole)
+add_subdirectory(${SAMPLES_SRC_DIR}/LuaMFD)
+add_subdirectory(${SAMPLES_SRC_DIR}/ScriptMFD)
+add_subdirectory(${SAMPLES_SRC_DIR}/ScriptVessel)
+add_subdirectory(${SAMPLES_SRC_DIR}/Solarsail)
+add_subdirectory(${SAMPLES_SRC_DIR}/TransX)
