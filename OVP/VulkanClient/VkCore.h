@@ -176,8 +176,7 @@ public:
 	void EndOneTime (VkCommandBuffer cmd);
 
 	// per-frame transient memory (DrawPrimitiveUP data, effect constants)
-	VkDeviceSize AllocTransient (VkDeviceSize size, VkDeviceSize align, void **ptr); // offset into TransientBuffer()
-	VkBuffer TransientBuffer () const;
+	VkDeviceSize AllocTransient (VkDeviceSize size, VkDeviceSize align, void **ptr, VkBuffer *buf); // offset into *buf
 
 	// render targets: dynamic rendering, begun lazily at the first draw or clear
 	void SetRenderTarget (VkSurf *color, VkSurf *depth); // SetRenderTarget(0,..) + SetDepthStencilSurface

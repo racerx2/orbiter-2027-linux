@@ -1251,6 +1251,7 @@ int TileBuffer::ReadDDSSurface (VkDev *pDev, const char *fname, LONG_PTR ofs, Vk
 	}
 
 	if (ddsd.dwHeight>4096 || ddsd.dwWidth>4096) LogErr("Attempting to load very large surface tile (%u,%u)", ddsd.dwWidth, ddsd.dwHeight);
+	if (!ddsd.dwHeight || !ddsd.dwWidth || ddsd.dwHeight>16384 || ddsd.dwWidth>16384) { fclose(f); return -10; } // not upstream: a corrupt header must not size the allocation below
 
 	*pTex = NULL;
 

@@ -36,7 +36,7 @@ VkDeviceSize VkLevelSize (VkFormat fmt, UINT w, UINT h, UINT d)
 {
 	UINT bw;
 	UINT bs = VkFormatBlockSize (fmt, &bw);
-	return (VkDeviceSize)((w + bw - 1) / bw) * ((h + bw - 1) / bw) * bs * d;
+	return (((VkDeviceSize)w + bw - 1) / bw) * (((VkDeviceSize)h + bw - 1) / bw) * bs * d; // 64-bit: header sizes are untrusted
 }
 
 static bool IsBC (VkFormat f)
@@ -511,6 +511,14 @@ static bool LoadDDS (const BYTE *buf, size_t n, VkPixels &px, VkImageInfo *info)
 	bool cube = (h.caps2 & DDSCAPS2_CUBEMAP) != 0;
 	UINT depth = (h.caps2 & DDSCAPS2_VOLUME) ? std::max (1u, h.depth) : 1;
 	UINT layers = cube ? 6 : 1;
+	if (!h.width || !h.height || h.width > 32768 || h.height > 32768 || depth > 2048 ||
+		(cube && ((h.caps2 & DDSCAPS2_VOLUME) || h.width != h.height))) { // a corrupt header must not size allocations
+		LogErr("DDS: invalid size %ux%ux%u%s", h.width, h.height, depth, cube ? " (cube)" : "");
+		return false;
+	}
+	UINT maxlevels = 1;
+	for (UINT s = std::max ({h.width, h.height, depth}); s > 1; s >>= 1) maxlevels++;
+	levels = std::min (levels, maxlevels);
 	if (info) {
 		info->Width = h.width; info->Height = h.height; info->Depth = depth; info->MipLevels = levels;
 		info->Format = fmt; info->Swizzle = swz; info->Cube = cube; info->ImageFileFormat = VKIFF_DDS;

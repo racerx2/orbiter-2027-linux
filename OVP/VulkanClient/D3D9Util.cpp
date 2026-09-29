@@ -1480,6 +1480,7 @@ int LoadPlanetTextures(const char* fname, VkTex** ppdds, DWORD flags, int amount
 		location = buffer;
 		while (ntex < amount && BytesLeft > 0)
 		{
+			if (BytesLeft < (long)(sizeof(DWORD) + sizeof(DDSURFACEDESC2_x64))) break; // not upstream: a truncated file ends the list
 			DWORD Magic = *(DWORD*)location;
 			if (Magic != MAKEFOURCC('D', 'D', 'S', ' ')) break;
 
@@ -1496,6 +1497,7 @@ int LoadPlanetTextures(const char* fname, VkTex** ppdds, DWORD flags, int amount
 			long bytes = (header->dwFlags & DDSD_LINEARSIZE) ? header->dwLinearSize : (header->dwHeight * header->dwWidth * header->ddpfPixelFormat.dwRGBBitCount / 8);
 
 			bytes += sizeof(Magic) + sizeof(DDSURFACEDESC2_x64);
+			if (bytes > BytesLeft) break; // not upstream: the loader must not read past the file
 
 			VkPixels px, cv;
 			VkTex *pTex = NULL;

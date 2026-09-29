@@ -297,9 +297,10 @@ void VkConstBuffer::Push (const std::vector<VkSamplerSlot> &samplers)
 	for (auto &d : data) {
 		if (d.first < 0 || d.first >= VkDev::NUBOS || d.second.empty()) continue;
 		void *p;
-		VkDeviceSize ofs = dev->AllocTransient (d.second.size(), 16, &p);
+		VkBuffer tb;
+		VkDeviceSize ofs = dev->AllocTransient (d.second.size(), 16, &p, &tb);
 		memcpy (p, d.second.data(), d.second.size());
-		bi[nb] = { dev->TransientBuffer (), ofs, d.second.size() };
+		bi[nb] = { tb, ofs, d.second.size() };
 		w[n] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
 		w[n].dstBinding = d.first;
 		w[n].descriptorCount = 1;

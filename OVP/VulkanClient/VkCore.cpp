@@ -10,6 +10,8 @@
 
 VkExtFunctions vkx;
 
+static const VkBufferUsageFlags TransientUsage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+
 // VkBuf
 
 VkBuf::VkBuf (VkDev *_dev, VkDeviceSize _size, VkBufferUsageFlags usage, bool host, bool readback)
@@ -674,8 +676,7 @@ void VkDev::CreateDevice ()
 		ci.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 		ci.commandBufferCount = 1;
 		VKCHECK(vkAllocateCommandBuffers (dev, &ci, &frame[i].cmd));
-		frame[i].transient = new VkBuf (this, 16 << 20, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, true);
+		frame[i].transient = new VkBuf (this, 16 << 20, TransientUsage, true);
 		frame[i].transientUsed = 0;
 		frame[i].done = 0;
 	}
@@ -850,23 +851,28 @@ void VkDev::EndOneTime (VkCommandBuffer cmd)
 	oneTimeLock.unlock ();
 }
 
-VkDeviceSize VkDev::AllocTransient (VkDeviceSize n, VkDeviceSize align, void **ptr)
+VkDeviceSize VkDev::AllocTransient (VkDeviceSize n, VkDeviceSize align, void **ptr, VkBuffer *buf)
 {
 	Frame &f = frame[iFrame];
 	if (align < props.limits.minUniformBufferOffsetAlignment) align = props.limits.minUniformBufferOffsetAlignment;
 	VkDeviceSize ofs = (f.transientUsed + align - 1) / align * align;
-	if (ofs + n > f.transient->size) {
-		LogErr("VkDev: per-frame transient buffer full (%llu bytes)", (unsigned long long)f.transient->size);
+	if (ofs + n > f.transient->size) { // a bigger buffer from here on; ~VkBuf defers the old one until this frame is done
+		VkDeviceSize size = std::max (f.transient->size * 2, n + align);
+		VkBuf *grown = new VkBuf (this, size, TransientUsage, true);
+		if (grown->Map ()) {
+			delete f.transient;
+			f.transient = grown;
+			LogAlw("VkDev: per-frame transient buffer grown to %llu bytes", (unsigned long long)size);
+		} else { // out of memory: keep the old buffer and wrap, as before
+			delete grown;
+			LogErr("VkDev: per-frame transient buffer could not grow to %llu bytes", (unsigned long long)size);
+		}
 		ofs = 0;
 	}
 	f.transientUsed = ofs + n;
 	*ptr = (char*)f.transient->Map() + ofs;
+	*buf = f.transient->buf;
 	return ofs;
-}
-
-VkBuffer VkDev::TransientBuffer () const
-{
-	return frame[iFrame].transient->buf;
 }
 
 // render targets
@@ -1309,9 +1315,10 @@ void VkDev::DrawIndexedPrimitive (VkPrimitiveTopology t, int baseVertex, UINT st
 void VkDev::DrawPrimitiveUP (VkPrimitiveTopology t, UINT vertexCount, const void *vtx, UINT stride)
 {
 	void *p;
-	VkDeviceSize ofs = AllocTransient (vertexCount * stride, 16, &p);
+	VkBuffer vb;
+	VkDeviceSize ofs = AllocTransient (vertexCount * stride, 16, &p, &vb);
 	memcpy (p, vtx, vertexCount * stride);
-	SetStreamSource (0, TransientBuffer(), ofs, stride);
+	SetStreamSource (0, vb, ofs, stride);
 	DrawPrimitive (t, 0, vertexCount);
 }
 
@@ -1320,12 +1327,13 @@ void VkDev::DrawIndexedPrimitiveUP (VkPrimitiveTopology t, UINT vertexCount, UIN
 {
 	void *pv, *pi;
 	UINT isz = indexCount * (it == VK_INDEX_TYPE_UINT32 ? 4 : 2);
-	VkDeviceSize vo = AllocTransient (vertexCount * stride, 16, &pv);
+	VkBuffer vb, ib;
+	VkDeviceSize vo = AllocTransient (vertexCount * stride, 16, &pv, &vb);
 	memcpy (pv, vtx, vertexCount * stride);
-	VkDeviceSize io = AllocTransient (isz, 16, &pi);
+	VkDeviceSize io = AllocTransient (isz, 16, &pi, &ib);
 	memcpy (pi, idx, isz);
-	SetStreamSource (0, TransientBuffer(), vo, stride);
-	SetIndices (TransientBuffer(), io, it);
+	SetStreamSource (0, vb, vo, stride);
+	SetIndices (ib, io, it);
 	DrawIndexedPrimitive (t, 0, 0, indexCount);
 }
 
