@@ -229,3 +229,20 @@ TEST_CASE("ReadScenario: stock scenarios", "[launcher]")
 		CHECK(f.vesselCount == 8);
 	}
 }
+
+TEST_CASE("ReadBlock: description blocks as ScanFileDesc joins them", "[launcher]")
+{
+	std::istringstream is ("x\r\nBEGIN_HYPERDESC\r\n<p>Q&A mission <b\r\nEND_HYPERDESC\r\nBEGIN_DESC\r\nLine one\r\nline two\r\n\r\nNext\r\nEND_DESC\r\n");
+	std::string t;
+	REQUIRE(ReadBlock (is, "DESC", t));
+	CHECK(t == "Line one line two \nNext ");
+	REQUIRE(ReadBlock (is, "HYPERDESC", t)); // rewound: blocks in any order
+	CHECK(t == "<p>Q&A mission <b ");
+	CHECK(!ReadBlock (is, "URLDESC", t));
+	CHECK(t.empty ());
+	REQUIRE(ReadBlock (is, "DESC", t, 5));
+	CHECK(t == "Line ");
+	std::istringstream open ("BEGIN_DESC\nno end");
+	REQUIRE(ReadBlock (open, "DESC", t));
+	CHECK(t == "no end ");
+}

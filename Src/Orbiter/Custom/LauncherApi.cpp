@@ -16,20 +16,18 @@
 #include <QDesktopServices>
 #include <QEvent>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QTextBrowser>
+#include <QTextDocumentFragment>
 #include <QTextEdit>
 #include <QTreeWidget>
 #include <algorithm>
 #include <fstream>
 
 namespace fs = std::filesystem;
-
-// classic scenario description readers (TabScenario.cpp)
-char *ScanFileDesc (std::istream &is, const char *blockname);
-void Html2Text (std::string &str);
 
 using orbiter::LaunchpadDialog;
 
@@ -57,29 +55,23 @@ namespace {
 		return s.trimmed ();
 	}
 
-	// the classic order for the current mode (TabScenario.cpp, ScenarioChanged)
+	// the classic block order (TabScenario.cpp); HTML through Qt, as the classic Html2Text loops on a lone '<' or '&'
 	QString DescriptionOf (const std::string &file, bool html)
 	{
 		std::ifstream is (file);
 		if (!is) return QString ();
-		char *buf = nullptr;
+		std::string text;
 		bool isHtml = false;
 		if (html) {
-			if ((buf = ScanFileDesc (is, "URLDESC"))) {
-				delete[] buf;
-				return QString ();
-			}
-			if ((buf = ScanFileDesc (is, "HYPERDESC"))) isHtml = true;
-			else buf = ScanFileDesc (is, "DESC");
+			if (custom::ReadBlock (is, "URLDESC", text)) return QString ();
+			if (custom::ReadBlock (is, "HYPERDESC", text)) isHtml = true;
+			else custom::ReadBlock (is, "DESC", text);
 		} else {
-			if (!(buf = ScanFileDesc (is, "DESC")))
-				if ((buf = ScanFileDesc (is, "HYPERDESC"))) isHtml = true;
+			if (!custom::ReadBlock (is, "DESC", text) && custom::ReadBlock (is, "HYPERDESC", text)) isHtml = true;
 		}
-		if (!buf) return QString ();
-		std::string s (buf);
-		delete[] buf;
-		if (isHtml) Html2Text (s);
-		return CleanText (QString::fromUtf8 (s));
+		QString q = QString::fromUtf8 (text);
+		if (isHtml) q = QTextDocumentFragment::fromHtml (q).toPlainText ();
+		return CleanText (q);
 	}
 
 	int PageButton (const QString &page)
@@ -473,11 +465,12 @@ void custom::LauncherApi::setPage (const QString &p)
 
 void custom::LauncherApi::setState (const QVariantMap &s)
 {
-	if (QJsonDocument::fromVariant (QVariant (s)).toJson (QJsonDocument::Compact).size () > 65536) {
+	QJsonDocument doc = QJsonDocument::fromVariant (QVariant (s));
+	if (doc.toJson (QJsonDocument::Compact).size () > 65536) {
 		log ("state larger than 64 KiB ignored");
 		return;
 	}
-	m_state = s;
+	m_state = doc.object ().toVariantMap (); // plain data only: object references would outlive the view
 	emit stateChanged ();
 }
 
@@ -494,7 +487,7 @@ QVariantMap custom::LauncherApi::scenarioInfo (const QString &path)
 	bool isFolder = known.value ();
 	std::string file = (isFolder
 		? oapiResolvePath ((std::string (lp->Cfg ()->CfgDirPrm.ScnDir) + path.toStdString () + "/Description.txt").c_str ()) // as ScenarioChanged
-		: oapiResolvePath (lp->App ()->ScnPath (path.toUtf8 ().constData ())));
+		: oapiResolvePath ((std::string (lp->Cfg ()->CfgDirPrm.ScnDir) + path.toStdString () + ".scn").c_str ())); // not Config::ScnPath: its buffer is 256 bytes
 	std::error_code ec;
 	fs::file_time_type mtime = fs::last_write_time (file, ec);
 	if (ec && !isFolder) return r;
@@ -648,7 +641,11 @@ void custom::LauncherApi::quit ()
 
 void custom::LauncherApi::log (const QString &text)
 {
-	if (dead) return;
+	if (dead || logCount > MAX_LOG) return;
+	if (++logCount > MAX_LOG) {
+		host->Log ("skin '" + host->ActiveSkin () + "': further log lines suppressed");
+		return;
+	}
 	QString t = text.left (500);
 	t.replace ('\n', ' ');
 	t.replace ('\r', ' ');
@@ -670,6 +667,7 @@ void custom::LauncherApi::SkinSwitched ()
 	if (dead) return;
 	m_page.clear ();
 	m_state.clear ();
+	logCount = 0;
 	emit skinChanged ();
 	emit skinsChanged ();
 	emit pageChanged ();

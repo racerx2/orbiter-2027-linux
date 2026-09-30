@@ -6,7 +6,7 @@ var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oc
 
 // "2001-04-07 17:58" -> "7 Apr 2001 · 17:58"; no date: Orbiter starts at the current time
 function date(info) {
-    if (!info || info.isFolder) return "";
+    if (!info || info.isFolder || !info.path) return "";
     if (!info.date) return "Current time";
     var m = /^(\d+)-(\d+)-(\d+) (\d+:\d+)$/.exec(info.date);
     if (!m) return info.date;
@@ -35,10 +35,12 @@ function kind(info) {
     if (info.focusStatus === "Landed") {
         if (b === "Mars") return "mars";
         if (b === "Earth") return "runwayday";
-        return "moon";
+        if (b === "Moon") return "moon";
+        return "deep";
     }
     if (b === "Earth" || b === "") return "orbit";
-    return "lunarorbit";
+    if (b === "Moon") return "lunarorbit";
+    return "deep";
 }
 
 function seed(path) {

@@ -334,10 +334,10 @@ ScenarioFacts ReadScenario (std::istream &is)
 	while (!stop && ReadLine (is, line, total, MAX_SCN_BYTES)) {
 		std::string t = Trim (line);
 		switch (st) {
-		case TOP:
-			if (Equal (t, "BEGIN_ENVIRONMENT")) st = ENV;
-			else if (Equal (t, "BEGIN_FOCUS")) st = FOCUS;
-			else if (Equal (t, "BEGIN_SHIPS")) st = SHIPS;
+		case TOP: // FindLine: a case-insensitive prefix of the raw line
+			if (Prefix (line, "BEGIN_ENVIRONMENT")) st = ENV;
+			else if (Prefix (line, "BEGIN_FOCUS")) st = FOCUS;
+			else if (Prefix (line, "BEGIN_SHIPS")) st = SHIPS;
 			break;
 		case ENV:
 			if (Equal (t, "END_ENVIRONMENT")) st = TOP, seenEnv = true;
@@ -396,6 +396,33 @@ ScenarioFacts ReadScenario (std::istream &is)
 			break;
 		}
 	return f;
+}
+
+bool ReadBlock (std::istream &is, const char *block, std::string &text, size_t maxBytes)
+{
+	text.clear ();
+	is.clear ();
+	is.seekg (0);
+	const std::string begin = std::string ("BEGIN_") + block, end = std::string ("END_") + block;
+	std::string line;
+	size_t total = 0;
+	bool in = false;
+	while (ReadLine (is, line, total, MAX_SCN_BYTES)) {
+		if (!in) {
+			in = Prefix (line, begin.c_str ()); // FindLine
+			continue;
+		}
+		if (Prefix (line, end.c_str ())) break;
+		if (line.empty ()) text += '\n';
+		else text += line + ' ';
+		if (text.size () >= maxBytes) {
+			text.resize (maxBytes);
+			break;
+		}
+	}
+	is.clear ();
+	is.seekg (0);
+	return in;
 }
 
 }

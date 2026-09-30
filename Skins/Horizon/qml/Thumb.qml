@@ -159,6 +159,13 @@ Canvas {
                 ctx.save(); ctx.translate(lx, ly); ctx.scale(1, 0.3);
                 ctx.fillStyle = "rgba(40,40,38,0.5)"; ctx.beginPath(); ctx.arc(0, 0, lr, 0, Math.PI * 2); ctx.fill(); ctx.restore();
             }
+        } else if (kind === "deep") {
+            ctx.fillStyle = vgrad(ctx, 0, h, [[0, "#01030a"], [1, "#0a0f24"]]);
+            ctx.fillRect(0, 0, w, h);
+            stars(ctx, r, 90, h);
+            g = ctx.createRadialGradient(w * 0.7, h * 0.4, 0, w * 0.7, h * 0.4, w * 0.5);
+            g.addColorStop(0, "rgba(120,110,200,0.18)"); g.addColorStop(1, "rgba(120,110,200,0)");
+            ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
         } else if (kind === "pad") {
             ctx.fillStyle = vgrad(ctx, 0, h, [[0, "#0a1230"], [0.5, "#3a2a5a"], [0.8, "#e0804a"], [0.81, "#17121a"], [1, "#07060a"]]);
             ctx.fillRect(0, 0, w, h);

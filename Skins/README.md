@@ -103,5 +103,8 @@ Scenario paths are the classic ones: folder names and the scenario name joined b
 Signals: each property has its `...Changed` signal; `returnedFromClassic()` fires when the user comes back from the
 classic pages.
 
+Writing `currentScenario` or `startPaused` takes effect at once; every method that opens a dialog or launches runs
+after the current QML call returns.
+
 `date` is the scenario's simulation date as `YYYY-MM-DD HH:MM`; scenarios without a date start at the current time
 and have no `mjd` or `date`.

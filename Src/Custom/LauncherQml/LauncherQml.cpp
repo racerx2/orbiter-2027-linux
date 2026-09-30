@@ -15,6 +15,7 @@
 #include <QQuickItem>
 #include <QQuickWidget>
 #include <QSet>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QUrl>
@@ -68,7 +69,9 @@ namespace {
 					queue << QString (w[1]).replace ('.', '/');
 			}
 		}
-		auto dir = std::make_unique<QTemporaryDir> (QDir::tempPath () + "/orbiter-qml-XXXXXX");
+		QString base = QStandardPaths::writableLocation (QStandardPaths::RuntimeLocation); // per-user tmpfs, emptied at logout
+		if (base.isEmpty () || !QFileInfo (base).isWritable ()) base = QDir::tempPath ();
+		auto dir = std::make_unique<QTemporaryDir> (base + "/orbiter-qml-XXXXXX");
 		if (!dir->isValid ()) {
 			err = "can't create the QML module directory: " + dir->errorString ();
 			return false;
@@ -139,6 +142,7 @@ namespace {
 		if (!err || errlen <= 0) return;
 		QByteArray b = s.toUtf8 ();
 		int n = std::min ((int)b.size (), errlen - 1);
+		while (n > 0 && n < (int)b.size () && ((unsigned char)b[n] & 0xC0) == 0x80) n--; // not inside a UTF-8 character
 		memcpy (err, b.constData (), n);
 		err[n] = '\0';
 	}

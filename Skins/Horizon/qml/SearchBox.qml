@@ -5,6 +5,7 @@ Rectangle {
     id: box
     property alias text: input.text
     property string placeholder: "Search"
+    readonly property bool editing: input.activeFocus
     function focusInput() { input.forceActiveFocus(); }
     height: 38
     radius: 19

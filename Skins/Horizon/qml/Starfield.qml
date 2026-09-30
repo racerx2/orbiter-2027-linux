@@ -15,8 +15,9 @@ Canvas {
         }
     }
 
-    onWidthChanged: requestPaint()
-    onHeightChanged: requestPaint()
+    onWidthChanged: repaint.restart()
+    onHeightChanged: repaint.restart()
+    Timer { id: repaint; interval: 120; onTriggered: c.requestPaint() } // once the size settles, not at every step
 
     onPaint: {
         var ctx = getContext("2d");

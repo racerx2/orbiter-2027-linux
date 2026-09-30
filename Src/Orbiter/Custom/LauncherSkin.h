@@ -68,6 +68,7 @@ namespace custom {
 		void PlaceBack ();
 		void Fail (const QString &id, const QString &reason, const QString &hint);
 		void RecordLaunch ();
+		QString SelectedScenario () const;
 		void AddPending (std::function<void ()> fn);
 		void ScheduleTry (int delayMs = -1);
 		void TryPending ();
@@ -98,6 +99,7 @@ namespace custom {
 		bool tryQueued = false;
 		bool switchPending = false;
 		QString switchTarget;
+		QString launching;       // the scenario selected when Launch was pressed
 
 		void *module = nullptr;
 		LauncherQmlCreateFn qmlCreate = nullptr;

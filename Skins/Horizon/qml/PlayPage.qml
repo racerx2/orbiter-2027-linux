@@ -98,7 +98,10 @@ Item {
             GhostButton { label: "DETAILS"; height: play.roomy ? 64 : 54; onClicked: app.go("SCENARIOS") }
             GhostButton {
                 star: true; on: play.fav; enabled: play.isScn; height: play.roomy ? 64 : 54
-                onClicked: app.notice(Launcher.toggleFavourite(play.path) ? "Added to favourites" : "Removed from favourites")
+                onClicked: {
+                    var was = play.fav, on = Launcher.toggleFavourite(play.path);
+                    app.notice(on ? "Added to favourites" : (was ? "Removed from favourites" : "Favourites are full"));
+                }
             }
         }
         Item { width: 1; height: 12 }

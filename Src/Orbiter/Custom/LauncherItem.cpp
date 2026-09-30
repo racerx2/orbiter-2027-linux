@@ -94,6 +94,5 @@ bool custom::LauncherItem::clbkOpen (QWidget *hLaunchpad)
 
 int custom::LauncherItem::clbkWriteConfig ()
 {
-	host->SaveCfg ();
-	return 0;
+	return 0; // Launcher.cfg is written when something changes, not at every launch and exit
 }

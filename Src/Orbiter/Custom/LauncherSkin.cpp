@@ -56,8 +56,10 @@ custom::LauncherSkin::LauncherSkin (LaunchpadDialog *lp): QObject (lp->GetTab (0
 	hider = new ClassicHider (dlg, hWait);
 	item = new LauncherItem (this);
 	lp->RegisterExtraParam (item, nullptr);
-	if (QPushButton *b = DlgItem<QPushButton> (dlg, IDLAUNCH))
+	if (QPushButton *b = DlgItem<QPushButton> (dlg, IDLAUNCH)) {
+		connect (b, &QPushButton::pressed, this, [this]() { launching = SelectedScenario (); }); // click() and Enter press it too
 		connect (b, &QPushButton::clicked, this, [this]() { RecordLaunch (); }); // after the classic handler, which launched
+	}
 	dlg->installEventFilter (this);
 	if (hWait) hWait->installEventFilter (this);
 	connect (qApp, &QCoreApplication::aboutToQuit, this, [this]() { Teardown (); });
@@ -135,16 +137,23 @@ void custom::LauncherSkin::RequestSkin (const QString &id)
 	});
 }
 
-void custom::LauncherSkin::RecordLaunch ()
+QString custom::LauncherSkin::SelectedScenario () const
 {
-	if (torn) return;
 	orbiter::LaunchpadTab *tab = lp->GetTab (PG_SCN);
 	QTreeWidget *t = (tab && tab->TabWnd () ? DlgItem<QTreeWidget> (tab->TabWnd (), IDC_SCN_LIST) : nullptr);
 	QTreeWidgetItem *it = (t ? t->currentItem () : nullptr);
-	if (!it || it->childIndicatorPolicy () == QTreeWidgetItem::ShowIndicator) return;
+	if (!it || it->childIndicatorPolicy () == QTreeWidgetItem::ShowIndicator) return QString ();
 	QString p = it->text (0);
 	for (QTreeWidgetItem *q = it->parent (); q; q = q->parent ())
 		p = q->text (0) + '/' + p;
+	return p;
+}
+
+void custom::LauncherSkin::RecordLaunch ()
+{
+	QString p = launching;
+	launching.clear ();
+	if (torn || p.isEmpty () || lp->Visible ()) return; // Launchpad still shown: no session started
 	AddRecent (cfg, p.toStdString ());
 	SaveCfg ();
 	if (api) api->RecentChanged ();
@@ -224,6 +233,7 @@ void custom::LauncherSkin::Unapply ()
 	if (!activeId.isEmpty () && !active.qss.empty ()) dlg->setStyleSheet (QString ());
 	activeId.clear ();
 	active = SkinManifest ();
+	if (api) api->SkinSwitched ();
 	UpdateActive ();
 }
 
@@ -325,18 +335,20 @@ bool custom::LauncherSkin::InSkinView () const
 void custom::LauncherSkin::EnterSkinView ()
 {
 	if (!qml || torn) return;
+	hider->Hide (); // before a (re)load of the view, so the classic controls don't show meanwhile
+	if (back) back->hide ();
+	ApplyMinSize (true);
 	if (!view) {
 		QString err;
 		if (!CreateView (err)) {
 			QString id = activeId;
+			hider->Restore ();
+			mode = CLASSIC;
 			Unapply ();
 			Fail (id, err, QString ());
 			return;
 		}
 	}
-	hider->Hide ();
-	if (back) back->hide ();
-	ApplyMinSize (true);
 	view->setGeometry (dlg->rect ());
 	view->show ();
 	view->raise ();
@@ -389,7 +401,8 @@ void custom::LauncherSkin::ApplyMinSize (bool skin)
 	}
 	QScreen *s = dlg->screen ();
 	QRect avail = (s ? s->availableGeometry () : QRect (0, 0, 1920, 1080));
-	int aw = std::max (CLASSIC_MINW, avail.width ()), ah = std::max (CLASSIC_MINH, avail.height ());
+	QSize frame = (dlg->isVisible () ? dlg->frameGeometry ().size () - dlg->size () : QSize (0, 0));
+	int aw = std::max (CLASSIC_MINW, avail.width () - frame.width ()), ah = std::max (CLASSIC_MINH, avail.height () - frame.height ());
 	int mw = std::clamp (active.minWidth, CLASSIC_MINW, aw);
 	int mh = std::clamp (active.minHeight, CLASSIC_MINH, ah);
 	bool small = (dlg->width () < mw || dlg->height () < mh); // before setMinimumSize grows it to the minimum
@@ -398,6 +411,10 @@ void custom::LauncherSkin::ApplyMinSize (bool skin)
 		int tw = std::clamp (active.width > 0 ? active.width : mw, mw, aw);
 		int th = std::clamp (active.height > 0 ? active.height : mh, mh, ah);
 		dlg->resize (std::max (dlg->width (), tw), std::max (dlg->height (), th));
+		QRect fg = dlg->frameGeometry ();
+		if (dlg->isVisible () && !avail.contains (fg)) // back onto the screen where the window manager lets us move it
+			dlg->move (std::clamp (fg.left (), avail.left (), std::max (avail.left (), avail.right () - fg.width () + 1)),
+				std::clamp (fg.top (), avail.top (), std::max (avail.top (), avail.bottom () - fg.height () + 1)));
 	}
 }
 

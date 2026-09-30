@@ -49,8 +49,21 @@ Item {
         return out;
     }
     function launch() { if (Launcher.canLaunch && isScn) Launcher.launch(path); }
-    Keys.onReturnPressed: launch()
-    Keys.onEnterPressed: launch()
+    // Enter in the search box first selects the first match; Enter again launches it
+    function enter() {
+        if (search.editing && query !== "") {
+            var first = null, shown = false;
+            for (var i = 0; i < items.length; i++) {
+                if (items[i].isFolder) continue;
+                if (!first) first = items[i].path;
+                if (items[i].path === path) shown = true;
+            }
+            if (first && !shown) { Launcher.currentScenario = first; return; }
+        }
+        launch();
+    }
+    Keys.onReturnPressed: enter()
+    Keys.onEnterPressed: enter()
 
     // rail
     Flickable {
@@ -190,7 +203,10 @@ Item {
                 LaunchButton { enabled: Launcher.canLaunch && page.isScn; width: 190; height: 50; onClicked: page.launch() }
                 GhostButton {
                     star: true; height: 50; on: Launcher.favourites.indexOf(page.path) >= 0
-                    onClicked: app.notice(Launcher.toggleFavourite(page.path) ? "Added to favourites" : "Removed from favourites")
+                    onClicked: {
+                        var was = Launcher.favourites.indexOf(page.path) >= 0, on = Launcher.toggleFavourite(page.path);
+                        app.notice(on ? "Added to favourites" : (was ? "Removed from favourites" : "Favourites are full"));
+                    }
                 }
             }
             Item { width: 1; height: page.isScn ? 18 : 0 }

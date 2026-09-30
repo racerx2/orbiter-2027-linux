@@ -71,6 +71,9 @@ namespace custom {
 	// reads BEGIN_ENVIRONMENT, BEGIN_FOCUS and BEGIN_SHIPS like State.cpp and Psys.cpp; at most 4 MiB
 	ScenarioFacts ReadScenario (std::istream &is);
 
+	// BEGIN_/END_<block> text joined like ScanFileDesc, capped at maxBytes; rewinds the stream
+	bool ReadBlock (std::istream &is, const char *block, std::string &text, size_t maxBytes = 64 * 1024);
+
 }
 
 #endif // !__CUSTOM_LAUNCHERFACTS_H
