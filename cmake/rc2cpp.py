@@ -117,6 +117,55 @@ def resolve(base, rel):
         cur = os.path.join(cur, hit[0])
     return cur
 
+# #if expressions: C integer constant expressions in intmax_t/uintmax_t, as (value, unsigned) pairs (no eval)
+CONDTOK = re.compile(r"\s*(?:(0[xX][0-9a-fA-F]+|\d+)([uUlL]*)|'((?:[^'\\]|\\.)+)'|([A-Za-z_]\w*)|(<<|>>|<=|>=|==|!=|&&|\|\||[-+*/%<>&^|!~()?:]))")
+BINPREC = {'*': 10, '/': 10, '%': 10, '+': 9, '-': 9, '<<': 8, '>>': 8, '<': 7, '<=': 7, '>': 7, '>=': 7,
+           '==': 6, '!=': 6, '&': 5, '^': 4, '|': 3, '&&': 2, '||': 1}
+M64 = (1 << 64) - 1
+CESC = {'n': 10, 't': 9, 'r': 13, 'a': 7, 'b': 8, 'f': 12, 'v': 11, '\\': 92, "'": 39, '"': 34, '?': 63}
+
+def wrap(v, u):
+    v &= M64
+    return (v, True) if u else ((v - (1 << 64)) if v >> 63 else v, False)
+
+def cnum(s, suffix):
+    v = int(s, 16) if s[:2].lower() == '0x' else (int(s, 8) if len(s) > 1 and s[0] == '0' else int(s))
+    if v > M64: raise RcError('integer constant too large')
+    return wrap(v, 'u' in suffix.lower() or v >> 63 != 0)  # too big for intmax_t: uintmax_t
+
+def cchar(s):  # one character, char signed as in MSVC
+    if s[0] != '\\': v, rest = ord(s[0]), s[1:]
+    elif s[1] in CESC: v, rest = CESC[s[1]], s[2:]
+    elif s[1] in 'xX':
+        m = re.match(r'[0-9a-fA-F]+', s[2:])
+        if not m: raise RcError('bad character constant')
+        v, rest = int(m.group(0), 16), s[2 + len(m.group(0)):]
+    else:
+        m = re.match(r'[0-7]{1,3}', s[1:])
+        if not m: raise RcError('bad character constant')
+        v, rest = int(m.group(0), 8), s[1 + len(m.group(0)):]
+    if rest or v > 0xFF: raise RcError('multi-character constant')
+    return (v - 256 if v > 127 else v, False)
+
+def cbinop(op, a, b, ev):  # ev: evaluated (C does not evaluate the skipped side of && || ?:)
+    (x, ux), (y, uy) = a, b
+    if op in ('<<', '>>'):
+        if y < 0 or y > 63:
+            if ev: raise RcError('shift count %d out of range' % y)
+            return (0, ux)
+        return wrap(x << y if op == '<<' else ((x & M64) >> y if ux else x >> y), ux)
+    u = ux or uy  # usual arithmetic conversions
+    if u: x, y = x & M64, y & M64
+    if op in ('/', '%'):
+        if y == 0:
+            if ev: raise RcError('division by zero')
+            return (0, u)
+        q = abs(x) // abs(y) * (1 if (x >= 0) == (y >= 0) else -1)  # C truncates toward zero
+        return wrap(q if op == '/' else x - q * y, u)
+    if op in ('<', '<=', '>', '>=', '==', '!='):
+        return (int({'<': x < y, '<=': x <= y, '>': x > y, '>=': x >= y, '==': x == y, '!=': x != y}[op]), False)
+    return wrap({'*': x * y, '+': x + y, '-': x - y, '&': x & y, '^': x ^ y, '|': x | y}[op], u)
+
 class Preproc:
     def __init__(self, incdirs):
         self.defs = {'RC_INVOKED': '1'}
@@ -130,20 +179,81 @@ class Preproc:
             v = self.defs[v].strip()
         return v
 
-    def cond(self, expr):
-        expr = re.sub(r'defined\s*\(\s*(\w+)\s*\)', lambda m: '1' if m.group(1) in self.defs else '0', expr)
-        expr = re.sub(r'defined\s+(\w+)', lambda m: '1' if m.group(1) in self.defs else '0', expr)
-        def ident(m):
-            v = self.value(m.group(0))
-            return v if re.fullmatch(r'[-+()0-9xXa-fA-FuUlL|&<>=! ]+', v) else '0'
-        expr = re.sub(r'\b[A-Za-z_]\w*\b', ident, expr)
-        expr = expr.replace('&&', ' and ').replace('||', ' or ')
-        expr = re.sub(r'!(?!=)', ' not ', expr)
-        expr = re.sub(r'(\d)[uUlL]+\b', r'\1', expr)
+    def cond(self, expr, where):
         try:
-            return bool(eval(expr, {}, {}))
-        except Exception:
-            return False
+            t = self.ctoks(expr, [])
+            v, i = self.cexpr(t, 0)
+            if i != len(t): raise RcError('unexpected %r' % (t[i][1],))
+            return v[0] != 0
+        except (RcError, ValueError, ArithmeticError, RecursionError) as e:
+            raise RcError('%s: bad #if expression %r: %s' % (where, expr, e))
+
+    # tokens with defined() resolved and macros expanded; expanding: the macros being expanded (a stack)
+    def ctoks(self, text, expanding):
+        raw, pos = [], 0
+        while pos < len(text):
+            m = CONDTOK.match(text, pos)
+            if not m:
+                if text[pos:].strip(): raise RcError('bad token %r' % text[pos:].strip()[:16])
+                break
+            pos = m.end()
+            if m.group(1): raw.append(('num', cnum(m.group(1), m.group(2))))
+            elif m.group(3): raw.append(('num', cchar(m.group(3))))
+            elif m.group(4): raw.append(('id', m.group(4)))
+            else: raw.append(('op', m.group(5)))
+        toks, i = [], 0
+        while i < len(raw):
+            k, v = raw[i]
+            if (k, v) == ('id', 'defined'):
+                if raw[i+1:i+2] == [('op', '(')] and raw[i+2:i+3] and raw[i+2][0] == 'id' and raw[i+3:i+4] == [('op', ')')]:
+                    name, i = raw[i+2][1], i+4
+                elif raw[i+1:i+2] and raw[i+1][0] == 'id':
+                    name, i = raw[i+1][1], i+2
+                else: raise RcError('defined without a name')
+                toks.append(('num', (int(name in self.defs), False)))
+                continue
+            if k == 'id':
+                if v in expanding: raise RcError('recursive macro %s' % v)
+                toks += self.ctoks(self.defs[v], expanding + [v]) if v in self.defs else [('num', (0, False))]
+            else:
+                toks.append(raw[i])
+            i += 1
+        return toks
+
+    def cexpr(self, t, i, ev=True):  # a ? b : c
+        c, i = self.cbin(t, i, 1, ev)
+        if t[i:i+1] != [('op', '?')]: return c, i
+        a, i = self.cexpr(t, i+1, ev and c[0] != 0)
+        if t[i:i+1] != [('op', ':')]: raise RcError("'?' without ':'")
+        b, i = self.cexpr(t, i+1, ev and c[0] == 0)
+        return wrap((a if c[0] else b)[0], a[1] or b[1]), i
+
+    def cbin(self, t, i, minprec, ev):
+        v, i = self.cunary(t, i, ev)
+        while i < len(t) and t[i][0] == 'op' and BINPREC.get(t[i][1], 0) >= minprec:
+            op = t[i][1]
+            if op in ('&&', '||'):
+                lhs = v[0] != 0
+                w, i = self.cbin(t, i+1, BINPREC[op] + 1, ev and (lhs if op == '&&' else not lhs))
+                v = (int((lhs and w[0] != 0) if op == '&&' else (lhs or w[0] != 0)), False)
+            else:
+                w, i = self.cbin(t, i+1, BINPREC[op] + 1, ev)
+                v = cbinop(op, v, w, ev)
+        return v, i
+
+    def cunary(self, t, i, ev):
+        if i >= len(t): raise RcError('expression ends early')
+        k, v = t[i]
+        if k == 'num': return v, i+1
+        if (k, v) == ('op', '('):
+            v, i = self.cexpr(t, i+1, ev)
+            if t[i:i+1] != [('op', ')')]: raise RcError("missing ')'")
+            return v, i+1
+        if k == 'op' and v in ('!', '~', '-', '+'):
+            (x, u), i = self.cunary(t, i+1, ev)
+            if v == '!': return (int(x == 0), False), i
+            return (wrap(~x, u) if v == '~' else wrap(-x, u) if v == '-' else (x, u)), i
+        raise RcError('unexpected %r' % (v,))
 
     def find(self, name, curdir):
         name = name.replace('\\', '/')
@@ -160,36 +270,50 @@ class Preproc:
         else: text = raw.decode('latin-1')
         if '\0' in text: raise RcError('%s: UTF-16 without a byte order mark' % path)
         text = text.replace('\r\n', '\n').replace('\r', '\n')
-        text = re.sub(r'\\\n', '', text)
+        lines, buf, start = [], '', 1  # logical lines (backslash continuations joined) with their first line number
+        for n, l in enumerate(text.split('\n'), 1):
+            if not buf: start = n
+            if l.endswith('\\'): buf += l[:-1]; continue
+            lines.append((start, buf + l)); buf = ''
+        if buf: lines.append((start, buf))
         out = []
-        stack = []  # (active, taken)
+        stack = []  # (parent active, a branch taken, #else seen)
         active = True
         curdir = os.path.dirname(os.path.abspath(path))
-        for line in text.split('\n'):
+        def dname(rest, d, where):
+            mm = re.match(r'[A-Za-z_]\w*', rest)
+            if not mm: raise RcError('%s: #%s without a name' % (where, d))
+            return mm.group(0)
+        for n, line in lines:
             s = line.strip()
             m = re.match(r'#\s*(\w+)\s*(.*)$', s)
             if not m:
                 out.append(line if active else '')
                 continue
             d, rest = m.group(1), m.group(2)
-            rest = re.sub(r'//.*$', '', rest).strip()
+            rest = re.sub(r'//.*$', '', re.sub(r'/\*.*?\*/', ' ', rest)).strip()
+            where = '%s:%d' % (path, n)
             if d in ('if', 'ifdef', 'ifndef'):
-                if d == 'if': c = self.cond(rest)
-                elif d == 'ifdef': c = rest.split()[0] in self.defs
-                else: c = rest.split()[0] not in self.defs
-                stack.append((active, c))
+                if not active: c = False  # a skipped group's conditions are not evaluated (C 6.10.1p6)
+                elif d == 'if': c = self.cond(rest, where)
+                else: c = (dname(rest, d, where) in self.defs) == (d == 'ifdef')
+                stack.append((active, c, False))
                 active = active and c
+            elif d in ('elif', 'else', 'endif') and not stack:
+                raise RcError('%s: #%s without #if' % (where, d))
             elif d == 'elif':
-                parent, taken = stack[-1]
-                c = (not taken) and self.cond(rest)
-                stack[-1] = (parent, taken or c)
+                parent, taken, els = stack[-1]
+                if els: raise RcError('%s: #elif after #else' % where)
+                c = parent and not taken and self.cond(rest, where)
+                stack[-1] = (parent, taken or c, False)
                 active = parent and c
             elif d == 'else':
-                parent, taken = stack[-1]
-                stack[-1] = (parent, True)
+                parent, taken, els = stack[-1]
+                if els: raise RcError('%s: #else after #else' % where)
+                stack[-1] = (parent, True, True)
                 active = parent and not taken
             elif d == 'endif':
-                active, _ = stack.pop()
+                active, _, _ = stack.pop()
             elif not active:
                 pass
             elif d == 'define':
@@ -197,7 +321,7 @@ class Preproc:
                 if mm and not mm.group(2):
                     self.defs[mm.group(1)] = re.sub(r'/\*.*?\*/', '', mm.group(3)).strip() or '1'
             elif d == 'undef':
-                self.defs.pop(rest.split()[0], None)
+                self.defs.pop(dname(rest, d, where), None)
             elif d == 'include':
                 name = rest.strip('"<> ')
                 if os.path.basename(name).lower() in SKIPINC:
@@ -209,6 +333,7 @@ class Preproc:
                     if not p.lower().endswith('.h'):
                         out.append(sub)
             out.append('')
+        if stack: raise RcError('%s: #if without #endif' % path)
         return '\n'.join(out)
 
 # tokenizer and expression evaluation
@@ -268,6 +393,7 @@ class Parser:
         self.strings = []  # (id, text) from STRINGTABLE
         self.data = []     # (type, name, id, path) user-defined resource types with a file (TEXT, IMAGE, RCDATA, ...)
         self.menus = []    # {'id', 'name', 'items': [[id, text, flags, nsub], ...]}
+        self.expanding = []  # macros being expanded (a macro in its own expansion is an error)
 
     def peek(self, k=0):
         return self.t[self.i+k] if self.i+k < len(self.t) else ('eof', None)
@@ -296,13 +422,17 @@ class Parser:
         if v in WIN:
             return WIN[v]
         if v != name:
+            if name in self.expanding:
+                raise RcError('recursive macro %s' % name)
             toks = tokenize(v)
             saved = (self.t, self.i)
             self.t, self.i = toks + [('eof', None)], 0
+            self.expanding.append(name)
             try:
                 val = self.expr()
             finally:
                 self.t, self.i = saved
+                self.expanding.pop()
             return val
         raise RcError('unknown symbol %s' % name)
 
@@ -613,7 +743,9 @@ class Parser:
         c['cx'] = self.num(); self.expect_op(','); c['cy'] = self.num()
         c['style'] = base | defstyle
         if self.accept('op', ','):
-            c['style'] = self.expr(base | defstyle)
+            cbtype = 0x3 if stmt == 'COMBOBOX' else 0  # a CBS_ type is a value, not a flag: CBS_SIMPLE only if the style names none
+            c['style'] = self.expr(base | (defstyle & ~cbtype))
+            if cbtype and not (c['style'] & cbtype): c['style'] |= defstyle & cbtype
             if self.accept('op', ','):
                 c['exstyle'] = self.expr()
         return c

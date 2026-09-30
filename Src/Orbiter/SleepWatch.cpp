@@ -17,6 +17,11 @@ SleepWatch::SleepWatch (QObject *parent) : QObject (parent)
 void SleepWatch::PrepareForSleep (bool start)
 {
 	// PBT_APMQUERYSUSPEND / PBT_APMRESUMESUSPEND, which only reach the render window
-	if (g_pOrbiter && g_pOrbiter->GetRenderWnd())
-		g_pOrbiter->Freeze (start);
+	if (!g_pOrbiter || !g_pOrbiter->GetRenderWnd()) { frozen = false; return; }
+	if (start) { // a paused simulation stays paused, and Freeze's Resume needs its Suspend
+		if (!frozen && g_pOrbiter->IsRunning()) { frozen = true; g_pOrbiter->Freeze (true); }
+	} else if (frozen) {
+		frozen = false;
+		g_pOrbiter->Freeze (false);
+	}
 }

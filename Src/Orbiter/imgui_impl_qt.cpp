@@ -245,7 +245,7 @@ bool ImGui_ImplQt_EventHandler (QWindow *window, QEvent *event)
 	case QEvent::Wheel: {
 		QWheelEvent *we = static_cast<QWheelEvent*> (event);
 		QPoint d = we->angleDelta(); // 120 per notch, as WHEEL_DELTA
-		io.AddMouseWheelEvent (-(float)d.x() / 120.0f, (float)d.y() / 120.0f);
+		io.AddMouseWheelEvent ((float)d.x() / 120.0f, (float)d.y() / 120.0f); // Qt's positive x is left, as ImGui's (WM_MOUSEHWHEEL's is right)
 		} return false;
 	case QEvent::KeyPress:
 	case QEvent::KeyRelease: {

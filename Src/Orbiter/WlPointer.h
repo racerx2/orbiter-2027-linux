@@ -11,6 +11,7 @@ void WlPointerDispatch ();               // the attached pointer's events; once 
 bool WlPointerLock (QWindow *hWnd);      // lock the pointer where it is; false when not on Wayland or not supported
 void WlPointerUnlock ();
 bool WlPointerLocked ();
+bool WlPointerLost ();                   // the compositor ended the lock since the last call (reported once)
 void WlPointerMotion (int &dx, int &dy); // motion since the last call, in the window's device pixels
 
 #endif // !__WLPOINTER_H

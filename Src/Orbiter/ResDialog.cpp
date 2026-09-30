@@ -32,6 +32,7 @@
 #include <QResizeEvent>
 #include <QScreen>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QStringDecoder>
 #include <QStyleFactory>
@@ -178,17 +179,22 @@ int LoadModuleString (const char *modulefile, int id, char *buf, int buflen)
 	buf[0] = '\0';
 	std::ifstream f (modulefile, std::ios::binary);
 	if (!f) return 0;
+	f.seekg (0, std::ios::end);
+	const uint64_t fsize = (uint64_t)std::max<std::streamoff> (0, f.tellg());
+	f.seekg (0);
+	auto fits = [fsize](const Elf64_Shdr &s) { return s.sh_offset <= fsize && s.sh_size <= fsize - s.sh_offset; }; // sizes from a corrupt file
 	Elf64_Ehdr eh;
 	if (!f.read ((char*)&eh, sizeof(eh)) || memcmp (eh.e_ident, ELFMAG, SELFMAG) || eh.e_ident[EI_CLASS] != ELFCLASS64 ||
 		eh.e_shentsize != sizeof(Elf64_Shdr) || eh.e_shstrndx >= eh.e_shnum) return 0;
 	std::vector<Elf64_Shdr> sh (eh.e_shnum);
 	f.seekg (eh.e_shoff);
-	if (!f.read ((char*)sh.data(), eh.e_shnum * sizeof(Elf64_Shdr))) return 0;
+	if (!f.read ((char*)sh.data(), eh.e_shnum * sizeof(Elf64_Shdr)) || !fits (sh[eh.e_shstrndx])) return 0;
 	std::string names (sh[eh.e_shstrndx].sh_size, '\0');
 	f.seekg (sh[eh.e_shstrndx].sh_offset);
 	if (!f.read (names.data(), names.size())) return 0;
 	for (const Elf64_Shdr &s : sh) {
 		if (s.sh_name >= names.size() || strcmp (names.c_str() + s.sh_name, ".oapi_strtab") || s.sh_type == SHT_NOBITS) continue;
+		if (!fits (s)) return 0;
 		std::string data (s.sh_size, '\0');
 		f.seekg (s.sh_offset);
 		if (!f.read (data.data(), data.size()) || data.compare (0, 8, "OAPISTR1")) return 0;
@@ -236,8 +242,8 @@ void oapiConnectDlgCommands (QWidget *hDlg, RESCOMMAND handler)
 			QObject::connect (e, &QPlainTextEdit::textChanged, hDlg, [handler, id, w]() { handler (id, RESN_CHANGE, w); });
 		} else if (QComboBox *c = qobject_cast<QComboBox*> (w)) {
 			QObject::connect (c, &QComboBox::activated, hDlg, [handler, id, w]() { handler (id, RESN_SELCHANGE, w); });
-			if (c->isEditable())
-				QObject::connect (c, &QComboBox::editTextChanged, hDlg, [handler, id, w]() { handler (id, RESN_EDITCHANGE, w); });
+			if (c->isEditable()) // CBN_EDITCHANGE: typed by the user, not set by the program
+				QObject::connect (c->lineEdit(), &QLineEdit::textEdited, hDlg, [handler, id, w]() { handler (id, RESN_EDITCHANGE, w); });
 		} else if (QListWidget *l = qobject_cast<QListWidget*> (w)) {
 			QObject::connect (l, &QListWidget::itemSelectionChanged, hDlg, [handler, id, w]() { handler (id, RESN_SELCHANGE, w); });
 			QObject::connect (l, &QListWidget::itemDoubleClicked, hDlg, [handler, id, w]() { handler (id, RESN_DBLCLK, w); });
@@ -282,7 +288,7 @@ void oapiSetDlgText (QWidget *hWnd, const char *text)
 	QString s = DlgString (text);
 	if (QLabel *w = qobject_cast<QLabel*> (hWnd)) w->setText (s);
 	else if (QLineEdit *w = qobject_cast<QLineEdit*> (hWnd)) w->setText (s);
-	else if (QPlainTextEdit *w = qobject_cast<QPlainTextEdit*> (hWnd)) w->setPlainText (s);
+	else if (QPlainTextEdit *w = qobject_cast<QPlainTextEdit*> (hWnd)) { QSignalBlocker b (w); w->setPlainText (s); } // multi-line EN_CHANGE: not for WM_SETTEXT
 	else if (QTextEdit *w = qobject_cast<QTextEdit*> (hWnd)) w->setPlainText (s);
 	else if (QAbstractButton *w = qobject_cast<QAbstractButton*> (hWnd)) w->setText (s);
 	else if (QGroupBox *w = qobject_cast<QGroupBox*> (hWnd)) w->setTitle (s);
@@ -864,6 +870,11 @@ public:
 
 QWidget *oapiCreateResDialog (void *hModule, int resId, QWidget *parent, QWindow *owner)
 {
+	return CreateResDialog (hModule, resId, parent, owner, true);
+}
+
+QWidget *CreateResDialog (void *hModule, int resId, QWidget *parent, QWindow *owner, bool show)
+{
 	using namespace rs;
 	const RESDIALOG *d = oapiFindResDialog (hModule, resId);
 	if (!d) return nullptr;
@@ -939,7 +950,7 @@ QWidget *oapiCreateResDialog (void *hModule, int resId, QWidget *parent, QWindow
 		dlg->winId();
 		if (dlg->windowHandle()) dlg->windowHandle()->setTransientParent (owner);
 	}
-	if (d->style & WS_VISIBLE) dlg->show();
+	if (show && (d->style & WS_VISIBLE)) dlg->show();
 	return dlg;
 }
 

@@ -18,6 +18,9 @@ const RESTABLE *OrbiterResources ();
 // Returns the number of bytes copied (buf is zero-terminated), 0 if the file or the string is not found.
 int LoadModuleString (const char *modulefile, int id, char *buf, int buflen);
 
+// oapiCreateResDialog; show false: a WS_VISIBLE dialog stays hidden for the caller to show after its set-up
+QWidget *CreateResDialog (void *hModule, int resId, QWidget *parent, QWindow *owner, bool show);
+
 // routes the events of one or more objects to a handler (window procedure hook); deleted with the first widget
 class EventHook: public QObject {
 public:

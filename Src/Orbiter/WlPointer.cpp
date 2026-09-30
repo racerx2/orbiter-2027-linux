@@ -22,6 +22,7 @@ zwp_relative_pointer_v1 *relptr = nullptr;
 double accx = 0.0, accy = 0.0;                 // motion not taken yet, in surface coordinates
 qreal dpr = 1.0;
 bool tried = false;
+bool lost = false;                             // the compositor ended the lock (WlPointerLost)
 
 void Global (void*, wl_registry *reg, uint32_t name, const char *iface, uint32_t)
 {
@@ -54,7 +55,7 @@ void RelMotion (void*, zwp_relative_pointer_v1*, uint32_t, uint32_t, wl_fixed_t 
 const zwp_relative_pointer_v1_listener relListener = { RelMotion };
 
 void Locked (void*, zwp_locked_pointer_v1*) {}
-void Unlocked (void*, zwp_locked_pointer_v1*) {}
+void Unlocked (void*, zwp_locked_pointer_v1*) { WlPointerUnlock (); lost = true; } // the compositor ended the oneshot lock: the camera ends the drag
 const zwp_locked_pointer_v1_listener lockListener = { Locked, Unlocked };
 
 bool Init ()
@@ -115,6 +116,7 @@ bool WlPointerLock (QWindow *hWnd)
 	WlPointerUnlock ();
 	dpr = hWnd->devicePixelRatio ();
 	accx = accy = 0.0;
+	lost = false;
 	locked = zwp_pointer_constraints_v1_lock_pointer (constraints, surface, pointer, nullptr, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_ONESHOT);
 	zwp_locked_pointer_v1_add_listener (locked, &lockListener, nullptr);
 	relptr = zwp_relative_pointer_manager_v1_get_relative_pointer (relmgr, pointer);
@@ -133,6 +135,13 @@ void WlPointerUnlock ()
 bool WlPointerLocked ()
 {
 	return (locked != nullptr);
+}
+
+bool WlPointerLost ()
+{
+	bool l = lost;
+	lost = false;
+	return l;
 }
 
 void WlPointerMotion (int &dx, int &dy)

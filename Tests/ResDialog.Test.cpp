@@ -15,9 +15,14 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QToolButton>
+#include <QKeyEvent>
+#include <QPlainTextEdit>
 #include <cmath>
 #include <cstring>
+#include <elf.h>
+#include <fstream>
 #include <strings.h>
+#include <unistd.h>
 #include "ResDialog.h"
 #include "DlgCtrl.h"
 #include "resource.h"
@@ -346,4 +351,109 @@ TEST_CASE("menu templates build menu bars", "[resdialog]")
 	REQUIRE(exitems.size() == 3);
 	REQUIRE(exitems[1]->isSeparator());
 	REQUIRE((exitems[2]->isChecked() && !exitems[2]->isEnabled()));
+}
+
+// counts the Show events of the top-level dialog built from one template
+struct ShowCounter: QObject {
+	int id = 0, n = 0;
+	bool eventFilter (QObject *o, QEvent *e) override
+	{
+		if (e->type() == QEvent::Show && o->isWidgetType() && static_cast<QWidget*> (o)->isWindow() && o->property ("resId").toInt() == id) n++;
+		return false;
+	}
+};
+
+TEST_CASE("a WS_VISIBLE popup created hidden is not shown before its caller shows it", "[resdialog]")
+{
+	App();
+	const RESTABLE *t = oapiResourceTable (nullptr);
+	const RESDIALOG *d = nullptr;
+	for (size_t i = 0; i < t->ndlg && !d; i++)
+		if ((t->dlg[i].style & 0x10000000) && !(t->dlg[i].style & 0x40000000)) d = t->dlg + i; // WS_VISIBLE, not WS_CHILD
+	REQUIRE(d);
+	ShowCounter c;
+	c.id = d->id;
+	qApp->installEventFilter (&c);
+	QWidget *w = CreateResDialog (nullptr, d->id, nullptr, nullptr, false);
+	REQUIRE(w);
+	REQUIRE(c.n == 0);
+	REQUIRE(!w->isVisible());
+	delete w;
+	w = oapiCreateResDialog (nullptr, d->id, nullptr);
+	REQUIRE(c.n == 1);
+	REQUIRE(w->isVisible());
+	qApp->removeEventFilter (&c);
+	delete w;
+}
+
+TEST_CASE("multi-line edits notify text changes by the user only (EN_CHANGE)", "[resdialog]")
+{
+	App();
+	QWidget *dlg = oapiCreateResDialog (nullptr, IDD_SAVESCN, nullptr);
+	QPlainTextEdit *e = DlgItem<QPlainTextEdit> (dlg, IDC_SAVE_DESC);
+	REQUIRE(e);
+	int n = 0;
+	oapiConnectDlgCommands (dlg, [&n](int id, int code, QWidget*) { if (id == IDC_SAVE_DESC && code == RESN_CHANGE) n++; });
+	oapiSetDlgItemText (dlg, IDC_SAVE_DESC, "set by the program");
+	REQUIRE(n == 0);
+	REQUIRE(e->toPlainText() == "set by the program");
+	QKeyEvent k (QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, "x");
+	QApplication::sendEvent (e, &k);
+	REQUIRE(n == 1);
+	delete dlg;
+}
+
+TEST_CASE("editable combo boxes notify text typed by the user only (CBN_EDITCHANGE)", "[resdialog]")
+{
+	App();
+	const RESTABLE *t = oapiResourceTable (nullptr);
+	QWidget *dlg = nullptr;
+	QComboBox *cb = nullptr;
+	for (size_t i = 0; i < t->ndlg && !cb; i++) {
+		dlg = oapiCreateResDialog (nullptr, t->dlg[i].id, nullptr);
+		for (QComboBox *c : dlg->findChildren<QComboBox*>())
+			if (c->isEditable() && c->property ("resId").isValid()) { cb = c; break; }
+		if (!cb) delete dlg;
+	}
+	REQUIRE(cb);
+	int id = cb->property ("resId").toInt(), n = 0;
+	oapiConnectDlgCommands (dlg, [&n, id](int i, int code, QWidget*) { if (i == id && code == RESN_EDITCHANGE) n++; });
+	oapiComboAddString (cb, "one");
+	oapiComboAddString (cb, "two");
+	oapiSetDlgText (cb, "set by the program");
+	cb->setCurrentIndex (1);
+	REQUIRE(n == 0);
+	QKeyEvent k (QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, "x");
+	QApplication::sendEvent (cb->lineEdit(), &k);
+	REQUIRE(n == 1);
+	delete dlg;
+}
+
+TEST_CASE("module strings: section sizes past the end of the file are refused, not allocated", "[resdialog]")
+{
+	char path[] = "/tmp/ob_resdlg_XXXXXX";
+	int fd = mkstemp (path);
+	REQUIRE(fd >= 0);
+	close (fd);
+	const char names[16] = "\0.oapi_strtab"; // section names: "" and ".oapi_strtab"
+	auto make = [&](Elf64_Xword namesize, Elf64_Xword datasize) {
+		Elf64_Ehdr eh = {};
+		memcpy (eh.e_ident, ELFMAG, SELFMAG);
+		eh.e_ident[EI_CLASS] = ELFCLASS64;
+		eh.e_shentsize = sizeof(Elf64_Shdr);
+		eh.e_shnum = 2;
+		eh.e_shstrndx = 0;
+		eh.e_shoff = sizeof(eh) + sizeof(names);
+		Elf64_Shdr sh[2] = {};
+		sh[0].sh_type = SHT_STRTAB, sh[0].sh_offset = sizeof(eh), sh[0].sh_size = namesize;
+		sh[1].sh_name = 1, sh[1].sh_type = SHT_PROGBITS, sh[1].sh_offset = 0, sh[1].sh_size = datasize;
+		std::ofstream f (path, std::ios::binary | std::ios::trunc);
+		f.write ((const char*)&eh, sizeof(eh)).write (names, sizeof(names)).write ((const char*)sh, sizeof(sh));
+	};
+	char buf[64];
+	make ((Elf64_Xword)1 << 40, 8); // corrupt size of the section-name table
+	REQUIRE(LoadModuleString (path, IDS_TABVISUAL, buf, 64) == 0);
+	make (sizeof(names), (Elf64_Xword)1 << 40); // corrupt size of .oapi_strtab
+	REQUIRE(LoadModuleString (path, IDS_TABVISUAL, buf, 64) == 0);
+	unlink (path);
 }

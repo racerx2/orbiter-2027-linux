@@ -137,6 +137,7 @@ bool Camera::ProcessMouse (UINT event, DWORD state, DWORD x, DWORD y, const char
 void Camera::UpdateMouse ()
 {
 	WlPointerDispatch ();
+	if (WlPointerLost () && mbdown[1]) { mbdown[1] = false; g_pOrbiter->ExitRotationMode (); } // not upstream: a broken lock ends the drag like a button release
 	QPoint gpt = QCursor::pos (); // GetCursorPos
 	POINT pt = { gpt.x(), gpt.y() };
 	if (pt.x != pm.x || pt.y != pm.y) {

@@ -11,6 +11,8 @@ public:
 	SleepWatch (QObject *parent = nullptr);
 private slots:
 	void PrepareForSleep (bool start);
+private:
+	bool frozen = false; // this watch froze the running simulation for the sleep
 };
 
 #endif // !__SLEEPWATCH_H

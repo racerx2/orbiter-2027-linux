@@ -1,0 +1,136 @@
+// not upstream: help viewer (ChmHelp.cpp): .chm (zip) pages and the help window beside modal dialogs, offscreen
+#include <catch2/catch_test_macros.hpp>
+#include <QApplication>
+#include <QDialog>
+#include <QTest>
+#include <QTextBrowser>
+#include <QTimer>
+#include <QWindow>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <zlib.h>
+#include "ChmHelp.h"
+
+namespace fs = std::filesystem;
+
+static QApplication &App ()
+{
+	static int argc = 1;
+	static char name[] = "ChmHelp.Test", *argv[] = {name, nullptr};
+	if (qEnvironmentVariableIsEmpty ("QT_QPA_PLATFORM")) qputenv ("QT_QPA_PLATFORM", "offscreen");
+	static QApplication app (argc, argv);
+	return app;
+}
+
+static QByteArray Deflate (const QByteArray &in) // raw deflate, as zip entries hold it
+{
+	QByteArray out (compressBound (in.size()) + 64, '\0');
+	z_stream zs = {};
+	deflateInit2 (&zs, 9, Z_DEFLATED, -MAX_WBITS, 8, Z_DEFAULT_STRATEGY);
+	zs.next_in = (Bytef*)in.data();
+	zs.avail_in = in.size();
+	zs.next_out = (Bytef*)out.data();
+	zs.avail_out = out.size();
+	deflate (&zs, Z_FINISH);
+	out.resize (zs.total_out);
+	deflateEnd (&zs);
+	return out;
+}
+
+static void Put16 (QByteArray &b, quint32 v) { b.append (char(v & 0xff)); b.append (char(v >> 8 & 0xff)); }
+static void Put32 (QByteArray &b, quint32 v) { Put16 (b, v & 0xffff); Put16 (b, v >> 16); }
+
+struct ZipEntry { QByteArray name, data; quint32 usize; }; // data deflated; usize as the headers state it
+
+static QByteArray Zip (const std::vector<ZipEntry> &entries)
+{
+	QByteArray z, cd;
+	for (const ZipEntry &e : entries) {
+		quint32 lh = z.size();
+		Put32 (z, 0x04034b50); Put16 (z, 20); Put16 (z, 0); Put16 (z, 8); Put32 (z, 0); Put32 (z, 0); // version, flags, deflate, time, crc
+		Put32 (z, e.data.size()); Put32 (z, e.usize); Put16 (z, e.name.size()); Put16 (z, 0);
+		z += e.name + e.data;
+		Put32 (cd, 0x02014b50); Put16 (cd, 20); Put16 (cd, 20); Put16 (cd, 0); Put16 (cd, 8); Put32 (cd, 0); Put32 (cd, 0);
+		Put32 (cd, e.data.size()); Put32 (cd, e.usize); Put16 (cd, e.name.size()); Put16 (cd, 0); Put16 (cd, 0);
+		Put16 (cd, 0); Put16 (cd, 0); Put32 (cd, 0); Put32 (cd, lh);
+		cd += e.name;
+	}
+	quint32 cdofs = z.size();
+	z += cd;
+	Put32 (z, 0x06054b50); Put16 (z, 0); Put16 (z, 0); Put16 (z, entries.size()); Put16 (z, entries.size());
+	Put32 (z, cd.size()); Put32 (z, cdofs); Put16 (z, 0);
+	return z;
+}
+
+// a help file in a temp folder: a.htm with a header size 100 bytes too large, b.htm with a 4 GB header size, c.htm as it should be
+struct TmpChm {
+	fs::path dir, file;
+	QByteArray page = QByteArray ("<html><body><p>Help page</p></body></html>\n").repeated (8);
+	TmpChm ()
+	{
+		char tmpl[] = "/tmp/ob_chm_XXXXXX";
+		dir = mkdtemp (tmpl);
+		file = dir / "test.chm";
+		QByteArray z = Zip ({{"a.htm", Deflate (page), (quint32)page.size() + 100},
+		                     {"b.htm", Deflate (page), 0xFFFFFFF0u},
+		                     {"c.htm", Deflate (page), (quint32)page.size()}});
+		std::ofstream (file, std::ios::binary).write (z.constData(), z.size());
+	}
+	~TmpChm () { fs::remove_all (dir); }
+};
+
+TEST_CASE("help file pages read back at their real size", "[chmhelp]")
+{
+	App();
+	TmpChm c;
+	ChmBrowser b;
+	auto read = [&](const char *topic) {
+		return b.loadResource (QTextDocument::ImageResource, ChmUrl (QString::fromStdString (c.file.string()), topic)).toByteArray();
+	};
+	REQUIRE(read ("c.htm") == c.page);
+	REQUIRE(read ("a.htm") == c.page); // no uninitialised tail after a stream shorter than its header
+	REQUIRE(read ("b.htm").isEmpty()); // no 4 GB buffer for a header deflate can't have produced
+}
+
+TEST_CASE("the help window takes input while a modal dialog runs", "[chmhelp]")
+{
+	App();
+	TmpChm c;
+	QWidget lp;
+	lp.resize (300, 200);
+	lp.show();
+	REQUIRE(HtmlHelp (nullptr, c.file.string().c_str(), "c.htm")); // open before the dialog, like oapiOpenLaunchpadHelp
+	QWidget *help = nullptr;
+	for (QWidget *w : QApplication::topLevelWidgets())
+		if (w->isVisible() && w->findChild<QTextBrowser*>()) help = w;
+	REQUIRE(help);
+	struct PressCounter: QObject {
+		QWidget *root = nullptr;
+		int n = 0;
+		bool eventFilter (QObject *o, QEvent *e) override
+		{
+			if (e->type() == QEvent::MouseButtonPress && o->isWidgetType() && (o == root || root->isAncestorOf (static_cast<QWidget*> (o)))) n++;
+			return false;
+		}
+	} presses;
+	presses.root = help;
+	qApp->installEventFilter (&presses);
+	QDialog dlg (&lp);
+	dlg.resize (100, 50);
+	int during = -1;
+	QTimer::singleShot (0, &dlg, [&]() {
+		HtmlHelp (&dlg, c.file.string().c_str(), "c.htm"); // the dialog's Help button
+		QTest::mouseClick (help->windowHandle(), Qt::LeftButton, Qt::NoModifier, QPoint (20, 20));
+		during = presses.n;
+		dlg.reject();
+	});
+	QWindow *before = help->windowHandle()->transientParent();
+	dlg.exec();
+	qApp->removeEventFilter (&presses);
+	REQUIRE(during == 1);
+	REQUIRE(help->windowHandle()->transientParent() == before); // back from the closed dialog
+	delete help; // not left to the static QApplication's exit
+}

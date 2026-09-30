@@ -53,15 +53,16 @@ static bool ReadBMP (const char *fname, Image &img)
 	auto u16 = [&](size_t o) { return (uint32_t)d[o] | (uint32_t)d[o+1] << 8; };
 	auto u32 = [&](size_t o) { return u16(o) | u16(o+2) << 16; };
 	uint32_t ofs = u32(10), hsize = u32(14), comp = u32(30), nclr = u32(46);
-	int32_t w = (int32_t)u32(18), h = (int32_t)u32(22);
+	int64_t w = (int32_t)u32(18), h = (int32_t)u32(22); // 64-bit: -INT32_MIN
 	int bpp = (int)u16(28);
 	bool topdown = h < 0;
 	if (topdown) h = -h;
-	if (w <= 0 || h <= 0 || comp != 0 || (bpp != 8 && bpp != 24 && bpp != 32)) return false;
+	if (w <= 0 || h <= 0 || h > INT32_MAX || comp != 0 || (bpp != 8 && bpp != 24 && bpp != 32)) return false;
 	if (bpp == 8 && !nclr) nclr = 256;
 	size_t stride = ((size_t)w*bpp/8 + 3) & ~(size_t)3;
-	if ((size_t)ofs + stride*h > (size_t)n || (bpp == 8 && 14 + hsize + 4*nclr > ofs)) return false;
-	const byte *pal = d.data() + 14 + hsize; // BGRx entries
+	uint64_t palend = 14 + (uint64_t)hsize + 4 * (uint64_t)nclr; // header fields from the file: no 32-bit wrap
+	if ((size_t)ofs + stride*h > (size_t)n || (bpp == 8 && palend > ofs)) return false;
+	const byte *pal = d.data() + 14 + (size_t)hsize; // BGRx entries
 	img.w = w; img.h = h;
 	img.px.resize ((size_t)w*h*4);
 	for (int y = 0; y < h; y++) {

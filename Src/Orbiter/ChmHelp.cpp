@@ -2,6 +2,7 @@
 
 #include "ChmHelp.h"
 #include "OrbiterAPI.h"
+#include <QApplication>
 #include <QDesktopServices>
 #include <QFile>
 #include <QFileInfo>
@@ -18,6 +19,7 @@
 #include <QTextDocument>
 #include <QTextList>
 #include <QTreeWidget>
+#include <QWindow>
 #include <algorithm>
 #include <map>
 #include <memory>
@@ -71,7 +73,7 @@ public:
 		if (it == dir.end()) return QByteArray();
 		const Entry &e = it.value();
 		if (e.method == 0) return data.mid (e.ofs, e.csize);
-		if (e.method != 8) return QByteArray();
+		if (e.method != 8 || e.usize > (quint64)e.csize * 1032) return QByteArray(); // deflate expands at most 1032:1
 		QByteArray out (e.usize, Qt::Uninitialized);
 		z_stream zs = {};
 		zs.next_in = (Bytef*)data.constData() + e.ofs;
@@ -81,7 +83,9 @@ public:
 		if (inflateInit2 (&zs, -MAX_WBITS) != Z_OK) return QByteArray();
 		int r = inflate (&zs, Z_FINISH);
 		inflateEnd (&zs);
-		return (r == Z_STREAM_END ? out : QByteArray());
+		if (r != Z_STREAM_END) return QByteArray();
+		out.truncate (zs.total_out); // a stream shorter than its header says leaves no uninitialised tail
+		return out;
 	}
 
 	QStringList names;
@@ -420,6 +424,15 @@ bool HtmlHelp (QWidget *owner, const char *file, const char *topic)
 	if (!g_help) g_help = new HelpWindow (owner ? owner->window() : nullptr);
 	if (!g_help->Load (path)) return false;
 	g_help->ShowTopic (QString::fromStdString (t));
+	if (QWidget *m = QApplication::activeModalWidget()) { // an unowned HH window is not disabled by DialogBox: not blocked by the modal dialog
+		g_help->winId();
+		QWindow *h = g_help->windowHandle(), *mw = m->windowHandle();
+		if (h && mw && h->transientParent() != mw) {
+			QPointer<QWindow> prev = h->transientParent();
+			h->setTransientParent (mw);
+			QObject::connect (mw, &QWindow::visibleChanged, h, [h, mw, prev](bool v) { if (!v && h->transientParent() == mw) h->setTransientParent (prev); }); // back to its owner when the dialog closes
+		}
+	}
 	g_help->show();
 	g_help->raise();
 	g_help->activateWindow();

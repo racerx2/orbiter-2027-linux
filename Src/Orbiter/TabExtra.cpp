@@ -1539,7 +1539,7 @@ char *LaunchpadItem::Description ()
 bool LaunchpadItem::OpenDialog (void *hInst, QWidget *hLaunchpad, int resId, DLGINIT pDlg)
 {
 	// DialogBoxParam: modal, the item is the context of the set-up function
-	QDialog *dlg = qobject_cast<QDialog*> (oapiCreateResDialog (hInst, resId, hLaunchpad));
+	QDialog *dlg = qobject_cast<QDialog*> (CreateResDialog (hInst, resId, hLaunchpad, nullptr, false)); // not upstream: exec shows it after the set-up function
 	if (!dlg) return true;
 	if (pDlg) pDlg (dlg, this);
 	dlg->exec();

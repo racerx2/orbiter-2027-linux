@@ -143,8 +143,8 @@ class QComboBox;
 // command notifications of dialog controls (WM_COMMAND notification code counterparts)
 enum RESNOTIFY {
 	RESN_CLICKED,    // button clicked by the user (BN_CLICKED)
-	RESN_CHANGE,     // edit box text changed, also when set by the program (EN_CHANGE)
-	RESN_KILLFOCUS,  // edit box left, or Return pressed (EN_KILLFOCUS)
+	RESN_CHANGE,     // edit box text changed, also when set by the program; multi-line edits: by the user only (EN_CHANGE)
+	RESN_KILLFOCUS,  // edit box left after its text changed, or Return pressed (EN_KILLFOCUS)
 	RESN_SELCHANGE,  // combo box selection changed by the user (CBN_SELCHANGE); list box selection changed (LBN_SELCHANGE)
 	RESN_DBLCLK,     // list box item double-clicked (LBN_DBLCLK)
 	RESN_EDITCHANGE  // editable combo box text changed by the user (CBN_EDITCHANGE)

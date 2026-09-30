@@ -94,6 +94,16 @@ target_link_libraries(ResDialog.Test Qt6::Widgets DlgCtrl)
 orbiter_rc_resources(ResDialog.Test ${ORBITER_SOURCE_DIR}/Orbiter.rc EXE SYMBOL OrbiterResources)
 orbiter_rc_resources(ResDialog.Test ${CMAKE_CURRENT_SOURCE_DIR}/ResMenu.Test.rc SYMBOL TestMenuResources)
 set_tests_properties(ResDialog.Test PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
+# not upstream: help viewer (.chm pages, help window beside modal dialogs) and the ImGui Qt backend, offscreen
+find_package(Qt6 REQUIRED COMPONENTS Test)
+add_unit_test(ChmHelp.Test ${ORBITER_SOURCE_DIR}/ChmHelp.cpp ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
+target_link_libraries(ChmHelp.Test Qt6::Widgets Qt6::Test zlib)
+set_tests_properties(ChmHelp.Test PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
+add_unit_test(ImGuiQt.Test ${ORBITER_SOURCE_DIR}/imgui_impl_qt.cpp)
+target_link_libraries(ImGuiQt.Test Orbitersdk Qt6::Gui)
+set_tests_properties(ImGuiQt.Test PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
+# not upstream: rc2cpp's #if evaluator (C semantics, errors instead of tracebacks)
+add_test(NAME RcCond.Test COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/RcCond.Test.py ${ORBITER_SOURCE_ROOT_DIR}/cmake)
 
 if (BUILD_ORBITER_SERVER)
 

@@ -10,8 +10,10 @@
 #include <QDBusMessage>
 #include <QDBusMetaType>
 #include <QDBusObjectPath>
+#include <QDBusPendingCallWatcher>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <unistd.h>
 #include <wayland-client.h>
@@ -31,6 +33,7 @@ zwp_keyboard_shortcuts_inhibitor_v1 *inhibitor = nullptr;
 bool active = false;                             // the compositor applies the inhibitor
 bool tried = false;
 int modOnly = 0;                                 // modifier key pressed alone: a modifier-only shortcut on its release
+int gen = 0;                                     // session count: kglobalaccel replies of an earlier session are dropped
 
 struct Action { QString path, name; };           // kglobalaccel component object and shortcut; empty path: none
 std::map<int, Action> actions;                   // key combination (Qt key | modifiers) -> shortcut
@@ -100,36 +103,46 @@ void Invoke (const Action &a)
 	QDBusConnection::sessionBus().send (m);
 }
 
-QDBusMessage Call (const QString &path, const char *iface, const char *method)
+// asynchronous call: done gets the reply on the GUI thread, unless the call failed or the session changed since
+void Call (const QString &path, const char *iface, const char *method, std::function<void (const QDBusMessage&)> done)
 {
 	QDBusMessage m = QDBusMessage::createMethodCall (service, path, iface, method);
-	return QDBusConnection::sessionBus().call (m, QDBus::Block, 1000);
+	auto *w = new QDBusPendingCallWatcher (QDBusConnection::sessionBus().asyncCall (m), qApp);
+	QObject::connect (w, &QDBusPendingCallWatcher::finished, w, [done, g = gen](QDBusPendingCallWatcher *call) {
+		call->deleteLater();
+		if (g == gen && !call->isError()) done (call->reply());
+	});
 }
 
-// the shortcuts of kglobalaccel's active components, read at the start of a session
+// the shortcuts of kglobalaccel's active components, read at the start of a session without holding it up
 void Load ()
 {
 	actions.clear();
-	QDBusMessage r = Call ("/kglobalaccel", "org.kde.KGlobalAccel", "allComponents");
-	if (r.type() != QDBusMessage::ReplyMessage || r.arguments().isEmpty()) return;
-	for (const QDBusObjectPath &p : qdbus_cast<QList<QDBusObjectPath>> (r.arguments().at(0))) {
-		QDBusMessage a = Call (p.path(), "org.kde.kglobalaccel.Component", "isActive");
-		if (a.type() != QDBusMessage::ReplyMessage || a.arguments().isEmpty() || !a.arguments().at(0).toBool()) continue;
-		QDBusMessage s = Call (p.path(), "org.kde.kglobalaccel.Component", "allShortcutInfos");
-		if (s.type() != QDBusMessage::ReplyMessage || s.arguments().isEmpty()) continue;
-		const QDBusArgument arg = s.arguments().at(0).value<QDBusArgument>();
-		arg.beginArray();
-		while (!arg.atEnd()) {                   // name, friendly name, component and context names, keys, default keys
-			QString str[6];
-			QList<int> keys, defkeys;
-			arg.beginStructure();
-			for (QString &x : str) arg >> x;
-			arg >> keys >> defkeys;
-			arg.endStructure();
-			for (int k : keys) if (k) actions.emplace (k, Action{ p.path(), str[0] });
+	gen++;
+	Call ("/kglobalaccel", "org.kde.KGlobalAccel", "allComponents", [](const QDBusMessage &r) {
+		if (r.arguments().isEmpty()) return;
+		for (const QDBusObjectPath &p : qdbus_cast<QList<QDBusObjectPath>> (r.arguments().at(0))) {
+			QString path = p.path();
+			Call (path, "org.kde.kglobalaccel.Component", "isActive", [path](const QDBusMessage &a) {
+				if (a.arguments().isEmpty() || !a.arguments().at(0).toBool()) return;
+				Call (path, "org.kde.kglobalaccel.Component", "allShortcutInfos", [path](const QDBusMessage &s) {
+					if (s.arguments().isEmpty()) return;
+					const QDBusArgument arg = s.arguments().at(0).value<QDBusArgument>();
+					arg.beginArray();
+					while (!arg.atEnd()) {       // name, friendly name, component and context names, keys, default keys
+						QString str[6];
+						QList<int> keys, defkeys;
+						arg.beginStructure();
+						for (QString &x : str) arg >> x;
+						arg >> keys >> defkeys;
+						arg.endStructure();
+						for (int k : keys) if (k) actions.emplace (k, Action{ path, str[0] });
+					}
+					arg.endArray();
+				});
+			});
 		}
-		arg.endArray();
-	}
+	});
 }
 
 // the desktop's shortcut for a key combination; false if there is none
@@ -174,6 +187,7 @@ void WlShortcutsDetach ()
 	active = false;
 	modOnly = 0;
 	actions.clear();                             // the desktop's shortcuts may change until the next session
+	gen++;
 }
 
 bool WlShortcutsKey (QKeyEvent *e, bool orbiterKey)

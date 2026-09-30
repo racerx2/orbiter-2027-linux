@@ -8,6 +8,7 @@
 #include "Orbiter.h"
 #include "resource.h"
 #include "Log.h"
+#include "ResDialog.h" // not upstream: CreateResDialog
 #include <QKeyEvent>
 #include <QMoveEvent>
 #include <QPointer>
@@ -98,14 +99,13 @@ QWidget *DialogWin::OpenWindow ()
 	if (gc) gc->clbkPreOpenPopup();
 
 	if (!hWnd) { // otherwise window exists already
-		hWnd = oapiCreateResDialog (hInst, resId, NULL, hPrnt);
+		hWnd = CreateResDialog (hInst, resId, NULL, hPrnt, false); // not upstream: WS_VISIBLE shown below after WM_INITDIALOG, without activation
 		if (!hWnd) {
 			LOGOUT_ERR ("Dialog resource %d not found", resId);
 			dlg_create = 0;
 			return NULL;
 		}
 		newwin = true;
-		hWnd->hide(); // not upstream: WS_VISIBLE, shown below after WM_INITDIALOG and without activation
 	}
 	hWnd->setProperty ("DialogWin", QVariant::fromValue ((void*)this)); // DWLP_USER
 	if (!events) events = new DialogEvents (hWnd);
