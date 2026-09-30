@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <thread>
+#include <atomic>
 
 class QVulkanInstance;
 class VkDev;
@@ -113,6 +114,7 @@ public:
 	bool external;         // swapchain image: not owned
 	bool autoGenMips = false; // D3DUSAGE_AUTOGENMIPMAP: the sublevels follow level 0
 	bool mipsDirty = false;   // level 0 changed since the sublevels were made
+	bool selfSampleLogged = false; // a draw that also renders into it was given the default texture (logged once)
 
 	VkTex (VkDev *dev, VkImage image, VkFormat fmt, UINT w, UINT h); // wraps an image owned elsewhere
 	VkTex (VkDev *dev, VkFormat fmt, UINT w, UINT h, UINT d, VkImageUsageFlags usage); // volume texture, one level
@@ -169,6 +171,8 @@ public:
 	VkDev (QVulkanInstance *inst, VkPhysicalDevice phys);
 	~VkDev ();
 	bool IsOK () const { return dev != VK_NULL_HANDLE && ok; }
+	bool Lost (VkResult r);                          // VK_ERROR_DEVICE_LOST: the device is failed from now on (IsOK false)
+	bool IsAttachment (const VkTex *t) const;        // t is a render target or the depth buffer of the next draw
 	bool IsRecording () const { return recording; }
 
 	// frame
@@ -299,7 +303,7 @@ private:
 	void ReplayState ();
 	void ApplySampleLocations ();
 	VkSampleCountFlags sampleLocationCounts;
-	void ReleaseDone ();                             // runs the deferred releases whose frames the GPU has finished
+	void ReleaseDone (bool all);                     // runs the deferred releases whose frames the GPU has finished (all: every one)
 	void DrawCopy (VkTex *src, VkSurf *dst, const RECT &d); // StretchRect into a multisampled target
 	VkShaderEXT copyVS, copyFS;
 
@@ -312,7 +316,8 @@ private:
 	} frame[NFRAMES];
 	int iFrame;
 	bool recording;
-	bool ok;                                         // false: made, but something the client needs failed (IsOK)
+	std::atomic<bool> ok;                            // false: made, but something the client needs failed, or a submit failed (IsOK); loader threads read it
+	bool idle = false;                               // a failed device waited idle: nothing is in flight (queueLock)
 	std::thread::id owner;                           // the render thread (the one that made the device)
 	VkSemaphore timeline;
 	uint64_t timelineValue;

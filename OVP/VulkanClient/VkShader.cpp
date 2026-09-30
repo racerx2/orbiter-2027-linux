@@ -318,6 +318,11 @@ void VkConstBuffer::Push (const std::vector<VkSamplerSlot> &samplers)
 		if (s.binding < VkDev::NUBOS || s.binding >= VkDev::MAXBINDINGS) continue;
 		auto it = tex.find (s.binding);
 		bool set = (it != tex.end() && it->second.tex && it->second.tex->img);
+		if (set && dev->IsAttachment (it->second.tex)) { // a render target of this draw (an IPI keeps a stage from its last pass): black, as an unset stage; D3D9 left such reads undefined
+			if (!it->second.tex->selfSampleLogged) LogDbg("Orange", "VkConstBuffer: binding %d reads a render target of the same draw (%ux%u, format %d), the default texture is bound", s.binding, it->second.tex->w, it->second.tex->h, (int)it->second.tex->fmt);
+			it->second.tex->selfSampleLogged = true;
+			set = false;
+		}
 		VkTex *t = set ? it->second.tex : dev->DefaultTexture (s.view);
 		dev->PrepareSample (t);
 		ii[ni] = { dev->Sampler (set ? it->second.s : defSampler), t->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };

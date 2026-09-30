@@ -663,25 +663,27 @@ int CD3DFramework9::Present()
 	if (!pDevice || !pDevice->IsRecording()) return -1;
 	pDevice->EndRendering();
 
-	if (hWnd && !hWnd->isExposed()) { // hidden or minimized: no acquire, which may never return; the frame still runs
+	bool failed = !pDevice->IsOK(); // a failed device: the frame ends unsubmitted, nothing is acquired or presented
+	if (failed || (hWnd && !hWnd->isExposed())) { // hidden or minimized: no acquire, which may never return; the frame still runs
 		pDevice->EndFrame(VK_NULL_HANDLE, VK_NULL_HANDLE);
 		pDevice->BeginFrame();
-		if (!bNoVSync) { // paced as FIFO presenting would have
-			QScreen *s = hWnd->screen();
+		if (failed || !bNoVSync) { // paced as FIFO presenting would have (a failed device never spins)
+			QScreen *s = hWnd ? hWnd->screen() : nullptr;
 			double hz = (s && s->refreshRate() > 1.0) ? s->refreshRate() : 60.0;
 			std::this_thread::sleep_for(std::chrono::microseconds((long long)(1e6 / hz)));
 		}
-		return 0;
+		return failed ? -1 : 0;
 	}
 
 	UINT idx = 0;
 	VkSemaphore acq = acquireSem[iAcquire];
 	VkResult r = swapchain ? vkAcquireNextImageKHR(pDevice->dev, swapchain, UINT64_MAX, acq, VK_NULL_HANDLE, &idx) : VK_ERROR_OUT_OF_DATE_KHR;
+	pDevice->Lost(r);
 	if (r == VK_ERROR_OUT_OF_DATE_KHR || r < 0) { // run the frame without showing it, then follow the window size
 		pDevice->EndFrame(VK_NULL_HANDLE, VK_NULL_HANDLE);
-		CreateSwapchain();
+		if (pDevice->IsOK()) CreateSwapchain(); // not after a lost device
 		pDevice->BeginFrame();
-		return 0;
+		return pDevice->IsOK() ? 0 : -1;
 	}
 	iAcquire = (iAcquire + 1) % VkDev::NFRAMES;
 
@@ -722,11 +724,9 @@ int CD3DFramework9::Present()
 	vkCmdBlitImage2(cmd, &bi);
 	SwapBarrier(cmd, swapImages[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
-	if (!pDevice->EndFrame(acq, presentSem[idx])) { // not submitted: presentSem stays unsignalled, a new swapchain takes the acquired image back
-		pDevice->WaitIdle();
-		CreateSwapchain();
+	if (!pDevice->EndFrame(acq, presentSem[idx])) { // not submitted: the device is failed, nothing more is presented (the image stays with the swapchain until it is destroyed)
 		pDevice->BeginFrame();
-		return 0;
+		return -1;
 	}
 
 	VkPresentInfoKHR pi = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };

@@ -819,10 +819,14 @@ VkDev::~VkDev ()
 	vkDestroyDevice (dev, NULL);
 }
 
-void VkDev::ReleaseDone ()
+void VkDev::ReleaseDone (bool all)
 {
 	uint64_t done = 0;
-	VKCHECK(vkGetSemaphoreCounterValue (dev, timeline, &done));
+	if (all) done = UINT64_MAX; // a failed device: BeginFrame waited idle and nothing is submitted any more, so everything goes
+	else {
+		VkResult r = vkGetSemaphoreCounterValue (dev, timeline, &done);
+		if (r < 0) { if (!Lost (r)) VKCHECK(r); done = 0; }
+	}
 	std::vector<std::function<void()>> rel;
 	{
 		std::lock_guard<std::mutex> lock (queueLock);
@@ -843,7 +847,9 @@ void VkDev::Defer (std::function<void()> release)
 void VkDev::WaitIdle ()
 {
 	std::lock_guard<std::mutex> lock (queueLock);
-	vkQueueWaitIdle (queue);
+	if (idle) return; // once for a failed device: NVIDIA's driver grows a buffer on every idle wait of a queue that gets no submits
+	Lost (vkQueueWaitIdle (queue));
+	if (!ok) idle = true;
 }
 
 // frames
@@ -852,14 +858,17 @@ VkCommandBuffer VkDev::BeginFrame ()
 {
 	iFrame = (iFrame + 1) % NFRAMES;
 	Frame &f = frame[iFrame];
-	if (f.done) {
+	if (f.done && ok) {
 		VkSemaphoreWaitInfo wi = { VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO };
 		wi.semaphoreCount = 1;
 		wi.pSemaphores = &timeline;
 		wi.pValues = &f.done;
-		VKCHECK(vkWaitSemaphores (dev, &wi, UINT64_MAX));
+		VkResult r = vkWaitSemaphores (dev, &wi, UINT64_MAX);
+		if (r < 0 && !Lost (r)) VKCHECK(r);
 	}
-	ReleaseDone ();
+	bool failed = !ok; // read once: a loader thread can fail the device in between
+	if (failed) WaitIdle (); // a failed device (here or on a loader thread): nothing is left in flight when ReleaseDone frees everything
+	ReleaseDone (failed);
 	f.transientUsed = 0;
 	VKCHECK(vkResetCommandPool (dev, f.pool, 0));
 	VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
@@ -885,9 +894,7 @@ bool VkDev::EndFrame (VkSemaphore wait, VkSemaphore signal)
 	ws.stageMask = VK_PIPELINE_STAGE_2_BLIT_BIT; // only the Present blit writes the swapchain image (its barrier chains with this stage): the rest of the frame doesn't wait for the acquire
 	VkSemaphoreSubmitInfo ss[2] = { { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO }, { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO } };
 	std::lock_guard<std::mutex> lock (queueLock);
-	f.done = ++timelineValue;
 	ss[0].semaphore = timeline;
-	ss[0].value = f.done;
 	ss[0].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
 	ss[1].semaphore = signal;
 	ss[1].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
@@ -898,18 +905,23 @@ bool VkDev::EndFrame (VkSemaphore wait, VkSemaphore signal)
 	si.pCommandBufferInfos = &ci;
 	si.signalSemaphoreInfoCount = signal ? 2 : 1;
 	si.pSignalSemaphoreInfos = ss;
-	VkResult r = vkQueueSubmit2 (queue, 1, &si, VK_NULL_HANDLE);
-	if (r >= 0) return true;
-	LogErr("VkDev: vkQueueSubmit2 failed (%d), the device is unusable", (int)r); // the frame held uploads and layout changes the trackers already count as done
-	ok = false;
-	f.done = --timelineValue; // never signalled otherwise: the next wait on this slot would hang
+	if (ok) { // a failed device submits nothing more (tested under the lock: a loader thread can fail it too)
+		f.done = ++timelineValue;
+		ss[0].value = f.done;
+		VkResult r = vkQueueSubmit2 (queue, 1, &si, VK_NULL_HANDLE);
+		if (r >= 0) return true;
+		LogErr("VkDev: vkQueueSubmit2 failed (%d), the device is unusable", (int)r); // the frame held uploads and layout changes the trackers already count as done
+		ok = false;
+		f.done = --timelineValue; // never signalled otherwise: the next wait on this slot would hang
+	}
 	if (wait) { // the acquire semaphore is still waited on, so it can be used again
 		VkSubmitInfo2 wi = { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
 		wi.waitSemaphoreInfoCount = 1;
 		wi.pWaitSemaphoreInfos = &ws;
 		vkQueueSubmit2 (queue, 1, &wi, VK_NULL_HANDLE);
+		idle = false;
 	}
-	return false;
+	return false; // the caller's BeginFrame or WaitIdle waits idle
 }
 
 void VkDev::Flush ()
@@ -946,11 +958,18 @@ void VkDev::EndOneTime (VkCommandBuffer cmd)
 	VkSubmitInfo2 si = { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
 	si.commandBufferInfoCount = 1;
 	si.pCommandBufferInfos = &ci;
+	VkResult r = VK_ERROR_DEVICE_LOST;
 	{
 		std::lock_guard<std::mutex> lock (queueLock);
-		VKCHECK(vkQueueSubmit2 (queue, 1, &si, fence));
+		if (ok) { // a failed device submits nothing more
+			r = vkQueueSubmit2 (queue, 1, &si, fence);
+			if (r < 0) { LogErr("VkDev: one-time vkQueueSubmit2 failed (%d), the device is unusable", (int)r); ok = false; }
+		}
 	}
-	VKCHECK(vkWaitForFences (dev, 1, &fence, VK_TRUE, UINT64_MAX));
+	if (r >= 0) { // a failed or skipped submit signals nothing: no wait
+		VkResult w = vkWaitForFences (dev, 1, &fence, VK_TRUE, UINT64_MAX);
+		if (w < 0 && !Lost (w)) VKCHECK(w);
+	}
 	vkDestroyFence (dev, fence, NULL);
 	vkFreeCommandBuffers (dev, oneTimePool, 1, &cmd);
 	oneTimeLock.unlock ();
@@ -1022,6 +1041,7 @@ void VkDev::SetRenderTarget (VkSurf *color, VkSurf *depth)
 	EndRendering ();
 	rtColor = color;
 	rtDepth = depth;
+	if (cbActive) cbActive->Invalidate (); // the next draw pushes its textures against these targets (IsAttachment)
 	// D3D9: setting render target 0 resets the viewport to the whole target
 	VkSurf *t = color ? color : depth;
 	if (t) SetViewport (0.0f, 0.0f, (float)t->w, (float)t->h);
@@ -1033,6 +1053,7 @@ void VkDev::SetRenderTargetN (UINT idx, VkSurf *color)
 	if (idx > 3 || rtExtra[idx - 1] == color) return;
 	EndRendering ();
 	rtExtra[idx - 1] = color;
+	if (cbActive) cbActive->Invalidate ();
 }
 void VkDev::ForgetTexture (const VkTex *t)
 {
@@ -1055,6 +1076,23 @@ void VkDev::ForgetTarget (const VkSurf *s)
 	if (rtColor == s) rtColor = NULL;
 	if (rtDepth == s) rtDepth = NULL;
 	for (auto &e : rtExtra) if (e == s) e = NULL;
+	if (cbActive) cbActive->Invalidate ();
+}
+
+bool VkDev::IsAttachment (const VkTex *t) const
+{
+	if (!t) return false;
+	if (rtDepth && rtDepth->tex == t) return true;
+	VkSurf *c[4] = { rtColor, rtExtra[0], rtExtra[1], rtExtra[2] };
+	for (UINT n = 0; rtColor && n < 4 && c[n]; n++) if (c[n]->tex == t) return true; // the list BeginRendering attaches
+	return false;
+}
+
+bool VkDev::Lost (VkResult r)
+{
+	if (r != VK_ERROR_DEVICE_LOST) return false;
+	if (ok.exchange (false)) LogErr("VkDev: the device is lost");
+	return true;
 }
 
 void VkDev::BeginRendering ()
@@ -1537,7 +1575,9 @@ VkTex *VkDev::DefaultTexture (VkImageViewType type)
 VkResult VkDev::QueuePresent (const VkPresentInfoKHR *pi)
 {
 	std::lock_guard<std::mutex> lock (queueLock);
-	return vkQueuePresentKHR (queue, pi);
+	VkResult r = vkQueuePresentKHR (queue, pi);
+	Lost (r);
+	return r;
 }
 
 // surface operations

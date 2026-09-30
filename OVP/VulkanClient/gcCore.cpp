@@ -135,17 +135,18 @@ void gcSwap::Init(VkDev *pDev, VkFormat fmt, VkExtent2D ext)
 void gcSwap::Present()
 {
 	VkDev *pDev = g_client->GetDevice();
-	if (!pSwap || !pDev->IsRecording()) return;
+	if (!pSwap || !pDev->IsRecording() || !pDev->IsOK()) return; // a failed device acquires nothing more
 	if (hWnd && !hWnd->isExposed()) return; // hidden or minimized: nothing to show
 	UINT idx = 0;
 	VkSemaphore acq = acquireSem[iAcquire];
 	VkResult r = vkAcquireNextImageKHR(pDev->dev, pSwap, UINT64_MAX, acq, VK_NULL_HANDLE, &idx);
+	pDev->Lost(r);
 	if (r < 0) { LogErr("gcSwap: vkAcquireNextImageKHR() Failed (%d)", (int)r); return; } // out of date: the owner registers the window again
 	iAcquire = (iAcquire + 1) % VkDev::NFRAMES;
 
 	pDev->StretchRect(pBack, NULL, pImage[idx], NULL, VK_FILTER_LINEAR);
 	pImage[idx]->tex->Transition(pDev->Cmd(), VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-	if (!pDev->EndFrame(acq, presentSem[idx])) { pDev->BeginFrame(); return; } // not submitted: no present on an unsignalled semaphore
+	if (!pDev->EndFrame(acq, presentSem[idx])) { pDev->BeginFrame(); return; } // not submitted: the device is failed, no present on an unsignalled semaphore and no acquire after this
 
 	VkPresentInfoKHR pi = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
 	pi.waitSemaphoreCount = 1;
