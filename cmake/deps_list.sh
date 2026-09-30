@@ -31,6 +31,10 @@ owner() {
 QT=$(dirname "$(path_of libQt6Core.so.6)")/qt6/plugins
 RUNTIME=$(ls "$QT"/platforms/libqxcb.so "$QT"/platforms/libqwayland*.so "$QT"/wayland-shell-integration/libxdg-shell.so \
 	"$QT"/imageformats/libqjpeg.so "$QT"/imageformats/libqico.so 2>/dev/null)
+# custom: launcher skins; the QML modules the Horizon skin imports, found through their qmldir files at run time
+QMLDIR=$(dirname "$(path_of libQt6Core.so.6)")/qt6/qml
+QMLRT=$(ls "$QMLDIR"/QtQuick/qmldir "$QMLDIR"/QtQml/qmldir "$QMLDIR"/QML/qmldir "$QMLDIR"/QtQml/Models/qmldir \
+	"$QMLDIR"/QtQml/WorkerScript/qmldir 2>/dev/null)
 # loaded with dlopen (XRSound's PipeWire), so no NEEDED names them either
 DLOPEN="libpipewire-0.3.so.0"
 dl_path() { PATH=$PATH:/usr/sbin:/sbin ldconfig -p | awk -v n="$1" '$1 == n && /x86-64/ { print $NF; exit }'; }
@@ -42,11 +46,15 @@ dl_path() { PATH=$PATH:/usr/sbin:/sbin ldconfig -p | awk -v n="$1" '$1 == n && /
 	if command -v dpkg >/dev/null; then
 		for lib in $NEEDED; do p=$(path_of "$lib"); [ -n "$p" ] && echo "apt $(owner "$p")"; done
 		for f in $RUNTIME; do echo "apt $(owner "$f")"; done
+		for f in $QMLRT; do echo "apt $(owner "$f")"; done # custom: launcher skins
 		for lib in $DLOPEN; do p=$(dl_path "$lib"); [ -n "$p" ] && echo "apt $(owner "$p")"; done
 	fi
 	for lib in $NEEDED $DLOPEN; do echo "rpm $lib()(64bit)"; done
 	echo "dnf qt6-qtwayland"
 	echo "zypper qt6-wayland"
+	echo "dnf qt6-qtdeclarative" # custom: launcher skins
+	echo "zypper qt6-declarative-imports" # custom: launcher skins
 	for p in qt6-base qt6-wayland libpng vulkan-icd-loader libpipewire libglvnd glu; do echo "pacman $p"; done
+	echo "pacman qt6-declarative" # custom: launcher skins
 } | awk 'NF > 1 && !seen[$0]++' >"$OUT"
 echo "deps_list.sh: $(awk '$1 == "apt"' "$OUT" | wc -l) apt, $(awk '$1 == "rpm"' "$OUT" | wc -l) rpm entries in $OUT"

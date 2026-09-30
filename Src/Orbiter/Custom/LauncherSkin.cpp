@@ -273,6 +273,7 @@ bool custom::LauncherSkin::LoadModule (QString &err)
 	module = h; // stays loaded until exit
 	qmlCreate = c;
 	qmlDestroy = d;
+	qmlFocus = (LauncherQmlFocusFn)dlsym (h, LAUNCHERQML_FOCUS);
 	return true;
 }
 
@@ -342,6 +343,14 @@ void custom::LauncherSkin::EnterSkinView ()
 	view->setFocus ();
 	mode = SKIN;
 	UpdateActive ();
+	QMetaObject::invokeMethod (this, [this]() { FocusSkin (); }, Qt::QueuedConnection);
+}
+
+void custom::LauncherSkin::FocusSkin ()
+{
+	if (torn || !InSkinView ()) return;
+	if (!view->hasFocus ()) view->setFocus (Qt::ActiveWindowFocusReason);
+	if (qmlFocus) qmlFocus (view); // the QML root loses its focus while the view isn't shown or active
 }
 
 void custom::LauncherSkin::EnterClassicView ()
@@ -383,8 +392,9 @@ void custom::LauncherSkin::ApplyMinSize (bool skin)
 	int aw = std::max (CLASSIC_MINW, avail.width ()), ah = std::max (CLASSIC_MINH, avail.height ());
 	int mw = std::clamp (active.minWidth, CLASSIC_MINW, aw);
 	int mh = std::clamp (active.minHeight, CLASSIC_MINH, ah);
+	bool small = (dlg->width () < mw || dlg->height () < mh); // before setMinimumSize grows it to the minimum
 	dlg->setMinimumSize (mw, mh);
-	if (dlg->width () < mw || dlg->height () < mh) {
+	if (small) {
 		int tw = std::clamp (active.width > 0 ? active.width : mw, mw, aw);
 		int th = std::clamp (active.height > 0 ? active.height : mh, mh, ah);
 		dlg->resize (std::max (dlg->width (), tw), std::max (dlg->height (), th));
@@ -424,6 +434,7 @@ bool custom::LauncherSkin::eventFilter (QObject *obj, QEvent *event)
 			QMetaObject::invokeMethod (this, [this]() { OnDialogHidden (); }, Qt::QueuedConnection);
 			break;
 		case QEvent::WindowActivate:
+			QMetaObject::invokeMethod (this, [this]() { FocusSkin (); }, Qt::QueuedConnection); // keys go to the skin
 			UpdateActive ();
 			ScheduleTry ();
 			break;

@@ -71,7 +71,7 @@ Item {
             Repeater {
                 model: page.topFolders
                 FilterChip {
-                    width: Math.min(implicitWidth, railCol.width)
+                    maxWidth: railCol.width
                     label: modelData.name
                     count: "" + page.countIn(modelData.path)
                     active: page.view === "FOLDER" && page.query === "" && (page.folder === modelData.path || page.folder.indexOf(modelData.path + "/") === 0)

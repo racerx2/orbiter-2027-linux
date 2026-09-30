@@ -22,8 +22,10 @@ struct LauncherQmlInit {
 
 typedef QWidget *(*LauncherQmlCreateFn) (const LauncherQmlInit *init, char *err, int errlen);
 typedef void (*LauncherQmlDestroyFn) (QWidget *view);
+typedef void (*LauncherQmlFocusFn) (QWidget *view); // gives the skin's root item the active focus (keys reach the skin)
 
 #define LAUNCHERQML_CREATE "LauncherQml_Create"
 #define LAUNCHERQML_DESTROY "LauncherQml_Destroy"
+#define LAUNCHERQML_FOCUS "LauncherQml_Focus"
 
 #endif // !__CUSTOM_LAUNCHERQMLABI_H

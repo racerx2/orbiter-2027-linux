@@ -53,6 +53,7 @@ namespace {
 	{
 		s.replace ("\r\n", "\n");
 		s.remove ('\r');
+		s.remove (QChar (0xFFFC)); // images of the HTML description, as QTextDocument's plain text marks them
 		return s.trimmed ();
 	}
 

@@ -12,6 +12,7 @@
 #include <QQmlEngine>
 #include <QQmlError>
 #include <QQmlNetworkAccessManagerFactory>
+#include <QQuickItem>
 #include <QQuickWidget>
 #include <QSet>
 #include <QTemporaryDir>
@@ -203,6 +204,13 @@ extern "C" Q_DECL_EXPORT QWidget *LauncherQml_Create (const LauncherQmlInit *ini
 	}
 	Log ("view created for " + skinDir);
 	return view;
+}
+
+extern "C" Q_DECL_EXPORT void LauncherQml_Focus (QWidget *view)
+{
+	QQuickWidget *w = qobject_cast<QQuickWidget*> (view);
+	QQuickItem *root = (w ? w->rootObject () : nullptr);
+	if (root && !root->hasActiveFocus ()) root->forceActiveFocus (); // the focus inside the root's scope stays where it was
 }
 
 extern "C" Q_DECL_EXPORT void LauncherQml_Destroy (QWidget *view)

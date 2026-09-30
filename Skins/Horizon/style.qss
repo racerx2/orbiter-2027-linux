@@ -1,7 +1,7 @@
 /* Horizon: the classic pages opened from the skin, in its colours; colours, borders and backgrounds only */
 QWidget { background-color: #070c16; color: #eef3fb; selection-background-color: #f5a524; selection-color: #1b1203; }
 QLabel, QCheckBox, QRadioButton { background-color: transparent; }
-QWidget#IDC_BLACKBOX { background-color: #000000; color: #f0b0b0; }
+QWidget#IDC_BLACKBOX { background-color: #000000; color: #b0b0f0; }
 QPushButton { background-color: #0f1828; border: 1px solid #253247; border-radius: 3px; }
 QPushButton:hover { background-color: #172338; border-color: #3c4f6d; }
 QPushButton:pressed, QPushButton:checked { background-color: #f5a524; color: #1b1203; border-color: #f5a524; }

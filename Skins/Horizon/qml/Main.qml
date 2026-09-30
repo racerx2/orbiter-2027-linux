@@ -2,15 +2,17 @@ import QtQuick
 import Orbiter.Launcher 1.0
 
 // Horizon launcher skin: backdrop, top bar and footer; the pages load below the bar
-Rectangle {
+FocusScope {
     id: app
-    color: Theme.bg
+    focus: true
     readonly property var pages: ({ PLAY: "PlayPage.qml", SCENARIOS: "ScenariosPage.qml", ADDONS: "AddonsPage.qml", SETTINGS: "SettingsPage.qml", ABOUT: "AboutPage.qml" })
     readonly property string page: (Launcher.page in pages) ? Launcher.page : "PLAY"
     readonly property bool live: Launcher.active
     readonly property real margin: width < 1300 ? 44 : 72
     function go(p) { if (p in pages) Launcher.page = p; }
     function notice(msg) { toast.show(msg); }
+
+    Rectangle { anchors.fill: parent; color: Theme.bg }
 
     // backdrop: animated only while the Launchpad is the active window
     Item {
@@ -77,7 +79,9 @@ Rectangle {
         width: parent.width; height: parent.height - 81 - 58
         source: app.pages[app.page]
         focus: true
+        onLoaded: forceActiveFocus()
     }
+    Component.onCompleted: pager.forceActiveFocus()
 
     // footer
     Rectangle { x: app.margin; y: parent.height - 58; width: parent.width - 2 * app.margin; height: 1; color: Theme.line }

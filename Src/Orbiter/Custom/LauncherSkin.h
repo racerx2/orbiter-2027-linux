@@ -62,6 +62,7 @@ namespace custom {
 		bool CreateView (QString &err);
 		void DestroyView ();
 		void EnterSkinView ();
+		void FocusSkin ();
 		void BackToSkin ();
 		void ApplyMinSize (bool skin);
 		void PlaceBack ();
@@ -101,6 +102,7 @@ namespace custom {
 		void *module = nullptr;
 		LauncherQmlCreateFn qmlCreate = nullptr;
 		LauncherQmlDestroyFn qmlDestroy = nullptr;
+		LauncherQmlFocusFn qmlFocus = nullptr;
 	};
 
 }
