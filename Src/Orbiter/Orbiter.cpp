@@ -74,7 +74,7 @@ using namespace oapi;
 
 //#define OUTPUT_TEXTURE_INFO
 
-#define KEYDOWN(name,key) (name[key] & 0x80) 
+// not upstream: KEYDOWN comes from OrbiterAPI.h (same expansion)
 
 const int MAX_TEXTURE_BUFSIZE = 8000000;
 // Texture manager buffer size. Should be determined from
@@ -701,7 +701,7 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 	DWORD i;
 
 	SetLogVerbosity (pCfg->CfgDebugPrm.bVerboseLog);
-	LOGOUT("");
+	LOGOUT("%s", ""); // not upstream: blank line, "" is a zero-length format to GCC
 	LOGOUT("**** Creating simulation session");
 
 	m_pLaunchpad->Hide(); // hide launchpad dialog while the render window is visible

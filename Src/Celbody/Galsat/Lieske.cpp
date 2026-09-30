@@ -717,89 +717,97 @@ int cd2com (const char *fname)
 /* common blocks /ebblok/ /trmblk/ /angblk/ /theory/ */
 
     int i;
+    int bad = 0; // not upstream: set by any read that fails
     FILE *fdat = fopen(fname, "rt");
 
     if (fdat) {
         /* read ebblok */
-        for (i = 0; i < 28; i++) fscanf(fdat, "%lf", ebblok_1.earay + i);
-        for (i = 0; i < 22; i++) fscanf(fdat, "%lf", ebblok_1.baray + i);
-        for (i = 0; i < 28; i++) fscanf(fdat, "%lf", ebblok_1.paray + i);
+        for (i = 0; i < 28; i++) bad |= fscanf(fdat, "%lf", ebblok_1.earay + i) != 1;
+        for (i = 0; i < 22; i++) bad |= fscanf(fdat, "%lf", ebblok_1.baray + i) != 1;
+        for (i = 0; i < 28; i++) bad |= fscanf(fdat, "%lf", ebblok_1.paray + i) != 1;
 
         /* read trmblk */
-        for (i = 0; i < 53; i++) fscanf(fdat, "%lf", trmblk_1.trmcod + i);
+        for (i = 0; i < 53; i++) bad |= fscanf(fdat, "%lf", trmblk_1.trmcod + i) != 1;
 
         /* read angblk */
-        for (i = 0; i < 99; i++) fscanf(fdat, "%lf", angblk_1.angcod + i);
-        for (i = 0; i < 99; i++) fscanf(fdat, "%lf", angblk_1.ratcod + i);
-        for (i = 0; i < 22; i++) fscanf(fdat, "%lf", angblk_1.ang + i);
-        for (i = 0; i < 23; i++) fscanf(fdat, "%lf", angblk_1.rat + i);
+        for (i = 0; i < 99; i++) bad |= fscanf(fdat, "%lf", angblk_1.angcod + i) != 1;
+        for (i = 0; i < 99; i++) bad |= fscanf(fdat, "%lf", angblk_1.ratcod + i) != 1;
+        for (i = 0; i < 22; i++) bad |= fscanf(fdat, "%lf", angblk_1.ang + i) != 1;
+        for (i = 0; i < 23; i++) bad |= fscanf(fdat, "%lf", angblk_1.rat + i) != 1;
 
         /* read theory */
-        for (i = 0; i < 4; i++) fscanf(fdat, "%lf", theory_1.axis + i);
-        for (i = 0; i < 10; i++) fscanf(fdat, "%lf", theory_1.cxi1 + i);
-        for (i = 0; i < 10; i++) fscanf(fdat, "%lf", theory_1.argx1 + i);
-        for (i = 0; i < 10; i++) fscanf(fdat, "%lf", theory_1.ratx1 + i);
-        for (i = 0; i < 7; i++) fscanf(fdat, "%lf", theory_1.cz1 + i);
-        for (i = 0; i < 7; i++) fscanf(fdat, "%lf", theory_1.argz1 + i);
-        for (i = 0; i < 7; i++) fscanf(fdat, "%lf", theory_1.ratz1 + i);
-        for (i = 0; i < 41; i++) fscanf(fdat, "%lf", theory_1.cv1 + i);
-        for (i = 0; i < 41; i++) fscanf(fdat, "%lf", theory_1.argv1 + i);
-        for (i = 0; i < 41; i++) fscanf(fdat, "%lf", theory_1.ratv1 + i);
-        for (i = 0; i < 24; i++) fscanf(fdat, "%lf", theory_1.cxi2 + i);
-        for (i = 0; i < 24; i++) fscanf(fdat, "%lf", theory_1.argx2 + i);
-        for (i = 0; i < 24; i++) fscanf(fdat, "%lf", theory_1.ratx2 + i);
-        for (i = 0; i < 11; i++) fscanf(fdat, "%lf", theory_1.cz2 + i);
-        for (i = 0; i < 11; i++) fscanf(fdat, "%lf", theory_1.argz2 + i);
-        for (i = 0; i < 11; i++) fscanf(fdat, "%lf", theory_1.ratz2 + i);
-        for (i = 0; i < 66; i++) fscanf(fdat, "%lf", theory_1.cv2 + i);
-        for (i = 0; i < 66; i++) fscanf(fdat, "%lf", theory_1.argv2 + i);
-        for (i = 0; i < 66; i++) fscanf(fdat, "%lf", theory_1.ratv2 + i);
-        for (i = 0; i < 31; i++) fscanf(fdat, "%lf", theory_1.cxi3 + i);
-        for (i = 0; i < 31; i++) fscanf(fdat, "%lf", theory_1.argx3 + i);
-        for (i = 0; i < 31; i++) fscanf(fdat, "%lf", theory_1.ratx3 + i);
-        for (i = 0; i < 13; i++) fscanf(fdat, "%lf", theory_1.cz3 + i);
-        for (i = 0; i < 13; i++) fscanf(fdat, "%lf", theory_1.argz3 + i);
-        for (i = 0; i < 13; i++) fscanf(fdat, "%lf", theory_1.ratz3 + i);
-        for (i = 0; i < 75; i++) fscanf(fdat, "%lf", theory_1.cv3 + i);
-        for (i = 0; i < 75; i++) fscanf(fdat, "%lf", theory_1.argv3 + i);
-        for (i = 0; i < 75; i++) fscanf(fdat, "%lf", theory_1.ratv3 + i);
-        for (i = 0; i < 49; i++) fscanf(fdat, "%lf", theory_1.cxi4 + i);
-        for (i = 0; i < 49; i++) fscanf(fdat, "%lf", theory_1.argx4 + i);
-        for (i = 0; i < 49; i++) fscanf(fdat, "%lf", theory_1.ratx4 + i);
-        for (i = 0; i < 18; i++) fscanf(fdat, "%lf", theory_1.cz4 + i);
-        for (i = 0; i < 18; i++) fscanf(fdat, "%lf", theory_1.argz4 + i);
-        for (i = 0; i < 18; i++) fscanf(fdat, "%lf", theory_1.ratz4 + i);
-        for (i = 0; i < 89; i++) fscanf(fdat, "%lf", theory_1.cv4 + i);
-        for (i = 0; i < 89; i++) fscanf(fdat, "%lf", theory_1.argv4 + i);
-        for (i = 0; i < 89; i++) fscanf(fdat, "%lf", theory_1.ratv4 + i);
-        fscanf(fdat, "%lf", &theory_1.epsln);
+        for (i = 0; i < 4; i++) bad |= fscanf(fdat, "%lf", theory_1.axis + i) != 1;
+        for (i = 0; i < 10; i++) bad |= fscanf(fdat, "%lf", theory_1.cxi1 + i) != 1;
+        for (i = 0; i < 10; i++) bad |= fscanf(fdat, "%lf", theory_1.argx1 + i) != 1;
+        for (i = 0; i < 10; i++) bad |= fscanf(fdat, "%lf", theory_1.ratx1 + i) != 1;
+        for (i = 0; i < 7; i++) bad |= fscanf(fdat, "%lf", theory_1.cz1 + i) != 1;
+        for (i = 0; i < 7; i++) bad |= fscanf(fdat, "%lf", theory_1.argz1 + i) != 1;
+        for (i = 0; i < 7; i++) bad |= fscanf(fdat, "%lf", theory_1.ratz1 + i) != 1;
+        for (i = 0; i < 41; i++) bad |= fscanf(fdat, "%lf", theory_1.cv1 + i) != 1;
+        for (i = 0; i < 41; i++) bad |= fscanf(fdat, "%lf", theory_1.argv1 + i) != 1;
+        for (i = 0; i < 41; i++) bad |= fscanf(fdat, "%lf", theory_1.ratv1 + i) != 1;
+        for (i = 0; i < 24; i++) bad |= fscanf(fdat, "%lf", theory_1.cxi2 + i) != 1;
+        for (i = 0; i < 24; i++) bad |= fscanf(fdat, "%lf", theory_1.argx2 + i) != 1;
+        for (i = 0; i < 24; i++) bad |= fscanf(fdat, "%lf", theory_1.ratx2 + i) != 1;
+        for (i = 0; i < 11; i++) bad |= fscanf(fdat, "%lf", theory_1.cz2 + i) != 1;
+        for (i = 0; i < 11; i++) bad |= fscanf(fdat, "%lf", theory_1.argz2 + i) != 1;
+        for (i = 0; i < 11; i++) bad |= fscanf(fdat, "%lf", theory_1.ratz2 + i) != 1;
+        for (i = 0; i < 66; i++) bad |= fscanf(fdat, "%lf", theory_1.cv2 + i) != 1;
+        for (i = 0; i < 66; i++) bad |= fscanf(fdat, "%lf", theory_1.argv2 + i) != 1;
+        for (i = 0; i < 66; i++) bad |= fscanf(fdat, "%lf", theory_1.ratv2 + i) != 1;
+        for (i = 0; i < 31; i++) bad |= fscanf(fdat, "%lf", theory_1.cxi3 + i) != 1;
+        for (i = 0; i < 31; i++) bad |= fscanf(fdat, "%lf", theory_1.argx3 + i) != 1;
+        for (i = 0; i < 31; i++) bad |= fscanf(fdat, "%lf", theory_1.ratx3 + i) != 1;
+        for (i = 0; i < 13; i++) bad |= fscanf(fdat, "%lf", theory_1.cz3 + i) != 1;
+        for (i = 0; i < 13; i++) bad |= fscanf(fdat, "%lf", theory_1.argz3 + i) != 1;
+        for (i = 0; i < 13; i++) bad |= fscanf(fdat, "%lf", theory_1.ratz3 + i) != 1;
+        for (i = 0; i < 75; i++) bad |= fscanf(fdat, "%lf", theory_1.cv3 + i) != 1;
+        for (i = 0; i < 75; i++) bad |= fscanf(fdat, "%lf", theory_1.argv3 + i) != 1;
+        for (i = 0; i < 75; i++) bad |= fscanf(fdat, "%lf", theory_1.ratv3 + i) != 1;
+        for (i = 0; i < 49; i++) bad |= fscanf(fdat, "%lf", theory_1.cxi4 + i) != 1;
+        for (i = 0; i < 49; i++) bad |= fscanf(fdat, "%lf", theory_1.argx4 + i) != 1;
+        for (i = 0; i < 49; i++) bad |= fscanf(fdat, "%lf", theory_1.ratx4 + i) != 1;
+        for (i = 0; i < 18; i++) bad |= fscanf(fdat, "%lf", theory_1.cz4 + i) != 1;
+        for (i = 0; i < 18; i++) bad |= fscanf(fdat, "%lf", theory_1.argz4 + i) != 1;
+        for (i = 0; i < 18; i++) bad |= fscanf(fdat, "%lf", theory_1.ratz4 + i) != 1;
+        for (i = 0; i < 89; i++) bad |= fscanf(fdat, "%lf", theory_1.cv4 + i) != 1;
+        for (i = 0; i < 89; i++) bad |= fscanf(fdat, "%lf", theory_1.argv4 + i) != 1;
+        for (i = 0; i < 89; i++) bad |= fscanf(fdat, "%lf", theory_1.ratv4 + i) != 1;
+        bad |= fscanf(fdat, "%lf", &theory_1.epsln) != 1;
 
-        fscanf(fdat, "%d", &theory_1.nxi1t);
-        fscanf(fdat, "%d", &theory_1.nz1t);
-        fscanf(fdat, "%d", &theory_1.nv1t);
-        fscanf(fdat, "%d", &theory_1.nxi2t);
-        fscanf(fdat, "%d", &theory_1.nz2t);
-        fscanf(fdat, "%d", &theory_1.nv2t);
-        fscanf(fdat, "%d", &theory_1.nxi3t);
-        fscanf(fdat, "%d", &theory_1.nz3t);
-        fscanf(fdat, "%d", &theory_1.nv3t);
-        fscanf(fdat, "%d", &theory_1.nxi4t);
-        fscanf(fdat, "%d", &theory_1.nz4t);
-        fscanf(fdat, "%d", &theory_1.nv4t);
-        for (i = 0; i < 20; i++) fscanf(fdat, "%d", theory_1.kodx1 + i);
-        for (i = 0; i < 14; i++) fscanf(fdat, "%d", theory_1.kodz1 + i);
-        for (i = 0; i < 82; i++) fscanf(fdat, "%d", theory_1.kodv1 + i);
-        for (i = 0; i < 48; i++) fscanf(fdat, "%d", theory_1.kodx2 + i);
-        for (i = 0; i < 22; i++) fscanf(fdat, "%d", theory_1.kodz2 + i);
-        for (i = 0; i < 132; i++) fscanf(fdat, "%d", theory_1.kodv2 + i);
-        for (i = 0; i < 62; i++) fscanf(fdat, "%d", theory_1.kodx3 + i);
-        for (i = 0; i < 26; i++) fscanf(fdat, "%d", theory_1.kodz3 + i);
-        for (i = 0; i < 150; i++) fscanf(fdat, "%d", theory_1.kodv3 + i);
-        for (i = 0; i < 98; i++) fscanf(fdat, "%d", theory_1.kodx4 + i);
-        for (i = 0; i < 36; i++) fscanf(fdat, "%d", theory_1.kodz4 + i);
-        for (i = 0; i < 178; i++) fscanf(fdat, "%d", theory_1.kodv4 + i);
+        bad |= fscanf(fdat, "%d", &theory_1.nxi1t) != 1;
+        bad |= fscanf(fdat, "%d", &theory_1.nz1t) != 1;
+        bad |= fscanf(fdat, "%d", &theory_1.nv1t) != 1;
+        bad |= fscanf(fdat, "%d", &theory_1.nxi2t) != 1;
+        bad |= fscanf(fdat, "%d", &theory_1.nz2t) != 1;
+        bad |= fscanf(fdat, "%d", &theory_1.nv2t) != 1;
+        bad |= fscanf(fdat, "%d", &theory_1.nxi3t) != 1;
+        bad |= fscanf(fdat, "%d", &theory_1.nz3t) != 1;
+        bad |= fscanf(fdat, "%d", &theory_1.nv3t) != 1;
+        bad |= fscanf(fdat, "%d", &theory_1.nxi4t) != 1;
+        bad |= fscanf(fdat, "%d", &theory_1.nz4t) != 1;
+        bad |= fscanf(fdat, "%d", &theory_1.nv4t) != 1;
+        for (i = 0; i < 20; i++) bad |= fscanf(fdat, "%d", theory_1.kodx1 + i) != 1;
+        for (i = 0; i < 14; i++) bad |= fscanf(fdat, "%d", theory_1.kodz1 + i) != 1;
+        for (i = 0; i < 82; i++) bad |= fscanf(fdat, "%d", theory_1.kodv1 + i) != 1;
+        for (i = 0; i < 48; i++) bad |= fscanf(fdat, "%d", theory_1.kodx2 + i) != 1;
+        for (i = 0; i < 22; i++) bad |= fscanf(fdat, "%d", theory_1.kodz2 + i) != 1;
+        for (i = 0; i < 132; i++) bad |= fscanf(fdat, "%d", theory_1.kodv2 + i) != 1;
+        for (i = 0; i < 62; i++) bad |= fscanf(fdat, "%d", theory_1.kodx3 + i) != 1;
+        for (i = 0; i < 26; i++) bad |= fscanf(fdat, "%d", theory_1.kodz3 + i) != 1;
+        for (i = 0; i < 150; i++) bad |= fscanf(fdat, "%d", theory_1.kodv3 + i) != 1;
+        for (i = 0; i < 98; i++) bad |= fscanf(fdat, "%d", theory_1.kodx4 + i) != 1;
+        for (i = 0; i < 36; i++) bad |= fscanf(fdat, "%d", theory_1.kodz4 + i) != 1;
+        for (i = 0; i < 178; i++) bad |= fscanf(fdat, "%d", theory_1.kodv4 + i) != 1;
 
         fclose(fdat);
+        if (bad) { // not upstream: a short or bad file leaves no data, as a missing one does
+            memset(&ebblok_1, 0, sizeof(ebblok_1));
+            memset(&trmblk_1, 0, sizeof(trmblk_1));
+            memset(&angblk_1, 0, sizeof(angblk_1));
+            memset(&theory_1, 0, sizeof(theory_1));
+            return -1;
+        }
         return 0;
     }
     return -1;

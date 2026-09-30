@@ -367,7 +367,7 @@ void Instrument_Orbit::UpdateDraw (oapi::Sketchpad *skp)
 
 void Instrument_Orbit::DisplayElements (oapi::Sketchpad *skp, const Elements *el, int x, int y)
 {
-	char cbuf[16];
+	char cbuf[32]; // not upstream: room for any int exponent
 	int dy = ch;
 	if (el) {
 		if (el->e < 1.0) { // closed orbit

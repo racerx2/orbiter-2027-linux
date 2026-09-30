@@ -14,6 +14,8 @@ void GalEphem (int ksat, double mjd, double *ret);
 void SampleEphem (int ksat, double simt, double interval, double *ret, Sample *sp);
 double Radius (double *data);
 
+static bool bData = false; // not upstream: ephem_e15.dat was read
+
 // ===========================================================
 // class GALOBJ
 // Base class for Galilean Jupiter moons controlled by
@@ -86,6 +88,11 @@ void JupiterBaryFastEphemeris (double simt, double *ret, Sample *sp)
 void GalEphem (int ksat, double mjd, double *ret)
 {
 	static double r[6];
+
+	if (!bData) { // not upstream: without Lieske data the moons stay at Jupiter's centre, galsat would give NaN velocities
+		for (int i = 0; i < 6; i++) ret[i] = 0.0;
+		return;
+	}
 
 	galsat (r, ret, mjd+2400000.5, ksat, 2);
 
@@ -210,7 +217,8 @@ DLLCLBK void InitModule (void *hModule)
 	// Load the data for the Lieske perturbation solutions
 	// into global data structures
 
-	if (cd2com(oapiResolvePath("Config\\Jupiter\\Data\\ephem_e15.dat").c_str())) {
+	bData = cd2com(oapiResolvePath("Config\\Jupiter\\Data\\ephem_e15.dat").c_str()) == 0; // not upstream: GalEphem needs the data
+	if (!bData) {
 		oapiWriteLogError("Galsat: file not found: Config\\Jupiter\\Data\\ephem_e15.dat");
 	}
 	chkgal();

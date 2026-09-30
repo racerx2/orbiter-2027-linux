@@ -26,6 +26,7 @@ static double pEphemT[NSAT];     // time of last full solution
 static double pEphemP[NSAT][6];  // last full solution
 static double pInterpT[NSAT];    // time of last interpolated solution
 static double pInterpP[NSAT][6]; // last interpolated solution
+static bool bData = false;       // not upstream: tass17.dat was read
 
 // ===========================================================
 // class SATOBJ
@@ -89,6 +90,11 @@ int SATOBJ::clbkFastEphemeris (double simt, int req, double *ret)
 void SatEphem (int ksat, double mjd, double *ret)
 {
 	int i;
+
+	if (!bData) { // not upstream: without TASS data the moons stay at Saturn's centre, edered would give NaN
+		for (i = 0; i < 6; i++) ret[i] = 0.0;
+		return;
+	}
 
 	if (mjd == pEphemT[ksat]) {
 
@@ -279,7 +285,9 @@ DLLCLBK void InitModule (void *hModule)
 	// Load the data for the TASS 1.7 perturbation solutions
 	// into global data structures
 
-	ReadData (oapiResolvePath ("Config\\Saturn\\Data\\tass17.dat").c_str(), 0);
+	bData = ReadData (oapiResolvePath ("Config\\Saturn\\Data\\tass17.dat").c_str(), 0) == 0; // not upstream: SatEphem needs the data
+	if (!bData) // not upstream: report it, as Galsat does
+		oapiWriteLogError("Satsat: file not found or bad: Config\\Saturn\\Data\\tass17.dat");
 
 	// invalidate all data structures
 	int i;

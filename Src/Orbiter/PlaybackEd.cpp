@@ -782,7 +782,7 @@ void NoteoffEvent::Write (ofstream &ofs)
 }
 
 void NoteoffEvent::DrawPreview() {
-	ImGui::Text ("---", size);
+	ImGui::TextUnformatted ("---"); // not upstream: no format, as in GenericEvent and NoteEvent
 }
 
 void NoteoffEvent::DrawEdit() {

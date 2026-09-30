@@ -371,7 +371,7 @@ void PlanetarySystem::ScanMoons (istream &is, CelestialBody *cbody, const char *
 {
 	char cbuf[256], name[256];
 	for (int i = 0;; i++) {
-		sprintf (cbuf, "%s:Moon%d", id, i+1);
+		if (snprintf (cbuf, sizeof (cbuf), "%s:Moon%d", id, i+1) >= (int)sizeof (cbuf)) return; // not upstream: a key too long for cbuf ends the scan, as a missing key does
 		if (!GetItemString (is, cbuf, name)) return;
 		Planet *moon = new Planet (name); TRACENEW
 		AddPlanet (moon, cbody);

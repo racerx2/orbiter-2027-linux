@@ -2586,7 +2586,7 @@ DLLEXPORT void InitLib (void *hModule)
 {
 	typedef void (*OPC_DLLInit)(void *hDLL);
 	OPC_DLLInit DLLInit;
-	char cbuf[256], mname[256], *mp;
+	char cbuf[320], mname[256], *mp; // not upstream: cbuf fits a 255-char name plus the build and API fields
 	int i, len;
 
 	if (td.SimT0 < 1) {

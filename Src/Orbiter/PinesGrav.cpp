@@ -145,7 +145,7 @@ int PinesGravProp::readGravModel(char* filename, int cutoff, int &actualLoadedTe
 			}
 
 			if (linecount == 0) {
-				if (!sscanf(gravFileLine, " %lf , %lf , %*lf , %d , %d , %d , %lf , %lf \n",
+				if (!sscanf(gravFileLine, " %lf , %lf , %*f , %d , %d , %d , %lf , %lf \n", // not upstream: %*f, the l does nothing on a skipped value
 					&refRad,
 					&GM,
 					&order,
@@ -167,7 +167,7 @@ int PinesGravProp::readGravModel(char* filename, int cutoff, int &actualLoadedTe
 
 				unsigned int lineindex = linecount - 1; //this is so we start loading coefficients at n=1
 
-				if (!sscanf(gravFileLine, " %*d , %*d , %lf , %lf , %*lf , %*lf \n",
+				if (!sscanf(gravFileLine, " %*d , %*d , %lf , %lf , %*f , %*f \n", // not upstream: %*f, the l does nothing on a skipped value
 					&C[lineindex],
 					&S[lineindex])) {
 					return 4;//Bad coefficient line format

@@ -71,7 +71,7 @@ CelestialBody::CelestialBody (char *fname)
 	GetItemReal (ifs, "PrecessionLAN", lan_ref);
 
 	if (GetItemString(ifs, "GravModelPath", cbuf) && GetItemInt(ifs, "GravCoeffCutoff", gravcoeff)) {
-		char gravModelFileName[512];
+		char gravModelFileName[sizeof("GravityModels\\") + sizeof(cbuf)]; // not upstream: sized to its real content, so logbuff[512] always fits
 		sprintf(gravModelFileName, "GravityModels\\%s",cbuf);
 		int maxGravityTerms = 0;
 		int	actualLoadedTerms = 0;
@@ -943,7 +943,7 @@ bool CELBODY2::FreeAtmosphere ()
 
 bool CELBODY2::LoadAtmosphereModule (const char *fname)
 {
-	char path[256], name[256];
+	char path[288], name[256]; // not upstream: path fits a 255-char name plus the folder parts
 	oapiGetObjectName (hBody, name, 256);
 	sprintf (path, "Modules\\Celbody\\%s\\Atmosphere", name);
 	if (!(hAtmModule = g_pOrbiter->LoadModule (path, fname))) return false;
