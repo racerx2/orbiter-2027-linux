@@ -494,7 +494,8 @@ public:
 	 *   therefore a good idea to finish the title with the units applicable to the data of
 	 *   this axis, so that for example a title "Altitude: km" may become "Altitude: km x 1000".
 	 */
-	void SetAxisTitle (int g, int axis, char *title);
+	void SetAxisTitle (int g, int axis, const char *title); // not upstream: const, title is copied
+	void SetAxisTitle (int g, int axis, char *title); // not upstream: the char* signature for modules built before the const one
 
 	/**
 	 * \brief Displays a graph.

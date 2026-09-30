@@ -1864,7 +1864,7 @@ void Orbiter::Resume (void)
 // Custom command registration
 //-----------------------------------------------------------------------------
 
-DWORD Orbiter::RegisterCustomCmd (char *label, char *desc, CustomFunc func, void *context)
+DWORD Orbiter::RegisterCustomCmd (const char *label, const char *desc, CustomFunc func, void *context) // not upstream: const strings
 {
 	DWORD id;
 	CUSTOMCMD *tmp = new CUSTOMCMD[ncustomcmd+1]; TRACENEW

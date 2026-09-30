@@ -64,7 +64,7 @@ void __writeLogError (const char *func, const char *file, int line, const char *
 }
 
 // FILEHANDLE here is a std::string* holding the config file path
-bool oapiReadItem_float (FILEHANDLE f, char *item, double &d)
+bool oapiReadItem_float (FILEHANDLE f, const char *item, double &d) // not upstream: matches the const API
 {
 	if (!f) return false;
 	std::ifstream ifs (oapiResolvePath (((std::string*)f)->c_str()));

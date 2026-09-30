@@ -242,7 +242,7 @@ public:
 
 	typedef struct {
 		char *label;
-		char *desc;
+		const char *desc; // not upstream: const, points at the caller's string
 		int id;
 		CustomFunc func;
 		void *context;
@@ -260,7 +260,7 @@ public:
 
 	TimeJumpData tjump;
 
-	DWORD RegisterCustomCmd (char *label, char *desc, CustomFunc func, void *context);
+	DWORD RegisterCustomCmd (const char *label, const char *desc, CustomFunc func, void *context); // not upstream: const strings
 	bool UnregisterCustomCmd (int cmdId);
 
 	int RegisterMenuCmd (const char *label, const char *imagepath, CustomFunc func, void *context = NULL);
