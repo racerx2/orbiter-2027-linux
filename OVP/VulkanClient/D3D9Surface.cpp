@@ -959,42 +959,53 @@ bool SurfNative::DeClone()
 //
 void SurfNative::Reload()
 {	
-	SAFE_DELETE(pTexSurf);
-	SAFE_DELETE(pResource);
-	for (int i = 0; i < (int)std::size(pMap); i++) SAFE_DELETE(pMap[i]);
+	if (IsClone() || (Flags & ~(OAPISURFACE_SHARED | OAPISURFACE_MAPS)) != OAPISURFACE_TEXTURE) return; // not upstream: file textures only (upstream's == test missed SHARED, MAPS)
 
 	char path[MAX_PATH];
 
 	if (!g_client->TexturePath(name, path)) {
 		oapiWriteLogV("SurfNative::Reload() File Not Found [%s]", path);
-		return;
+		return; // not upstream: the old image stays
 	}
 
-	if (Flags == OAPISURFACE_TEXTURE)
+	VkImageInfo info;
+
+	if (VkGetImageInfoFromFile(path, &info))
 	{
-		VkImageInfo info;
+		DWORD Mips = VKTEX_FROM_FILE;
+		if (Config->TextureMips == 2) Mips = 0;                         // Autogen all
+		if (Config->TextureMips == 1 && info.MipLevels == 1) Mips = 0;  // Autogen missing
 
-		if (VkGetImageInfoFromFile(path, &info))
+		VkTex *pNew = VkCreateTextureFromFile(g_client->GetDevice(), path, info.Width, info.Height, Mips, VK_FORMAT_UNDEFINED, SWZ_NONE, NatUsageBase);
+		if (pNew) // not upstream: the old image and maps go only when a new one is made
 		{
-			DWORD Mips = VKTEX_FROM_FILE;
-			if (Config->TextureMips == 2) Mips = 0;                         // Autogen all
-			if (Config->TextureMips == 1 && info.MipLevels == 1) Mips = 0;  // Autogen missing
-
-			if ((pResource = VkCreateTextureFromFile(g_client->GetDevice(), path, info.Width, info.Height, Mips,
-				VK_FORMAT_UNDEFINED, SWZ_NONE, NatUsageBase)))
-			{
-				AddMap(MAP_HEAT, NatLoadSpecialTexture(name, "heat"));
-				AddMap(MAP_NORMAL, NatLoadSpecialTexture(name, "norm"));
-				AddMap(MAP_SPECULAR, NatLoadSpecialTexture(name, "spec"));
-				AddMap(MAP_EMISSION, NatLoadSpecialTexture(name, "emis"));
-				AddMap(MAP_ROUGHNESS, NatLoadSpecialTexture(name, "rghn"));
-				AddMap(MAP_METALNESS, NatLoadSpecialTexture(name, "metal"));
-				AddMap(MAP_REFLECTION, NatLoadSpecialTexture(name, "refl"));
-				AddMap(MAP_TRANSLUCENCE, NatLoadSpecialTexture(name, "transl"));
-				AddMap(MAP_TRANSMITTANCE, NatLoadSpecialTexture(name, "transm"));
-			}
+			SAFE_DELETE(pTexSurf);
+			SAFE_DELETE(pTemp); // not upstream: made at the old size
+			SAFE_DELETE(pResource);
+			for (int i = 0; i < (int)std::size(pMap); i++) SAFE_DELETE(pMap[i]);
+			pResource = pNew;
+			desc.Width = pNew->w; // not upstream: the new image's description (an edited file may differ)
+			desc.Height = pNew->h;
+			desc.Format = pNew->fmt;
+			desc.Swizzle = VkSwizzleOf(pNew->swizzle);
+			desc.Usage = pNew->usage;
+			desc.RenderTarget = (pNew->usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) != 0;
+			desc.MultiSampleType = pNew->samples;
+			Mipmaps = pNew->levels;
+			pNew->autoGenMips = desc.AutoGenMipMap;
+			AddMap(MAP_HEAT, NatLoadSpecialTexture(name, "heat"));
+			AddMap(MAP_NORMAL, NatLoadSpecialTexture(name, "norm"));
+			AddMap(MAP_SPECULAR, NatLoadSpecialTexture(name, "spec"));
+			AddMap(MAP_EMISSION, NatLoadSpecialTexture(name, "emis"));
+			AddMap(MAP_ROUGHNESS, NatLoadSpecialTexture(name, "rghn"));
+			AddMap(MAP_METALNESS, NatLoadSpecialTexture(name, "metal"));
+			AddMap(MAP_REFLECTION, NatLoadSpecialTexture(name, "refl"));
+			AddMap(MAP_TRANSLUCENCE, NatLoadSpecialTexture(name, "transl"));
+			AddMap(MAP_TRANSMITTANCE, NatLoadSpecialTexture(name, "transm"));
 		}
+		else oapiWriteLogV("SurfNative::Reload() FAILED [%s]", path); // not upstream: the old image stays
 	}
+	else oapiWriteLogV("SurfNative::Reload() FAILED [%s]", path); // not upstream: the old image stays
 }
 
 
