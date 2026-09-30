@@ -1,3 +1,7 @@
+// ==============================================================
+// Part of the ORBITER VISUALISATION PROJECT (OVP)
+// Dual licensed under GPL v3 and LGPL v3
+// ==============================================================
 
 
 layout(binding = 1, row_major, scalar) uniform EnvMapBlurPS	// uniform extern: pixel shader constants (IPI.glsl's are binding 0)

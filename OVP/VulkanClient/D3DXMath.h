@@ -1,3 +1,8 @@
+// ==============================================================
+// Part of the ORBITER VISUALISATION PROJECT (OVP)
+// Dual licensed under GPL v3 and LGPL v3
+// Copyright (C) 2026 racerx2
+// ==============================================================
 // not upstream: d3d9types/d3dx9math counterparts, same layouts as D3DX (row vectors, v * M)
 
 #ifndef __D3DXMATH_H

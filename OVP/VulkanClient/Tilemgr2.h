@@ -18,6 +18,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <condition_variable> // not upstream: hStopCond
 #include "VPlanet.h"
 #include "Spherepatch.h"
 #include "D3D9Pad.h"
@@ -258,6 +259,8 @@ private:
 	static int nqueue, queue_in, queue_out;
 	std::thread hLoadThread; // Load ThreadProc handle
 	std::atomic<bool> hStopThread; // Thread kill signal (event handle)
+	std::mutex hStopMutex;               // not upstream: the loader sleeps on hStopCond until hStopThread or its idle time
+	std::condition_variable hStopCond;
 	static std::recursive_mutex hLoadMutex; // a Win32 mutex is recursive: Render holds it when PreDelete calls Unqueue
 	static DWORD Load_ThreadProc (void*);
 	int load_frequency;

@@ -72,7 +72,7 @@ void MissingRuntimeError()
 void FailedDeviceError()
 {
 	QMessageBox::warning(NULL, "VulkanClient Initialization Failed",
-		"Vulkan device failed. The graphics card needs Vulkan 1.4 with shader objects (see Orbiter.log)"); // the DX12 wrapper hint doesn't apply
+		"Vulkan device failed. The graphics card needs Vulkan 1.3 with push descriptors and shader objects (see Orbiter.log)"); // not upstream: Vulkan requirements (the DX12 wrapper hint doesn't apply)
 }
 
 //-------------------------------------------------------------------------------------------

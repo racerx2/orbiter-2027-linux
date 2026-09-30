@@ -1,3 +1,8 @@
+// ==============================================================
+// Part of the ORBITER VISUALISATION PROJECT (OVP)
+// Dual licensed under GPL v3 and LGPL v3
+// Copyright (C) 2026 racerx2
+// ==============================================================
 // not upstream: GLSL compilation at run time (D3DXCompileShader), constant tables (ID3DXConstantTable) and effects (ID3DXEffect)
 
 #ifndef __VKSHADER_H

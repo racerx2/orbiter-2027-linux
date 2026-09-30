@@ -1,3 +1,8 @@
+// ==============================================================
+// Part of the ORBITER VISUALISATION PROJECT (OVP)
+// Dual licensed under GPL v3 and LGPL v3
+// Copyright (C) 2026 racerx2
+// ==============================================================
 // not upstream: Vulkan objects standing in for the Direct3D 9 runtime
 
 #define VMA_IMPLEMENTATION
@@ -7,10 +12,19 @@
 #include <QVulkanInstance>
 #include <cstring>
 #include <algorithm>
+#include <string>
 
 VkExtFunctions vkx;
 
 static const VkBufferUsageFlags TransientUsage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+static void TransferDone (VkCommandBuffer cmd);
+
+static VkRect2D ClampRect (const RECT &r, const VkSurf *t) // inside the target: no negative offset, no wrapped extent
+{
+	LONG l = std::clamp (r.left, (LONG)0, (LONG)t->w), tp = std::clamp (r.top, (LONG)0, (LONG)t->h);
+	LONG rt = std::clamp (r.right, l, (LONG)t->w), b = std::clamp (r.bottom, tp, (LONG)t->h);
+	return VkRect2D{ { l, tp }, { UINT(rt - l), UINT(b - tp) } };
+}
 
 // VkBuf
 
@@ -21,19 +35,28 @@ VkBuf::VkBuf (VkDev *_dev, VkDeviceSize _size, VkBufferUsageFlags usage, bool ho
 	mapped = NULL;
 	buf = VK_NULL_HANDLE;
 	alloc = VK_NULL_HANDLE;
+	if (size == 0) return; // no buffer, as D3D9's CreateVertexBuffer (0) failed
 	VkBufferCreateInfo bi = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
 	bi.size = size;
-	bi.usage = usage | (host ? 0 : VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+	bi.usage = usage | (host ? 0 : VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT); // device local: Upload and CopyBuffer
 	VmaAllocationCreateInfo ai = {};
 	ai.usage = VMA_MEMORY_USAGE_AUTO;
 	if (host) ai.flags = (readback ? VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT : VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT) | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+	if (host && !readback) ai.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT; // written through Map with no unlock point: nothing to flush
 	VmaAllocationInfo info;
-	VKCHECK(vmaCreateBuffer (dev->vma, &bi, &ai, &buf, &alloc, &info));
+	VkResult r = vmaCreateBuffer (dev->vma, &bi, &ai, &buf, &alloc, &info);
+	if (r < 0) {
+		LogErr("VkBuf: vmaCreateBuffer failed (%d) for %llu bytes", (int)r, (unsigned long long)size);
+		buf = VK_NULL_HANDLE;
+		alloc = VK_NULL_HANDLE;
+		return;
+	}
 	if (host) mapped = info.pMappedData;
 }
 
 VkBuf::~VkBuf ()
 {
+	if (!buf) return;
 	VmaAllocator vma = dev->vma;
 	VkBuffer b = buf;
 	VmaAllocation a = alloc;
@@ -42,25 +65,20 @@ VkBuf::~VkBuf ()
 
 void VkBuf::Upload (const void *data, VkDeviceSize n, VkDeviceSize offset)
 {
+	if (!buf || !n) return;
 	if (mapped) {
 		memcpy ((char*)mapped + offset, data, n);
 		return;
 	}
 	VkBuf staging (dev, n, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
+	if (!staging.Map ()) return;
 	memcpy (staging.Map(), data, n);
-	VkCommandBuffer cmd = dev->BeginOneTime ();
-	VkBufferCopy region = { 0, offset, n };
-	vkCmdCopyBuffer (cmd, staging.buf, buf, 1, &region);
-	VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
-	mb.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-	mb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-	mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-	mb.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
-	VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-	di.memoryBarrierCount = 1;
-	di.pMemoryBarriers = &mb;
-	vkCmdPipelineBarrier2 (cmd, &di);
-	dev->EndOneTime (cmd);
+	dev->BufferCopy (staging.buf, buf, 0, offset, n); // the staging buffer is deferred past the frame that reads it
+}
+
+void VkBuf::Invalidate ()
+{
+	if (alloc) vmaInvalidateAllocation (dev->vma, alloc, 0, VK_WHOLE_SIZE);
 }
 
 // VkVertexDecl
@@ -367,6 +385,13 @@ void VkTex::Transition (VkCommandBuffer cmd, VkImageLayout to)
 	di.pImageMemoryBarriers = &b;
 	vkCmdPipelineBarrier2 (cmd, &di);
 	layout = to;
+	if (dev->InFrame () && cmd == dev->Cmd ()) touched = dev->FrameValue ();
+}
+
+void VkTex::Written (UINT level)
+{
+	if (!level && autoGenMips && levels > 1) mipsDirty = true;
+	if (dev->InFrame ()) touched = dev->FrameValue ();
 }
 
 void VkTex::Upload (UINT level, UINT layer, const void *data, VkDeviceSize size, UINT rowPitch)
@@ -374,19 +399,34 @@ void VkTex::Upload (UINT level, UINT layer, const void *data, VkDeviceSize size,
 	UINT bw;
 	UINT bs = VkFormatBlockSize (fmt, &bw);
 	UINT lw = std::max (1u, w >> level), lh = std::max (1u, h >> level);
+	if (!img) return;
+	if (Aspect () == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) { // a buffer copy names one aspect; D3D9 couldn't lock D24S8 either
+		LogErr("VkTex::Upload: depth/stencil format %d can't be written", (int)fmt);
+		return;
+	}
+	if (samples != VK_SAMPLE_COUNT_1_BIT) { // copies can't write a multisampled image: a single-sampled one, then StretchRect's draw
+		if (!dev->InFrame ()) { LogErr("VkTex::Upload: a multisampled image is written on the render thread only"); return; }
+		VkTex tmp (dev, lw, lh, 1, fmt, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+		tmp.Upload (0, 0, data, size, rowPitch);
+		VkSurf s (&tmp), d (this, level, layer);
+		dev->StretchRect (&s, NULL, &d, NULL, VK_FILTER_NEAREST);
+		return;
+	}
 	VkBuf staging (dev, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
+	if (!staging.Map ()) return;
 	memcpy (staging.Map(), data, size);
-	VkCommandBuffer cmd = dev->BeginOneTime ();
-	VkImageLayout keep = layout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : layout;
+	VkCommandBuffer cmd = dev->BeginUpload ();
+	VkImageLayout keep = layout != VK_IMAGE_LAYOUT_UNDEFINED ? layout : ((usage & VK_IMAGE_USAGE_SAMPLED_BIT) ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL); // a transfer-only image can't be in a shader layout
 	Transition (cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 	VkBufferImageCopy region = {};
 	region.bufferRowLength = rowPitch ? (rowPitch / bs) * bw : 0;
 	region.imageSubresource = { Aspect(), level, layer, 1 };
 	region.imageExtent = { lw, lh, depth };
 	vkCmdCopyBufferToImage (cmd, staging.buf, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+	if (keep == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) TransferDone (cmd); // no layout change follows: the barrier for the next writer or reader
 	Transition (cmd, keep);
 	Written (level);
-	dev->EndOneTime (cmd);
+	dev->EndUpload (cmd);
 }
 
 void VkTex::GenerateMips (VkCommandBuffer cmd)
@@ -493,9 +533,18 @@ VkDev::VkDev (QVulkanInstance *inst, VkPhysicalDevice _phys)
 	vma = VK_NULL_HANDLE;
 	iFrame = 0;
 	recording = false;
+	ok = true;
+	owner = std::this_thread::get_id ();
 	rtColor = rtDepth = NULL;
 	rtExtra[0] = rtExtra[1] = rtExtra[2] = NULL;
 	streamStride[0] = streamStride[1] = 0;
+	streamBuf[0] = streamBuf[1] = VK_NULL_HANDLE;
+	streamOffset[0] = streamOffset[1] = 0;
+	streamBound[0] = streamBound[1] = false;
+	indexBuf = VK_NULL_HANDLE;
+	indexOffset = 0;
+	indexType = VK_INDEX_TYPE_UINT16;
+	indexBound = false;
 	rendering = false;
 	scissorSet = false;
 	viewport = {};
@@ -546,21 +595,49 @@ void VkDev::CreateDevice ()
 		if (qf[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) { queueFamily = i; break; }
 	if (queueFamily == n) { LogErr("VkDev: no graphics queue"); return; }
 
+	// push descriptors: VK_KHR_push_descriptor where the device lists it (Vulkan 1.3 and 1.4 drivers), else core Vulkan 1.4
+	UINT ne = 0;
+	vkEnumerateDeviceExtensionProperties (phys, NULL, &ne, NULL);
+	std::vector<VkExtensionProperties> ep(ne);
+	vkEnumerateDeviceExtensionProperties (phys, NULL, &ne, ep.data());
+	auto listed = [&ep](const char *name) { for (auto &e : ep) if (!strcmp (e.extensionName, name)) return true; return false; };
+	bool pushExt = listed (VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+	bool push14 = false;
+#ifdef VK_VERSION_1_4
+	QVersionNumber iv = qinst->apiVersion ();
+	push14 = !pushExt && std::min (props.apiVersion, VK_MAKE_API_VERSION (0, iv.majorVersion (), iv.minorVersion (), 0)) >= VK_MAKE_API_VERSION (0, 1, 4, 0); // the version in effect
+#endif
+
 	// features: query what the device has, then switch on what the client uses
 	VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT fvi = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT };
 	VkPhysicalDeviceExtendedDynamicState3FeaturesEXT fds3 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT, &fvi };
 	VkPhysicalDeviceShaderObjectFeaturesEXT fso = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT, &fds3 };
-	VkPhysicalDeviceVulkan14Features f14 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES, &fso };
-	VkPhysicalDeviceVulkan13Features f13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, &f14 };
+	VkPhysicalDeviceVulkan13Features f13 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, &fso };
 	VkPhysicalDeviceVulkan12Features f12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &f13 };
 	VkPhysicalDeviceFeatures2 f2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f12 };
+	bool pushOK = pushExt;
+#ifdef VK_VERSION_1_4
+	VkPhysicalDeviceVulkan14Features f14 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES, &fso };
+	if (push14) f13.pNext = &f14; // a 1.4 structure is chained for a 1.4 device only
+#endif
 	vkGetPhysicalDeviceFeatures2 (phys, &f2);
+#ifdef VK_VERSION_1_4
+	if (push14) pushOK = f14.pushDescriptor;
+#endif
 
-	if (!f13.dynamicRendering || !f13.synchronization2 || !f12.timelineSemaphore || !f12.scalarBlockLayout || !f14.pushDescriptor ||
-		!fso.shaderObject || !fvi.vertexInputDynamicState || !fds3.extendedDynamicState3ColorBlendEnable ||
-		!fds3.extendedDynamicState3ColorBlendEquation || !fds3.extendedDynamicState3ColorWriteMask) {
-		LogErr("VkDev: %s lacks a required feature (dynamic rendering, sync2, timeline semaphores, scalar block layout, "
-			"push descriptors, shader objects, dynamic vertex input or dynamic blend state)", props.deviceName);
+	std::string missing;
+	auto need = [&missing](bool have, const char *name) { if (!have) missing += std::string (missing.empty () ? "" : ", ") + name; };
+	need (f13.dynamicRendering, "dynamicRendering");
+	need (f13.synchronization2, "synchronization2");
+	need (f12.timelineSemaphore, "timelineSemaphore");
+	need (f12.scalarBlockLayout, "scalarBlockLayout");
+	need (pushOK, "push descriptors (VK_KHR_push_descriptor or Vulkan 1.4)");
+	need (fso.shaderObject, "shaderObject (VK_EXT_shader_object; the VK_LAYER_KHRONOS_shader_object layer emulates it)");
+	need (fvi.vertexInputDynamicState, "vertexInputDynamicState (VK_EXT_vertex_input_dynamic_state)");
+	need (fds3.extendedDynamicState3ColorBlendEnable && fds3.extendedDynamicState3ColorBlendEquation && fds3.extendedDynamicState3ColorWriteMask,
+		"extendedDynamicState3 colour blend enable, equation and write mask (VK_EXT_extended_dynamic_state3)");
+	if (!missing.empty ()) {
+		LogErr("VkDev: %s lacks %s", props.deviceName, missing.c_str ());
 		return;
 	}
 
@@ -581,8 +658,6 @@ void VkDev::CreateDevice ()
 	e13.synchronization2 = VK_TRUE;
 	e13.maintenance4 = f13.maintenance4;
 	e13.shaderDemoteToHelperInvocation = f13.shaderDemoteToHelperInvocation; // glslang emits discard as demote for SPIR-V 1.6
-	VkPhysicalDeviceVulkan14Features e14 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
-	e14.pushDescriptor = VK_TRUE;
 	VkPhysicalDeviceShaderObjectFeaturesEXT eso = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT };
 	eso.shaderObject = VK_TRUE;
 	VkPhysicalDeviceExtendedDynamicState3FeaturesEXT eds3 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT };
@@ -596,18 +671,18 @@ void VkDev::CreateDevice ()
 	eds3.extendedDynamicState3DepthClampEnable = fds3.extendedDynamicState3DepthClampEnable;
 	VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT evi = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT };
 	evi.vertexInputDynamicState = VK_TRUE;
-	e2.pNext = &e12; e12.pNext = &e13; e13.pNext = &e14; e14.pNext = &eso; eso.pNext = &eds3; eds3.pNext = &evi;
+	e2.pNext = &e12; e12.pNext = &e13; e13.pNext = &eso; eso.pNext = &eds3; eds3.pNext = &evi;
+#ifdef VK_VERSION_1_4
+	VkPhysicalDeviceVulkan14Features e14 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES, &eso };
+	e14.pushDescriptor = VK_TRUE;
+	if (push14) e13.pNext = &e14;
+#endif
 	features = e2.features;
+	std::vector<const char*> ext (devExt, devExt + sizeof(devExt)/sizeof(devExt[0]));
+	if (pushExt) ext.push_back (VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
 
 	// D3DRS_MULTISAMPLEANTIALIAS off: every sample at the pixel centre, which needs VK_EXT_sample_locations with dynamic enable
-	std::vector<const char*> ext (devExt, devExt + sizeof(devExt)/sizeof(devExt[0]));
-	UINT ne = 0;
-	vkEnumerateDeviceExtensionProperties (phys, NULL, &ne, NULL);
-	std::vector<VkExtensionProperties> ep(ne);
-	vkEnumerateDeviceExtensionProperties (phys, NULL, &ne, ep.data());
-	bool hasSL = false;
-	for (auto &e : ep) if (!strcmp (e.extensionName, VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME)) hasSL = true;
-	if (hasSL && fds3.extendedDynamicState3SampleLocationsEnable) {
+	if (listed (VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME) && fds3.extendedDynamicState3SampleLocationsEnable) {
 		VkPhysicalDeviceSampleLocationsPropertiesEXT slp = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLE_LOCATIONS_PROPERTIES_EXT };
 		VkPhysicalDeviceProperties2 pp = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &slp };
 		vkGetPhysicalDeviceProperties2 (phys, &pp);
@@ -651,9 +726,11 @@ void VkDev::CreateDevice ()
 		VKX(CmdSetSampleLocationsEXT);
 	}
 #undef VKX
+	vkx.CmdPushDescriptorSet = (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr (dev, pushExt ? "vkCmdPushDescriptorSetKHR" : "vkCmdPushDescriptorSet");
+	if (!vkx.CmdPushDescriptorSet) { LogErr("VkDev: no push descriptor command"); ok = false; }
 
 	VmaAllocatorCreateInfo ai = {};
-	ai.vulkanApiVersion = VK_API_VERSION_1_4;
+	ai.vulkanApiVersion = VK_API_VERSION_1_3; // the client's minimum; VMA uses no 1.4 command
 	ai.physicalDevice = phys;
 	ai.device = dev;
 	ai.instance = instance;
@@ -677,6 +754,7 @@ void VkDev::CreateDevice ()
 		ci.commandBufferCount = 1;
 		VKCHECK(vkAllocateCommandBuffers (dev, &ci, &frame[i].cmd));
 		frame[i].transient = new VkBuf (this, 16 << 20, TransientUsage, true);
+		if (!frame[i].transient->Map ()) { LogErr("VkDev: no host memory for the per-frame transient buffer"); ok = false; }
 		frame[i].transientUsed = 0;
 		frame[i].done = 0;
 	}
@@ -691,7 +769,7 @@ void VkDev::CreateDevice ()
 		b[i].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 	}
 	VkDescriptorSetLayoutCreateInfo li = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-	li.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT;
+	li.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR; // the name 1.3 headers know; same value as the core flag
 	li.bindingCount = MAXBINDINGS;
 	li.pBindings = b;
 	VKCHECK(vkCreateDescriptorSetLayout (dev, &li, NULL, &setLayout));
@@ -706,6 +784,7 @@ void VkDev::CreateDevice ()
 	LogAlw("VkDev: %s, Vulkan %u.%u.%u", props.deviceName, VK_API_VERSION_MAJOR(props.apiVersion),
 		VK_API_VERSION_MINOR(props.apiVersion), VK_API_VERSION_PATCH(props.apiVersion));
 	LogAlw("VkDev: per-draw multisampling off (sample locations): %s", sampleLocations ? "Yes" : "No");
+	LogAlw("VkDev: push descriptors from %s", pushExt ? "VK_KHR_push_descriptor" : "Vulkan 1.4");
 }
 
 VkDev::~VkDev ()
@@ -713,11 +792,21 @@ VkDev::~VkDev ()
 	if (!dev) return;
 	vkDeviceWaitIdle (dev);
 	for (int i = 0; i < 3; i++) delete defTex[i];
+	for (VkTex *t : resolveTemps) delete t;
+	for (VkTex *t : scaleTemps) delete t;
 	for (int i = 0; i < NFRAMES; i++) {
 		delete frame[i].transient;
 		frame[i].transient = NULL;
 	}
-	for (int i = 0; i < NFRAMES; i++) ReleaseFrame (i);
+	for (;;) { // the device is idle: every deferred release runs, also those a release defers
+		std::deque<std::pair<uint64_t, std::function<void()>>> rel;
+		{
+			std::lock_guard<std::mutex> lock (queueLock);
+			rel.swap (deferred);
+		}
+		if (rel.empty ()) break;
+		for (auto &r : rel) r.second ();
+	}
 	for (auto &s : samplers) vkDestroySampler (dev, s.second, NULL);
 	if (copyVS) vkx.DestroyShaderEXT (dev, copyVS, NULL);
 	if (copyFS) vkx.DestroyShaderEXT (dev, copyFS, NULL);
@@ -730,20 +819,25 @@ VkDev::~VkDev ()
 	vkDestroyDevice (dev, NULL);
 }
 
-void VkDev::ReleaseFrame (int i)
+void VkDev::ReleaseDone ()
 {
+	uint64_t done = 0;
+	VKCHECK(vkGetSemaphoreCounterValue (dev, timeline, &done));
 	std::vector<std::function<void()>> rel;
 	{
 		std::lock_guard<std::mutex> lock (queueLock);
-		rel.swap (frame[i].release);
+		while (!deferred.empty () && deferred.front ().first <= done) {
+			rel.push_back (std::move (deferred.front ().second));
+			deferred.pop_front ();
+		}
 	}
-	for (auto &f : rel) f();
+	for (auto &f : rel) f(); // outside the lock: a release may defer again
 }
 
 void VkDev::Defer (std::function<void()> release)
 {
 	std::lock_guard<std::mutex> lock (queueLock);
-	frame[iFrame].release.push_back (release);
+	deferred.push_back ({ timelineValue + 1, std::move (release) }); // the value the frame being recorded signals (EndFrame takes it under this lock)
 }
 
 void VkDev::WaitIdle ()
@@ -765,7 +859,7 @@ VkCommandBuffer VkDev::BeginFrame ()
 		wi.pValues = &f.done;
 		VKCHECK(vkWaitSemaphores (dev, &wi, UINT64_MAX));
 	}
-	ReleaseFrame (iFrame);
+	ReleaseDone ();
 	f.transientUsed = 0;
 	VKCHECK(vkResetCommandPool (dev, f.pool, 0));
 	VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
@@ -776,9 +870,9 @@ VkCommandBuffer VkDev::BeginFrame ()
 	return f.cmd;
 }
 
-void VkDev::EndFrame (VkSemaphore wait, VkSemaphore signal)
+bool VkDev::EndFrame (VkSemaphore wait, VkSemaphore signal)
 {
-	if (!recording) return;
+	if (!recording) return true;
 	EndRendering ();
 	Frame &f = frame[iFrame];
 	VKCHECK(vkEndCommandBuffer (f.cmd));
@@ -788,7 +882,7 @@ void VkDev::EndFrame (VkSemaphore wait, VkSemaphore signal)
 	ci.commandBuffer = f.cmd;
 	VkSemaphoreSubmitInfo ws = { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
 	ws.semaphore = wait;
-	ws.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+	ws.stageMask = VK_PIPELINE_STAGE_2_BLIT_BIT; // only the Present blit writes the swapchain image (its barrier chains with this stage): the rest of the frame doesn't wait for the acquire
 	VkSemaphoreSubmitInfo ss[2] = { { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO }, { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO } };
 	std::lock_guard<std::mutex> lock (queueLock);
 	f.done = ++timelineValue;
@@ -804,7 +898,18 @@ void VkDev::EndFrame (VkSemaphore wait, VkSemaphore signal)
 	si.pCommandBufferInfos = &ci;
 	si.signalSemaphoreInfoCount = signal ? 2 : 1;
 	si.pSignalSemaphoreInfos = ss;
-	VKCHECK(vkQueueSubmit2 (queue, 1, &si, VK_NULL_HANDLE));
+	VkResult r = vkQueueSubmit2 (queue, 1, &si, VK_NULL_HANDLE);
+	if (r >= 0) return true;
+	LogErr("VkDev: vkQueueSubmit2 failed (%d), the device is unusable", (int)r); // the frame held uploads and layout changes the trackers already count as done
+	ok = false;
+	f.done = --timelineValue; // never signalled otherwise: the next wait on this slot would hang
+	if (wait) { // the acquire semaphore is still waited on, so it can be used again
+		VkSubmitInfo2 wi = { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
+		wi.waitSemaphoreInfoCount = 1;
+		wi.pWaitSemaphoreInfos = &ws;
+		vkQueueSubmit2 (queue, 1, &wi, VK_NULL_HANDLE);
+	}
+	return false;
 }
 
 void VkDev::Flush ()
@@ -849,6 +954,40 @@ void VkDev::EndOneTime (VkCommandBuffer cmd)
 	vkDestroyFence (dev, fence, NULL);
 	vkFreeCommandBuffers (dev, oneTimePool, 1, &cmd);
 	oneTimeLock.unlock ();
+}
+
+VkCommandBuffer VkDev::BeginUpload ()
+{
+	if (!InFrame ()) return BeginOneTime ();
+	EndRendering (); // copies and layout changes are recorded outside a rendering pass
+	return Cmd ();
+}
+
+void VkDev::EndUpload (VkCommandBuffer cmd)
+{
+	if (!(InFrame () && cmd == Cmd ())) EndOneTime (cmd);
+}
+
+void VkDev::BufferCopy (VkBuffer src, VkBuffer dst, VkDeviceSize srcOffset, VkDeviceSize dstOffset, VkDeviceSize n)
+{
+	VkCommandBuffer cmd = BeginUpload ();
+	VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 }; // after the commands that still read or write dst
+	mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+	mb.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+	mb.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+	mb.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+	VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+	di.memoryBarrierCount = 1;
+	di.pMemoryBarriers = &mb;
+	vkCmdPipelineBarrier2 (cmd, &di);
+	VkBufferCopy region = { srcOffset, dstOffset, n };
+	vkCmdCopyBuffer (cmd, src, dst, 1, &region);
+	mb.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT; // before the commands that read it
+	mb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+	mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+	mb.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+	vkCmdPipelineBarrier2 (cmd, &di);
+	EndUpload (cmd);
 }
 
 VkDeviceSize VkDev::AllocTransient (VkDeviceSize n, VkDeviceSize align, void **ptr, VkBuffer *buf)
@@ -946,6 +1085,7 @@ void VkDev::BeginRendering ()
 	}
 	if (rtDepth) {
 		rtDepth->tex->Transition (cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+		rtDepth->tex->Written (rtDepth->level); // a readback of it flushes this frame first
 		da.imageView = rtDepth->view;
 		da.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 		da.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -956,10 +1096,18 @@ void VkDev::BeginRendering ()
 			ri.pStencilAttachment = &sa;
 		}
 	}
+	VkMemoryBarrier2 ab = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 }; // no implicit order between rendering passes: the last pass's attachment writes before this one's loads and tests
+	ab.srcStageMask = ab.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+	ab.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+	ab.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+	VkDependencyInfo ad = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+	ad.memoryBarrierCount = 1;
+	ad.pMemoryBarriers = &ab;
+	vkCmdPipelineBarrier2 (cmd, &ad);
 	vkCmdBeginRendering (cmd, &ri);
 	rendering = true;
 	vkCmdSetViewportWithCount (cmd, 1, &viewport);
-	VkRect2D sc = scissorSet ? scissor : ri.renderArea;
+	VkRect2D sc = ScissorArea ();
 	vkCmdSetScissorWithCount (cmd, 1, &sc);
 	vkx.CmdSetRasterizationSamplesEXT (cmd, t->tex->samples);
 	ApplySampleLocations ();
@@ -997,11 +1145,17 @@ void VkDev::Clear (bool color, bool depth, bool stencil, DWORD argb, float z, DW
 		if (ca[n].aspectMask) n++;
 	}
 	if (!n) return;
+	// D3D9 clears the viewport, within the scissor rect while the test is on; given rects are clipped to that
+	VkViewport v = GetViewport ();
+	RECT a = { (LONG)v.x, (LONG)v.y, (LONG)(v.x + v.width), (LONG)(v.y + v.height) };
+	auto clip = [&a](const RECT &c) { a.left = std::max (a.left, c.left); a.top = std::max (a.top, c.top); a.right = std::min (a.right, c.right); a.bottom = std::min (a.bottom, c.bottom); };
+	if (scissorSet) clip (scissor);
+	if (r) clip (*r);
 	VkSurf *t = rtColor ? rtColor : rtDepth;
 	VkClearRect cr = {};
-	cr.rect = r ? VkRect2D{ { r->left, r->top }, { UINT(r->right - r->left), UINT(r->bottom - r->top) } } : VkRect2D{ { 0, 0 }, { t->w, t->h } };
+	cr.rect = ClampRect (a, t);
 	cr.layerCount = 1;
-	vkCmdClearAttachments (Cmd(), n, ca, 1, &cr);
+	if (cr.rect.extent.width && cr.rect.extent.height) vkCmdClearAttachments (Cmd(), n, ca, 1, &cr);
 }
 
 void VkDev::SetViewport (float x, float y, float w, float h, float minz, float maxz)
@@ -1011,13 +1165,19 @@ void VkDev::SetViewport (float x, float y, float w, float h, float minz, float m
 	if (rendering) vkCmdSetViewportWithCount (Cmd(), 1, &viewport);
 }
 
+VkRect2D VkDev::ScissorArea () const
+{
+	VkSurf *t = rtColor ? rtColor : rtDepth;
+	if (!t) return VkRect2D{};
+	return scissorSet ? ClampRect (scissor, t) : VkRect2D{ { 0, 0 }, { t->w, t->h } };
+}
+
 void VkDev::SetScissor (const RECT *r)
 {
 	scissorSet = (r != NULL);
-	if (r) scissor = { { r->left, r->top }, { UINT(r->right - r->left), UINT(r->bottom - r->top) } };
+	if (r) scissor = *r;
 	if (!rendering) return;
-	VkSurf *t = rtColor ? rtColor : rtDepth;
-	VkRect2D sc = scissorSet ? scissor : VkRect2D{ { 0, 0 }, { t->w, t->h } };
+	VkRect2D sc = ScissorArea ();
 	vkCmdSetScissorWithCount (Cmd(), 1, &sc);
 }
 
@@ -1031,10 +1191,7 @@ void VkDev::SetState (const State &s)
 
 bool VkDev::GetScissor (RECT *r) const
 {
-	r->left = scissor.offset.x;
-	r->top = scissor.offset.y;
-	r->right = scissor.offset.x + (LONG)scissor.extent.width;
-	r->bottom = scissor.offset.y + (LONG)scissor.extent.height;
+	*r = scissor;
 	return scissorSet;
 }
 
@@ -1076,6 +1233,7 @@ void VkDev::ReplayState ()
 	else vkx.CmdSetVertexInputEXT (cmd, 0, NULL, 0, NULL);
 	if (curVS || curFS) BindShaders (curVS, curFS);
 	if (cbActive) cbActive->Invalidate (); // push descriptors don't carry over to a new command buffer
+	streamBound[0] = streamBound[1] = indexBound = false; // neither do buffer bindings: PreDraw binds the kept ones again
 }
 
 void VkDev::SetMultisampleAA (bool enable)
@@ -1233,7 +1391,12 @@ void VkDev::SetVertexDecl (const VkVertexDecl *decl)
 void VkDev::SetStreamSource (UINT stream, VkBuffer vb, VkDeviceSize offset, UINT stride)
 {
 	bool changed = (stream < 2 && streamStride[stream] != stride);
-	if (stream < 2) streamStride[stream] = stride;
+	if (stream < 2) {
+		streamStride[stream] = stride;
+		streamBuf[stream] = vb;
+		streamOffset[stream] = offset;
+		streamBound[stream] = recording && vb;
+	}
 	if (!recording || !vb) return;
 	if (changed && st.decl) SetVertexDecl (st.decl); // the vertex input state carries the stride as well
 	VkDeviceSize s = stride;
@@ -1242,6 +1405,10 @@ void VkDev::SetStreamSource (UINT stream, VkBuffer vb, VkDeviceSize offset, UINT
 
 void VkDev::SetIndices (VkBuffer ib, VkDeviceSize offset, VkIndexType type)
 {
+	indexBuf = ib;
+	indexOffset = offset;
+	indexType = type;
+	indexBound = recording && ib;
 	if (recording && ib) vkCmdBindIndexBuffer (Cmd(), ib, offset, type);
 }
 
@@ -1289,14 +1456,17 @@ void VkDev::SetConstantSource (VkConstBuffer *cb, const std::vector<VkSamplerSlo
 	if (cb) cb->Invalidate ();
 }
 
-void VkDev::PreDraw ()
+void VkDev::PreDraw (bool indexed)
 {
 	if (cbActive && cbSlots && cbActive->IsDirty ()) cbActive->Push (*cbSlots); // may end rendering to change a texture's layout
+	if (st.decl) for (const auto &b : st.decl->bind) // D3D9 keeps the streams across a Flush; only those the declaration reads are bound again
+		if (b.binding < 2 && !streamBound[b.binding] && streamBuf[b.binding]) SetStreamSource (b.binding, streamBuf[b.binding], streamOffset[b.binding], streamStride[b.binding]);
+	if (indexed && !indexBound && indexBuf) SetIndices (indexBuf, indexOffset, indexType);
 }
 
 void VkDev::DrawPrimitive (VkPrimitiveTopology t, UINT startVertex, UINT vertexCount)
 {
-	PreDraw ();
+	PreDraw (false);
 	BeginRendering ();
 	if (!rendering || !vertexCount) return;
 	SetTopology (t);
@@ -1305,7 +1475,7 @@ void VkDev::DrawPrimitive (VkPrimitiveTopology t, UINT startVertex, UINT vertexC
 
 void VkDev::DrawIndexedPrimitive (VkPrimitiveTopology t, int baseVertex, UINT startIndex, UINT indexCount)
 {
-	PreDraw ();
+	PreDraw (true);
 	BeginRendering ();
 	if (!rendering || !indexCount) return;
 	SetTopology (t);
@@ -1320,6 +1490,7 @@ void VkDev::DrawPrimitiveUP (VkPrimitiveTopology t, UINT vertexCount, const void
 	memcpy (p, vtx, vertexCount * stride);
 	SetStreamSource (0, vb, ofs, stride);
 	DrawPrimitive (t, 0, vertexCount);
+	streamBuf[0] = VK_NULL_HANDLE; // D3D9 resets stream 0 after a UP draw: the transient buffer is never bound again
 }
 
 void VkDev::DrawIndexedPrimitiveUP (VkPrimitiveTopology t, UINT vertexCount, UINT indexCount, const void *idx, VkIndexType it,
@@ -1335,6 +1506,7 @@ void VkDev::DrawIndexedPrimitiveUP (VkPrimitiveTopology t, UINT vertexCount, UIN
 	SetStreamSource (0, vb, vo, stride);
 	SetIndices (ib, io, it);
 	DrawIndexedPrimitive (t, 0, 0, indexCount);
+	streamBuf[0] = indexBuf = VK_NULL_HANDLE; // D3D9 resets stream 0 and the indices after a UP draw
 }
 
 void VkDev::PrepareSample (VkTex *t)
@@ -1393,7 +1565,7 @@ void VkDev::StretchRect (VkSurf *src, const RECT *sr, VkSurf *dst, const RECT *d
 	VkTex *st = src->tex, *dt = dst->tex;
 	VkTex *tmp = NULL;
 	if (st->samples != VK_SAMPLE_COUNT_1_BIT) { // D3D9 resolves a multisampled source
-		tmp = new VkTex (this, src->w, src->h, 1, st->fmt, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+		tmp = Temp (resolveTemps, src->w, src->h, st->fmt, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 		st->Transition (cmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 		tmp->Transition (cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 		VkImageResolve r = {};
@@ -1408,8 +1580,8 @@ void VkDev::StretchRect (VkSurf *src, const RECT *sr, VkSurf *dst, const RECT *d
 	RECT bd = d;
 	UINT bl = dst->level, by = dst->layer;
 	if (dt->samples != VK_SAMPLE_COUNT_1_BIT) { // blits can't write a multisampled image: scale into a temp, then draw that
-		if (dt->IsDepth () || d.right <= d.left || d.bottom <= d.top) { delete tmp; return; }
-		ms = new VkTex (this, UINT(d.right - d.left), UINT(d.bottom - d.top), 1, dt->fmt, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+		if (dt->IsDepth () || d.right <= d.left || d.bottom <= d.top) return;
+		ms = Temp (scaleTemps, UINT(d.right - d.left), UINT(d.bottom - d.top), dt->fmt, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
 		dt = ms;
 		bd = RECT{ 0, 0, d.right - d.left, d.bottom - d.top };
 		bl = by = 0;
@@ -1438,8 +1610,18 @@ void VkDev::StretchRect (VkSurf *src, const RECT *sr, VkSurf *dst, const RECT *d
 	TransferDone (cmd);
 	if (!ms) dst->tex->Written (dst->level);
 	if (ms) DrawCopy (ms, dst, d);
-	delete ms;
-	delete tmp;
+}
+
+// StretchRect's temporaries: reused while size and format match (the layout barriers order the uses); the oldest of too many outlives its frames
+VkTex *VkDev::Temp (std::vector<VkTex*> &pool, UINT w, UINT h, VkFormat fmt, VkImageUsageFlags usage)
+{
+	for (VkTex *t : pool) if (t->w == w && t->h == h && t->fmt == fmt && t->usage == usage) return t;
+	if (pool.size () >= 4) {
+		delete pool.front ();
+		pool.erase (pool.begin ());
+	}
+	pool.push_back (new VkTex (this, w, h, 1, fmt, usage));
+	return pool.back ();
 }
 
 void VkDev::DrawCopy (VkTex *src, VkSurf *dst, const RECT &d)
@@ -1458,14 +1640,14 @@ void VkDev::DrawCopy (VkTex *src, VkSurf *dst, const RECT &d)
 	if (!copyVS || !copyFS) return;
 	VkSurf *oc = rtColor, *od = rtDepth, *oe[3] = { rtExtra[0], rtExtra[1], rtExtra[2] };
 	VkViewport ov = viewport;
-	VkRect2D os = scissor;
+	RECT os = scissor;
 	bool oss = scissorSet;
 	EndRendering ();
 	src->Transition (Cmd(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	rtColor = dst;
 	rtDepth = rtExtra[0] = rtExtra[1] = rtExtra[2] = NULL;
 	viewport = { (float)d.left, (float)d.top, float(d.right - d.left), float(d.bottom - d.top), 0.0f, 1.0f }; // same size as src: one texel per pixel
-	scissor = { { d.left, d.top }, { UINT(d.right - d.left), UINT(d.bottom - d.top) } };
+	scissor = d;
 	scissorSet = true;
 	BeginRendering ();
 	VkCommandBuffer cmd = Cmd ();
@@ -1492,7 +1674,7 @@ void VkDev::DrawCopy (VkTex *src, VkSurf *dst, const RECT &d)
 	w.descriptorCount = 1;
 	w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	w.pImageInfo = &ii;
-	vkCmdPushDescriptorSet (cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout, 0, 1, &w);
+	vkx.CmdPushDescriptorSet (cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout, 0, 1, &w);
 	vkCmdDraw (cmd, 3, 1, 0, 0);
 	EndRendering ();
 	rtColor = oc;
@@ -1541,9 +1723,11 @@ void VkDev::ColorFill (VkSurf *s, const RECT *r, DWORD argb)
 		VkViewport ov = viewport;
 		EndRendering ();
 		rtExtra[0] = rtExtra[1] = rtExtra[2] = NULL;
-		VkRect2D os = scissor;
+		RECT os = scissor;
 		bool oss = scissorSet;
 		SetRenderTarget (s, NULL);
+		SetViewport (0.0f, 0.0f, (float)s->w, (float)s->h); // ColorFill ignores the viewport and the scissor rect (SetRenderTarget keeps them for the bound target)
+		scissorSet = false;
 		Clear (true, false, false, argb, 1.0f, 0, r);
 		EndRendering ();
 		for (int i = 0; i < 3; i++) rtExtra[i] = oe[i];

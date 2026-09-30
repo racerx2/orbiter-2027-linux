@@ -22,6 +22,8 @@
 #include <QScreen>
 #include <QGuiApplication>
 #include <QMessageBox>
+#include <chrono> // not upstream: Present's pacing while the window is hidden
+#include <thread>
 
 using namespace oapi;
 
@@ -37,7 +39,7 @@ VkVertexDecl	*pPatchVertexDecl = NULL;
 VkVertexDecl	*pSketchpadDecl = NULL;
 VkVertexDecl	*pLocalLightsDecl = NULL;
 
-static const char *d3dmessage={"Required Vulkan version (1.4 or newer) not found\0"};
+static const char *d3dmessage={"Required Vulkan version (1.3 or newer) not found\0"}; // not upstream: Vulkan, not DirectX
 
 // not upstream: format support queries (CheckDeviceFormat, CheckDepthStencilMatch counterparts)
 static bool FormatHas (VkPhysicalDevice p, VkFormat f, VkFormatFeatureFlags ff)
@@ -301,9 +303,9 @@ int CD3DFramework9::Initialize(QWindow *_hWnd, GraphicsClient::VIDEODATA *vData)
 	LogAlw("Vulkan API Version...... : %u.%u.%u",VK_API_VERSION_MAJOR(info.apiVersion),VK_API_VERSION_MINOR(info.apiVersion),VK_API_VERSION_PATCH(info.apiVersion));
 	LogOapi("NumSimultaneousRTs...... : %u",lim.maxColorAttachments);
 
-	// COLORWRITEENABLE and non-power of 2 textures are core Vulkan; pixel shader 3.0 → Vulkan 1.4 (VkDev checks features)
-	if (info.apiVersion < VK_API_VERSION_1_4) {
-		LogErr("[Vulkan 1.4 is required]");
+	// COLORWRITEENABLE and non-power of 2 textures are core Vulkan; pixel shader 3.0 → Vulkan 1.3 (VkDev checks the features and push descriptors)
+	if (info.apiVersion < VK_API_VERSION_1_3) { // not upstream: shader model 3.0 check
+		LogErr("[Vulkan 1.3 is required]"); // not upstream
 		bFail=true;
 	}
 
@@ -543,6 +545,10 @@ int CD3DFramework9::CreateSwapchain()
 
 	VkSurfaceCapabilitiesKHR sc;
 	VKCHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys, surface, &sc));
+	if (!(sc.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) { // Present blits into the swapchain image
+		LogErr("[The render window's swapchain can't be a transfer destination]");
+		return -1;
+	}
 
 	UINT n = 0;
 	vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &n, NULL);
@@ -657,6 +663,17 @@ int CD3DFramework9::Present()
 	if (!pDevice || !pDevice->IsRecording()) return -1;
 	pDevice->EndRendering();
 
+	if (hWnd && !hWnd->isExposed()) { // hidden or minimized: no acquire, which may never return; the frame still runs
+		pDevice->EndFrame(VK_NULL_HANDLE, VK_NULL_HANDLE);
+		pDevice->BeginFrame();
+		if (!bNoVSync) { // paced as FIFO presenting would have
+			QScreen *s = hWnd->screen();
+			double hz = (s && s->refreshRate() > 1.0) ? s->refreshRate() : 60.0;
+			std::this_thread::sleep_for(std::chrono::microseconds((long long)(1e6 / hz)));
+		}
+		return 0;
+	}
+
 	UINT idx = 0;
 	VkSemaphore acq = acquireSem[iAcquire];
 	VkResult r = swapchain ? vkAcquireNextImageKHR(pDevice->dev, swapchain, UINT64_MAX, acq, VK_NULL_HANDLE, &idx) : VK_ERROR_OUT_OF_DATE_KHR;
@@ -705,7 +722,12 @@ int CD3DFramework9::Present()
 	vkCmdBlitImage2(cmd, &bi);
 	SwapBarrier(cmd, swapImages[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
-	pDevice->EndFrame(acq, presentSem[idx]);
+	if (!pDevice->EndFrame(acq, presentSem[idx])) { // not submitted: presentSem stays unsignalled, a new swapchain takes the acquired image back
+		pDevice->WaitIdle();
+		CreateSwapchain();
+		pDevice->BeginFrame();
+		return 0;
+	}
 
 	VkPresentInfoKHR pi = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
 	pi.waitSemaphoreCount = 1;

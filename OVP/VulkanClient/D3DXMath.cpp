@@ -1,3 +1,8 @@
+// ==============================================================
+// Part of the ORBITER VISUALISATION PROJECT (OVP)
+// Dual licensed under GPL v3 and LGPL v3
+// Copyright (C) 2026 racerx2
+// ==============================================================
 // not upstream: the D3DX math functions the client uses, with D3DX semantics
 
 #include "D3DXMath.h"

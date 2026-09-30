@@ -178,6 +178,7 @@ bool TileLabel::Read ()
 		std::ifstream ifs(oapiResolvePath(texpath));
 		while (ifs >> typestr >> lat >> lng >> altstr >> std::ws) {
 			std::getline(ifs, name, '\n');
+			if (!name.empty() && name.back() == '\r') name.pop_back(); // not upstream: CRLF files (Windows text mode dropped the CR)
 			TLABEL *item = new TLABEL;
 			item->lat = lat * RAD;
 			item->lng = lng * RAD;

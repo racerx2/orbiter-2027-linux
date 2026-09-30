@@ -1,3 +1,8 @@
+// ==============================================================
+// Part of the ORBITER VISUALISATION PROJECT (OVP)
+// Dual licensed under GPL v3 and LGPL v3
+// Copyright (C) 2026 racerx2
+// ==============================================================
 // not upstream: Vulkan objects that replace the Direct3D 9 runtime objects (no D3D9 interface emulation)
 
 #ifndef __VKCORE_H
@@ -7,9 +12,11 @@
 #include "vk_mem_alloc.h"
 #include "OrbiterPlatform.h"
 #include <vector>
+#include <deque>
 #include <functional>
 #include <unordered_map>
 #include <mutex>
+#include <thread>
 
 class QVulkanInstance;
 class VkDev;
@@ -36,6 +43,7 @@ struct VkExtFunctions {
 	PFN_vkCmdSetDepthClampEnableEXT CmdSetDepthClampEnableEXT;
 	PFN_vkCmdSetSampleLocationsEnableEXT CmdSetSampleLocationsEnableEXT; // VK_EXT_sample_locations, when the device has it
 	PFN_vkCmdSetSampleLocationsEXT CmdSetSampleLocationsEXT;
+	PFN_vkCmdPushDescriptorSetKHR CmdPushDescriptorSet; // VK_KHR_push_descriptor's, or the core 1.4 command (the same signature)
 };
 extern VkExtFunctions vkx;
 
@@ -45,8 +53,9 @@ class VkBuf {
 public:
 	VkBuf (VkDev *dev, VkDeviceSize size, VkBufferUsageFlags usage, bool host, bool readback = false);
 	~VkBuf ();
-	void *Map () const { return mapped; } // Lock; NULL for device-local buffers
+	void *Map () const { return mapped; } // Lock; NULL for device-local buffers and when the allocation failed
 	void Upload (const void *data, VkDeviceSize size, VkDeviceSize offset = 0); // UpdateSubresource path
+	void Invalidate ();                   // readback buffers: the GPU's writes become visible to Map
 	VkBuffer buf;
 	VkDeviceSize size;
 private:
@@ -86,7 +95,7 @@ public:
 	void Transition (VkCommandBuffer cmd, VkImageLayout layout); // records a barrier to the new layout
 	void Upload (UINT level, UINT layer, const void *data, VkDeviceSize size, UINT rowPitch = 0); // whole mip level
 	void GenerateMips (VkCommandBuffer cmd); // D3DUSAGE_AUTOGENMIPMAP counterpart
-	void Written (UINT level) { if (!level && autoGenMips && levels > 1) mipsDirty = true; } // level 0 changed: sublevels out of date
+	void Written (UINT level);                // level 0 changed: sublevels out of date; in the open frame: touched
 	VkImageAspectFlags Aspect () const;
 	bool IsDepth () const;
 	void SetSwizzle (VkComponentMapping swz);   // view channel mapping (X8, L8, A8 and A8L8 formats)
@@ -98,7 +107,8 @@ public:
 	bool cube;
 	VkSampleCountFlagBits samples;
 	VkImageUsageFlags usage;
-	VkImageLayout layout;
+	VkImageLayout layout;  // after the last recorded barrier: the render thread records its transitions into the frame in order; one-time submits only touch images no frame uses (new, pool, loader), or end in the layout they found (readback)
+	uint64_t touched = 0;  // FrameValue of the open frame when it last recorded a barrier or write on this image (VkReadPixels flushes only then)
 	VkComponentMapping swizzle; // identity unless SetSwizzle
 	bool external;         // swapchain image: not owned
 	bool autoGenMips = false; // D3DUSAGE_AUTOGENMIPMAP: the sublevels follow level 0
@@ -158,22 +168,30 @@ public:
 
 	VkDev (QVulkanInstance *inst, VkPhysicalDevice phys);
 	~VkDev ();
-	bool IsOK () const { return dev != VK_NULL_HANDLE; }
+	bool IsOK () const { return dev != VK_NULL_HANDLE && ok; }
 	bool IsRecording () const { return recording; }
 
 	// frame
 	VkCommandBuffer BeginFrame ();                   // waits for the frame slot, starts its command buffer
-	void EndFrame (VkSemaphore wait, VkSemaphore signal); // submits (wait/signal: swapchain semaphores or null)
+	bool EndFrame (VkSemaphore wait, VkSemaphore signal); // submits (wait/signal: swapchain semaphores or null); false: not submitted, signal stays unsignalled
 	VkCommandBuffer Cmd () const { return frame[iFrame].cmd; }
 	void Flush ();                                   // submit the recorded commands and wait (uploads outside a frame)
 	void WaitIdle ();
 	VkResult QueuePresent (const VkPresentInfoKHR *pi); // vkQueuePresentKHR under the queue lock
 	std::mutex &QueueLock () { return queueLock; }  // for code that submits to the queue itself (ImGui backend)
-	void Defer (std::function<void()> release);      // SAFE_RELEASE: freed once the GPU is done with this frame
+	void Defer (std::function<void()> release);      // SAFE_RELEASE: freed once the GPU is done with the frame being recorded (any thread)
+	void ForgetShader (VkShaderEXT s) { if (s && s == curVS) curVS = VK_NULL_HANDLE; if (s && s == curFS) curFS = VK_NULL_HANDLE; } // a shader is destroyed: never bound again by ReplayState
 
 	// one-off commands (uploads, readbacks) outside the frame command buffer
 	VkCommandBuffer BeginOneTime ();
 	void EndOneTime (VkCommandBuffer cmd);
+
+	// uploads: into the open frame on the render thread (in order with the draws, no wait), else a one-time submit
+	bool InFrame () const { return std::this_thread::get_id () == owner && recording; } // thread first: recording is render-thread state
+	uint64_t FrameValue () const { return timelineValue + 1; } // render thread: the timeline value the open frame signals
+	VkCommandBuffer BeginUpload ();
+	void EndUpload (VkCommandBuffer cmd);
+	void BufferCopy (VkBuffer src, VkBuffer dst, VkDeviceSize srcOffset, VkDeviceSize dstOffset, VkDeviceSize size); // after earlier uses of dst, before later ones
 
 	// per-frame transient memory (DrawPrimitiveUP data, effect constants)
 	VkDeviceSize AllocTransient (VkDeviceSize size, VkDeviceSize align, void **ptr, VkBuffer *buf); // offset into *buf
@@ -281,7 +299,7 @@ private:
 	void ReplayState ();
 	void ApplySampleLocations ();
 	VkSampleCountFlags sampleLocationCounts;
-	void ReleaseFrame (int i);
+	void ReleaseDone ();                             // runs the deferred releases whose frames the GPU has finished
 	void DrawCopy (VkTex *src, VkSurf *dst, const RECT &d); // StretchRect into a multisampled target
 	VkShaderEXT copyVS, copyFS;
 
@@ -289,14 +307,16 @@ private:
 		VkCommandPool pool;
 		VkCommandBuffer cmd;
 		uint64_t done;                               // timeline value signalled when this frame's work is complete
-		std::vector<std::function<void()>> release;
 		VkBuf *transient;
 		VkDeviceSize transientUsed;
 	} frame[NFRAMES];
 	int iFrame;
 	bool recording;
+	bool ok;                                         // false: made, but something the client needs failed (IsOK)
+	std::thread::id owner;                           // the render thread (the one that made the device)
 	VkSemaphore timeline;
 	uint64_t timelineValue;
+	std::deque<std::pair<uint64_t, std::function<void()>>> deferred; // (timeline value that frees it, release), under queueLock
 	VkCommandPool oneTimePool;
 	std::recursive_mutex oneTimeLock;                // held from BeginOneTime to EndOneTime: the pool is externally synchronized
 	std::mutex constLock;
@@ -306,14 +326,24 @@ private:
 	VkSurf *rtColor, *rtDepth;
 	VkSurf *rtExtra[3];                                  // MRT colour targets 1-3 (a list ending at the first NULL)
 	UINT streamStride[2];
+	VkBuffer streamBuf[2];                           // SetStreamSource/SetIndices, kept as D3D9 keeps them across a Flush
+	VkDeviceSize streamOffset[2];
+	bool streamBound[2];                             // bound in this command buffer; PreDraw binds the others again
+	VkBuffer indexBuf;
+	VkDeviceSize indexOffset;
+	VkIndexType indexType;
+	bool indexBound;
 	bool rendering;
 	VkViewport viewport;
-	VkRect2D scissor;
+	RECT scissor;                                    // as SetScissorRect got it (GetScissor); applied clamped to the target
 	bool scissorSet;
+	VkRect2D ScissorArea () const;                   // the scissor rect inside the target, or the whole target
 
 	State st;
 
-	void PreDraw ();
+	void PreDraw (bool indexed);
+	std::vector<VkTex*> resolveTemps, scaleTemps;   // StretchRect's temporaries, a few sizes kept (a frame often alternates two)
+	VkTex *Temp (std::vector<VkTex*> &pool, UINT w, UINT h, VkFormat fmt, VkImageUsageFlags usage);
 
 	VkShaderEXT curVS, curFS;
 	VkConstBuffer *cbActive;

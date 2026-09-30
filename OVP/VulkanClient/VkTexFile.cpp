@@ -1,3 +1,8 @@
+// ==============================================================
+// Part of the ORBITER VISUALISATION PROJECT (OVP)
+// Dual licensed under GPL v3 and LGPL v3
+// Copyright (C) 2026 racerx2
+// ==============================================================
 // not upstream: see VkTexFile.h
 
 #include "VkTexFile.h"
@@ -42,6 +47,11 @@ VkDeviceSize VkLevelSize (VkFormat fmt, UINT w, UINT h, UINT d)
 static bool IsBC (VkFormat f)
 {
 	return f == VK_FORMAT_BC1_RGBA_UNORM_BLOCK || f == VK_FORMAT_BC1_RGB_UNORM_BLOCK || f == VK_FORMAT_BC2_UNORM_BLOCK || f == VK_FORMAT_BC3_UNORM_BLOCK;
+}
+
+static bool NoCodec (VkFormat f) // formats only DX10 DDS files bring (D3D9 had none of them): uploaded as stored, no CPU decoder or encoder
+{
+	return f == VK_FORMAT_BC4_UNORM_BLOCK || f == VK_FORMAT_BC5_UNORM_BLOCK || f == VK_FORMAT_BC7_UNORM_BLOCK;
 }
 
 // half floats
@@ -449,12 +459,15 @@ static bool DDSFormat (const DDSHeader &h, const DDSHeader10 *h10, VkFormat *fmt
 		case FOURCC('D','X','1','0'):
 			if (!h10) return false;
 			switch (h10->dxgiFormat) {
-			case 71: *fmt = VK_FORMAT_BC1_RGBA_UNORM_BLOCK; break;
-			case 74: *fmt = VK_FORMAT_BC2_UNORM_BLOCK; break;
-			case 77: *fmt = VK_FORMAT_BC3_UNORM_BLOCK; break;
-			case 28: *fmt = VK_FORMAT_R8G8B8A8_UNORM; break;
-			case 87: *fmt = VK_FORMAT_B8G8R8A8_UNORM; break;
-			case 88: *fmt = VK_FORMAT_B8G8R8A8_UNORM; *swz = SWZ_NOALPHA; break;
+			case 71: case 72: *fmt = VK_FORMAT_BC1_RGBA_UNORM_BLOCK; break; // the _SRGB twins as UNORM: D3D9 had no sRGB formats, the bytes are the same
+			case 74: case 75: *fmt = VK_FORMAT_BC2_UNORM_BLOCK; break;
+			case 77: case 78: *fmt = VK_FORMAT_BC3_UNORM_BLOCK; break;
+			case 80: *fmt = VK_FORMAT_BC4_UNORM_BLOCK; break;
+			case 83: *fmt = VK_FORMAT_BC5_UNORM_BLOCK; break;
+			case 98: case 99: *fmt = VK_FORMAT_BC7_UNORM_BLOCK; break;
+			case 28: case 29: *fmt = VK_FORMAT_R8G8B8A8_UNORM; break;
+			case 87: case 91: *fmt = VK_FORMAT_B8G8R8A8_UNORM; break;
+			case 88: case 93: *fmt = VK_FORMAT_B8G8R8A8_UNORM; *swz = SWZ_NOALPHA; break;
 			case 10: *fmt = VK_FORMAT_R16G16B16A16_SFLOAT; break;
 			case 2:  *fmt = VK_FORMAT_R32G32B32A32_SFLOAT; break;
 			case 41: *fmt = VK_FORMAT_R32_SFLOAT; break;
@@ -693,6 +706,12 @@ bool VkConvertPixels (const VkPixels &in, VkPixels &out, VkFormat fmt, VkSwz swz
 		return true;
 	}
 	if (in.depth > 1) { LogErr("VkConvertPixels: volume textures are kept as stored"); return false; }
+	if (NoCodec (in.fmt) || NoCodec (fmt)) { // BC4, BC5, BC7 (DX10 DDS only): loaded as stored, never converted
+		if (fmt != in.fmt || swz != in.swz || w != in.w || h != in.h) { LogErr("VkConvertPixels: format %d can't be converted", (int)(NoCodec (in.fmt) ? in.fmt : fmt)); return false; }
+		LogWrn("VkConvertPixels: format %d keeps its %u stored mip levels (%u asked)", (int)fmt, in.levels, levels);
+		out = in;
+		return true;
+	}
 
 	out.w = w; out.h = h; out.depth = 1; out.levels = levels; out.layers = in.layers;
 	out.fmt = fmt; out.swz = swz;
@@ -702,7 +721,16 @@ bool VkConvertPixels (const VkPixels &in, VkPixels &out, VkFormat fmt, VkSwz swz
 		UINT lw = w, lh = h;
 		for (UINT l = 0; l < levels; l++) {
 			UINT iw = std::max (1u, in.w >> l), ih = std::max (1u, in.h >> l);
-			if (l < in.levels && iw == lw && ih == lh) DecodeLevel (in.Level (l, f).data(), in.fmt, in.swz, lw, lh, cur); // stored level
+			const bool stored = (l < in.levels && iw == lw && ih == lh);
+			const bool verbatim = stored && fmt == in.fmt && swz == in.swz; // a stored level in the wanted format: copied, not re-encoded (lossy for BCn)
+			const bool nextStored = (l + 1 < in.levels) && std::max (1u, iw >> 1) == std::max (1u, lw >> 1) && std::max (1u, ih >> 1) == std::max (1u, lh >> 1);
+			if (verbatim && !(l + 1 < levels && !nextStored)) { // nothing is generated from it
+				out.Level (l, f) = in.Level (l, f);
+				lw = std::max (1u, lw >> 1);
+				lh = std::max (1u, lh >> 1);
+				continue;
+			}
+			if (stored) DecodeLevel (in.Level (l, f).data(), in.fmt, in.swz, lw, lh, cur); // stored level
 			else if (l == 0) {
 				std::vector<float> src;
 				DecodeLevel (in.Level (0, f).data(), in.fmt, in.swz, in.w, in.h, src);
@@ -712,7 +740,8 @@ bool VkConvertPixels (const VkPixels &in, VkPixels &out, VkFormat fmt, VkSwz swz
 				UINT pw = std::max (1u, w >> (l-1)), ph = std::max (1u, h >> (l-1));
 				Resample (next, pw, ph, cur, lw, lh);
 			}
-			EncodeLevel (cur, lw, lh, fmt, swz, out.Level (l, f));
+			if (verbatim) out.Level (l, f) = in.Level (l, f); // decoded only for the level generated from it
+			else EncodeLevel (cur, lw, lh, fmt, swz, out.Level (l, f));
 			next.swap (cur);
 			lw = std::max (1u, lw >> 1);
 			lh = std::max (1u, lh >> 1);
@@ -730,11 +759,18 @@ VkTex *VkCreateTexture (VkDev *dev, const VkPixels &px, VkImageUsageFlags usage)
 		: new VkTex (dev, px.w, px.h, px.levels, px.fmt, usage, px.layers, px.layers == 6);
 	if (!t->img) { delete t; return NULL; }
 	if (px.swz != SWZ_NONE) t->SetSwizzle (VkSwizzleMap (px.swz));
+	if (!VkUploadPixels (t, px)) { delete t; return NULL; }
+	return t;
+}
 
-	// one staging buffer and one submit for all levels and faces
+bool VkUploadPixels (VkTex *t, const VkPixels &px)
+{
+	// one staging buffer and one copy for all levels and faces (in the open frame on the render thread, else one submit)
+	VkDev *dev = t->Device ();
 	VkDeviceSize total = 0;
 	for (auto &d : px.data) total += (d.size() + 15) & ~15ull;
 	VkBuf staging (dev, std::max (total, (VkDeviceSize)16), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
+	if (!staging.Map ()) return false;
 	std::vector<VkBufferImageCopy> regions;
 	VkDeviceSize ofs = 0;
 	UINT nl = (px.depth > 1) ? 1 : px.levels;
@@ -749,12 +785,13 @@ VkTex *VkCreateTexture (VkDev *dev, const VkPixels &px, VkImageUsageFlags usage)
 			regions.push_back (r);
 			ofs += (d.size() + 15) & ~15ull;
 		}
-	VkCommandBuffer cmd = dev->BeginOneTime ();
+	VkCommandBuffer cmd = dev->BeginUpload ();
 	t->Transition (cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 	vkCmdCopyBufferToImage (cmd, staging.buf, t->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (UINT)regions.size(), regions.data());
 	t->Transition (cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-	dev->EndOneTime (cmd);
-	return t;
+	t->Written (0);
+	dev->EndUpload (cmd);
+	return true;
 }
 
 VkTex *VkCreateTextureFromFile (VkDev *dev, const char *path, UINT w, UINT h, UINT mips, VkFormat fmt, VkSwz swz,
@@ -785,16 +822,31 @@ bool VkLoadTextureLevel (VkTex *t, UINT level, UINT layer, const VkPixels &src)
 
 // readback
 
+static void AfterEarlierWrites (VkCommandBuffer cmd) // the readback waits for the frames submitted before it, also without a layout change
+{
+	VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+	mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+	mb.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+	mb.dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+	mb.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+	VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+	di.memoryBarrierCount = 1;
+	di.pMemoryBarriers = &mb;
+	vkCmdPipelineBarrier2 (cmd, &di);
+}
+
 bool VkReadPixels (VkDev *dev, VkTex *t, VkPixels &px, UINT levels)
 {
 	if (!t || !t->img) return false;
-	if (dev->IsRecording ()) dev->Flush (); // the frame's commands that wrote the image
+	if (t->Aspect () == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) { LogErr("VkReadPixels: depth/stencil format %d can't be read", (int)t->fmt); return false; } // a buffer copy names one aspect; D3D9 couldn't lock D24S8
+	if (dev->InFrame () && t->touched == dev->FrameValue ()) dev->Flush (); // the open frame wrote or moved the image: its commands first (earlier frames: the barrier below)
 	VkTex *src = t;
 	VkTex *tmp = NULL;
 	if (levels == 0 || levels > t->levels) levels = t->levels;
 	if (t->samples != VK_SAMPLE_COUNT_1_BIT) { // resolve first, as D3D9 did for multisampled render targets
 		tmp = new VkTex (dev, t->w, t->h, 1, t->fmt, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
 		VkCommandBuffer cmd = dev->BeginOneTime ();
+		AfterEarlierWrites (cmd);
 		VkImageLayout keep = t->layout;
 		t->Transition (cmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 		tmp->Transition (cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -823,12 +875,24 @@ bool VkReadPixels (VkDev *dev, VkTex *t, VkPixels &px, UINT levels)
 			total += (VkLevelSize (px.fmt, r.imageExtent.width, r.imageExtent.height, r.imageExtent.depth) + 15) & ~15ull;
 		}
 	VkBuf staging (dev, total, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, true);
+	if (!staging.Map ()) { delete tmp; return false; }
 	VkCommandBuffer cmd = dev->BeginOneTime ();
+	AfterEarlierWrites (cmd);
 	VkImageLayout keep = src->layout;
 	src->Transition (cmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 	vkCmdCopyImageToBuffer (cmd, src->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging.buf, (UINT)regions.size(), regions.data());
+	VkMemoryBarrier2 hb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 }; // the copy's writes made available to the host
+	hb.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+	hb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+	hb.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+	hb.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+	VkDependencyInfo hd = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+	hd.memoryBarrierCount = 1;
+	hd.pMemoryBarriers = &hb;
+	vkCmdPipelineBarrier2 (cmd, &hd);
 	if (keep != VK_IMAGE_LAYOUT_UNDEFINED) src->Transition (cmd, keep);
 	dev->EndOneTime (cmd);
+	staging.Invalidate (); // cached readback memory may not be coherent
 	UINT i = 0;
 	for (UINT f = 0; f < px.layers; f++)
 		for (UINT l = 0; l < levels; l++, i++) {

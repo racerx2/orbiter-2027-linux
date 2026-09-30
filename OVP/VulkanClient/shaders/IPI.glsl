@@ -1,3 +1,7 @@
+// ==============================================================
+// Part of the ORBITER VISUALISATION PROJECT (OVP)
+// Dual licensed under GPL v3 and LGPL v3
+// ==============================================================
 
 layout(binding = 0, row_major, scalar) uniform IPIVS	// uniform extern: vertex shader constants (the pixel shader's are binding 1)
 {

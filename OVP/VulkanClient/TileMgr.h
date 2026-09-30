@@ -20,6 +20,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <condition_variable> // not upstream: hStopCond
 #include "Mesh.h"
 #include "Spherepatch.h"
 
@@ -256,6 +257,8 @@ public:
 private:
 	static std::thread hLoadThread; // LoadTile ThreadProc handle
 	static std::atomic<bool> hStopThread; // Thread kill signal (event handle)
+	static std::mutex hStopMutex;         // not upstream: the loader sleeps on hStopCond until hStopThread or its idle time
+	static std::condition_variable hStopCond;
 
 	static void TerminateLoadThread(); // Terminates the LoadTile thread
 

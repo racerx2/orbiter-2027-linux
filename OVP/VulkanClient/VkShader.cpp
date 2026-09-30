@@ -1,3 +1,8 @@
+// ==============================================================
+// Part of the ORBITER VISUALISATION PROJECT (OVP)
+// Dual licensed under GPL v3 and LGPL v3
+// Copyright (C) 2026 racerx2
+// ==============================================================
 // not upstream: see VkShader.h
 
 #include "VkShader.h"
@@ -323,7 +328,7 @@ void VkConstBuffer::Push (const std::vector<VkSamplerSlot> &samplers)
 		w[n].pImageInfo = &ii[ni];
 		n++, ni++;
 	}
-	if (n) vkCmdPushDescriptorSet (dev->Cmd (), VK_PIPELINE_BIND_POINT_GRAPHICS, dev->PipelineLayout (), 0, n, w);
+	if (n) vkx.CmdPushDescriptorSet (dev->Cmd (), VK_PIPELINE_BIND_POINT_GRAPHICS, dev->PipelineLayout (), 0, n, w);
 }
 
 // effect declarations
@@ -451,6 +456,8 @@ VkEffect::~VkEffect ()
 	VkDevice d = dev->dev;
 	for (auto &t : tech) for (auto &p : t.pass) {
 		VkShaderEXT vs = p.vsObj, ps = p.psObj;
+		dev->ForgetShader (vs);
+		dev->ForgetShader (ps);
 		dev->Defer ([d, vs, ps]() {
 			if (vs) vkx.DestroyShaderEXT (d, vs, NULL);
 			if (ps) vkx.DestroyShaderEXT (d, ps, NULL);

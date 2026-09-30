@@ -99,12 +99,14 @@ ImageProcessing::~ImageProcessing()
 	VkDevice d = pDevice->dev;
 	SAFE_DELETE(pVSConst);
 	VkShaderEXT vs = pVertex;
+	pDevice->ForgetShader(vs); // not upstream: the device must not bind it again
 	pDevice->Defer([d, vs]() { if (vs) vkx.DestroyShaderEXT(d, vs, NULL); }); // SAFE_RELEASE(pVertex)
 	pVertex = VK_NULL_HANDLE;
 	SAFE_DELETEA(pOcta);
 
 	for (auto x : Shaders) {
 		VkShaderEXT ps = x.second.pPixel;
+		pDevice->ForgetShader(ps); // not upstream: the device must not bind it again
 		pDevice->Defer([d, ps]() { if (ps) vkx.DestroyShaderEXT(d, ps, NULL); }); // SAFE_RELEASE(x.second.pPixel)
 		SAFE_DELETE(x.second.pPSConst);
 	}

@@ -20,6 +20,7 @@
 #include <map>
 #include <sstream>
 #include <unordered_map>
+#include <algorithm> // not upstream: std::sort
 
 #include "D3D9Client.h"
 #include "D3D9Config.h"
@@ -112,6 +113,16 @@ std::vector<std::string> EnumerateDirectory(std::string directory, std::string f
 			if (!fd.is_directory(ec) && fn.size() >= ext.size() && !strcasecmp(fn.c_str() + fn.size() - ext.size(), ext.c_str())) result.push_back(fn);
 		}
 	}
+	// not upstream: FindFirstFile's NTFS order (ASCII upper-cased, a shorter prefix first); the last flattening shape wins
+	std::sort(result.begin(), result.end(), [](const std::string &x, const std::string &y) {
+		for (size_t i = 0; i < x.size() && i < y.size(); i++) {
+			unsigned char cx = x[i], cy = y[i];
+			if (cx >= 'a' && cx <= 'z') cx -= 'a' - 'A';
+			if (cy >= 'a' && cy <= 'z') cy -= 'a' - 'A';
+			if (cx != cy) return cx < cy;
+		}
+		return x.size() != y.size() ? x.size() < y.size() : x < y;
+	});
 	return result;
 }
 

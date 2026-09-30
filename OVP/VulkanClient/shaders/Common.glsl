@@ -1,3 +1,7 @@
+// ==============================================================
+// Part of the ORBITER VISUALISATION PROJECT (OVP)
+// Dual licensed under GPL v3 and LGPL v3
+// ==============================================================
 
 
 #define KERNEL_RADIUS 2.0f

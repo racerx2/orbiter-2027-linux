@@ -472,7 +472,7 @@ bool D3D9Client::clbkInitialise()
 
 	if (g_pD3DObject) oapiWriteLog("[D3D9] Vulkan Instance Created...");
 	else {
-		oapiWriteLog("[D3D9][ERROR] Failed to create a Vulkan 1.4 instance");
+		oapiWriteLog("[D3D9][ERROR] Failed to create a Vulkan instance (1.3 or newer needed)"); // not upstream: Vulkan instance
 		FailedDeviceError();
 		return false;
 	}
@@ -2804,7 +2804,7 @@ void D3D9Client::clbkImGuiInit()
 	_TRACE;
 	// ImGui_ImplDX9_Init(pDevice): the Vulkan backend takes the device objects and the backbuffer format (dynamic rendering)
 	ImGui_ImplVulkan_InitInfo info = {};
-	info.ApiVersion = VK_API_VERSION_1_4;
+	info.ApiVersion = VK_API_VERSION_1_3; // not upstream: the client's minimum
 	info.Instance = pDevice->instance;
 	info.PhysicalDevice = pDevice->phys;
 	info.Device = pDevice->dev;

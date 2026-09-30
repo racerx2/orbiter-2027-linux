@@ -66,10 +66,10 @@ struct DDSURFACEDESC2 {
 #define MAKEFOURCC(a, b, c, d) ((DWORD)(BYTE)(a) | ((DWORD)(BYTE)(b) << 8) | ((DWORD)(BYTE)(c) << 16) | ((DWORD)(BYTE)(d) << 24))
 
 // not upstream: WaitForSingleObject(event, ms) on an auto-reset stop flag; true if it was set within ms
-static bool WaitForStop (std::atomic<bool> &stop, DWORD ms)
+static bool WaitForStop (std::atomic<bool> &stop, std::mutex &m, std::condition_variable &cv, DWORD ms)
 {
-	auto t1 = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
-	while (!stop && std::chrono::steady_clock::now() < t1) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	std::unique_lock<std::mutex> lock(m); // the flag is set under m, so no wake-up is lost
+	cv.wait_for(lock, std::chrono::milliseconds(ms), [&stop] { return stop.load(); });
 	return stop.exchange(false);
 }
 
@@ -1021,7 +1021,8 @@ void TileBuffer::TerminateLoadThread()
 {
 	if (hLoadThread.joinable()) {
 		// Signal thread to stop and wait for it to happen
-		hStopThread = true; // SetEvent
+		{ std::lock_guard<std::mutex> lock(hStopMutex); hStopThread = true; } // not upstream: SetEvent, under the mutex WaitForStop waits with
+		hStopCond.notify_all(); // not upstream: wakes WaitForStop
 		hLoadThread.join(); // WaitForSingleObject, CloseHandle
 		// Clean up for next run
 		hStopThread = false; // ResetEvent
@@ -1140,7 +1141,7 @@ DWORD TileBuffer::LoadTile_ThreadProc (void *data)
 	LogAlw("TileBuffer::LoadTile thread started");
 
 	bool bFirstRun = true;
-	while (bFirstRun || !WaitForStop(hStopThread, idle))
+	while (bFirstRun || !WaitForStop(hStopThread, hStopMutex, hStopCond, idle))
 	{
 		bFirstRun = false;
 
@@ -1314,6 +1315,8 @@ int TileBuffer::queue_out = 0;
 std::recursive_mutex TileBuffer::hQueueMutex;
 std::thread TileBuffer::hLoadThread;
 std::atomic<bool> TileBuffer::hStopThread(false); // CreateEvent: auto-reset, not signalled
+std::mutex TileBuffer::hStopMutex; // not upstream
+std::condition_variable TileBuffer::hStopCond; // not upstream
 struct TileBuffer::QUEUEDESC TileBuffer::loadqueue[MAXQUEUE] = {0};
 
 

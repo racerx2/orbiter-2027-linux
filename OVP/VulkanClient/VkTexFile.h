@@ -1,3 +1,8 @@
+// ==============================================================
+// Part of the ORBITER VISUALISATION PROJECT (OVP)
+// Dual licensed under GPL v3 and LGPL v3
+// Copyright (C) 2026 racerx2
+// ==============================================================
 // not upstream: texture files and pixel conversions (the D3DX texture file functions and LockRect readbacks)
 
 #ifndef __VKTEXFILE_H
@@ -45,6 +50,7 @@ bool VkConvertPixels (const VkPixels &in, VkPixels &out, VkFormat fmt, VkSwz swz
 
 // texture with the pixels uploaded; D3DX's call: file, size (0 = file), mips (VKTEX_FROM_FILE, 0 = full chain), format
 VkTex *VkCreateTexture (VkDev *dev, const VkPixels &px, VkImageUsageFlags usage);
+bool VkUploadPixels (VkTex *t, const VkPixels &px); // every level and face of px into t (same size, format and levels), then sampled
 VkTex *VkCreateTextureFromFile (VkDev *dev, const char *path, UINT w, UINT h, UINT mips, VkFormat fmt, VkSwz swz,
 	VkImageUsageFlags usage, VkImageInfo *info = NULL);
 bool VkLoadTextureLevel (VkTex *t, UINT level, UINT layer, const VkPixels &src); // D3DXLoadSurfaceFrom*: converts to fit

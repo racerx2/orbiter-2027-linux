@@ -190,12 +190,10 @@ bool CopyBuffer(VkBuf *pDst, VkBuf *pSrc)
 		memcpy(pDst->Map(), pSrc->Map(), pSrc->size);
 		return true;
 	}
+	if (pSrc->Map()) { pDst->Upload(pSrc->Map(), pSrc->size); return true; } // not upstream: into device-local memory
+	if (pDst->Map() || !pSrc->buf || !pDst->buf) return false; // not upstream: a device-local source into host memory is not needed here
 
-	VkDev *pDev = g_client->GetDevice(); // device local: a buffer copy
-	VkCommandBuffer cmd = pDev->BeginOneTime();
-	VkBufferCopy region = { 0, 0, pSrc->size };
-	vkCmdCopyBuffer(cmd, pSrc->buf, pDst->buf, 1, &region);
-	pDev->EndOneTime(cmd);
+	g_client->GetDevice()->BufferCopy(pSrc->buf, pDst->buf, 0, 0, pSrc->size); // not upstream: device local, a buffer copy in order with the frame
 	return true;
 }
 
@@ -1729,6 +1727,7 @@ ShaderClass::~ShaderClass()
 	if (pDev->GetConstantSource() == pCB) pDev->SetConstantSource(NULL, NULL);
 	VkDevice d = pDev->dev;
 	VkShaderEXT ps = pPS, vs = pVS;
+	pDev->ForgetShader(ps); pDev->ForgetShader(vs); // not upstream: the device must not bind them again
 	pDev->Defer([d, ps, vs]() { if (ps) vkx.DestroyShaderEXT(d, ps, NULL); if (vs) vkx.DestroyShaderEXT(d, vs, NULL); });
 	SAFE_DELETE(pPSCB);
 	SAFE_DELETE(pVSCB);

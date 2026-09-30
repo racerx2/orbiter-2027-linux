@@ -40,10 +40,10 @@ bool FileExists(const char* path)
 }
 
 // not upstream: WaitForSingleObject(event, ms) on an auto-reset stop flag; true if it was set within ms
-static bool WaitForStop (std::atomic<bool> &stop, DWORD ms)
+static bool WaitForStop (std::atomic<bool> &stop, std::mutex &m, std::condition_variable &cv, DWORD ms)
 {
-	auto t1 = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
-	while (!stop && std::chrono::steady_clock::now() < t1) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	std::unique_lock<std::mutex> lock(m); // the flag is set under m, so no wake-up is lost
+	cv.wait_for(lock, std::chrono::milliseconds(ms), [&stop] { return stop.load(); });
 	return stop.exchange(false);
 }
 
@@ -130,7 +130,7 @@ bool Tile::CreateTexture(VkDev *pDev, VkPixels *pPre, VkTex **pTex)
 		*pTex = g_pTexmgr_tt->New(pPre->w, pPre->fmt); // GetLevelDesc(0)
 		VkPixels cv; // UpdateTexture: the pool texture's format and levels (missing levels box-filtered)
 		if (VkConvertPixels(*pPre, cv, (*pTex)->fmt, SWZ_NONE, 0, 0, (*pTex)->levels)) {
-			for (UINT l = 0; l < cv.levels; l++) (*pTex)->Upload(l, 0, cv.Level(l).data(), cv.Level(l).size());
+			VkUploadPixels(*pTex, cv); // not upstream: UpdateTexture, every level in one submit
 		}
 		else LogErr("Tile::CreateTexture: UpdateTexture failed");
 		return true;
@@ -871,7 +871,8 @@ void TileLoader::TerminateLoadThread()
 {
 	if (hLoadThread.joinable()) {
 		// Signal thread to stop and wait for it to happen
-		hStopThread = true; // SetEvent
+		{ std::lock_guard<std::mutex> lock(hStopMutex); hStopThread = true; } // not upstream: SetEvent, under the mutex WaitForStop waits with
+		hStopCond.notify_all(); // not upstream: wakes WaitForStop
 		hLoadThread.join(); // WaitForSingleObject(INFINITE), CloseHandle
 		// Clean up for next run
 		hStopThread = false; // ResetEvent
@@ -1030,7 +1031,7 @@ DWORD TileLoader::Load_ThreadProc (void *data)
 	LogAlw("TileLoader::Load thread started");
 
 	bool bFirstRun = true;
-	while (bFirstRun || !WaitForStop(loader->hStopThread, idle))
+	while (bFirstRun || !WaitForStop(loader->hStopThread, loader->hStopMutex, loader->hStopCond, idle))
 	{
 		bFirstRun = false;
 

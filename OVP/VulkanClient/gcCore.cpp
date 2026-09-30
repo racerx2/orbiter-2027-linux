@@ -48,6 +48,7 @@ public:
 	std::vector<VkSemaphore> presentSem;
 	VkSemaphore acquireSem[VkDev::NFRAMES];
 	int iAcquire;
+	QWindow *hWnd = nullptr;  // not upstream: Present skips a hidden window (an acquire there may never return)
 };
 
 
@@ -63,6 +64,7 @@ static VkSwapchainKHR CreateAdditionalSwapChain(VkDev *pDev, QWindow *hWnd, VkSw
 
 	VkSurfaceCapabilitiesKHR sc;
 	VKCHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(pDev->phys, surface, &sc));
+	if (!(sc.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) { LogErr("gcSwap: the window's swapchain can't be a transfer destination"); return VK_NULL_HANDLE; } // Present blits into it
 
 	UINT n = 0;
 	vkGetPhysicalDeviceSurfaceFormatsKHR(pDev->phys, surface, &n, NULL);
@@ -134,6 +136,7 @@ void gcSwap::Present()
 {
 	VkDev *pDev = g_client->GetDevice();
 	if (!pSwap || !pDev->IsRecording()) return;
+	if (hWnd && !hWnd->isExposed()) return; // hidden or minimized: nothing to show
 	UINT idx = 0;
 	VkSemaphore acq = acquireSem[iAcquire];
 	VkResult r = vkAcquireNextImageKHR(pDev->dev, pSwap, UINT64_MAX, acq, VK_NULL_HANDLE, &idx);
@@ -142,7 +145,7 @@ void gcSwap::Present()
 
 	pDev->StretchRect(pBack, NULL, pImage[idx], NULL, VK_FILTER_LINEAR);
 	pImage[idx]->tex->Transition(pDev->Cmd(), VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-	pDev->EndFrame(acq, presentSem[idx]); // the frame so far is submitted, as D3D9 flushed it at Present
+	if (!pDev->EndFrame(acq, presentSem[idx])) { pDev->BeginFrame(); return; } // not submitted: no present on an unsignalled semaphore
 
 	VkPresentInfoKHR pi = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
 	pi.waitSemaphoreCount = 1;
@@ -246,6 +249,7 @@ HSWAP gcCore::RegisterSwap(QWindow *hWnd, HSWAP hData, int AA)
 
 		pData->hSurf = SURFHANDLE(pSrf);
 		pData->pSwap = pSwap;
+		pData->hWnd = hWnd; // not upstream: Present checks it is shown
 		pData->pBack = pBack;
 		pData->Init(pDev, fmt, ext);
 

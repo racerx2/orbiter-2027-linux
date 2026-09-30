@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# ==============================================================
+# Part of the ORBITER VISUALISATION PROJECT (OVP)
+# Dual licensed under GPL v3 and LGPL v3
+# Copyright (C) 2026 racerx2
+# ==============================================================
 # not upstream: InterfaceBuilder.exe (Program.cs) as Python, header part: gcCore.h -> gcCoreAPI.h (the gcCore.cpp rewrite left out: the ported gcCore.cpp keeps its binder code)
 import sys
 
