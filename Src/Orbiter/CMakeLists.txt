@@ -151,6 +151,7 @@ set(Orbiter_depends
 
 # Orbiter executable (graphics server version)
 add_executable(Orbiter ${common_src})
+include(Custom/Custom.cmake) # custom: launcher skins
 
 # the dialog templates, bitmaps, icons and strings of Orbiter.rc as a C++ resource table
 orbiter_rc_resources(Orbiter Orbiter.rc EXE SYMBOL OrbiterResources)

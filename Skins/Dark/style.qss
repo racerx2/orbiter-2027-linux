@@ -1,0 +1,27 @@
+/* Dark: colours, borders and backgrounds only; the classic layout is sized from the dialog font */
+QWidget { background-color: #121821; color: #dce4ee; selection-background-color: #f5a524; selection-color: #1b1203; }
+QLabel, QCheckBox, QRadioButton { background-color: transparent; }
+QWidget#IDC_BLACKBOX { background-color: #000000; color: #f0b0b0; }
+QPushButton { background-color: #1d2633; border: 1px solid #334155; border-radius: 3px; }
+QPushButton:hover { background-color: #263244; border-color: #4b5d78; }
+QPushButton:pressed, QPushButton:checked { background-color: #f5a524; color: #1b1203; border-color: #f5a524; }
+QPushButton:disabled { color: #5c6878; border-color: #232c38; }
+QPushButton#IDLAUNCH { background-color: #f5a524; color: #1b1203; border-color: #ffc65c; font-weight: bold; }
+QPushButton#IDLAUNCH:hover { background-color: #ffc65c; }
+QPushButton#IDLAUNCH:disabled { background-color: #3a3222; color: #7a6a4a; }
+QTreeView, QListView, QTextEdit, QPlainTextEdit, QTextBrowser { background-color: #0b1017; border: 1px solid #263244; alternate-background-color: #0f151e; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background-color: #0b1017; border: 1px solid #334155; border-radius: 2px; }
+QComboBox QAbstractItemView { background-color: #0b1017; border: 1px solid #334155; }
+QGroupBox { border: 1px solid #263244; margin-top: 8px; }
+QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; }
+QTabBar::tab { background-color: #1d2633; border: 1px solid #263244; padding: 3px 8px; }
+QTabBar::tab:selected { background-color: #263244; border-bottom: 2px solid #f5a524; }
+QHeaderView::section { background-color: #1d2633; border: 1px solid #263244; }
+QScrollBar:vertical { background: #0b1017; width: 12px; }
+QScrollBar::handle:vertical { background: #334155; min-height: 24px; border-radius: 4px; }
+QScrollBar:horizontal { background: #0b1017; height: 12px; }
+QScrollBar::handle:horizontal { background: #334155; min-width: 24px; border-radius: 4px; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0px; height: 0px; }
+QProgressBar { background-color: #0b1017; border: 1px solid #334155; }
+QProgressBar::chunk { background-color: #f5a524; }
+QToolTip { background-color: #1d2633; color: #dce4ee; border: 1px solid #334155; }

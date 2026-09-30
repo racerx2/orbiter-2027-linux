@@ -105,6 +105,14 @@ add_test(NAME RcCond.Test COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_D
 # not upstream: folder listings in NTFS order, MakePath under a long working directory
 add_unit_test(Util.Test ${ORBITER_SOURCE_DIR}/Util.cpp ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
 target_link_libraries(Util.Test Qt6::Widgets)
+# custom: launcher skins; the parsers, and the classic-control hider on IDD_MAIN offscreen
+add_unit_test(LauncherFacts.Test ${ORBITER_SOURCE_DIR}/Custom/LauncherFacts.cpp)
+target_compile_definitions(LauncherFacts.Test PRIVATE SCN_DIR="${CMAKE_SOURCE_DIR}/Scenarios")
+add_unit_test(ClassicHider.Test ${ORBITER_SOURCE_DIR}/Custom/ClassicHider.cpp ${ORBITER_SOURCE_DIR}/ResDialog.cpp ${ORBITER_SOURCE_DIR}/ResDialog.h)
+set_target_properties(ClassicHider.Test PROPERTIES AUTOMOC ON)
+target_link_libraries(ClassicHider.Test Qt6::Widgets DlgCtrl)
+orbiter_rc_resources(ClassicHider.Test ${ORBITER_SOURCE_DIR}/Orbiter.rc EXE SYMBOL OrbiterResources)
+set_tests_properties(ClassicHider.Test PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
 
 if (BUILD_ORBITER_SERVER)
 

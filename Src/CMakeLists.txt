@@ -8,6 +8,7 @@ add_subdirectory(Celbody)
 add_subdirectory(Vessel)
 add_subdirectory(Module)
 add_subdirectory(Plugin)
+add_subdirectory(Custom) # custom: launcher skins
 
 # ==========================================================================
 # SDK Sample Installation

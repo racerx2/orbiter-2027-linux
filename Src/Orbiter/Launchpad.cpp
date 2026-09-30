@@ -21,6 +21,7 @@
 #include "Help.h"
 #include "Memstat.h"
 #include "ResDialog.h"
+#include "Custom/LauncherSkin.h" // custom: launcher skins
 #include <QApplication>
 #include <QCloseEvent>
 #include <QKeyEvent>
@@ -144,6 +145,7 @@ bool orbiter::LaunchpadDialog::Create (bool startvideotab)
 		}
 		oapiResDlgItem (hDlg, IDC_BLACKBOX)->setProperty ("text", SIG4 "  \n" SIG2 "  \n" SIG1AA "  \n" SIG1AB "  ");
 		oapiResDlgItem (hDlg, IDC_VERSION)->setProperty ("text", SIG7);
+		custom::LauncherSkin::Attach (this); // custom: launcher skins
 		Show();
 		if (startvideotab) {
 			SwitchTabPage (hDlg, PG_VID);
