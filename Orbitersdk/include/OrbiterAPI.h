@@ -6369,9 +6369,10 @@ OAPIFUNC void oapiWriteLog (char *line);
 	* \param format Format string. Can contain any C-style parameter flags.
 	* \param ... List of output parameters. Must match the parameter flags in the format string.
 	* \note A newline character is appended to the end of the format string.
+	* \note Checked like printf (GCC format attribute): pass run-time text as "%s", text; a non-literal format without arguments warns (-Wformat-security), an error where -Werror=format-security is set. <!-- not upstream: GCC checks the format -->
 	* \sa oapiWriteLog
 	*/
-OAPIFUNC void oapiWriteLogV (const char *format, ...);
+OAPIFUNC void oapiWriteLogV (const char *format, ...) __attribute__((format(printf, 1, 2))); // not upstream: GCC checks the format
 
 	/**
 	* \brief Writes a formatted error message with variable number of arguments to orbiter.log.
@@ -6380,7 +6381,7 @@ OAPIFUNC void oapiWriteLogV (const char *format, ...);
 	* \sa oapiWriteLog, oapiWriteLogV
 	*/
 #define oapiWriteLogError(format, ...) __writeLogError(__FUNCTION__,__FILE__,__LINE__, format __VA_OPT__(,) __VA_ARGS__) // __VA_OPT__: MSVC drops the empty comma itself
-OAPIFUNC void __writeLogError(const char *func, const char *file, int line, const char *format, ...);
+OAPIFUNC void __writeLogError(const char *func, const char *file, int line, const char *format, ...) __attribute__((format(printf, 4, 5))); // not upstream: GCC checks the format
 
    /**
 	* \brief Writes a string-valued item to a scenario file.

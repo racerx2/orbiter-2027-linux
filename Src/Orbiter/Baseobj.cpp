@@ -178,7 +178,7 @@ void BaseObject::ParseError (const char *msg) const
 {
 	char errmsg[256];
 	snprintf (errmsg, 255, "Parse error from base definition file for %s: %s", base->Name(), msg);
-	LOGOUT_ERR(errmsg);
+	LOGOUT_ERR("%s", errmsg); // not upstream: text passed as "%s"
 }
 
 // ==============================================================================

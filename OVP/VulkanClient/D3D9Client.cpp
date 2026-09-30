@@ -953,7 +953,7 @@ void D3D9Client::clbkCloseSession(bool fastclose)
 	// Check the status of RenderTarget Stack ------------------------------------------------
 	//
 	if (RenderStack.empty() == false) {
-		LogErr("RenderStack contains %d items:", RenderStack.size());
+		LogErr("RenderStack contains %zu items:", RenderStack.size()); // not upstream: format matches the argument
 		while (!RenderStack.empty()) {
 			LogErr("RenderTarget=%s, DepthStencil=%s", _PTR(RenderStack.front().pColor), _PTR(RenderStack.front().pDepthStencil));
 			RenderStack.pop_front();
@@ -1095,7 +1095,7 @@ void D3D9Client::clbkDestroyRenderWindow (bool fastclose)
 	// Check Fonts catalog --------------------------------------------------------------------------------------
 	//
 	if (g_fonts.size()) {
-		LogWrn("%u un-released fonts!", g_fonts.size());
+		LogWrn("%zu un-released fonts!", g_fonts.size()); // not upstream: format matches the argument
 		for (auto it = g_fonts.begin(); it != g_fonts.end(); ) {
 			clbkReleaseFont(*it++);
 		}
@@ -1104,7 +1104,7 @@ void D3D9Client::clbkDestroyRenderWindow (bool fastclose)
 
 	// --- Brushes
 	if (g_brushes.size()) {
-		LogWrn("%u un-released brushes!", g_brushes.size());
+		LogWrn("%zu un-released brushes!", g_brushes.size()); // not upstream: format matches the argument
 		for (auto it = g_brushes.begin(); it != g_brushes.end(); ) {
 			clbkReleaseBrush(*it++);
 		}
@@ -1113,7 +1113,7 @@ void D3D9Client::clbkDestroyRenderWindow (bool fastclose)
 
 	// --- Pens
 	if (g_pens.size()) {
-		LogWrn("%u un-released pens!", g_pens.size());
+		LogWrn("%zu un-released pens!", g_pens.size()); // not upstream: format matches the argument
 		for (auto it = g_pens.begin(); it != g_pens.end(); ) {
 			clbkReleasePen(*it++);
 		}

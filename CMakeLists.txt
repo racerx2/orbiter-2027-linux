@@ -98,6 +98,7 @@ find_package(LATEX)
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets DBus) # not upstream: 6.5 for QNativeInterface::QWaylandApplication
 
 # /we4311 left out: g++ already rejects pointer-to-smaller-int casts; NOMINMAX has no counterpart
+add_compile_options(-Wformat) # not upstream: printf format checks (GCC turns them on by default only on some distributions)
 set(CMAKE_BUILD_WITH_INSTALL_RPATH true)
 # Windows finds DLLs next to the exe and in Modules (Orbiter adds it to PATH); $ORIGIN/.. reaches Modules from Modules/<sub>, $ORIGIN/../.. the exe folder
 set(CMAKE_INSTALL_RPATH "$ORIGIN" "$ORIGIN/.." "$ORIGIN/../..")

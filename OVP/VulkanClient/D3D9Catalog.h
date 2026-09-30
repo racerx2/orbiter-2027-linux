@@ -74,11 +74,11 @@ public:
 		for (auto x : Fre) {
 			size_t size = 0; DWORD ent = 0;
 			for (auto y : x.second) { ent++; size += x.first; delete y; }
-			oapiWriteLogV("Memgr[%s] Size[%u]: Total of %u bytes in %u entries", name.c_str(), x.first, size * sizeof(T), ent);
+			oapiWriteLogV("Memgr[%s] Size[%u]: Total of %zu bytes in %u entries", name.c_str(), x.first, size * sizeof(T), ent); // not upstream: format matches the argument
 		}
 		if (Rsv.size() == 0) oapiWriteLogV("Memgr[%s] All clear",name.c_str());
 		else for (auto x : Rsv) {
-			oapiWriteLogV("Memgr[%s] Leaking %u bytes", name.c_str(), x.second * sizeof(T));
+			oapiWriteLogV("Memgr[%s] Leaking %zu bytes", name.c_str(), x.second * sizeof(T)); // not upstream: format matches the argument
 			delete x.first;
 		}
 #else
@@ -162,11 +162,11 @@ public:
 		for (auto x : Fre) {
 			size_t size = 0; DWORD ent = 0;
 			for (auto y : x.second) { ent++; size += UnitSize(x.first); Delete(y); }
-			oapiWriteLogV("Objmgr[%s] Size[%u]: Total of %u bytes in %u entries", name.c_str(), x.first, size, ent);
+			oapiWriteLogV("Objmgr[%s] Size[%u]: Total of %zu bytes in %u entries", name.c_str(), x.first, size, ent); // not upstream: format matches the argument
 		}	
 		if (Rsv.size() == 0) oapiWriteLogV("Objmgr[%s] All clear", name.c_str());
 		else for (auto x : Rsv) {
-			oapiWriteLogV("Objmgr[%s] Leaking %u bytes", name.c_str(), UnitSize(x.second));
+			oapiWriteLogV("Objmgr[%s] Leaking %zu bytes", name.c_str(), UnitSize(x.second)); // not upstream: format matches the argument
 			Delete(x.first);
 		}
 #else

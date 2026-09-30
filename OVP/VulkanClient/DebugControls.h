@@ -124,7 +124,7 @@ namespace DebugControls {
 	bool		IsActive();
 	bool		IsSelectedGroupRendered();
 
-	void		Append(const char *format, ...);
+	void		Append(const char *format, ...) __attribute__((format(printf, 1, 2))); // not upstream: GCC checks the format
 	void		Refresh();
 
 	void		WndProc(QWidget *hWnd, void *context);  // DLGINIT: connects the dialog's controls

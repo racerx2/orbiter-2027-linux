@@ -78,7 +78,7 @@ CD3DFramework9::CD3DFramework9()
 
 	if (g_pD3DObject == NULL) {
 		LogErr("ERROR: [Vulkan Instance Creation Failed]");
-		LogErr(d3dmessage);
+		LogErr("%s", d3dmessage); // not upstream: text passed as "%s"
 		QMessageBox::critical(NULL, "VulkanClient Initialization Failed", d3dmessage);
 	}
 }

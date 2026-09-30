@@ -2334,7 +2334,7 @@ DLLEXPORT void oapiWriteLine (FILEHANDLE file, char *line)
 
 DLLEXPORT void oapiWriteLog (char *line)
 {
-	LOGOUT (line);
+	LOGOUT ("%s", line); // not upstream: the line is written as it is
 }
 
 DLLEXPORT void oapiExitOrbiter(int code)
@@ -2616,7 +2616,7 @@ DLLEXPORT void InitLib (void *hModule)
 			strcat (cbuf, ", API ******]");
 		}
 
-		LOGOUT (cbuf);
+		LOGOUT ("%s", cbuf); // not upstream: text passed as "%s"
 	}
 
 	DLLInit = (OPC_DLLInit)ModuleProc (hModule, "InitModule");

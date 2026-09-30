@@ -5956,7 +5956,7 @@ bool Vessel::LoadModule (ifstream &classf)
 			const char *err = dlerror(); // GetLastError counterpart
 			char errbuf[256];
 			snprintf(errbuf, 256, "Could not load vessel module: %s (%s)", cbuf, err ? err : "unknown error");
-			LOGOUT_ERR (errbuf);
+			LOGOUT_ERR ("%s", errbuf); // not upstream: text passed as "%s"
 		}
 		if (modIntf.ovcInit)
 			modIntf.v = modIntf.ovcInit ((OBJHANDLE)this, flightmodel);

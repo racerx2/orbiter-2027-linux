@@ -80,27 +80,27 @@ CelestialBody::CelestialBody (char *fname)
 		if (readResult == 0) {
 			char logbuff[512];
 			sprintf(logbuff, "GRAVITY MODEL: %s LOADED, Terms %d/%d", gravModelFileName, actualLoadedTerms, maxGravityTerms);
-			LOGOUT(logbuff);
+			LOGOUT("%s", logbuff); // not upstream: text passed as "%s"
 		}
 		else if (readResult == 1) {
 			char logbuff[512];
 			sprintf(logbuff, "GRAVITY MODEL ERROR: COEFFICIENT FILE %s NOT FOUND", gravModelFileName);
-			LOGOUT(logbuff);
+			LOGOUT("%s", logbuff); // not upstream: text passed as "%s"
 		}
 		else if (readResult == 2) {
 			char logbuff[512];
 			sprintf(logbuff, "GRAVITY MODEL ERROR: COULD NOT ALLOCATE SPACE FOR GRAVITY MODEL %s", gravModelFileName);
-			LOGOUT(logbuff);
+			LOGOUT("%s", logbuff); // not upstream: text passed as "%s"
 		}
 		else if (readResult == 3) {
 			char logbuff[512];
 			sprintf(logbuff, "GRAVITY MODEL ERROR: BAD HEADDER LINE FORMAT %s", gravModelFileName);
-			LOGOUT(logbuff);
+			LOGOUT("%s", logbuff); // not upstream: text passed as "%s"
 		}
 		else if (readResult == 4) {
 			char logbuff[512];
 			sprintf(logbuff, "GRAVITY MODEL ERROR: BAD COEFFICIENT LINE FORMAT %s", gravModelFileName);
-			LOGOUT(logbuff);
+			LOGOUT("%s", logbuff); // not upstream: text passed as "%s"
 		}
 
 		if (readResult == 0) {

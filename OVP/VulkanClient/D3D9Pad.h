@@ -678,7 +678,7 @@ private:
 	// -------------------------------------------------------------------------
 	char name[32];
 
-	void Log(const char *format, ...) const;
+	void Log(const char *format, ...) const __attribute__((format(printf, 2, 3))); // not upstream: GCC checks the format
 	static FILE *log;
 	static std::recursive_mutex LogCrit;
 	static std::map< MESHHANDLE, class SketchMesh*> MeshMap;

@@ -89,7 +89,7 @@ void LogOutFine (const char *msg, ...)
 
 void LogOut ()
 {
-	LogOut (logs);
+	LogOut ("%s", logs); // not upstream: text passed as "%s"
 }
 
 void LogOut_Error (const char *func, const char *file, int line, const char *msg, ...)
@@ -160,7 +160,7 @@ void LogOut_DIErr (int err, const char *func, const char *file, int line) {
 	static char *err_ = errmsg+24;
 	snprintf (err_, 256-24, "%s (errno %d)", strerror (err), err); // evdev reports errno values, not DIERR codes
 	LogOut ("---------------------------------------------------------------");
-	LogOut (errmsg);
+	LogOut ("%s", errmsg); // not upstream: text passed as "%s"
 	sprintf (logs, ">>> [%s | %s | %d]", func, file, line);
 	LogOut();
 	LogOut ("---------------------------------------------------------------");
@@ -179,7 +179,7 @@ void LogOut_Obsolete(const char* func, const char* msg)
 	LogOut_Obsolete_Start();
 	LogOut("Obsolete API function used: %s", func);
 	if (msg)
-		LogOut(msg);
+		LogOut("%s", msg); // not upstream: text passed as "%s"
 	else {
 		LogOut("At least one active module is accessing an obsolete interface function.");
 		LogOut("Addons which rely on obsolete functions may not be compatible with");

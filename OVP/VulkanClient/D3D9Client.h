@@ -1286,7 +1286,7 @@ private:
 	void BltError(SURFHANDLE src, SURFHANDLE tgt, const LPRECT s, const LPRECT t, bool bHalt = true) const;
 	void SketchPadTest();
 	void PresentScene();
-	void Label(const char *format, ...);
+	void Label(const char *format, ...) __attribute__((format(printf, 2, 3))); // not upstream: GCC checks the format
 	void DrawTimeBar(double t, double scale, double frames, DWORD color, const char *label=NULL);
 	bool ChkDev(const char *fnc) const;
 

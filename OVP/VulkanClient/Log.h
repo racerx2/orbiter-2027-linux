@@ -43,20 +43,20 @@ extern std::queue<std::string> D3D9DebugQueue;
 //#define _UNDEBUGED
 
 void   RuntimeError(const char* File, const char* Fnc, UINT Line);
-void   D3D9DebugLog(const char *format, ...);
+void   D3D9DebugLog(const char *format, ...) __attribute__((format(printf, 1, 2))); // not upstream: GCC checks the format
 void   D3D9DebugLogVec(const char* lbl, oapi::FVECTOR4 &v);
 void   D3D9InitLog(const char *file);
 void   D3D9CloseLog();
-void   LogTrace(const char *format, ...);
-void   LogErr(const char *format, ...);
-void   LogWrn(const char *format, ...);
-void   LogOk (const char *format, ...);
-void   LogBreak(const char* format, ...);
-void   LogBlu(const char *format, ...);
-void   LogOapi(const char *format, ...);
-void   LogAlw(const char *format, ...);
-void   LogDbg(const char *color, const char *format, ...);
-void   LogClr(const char *color, const char *format, ...);
+void   LogTrace(const char *format, ...) __attribute__((format(printf, 1, 2))); // not upstream: GCC checks the format
+void   LogErr(const char *format, ...) __attribute__((format(printf, 1, 2))); // not upstream: GCC checks the format
+void   LogWrn(const char *format, ...) __attribute__((format(printf, 1, 2))); // not upstream: GCC checks the format
+void   LogOk (const char *format, ...) __attribute__((format(printf, 1, 2))); // not upstream: GCC checks the format
+void   LogBreak(const char* format, ...) __attribute__((format(printf, 1, 2))); // not upstream: GCC checks the format
+void   LogBlu(const char *format, ...) __attribute__((format(printf, 1, 2))); // not upstream: GCC checks the format
+void   LogOapi(const char *format, ...) __attribute__((format(printf, 1, 2))); // not upstream: GCC checks the format
+void   LogAlw(const char *format, ...) __attribute__((format(printf, 1, 2))); // not upstream: GCC checks the format
+void   LogDbg(const char *color, const char *format, ...) __attribute__((format(printf, 2, 3))); // not upstream: GCC checks the format
+void   LogClr(const char *color, const char *format, ...) __attribute__((format(printf, 2, 3))); // not upstream: GCC checks the format
 
 double D3D9GetTime();
 void   D3D9SetTime(D3D9Time &inout, double ref);

@@ -172,7 +172,7 @@ void Orbits::clbkSimulationStart(RenderMode rm)
 				pBody[i].pOrb = new COrbit(pBody[i].hObj, pBody[i].hRef);
 			}
 			else {
-				if (i != 0) oapiWriteLogV("Orbits: No Reference for object %u, 0x%X", i, pBody[i].hObj);
+				if (i != 0) oapiWriteLogV("Orbits: No Reference for object %zu, %p", i, pBody[i].hObj); // not upstream: format matches the argument
 			}
 		}
 	}

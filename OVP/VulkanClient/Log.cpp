@@ -137,7 +137,7 @@ void LogAttribs(DWORD attrib, DWORD w, DWORD h, const char *origin)
 	if (attrib&OAPISURFACE_NOALPHA)		 strcat(buf, "OAPISURFACE_NOALPHA ");
 	if (attrib&OAPISURFACE_UNCOMPRESS)	 strcat(buf, "OAPISURFACE_UNCOMPRESS ");
 	if (attrib&OAPISURFACE_SYSMEM)		 strcat(buf, "OAPISURFACE_SYSMEM ");
-	LogDbg("BlueViolet", buf);
+	LogDbg("BlueViolet", "%s", buf); // not upstream: text passed as "%s"
 }
 
 //-------------------------------------------------------------------------------------------
