@@ -476,7 +476,7 @@ void orbiter::ScenarioTab::ScenarioChanged ()
 			if (htmldesc) {
 				buf = ScanFileDesc(ifs, "URLDESC");
 				if (buf) {
-					char url_ref[256], url[512], cwd[256], *path, *topic;
+					char url_ref[256], url[512], *path, *topic; // not upstream: url[256] and no cwd buffer (an its: URL can pass 256)
 					strncpy(url_ref, trim_string(buf), 255);
 					url_ref[255] = '\0';
 					path = strtok(url_ref, ",");
@@ -484,7 +484,7 @@ void orbiter::ScenarioTab::ScenarioChanged ()
 					if (topic)
 						snprintf(url, 512, "its:Html\\Scenarios\\%s.chm::%s.htm", path, topic);
 					else
-						snprintf(url, 512, "%s/Html/Scenarios/%s.htm", getcwd(cwd, 256), path);
+						snprintf(url, 512, "Html/Scenarios/%s.htm", path); // not upstream: relative, DisplayHTMLPage makes it absolute (no getcwd buffer to overflow)
 					for (char *c = url; *c; c++) if (*c == '\\') *c = '/';
 					DisplayHTMLPage(oapiResDlgItem(hTab, IDC_SCN_HTML), topic ? url : oapiResolvePath(url).c_str()); // "its:" URLs resolve in DisplayHTMLPage
 					have_info = true;
@@ -670,7 +670,7 @@ void orbiter::ScenarioTab::ClearQSFolder()
 	int qsCount = 0;
 	
 	if (fs::exists(scnpath) && fs::is_directory(scnpath)) {
-		for (auto& entry : fs::directory_iterator(scnpath)) {
+		for (auto& entry : SortedEntries (fs::directory_iterator(scnpath))) { // not upstream: NTFS order
 			if (entry.is_regular_file() && entry.path().extension().string() == ".scn") {
 				qsCount++;
 				if (qsCount <= 10) {

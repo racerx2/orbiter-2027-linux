@@ -1440,6 +1440,7 @@ void OptionsPage_CelSphere::PopulateStarmapList(QWidget *hPage)
 		char cbuf[256];
 		bool found = false;
 		while (ifs.getline(cbuf, 256)) {
+			if (size_t n = strlen (cbuf); n && cbuf[n-1] == '\r') cbuf[n-1] = '\0'; // not upstream: CRLF files (Windows text mode dropped the CR)
 			if (!found) {
 				if (!strcmp(cbuf, "BEGIN_STARMAPS"))
 					found = true;
@@ -1472,6 +1473,7 @@ void OptionsPage_CelSphere::PopulateBgImageList(QWidget *hPage)
 		char cbuf[256];
 		bool found = false;
 		while (ifs.getline(cbuf, 256)) {
+			if (size_t n = strlen (cbuf); n && cbuf[n-1] == '\r') cbuf[n-1] = '\0'; // not upstream: CRLF files (Windows text mode dropped the CR)
 			if (!found) {
 				if (!strcmp(cbuf, "BEGIN_BACKGROUNDS"))
 					found = true;

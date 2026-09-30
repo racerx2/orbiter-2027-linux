@@ -104,6 +104,9 @@ target_link_libraries(ImGuiQt.Test Orbitersdk Qt6::Gui)
 set_tests_properties(ImGuiQt.Test PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
 # not upstream: rc2cpp's #if evaluator (C semantics, errors instead of tracebacks)
 add_test(NAME RcCond.Test COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/RcCond.Test.py ${ORBITER_SOURCE_ROOT_DIR}/cmake)
+# not upstream: folder listings in NTFS order, MakePath under a long working directory
+add_unit_test(Util.Test ${ORBITER_SOURCE_DIR}/Util.cpp ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
+target_link_libraries(Util.Test Qt6::Widgets)
 
 if (BUILD_ORBITER_SERVER)
 

@@ -21,6 +21,7 @@
 #include "Nav.h"
 #include "GraphicsAPI.h"
 #include "Orbiter.h"
+#include "Util.h" // not upstream: SortedEntries
 #include <functional>
 #include <filesystem>
 namespace fs = std::filesystem;
@@ -197,7 +198,7 @@ public:
 			break;
 		}
 		std::error_code ec;
-		for (const auto& entry : fs::directory_iterator(oapiResolvePath(path.string().c_str()), ec)) {
+		for (const auto& entry : SortedEntries (fs::directory_iterator(oapiResolvePath(path.string().c_str()), ec))) { // not upstream: NTFS order
 			if (entry.path().extension().string() == ext) {
 				callback(entry);
 			}

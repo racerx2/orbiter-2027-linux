@@ -69,7 +69,7 @@ void DlgCapture::AutoIncrement (char *cbuf)
 {
 	int i, count, len = strlen(cbuf);
 	for (i = len; i > 0; i--)
-		if (cbuf[i-1] == '\\') break;
+		if (cbuf[i-1] == '\\' || cbuf[i-1] == '/') break; // not upstream: Linux paths use '/'
 	if (sscanf (cbuf+i, "%d", &count) == 1) {
 		int w = len-i;
 		sprintf (cbuf+i, "%0*d", w, count+1);

@@ -8,6 +8,7 @@
 #include "DGC_resource.h"
 #include <stdio.h>
 #include <unistd.h>
+#include <sys/stat.h> // not upstream: lstat
 #include <QAbstractButton>
 #include <QDialog>
 
@@ -61,7 +62,8 @@ void DGConfig::EnableHires (bool enable)
 	} else {
 		// to disable the highres textures, we simply rename the directory
 		// so that orbiter's texture manager can't find it
-		rename (oapiResolvePath (hires_enabled).c_str(), oapiResolvePath (hires_disabled).c_str());
+		struct stat st; // not upstream
+		if (lstat (oapiResolvePath (hires_disabled).c_str(), &st) != 0) rename (oapiResolvePath (hires_enabled).c_str(), oapiResolvePath (hires_disabled).c_str()); // not upstream: Windows rename refuses an existing target
 	}
 }
 

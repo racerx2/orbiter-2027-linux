@@ -49,12 +49,7 @@ bool MakePath (const char *fname)
 	for (i = len; i > 0; i--)
 		if (fname[i-1] == '\\' || fname[i-1] == '/') break;
 	if (!i) return false;
-	if (fname[0] != '\\' && fname[0] != '/') { // relative path (no drive letters on Linux)
-		if (!getcwd (cbuf, 256)) return false;
-		len = strlen(cbuf);
-		cbuf[len++] = '/';
-	} else len = 0;
-	snprintf (cbuf+len, 256-len, "%.*s", i, fname);
+	if (snprintf (cbuf, sizeof(cbuf), "%.*s", i, fname) >= (int)sizeof(cbuf)) return false; // not upstream: mkdir takes relative paths, no working directory prefix (SHCreateDirectoryEx wanted a full path)
 	// SHCreateDirectoryEx counterpart: create every missing level; ERROR_SUCCESS only if the last level is new
 	std::string path = oapiResolvePath (cbuf);
 	while (path.size() > 1 && path.back() == '/') path.pop_back();
@@ -332,4 +327,26 @@ const char *ModuleFileName (void *hModule)
 {
 	struct link_map *lm;
 	return (hModule && !dlinfo (hModule, RTLD_DI_LINKMAP, &lm) && lm->l_name ? lm->l_name : "");
+}
+
+// not upstream: FindFirstFile's NTFS order: names compared upper-cased (ASCII only), a shorter prefix first
+static bool NtfsLess (const std::string &x, const std::string &y)
+{
+	for (size_t i = 0; i < x.size () && i < y.size (); i++) {
+		unsigned char cx = x[i], cy = y[i];
+		if (cx >= 'a' && cx <= 'z') cx -= 'a' - 'A';
+		if (cy >= 'a' && cy <= 'z') cy -= 'a' - 'A';
+		if (cx != cy) return cx < cy;
+	}
+	if (x.size () != y.size ()) return x.size () < y.size ();
+	return x < y; // names that differ only in case exist only on Linux: a stable order
+}
+
+std::vector<std::filesystem::directory_entry> SortedEntries (std::filesystem::directory_iterator it)
+{
+	std::vector<std::filesystem::directory_entry> v (begin (it), end (it));
+	std::sort (v.begin (), v.end (), [](const std::filesystem::directory_entry &a, const std::filesystem::directory_entry &b) {
+		return NtfsLess (a.path ().filename ().string (), b.path ().filename ().string ());
+	});
+	return v;
 }

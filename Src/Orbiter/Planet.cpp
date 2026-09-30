@@ -489,7 +489,7 @@ void Planet::ScanBases (char *path)
 	strcpy (cbuf, g_pOrbiter->ConfigPath(spath));
 	fs::path configdir = fs::path(oapiResolvePath(cbuf)).parent_path();
 	std::error_code ec;
-	for (const auto& entry : fs::directory_iterator(configdir, ec)) {
+	for (const auto& entry : SortedEntries (fs::directory_iterator(configdir, ec))) { // not upstream: NTFS order
 		if (entry.path().extension().string() == ".cfg") {
 			ifstream ifs(entry.path());
 			if (!ifs) continue;

@@ -88,7 +88,7 @@ const char* CurrentScenario = "(Current state)";
 char ScenarioName[256] = "\0";
 // some global string resources
 
-char cwd[512];
+char cwd[PATH_MAX]; // not upstream: 512; Linux paths run to PATH_MAX
 
 // =======================================================================
 // Global variables
@@ -246,7 +246,7 @@ int main (int argc, char *argv[])
 void SetEnvironmentVars ()
 {
 	// PATH=...;Modules left out: dlopen doesn't search PATH, modules find their libraries through their RUNPATH
-	if (!getcwd (cwd, 512)) cwd[0] = '\0';
+	if (!getcwd (cwd, sizeof(cwd))) cwd[0] = '\0'; // not upstream: _getcwd (cwd, 512)
 }
 
 // =======================================================================
@@ -547,7 +547,7 @@ void Orbiter::LoadModules(const std::string& path, const std::list<std::string>&
 
 void Orbiter::LoadModules(const std::string& path)
 {
-	for (const auto& entry : fs::directory_iterator(oapiResolvePath(path.c_str()))) {
+	for (const auto& entry : SortedEntries (fs::directory_iterator(oapiResolvePath(path.c_str())))) { // not upstream: NTFS order
 		auto fpath = entry.path();
 		if (fpath.extension().string() == ".so") {
 			LoadModule(path.c_str(), fpath.stem().string().c_str());
@@ -574,7 +574,7 @@ void *Orbiter::LoadModule (const char *path, const char *name)
 
 	// Load the module DLL
 	void *hDLL = NULL;
-	char cbuf[1024]; // 256 upstream; Linux working directories run longer
+	char cbuf[PATH_MAX+512]; // not upstream: 256; holds the working directory and the module path
 	if (FindStandaloneDll(path, name, cbuf)) // try to find standalone plugin file
 	{
 		hDLL = dlopen (cbuf, RTLD_NOW); // LoadLibrary
@@ -891,6 +891,7 @@ void Orbiter::CloseSession ()
 	DWORD i;
 
 	bSession = false;
+	ExitRotationMode (); // not upstream: a session closed mid right-drag keeps the blank cursor and bKeepFocus otherwise
 	WlShortcutsDetach (); // before the render window's surface goes: KWin keeps an inhibitor of a destroyed surface
 
 	if      (bRecord)   ToggleRecorder();
@@ -1143,7 +1144,7 @@ void Orbiter::InitRotationMode ()
 
 	// Checks if the cursor is already hidden
 	if (g_iCursorShowCount == 0 && hRenderWnd) {
-		hRenderWnd->setCursor (Qt::BlankCursor); // ShowCursor (FALSE)
+		QGuiApplication::setOverrideCursor (QCursor (Qt::BlankCursor)); // ShowCursor (FALSE)
 		g_iCursorShowCount = -1;
 	}
 
@@ -1160,7 +1161,7 @@ void Orbiter::ExitRotationMode ()
 
 	// Checks if the cursor is already hidden
 	if (g_iCursorShowCount < 0) {
-		if (hRenderWnd) hRenderWnd->unsetCursor (); // ShowCursor (TRUE)
+		QGuiApplication::restoreOverrideCursor (); // ShowCursor (TRUE)
 		g_iCursorShowCount = 0;
 	}
 }

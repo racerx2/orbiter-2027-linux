@@ -8,6 +8,8 @@
 #include "Vecmat.h"
 #include "OrbiterAPI.h"
 #include "Orbiter.h"
+#include <filesystem> // not upstream: SortedEntries
+#include <vector>     // not upstream: SortedEntries
 
 extern Orbiter *g_pOrbiter;
 
@@ -98,5 +100,8 @@ void ModuleFree (void *hModule);
 
 // not upstream: GetModuleFileName counterpart; the path the module was loaded from
 const char *ModuleFileName (void *hModule);
+
+// not upstream: a folder's entries in FindFirstFile's NTFS order; directory_iterator lists them unsorted on Linux
+std::vector<std::filesystem::directory_entry> SortedEntries (std::filesystem::directory_iterator it);
 
 #endif //!__UTIL_H

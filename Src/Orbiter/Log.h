@@ -9,6 +9,7 @@
 #include <csignal>             // raise(SIGTRAP) for DebugBreak
 #include <cstring>
 #include <unistd.h>            // getcwd/chdir for _getcwd/_chdir
+#include <climits>             // not upstream: PATH_MAX for CHECKCWD
 #include "OrbiterPlatform.h"   // DWORD
 
 // comment the following line to suppress log file output
@@ -107,7 +108,7 @@ void PrintModules();
 #define dCHECK(test,msg,...)
 #endif
 
-#define CHECKCWD(cwd,name) { char c[512]; if(!getcwd(c,512) || strcmp(c,cwd)) { if(chdir(cwd)) {} sprintf (c,"CWD modified by module %s - Fixing.",name); LOGOUT_WARN(c); } }
+#define CHECKCWD(cwd,name) { char c[PATH_MAX]; if(!getcwd(c,sizeof(c)) || strcmp(c,cwd)) { if(chdir(cwd)) {} sprintf (c,"CWD modified by module %s - Fixing.",name); LOGOUT_WARN(c); } } // not upstream: c[512], PATH_MAX here
 
 #ifndef __LOG_CPP
 extern char logs[256];

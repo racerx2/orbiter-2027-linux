@@ -13,9 +13,33 @@
 #include <strings.h>
 #include <dlfcn.h>
 #include <filesystem>
+#include <algorithm> // not upstream: SortedEntries
+#include <vector>    // not upstream: SortedEntries
 namespace fs = std::filesystem;
 
 using namespace std;
+
+// not upstream: FindFirstFile's NTFS order, as the core's SortedEntries (Util.cpp): names compared upper-cased (ASCII only), a shorter prefix first
+static bool NtfsLess (const std::string &x, const std::string &y)
+{
+	for (size_t i = 0; i < x.size () && i < y.size (); i++) {
+		unsigned char cx = x[i], cy = y[i];
+		if (cx >= 'a' && cx <= 'z') cx -= 'a' - 'A';
+		if (cy >= 'a' && cy <= 'z') cy -= 'a' - 'A';
+		if (cx != cy) return cx < cy;
+	}
+	if (x.size () != y.size ()) return x.size () < y.size ();
+	return x < y; // names that differ only in case exist only on Linux: a stable order
+}
+
+static std::vector<fs::directory_entry> SortedEntries (fs::directory_iterator it)
+{
+	std::vector<fs::directory_entry> v (begin (it), end (it));
+	std::sort (v.begin (), v.end (), [](const fs::directory_entry &a, const fs::directory_entry &b) {
+		return NtfsLess (a.path ().filename ().string (), b.path ().filename ().string ());
+	});
+	return v;
+}
 
 class AtmConfig;
 
@@ -239,7 +263,7 @@ void AtmConfig::ScanModules (const char *celbody)
 
 	auto path = CelbodyDir / celbody / "Atmosphere";
 	MODULESPEC* module_last = 0;
-	for (auto& entry : fs::directory_iterator(path)) {
+	for (auto& entry : SortedEntries (fs::directory_iterator(path))) { // not upstream: NTFS order (IDC_COMBO1 has no CBS_SORT)
 		auto module = entry.path();
 		if (module.extension().string() == ".so") {
 			const auto name = module.stem().string();

@@ -8,6 +8,8 @@
 #include "AC_resource.h"
 #include <stdio.h>
 #include <unistd.h>
+#include <cerrno> // not upstream: EEXIST
+#include <sys/stat.h> // not upstream: lstat
 #include <QAbstractButton>
 #include <QDialog>
 
@@ -29,7 +31,10 @@ static int access_path (const char *path, int mode)
 
 static int rename_path (const char *from, const char *to)
 {
-	return rename (oapiResolvePath (from).c_str(), oapiResolvePath (to).c_str());
+	std::string t = oapiResolvePath (to);
+	struct stat st;
+	if (lstat (t.c_str(), &st) == 0) { errno = EEXIST; return -1; } // Windows rename refuses an existing target, POSIX replaces it
+	return rename (oapiResolvePath (from).c_str(), t.c_str());
 }
 
 // not upstream: BM_SETCHECK / BM_GETCHECK on a dialog control

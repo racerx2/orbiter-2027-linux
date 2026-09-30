@@ -202,7 +202,7 @@ public:
 
 	void ForEach(int type, std::function<void(const fs::directory_entry&)> callback) {
 		std::error_code ec;
-		for (const auto& entry : fs::directory_iterator(oapiResolvePath(m_labelPath.c_str()), ec)) {
+		for (const auto& entry : SortedEntries (fs::directory_iterator(oapiResolvePath(m_labelPath.c_str()), ec))) { // not upstream: NTFS order
 			if (entry.path().extension().string() == ".mkr") {
 				callback(entry);
 			}
