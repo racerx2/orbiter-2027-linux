@@ -23,7 +23,7 @@ add_custom_command(OUTPUT ${ORBITER_BINARY_HTML_DIR}/Vessels/${name}.chm
 	COMMAND ${ldoc} .
 	COMMAND ${HHC_CMD} ${name}.hhp
 	COMMAND ${CMAKE_COMMAND} -E copy ${name}.chm ${ORBITER_BINARY_HTML_DIR}/Vessels/
-	DEPENDS ${ChmSources}
+	DEPENDS ${ChmSources} lfs CopyLDoc # not upstream: ldoc and the Lua modules it loads come first (a clean parallel build ran it too early)
 	JOB_POOL htmlhelp
 )
 add_custom_target(${name}_chm
