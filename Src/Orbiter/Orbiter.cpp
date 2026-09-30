@@ -2561,8 +2561,11 @@ bool Orbiter::MsgProc (QWindow *hWnd, QEvent *event)
 	if ((event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) && GetKbdDevice()) {
 		QKeyEvent *ke = static_cast<QKeyEvent*>(event);
 		bool press = (event->type() == QEvent::KeyPress);
-		if (WlShortcutsKey (ke, press && IsKeymapKey (keymap, GetKbdDevice(), ke)))
-			return true; // the desktop's shortcut (KDE Plasma): passed on, as the desktop would have taken it
+		if (WlShortcutsKey (ke, press && IsKeymapKey (keymap, GetKbdDevice(), ke))) { // the desktop's shortcut (KDE Plasma): passed on
+			if (!ke->isAutoRepeat() && (ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)))
+				GetKbdDevice()->Unacquire(); // not upstream: the desktop takes the keyboard and its releases, as a deactivation did
+			return true;
+		}
 		GetKbdDevice()->KeyEvent ((int)ke->nativeScanCode() - 8, press); // xkb keycode -> evdev
 	}
 	if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut)
