@@ -39,7 +39,7 @@ static void TextOut(QPainter *hDC, int x, int y, const QString &s, const QColor 
 }
 
 list<gcPropertyTree *> g_gcPropertyTrees;
-std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+// not upstream: std::wstring_convert converter left out, QString::fromUtf8 decodes the value (TextOutW below)
 
 
 // ==================================================================================
@@ -96,7 +96,7 @@ void gcPropertyTreeRelease(void *hInst)
 
 // ==================================================================================
 //
-gcPropertyTree::gcPropertyTree(gcGUIApp *_pApp, QWidget *_hWnd, WORD _idc, GCPROPCLBK pCall, QFont *hFnt, void *_hInst) : alloc_id('gcTV')
+gcPropertyTree::gcPropertyTree(gcGUIApp *_pApp, QWidget *_hWnd, WORD _idc, GCPROPCLBK pCall, QFont *hFnt, void *_hInst) : alloc_id(0x67635456) // not upstream: 'gcTV' as a number
 {
 	pApp = _pApp;
 	pCore = gcGetCoreInterface();

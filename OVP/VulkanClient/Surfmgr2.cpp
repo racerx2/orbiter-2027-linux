@@ -209,11 +209,13 @@ INT16 *SurfTile::ReadElevationFile (const char *name, int lvl, int ilat, int iln
 	// Elevation data
 	if (smgr->DoLoadIndividualFiles(2)) { // try loading from individual tile file
 		snprintf(path, MAX_PATH, "%s\\Elev\\%02d\\%06d\\%06d.elv", mgr->DataRootDir().c_str(), lvl, ilat, ilng);
-		if ((f = fopen(oapiResolvePath(path).c_str(), "rb"))) {
+		// read the elevation file header
+		ELEVFILEHEADER hdr0 = ehdr; // not upstream: put back if the file is short
+		if ((f = fopen(oapiResolvePath(path).c_str(), "rb")) && fread (&ehdr, sizeof(ELEVFILEHEADER), 1, f) != 1) { ehdr = hdr0; fclose (f); f = NULL; } // not upstream: a short header counts as no file
+		if (f) {
+			bool rd = true; // not upstream: false after a short data read
 			e = g_pMemgr_i->New(ndat);
 			elev = g_pMemgr_f->New(ndat);
-			// read the elevation file header
-			fread (&ehdr, sizeof(ELEVFILEHEADER), 1, f);
 			if (ehdr.hdrsize != sizeof(ELEVFILEHEADER)) fseek (f, ehdr.hdrsize, SEEK_SET);
 			LogClr("Teal", "NewTile[%s]: Lvl=%d, Scale=%g, Offset=%g", name, lvl-4, ehdr.scale, ehdr.offset);
 
@@ -226,18 +228,19 @@ INT16 *SurfTile::ReadElevationFile (const char *name, int lvl, int ilat, int iln
 				break;
 			case 8: {
 				UINT8 *tmp = g_pMemgr_u->New(ndat);
-				fread (tmp, sizeof(UINT8), ndat, f);
-				for (i = 0; i < ndat; i++)
+				rd = fread (tmp, sizeof(UINT8), ndat, f) == (size_t)ndat;
+				for (i = 0; rd && i < ndat; i++)
 					e[i] = (INT16)tmp[i];
 				g_pMemgr_u->Free(tmp);
 				tmp = NULL;
 				}
 				break;
 			case -16:
-				fread (e, sizeof(INT16), ndat, f);
+				rd = fread (e, sizeof(INT16), ndat, f) == (size_t)ndat;
 				break;
 			}
 			fclose (f);
+			if (!rd) { g_pMemgr_i->Free(e); e = NULL; g_pMemgr_f->Free(elev); elev = NULL; ehdr = hdr0; } // not upstream: a short file counts as missing, the archive is tried next
 		}
 	}
 	if (!e && smgr->ZTreeManager(2)) { // try loading from compressed archive
@@ -297,8 +300,9 @@ INT16 *SurfTile::ReadElevationFile (const char *name, int lvl, int ilat, int iln
 		ELEVFILEHEADER hdr;
 		if (smgr->DoLoadIndividualFiles(3)) { // try loading from individual tile file
 			snprintf (path, MAX_PATH, "%s\\Elev_mod\\%02d\\%06d\\%06d.elv", mgr->DataRootDir().c_str(), lvl, ilat, ilng);
-			if ((f = fopen(oapiResolvePath(path).c_str(), "rb"))) {
-				fread (&hdr, sizeof(ELEVFILEHEADER), 1, f);
+			if ((f = fopen(oapiResolvePath(path).c_str(), "rb")) && fread (&hdr, sizeof(ELEVFILEHEADER), 1, f) != 1) { fclose (f); f = NULL; } // not upstream: a short header counts as no file
+			if (f) {
+				bool rd = true; // not upstream: false after a short data read
 				if (hdr.hdrsize != sizeof(ELEVFILEHEADER)) fseek (f, hdr.hdrsize, SEEK_SET);
 				LogClr("Teal", "NewElevMod[%s]: Lvl=%d, Scale=%g, Offset=%g", name, lvl - 4, hdr.scale, hdr.offset);
 
@@ -315,8 +319,8 @@ INT16 *SurfTile::ReadElevationFile (const char *name, int lvl, int ilat, int iln
 				case 8: {
 					const UINT8 mask = UCHAR_MAX;
 					UINT8 *tmp = g_pMemgr_u->New(ndat);
-					fread (tmp, sizeof(UINT8), ndat, f);
-					for (i = 0; i < ndat; i++) {
+					rd = fread (tmp, sizeof(UINT8), ndat, f) == (size_t)ndat;
+					for (i = 0; rd && i < ndat; i++) {
 						if (tmp[i] != mask) {
 							e[i] = (INT16)(do_rescale ? (INT16)(tmp[i] * rescale) : (INT16)tmp[i]);
 							if (do_shift) e[i] += offset;
@@ -330,8 +334,8 @@ INT16 *SurfTile::ReadElevationFile (const char *name, int lvl, int ilat, int iln
 				case -16: {
 					const INT16 mask = SHRT_MAX;
 					INT16* tmp = g_pMemgr_i->New(ndat);
-					fread (tmp, sizeof(INT16), ndat, f);
-					for (i = 0; i < ndat; i++) {
+					rd = fread (tmp, sizeof(INT16), ndat, f) == (size_t)ndat;
+					for (i = 0; rd && i < ndat; i++) {
 						if (tmp[i] != mask) {
 							e[i] = (do_rescale ? (INT16)(tmp[i] * rescale) : tmp[i]);
 							if (do_shift) e[i] += offset;
@@ -344,7 +348,7 @@ INT16 *SurfTile::ReadElevationFile (const char *name, int lvl, int ilat, int iln
 					break;
 				}
 				fclose(f);
-				ok = true;
+				ok = rd; // not upstream: a short file is not applied, the archive is tried
 			}
 		}
 		if (!ok && smgr->ZTreeManager(3)) { // try loading from compressed archive
@@ -1739,16 +1743,17 @@ float* TileManager2<SurfTile>::BrowseElevationData(int lvl, int ilat, int ilng, 
 	const int ndat = TILE_ELEVSTRIDE * TILE_ELEVSTRIDE;
 	float* elev = NULL;
 	char path[MAX_PATH];
-	char fname[128];
+	char fname[MAX_PATH]; // not upstream: was 128, a 255-char body name and the tile path always fit
 	FILE* f;
 	int i;
 
 	// Elevation data
 	if (flags & gcTileFlags::CACHE) { // try loading from individual tile file
 		snprintf(path, MAX_PATH, "%s\\Elev\\%02d\\%06d\\%06d.elv", m_dataRootDir.c_str(), lvl + 4, ilat, ilng);
-		if ((f = fopen(oapiResolvePath(path).c_str(), "rb"))) {
+		if ((f = fopen(oapiResolvePath(path).c_str(), "rb")) && fread(&ehdr, sizeof(ELEVFILEHEADER), 1, f) != 1) { fclose(f); f = NULL; } // not upstream: a short header counts as no file
+		if (f) {
+			bool rd = true; // not upstream: false after a short data read
 			elev = new float[ndat];
-			fread(&ehdr, sizeof(ELEVFILEHEADER), 1, f);
 			if (ehdr.hdrsize != sizeof(ELEVFILEHEADER)) fseek(f, ehdr.hdrsize, SEEK_SET);
 
 			ehdr.scale = 1.0;
@@ -1759,20 +1764,21 @@ float* TileManager2<SurfTile>::BrowseElevationData(int lvl, int ilat, int ilng, 
 				break;
 			case 8: {
 				UINT8* tmp = new UINT8[ndat];
-				fread(tmp, sizeof(UINT8), ndat, f);
-				for (i = 0; i < ndat; i++) elev[i] = float(tmp[i]);
+				rd = fread(tmp, sizeof(UINT8), ndat, f) == (size_t)ndat;
+				for (i = 0; rd && i < ndat; i++) elev[i] = float(tmp[i]);
 				delete[]tmp;
 				break;
 			}
 			case -16: {
 				INT16* tmp = new INT16[ndat];
-				fread(tmp, sizeof(INT16), ndat, f);
-				for (i = 0; i < ndat; i++) elev[i] = float(tmp[i]);
+				rd = fread(tmp, sizeof(INT16), ndat, f) == (size_t)ndat;
+				for (i = 0; rd && i < ndat; i++) elev[i] = float(tmp[i]);
 				delete[]tmp;
 				break;
 			}
 			}
 			fclose(f);
+			if (!rd) { delete[] elev; elev = NULL; } // not upstream: a short file counts as missing, the archive is tried next
 		}
 	}
 	if (!elev && (flags & gcTileFlags::TREE) && ZTreeManager(2)) { // try loading from compressed archive
@@ -1809,9 +1815,9 @@ float* TileManager2<SurfTile>::BrowseElevationData(int lvl, int ilat, int ilng, 
 		if (flags & gcTileFlags::CACHE) { // try loading from individual tile file
 			snprintf(fname, std::size(fname), "%s\\Elev_mod\\%02d\\%06d\\%06d.elv", CbodyName(), lvl + 4, ilat, ilng);
 			bool found = GetClient()->TexturePath(fname, path);
-			if (found && (f = fopen(oapiResolvePath(path).c_str(), "rb"))) {
-
-				fread(&hdr, sizeof(ELEVFILEHEADER), 1, f);
+			if (found && (f = fopen(oapiResolvePath(path).c_str(), "rb")) && fread(&hdr, sizeof(ELEVFILEHEADER), 1, f) != 1) { fclose(f); f = NULL; } // not upstream: a short header counts as no file
+			if (found && f) {
+				bool rd = true; // not upstream: false after a short data read
 				if (hdr.hdrsize != sizeof(ELEVFILEHEADER)) fseek(f, hdr.hdrsize, SEEK_SET);
 
 				switch (hdr.dtype)
@@ -1823,8 +1829,8 @@ float* TileManager2<SurfTile>::BrowseElevationData(int lvl, int ilat, int ilng, 
 				case 8: {
 					const UINT8 mask = UCHAR_MAX;
 					UINT8* tmp = new UINT8[ndat];
-					fread(tmp, sizeof(UINT8), ndat, f);
-					for (i = 0; i < ndat; i++)
+					rd = fread(tmp, sizeof(UINT8), ndat, f) == (size_t)ndat;
+					for (i = 0; rd && i < ndat; i++)
 						if (tmp[i] != mask)
 							elev[i] = float(trunc(float(tmp[i]) * hdr.scale) + trunc(hdr.offset));
 					delete[]tmp;
@@ -1833,8 +1839,8 @@ float* TileManager2<SurfTile>::BrowseElevationData(int lvl, int ilat, int ilng, 
 				case -16: {
 					const INT16 mask = SHRT_MAX;
 					INT16* tmp = new INT16[ndat];
-					fread(tmp, sizeof(INT16), ndat, f);
-					for (i = 0; i < ndat; i++)
+					rd = fread(tmp, sizeof(INT16), ndat, f) == (size_t)ndat;
+					for (i = 0; rd && i < ndat; i++)
 						if (tmp[i] != mask)
 							elev[i] = float(trunc(float(tmp[i]) * hdr.scale) + trunc(hdr.offset));
 					delete[]tmp;
@@ -1842,7 +1848,7 @@ float* TileManager2<SurfTile>::BrowseElevationData(int lvl, int ilat, int ilng, 
 				}
 				}
 				fclose(f);
-				ok = true;
+				ok = rd; // not upstream: a short file is not applied, the archive is tried
 			}
 		}
 

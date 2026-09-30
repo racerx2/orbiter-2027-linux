@@ -76,7 +76,7 @@ VkTex *NatLoadSpecialTexture(const char* fname, const char* ext)
 	char path[MAX_PATH];
 	char name[MAX_PATH];
 
-	NatCreateName(name, (int)std::size(name), fname, ext);
+	if (!NatCreateName(name, (int)std::size(name), fname, ext)) return NULL; // not upstream: without a '.' (or when cut) name is unset
 
 	VkTex *pTex = NULL;
 	
@@ -1093,7 +1093,7 @@ bool NatCreateName(char* out, int mlen, const char* fname, const char* id)
 	char* p = strrchr(buffe, '.');
 	if (p != NULL) {
 		*p = '\0';
-		snprintf(out, mlen, "%s_%s.%s", buffe, id, ++p);
+		if (snprintf(out, mlen, "%s_%s.%s", buffe, id, ++p) >= mlen) return false; // not upstream: a cut name is no name (sprintf_s failed here)
 	}
 	return (p != NULL);
 }

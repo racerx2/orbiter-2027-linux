@@ -157,7 +157,7 @@ void ProcessPlanetFlats(OBJHANDLE hPlanet)
 	char name[MAX_PATH];
 	char fname[MAX_PATH];
 	oapiGetObjectName(hPlanet, name, std::size(name) - 6);
-	snprintf(fname, std::size(fname), "%s/Flat", name); // '/': TexturePath checks the path as given
+	snprintf(fname, std::size(fname), "%.*s/Flat", (int)std::size(name) - 7, name); // '/': TexturePath checks the path as given; not upstream: %.*s is the -6 bound above
 	g_client->TexturePath(fname, name);
 	auto files = EnumerateDirectory(name, "*.flt");
 	// Load all planet shapes
