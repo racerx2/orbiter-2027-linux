@@ -27,7 +27,7 @@
 
 // file name for storing custom parameters
 const char *cfgfile = "myparam.cfg";
-char *myitemtag = "MyParam";
+const char *myitemtag = "MyParam"; // not upstream: const, the item API takes const char*
 
 class MyRootItem;
 class MyItem;
@@ -48,8 +48,8 @@ struct {
 class MyRootItem: public LaunchpadItem {
 public:
 	MyRootItem(): LaunchpadItem() {}
-	char *Name() { return "My root item"; }
-	char *Description() { return "Example 'Launchpad parameter template' from Orbiter SDK"; }
+	char *Name() { static char name[] = "My root item"; return name; } // not upstream: writable, Name() returns char*
+	char *Description() { static char desc[] = "Example 'Launchpad parameter template' from Orbiter SDK"; return desc; } // not upstream: as Name()
 };
 
 // ==============================================================
@@ -61,8 +61,8 @@ public:
 class MyItem: public LaunchpadItem {
 public:
 	MyItem();
-	char *Name() { return "My sub-item"; }
-	char *Description() { return "This item is an example from the Orbiter SDK. It doesn't do anything useful, but provides a source example for developers on how to write Launchpad plugins."; }
+	char *Name() { static char name[] = "My sub-item"; return name; } // not upstream: writable, Name() returns char*
+	char *Description() { static char desc[] = "This item is an example from the Orbiter SDK. It doesn't do anything useful, but provides a source example for developers on how to write Launchpad plugins."; return desc; } // not upstream: as Name()
 	bool clbkOpen (QWidget *hLaunchpad);
 	int clbkWriteConfig ();
 	static void DlgProc (QWidget*, void*);

@@ -1295,18 +1295,19 @@ void ShuttleA::clbkSetClassCaps (FILEHANDLE cfg)
 void ShuttleA::clbkLoadStateEx (FILEHANDLE scn, void *vs)
 {
 	char *line;
+	int s; // not upstream: sscanf %d needs an int, DoorStatus is an enum
 
 	while (oapiReadScenario_nextline (scn, line)) {
 		if (!strncasecmp (line, "PODANGLE", 8)) {
 			sscanf (line+8, "%lf%lf", pod_angle+0, pod_angle+1);
 		} else if (!strncasecmp (line, "DOCKSTATE", 9)) {
-			sscanf (line+9, "%d%lf", &dock_status, &dock_proc);
+			s = dock_status; sscanf (line+9, "%d%lf", &s, &dock_proc); dock_status = (DoorStatus)s; // not upstream: via s
 		} else if (!strncasecmp (line, "AIRLOCK", 7)) {
-			sscanf (line+7, "%d%lf", &lock_status[0], &lock_proc[0]);
+			s = lock_status[0]; sscanf (line+7, "%d%lf", &s, &lock_proc[0]); lock_status[0] = (DoorStatus)s; // not upstream: via s
 		} else if (!strncasecmp (line, "IAIRLOCK", 8)) {
-			sscanf (line+8, "%d%lf", &lock_status[1], &lock_proc[1]);
+			s = lock_status[1]; sscanf (line+8, "%d%lf", &s, &lock_proc[1]); lock_status[1] = (DoorStatus)s; // not upstream: via s
 		} else if (!strncasecmp (line, "GEAR", 4)) {
-			sscanf (line+4, "%d%lf", &gear_status, &gear_proc);
+			s = gear_status; sscanf (line+4, "%d%lf", &s, &gear_proc); gear_status = (DoorStatus)s; // not upstream: via s
 		} else if (!strncasecmp (line, "PAYLOAD MASS", 12)) {
 			sscanf (line+12, "%lf%d", &payload_mass,&cargo_arm_status);
 		} else if (!strncasecmp (line, "ATTREF", 6)) {

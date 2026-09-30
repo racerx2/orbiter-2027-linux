@@ -322,7 +322,7 @@ void slingshot::graphupdate(oapi::Sketchpad *sketchpad, Graph *graph,basefunctio
 
 void minorejectplan::wordupdate(oapi::Sketchpad *sketchpad, int width, int height, basefunction *base)
 {
-	char buffer[20];
+	char buffer[32]; // not upstream: prefix + any %.4g value + UTF-8 degree sign + NUL is at most 22 bytes
 	int linespacing=height/24;
 	int pos=16*linespacing;
 	int len;

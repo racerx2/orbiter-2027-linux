@@ -129,14 +129,15 @@ void HST::clbkSetClassCaps (FILEHANDLE cfg)
 void HST::clbkLoadStateEx (FILEHANDLE scn, void *vs)
 {
 	char *line;
+	int s; // not upstream: sscanf %d needs an int, DoorStatus is an enum
 
 	while (oapiReadScenario_nextline (scn, line)) {
 		if (!strncasecmp (line, "ANT", 3)) {
-			sscanf (line+3, "%d%lf", &ant_status, &ant_proc);
+			s = ant_status; sscanf (line+3, "%d%lf", &s, &ant_proc); ant_status = (DoorStatus)s; // not upstream: via s
 		} else if (!strncasecmp (line, "HATCH", 5)) {
-			sscanf (line+5, "%d%lf", &hatch_status, &hatch_proc);
+			s = hatch_status; sscanf (line+5, "%d%lf", &s, &hatch_proc); hatch_status = (DoorStatus)s; // not upstream: via s
 		} else if (!strncasecmp (line, "FOLD", 4)) {
-			sscanf (line+5, "%d%lf", &array_status, &array_proc);
+			s = array_status; sscanf (line+5, "%d%lf", &s, &array_proc); array_status = (DoorStatus)s; // not upstream: via s
 		} else {
 			ParseScenarioLineEx (line, vs);
 		}
