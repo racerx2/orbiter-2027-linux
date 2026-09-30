@@ -31,7 +31,7 @@ jobs:
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ca-certificates git cmake ninja-build g++ pkg-config python3 libvulkan-dev glslang-dev qt6-base-dev \
+            ca-certificates git cmake ninja-build g++ pkg-config python3 libvulkan-dev glslang-dev glslang-tools qt6-base-dev \
             libwayland-dev wayland-protocols libpipewire-0.3-dev libpng-dev libgl-dev libglu1-mesa-dev fonts-dejavu-core spirv-tools
       - uses: actions/checkout@v6
       - name: Configure

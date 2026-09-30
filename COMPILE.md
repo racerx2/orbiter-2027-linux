@@ -7,7 +7,7 @@ LINUX: PREREQUISITES
 ====================
 The packages, one line per distribution (only the Ubuntu names are tested so far):
 
-- Debian/Ubuntu: `cmake ninja-build g++ git pkg-config python3 libvulkan-dev glslang-dev qt6-base-dev libwayland-dev wayland-protocols libpipewire-0.3-dev libpng-dev`
+- Debian/Ubuntu: `cmake ninja-build g++ git pkg-config python3 libvulkan-dev glslang-dev glslang-tools qt6-base-dev libwayland-dev wayland-protocols libpipewire-0.3-dev libpng-dev`
 - Fedora: `cmake ninja-build gcc-c++ git pkgconf-pkg-config python3 vulkan-headers vulkan-loader-devel glslang-devel qt6-qtbase-devel wayland-devel wayland-protocols-devel pipewire-devel libpng-devel`
 - openSUSE: `cmake ninja gcc-c++ git pkg-config python3 vulkan-devel vulkan-headers glslang-devel qt6-base-devel wayland-devel wayland-protocols-devel pipewire-devel libpng16-devel`
 - Arch: `cmake ninja gcc git pkgconf python vulkan-headers vulkan-icd-loader glslang qt6-base wayland wayland-protocols libpipewire libpng`
@@ -17,7 +17,7 @@ Optional, Dragonfly's ADI ball (the vessel is left out without it): `libgl-dev l
 For debugging: the Vulkan validation layers (`vulkan-validationlayers`).
 
 What they are for: Qt 6 draws the windows and dialogs; Vulkan and glslang are the graphics client (glslang
-compiles its shaders at run time); Wayland and wayland-protocols give mouse look (pointer lock) on Wayland;
+compiles its shaders at run time; on Debian and Ubuntu its CMake package also wants the glslang-tools programs); Wayland and wayland-protocols give mouse look (pointer lock) on Wayland;
 PipeWire's headers are for sound (XRSound loads libpipewire at run time, and without it Orbiter runs silent);
 libpng is for the utilities plsplit and tileedit.
 
