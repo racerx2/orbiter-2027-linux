@@ -159,6 +159,7 @@ orbiter_rc_resources(Orbiter Orbiter.rc EXE SYMBOL OrbiterResources)
 # keyboard-shortcuts-inhibit protocols
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WAYLAND_CLIENT REQUIRED IMPORTED_TARGET wayland-client)
+pkg_check_modules(WAYLAND_PROTOCOLS REQUIRED wayland-protocols) # not upstream: configure fails clearly without it
 pkg_get_variable(WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
 find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
 foreach(proto pointer-constraints relative-pointer keyboard-shortcuts-inhibit)

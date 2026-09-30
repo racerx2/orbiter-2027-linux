@@ -10,15 +10,13 @@ add_subdirectory(imgui)
 
 ## LFS
 add_library(lfs SHARED luafilesystem/src/lfs.c)
-install(TARGETS lfs	DESTINATION ${ORBITER_BINARY_ROOT_DIR})
+# install to ORBITER_BINARY_ROOT_DIR left out: an absolute path; the build dir gets lfs.so from LIBRARY_OUTPUT_DIRECTORY
 install(TARGETS lfs DESTINATION ${ORBITER_INSTALL_SDK_DIR}/Utils/)
 target_include_directories(lfs PUBLIC Lua)
 target_link_libraries(lfs lua)
 # /DEF:lfs.def left out: ELF exports luaopen_lfs by default
 # lfs.so without the lib prefix, so Lua's require "lfs" finds it like lfs.dll
 set_target_properties(lfs PROPERTIES PREFIX "")
-
-install(TARGETS lfs	DESTINATION ${ORBITER_BINARY_ROOT_DIR})
 
 set_target_properties(lfs PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY ${ORBITER_BINARY_ROOT_DIR}

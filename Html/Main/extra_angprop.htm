@@ -16,7 +16,7 @@
 <p>For maximum fidelity (but potentially lower frame rates in the presence of a large number of spacecraft), high-order Runge-Kutta integrators can be used also for shorter time intervals or smaller angular steps.</p>
 <p>The <i>Subsampling</i> section of the dialog can be used to improve the accuracy of the angular state propagation method for high angular velocities. It instructs Orbiter to use multiple integration steps in a single frame if the angular step is larger than the provided target step. The maximum number of subsampling steps per frame can also be specified.</p>
 <p>The <i>Rotation model</i> section can be used to simplify the rotation model used by Orbiter in the presence of extremely large time steps to improve the stability of the simulation. <i>Suppress cross-axis coupling</i> instructs Orbiter to ignore the coupling terms in the differential equations that define the relationship between torque and angular velocity. Instead, the rotations around the three vessel axes are calculated independently. The <i>Suppress torque terms</i> option instructs Orbiter to ignore external torques (e.g. from attitude thrusters) in frames where the angular steps exceeds the specified limit.</p>
-<p>For details about the state integrators available in Orbiter, see <i>Orbiter Technical Notes: Dynamic state vector propagation</i> (in Doc\Technotes\dynamics.pdf).</p>
+<p>For details about the state integrators available in Orbiter, see <i>Orbiter Technical Reference: Dynamic state vector propagation</i> (in Doc/Orbiter Technical Reference (Linux).pdf).</p> <!-- not upstream: Linux -->
 
 </body>
 </html>

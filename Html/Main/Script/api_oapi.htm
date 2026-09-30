@@ -2397,9 +2397,9 @@ surfaces is very inefficient on most graphics hardware.</p>
 </table>
 <h4>Notes:</h4>
 <p>Textures loaded by this function should be in DDS format and conform to the
-DirectX restrictions for texture surfaces, typically square bitmaps with
+restrictions for texture surfaces, typically square bitmaps with <!-- not upstream: Linux -->
 dimensions of powers of 2 (128x128, 256x256, etc.).</p>
-<p>When using the D3D9Client, additional file formats (e.g. bmp) are supported, and power of 2 restrictions are lifted.</p>
+<p>When using the VulkanClient, additional file formats (e.g. bmp) are supported, and power of 2 restrictions are lifted.</p> <!-- not upstream: Linux -->
 <p>File names can contain search paths. Orbiter searches for textures in the
 standard way, i.e. first searches the HitexDir directory (usually Textures2),
 then the TextureDir directory (usually Textures). All search paths are relative

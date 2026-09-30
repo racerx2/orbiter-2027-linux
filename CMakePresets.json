@@ -62,26 +62,22 @@
     {
       "name": "linux-x64-debug",
       "displayName": "x64 Debug",
-      "configurePreset": "linux-x64-debug",
-      "jobs": 3
+      "configurePreset": "linux-x64-debug"
     },
     {
       "name": "linux-x64-release",
       "displayName": "x64 Release",
-      "configurePreset": "linux-x64-release",
-      "jobs": 3
+      "configurePreset": "linux-x64-release"
     },
     {
       "name": "linux-x64-asan",
       "displayName": "x64 ASan",
-      "configurePreset": "linux-x64-asan",
-      "jobs": 3
+      "configurePreset": "linux-x64-asan"
     },
     {
       "name": "linux-x64-tracy",
       "displayName": "x64 Tracy Profiler",
-      "configurePreset": "linux-x64-tracy",
-      "jobs": 3
+      "configurePreset": "linux-x64-tracy"
     }
   ],
   "testPresets": [

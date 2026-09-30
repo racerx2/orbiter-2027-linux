@@ -15,11 +15,11 @@ the default script vocabulary, e.g. to add vessel-type specific methods to vesse
 class instances.</p>
 
 <h2>Adding type-specific vessel methods</h2>
-<p>A vessel DLL can intercept the creation of vessel objects by the Lua interpreter
+<p>A vessel module can intercept the creation of vessel objects by the Lua interpreter <!-- not upstream: Linux -->
 in order to attach additional vessel-type specific methods to the object.
 The interpreter can then call these methods for all vessel objects of this type.</p>
 
-<p>For example, a vessel DLL may provide script methods for landing gear operation.
+<p>For example, a vessel module may provide script methods for landing gear operation. <!-- not upstream: Linux -->
 This allows the user to raise or lower the gear from a Lua terminal (LuaMFD or
 LuaConsole). Typically, we may want to provide commands</p>
 <div class="code">
@@ -27,7 +27,7 @@ v=vessel.get_interface('MyVessel')<br />
 v:gear_up()<br />
 v:gear_dn()
 </div>
-<p>To provide these functions, the vessel class in the DLL must be derived from
+<p>To provide these functions, the vessel class in the module must be derived from <!-- not upstream: Linux -->
 VESSEL3 and implement the clbkGeneric method. The clbkGeneric method must
 respond to VMSG_LUAINSTANCE messages:</p>
 <div class="code">

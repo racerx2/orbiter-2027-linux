@@ -1,7 +1,7 @@
 # Copyright (c) Martin Schweiger
 # Licensed under the MIT License
 
-cmake_minimum_required(VERSION 3.19)
+cmake_minimum_required(VERSION 3.28) # not upstream: copy_directory_if_different (3.26), FetchContent EXCLUDE_FROM_ALL in tracy.cmake (3.28)
 
 # Set the project name
 project (Orbiter VERSION 21.7.24)
@@ -10,6 +10,7 @@ project (Orbiter VERSION 21.7.24)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED OFF)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF) # not upstream: no C++ modules; CMP0155 (3.28) would scan every C++20 source
 
 # upstream's /permissive note is MSVC-only
 
@@ -94,7 +95,7 @@ set(ldoc ${CMAKE_COMMAND} -E env "LUA_PATH='${ORBITER_BINARY_ROOT_DIR}/?.lua$<SE
 find_package(LATEX)
 
 # Qt6 replaces the Qt5_x64 lookup and also carries the Launchpad and dialogs
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets DBus)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets DBus) # not upstream: 6.5 for QNativeInterface::QWaylandApplication
 
 # /we4311 left out: g++ already rejects pointer-to-smaller-int casts; NOMINMAX has no counterpart
 set(CMAKE_BUILD_WITH_INSTALL_RPATH true)
@@ -154,7 +155,7 @@ endif()
 string(COMPARE NOTEQUAL ${ORBITER_PLANET_TEXTURE_INSTALL_DIR} "${ORBITER_BINARY_ROOT_DIR}/Textures" CUSTOM_PLANET_TEXTURE_DIR)
 
 if (${CUSTOM_PLANET_TEXTURE_DIR})
-	string(REPLACE  "/" "\\" ORBITER_PLANET_TEXTURE_INSTALL_DIR_W "${ORBITER_PLANET_TEXTURE_INSTALL_DIR}")
+	set(ORBITER_PLANET_TEXTURE_INSTALL_DIR_W "${ORBITER_PLANET_TEXTURE_INSTALL_DIR}") # not upstream: Linux paths keep '/'
 
 	configure_file(${ORBITER_SOURCE_DIR}/Orbiter.cfg.in ${ORBITER_BINARY_ROOT_DIR}/Orbiter.cfg)
 	install(FILES ${ORBITER_BINARY_ROOT_DIR}/Orbiter.cfg DESTINATION ${ORBITER_INSTALL_ROOT_DIR})
@@ -210,9 +211,12 @@ if(ORBITER_BUILD_XRSOUND)
 	pkg_check_modules(PIPEWIRE REQUIRED IMPORTED_TARGET libpipewire-0.3)
 endif()
 
-# Vulkan 1.4 and glslangValidator replace the DirectX SDK (June 2010)
+# Vulkan 1.3 replaces the DirectX SDK (June 2010); glslang compiles the shaders at run time
 if(ORBITER_BUILD_VULKANCLIENT)
-	find_package(Vulkan 1.4 REQUIRED COMPONENTS glslangValidator)
+	find_package(Vulkan 1.3 REQUIRED)
+	if(Vulkan_VERSION VERSION_LESS 1.3.246) # not upstream: VK_EXT_shader_object's headers
+		message(FATAL_ERROR "Vulkan headers ${Vulkan_VERSION} found, the VulkanClient needs 1.3.246 or newer")
+	endif()
 endif()
 
 if (ORBITER_MAKE_DOC)
@@ -253,6 +257,7 @@ endfunction()
 # BinAssets left out: it only holds msvcr71/msvcp71.dll, the Windows runtime for old add-ons
 install(DIRECTORY Scenarios Textures Meshes Config GravityModels Script Flights
 	DESTINATION ${ORBITER_INSTALL_ROOT_DIR}
+	REGEX "/Textures/[^/]+/Archive$" EXCLUDE # not upstream: a local planet texture archive is never installed or packed
 )
 
 set(CMAKE_MODULE_PATH
@@ -328,10 +333,11 @@ set(CPACK_RESOURCE_FILE_LICENSE ${ORBITER_SOURCE_ROOT_DIR}/cmake/LICENSE.rtf)
 set(CPACK_RESOURCE_FILE_README ${ORBITER_SOURCE_ROOT_DIR}/README.md)
 # CPACK_WIX_* (banner, dialog, icon, upgrade GUID) left out: no WIX installer on Linux
 set(CPACK_PROJECT_CONFIG_FILE "${CMAKE_BINARY_DIR}/OrbiterCPackOptions.cmake")
+set(CPACK_PRE_BUILD_SCRIPTS ${ORBITER_SOURCE_ROOT_DIR}/cmake/cpack_install.cmake) # not upstream: before include(CPack), which writes CPackConfig.cmake; packages get the default PlanetTexDir
 
 # not upstream: package_source leaves out the build trees (out/, also local data there) and LaTeX byproducts; CPack's defaults kept
 string(REGEX REPLACE "([][+.*()^$?|])" "\\\\\\1" ORBITER_SOURCE_RE "${CMAKE_SOURCE_DIR}") # not upstream: out/ of this tree only
-set(ORBITER_SOURCE_IGNORE "/CVS/;/\\.svn/;/\\.bzr/;/\\.hg/;/\\.git/;\\.swp$;\\.#;/#;^${ORBITER_SOURCE_RE}/out/;-eps-converted-to\\.pdf$") # not upstream
+set(ORBITER_SOURCE_IGNORE "/CVS/;/\\.svn/;/\\.bzr/;/\\.hg/;/\\.git/;\\.swp$;\\.#;/#;^${ORBITER_SOURCE_RE}/out/;^${ORBITER_SOURCE_RE}/Textures/[^/]+/Archive/;-eps-converted-to\\.pdf$") # not upstream
 string(REGEX REPLACE "([\\\$\"])" "\\\\\\1" CPACK_SOURCE_IGNORE_FILES "${ORBITER_SOURCE_IGNORE}") # not upstream: CPack unescapes once more (as its own defaults)
 
 include(OrbiterCPackOptions)
@@ -347,12 +353,7 @@ cpack_add_component(RuntimeLibraries
 	DESCRIPTION "System libraries used by Orbiter. Install if Orbiter fails to launch."
 )
 
-# There appears to be a CMake (3.20.5) bug that prevents CMAKE_INSTALL_PREFIX to be set
-# correctly in the CPACK_PRE_BUILD_SCRIPTS, so the script has been disabled for now
-# This means that the planet texture installation directory is not reset to default
-# for the packages. This needs to be fixed
-
-#set(CPACK_PRE_BUILD_SCRIPTS ${ORBITER_SOURCE_ROOT_DIR}/cmake/cpack_install.cmake)
+# CPACK_PRE_BUILD_SCRIPTS note and commented set left out: set above; the script writes the staged tree (CPACK_TEMPORARY_INSTALL_DIRECTORY)
 
 if (ORBITER_MAKE_TESTS)
       enable_testing()

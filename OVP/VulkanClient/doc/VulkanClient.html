@@ -76,7 +76,10 @@
 <h1 class="brk">Requirements</h1>
 <p>
   The VulkanClient needs a graphics card and driver with
-  <a href="https://www.vulkan.org" target="_blank">Vulkan</a> 1.4 support.
+  <a href="https://www.vulkan.org" target="_blank">Vulkan</a> 1.3 support and the extensions
+  VK_KHR_push_descriptor (part of Vulkan 1.4), VK_EXT_shader_object, VK_EXT_extended_dynamic_state3
+  and VK_EXT_vertex_input_dynamic_state; the log names any that are missing. Where a driver has no
+  VK_EXT_shader_object (Intel's ANV), the Khronos layer VK_LAYER_KHRONOS_shader_object emulates it.
   The anti-aliasing and anisotropic filtering levels offered in the setup
   dialog are the ones the selected device supports.
 </p>

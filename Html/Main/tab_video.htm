@@ -11,29 +11,25 @@
 
 <h1><a name="hid_tab_video"></a>Video settings</h1>
 <p>
-On this page you can select a video device, switch between running the simulation in fullscreen or window mode, and choose screen resolution and colour depth.</p>
+On this page you select the graphics engine and set up the simulation window: full screen or in a window, the full screen mode and the window size.</p> <!-- not upstream: Linux -->
 <p>
-If you are running the Orbiter <i>Graphics Server</i> (orbiter_ng) with a 3rd party graphics client, the options on this page may be different. Refer to the graphics client documentation for details.</p>
+On Linux the graphics engine is the <i>VulkanClient</i> plugin; without a graphics engine Orbiter runs in console mode. The options below are the VulkanClient's; its documentation (Doc/VulkanClient/VulkanClient.html) describes them in detail.</p> <!-- not upstream: Linux -->
 
 <h2>3-D device</h2>
 <p>
-Lists the available hardware and software devices for 3D rendering. Select a hardware device that supports transformation and lighting (T&amp;L) when possible, such as <i>Direct3D T&amp;L HAL</i>. If a T&amp;L device is not available, at least pick a hardware device, such as Direct3D HAL. Software devices such as <i>RGB Emulation</i> will produce poor performance or may fail to run altogether. Note that some hardware devices may not support window mode.</p>
-<p>
-<b>Always enumerate devices</b>: Tick this box if Orbiter does not display 3-D devices or screen modes correctly. This option enforces a hardware scan whenever Orbiter is launched and skips the device data stored in device.dat. Make sure to tick this box after upgrading your graphics hardware or DirectX/video drivers to make Orbiter aware of the changes. In general it is a good idea to leave this box ticked all the time.</p>
-<p>
-<b>Try stencil buffer</b>: Tick this box to enable stencil buffer effects when available. Stencil buffers can improve various visual effects (for example, provide support for alpha-blended shadows) but can have an impact on performance. If the selected video mode doesn't support stencil buffers, this option is ignored. Generally, 32-bit modes do support stencil buffering, while 16-bit modes don't.</p>
+Lists the Vulkan devices found on this computer: graphics cards, and software renderers such as llvmpipe. Pick your graphics card; a software renderer is very slow.</p> <!-- not upstream: Linux -->
+<p><b>Advanced</b>: opens the VulkanClient Advanced Setup dialog (anti-aliasing, texture filtering, shadows and more).</p> <!-- not upstream: Linux -->
 
 <h2>Full Screen</h2>
 <p>
-Select this option to run Orbiter in fullscreen mode. You can choose the screen resolution and colour depth from the lists provided. Only modes supported by the selected device are listed here. Higher resolution and colour depth will improve the visual appearance at the cost of reduced performance.</p>
+Select this option to run Orbiter full screen. The Full Screen Mode list offers "True Full Screen (no alt-tab)", "Full Screen Window" (a window without frame that covers the screen) and "Window with Taskbar" (the same, leaving the desktop's panels visible). On Linux the display mode is never changed, so full screen uses the screen's current resolution, and switching to other windows works in all three modes.</p> <!-- not upstream: Linux -->
 <p>
 <b>Disable vertical sync</b>: This allows Orbiter to update a frame without waiting for a synchronisation signal from the monitor. This can improve frame rates, but may lead to visual artefacts (tearing). Note that some video drivers allow to override application vsync settings, in which case this option has no effect.</p>
-<p>
-<b>Disable hardware pageflip</b>: This option can fix a problem with periodic white screen flashes on some systems. It replaces the hardware page flip command with a memory copy operation. This option also automatically disables vsync.
-</p>
+<p><b>Multiple displays</b>: In "Full Screen Window" mode the window covers all screens of the desktop; in "Window with Taskbar" mode it takes the width of the desktop's work area instead of the screen.</p> <!-- not upstream: Linux -->
 
 <h2>Window</h2>
 <p>
-Select this option to run Orbiter in a window. You can specify the size of the render window here. Selecting one of the <i>fixed aspect ratio</i> options (4:3 normal, 16:10 widescreen or 16:9 widescreen) automatically adjusts the window width or height to maintain the aspect ratio. Large window sizes may reduce simulation performance. Note that some older graphics drivers may not allow 3-D applications to run in window mode.</p>
+Select this option to run Orbiter in a window. You can specify the size of the render window here. Selecting one of the <i>fixed aspect ratio</i> options (4:3 normal, 16:10 widescreen or 16:9 widescreen) automatically adjusts the window width or height to maintain the aspect ratio. Large window sizes may reduce simulation performance.</p> <!-- not upstream: Linux -->
+<p><b>Force window size</b>: Orbiter sets the render window to the size given here again after the desktop has placed it. With this option ticked, the anti-aliasing setting of the Advanced Setup dialog is not available.</p> <!-- not upstream: Linux -->
 </BODY>
 </HTML>

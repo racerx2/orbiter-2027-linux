@@ -13,3 +13,8 @@ out/**
 Doc/**/*.log
 Doc/**/*.pdf
 Doc/**/*.gz
+
+# not upstream: local planet archives, user presets, Python caches
+/Textures/*/Archive/
+CMakeUserPresets.json
+__pycache__/

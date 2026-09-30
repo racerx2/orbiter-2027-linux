@@ -11,25 +11,25 @@
 
 <h1>Vessel scripts</h1>
 <p>Vessel scripts are a quick and easy way to define new vessel types in Orbiter.
-Unlike vessel DLL modules, they don't require the compilation of a C++ file, but just a text
+Unlike vessel modules, they don't require the compilation of a C++ file, but just a text <!-- not upstream: Linux -->
 file containing the script.</p>
-<p>Compared to DLL modules using the Orbiter API, scripted vessels haven't quite the
+<p>Compared to modules using the Orbiter API, scripted vessels haven't quite the <!-- not upstream: Linux -->
 same range of functions, and the script interpretation carries a performance penalty.
 Therefore, vessel scripts are mainly useful for simple vessel implementations, or rapid
-prototyping as a pre-step to a full DLL implementation.</p>
+prototyping as a pre-step to a full module implementation.</p> <!-- not upstream: Linux -->
 <p>This section illustrates how to create new vessel types using the <i>ScriptVessel</i>
 interface. ScriptVessel is a generic vessel module that loads a script to obtain vessel
 parameters (physical specifications, aerodynamic properties, engine layout, meshes,
 animations, etc.). The script can contain callback functions that are called by the
 ScriptVessel module to signal events such as vessel initialisation, time steps or docking.</p>
 <p>The C++ sources for the ScriptVessel module are contained in the Orbiter SDK, at
-Orbitersdk\samples\ScriptVessel.</p>
+Orbitersdk/samples/ScriptVessel.</p> <!-- not upstream: Linux -->
 <p>The <i>ScriptPB</i> vessel class is an example for a scripted vessel definition. It can
-be found in Config\Vessels\ScriptPB.cfg.</p>
+be found in Config/Vessels/ScriptPB.cfg.</p> <!-- not upstream: Linux -->
 
 <h2>Step 1: The vessel configuration file</h2>
 <p>All vessel type definitions require a definition file. This is a text file in the
-Config\Vessels subdirectory, called
+Config/Vessels subdirectory, called <!-- not upstream: Linux -->
 <div class="code">
 <i>&lt;classname&gt;</i>.cfg
 </div>
@@ -41,7 +41,7 @@ Module = ScriptVessel<br />
 Script = <i>&lt;scriptname&gt;</i>
 </div>
 where <i>&lt;classname&gt;</i> is again the vessel class name, and <i>&lt;scriptname&gt;</i>
-is the name of the script file. The script file should be located in the Config\Vessels
+is the name of the script file. The script file should be located in the Config/Vessels <!-- not upstream: Linux -->
 subdirectory. It is even possible to place the script directly into the configuration
 file. This will be described in the next section.</p>
 
@@ -141,7 +141,7 @@ function clbk_setclasscaps(cfg)<br />
 end
 </div>
 <p>Other engines, including hover, retro and attitude control (RCS) engines, can be added in
-the same way. See Config\Vessels\ScriptPB.cfg for an example of a complete engine layout.</p>
+the same way. See Config/Vessels/ScriptPB.cfg for an example of a complete engine layout.</p> <!-- not upstream: Linux -->
 
 <h2>Step 5: Adding airfoils</h2>
 <p>Airfoils are required to define the vessel's lift and drag properties in an atmosphere.</p>

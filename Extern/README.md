@@ -2,13 +2,12 @@
 
 If you want to add new dependency, the way to add it will depend on the type
 
-## lunarmodule dependency
+## Lua module dependency
 
-Use `add_lunarmodule` function in Extern/CMakeLists.txt with appropriate tag:
-
-```
-add_lunarmodule(ldoc v1.5.0)
-```
+The Lua modules are source copies in `Extern/ldoc`, `Extern/Penlight` and `Extern/luafilesystem`.
+The `CopyLDoc` target in Extern/CMakeLists.txt copies ldoc and Penlight into the build, and
+luafilesystem is built there as the `lfs` library. Add a new module the same way: a copy of its
+sources, then a copy step (pure Lua) or a library target (C) in Extern/CMakeLists.txt.
 
 ## C++ dependency
 

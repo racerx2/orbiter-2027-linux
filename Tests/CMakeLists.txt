@@ -1,14 +1,12 @@
 Include(FetchContent)
 
-# v3.0.0-preview3 sizes a static array with MINSIGSTKSZ, which glibc 2.34+ turned into a sysconf() call
 FetchContent_Declare(
   Catch2
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-  GIT_TAG        v3.8.1
+  GIT_TAG        v3.8.1 # not upstream: v3.0.0-preview3 sizes a static array with MINSIGSTKSZ (sysconf since glibc 2.34)
 )
 
-# static Catch2: tracy.cmake turns BUILD_SHARED_LIBS on for everything after it
-set(BUILD_SHARED_LIBS OFF)
+set(BUILD_SHARED_LIBS OFF) # not upstream: static Catch2; tracy.cmake turns shared libs on
 FetchContent_MakeAvailable(Catch2)
 
 # Utility function
@@ -77,17 +75,17 @@ target_link_options(Lua.Interpreter PRIVATE -Wl,--unresolved-symbols=ignore-in-s
 
 # not upstream: proves the Catch2/ctest harness builds and runs
 add_unit_test(Port.Harness)
-# not upstream: Phase 1 core utilities
+# not upstream: core utilities
 add_unit_test(Vecmat.Test ${ORBITER_SOURCE_DIR}/Vecmat.cpp)
 add_unit_test(Astro.Test ${ORBITER_SOURCE_DIR}/Astro.cpp ${ORBITER_SOURCE_DIR}/TimeData.cpp)
 add_unit_test(PathResolve.Test ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
 add_unit_test(Input.Test ${ORBITER_SOURCE_DIR}/Di7frame.cpp ${ORBITER_SOURCE_DIR}/Memstat.cpp)
-# not upstream: Phase 2 Celbody modules, loaded like Orbiter loads them; the test exports the exe-side API they bind to
+# not upstream: Celbody modules, loaded like Orbiter loads them; the test exports the exe-side API they bind to
 add_unit_test(Celbody.Test ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
 set_target_properties(Celbody.Test PROPERTIES ENABLE_EXPORTS ON)
 add_dependencies(Celbody.Test Sol Sun Mercury Venus Earth Mars Jupiter Saturn Uranus Neptune Moon Io Europa Ganymede Callisto
 	Mimas Enceladus Tethys Dione Rhea Titan Hyperion Iapetus EarthAtm2006 EarthAtmJ71G EarthAtmNRLMSISE00 MarsAtm2006 VenusAtm2006)
-# not upstream: Phase 4 dialog builder on Orbiter.rc, rendered offscreen
+# not upstream: dialog builder on Orbiter.rc, rendered offscreen
 add_unit_test(ResDialog.Test ${ORBITER_SOURCE_DIR}/ResDialog.cpp ${ORBITER_SOURCE_DIR}/ResDialog.h)
 set_target_properties(ResDialog.Test PROPERTIES AUTOMOC ON)
 target_link_libraries(ResDialog.Test Qt6::Widgets DlgCtrl)

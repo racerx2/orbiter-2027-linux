@@ -10,8 +10,8 @@ Unit tests have a default timeout of 30 seconds for whole suite
 
 Integration tests are implemented by
 
-1. Adding a Lua script to Script\Tests directory
-1. Adding a corresponding scenario referencing this script to Scenarios\Tests directory
+1. Adding a Lua script to Script/Tests directory
+1. Adding a corresponding scenario referencing this script to Scenarios/Tests directory
 
 Lua script must:
 

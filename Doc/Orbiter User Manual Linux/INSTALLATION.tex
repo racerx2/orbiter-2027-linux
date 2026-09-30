@@ -6,7 +6,7 @@
 This section lists the computer requirements for running Orbiter on Linux, and contains download and installation instructions.
 
 \subsection{Computer requirements}
-Orbiter runs on 64-bit (x86-64) Linux distributions with a Wayland or X11 desktop. It needs a graphics driver with Vulkan 1.4 support, and plays sound through PipeWire.\\
+Orbiter runs on 64-bit (x86-64) Linux distributions with a Wayland or X11 desktop. It needs a graphics driver with Vulkan 1.3 support, and plays sound through PipeWire (without it Orbiter runs silent). The Linux package needs glibc 2.43 and Qt 6.10 or newer (Ubuntu 26.04 or a distribution at least as new); the OpenOrbiter launcher checks this. The graphics driver needs Vulkan 1.3 with the extensions VK\_KHR\_push\_descriptor, VK\_EXT\_shader\_object, VK\_EXT\_extended\_dynamic\_state3 and VK\_EXT\_vertex\_input\_dynamic\_state (current Mesa and NVIDIA drivers have them; on Intel's ANV the Khronos layer VK\_LAYER\_KHRONOS\_shader\_object is needed, see Doc/VulkanClient/VulkanClient.html).\\
 The following table lists the hardware requirements needed by Orbiter.
 
 %\begin{table}[H]
@@ -19,7 +19,7 @@ The following table lists the hardware requirements needed by Orbiter.
 	\hline\rule{0pt}{2ex}
 	CPU & Dual Core &\\
 	\hline\rule{0pt}{2ex}
-	GPU & 50 GFlops, Vulkan 1.4 driver & 100 GFlops\\
+	GPU & 50 GFlops, Vulkan 1.3 driver & 100 GFlops\\
 	\hline\rule{0pt}{2ex}
 	Disk & 5 GB of free space & 10 GB of free space (80 GB if you want hi-res textures)\\
 	\hline
@@ -42,7 +42,7 @@ If desired, high-resolution texture packs are available for Mercury, Earth, Moon
 \texttt{tar -xzf OpenOrbiter-<version>-Linux.tar.gz -C \textasciitilde/Orbiter}\\
 Important: Take care to preserve the directory structure of the package. The Orbiter folder is OpenOrbiter-<version>-Linux/Orbiter inside it.
 \item After unpacking the package, make sure your Orbiter folder contains the executable (Orbiter), its launcher (OpenOrbiter) and, among other files, the Config, Meshes, Scenarios and Textures subfolders.
-\item Orbiter is launched with the OpenOrbiter launcher in the Orbiter folder, which starts the Orbiter executable from its own folder. The first time, the launcher checks the libraries Orbiter needs, offers to install anything missing from your distribution's own package repositories (apt, dnf, zypper or pacman), and adds Orbiter to your application menu, so after that it starts from the menu like any other program. Orbiter's output goes to \textasciitilde/.cache/orbiter64-linux/orbiter.log; \texttt{./OpenOrbiter -{}-verbose} keeps it in the terminal instead.
+\item Orbiter is launched with the OpenOrbiter launcher in the Orbiter folder, which starts the Orbiter executable from its own folder. The first time, the launcher checks the libraries Orbiter needs, offers to install anything missing from your distribution's own package repositories (apt, dnf, zypper or pacman), and adds Orbiter to your application menu, so after that it starts from the menu like any other program. Orbiter's output goes to \textasciitilde/.cache/orbiter-linux/orbiter.log; \texttt{./OpenOrbiter -{}-verbose} keeps it in the terminal instead.
 \item Graphics come from the included VulkanClient plugin, which renders with Vulkan: select it as graphics engine on the \textit{Video} tab of the Launchpad (see section \ref{ssec:launchpad_video}). Without a graphics engine, Orbiter runs in console mode, controlled from a text console (the terminal it was started from, or a console window of its own). Once running, Orbiter will show you the "Launchpad" dialog, where you can select video options and simulation parameters.
 \item You are now ready to start, select a scenario from the Launchpad dialog and click the \textit{Launch Orbiter} button!
 \end{itemize}
@@ -56,6 +56,6 @@ Add-ons that contain program modules (.dll files) are different: a Windows .dll 
 Help files (.chm) of Windows add-ons are Microsoft compiled HTML files, which Orbiter's help window on Linux cannot show (Orbiter's own .chm files on Linux are zip archives of HTML pages). Such help files can be read with a CHM viewer, for example xCHM or KchmViewer.
 
 \subsection{Uninstall}
-Run \texttt{./OpenOrbiter -{}-remove-menu} in the Orbiter folder to take Orbiter out of the application menu, then simply remove the Orbiter folders with all contents and subdirectories. This will completely remove Orbiter from your hard drive. The launcher's own files are in \textasciitilde/.cache/orbiter64-linux and can be removed as well.
+Run \texttt{./OpenOrbiter -{}-remove-menu} in the Orbiter folder to take Orbiter out of the application menu, then simply remove the Orbiter folders with all contents and subdirectories. This will completely remove Orbiter from your hard drive. The launcher's own files are in \textasciitilde/.cache/orbiter-linux (\textasciitilde/.cache/orbiter64-linux for the first Linux release) and can be removed as well. \texttt{-{}-remove-menu} keeps every copy of Orbiter out of the application menu; \texttt{./OpenOrbiter -{}-add-menu} puts it back.
 
 \end{document}

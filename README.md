@@ -16,7 +16,7 @@ a try. Orbiter is free, so you don’t need to invest more than a bit of your
 spare time.
 
 This tree is the Linux-only code of a line-by-line port of [orbitersim/orbiter](https://github.com/orbitersim/orbiter)
-(commits in `UPSTREAM`, via [racerx2/orbiter64-Linux](https://github.com/racerx2/orbiter64-Linux)) to native Linux: no Wine, no DXVK, graphics on Vulkan 1.4,
+(commits in `UPSTREAM`, via [racerx2/orbiter64-Linux](https://github.com/racerx2/orbiter64-Linux)) to native Linux: no Wine, no DXVK, graphics on Vulkan 1.3,
 windows and dialogs on Qt 6, sound on PipeWire. It holds no Windows code; Orbiter for
 Windows is [orbitersim/orbiter](https://github.com/orbitersim/orbiter).
 
@@ -25,7 +25,8 @@ Windows is [orbitersim/orbiter](https://github.com/orbitersim/orbiter).
 Orbiter is now published as an Open Source project under the MIT License (see
 [LICENSE](./LICENSE) file for details).
 
-The graphics engine (OVP/VulkanClient, ported from D3D9Client) is licensed under LGPL.
+The graphics engine (OVP/VulkanClient, ported from D3D9Client) is dual licensed under GPL v3 and LGPL v3,
+see [GPL](./OVP/VulkanClient/GPL.txt) and [LGPL](./OVP/VulkanClient/LGPL.txt).
 
 ## Installation
 Hardware requirements needed by Orbiter:
@@ -33,15 +34,17 @@ Hardware requirements needed by Orbiter:
 | ---- | ---- | ---- |
 | RAM: | 500 MB | 2 GB |
 | CPU: | Dual Core |  |
-| GPU: | Vulkan 1.4 | Vulkan 1.4 |
+| GPU: | Vulkan 1.3 | Vulkan 1.3 |
 | Disk: | 5 GB of free space | 10 GB of free space (80 GB if you want hi-res textures) |
+
+The Vulkan driver also needs the extensions listed in [COMPILE.md](./COMPILE.md).
 
 Get the port repository from github
 ```bash
 git clone https://github.com/racerx2/orbiter-linux.git
 ```
 
-To configure and build you need CMake 3.26 or later, Ninja and GCC with C++20.
+To configure and build you need CMake 3.28 or later, Ninja and GCC with C++20.
 See [COMPILE.md](./COMPILE.md) for details on building Orbiter.
 
 ## Planet textures
@@ -66,7 +69,7 @@ by setting the `PlanetTexDir` entry in `Orbiter.cfg`.
 
 ## Help
 
-Help files are located in the Doc subfolder (if you built them).
+Help files are located in the Doc subfolder (if you built them with `-DORBITER_MAKE_DOC=ON`).
 Orbiter User Manual (Linux).pdf is the main Orbiter user manual.
 
 The in-game help system can be opened via the "Help" button on

@@ -12,12 +12,21 @@ DIR=$(dirname "$(readlink -f "$0")")
 BIN="$DIR/Orbiter"
 DEPS="$DIR/deps.list"
 TITLE="Orbiter"
-CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/orbiter64-linux"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/orbiter-linux"
 STAMP="$CACHE/launcher.ok"
 LOG="$CACHE/launcher.log"
 APPLOG="$CACHE/orbiter.log"
-MENU="${XDG_DATA_HOME:-$HOME/.local/share}/applications/orbiter64-linux.desktop"
+MENU="${XDG_DATA_HOME:-$HOME/.local/share}/applications/orbiter-linux.desktop"
 NO_MENU="$CACHE/no-menu"
+# rc1 named both orbiter64-linux: its no-menu marker (at this launcher's first start) and its menu entry move to the new names
+OLD_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/orbiter64-linux"
+OLD_MENU="${XDG_DATA_HOME:-$HOME/.local/share}/applications/orbiter64-linux.desktop"
+if [ "$(id -u)" != 0 ]; then
+    [ ! -d "$CACHE" ] && [ -e "$OLD_CACHE/no-menu" ] && mkdir -p "$CACHE" && mv -f "$OLD_CACHE/no-menu" "$NO_MENU"
+    if [ -f "$OLD_MENU" ] && awk '/^Exec=".*\/OpenOrbiter"$/ { e = 1 } $0 == "StartupWMClass=Orbiter" { w = 1 } END { exit !(e && w) }' "$OLD_MENU"; then
+        if [ -e "$MENU" ]; then rm -f "$OLD_MENU"; else mkdir -p "$(dirname "$MENU")" && mv -f "$OLD_MENU" "$MENU"; fi
+    fi
+fi
 
 VERBOSE=0
 ARGS=()

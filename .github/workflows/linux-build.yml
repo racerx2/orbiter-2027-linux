@@ -1,0 +1,42 @@
+# Linux build and tests in the distributions COMPILE.md names (GitHub's own Ubuntu image has Qt 6.4)
+name: Linux build
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore: [ 'Doc/**', '**.md' ]
+  pull_request:
+    branches: [ main ]
+    paths-ignore: [ 'Doc/**', '**.md' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [ "ubuntu:26.04", "debian:13" ]
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install packages
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git cmake ninja-build g++ pkg-config python3 libvulkan-dev glslang-dev qt6-base-dev \
+            libwayland-dev wayland-protocols libpipewire-0.3-dev libpng-dev libgl-dev libglu1-mesa-dev fonts-dejavu-core spirv-tools
+      - uses: actions/checkout@v6
+      - name: Configure
+        run: cmake --preset linux-x64-release
+      - name: Build
+        run: cmake --build --preset linux-x64-release -j 4
+      - name: Test
+        run: ctest --preset linux-x64-release

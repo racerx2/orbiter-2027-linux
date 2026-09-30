@@ -11,20 +11,20 @@
 
 <h1>MFD scripts</h1>
 <p>MFD scripts provide a quick and easy way to create new multifunctional display
- modes for enhancing all Orbiter vessels. Unlike vessel DLL modules, they don't require the compilation of a C++ file, but just a text
+ modes for enhancing all Orbiter vessels. Unlike vessel modules, they don't require the compilation of a C++ file, but just a text <!-- not upstream: Linux -->
 file containing the script.</p>
 <p>This section illustrates how to create a new MFD mode using the <i>ScriptMFD</i>
 interface. ScriptMFD is a generic MFD plugin that loads scripts and uses them to
 register MFD modes with Orbiter.</p>
 <p>The C++ sources for the ScriptMFD module are contained in the Orbiter SDK, at
-Orbitersdk\samples\ScriptMFD.</p>
+Orbitersdk/samples/ScriptMFD.</p> <!-- not upstream: Linux -->
 
 <h2>Step 1: The MFD configuration file</h2>
 <p>Script MFD modes require a configuration file (unlike MFD modes defined via a
-plugin DLL, which generally don't, unless the plugin uses a configuration file to
+plugin module, which generally don't, unless the plugin uses a configuration file to <!-- not upstream: Linux -->
 store MFD configuration data). The script MFD configuration file stores the MFD
 mode name, the keyboard shortcut, and the name of the MFD script.</p>
-<p>The MFD configuration file is a text file and must be placed in the Config\MFD
+<p>The MFD configuration file is a text file and must be placed in the Config/MFD <!-- not upstream: Linux -->
 subdirectory. It must contain the following:</p>
 <div class="code">
 Name = <i>&lt;modename&gt;</i><br />
@@ -33,11 +33,11 @@ Key = <i>&lt;keycode&gt;</i>
 </div>
 <p>where <i>&lt;modename&gt;</i> is the name of the MFD mode (as should be displayed
 in the MFD list of modes), <i>&lt;scriptname&gt;</i> is the name of the file
-containing the MFD script (with path relative to Config\MFD), and <i>&lt;keycode&gt;</i>
+containing the MFD script (with path relative to Config/MFD), and <i>&lt;keycode&gt;</i> <!-- not upstream: Linux -->
 is the keycode for the MFD selection shortcut.</p>
 <p>The keycode is an integer value (specified either in decimal or in 0x... hexadecimal
 notation) corresponding to the values of the OAPI_KEY_xxx identifiers found in
-Orbitersdk\include\OrbiterAPI.h</p>
+Orbitersdk/include/OrbiterAPI.h</p> <!-- not upstream: Linux -->
 <p>While the MFD script can be put in a separate text file, it is also possible
 (and usually more convenient) to put it directly in the configuration file,
 allowing to define the entire MFD mode with a single file. This method is explained
@@ -80,7 +80,7 @@ interpreter.</p>
 <p>You are now ready to add the MFD script.</p>
 
 <h2>Step 4: Activating the MFD mode</h2>
-<p>To activate the new MFD mode, it must be entered in the Config\MFD\ScriptMFD.cfg
+<p>To activate the new MFD mode, it must be entered in the Config/MFD/ScriptMFD.cfg <!-- not upstream: Linux -->
 file. Append the line
 <div class="code">
 MFD\<i>&lt;configname&gt;</i>
