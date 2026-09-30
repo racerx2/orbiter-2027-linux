@@ -116,8 +116,8 @@ VesselXRSoundEngine *XRSoundDLL::GetXRSoundEngineInstance(const OBJHANDLE hVesse
         // if the request for an engine came from a vessel, it should *always* succeed, even if it would not normally have default sounds
         if (bInvokedByClientVessel || bShouldHaveDefaultSounds)
         {
-            char msg[256];
-            snprintf(msg, 256, "XRSoundDLL::GetXRSoundEngineInstance: creating new XRSoundEngine instance for vessel %s", static_cast<const char *>(csVesselDesc));
+            char msg[96 + sizeof(csVesselDesc)]; // not upstream: room for the prefix and the whole description
+            snprintf(msg, sizeof(msg), "XRSoundDLL::GetXRSoundEngineInstance: creating new XRSoundEngine instance for vessel %s", static_cast<const char *>(csVesselDesc)); // not upstream: sizeof
 
             pEngine = VesselXRSoundEngine::CreateInstance(hVessel);
             if (pEngine)
