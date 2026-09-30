@@ -293,6 +293,9 @@ add_subdirectory(Src)
 add_subdirectory(Utils)
 add_subdirectory(Orbitersdk)
 add_subdirectory(OVP)
+if(ORBITER_MAKE_TESTS) # not upstream: XRSound registers its tests in its own folder
+	enable_testing()
+endif()
 add_subdirectory(Sound)
 add_subdirectory(Html)
 

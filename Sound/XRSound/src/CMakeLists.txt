@@ -26,13 +26,15 @@ target_include_directories(XRSound_dll PUBLIC
 	${ORBITER_SOURCE_SDK_INCLUDE_DIR}
 	${CMAKE_CURRENT_SOURCE_DIR}/Utils
 	${AUDIO_DECODER_INCLUDE_DIRS}
+	$<TARGET_PROPERTY:PkgConfig::PIPEWIRE,INTERFACE_INCLUDE_DIRECTORIES> # not upstream: PipeWire's headers only
 )
 
 # PipeWire replaces irrKlang; Qt Widgets for ConfigFileParser's QMessageBox
 target_link_libraries(XRSound_dll
 	${ORBITER_LIB}
 	${ORBITER_SDK_LIB}
-	PkgConfig::PIPEWIRE
+	${CMAKE_DL_LIBS} # not upstream: libpipewire is opened at run time, so XRSound.so loads without it
+	Threads::Threads # not upstream: the decoder threads
 	${AUDIO_DECODER_LIBS}
 	Qt6::Widgets
 )

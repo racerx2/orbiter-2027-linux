@@ -66,9 +66,10 @@ install(FILES "${ORBITER_BINARY_ROOT_DIR}/Doc/XRSound User Manual.pdf"
 )
 # irrKlang DLL install left out: no irrKlang
 
+find_package(Threads REQUIRED) # not upstream: the mixer's decoder threads
 add_subdirectory(src)
 
-# not upstream: mixer test, decodes a WAV from the assets and plays 0.5 s (reports it when no PipeWire daemon answers)
+# not upstream: mixer tests, all silent: an offline engine, no daemon (PIPEWIRE_REMOTE points nowhere), a private daemon without devices
 if(ORBITER_MAKE_TESTS)
 	add_executable(XRSound.AudioEngine.Test
 		test/AudioEngineTest.cpp
@@ -76,9 +77,12 @@ if(ORBITER_MAKE_TESTS)
 		src/Audio/AudioDecode.cpp
 	)
 	set_target_properties(XRSound.AudioEngine.Test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${ORBITER_BINARY_ROOT_DIR}/Tests)
-	target_include_directories(XRSound.AudioEngine.Test PRIVATE ${SOLUTION_DIR} ${AUDIO_DECODER_INCLUDE_DIRS})
-	target_compile_definitions(XRSound.AudioEngine.Test PRIVATE XRSOUND_TEST_SOUNDS="${ASSET_DIR}/XRSound/Default")
-	target_link_libraries(XRSound.AudioEngine.Test PkgConfig::PIPEWIRE ${AUDIO_DECODER_LIBS})
+	target_include_directories(XRSound.AudioEngine.Test PRIVATE ${SOLUTION_DIR} ${AUDIO_DECODER_INCLUDE_DIRS} $<TARGET_PROPERTY:PkgConfig::PIPEWIRE,INTERFACE_INCLUDE_DIRECTORIES>)
+	target_compile_definitions(XRSound.AudioEngine.Test PRIVATE XRSOUND_TEST_SOUNDS="${ASSET_DIR}/XRSound/Default" XRSOUND_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/test/data")
+	target_link_libraries(XRSound.AudioEngine.Test ${CMAKE_DL_LIBS} Threads::Threads ${AUDIO_DECODER_LIBS})
 	add_test(NAME XRSound.AudioEngine.Test COMMAND $<TARGET_FILE:XRSound.AudioEngine.Test>)
-	set_tests_properties(XRSound.AudioEngine.Test PROPERTIES TIMEOUT 20)
+	set_tests_properties(XRSound.AudioEngine.Test PROPERTIES TIMEOUT 120 ENVIRONMENT "PIPEWIRE_REMOTE=xrsound-test-none")
+	add_test(NAME XRSound.AudioEngine.Daemon.Test COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/test/DaemonTest.sh $<TARGET_FILE:XRSound.AudioEngine.Test> ${CMAKE_CURRENT_SOURCE_DIR}/test)
+	set_tests_properties(XRSound.AudioEngine.Daemon.Test PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+	add_test(NAME XRSound.NoPipeWireLink.Test COMMAND ${CMAKE_COMMAND} -DLIBRARY=$<TARGET_FILE:XRSound_dll> -DREADELF=${CMAKE_READELF} -DNM=${CMAKE_NM} -P ${CMAKE_CURRENT_SOURCE_DIR}/test/CheckNoPipeWireLink.cmake)
 endif()

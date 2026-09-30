@@ -565,7 +565,11 @@ void XRSoundEngine::UpdateIrrKlangEngine()
     if (!XRSoundEngine::IsKlangEngineInitialized())
         return;     // edge case: there are no sound-enabled vessels in Orbiter yet, so nothing to do
 
-    s_pKlangEngine->Update();   // frees finished sounds; the mixing itself runs on the PipeWire thread
+    // not upstream: Update also reports a lost or restored sound output and sound files that failed to decode
+    std::vector<std::string> log;
+    s_pKlangEngine->Update(log, s_globalConfig.EnableVerboseLogging);   // frees finished sounds; the mixing itself runs on the PipeWire thread
+    for (const std::string &line : log)
+        s_globalConfig.WriteLog(line.c_str());
 }
 
 // Reset any static data for a simulation restart (e.g., one-shot timers, etc.)
