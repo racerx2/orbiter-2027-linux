@@ -289,7 +289,7 @@ QVariant ChmBrowser::LoadPage (int type, const QUrl &name)
 
 class HelpWindow: public QWidget {
 public:
-	HelpWindow (QWidget *owner): QWidget (owner, Qt::Window)
+	HelpWindow (QWidget *owner): QWidget (owner, Qt::Dialog | Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint) // a dialog type: X11 writes an owner only for those; the HH window's buttons
 	{
 		resize (900, 640);
 		QHBoxLayout *layout = new QHBoxLayout (this);
@@ -409,8 +409,9 @@ private:
 };
 
 static QPointer<HelpWindow> g_help;
+static QMetaObject::Connection g_helpOwner; // the owner window's destroyed -> the help's close
 
-bool HtmlHelp (QWidget *owner, const char *file, const char *topic)
+static bool ShowHelp (QWidget *owner, QWindow *wowner, const char *file, const char *topic) // HtmlHelp; wowner: hwndCaller as a QWindow
 {
 	if (!file) return false;
 	std::string chm = file, t = (topic ? topic : "");
@@ -424,17 +425,35 @@ bool HtmlHelp (QWidget *owner, const char *file, const char *topic)
 	if (!g_help) g_help = new HelpWindow (owner ? owner->window() : nullptr);
 	if (!g_help->Load (path)) return false;
 	g_help->ShowTopic (QString::fromStdString (t));
-	if (QWidget *m = QApplication::activeModalWidget()) { // an unowned HH window is not disabled by DialogBox: not blocked by the modal dialog
-		g_help->winId();
-		QWindow *h = g_help->windowHandle(), *mw = m->windowHandle();
-		if (h && mw && h->transientParent() != mw) {
-			QPointer<QWindow> prev = h->transientParent();
-			h->setTransientParent (mw);
-			QObject::connect (mw, &QWindow::visibleChanged, h, [h, mw, prev](bool v) { if (!v && h->transientParent() == mw) h->setTransientParent (prev); }); // back to its owner when the dialog closes
-		}
+	g_help->winId();
+	QWindow *h = g_help->windowHandle(), *to = wowner; // hwndCaller: an owned window stays above its owner
+	QWidget *m = QApplication::activeModalWidget(); // an unowned HH window is not disabled by DialogBox: not blocked by the modal dialog
+	if (m && m->windowHandle()) to = m->windowHandle();
+	if (h && to && h->transientParent() != to) {
+		QPointer<QWindow> prev = wowner ? wowner : h->transientParent();
+		bool shown = g_help->isVisible();
+		QPoint pos = g_help->pos();
+		if (shown) g_help->hide(); // X11 writes the owner at a show, Wayland takes it only at a show
+		h->setTransientParent (to);
+		if (shown) g_help->move (pos); // X11 keeps the place, the Wayland compositor places it again
+		if (to != wowner) QObject::connect (to, &QWindow::visibleChanged, h, [h, to, prev](bool v) { if (!v && h->transientParent() == to) h->setTransientParent (prev); }); // back to its owner when the dialog closes
+	}
+	if (wowner) { // destroyed with its owner (Qt Wayland closes it itself), not with an earlier one
+		QObject::disconnect (g_helpOwner);
+		g_helpOwner = QObject::connect (wowner, &QObject::destroyed, g_help.data(), &QWidget::close);
 	}
 	g_help->show();
 	g_help->raise();
 	g_help->activateWindow();
 	return true;
+}
+
+bool HtmlHelp (QWidget *owner, const char *file, const char *topic)
+{
+	return ShowHelp (owner, nullptr, file, topic);
+}
+
+bool HtmlHelp (QWindow *owner, const char *file, const char *topic)
+{
+	return ShowHelp (nullptr, owner, file, topic);
 }

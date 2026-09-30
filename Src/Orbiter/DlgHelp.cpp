@@ -17,7 +17,7 @@ void DlgHelp::OnDraw() {}
 void DlgHelp::OpenHelp(const HELPCONTEXT *hc)
 {
 	char buf[256];
-	// the help window is a top-level window of its own (the render window is a QWindow, not a widget)
+	QWindow *hWnd = (QWindow*)(ImGui::GetMainViewport()->PlatformHandle); // HWND
 	if(hc->topic)
 		snprintf(buf, 256, "%s::%s", hc->helpfile, hc->topic);
 	else
@@ -25,7 +25,7 @@ void DlgHelp::OpenHelp(const HELPCONTEXT *hc)
 
 	buf[255] = '\0';
 
-	if(!HtmlHelp (NULL, buf, NULL)) {
+	if(!HtmlHelp (hWnd, buf, NULL)) {
 		oapiAddNotification(OAPINOTIF_ERROR, "Failed to open help", buf);
 	}
 }
