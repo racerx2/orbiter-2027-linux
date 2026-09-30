@@ -619,7 +619,7 @@ bool custom::LauncherApi::toggleFavourite (const QString &path)
 
 void custom::LauncherApi::setSkin (const QString &id)
 {
-	if (!dead) host->RequestSkin (id);
+	if (!dead && !host->Resetting ()) host->RequestSkin (id); // Ctrl+Shift+L wins over the skin
 }
 
 void custom::LauncherApi::refreshSetup ()

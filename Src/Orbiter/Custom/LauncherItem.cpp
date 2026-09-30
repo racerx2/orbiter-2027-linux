@@ -18,7 +18,7 @@ char *custom::LauncherItem::Name ()
 
 char *custom::LauncherItem::Description ()
 {
-	static char desc[] = "Choose how the Launchpad looks.\r\n\r\nSkins are folders in Orbiter's Skins directory: a style sheet for the classic Launchpad, or a new launcher written in QML.";
+	static char desc[] = "Choose how the Launchpad looks.\r\n\r\nSkins are folders in Orbiter's Skins directory: a style sheet for the classic Launchpad, or a new launcher written in QML.\r\n\r\nCtrl+Shift+L in the Launchpad window returns to Classic.";
 	return desc;
 }
 
@@ -41,6 +41,7 @@ bool custom::LauncherItem::clbkOpen (QWidget *hLaunchpad)
 	lay->addWidget (new QLabel ("Skins found in the Skins folder:", &dlg));
 	lay->addWidget (list, 1);
 	lay->addWidget (info);
+	lay->addWidget (new QLabel ("Ctrl+Shift+L in the Launchpad window returns to Classic.", &dlg));
 	lay->addWidget (buttons);
 
 	const QString activeId = host->ActiveSkin ();

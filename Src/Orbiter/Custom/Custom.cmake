@@ -6,6 +6,7 @@ target_sources(Orbiter PRIVATE
 	Custom/LauncherApi.cpp
 	Custom/LauncherSkin.cpp
 	Custom/LauncherItem.cpp
+	Custom/ResetKey.cpp
 )
 
 add_custom_target(CopySkins ALL

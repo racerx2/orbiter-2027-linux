@@ -4,6 +4,11 @@ A skin changes how the Launchpad looks. Choose one in the Launchpad under **Extr
 Horizon's Settings page). Start Orbiter with `ORBITER_LAUNCHER_SKIN=classic` to get the classic Launchpad for one
 run, whatever skin is chosen.
 
+**Escape key.** Ctrl+Shift+L in the Launchpad window switches back to the classic Launchpad and keeps it chosen.
+The window title shows the key while a skin is active. It also works when a skin shows nothing or hides its text.
+A reset stores Classic even when `ORBITER_LAUNCHER_SKIN` chose the skin (the variable still wins at the next
+start). Some keyboards have no Latin layout configured; there Ctrl+Shift+L may not arrive, so use the variable.
+
 There are two kinds, and a skin can be both:
 
 - **Style sheet (QSS)**: a Qt style sheet, CSS syntax, applied to the classic Launchpad. Example: `Dark`.
@@ -56,6 +61,12 @@ are not allowed).
 - Use `Launcher.launch()`, `Launcher.quit()` and `Launcher.openUrl()` rather than `Qt.quit()` or
   `Qt.openUrlExternally()`.
 - A skin that fails to load falls back to the classic Launchpad; the errors are in Orbiter.log.
+- The root object of the entry file must be an `Item` (or a type based on it), not a `Window`. Make it a
+  `FocusScope` when items inside take keyboard focus: Orbiter gives the root the focus whenever the view is shown or
+  activated.
+- Ctrl+Shift+L is reserved: a skin doesn't receive it, and its `Launcher.setSkin` calls are ignored until the
+  switch to Classic has run. One exception: after the first key of a two-key `Shortcut` in the skin, Qt may give
+  the key to that shortcut. Still offer your own way to the classic pages (`Launcher.showClassic`).
 
 **Safety.** A QML skin is code that runs inside Orbiter with your rights, like an add-on module. Orbiter keeps skins
 from using the network and from loading files outside their folder in the usual ways, but this is not a sandbox:

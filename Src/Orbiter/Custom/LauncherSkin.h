@@ -21,6 +21,7 @@ namespace custom {
 	class ClassicHider;
 	class LauncherApi;
 	class LauncherItem;
+	class ResetKey;
 
 	class LauncherSkin: public QObject {
 	public:
@@ -38,6 +39,7 @@ namespace custom {
 		QString StoredSkin () const { return QString::fromStdString (cfg.skin); }
 		void RequestSkin (const QString &id);   // the user's choice: stored, then switched when safe
 		bool SwitchPending () const { return switchPending; }
+		bool Resetting () const { return resetting; } // Ctrl+Shift+L pressed, switch to Classic not run yet
 
 		LauncherCfg &Cfg () { return cfg; }
 		void SaveCfg ();
@@ -76,6 +78,9 @@ namespace custom {
 		void OnDialogHidden ();
 		void Teardown ();
 		void UpdateActive ();
+		void SyncEscape ();
+		void ResetToClassic ();
+		void FocusClassic ();
 
 		orbiter::LaunchpadDialog *lp;
 		QWidget *dlg;
@@ -84,6 +89,8 @@ namespace custom {
 		LauncherApi *api = nullptr;
 		LauncherItem *item = nullptr;
 		QPushButton *back = nullptr;
+		ResetKey *resetKey = nullptr;
+		QString baseTitle;
 		QPointer<QWidget> view;
 
 		LauncherCfg cfg;
@@ -98,6 +105,7 @@ namespace custom {
 		std::vector<std::function<void ()>> pending;
 		bool tryQueued = false;
 		bool switchPending = false;
+		bool resetting = false;
 		QString switchTarget;
 		QString launching;       // the scenario selected when Launch was pressed
 

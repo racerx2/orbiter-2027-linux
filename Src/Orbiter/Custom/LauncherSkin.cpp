@@ -4,6 +4,7 @@
 #include "ClassicHider.h"
 #include "LauncherApi.h"
 #include "LauncherItem.h"
+#include "ResetKey.h"
 #include "Orbiter.h"
 #include "Launchpad.h"
 #include "LpadTab.h"
@@ -35,6 +36,7 @@ namespace {
 	const char *SKIN_DIR = "Skins";
 	const char *MODULE_FILE = "Modules/Launcher/LauncherQml.so";
 	const size_t MAX_SKINS = 200;
+	const char *TITLE_HINT = " — Ctrl+Shift+L: classic Launchpad";
 
 	void LogLine (const char *line)
 	{
@@ -52,6 +54,8 @@ custom::LauncherSkin::LauncherSkin (LaunchpadDialog *lp): QObject (lp->GetTab (0
 {
 	dlg = lp->GetTab (0)->LaunchpadWnd ();
 	hWait = lp->GetWaitWindow ();
+	baseTitle = dlg->windowTitle ();
+	resetKey = new ResetKey (dlg, [this]() { ResetToClassic (); }, this);
 	LoadLauncherCfg (CFG_FILE, cfg);
 	hider = new ClassicHider (dlg, hWait);
 	item = new LauncherItem (this);
@@ -73,6 +77,7 @@ custom::LauncherSkin::LauncherSkin (LaunchpadDialog *lp): QObject (lp->GetTab (0
 	}
 	ScanSkins ();
 	if (!id.isEmpty ()) Apply (id, c->CfgCmdlinePrm.bOpenVideoTab);
+	SyncEscape ();
 	AddPending ([this]() { if (api) api->RefreshAll (); });
 }
 
@@ -132,9 +137,49 @@ void custom::LauncherSkin::RequestSkin (const QString &id)
 		switchPending = false;
 		ScanSkins ();
 		Unapply ();
+		resetting = false; // only now: the old skin can call setSkin until its engine is gone
 		if (!switchTarget.isEmpty ()) Apply (switchTarget, false);
 		if (api) api->SkinSwitched ();
+		SyncEscape ();
+		if (!InSkinView ()) FocusClassic (); // the focused QML view may be gone
 	});
+}
+
+void custom::LauncherSkin::ResetToClassic ()
+{
+	if (torn || resetting || activeId.isEmpty ()) return;
+	resetting = true;
+	Log ("Ctrl+Shift+L: back to Classic");
+	RequestSkin (QString ()); // queued: the view that got the key must not go away under it
+}
+
+void custom::LauncherSkin::SyncEscape ()
+{
+	const bool on = !torn && !activeId.isEmpty ();
+	if (resetKey) {
+		resetKey->SetQml (on && qml);
+		if (on) resetKey->Install ();
+		else resetKey->Remove ();
+	}
+	const QString title = (on ? baseTitle + QString::fromUtf8 (TITLE_HINT) : baseTitle);
+	if (dlg->windowTitle () != title) dlg->setWindowTitle (title);
+}
+
+void custom::LauncherSkin::FocusClassic ()
+{
+	QWidget *f = dlg->focusWidget ();
+	if (torn || (f && f->isVisible ())) return;
+	orbiter::LaunchpadTab *tab = lp->GetTab (PG_SCN);
+	QTreeWidget *t = (tab && tab->TabWnd () ? DlgItem<QTreeWidget> (tab->TabWnd (), IDC_SCN_LIST) : nullptr);
+	if (t && t->isVisible ()) {
+		t->setFocus (Qt::OtherFocusReason);
+		return;
+	}
+	for (QWidget *w = dlg->nextInFocusChain (); w && w != dlg; w = w->nextInFocusChain ())
+		if (w->window () == dlg && w->isVisible () && w->isEnabled () && (w->focusPolicy () & Qt::TabFocus)) {
+			w->setFocus (Qt::TabFocusReason);
+			return;
+		}
 }
 
 QString custom::LauncherSkin::SelectedScenario () const
@@ -345,6 +390,7 @@ void custom::LauncherSkin::EnterSkinView ()
 			hider->Restore ();
 			mode = CLASSIC;
 			Unapply ();
+			SyncEscape ();
 			Fail (id, err, QString ());
 			return;
 		}
@@ -484,7 +530,7 @@ void custom::LauncherSkin::OnWaitHidden ()
 {
 	if (torn) return;
 	waiting = false;
-	if (qml && mode == SKIN) EnterSkinView (); // recreates the view after a flight and hides Launch/Help/Exit again
+	if (qml && mode == SKIN && !switchPending) EnterSkinView (); // recreates the view after a flight and hides Launch/Help/Exit again
 	UpdateActive ();
 	ScheduleTry ();
 }
@@ -537,10 +583,11 @@ void custom::LauncherSkin::Teardown ()
 	if (torn) return;
 	torn = true;
 	pending.clear ();
+	SyncEscape (); // filter off, title back
 	if (view) DestroyView ();
 	if (api) api->Kill ();
 	if (item) {
-		lp->UnregisterExtraParam (item); // writes Launcher.cfg through clbkWriteConfig once more
+		lp->UnregisterExtraParam (item); // its clbkWriteConfig writes nothing
 		delete item;
 		item = nullptr;
 	}

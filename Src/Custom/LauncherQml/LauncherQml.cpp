@@ -200,6 +200,7 @@ extern "C" Q_DECL_EXPORT QWidget *LauncherQml_Create (const LauncherQmlInit *ini
 		for (const QQmlError &x : view->errors ()) {
 			Log (x.toString ());
 			if (msgs.size () < 5) msgs << x.toString ();
+			if (x.description ().contains ("invalid root object")) msgs << "The skin's root object must be an Item, not a Window or QtObject.";
 		}
 		if (msgs.isEmpty ()) msgs << "the QML entry file did not load";
 		CopyErr (err, errlen, msgs.join ('\n'));
