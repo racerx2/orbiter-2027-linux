@@ -124,16 +124,19 @@ bool DlgElevImport::scanMetaFile(const char *fname, ElevPatchMetaInfo &meta)
 	int ilat, ilng, n;
 	double smin, emin, smean, emean, smax, emax;
 	char str[1024];
-	fscanf(f, "vmin=%lf vmax=%lf scale=%lf offset=%lf type=%d padding=1x1 colormap=%d smin=%lf emin=%lf smean=%lf emean=%lf smax=%lf emax=%lf latmin=%lf latmax=%lf lngmin=%lf lngmax=%lf\n",
+	if (fscanf(f, "vmin=%lf vmax=%lf scale=%lf offset=%lf type=%d padding=1x1 colormap=%d smin=%lf emin=%lf smean=%lf emean=%lf smax=%lf emax=%lf latmin=%lf latmax=%lf lngmin=%lf lngmax=%lf\n",
 		&meta.dmin, &meta.dmax, &meta.scale, &meta.offset, &meta.type, &meta.colormap, &smin, &emin, &smean, &emean, &smax, &emax,
-		&meta.latmin, &meta.latmax, &meta.lngmin, &meta.lngmax);
+		&meta.latmin, &meta.latmax, &meta.lngmin, &meta.lngmax) != 16) {
+		fclose(f); // not upstream: a first line without all 16 values is no valid metadata
+		return false;
+	}
 	if (fscanf(f, "lvl=%d ilat0=%d ilat1=%d ilng0=%d ilng1=%d\n",
 		&meta.lvl, &meta.ilat0, &meta.ilat1, &meta.ilng0, &meta.ilng1) != 5) {
 		meta.lvl = meta.ilat0 = meta.ilat1 = meta.ilng0 = meta.ilng1 = 0;
 	}
 	else {
-		fscanf(f, "%s", str);
-		if (!strncmp(str, "missing", 7)) {
+		n = fscanf(f, "%1023s", str); // not upstream: EOF means no missing list; width keeps the token inside str[1024]
+		if (n == 1 && !strncmp(str, "missing", 7)) {
 			while (true) {
 				n = fscanf(f, "%d/%d", &ilat, &ilng);
 				if (n == 2) {

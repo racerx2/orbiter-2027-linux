@@ -171,8 +171,8 @@ bool DlgSurfImport::scanMetaFile(const char *fname, SurfPatchMetaInfo &meta)
 		meta.lvl = meta.ilat0 = meta.ilat1 = meta.ilng0 = meta.ilng1 = 0;
 	}
 	else {
-		fscanf(f, "%s", str);
-		if (!strncmp(str, "missing", 7)) {
+		n = fscanf(f, "%1023s", str); // not upstream: EOF means no missing list; width keeps the token inside str[1024]
+		if (n == 1 && !strncmp(str, "missing", 7)) {
 			while (true) {
 				n = fscanf(f, "%d/%d", &ilat, &ilng);
 				if (n == 2) {

@@ -17,11 +17,11 @@ void ensureLayerDir(const char *rootDir, const char *layer, int lvl, int ilat)
 {
 	char path[1024]; // was 256: callers pass 1024-byte roots and Linux paths aren't capped at MAX_PATH
 	if (strlen(rootDir) + strlen(layer) > sizeof(path) - 20) return; // not upstream: no mkdir of a cut-off path
-	snprintf(path, sizeof(path), "%s/%s", rootDir, layer); // not upstream: snprintf, FORTIFY aborts on overflow
+	if (snprintf(path, sizeof(path), "%s/%s", rootDir, layer) >= (int)sizeof(path)) return; // not upstream: snprintf, FORTIFY aborts on overflow; no mkdir of a cut-off path
 	mkdir(path, 0777);
-	snprintf(path, sizeof(path), "%s/%s/%02d", rootDir, layer, lvl); // not upstream: snprintf, FORTIFY aborts on overflow
+	if (snprintf(path, sizeof(path), "%s/%s/%02d", rootDir, layer, lvl) >= (int)sizeof(path)) return; // not upstream: snprintf, FORTIFY aborts on overflow; no mkdir of a cut-off path
 	mkdir(path, 0777);
-	snprintf(path, sizeof(path), "%s/%s/%02d/%06d", rootDir, layer, lvl, ilat); // not upstream: snprintf, FORTIFY aborts on overflow
+	if (snprintf(path, sizeof(path), "%s/%s/%02d/%06d", rootDir, layer, lvl, ilat) >= (int)sizeof(path)) return; // not upstream: snprintf, FORTIFY aborts on overflow; no mkdir of a cut-off path
 	mkdir(path, 0777);
 }
 

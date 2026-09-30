@@ -36,14 +36,14 @@ bool TreeFileHeader::fread(FILE *f)
 		return false;
 	if (::fread(&sz, sizeof(DWORD), 1, f) != 1 || sz != size)
 		return false;
-	::fread(&flags, sizeof(DWORD), 1, f);
-	::fread(&dataOfs, sizeof(DWORD), 1, f);
-	::fread(&dataLength, sizeof(int64_t), 1, f);
-	::fread(&nodeCount, sizeof(DWORD), 1, f);
-	::fread(&rootPos1, sizeof(DWORD), 1, f);
-	::fread(&rootPos2, sizeof(DWORD), 1, f);
-	::fread(&rootPos3, sizeof(DWORD), 1, f);
-	::fread(rootPos4, sizeof(DWORD), 2, f);
+	if (::fread(&flags, sizeof(DWORD), 1, f) != 1) return false; // not upstream: a short header is a bad header
+	if (::fread(&dataOfs, sizeof(DWORD), 1, f) != 1) return false;
+	if (::fread(&dataLength, sizeof(int64_t), 1, f) != 1) return false;
+	if (::fread(&nodeCount, sizeof(DWORD), 1, f) != 1) return false;
+	if (::fread(&rootPos1, sizeof(DWORD), 1, f) != 1) return false;
+	if (::fread(&rootPos2, sizeof(DWORD), 1, f) != 1) return false;
+	if (::fread(&rootPos3, sizeof(DWORD), 1, f) != 1) return false;
+	if (::fread(rootPos4, sizeof(DWORD), 2, f) != 2) return false;
 	return true;
 }
 
@@ -177,7 +177,7 @@ DWORD ZTreeMgr::ReadData(DWORD idx, BYTE **outp) const
 
 	DWORD zsize = NodeSizeDeflated(idx);
 	BYTE *zbuf = new BYTE[zsize];	
-	fread(zbuf, 1, zsize, treef);
+	if (fread(zbuf, 1, zsize, treef) != zsize) { delete []zbuf; return 0; } // not upstream: a short node is no data
 
 	BYTE *ebuf = new BYTE[esize];
 
