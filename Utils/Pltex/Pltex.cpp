@@ -1389,11 +1389,11 @@ void SortTextures (const char *rootname)
 		if (!(maskfm = fopen (cbuf, "wb"))) FatalError ("Could not open output file");
 	} else maskfm = 0;
 
-	fread (idstr, 1, 8, binf);  // read file format id + version number
-	if (strncmp (idstr, TileID, 4)) fseek (binf, 0, SEEK_SET); // no header: old version
+	size_t nid = fread (idstr, 1, 8, binf);  // read file format id + version number; not upstream: count used below
+	if (nid < 4 || strncmp (idstr, TileID, 4)) fseek (binf, 0, SEEK_SET); // no header: old version
 
-	fread (&ntd, sizeof(DWORD), 1, binf);
-	td = new TILEFILESPEC[ntd]; fread (td, sizeof(TILEFILESPEC), ntd, binf);
+	if (fread (&ntd, sizeof(DWORD), 1, binf) != 1) FatalError ("Tile file parse error"); // not upstream: short file
+	td = new TILEFILESPEC[ntd]; if (fread (td, sizeof(TILEFILESPEC), ntd, binf) != ntd) FatalError ("Tile file parse error"); // not upstream: short file
 
 	texofs = maskofs = 0;
 	for (level = 9; level <= MAXLEVEL; level++) {
@@ -1506,14 +1506,14 @@ void MergeTextures ()
 	if (maskf1 || maskf2)
 		if (!(maskfm = fopen ("merge_tile_lmask.tex", "wb"))) FatalError ("Could not open output file");
 
-	fread (idstr, 1, 8, binf1);
-	if (strncmp (idstr, TileID, 4)) fseek (binf1, 0, SEEK_SET); // old format
-	fread (idstr, 1, 8, binf2);
-	if (strncmp (idstr, TileID, 4)) fseek (binf2, 0, SEEK_SET); // old format
-	fread (&ntd1, sizeof(DWORD), 1, binf1);
-	fread (&ntd2, sizeof(DWORD), 1, binf2);
-	td1 = new TILEFILESPEC[ntd1]; fread (td1, sizeof(TILEFILESPEC), ntd1, binf1);
-	td2 = new TILEFILESPEC[ntd2]; fread (td2, sizeof(TILEFILESPEC), ntd2, binf2);
+	size_t nid = fread (idstr, 1, 8, binf1); // not upstream: count used below
+	if (nid < 4 || strncmp (idstr, TileID, 4)) fseek (binf1, 0, SEEK_SET); // old format
+	nid = fread (idstr, 1, 8, binf2);
+	if (nid < 4 || strncmp (idstr, TileID, 4)) fseek (binf2, 0, SEEK_SET); // old format
+	if (fread (&ntd1, sizeof(DWORD), 1, binf1) != 1) FatalError ("Tile file parse error"); // not upstream: short file
+	if (fread (&ntd2, sizeof(DWORD), 1, binf2) != 1) FatalError ("Tile file parse error"); // not upstream: short file
+	td1 = new TILEFILESPEC[ntd1]; if (fread (td1, sizeof(TILEFILESPEC), ntd1, binf1) != ntd1) FatalError ("Tile file parse error"); // not upstream: short file
+	td2 = new TILEFILESPEC[ntd2]; if (fread (td2, sizeof(TILEFILESPEC), ntd2, binf2) != ntd2) FatalError ("Tile file parse error"); // not upstream: short file
 	tdm = new TILEFILESPEC[ntd1+ntd2]; // max size of merged descriptors
 	ntdm = 364;
 
@@ -2356,7 +2356,7 @@ DWORD CatDDS (FILE *texf, RGB *img, Alpha *aimg, LONG imgw, LONG imgh, bool forc
 	if (force || !aimg || !selective_alpha || (bopaque && btransparent)) {
 		FILE *ddsf = fopen (ddsname, "rb");
 		BYTE *buf = new BYTE[ddssize];
-		fread (buf, 1, ddssize, ddsf);
+		if (fread (buf, 1, ddssize, ddsf) != (size_t)ddssize) FatalError ("Could not read DDS file"); // not upstream: short read
 		fclose (ddsf);
 		fwrite (buf, 1, ddssize, texf);
 		delete []buf;
@@ -2503,7 +2503,7 @@ WORD CatMaskDDS (FILE *texf, RGB *img, Alpha *aimg, LONG imgw, LONG imgh)
 	// append to texture file
 	FILE *ddsf = fopen (ddsname, "rb");
 	BYTE *buf = new BYTE[ddssize];
-	fread (buf, 1, ddssize, ddsf);
+	if (fread (buf, 1, ddssize, ddsf) != (size_t)ddssize) FatalError ("Could not read DDS file"); // not upstream: short read
 	fclose (ddsf);
 	fwrite (buf, 1, ddssize, texf);
 	delete[]buf;
@@ -2531,7 +2531,8 @@ void ReadBMP_data (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 	if (id[0] != 'B' || id[1] != 'M') FatalError ("Wrong input file format");
 
 	BYTE *tmp = new BYTE[bmfh.bfOffBits];
-	fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp);
+	if (bmfh.bfOffBits < sizeof(BITMAPFILEHEADER)+sizeof(BITMAPINFOHEADER) || fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp) != bmfh.bfOffBits-sizeof(BITMAPFILEHEADER))
+		FatalError ("Cannot read bitmap file header"); // not upstream: offset below the info header, or short file
 	bmi = (BITMAPINFO*)tmp;
 
 	mapw = bmi->bmiHeader.biWidth;
@@ -2561,7 +2562,8 @@ RGB *ReadBMP (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 	if (id[0] != 'B' || id[1] != 'M') FatalError ("Wrong input file format");
 
 	BYTE *tmp = new BYTE[bmfh.bfOffBits];
-	fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp);
+	if (bmfh.bfOffBits < sizeof(BITMAPFILEHEADER)+sizeof(BITMAPINFOHEADER) || fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp) != bmfh.bfOffBits-sizeof(BITMAPFILEHEADER))
+		FatalError ("Cannot read bitmap file header"); // not upstream: offset below the info header, or short file
 	bmi = (BITMAPINFO*)tmp;
 
 	mapw = bmi->bmiHeader.biWidth;
@@ -2576,14 +2578,14 @@ RGB *ReadBMP (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 	case 8: {
 		BYTE b;
 		for (i = 0; i < imgsize; i++) {
-			fread (&b, 1, 1, fbmp);
+			if (!fread (&b, 1, 1, fbmp)) FatalError ("Cannot read bitmap data"); // not upstream: short file
 			img[i].r = bmi->bmiColors[b].rgbRed;
 			img[i].g = bmi->bmiColors[b].rgbGreen;
 			img[i].b = bmi->bmiColors[b].rgbBlue;
 		}}
 		break;
 	case 24:
-		fread (img, sizeof(RGB), imgsize, fbmp);
+		if (fread (img, sizeof(RGB), imgsize, fbmp) != imgsize) FatalError ("Cannot read bitmap data"); // not upstream: short file
 		break;
 	default:
 		FatalError ("Unsupported source colour depth");
@@ -2613,7 +2615,8 @@ RGB *ReadBMP_band (char *fname, LONG &mapw, LONG &maph, WORD &bpp, LONG line0, L
 	if (id[0] != 'B' || id[1] != 'M') FatalError ("Wrong input file format");
 
 	BYTE *tmp = new BYTE[bmfh.bfOffBits];
-	fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp);
+	if (bmfh.bfOffBits < sizeof(BITMAPFILEHEADER)+sizeof(BITMAPINFOHEADER) || fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp) != bmfh.bfOffBits-sizeof(BITMAPFILEHEADER))
+		FatalError ("Cannot read bitmap file header"); // not upstream: offset below the info header, or short file
 	bmi = (BITMAPINFO*)tmp;
 
 	if (line0+nlines > bmi->bmiHeader.biHeight) FatalError ("Error extracting bitmap band");
@@ -2630,9 +2633,9 @@ RGB *ReadBMP_band (char *fname, LONG &mapw, LONG &maph, WORD &bpp, LONG line0, L
 	case 8: {
 		BYTE *line = new BYTE[mapw];
 		for (j = 0; j < line0; j++)
-			fread (line, 1, mapw, fbmp); // skip these lines
+			if (fread (line, 1, mapw, fbmp) != (size_t)mapw) FatalError ("Cannot read bitmap data"); // skip these lines; not upstream: short file
 		for (j = 0; j < nlines; j++) {
-			fread (line, 1, mapw, fbmp);
+			if (fread (line, 1, mapw, fbmp) != (size_t)mapw) FatalError ("Cannot read bitmap data"); // not upstream: short file
 			for (i = 0; i < mapw; i++) {
 				img[j*mapw+i].r = bmi->bmiColors[line[i]].rgbRed;
 				img[j*mapw+i].g = bmi->bmiColors[line[i]].rgbGreen;
@@ -2644,9 +2647,9 @@ RGB *ReadBMP_band (char *fname, LONG &mapw, LONG &maph, WORD &bpp, LONG line0, L
 		break;
 	case 24:
 		for (j = 0; j < line0; j++)
-			fread (img, sizeof(RGB), mapw, fbmp); // skip these lines
+			if (fread (img, sizeof(RGB), mapw, fbmp) != (size_t)mapw) FatalError ("Cannot read bitmap data"); // skip these lines; not upstream: short file
 		for (j = 0; j < nlines; j++)
-			fread (img+j*mapw, sizeof(RGB), mapw, fbmp);
+			if (fread (img+j*mapw, sizeof(RGB), mapw, fbmp) != (size_t)mapw) FatalError ("Cannot read bitmap data"); // not upstream: short file
 		break;
 	default:
 		FatalError ("Unsupported source colour depth");
@@ -2675,7 +2678,8 @@ Alpha *ReadBMPAlpha (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 	if (id[0] != 'B' || id[1] != 'M') FatalError ("Wrong input file format");
 
 	BYTE *tmp = new BYTE[bmfh.bfOffBits];
-	fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp);
+	if (bmfh.bfOffBits < sizeof(BITMAPFILEHEADER)+sizeof(BITMAPINFOHEADER) || fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp) != bmfh.bfOffBits-sizeof(BITMAPFILEHEADER))
+		FatalError ("Cannot read bitmap file header"); // not upstream: offset below the info header, or short file
 	bmi = (BITMAPINFO*)tmp;
 
 	mapw = bmi->bmiHeader.biWidth;
@@ -2690,14 +2694,14 @@ Alpha *ReadBMPAlpha (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 	case 8: {
 		BYTE b;
 		for (i = 0; i < imgsize; i++) {
-			fread (&b, 1, 1, fbmp);
+			if (!fread (&b, 1, 1, fbmp)) FatalError ("Cannot read bitmap data"); // not upstream: short file
 			aimg[i] = bmi->bmiColors[b].rgbBlue;
 		}}
 		break;
 	case 24: {
 		RGB rgb;
 		for (i = 0; i < imgsize; i++) {
-			fread (&rgb, sizeof(RGB), 1, fbmp);
+			if (!fread (&rgb, sizeof(RGB), 1, fbmp)) FatalError ("Cannot read bitmap data"); // not upstream: short file
 			aimg[i] = rgb.b;
 		}}
 		break;
@@ -2729,7 +2733,8 @@ Alpha *ReadBMPAlpha_band (char *fname, LONG &mapw, LONG &maph, WORD &bpp, LONG l
 	if (id[0] != 'B' || id[1] != 'M') FatalError ("Wrong input file format");
 
 	BYTE *tmp = new BYTE[bmfh.bfOffBits];
-	fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp);
+	if (bmfh.bfOffBits < sizeof(BITMAPFILEHEADER)+sizeof(BITMAPINFOHEADER) || fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp) != bmfh.bfOffBits-sizeof(BITMAPFILEHEADER))
+		FatalError ("Cannot read bitmap file header"); // not upstream: offset below the info header, or short file
 	bmi = (BITMAPINFO*)tmp;
 
 	if (line0+nlines > bmi->bmiHeader.biHeight) FatalError ("Error extracting bitmap band");
@@ -2746,9 +2751,9 @@ Alpha *ReadBMPAlpha_band (char *fname, LONG &mapw, LONG &maph, WORD &bpp, LONG l
 	case 8: {
 		BYTE *line = new BYTE[mapw];
 		for (j = 0; j < line0; j++)
-			fread (line, 1, mapw, fbmp); // skip these lines
+			if (fread (line, 1, mapw, fbmp) != (size_t)mapw) FatalError ("Cannot read bitmap data"); // skip these lines; not upstream: short file
 		for (j = 0; j < nlines; j++) {
-			fread (line, 1, mapw, fbmp);
+			if (fread (line, 1, mapw, fbmp) != (size_t)mapw) FatalError ("Cannot read bitmap data"); // not upstream: short file
 			for (i = 0; i < mapw; i++) {
 				aimg[j*mapw+i] = bmi->bmiColors[line[i]].rgbBlue;
 			}
@@ -2760,10 +2765,10 @@ Alpha *ReadBMPAlpha_band (char *fname, LONG &mapw, LONG &maph, WORD &bpp, LONG l
 		RGB rgb;
 		for (j = 0; j < line0; j++)
 			for (i = 0; i < mapw; i++)
-				fread (&rgb, sizeof(RGB), 1, fbmp); // skip these lines
+				if (!fread (&rgb, sizeof(RGB), 1, fbmp)) FatalError ("Cannot read bitmap data"); // skip these lines; not upstream: short file
 		for (j = 0; j < nlines; j++)
 			for (i = 0; i < mapw; i++) {
-				fread (&rgb, sizeof(RGB), 1, fbmp);
+				if (!fread (&rgb, sizeof(RGB), 1, fbmp)) FatalError ("Cannot read bitmap data"); // not upstream: short file
 				aimg[j*mapw+i] = rgb.b;
 			}
 		break;
@@ -2864,7 +2869,7 @@ DWORD CopyDDS (FILE *ftgt, FILE *fsrc, DWORD idx, bool idx_is_ofs)
 		if (!fread (&dwMagic, sizeof(DWORD), 1, fsrc)) return 0;
 		if (dwMagic != MAKEFOURCC('D','D','S',' ')) return 0;
 
-		fread (&ddsd, sizeof(DDSURFACEDESC2), 1, fsrc);
+		if (fread (&ddsd, sizeof(DDSURFACEDESC2), 1, fsrc) != 1) return 0; // not upstream: short file
 		if (!(ddsd.dwFlags & DDSD_LINEARSIZE)) return 0;
 		size = ddsd.dwLinearSize;
 		if (size > mipsize[0]) { // re-allocate buffers
@@ -2877,12 +2882,12 @@ DWORD CopyDDS (FILE *ftgt, FILE *fsrc, DWORD idx, bool idx_is_ofs)
 					            // correct for DXT1, but may differ for other formats!
 			}
 		}
-		fread (mipbuf[0], size, 1, fsrc);
+		if (fread (mipbuf[0], 1, size, fsrc) != size) return 0; // not upstream: short file; bytes counted, so a zero size still passes
 		if (ddsd.dwFlags & DDSD_MIPMAPCOUNT) {
 			for (j = 1, s = size; j < ddsd.dwMipMapCount; j++) {
 				s >>= 2;
 				s = max (s, (DWORD)8);
-				fread (mipbuf[j], s, 1, fsrc);
+				if (fread (mipbuf[j], 1, s, fsrc) != s) return 0; // not upstream: short file
 			}
 		}
 	}

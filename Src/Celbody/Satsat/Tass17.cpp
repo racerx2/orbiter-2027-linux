@@ -45,7 +45,7 @@ static int calclon (double dj, const SeriesData *sd, double *dlo);
 static int calcelem (double dj, int is, double *elem, const SeriesData *sd,
     double *dlo);
 static int edered (double *elem, double *xyz, double *vxyz, int isat);
-static void lithyp (FILE *f);
+static int lithyp (FILE *f); // not upstream: returns -1 for a short or bad file
 static int elemhyp (double dj, double *elem);
 
 /* cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc */
@@ -178,7 +178,7 @@ int calclon (double dj, const SeriesData *sd, double *dlo)
 // ==========================================================
 // Read perturbation terms
 
-void ReadData (const char *fname, int res)
+int ReadData (const char *fname, int res) // not upstream: returns -1 for a missing or bad file
 {
     SeriesData *sd = sdata;
 
@@ -190,34 +190,35 @@ void ReadData (const char *fname, int res)
     static double radsdg = atan(1.) / 45.;
 
     FILE *f = fopen (fname, "rt");
-    fscanf (f, "%lf", &gk);
-    fscanf (f, "%lf", &tas);
+    if (!f) return -1; // not upstream: upstream passes NULL to fscanf
+    if (fscanf (f, "%lf", &gk) != 1) goto bad;
+    if (fscanf (f, "%lf", &tas) != 1) goto bad;
     gk1 = pow (gk*365.25, 2.0) / tas;
-    fscanf (f, "%lf", &aia);
-    fscanf (f, "%lf", &oma);
+    if (fscanf (f, "%lf", &aia) != 1) goto bad;
+    if (fscanf (f, "%lf", &oma) != 1) goto bad;
     aia *= radsdg;
     oma *= radsdg;
-    for (i = 0; i < 9; ++i) fscanf (f, "%lf", tam+i);
+    for (i = 0; i < 9; ++i) if (fscanf (f, "%lf", tam+i) != 1) goto bad;
     for (i = 0; i < 9; ++i) tmas[i] = 1. / tam[i];
-    for (i = 0; i < 9; ++i) fscanf (f, "%lf", am+i);
+    for (i = 0; i < 9; ++i) if (fscanf (f, "%lf", am+i) != 1) goto bad;
     for (i = 0; i < 9; ++i) aam[i] = am[i] * 365.25;
 
     for (i = 0; i < 8; i++) { // loop over objects
 	if (i == 6) continue; // skip Hyperion
 	for (j = 0; j < 4; j++) { // loop over series
-	    fscanf (f, "%d%d%d%d", &is, &ieq, &nt1, &nt2);
+	    if (fscanf (f, "%d%d%d%d", &is, &ieq, &nt1, &nt2) != 4 || nt1 < 0 || nt2 < nt1) goto bad; // not upstream: the counts size the arrays
 	    nt = (res == 0 ? nt2 : nt1);
 	    sd[i].ntr[j] = nt;
 	    sd[i].term[j] = new Term[nt];
 	    sd[i].iks[j] = new Iks[nt];
 	    if (ieq == 2) {
-		fscanf (f, "%d%lf%lf", &k, &sd[i].al0, &sd[i].an0);
+		if (fscanf (f, "%d%lf%lf", &k, &sd[i].al0, &sd[i].an0) != 3) goto bad;
 		sd[i].ntr[4] = nt1;
 	    }
 	    for (k = 0; k < nt2; k++) {
-		fscanf (f, "%d%lf%lf%lf", &n, tm+0, tm+1, tm+2);
-		fscanf (f, "%d%d%d%d%d%d%d%d",
-			ik+0, ik+1, ik+2, ik+3, ik+4, ik+5, ik+6, ik+7);
+		if (fscanf (f, "%d%lf%lf%lf", &n, tm+0, tm+1, tm+2) != 4) goto bad;
+		if (fscanf (f, "%d%d%d%d%d%d%d%d",
+			ik+0, ik+1, ik+2, ik+3, ik+4, ik+5, ik+6, ik+7) != 8) goto bad;
 		if (k < nt) {
 		    for (m = 0; m < 3; m++) sd[i].term[j][k][m] = tm[m];
 		    for (m = 0; m < 8; m++) sd[i].iks[j][k][m] = ik[m];
@@ -226,8 +227,15 @@ void ReadData (const char *fname, int res)
 	}
     }
     // Read Hyperion data
-    lithyp (f);
+    if (lithyp (f)) goto bad; // not upstream: see lithyp
     fclose (f);
+    return 0;
+
+bad: // not upstream: a short or bad file leaves no terms, as a missing one does
+    fclose (f);
+    for (i = 0; i < 8; i++) memset (sd[i].ntr, 0, sizeof(sd[i].ntr));
+    serhyp.nbtp = serhyp.nbtq = serhyp.nbtz = serhyp.nbtzt = 0;
+    return -1;
 }
 
 // ==========================================================
@@ -288,30 +296,31 @@ int edered (double *elem, double *xyz, double *vxyz, int isat)
 // ==========================================================
 // Read perturbation terms for Hyperion
 
-void lithyp (FILE *f)
+int lithyp (FILE *f)
 {
     int i;
 
-    fscanf (f, "%lf", &serhyp.t0);
-    fscanf (f, "%lf", &serhyp.amm7);
-    fscanf (f, "%d", &serhyp.nbtp);
-    fscanf (f, "%lf", &serhyp.cstp);
+    if (fscanf (f, "%lf", &serhyp.t0) != 1) return -1;
+    if (fscanf (f, "%lf", &serhyp.amm7) != 1) return -1;
+    if (fscanf (f, "%d", &serhyp.nbtp) != 1 || serhyp.nbtp < 0 || serhyp.nbtp > 120) return -1; // not upstream: count must fit serp[120]
+    if (fscanf (f, "%lf", &serhyp.cstp) != 1) return -1;
     for (i = 0; i < serhyp.nbtp; ++i)
-		fscanf (f, "%lf%lf%lf",
-			serhyp.serp+i, serhyp.fap+i, serhyp.frp+i);
-    fscanf (f, "%d", &serhyp.nbtq);
-    fscanf (f, "%lf", &serhyp.cstq);
+		if (fscanf (f, "%lf%lf%lf",
+			serhyp.serp+i, serhyp.fap+i, serhyp.frp+i) != 3) return -1;
+    if (fscanf (f, "%d", &serhyp.nbtq) != 1 || serhyp.nbtq < 0 || serhyp.nbtq > 240) return -1; // not upstream: count must fit serq[240]
+    if (fscanf (f, "%lf", &serhyp.cstq) != 1) return -1;
     for (i = 0; i < serhyp.nbtq; ++i)
-		fscanf (f, "%lf%lf%lf",
-			serhyp.serq+i, serhyp.faq+i, serhyp.frq+i);
-    fscanf (f, "%d", &serhyp.nbtz);
+		if (fscanf (f, "%lf%lf%lf",
+			serhyp.serq+i, serhyp.faq+i, serhyp.frq+i) != 3) return -1;
+    if (fscanf (f, "%d", &serhyp.nbtz) != 1 || serhyp.nbtz < 0 || serhyp.nbtz > 200) return -1; // not upstream: count must fit serz[200]
     for (i = 0; i < serhyp.nbtz; ++i)
-		fscanf (f, "%lf%lf%lf",
-			serhyp.serz+i, serhyp.faz+i, serhyp.frz+i);
-    fscanf (f, "%d", &serhyp.nbtzt);
+		if (fscanf (f, "%lf%lf%lf",
+			serhyp.serz+i, serhyp.faz+i, serhyp.frz+i) != 3) return -1;
+    if (fscanf (f, "%d", &serhyp.nbtzt) != 1 || serhyp.nbtzt < 0 || serhyp.nbtzt > 65) return -1; // not upstream: count must fit serzt[65]
     for (i = 0; i < serhyp.nbtzt; ++i)
-		fscanf (f, "%lf%lf%lf",
-			serhyp.serzt+i, serhyp.fazt+i, serhyp.frzt+i);
+		if (fscanf (f, "%lf%lf%lf",
+			serhyp.serzt+i, serhyp.fazt+i, serhyp.frzt+i) != 3) return -1;
+    return 0;
 }
 
 // ==========================================================

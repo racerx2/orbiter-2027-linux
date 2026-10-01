@@ -68,7 +68,7 @@ bool ConfigFileParser::ParseFile(const char *pFilename)
 
     const bool bParsingOverrideFile = (strcasecmp(pFilename, GetDefaultFilename()) != 0);  // true if we are parsing an override file
 
-    static char temp[256]; // reused for messages
+    static char temp[MAX_LINE_LENGTH + 512]; // reused for messages; not upstream: room for a full config line plus the file name
 
     // open the config file
     snprintf(temp, sizeof(temp), "Parsing config file '%s'", pFilename); // not upstream: snprintf, FORTIFY aborts on overflow
@@ -268,7 +268,7 @@ void ConfigFileParser::WriteLog(const char *pMsg) const
     if ((pMsg == nullptr) || (m_pLogFile == nullptr)) 
         return;
 
-	char csMsg[256];
+	char csMsg[MAX_LINE_LENGTH + 1024]; // not upstream: room for the timestamp, the prefix (255) and a full-line message
     // get and format the current time
     auto now = std::chrono::system_clock::now();
     std::time_t t = std::chrono::system_clock::to_time_t(now);
@@ -284,7 +284,7 @@ void ConfigFileParser::WriteLog(const char *pMsg) const
     if (!GetLogPrefix().empty())
         snprintf(csPrefix, 256, "[%s] ", GetLogPrefix().c_str());
 
-    snprintf(csMsg, 256, "%02d.%02d.%04d %02d:%02d:%02d.%03d - %s%s\n", 
+    snprintf(csMsg, sizeof(csMsg), "%02d.%02d.%04d %02d:%02d:%02d.%03d - %s%s\n", // not upstream: sizeof, csMsg grew
         tm.tm_mon + 1, tm.tm_mday, tm.tm_year + 1900, 
         tm.tm_hour, tm.tm_min, tm.tm_sec, (int)ms.count(),
         csPrefix, pMsg);

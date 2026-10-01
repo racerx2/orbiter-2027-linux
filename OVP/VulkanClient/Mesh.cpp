@@ -502,6 +502,7 @@ void D3D9Mesh::LoadMeshFromHandle(MESHHANDLE hMesh, D3DXVECTOR3 *reorig, float *
 void D3D9Mesh::ReloadTextures()
 {
 	for (UINT i = 0; i < nTex; i++) if (Tex[i]) SURFACE(Tex[i])->Reload();
+	CheckMeshStatus(); // not upstream: the reloaded textures may have gained or lost maps
 }
 
 // ===========================================================================================

@@ -837,7 +837,7 @@ static void AfterEarlierWrites (VkCommandBuffer cmd) // the readback waits for t
 
 bool VkReadPixels (VkDev *dev, VkTex *t, VkPixels &px, UINT levels)
 {
-	if (!t || !t->img) return false;
+	if (!t || !t->img || !dev->IsOK ()) return false; // a failed device reads nothing
 	if (t->Aspect () == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) { LogErr("VkReadPixels: depth/stencil format %d can't be read", (int)t->fmt); return false; } // a buffer copy names one aspect; D3D9 couldn't lock D24S8
 	if (dev->InFrame () && t->touched == dev->FrameValue ()) dev->Flush (); // the open frame wrote or moved the image: its commands first (earlier frames: the barrier below)
 	VkTex *src = t;
@@ -892,6 +892,7 @@ bool VkReadPixels (VkDev *dev, VkTex *t, VkPixels &px, UINT levels)
 	vkCmdPipelineBarrier2 (cmd, &hd);
 	if (keep != VK_IMAGE_LAYOUT_UNDEFINED) src->Transition (cmd, keep);
 	dev->EndOneTime (cmd);
+	if (!dev->IsOK ()) { delete tmp; return false; } // not submitted, or the device failed: the staging holds nothing
 	staging.Invalidate (); // cached readback memory may not be coherent
 	UINT i = 0;
 	for (UINT f = 0; f < px.layers; f++)

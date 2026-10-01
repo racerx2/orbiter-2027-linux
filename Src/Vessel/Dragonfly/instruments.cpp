@@ -285,7 +285,7 @@ void EGauge::RegisterMe(int index)
 
  void EGauge::PaintMe()
  {float Pi=3.1415;
-  char intst[10];
+  char intst[12]; // not upstream: room for any int
   float ang=-Pi/4+Pi/8;
   int i;
   POINT TR[3];
@@ -303,7 +303,7 @@ ang+=Pi/12;
 for (i=0;i<6;i++) {
 MoveTo(hDC,50+cos(ang)*20,50-sin(ang)*20); //now the big scales
 DrawLineTo(hDC,50+cos(ang)*28,50-sin(ang)*28);
-gcvt((int)(i*(MaxV-MinV)/5+MinV) ,6,intst); //convert number to char (glibc: no trailing "." after whole numbers, unlike MSVC)
+snprintf(intst,sizeof(intst),"%d",(int)(i*(MaxV-MinV)/5+MinV)); // not upstream: gcvt(int,6) prints the %d text below 1e6 (glibc, no trailing "." unlike MSVC)
 hDC->setFont(*hFNT_Panel);
 talign=Qt::AlignHCenter;hDC->setBackgroundMode(Qt::TransparentMode); 
 textcol=QColor(140,49,49);
@@ -367,7 +367,7 @@ void HGauge::RegisterMe(int index)
 };
 void HGauge::PaintMe()
 {
- char intst[10];
+ char intst[12]; // not upstream: room for any int
 
 
  oapiBlt(parent->surf,hHgaugeSRF,0,0,0,0,85,190); //copy the backgorund
@@ -381,7 +381,7 @@ void HGauge::PaintMe()
  DrawTextOut(hDC,(int)85/2,15,unit,sizeof(char)*strlen(unit),textcol,talign); // the unit of msrm.
  int k,j,i=0;//SetBkMode(hDC,OPAQUE);SetBkColor(hDC,RGB(0,0,0));
  do  {
-      gcvt((int)(i*(MaxV-MinV)/NrFig+MinV) ,6,intst); //convert number to char
+      snprintf(intst,sizeof(intst),"%d",(int)(i*(MaxV-MinV)/NrFig+MinV)); // not upstream: as EGauge::PaintMe
       k=(int)(190-(40+(190-85)*i/NrFig));;          // calculate the y coord.
       hDC->setPen(*hPEN_Gray);
       if (i<NrFig) for(j=1;j<NrLin+1;j++) { // then the scale (three lines between the numbers)

@@ -1891,7 +1891,7 @@ DLLEXPORT void oapiReleaseSketchpad (oapi::Sketchpad *skp)
 	if (gc && skp) gc->clbkReleaseSketchpad (skp);
 }
 
-DLLEXPORT oapi::Font *oapiCreateFont (int height, bool prop, char *face, FontStyle style)
+DLLEXPORT oapi::Font *oapiCreateFont (int height, bool prop, const char *face, FontStyle style) // not upstream: const face
 {
 	oapi::GraphicsClient *gc = g_pOrbiter->GetGraphicsClient();
 	oapi::Font *font = NULL;
@@ -2140,7 +2140,7 @@ DLLEXPORT LAUNCHPADITEM_HANDLE oapiFindLaunchpadItem (const char *name, LAUNCHPA
 	return g_pOrbiter->Launchpad()->FindExtraParam (name, (QTreeWidgetItem*)parent);
 }
 
-DLLEXPORT DWORD oapiRegisterCustomCmd (char *label, char *desc, CustomFunc func, void *context)
+DLLEXPORT DWORD oapiRegisterCustomCmd (const char *label, const char *desc, CustomFunc func, void *context) // not upstream: const strings
 {
 	return g_pOrbiter->RegisterCustomCmd (label, desc, func, context);
 }
@@ -2326,13 +2326,13 @@ DLLEXPORT bool oapiSaveScenario (const char *fname, const char *desc)
 	return g_pOrbiter->SaveScenario (fname, desc, 1);
 }
 
-DLLEXPORT void oapiWriteLine (FILEHANDLE file, char *line)
+DLLEXPORT void oapiWriteLine (FILEHANDLE file, const char *line) // not upstream: const line
 {
 	ofstream &ofs = *(ofstream*)file;
 	ofs << line << endl;
 }
 
-DLLEXPORT void oapiWriteLog (char *line)
+DLLEXPORT void oapiWriteLog (const char *line) // not upstream: const line
 {
 	LOGOUT ("%s", line); // not upstream: the line is written as it is
 }
@@ -2363,13 +2363,13 @@ DLLEXPORT void __writeLogError(const char *func, const char *file, int line, con
 #endif
 }
 
-DLLEXPORT void oapiWriteScenario_string (FILEHANDLE file, char *item, char *string)
+DLLEXPORT void oapiWriteScenario_string (FILEHANDLE file, const char *item, char *string) // not upstream: const item
 {
 	ofstream &ofs = *(ofstream*)file;
 	ofs << "  " << item << ' ' << string << endl;
 }
 
-DLLEXPORT void oapiWriteScenario_int (FILEHANDLE file, char *item, int i)
+DLLEXPORT void oapiWriteScenario_int (FILEHANDLE file, const char *item, int i) // not upstream: const item
 {
 	ofstream &ofs = *(ofstream*)file;
 	ofs << "  " << item << ' ' << i << endl;
@@ -2399,13 +2399,13 @@ DLLEXPORT bool oapiReadScenario_nextline (FILEHANDLE file, char *&line)
 	return true;
 }
 
-DLLEXPORT void oapiWriteItem_string (FILEHANDLE file, char *item, char *string)
+DLLEXPORT void oapiWriteItem_string (FILEHANDLE file, const char *item, char *string) // not upstream: const item
 {
 	ofstream &ofs = *(ofstream*)file;
 	ofs << item << " = " << string << endl;
 }
 
-DLLEXPORT void oapiWriteItem_float (FILEHANDLE file, char *item, double d)
+DLLEXPORT void oapiWriteItem_float (FILEHANDLE file, const char *item, double d) // not upstream: const item
 {
 	ofstream &ofs = *(ofstream*)file;
 	ofs << item << " = " << d << endl;
@@ -2434,7 +2434,7 @@ DLLEXPORT bool oapiReadItem_string (FILEHANDLE f, char *item, char *string)
 	return GetItemString (*(ifstream*)f, item, string);
 }
 
-DLLEXPORT bool oapiReadItem_float (FILEHANDLE f, char *item, double &val)
+DLLEXPORT bool oapiReadItem_float (FILEHANDLE f, const char *item, double &val) // not upstream: const item
 {
 	return GetItemReal (*(ifstream*)f, item, val);
 }
@@ -2459,7 +2459,7 @@ DLLEXPORT bool oapiReadItem_vec (FILEHANDLE f, char *item, VECTOR3 &val)
 	return res;
 }
 
-DLLEXPORT void oapiOpenInputBox (char *title, bool (*Clbk)(void*,char*,void*), char *buf, int vislen, void *usrdata)
+DLLEXPORT void oapiOpenInputBox (const char *title, bool (*Clbk)(void*,char*,void*), char *buf, int vislen, void *usrdata) // not upstream: const title
 {
 	g_input->Open (title, buf, vislen, (InputBox::Callbk)Clbk, usrdata);
 }
@@ -2586,7 +2586,7 @@ DLLEXPORT void InitLib (void *hModule)
 {
 	typedef void (*OPC_DLLInit)(void *hDLL);
 	OPC_DLLInit DLLInit;
-	char cbuf[256], mname[256], *mp;
+	char cbuf[320], mname[256], *mp; // not upstream: cbuf fits a 255-char name plus the build and API fields
 	int i, len;
 
 	if (td.SimT0 < 1) {
@@ -2660,3 +2660,15 @@ DLLEXPORT void sscan_state (char *str, AnimState &s)
 	s.action = (AnimState::Action)(a+1);
 	s.pos = p;
 }
+
+// not upstream: the char* signatures of the const functions above, for modules built before the const API
+DLLEXPORT oapi::Font *oapiCreateFont (int height, bool prop, char *face, FontStyle style) { return oapiCreateFont (height, prop, (const char*)face, style); }
+DLLEXPORT DWORD oapiRegisterCustomCmd (char *label, char *desc, CustomFunc func, void *context) { return oapiRegisterCustomCmd ((const char*)label, (const char*)desc, func, context); }
+DLLEXPORT void oapiWriteLine (FILEHANDLE file, char *line) { oapiWriteLine (file, (const char*)line); }
+DLLEXPORT void oapiWriteLog (char *line) { oapiWriteLog ((const char*)line); }
+DLLEXPORT void oapiWriteScenario_string (FILEHANDLE file, char *item, char *string) { oapiWriteScenario_string (file, (const char*)item, string); }
+DLLEXPORT void oapiWriteScenario_int (FILEHANDLE file, char *item, int i) { oapiWriteScenario_int (file, (const char*)item, i); }
+DLLEXPORT void oapiWriteItem_string (FILEHANDLE file, char *item, char *string) { oapiWriteItem_string (file, (const char*)item, string); }
+DLLEXPORT void oapiWriteItem_float (FILEHANDLE file, char *item, double d) { oapiWriteItem_float (file, (const char*)item, d); }
+DLLEXPORT bool oapiReadItem_float (FILEHANDLE f, char *item, double &val) { return oapiReadItem_float (f, (const char*)item, val); }
+DLLEXPORT void oapiOpenInputBox (char *title, bool (*Clbk)(void*,char*,void*), char *buf, int vislen, void *usrdata) { oapiOpenInputBox ((const char*)title, Clbk, buf, vislen, usrdata); }

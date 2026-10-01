@@ -569,7 +569,7 @@ ScnEditorTab *ScnEditorTab::TabPointer (QWidget *hDlg, void *context)
 
 void ScnEditorTab::ScanVesselList (int ResId, bool detail, OBJHANDLE hExclude)
 {
-	char cbuf[256], *cp;
+	char *cp; // not upstream: the row is a std::string below
 
 	// populate vessel list
 	QSignalBlocker block (DlgItem<QListWidget> (hTab, ResId)); // LB_ messages don't notify
@@ -578,18 +578,18 @@ void ScnEditorTab::ScanVesselList (int ResId, bool detail, OBJHANDLE hExclude)
 		OBJHANDLE hR, hV = oapiGetVesselByIndex (i);
 		if (hV == hExclude) continue;
 		VESSEL *vessel = oapiGetVesselInterface (hV);
-		strcpy (cbuf, vessel->GetName());
+		std::string row = vessel->GetName(); // not upstream: std::string, name + class + ref can pass 255 chars
 		if (detail) {
 			if (cp = vessel->GetClassName())
-				sprintf (cbuf+strlen(cbuf), "\t(%s)", cp);
-			else strcat (cbuf, "\t");
+				row += std::string ("\t(") + cp + ")";
+			else row += "\t";
 			if (hR = vessel->GetGravityRef()) {
 				char rname[256];
 				oapiGetObjectName (hR, rname, 256);
-				sprintf (cbuf+strlen(cbuf), "\t%s", rname);
+				row += std::string ("\t") + rname;
 			}
 		}
-		DlgItem<QListWidget> (hTab, ResId)->addItem (QString::fromUtf8 (cbuf));
+		DlgItem<QListWidget> (hTab, ResId)->addItem (QString::fromUtf8 (row.c_str()));
 	}
 }
 
@@ -920,7 +920,7 @@ void EditorTab_New::VesselTpChanged ()
 
 bool EditorTab_New::UpdateVesselBmp ()
 {
-	char classname[256], pathname[256], imagename[256];
+	char classname[256], pathname[256+12], imagename[256]; // not upstream: pathname holds "Vessels/" + a 255-char class + ".cfg"
 
 	if (hVesselBmp) {
 		delete hVesselBmp; // DeleteObject

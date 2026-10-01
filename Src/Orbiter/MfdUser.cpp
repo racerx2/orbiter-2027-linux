@@ -349,12 +349,17 @@ void GraphMFD::SetAutoTicks (int g, int axis)
 	}
 }
 
-void GraphMFD::SetAxisTitle (int g, int axis, char *title)
+void GraphMFD::SetAxisTitle (int g, int axis, const char *title) // not upstream: const title
 {
 	if (axis)
 		strncpy (graph[g].data_title, title, 63);
 	else
 		strncpy (graph[g].absc_title, title, 63);
+}
+
+void GraphMFD::SetAxisTitle (int g, int axis, char *title) // not upstream: the char* signature for modules built before the const one
+{
+	SetAxisTitle (g, axis, (const char*)title);
 }
 
 void GraphMFD::Plot (QPainter *hDC, int g, int h0, int h1, const char *title)

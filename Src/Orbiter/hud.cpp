@@ -1024,7 +1024,7 @@ void HUD::DrawLadderBar (oapi::Sketchpad *skp, double lwcosa, double lwsina,
 	double dcosa, double dsina, int phi10, bool mark_subzero)
 {
 	int x1, y1, x2, y2, dx, dy, dx1, dy1, dx2=0, dy2=0;
-	char cbuf[5];
+	char cbuf[16]; // not upstream: room for any int, only 2 or 3 chars are drawn
 
 	bool is_subzero = (phi10 < 0);
 	bool revert = false;

@@ -197,7 +197,7 @@ public:
 // Global parameters
 
 LuaConsole *g_Module = NULL;
-ConsoleConfig *g_Config = NULL;
+// not upstream: g_Config dropped, ConsoleConfig is never defined and g_Config was never set
 
 // ==============================================================
 // class LuaConsole
@@ -331,7 +331,7 @@ DLLCLBK void InitModule (void *hDLL)
 
 DLLCLBK void ExitModule (void *hDLL)
 {
-	delete g_Config;
+	// not upstream: nothing to free, g_Config was always NULL
 }
 
 // ==============================================================

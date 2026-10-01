@@ -83,7 +83,7 @@ bool State::Read (const char *fname)
 			} else if (!strncasecmp (pc, "SplashScreen", 12)) {
 				char color[256];
 				int nChar = 0;
-				if(sscanf(pc+12, "%255s %n", &color, &nChar)==1) {
+				if(sscanf(pc+12, "%255s %n", color, &nChar)==1) { // not upstream: color, not &color
 					splashcolor = GetCSSColor(color);
 					splashscreen = trim_string (pc+12+nChar);
 				}

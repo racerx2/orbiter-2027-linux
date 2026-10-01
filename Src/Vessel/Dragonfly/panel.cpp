@@ -66,16 +66,16 @@ int LoadOGLBitmap(const char *filename)
    
 
    if( (file = fopen(filename, "rb"))==NULL) return (-1); 
-   fread(&fileheader, sizeof(fileheader), 1, file); 
+   if (fread(&fileheader, sizeof(fileheader), 1, file) != 1) { fclose(file); return (-1); } // not upstream: a short file fails like a missing one
    fseek(file, sizeof(fileheader), SEEK_SET);
-   fread(&infoheader, sizeof(infoheader), 1, file);
+   if (fread(&infoheader, sizeof(infoheader), 1, file) != 1) { fclose(file); return (-1); } // not upstream: as above
 
    l_texture = (unsigned char *) malloc(infoheader.biWidth * infoheader.biHeight * 4);
    memset(l_texture, 0, infoheader.biWidth * infoheader.biHeight * 4);
 
    for (l_index=0; l_index < infoheader.biWidth*infoheader.biHeight; l_index++)
    { 
-      fread(&rgb, sizeof(rgb), 1, file); 
+      if (fread(&rgb, sizeof(rgb), 1, file) != 1) { free(l_texture); fclose(file); return (-1); } // not upstream: short pixel data, no texture
 
       l_texture[l_index2+0] = rgb.rgbtRed; // Red component
       l_texture[l_index2+1] = rgb.rgbtGreen; // Green component

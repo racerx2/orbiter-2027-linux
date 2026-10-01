@@ -864,10 +864,7 @@ void Orbiter::FRecorder_ClosePlayback ()
 		delete FRsys_stream;
 		FRsys_stream = 0;
 	}
-	if (FReditor) {
-		delete FReditor;
-		FReditor = 0;
-	}
+	// not upstream: FReditor delete left out, PlaybackEditor is never defined or created (DlgPlaybackEditor replaced it)
 }
 
 void Orbiter::FRecorder_Play ()

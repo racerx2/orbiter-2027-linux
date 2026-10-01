@@ -428,7 +428,7 @@ void VectorMap::CheckSelection ()
 		break;
 	}
 	if (clearselection) {
-		OBJTYPE nullobj = {0,NULL};
+		OBJTYPE nullobj = {NULL,0}; // not upstream: obj first, as declared
 		SetSelection (nullobj);
 	}
 }

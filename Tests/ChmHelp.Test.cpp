@@ -2,6 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <QApplication>
 #include <QDialog>
+#include <QPointer>
 #include <QTest>
 #include <QTextBrowser>
 #include <QTimer>
@@ -102,7 +103,7 @@ TEST_CASE("the help window takes input while a modal dialog runs", "[chmhelp]")
 	QWidget lp;
 	lp.resize (300, 200);
 	lp.show();
-	REQUIRE(HtmlHelp (nullptr, c.file.string().c_str(), "c.htm")); // open before the dialog, like oapiOpenLaunchpadHelp
+	REQUIRE(HtmlHelp ((QWidget*)nullptr, c.file.string().c_str(), "c.htm")); // open before the dialog, like oapiOpenLaunchpadHelp
 	QWidget *help = nullptr;
 	for (QWidget *w : QApplication::topLevelWidgets())
 		if (w->isVisible() && w->findChild<QTextBrowser*>()) help = w;
@@ -133,4 +134,32 @@ TEST_CASE("the help window takes input while a modal dialog runs", "[chmhelp]")
 	REQUIRE(during == 1);
 	REQUIRE(help->windowHandle()->transientParent() == before); // back from the closed dialog
 	delete help; // not left to the static QApplication's exit
+}
+
+TEST_CASE("the help window is owned by the render window and closes with it", "[chmhelp]")
+{
+	App();
+	TmpChm c;
+	QWindow *rw = new QWindow; // hwndCaller: the render window
+	rw->resize (300, 200);
+	rw->show();
+	REQUIRE(HtmlHelp (rw, c.file.string().c_str(), "c.htm"));
+	QPointer<QWidget> help;
+	for (QWidget *w : QApplication::topLevelWidgets())
+		if (w->isVisible() && w->findChild<QTextBrowser*>()) help = w;
+	REQUIRE(help);
+	REQUIRE(help->windowHandle()->transientParent() == rw);
+	QWindow *rw2 = new QWindow; // another owner while it is shown
+	rw2->resize (300, 200);
+	rw2->show();
+	REQUIRE(HtmlHelp (rw2, c.file.string().c_str(), "c.htm"));
+	REQUIRE(help->isVisible());
+	REQUIRE(help->windowHandle()->transientParent() == rw2);
+	delete rw; // an earlier owner does not close it
+	QCoreApplication::sendPostedEvents (nullptr, QEvent::DeferredDelete);
+	REQUIRE(help);
+	REQUIRE(help->isVisible());
+	delete rw2; // its owner does
+	QCoreApplication::sendPostedEvents (nullptr, QEvent::DeferredDelete);
+	REQUIRE(!help);
 }

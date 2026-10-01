@@ -152,6 +152,23 @@ TEST_CASE("labels grow into free space, not over their neighbours", "[resdialog]
 	delete dlg;
 }
 
+TEST_CASE("a text set later grows its control as the template's text did", "[resdialog]")
+{
+	App();
+	QWidget *dlg = oapiCreateResDialog (nullptr, IDD_PAGE_DEV, nullptr);
+	QCheckBox *cb = DlgItem<QCheckBox> (dlg, IDC_VID_STENCIL), *left = DlgItem<QCheckBox> (dlg, IDC_VID_ENUM);
+	QWidget *group = oapiResDlgItem (dlg, IDC_VID_STATIC1);
+	REQUIRE((cb && left && group));
+	int w0 = cb->width();
+	oapiSetDlgItemText (dlg, IDC_VID_STENCIL, "Force window size, a longer text"); // wider than its 68 DU box
+	REQUIRE(cb->sizeHint().width() > w0);
+	REQUIRE(cb->width() > w0); // grew
+	REQUIRE(cb->geometry().right() <= group->geometry().right() - 4); // inside its group box
+	oapiSetDlgItemText (dlg, IDC_VID_ENUM, "Always enumerate devices, and a much longer text after that");
+	REQUIRE(left->geometry().right() == cb->geometry().left() - 2); // stops before its neighbour
+	delete dlg;
+}
+
 TEST_CASE("up-down control steps toward its upper limit", "[resdialog]")
 {
 	App();

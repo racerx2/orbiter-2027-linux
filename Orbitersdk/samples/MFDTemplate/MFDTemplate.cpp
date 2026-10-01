@@ -29,7 +29,7 @@ int g_MFDmode; // identifier for new MFD mode
 
 DLLCLBK void InitModule (void *hDLL)
 {
-	static char *name = "MFD Template";   // MFD mode name
+	static char name[] = "MFD Template";   // MFD mode name; not upstream: a writable array, spec.name is char*
 	MFDMODESPECEX spec;
 	spec.name = name;
 	spec.key = OAPI_KEY_T;                // MFD mode selection key
@@ -68,7 +68,7 @@ MFDTemplate::~MFDTemplate ()
 char *MFDTemplate::ButtonLabel (int bt)
 {
 	// The labels for the two buttons used by our MFD mode
-	static char *label[2] = {"UP", "DN"};
+	static char label[2][4] = {"UP", "DN"}; // not upstream: writable labels, ButtonLabel returns char*
 	return (bt < 2 ? label[bt] : 0);
 }
 

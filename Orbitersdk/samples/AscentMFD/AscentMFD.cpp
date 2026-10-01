@@ -44,7 +44,7 @@ static struct {  // global data storage
 
 DLLCLBK void InitModule (void *hDLL)
 {
-	static char *name = "Ascent profile";
+	static char name[] = "Ascent profile"; // not upstream: a writable array, spec.name is char*
 	MFDMODESPECEX spec;
 	spec.name    = name;
 	spec.key     = OAPI_KEY_P;
@@ -213,7 +213,7 @@ bool AscentMFD::ConsumeButton (int bt, int event)
 
 char *AscentMFD::ButtonLabel (int bt)
 {
-	char *label[4] = {"PG", "AR", "VRR", "VTR"};
+	static char label[4][4] = {"PG", "AR", "VRR", "VTR"}; // not upstream: writable labels, ButtonLabel returns char*
 	return (bt < 4 ? label[bt] : 0);
 }
 

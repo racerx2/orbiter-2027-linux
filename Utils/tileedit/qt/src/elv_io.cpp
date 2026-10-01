@@ -60,14 +60,14 @@ ElevData elvread(const char *fname)
 	case 8:
 		for (i = 0; i < ndat; i++) {
 			UINT8 v;
-			fread(&v, sizeof(UINT8), 1, f);
+			if (fread(&v, sizeof(UINT8), 1, f) != 1) { fclose(f); return ElevData(); } // not upstream: short file is no data
 			e[i] = (double)v * scale + offset;
 		}
 		break;
 	case -16:
 		for (i = 0; i < ndat; i++) {
 			INT16 v;
-			fread(&v, sizeof(INT16), 1, f);
+			if (fread(&v, sizeof(INT16), 1, f) != 1) { fclose(f); return ElevData(); } // not upstream: short file is no data
 			e[i] = (double)v * scale + offset;
 		}
 		break;
@@ -109,22 +109,22 @@ bool elvmodread(const char *fname, ElevData &edata)
 		for (i = 0; i < ndat; i++)
 			e[i] = offset;
 		break;
-	case 8: 
+	case 8: {
+		std::vector<UINT8> v(ndat); // not upstream: whole block read first, so a short file leaves edata untouched
+		if (fread(v.data(), sizeof(UINT8), ndat, f) != (size_t)ndat) { fclose(f); return false; }
 		for (i = 0; i < ndat; i++) {
-			UINT8 v;
-			fread(&v, sizeof(UINT8), 1, f);
-			if (v != UCHAR_MAX)
-				e[i] = (double)v * scale + offset;
+			if (v[i] != UCHAR_MAX)
+				e[i] = (double)v[i] * scale + offset;
 		}
-		break;
-	case -16:
+		} break;
+	case -16: {
+		std::vector<INT16> v(ndat); // not upstream: whole block read first, so a short file leaves edata untouched
+		if (fread(v.data(), sizeof(INT16), ndat, f) != (size_t)ndat) { fclose(f); return false; }
 		for (i = 0; i < ndat; i++) {
-			INT16 v;
-			fread(&v, sizeof(INT16), 1, f);
-			if (v != SHRT_MAX)
-				e[i] = (double)v * scale + offset;
+			if (v[i] != SHRT_MAX)
+				e[i] = (double)v[i] * scale + offset;
 		}
-		break;
+		} break;
 	}
 	fclose(f);
 	edata.dmin = *std::min_element(edata.data.begin(), edata.data.end());

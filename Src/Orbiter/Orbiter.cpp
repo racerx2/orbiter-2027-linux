@@ -74,7 +74,7 @@ using namespace oapi;
 
 //#define OUTPUT_TEXTURE_INFO
 
-#define KEYDOWN(name,key) (name[key] & 0x80) 
+// not upstream: KEYDOWN comes from OrbiterAPI.h (same expansion)
 
 const int MAX_TEXTURE_BUFSIZE = 8000000;
 // Texture manager buffer size. Should be determined from
@@ -701,7 +701,7 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 	DWORD i;
 
 	SetLogVerbosity (pCfg->CfgDebugPrm.bVerboseLog);
-	LOGOUT("");
+	LOGOUT("%s", ""); // not upstream: blank line, "" is a zero-length format to GCC
 	LOGOUT("**** Creating simulation session");
 
 	m_pLaunchpad->Hide(); // hide launchpad dialog while the render window is visible
@@ -1864,7 +1864,7 @@ void Orbiter::Resume (void)
 // Custom command registration
 //-----------------------------------------------------------------------------
 
-DWORD Orbiter::RegisterCustomCmd (char *label, char *desc, CustomFunc func, void *context)
+DWORD Orbiter::RegisterCustomCmd (const char *label, const char *desc, CustomFunc func, void *context) // not upstream: const strings
 {
 	DWORD id;
 	CUSTOMCMD *tmp = new CUSTOMCMD[ncustomcmd+1]; TRACENEW
@@ -2561,8 +2561,11 @@ bool Orbiter::MsgProc (QWindow *hWnd, QEvent *event)
 	if ((event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) && GetKbdDevice()) {
 		QKeyEvent *ke = static_cast<QKeyEvent*>(event);
 		bool press = (event->type() == QEvent::KeyPress);
-		if (WlShortcutsKey (ke, press && IsKeymapKey (keymap, GetKbdDevice(), ke)))
-			return true; // the desktop's shortcut (KDE Plasma): passed on, as the desktop would have taken it
+		if (WlShortcutsKey (ke, press && IsKeymapKey (keymap, GetKbdDevice(), ke))) { // the desktop's shortcut (KDE Plasma): passed on
+			if (!ke->isAutoRepeat() && (ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)))
+				GetKbdDevice()->Unacquire(); // not upstream: the desktop takes the keyboard and its releases, as a deactivation did
+			return true;
+		}
 		GetKbdDevice()->KeyEvent ((int)ke->nativeScanCode() - 8, press); // xkb keycode -> evdev
 	}
 	if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut)

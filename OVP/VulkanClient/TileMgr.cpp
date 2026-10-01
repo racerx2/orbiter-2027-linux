@@ -37,6 +37,9 @@ struct IDXLIST {
 	LONG_PTR ofs;
 };
 
+struct TILEFILEREC { DWORD sidx, midx, eidx, flags, subidx[4]; }; // not upstream: a _tile.bin record as Pltex writes it (32 bytes, TILEFILESPEC is 40 on 64-bit)
+static_assert (sizeof (TILEFILEREC) == 32, "_tile.bin records are 32 bytes"); // not upstream: the file layout TILEFILEREC reads
+
 // Some debugging parameters
 int tmissing = 0;
 
@@ -156,26 +159,30 @@ bool TileManager::LoadPatchData ()
 
 		WORD *tflag = 0;
 		LMASKFILEHEADER lmfh;
-		fread (&lmfh, sizeof (lmfh), 1, binf);
+		bool rd = fread (&lmfh, sizeof (lmfh), 1, binf) == 1; // not upstream: short reads count as a missing file (an old-style file may be shorter than this header)
 		if (!strncmp (lmfh.id, "PLTA0100", 8)) { // v.1.00 format
 			minres = lmfh.minres;
 			maxres = lmfh.maxres;
-			npatch = lmfh.npatch;
+			npatch = rd ? lmfh.npatch : 0;
 			tflag = new WORD[npatch];
-			fread (tflag, sizeof(WORD), npatch, binf);
+			rd = rd && fread (tflag, sizeof(WORD), npatch, binf) == (size_t)npatch;
 		} else {                                 // pre-v.1.00 format
 			fseek (binf, 0, SEEK_SET);
-			fread (&minres, 1, 1, binf);
-			fread (&maxres, 1, 1, binf);
-			npatch = patchidx[maxres] - patchidx[minres-1];
+			rd = fread (&minres, 1, 1, binf) == 1 && fread (&maxres, 1, 1, binf) == 1;
+			npatch = rd ? patchidx[maxres] - patchidx[minres-1] : 0;
 			tflag = new WORD[npatch];
 			for (i = 0; i < npatch; i++) {
-				fread (&flag, 1, 1, binf);
+				if (fread (&flag, 1, 1, binf) != 1) { rd = false; break; }
 				tflag[i] = flag;
 			}
 			//LOGOUT1P("*** WARNING: Old-style texture contents file %s_lmask.bin", cbody->Name());
 		}
 		fclose (binf);
+		if (!rd) { // not upstream: as the missing-file branch above
+			delete []tflag;
+			for (i = 0; i < patchidx[maxbaselvl]; i++) tiledesc[i].flag = 1;
+			return false;
+		}
 
 		for (i = idx = 0; i < patchidx[maxbaselvl]; i++) {
 			if (i < patchidx[minres-1]) {
@@ -220,8 +227,7 @@ bool TileManager::LoadTileData ()
 
 	// read file header
 	char idstr[9] = "        ";
-	fread (idstr, 1, 8, file);
-	if (!strncmp (idstr, "PLTS", 4)) {
+	if (fread (idstr, 1, 8, file) >= 4 && !strncmp (idstr, "PLTS", 4)) { // not upstream: the id needs 4 bytes, a shorter read is the old format below
 		tilever = 1;
 	} else { // no header: old-style file format
 		tilever = 0;
@@ -229,9 +235,17 @@ bool TileManager::LoadTileData ()
 	}
 
 	DWORD n, i, j;
-	fread (&n, sizeof(DWORD), 1, file);
+	if (fread (&n, sizeof(DWORD), 1, file) != 1 || n < 364) { fclose (file); LogWrn("Surface Tile TOC not found for %s", fname); return false; } // not upstream: a short file counts as missing, the level-8 loop reads tfs[0..363]
 	TILEFILESPEC *tfs = new TILEFILESPEC[n];
-	fread (tfs, sizeof(TILEFILESPEC), n, file);
+	TILEFILEREC rec; // not upstream: the file's 32-byte records are widened into tfs
+	for (i = 0; i < n && fread (&rec, sizeof(TILEFILEREC), 1, file) == 1; i++) {
+		tfs[i].sidx = rec.sidx == 0xFFFFFFFF ? NOTILE : (LONG_PTR)rec.sidx; // not upstream: 0xFFFFFFFF is NOTILE, other values are zero-extended
+		tfs[i].midx = rec.midx == 0xFFFFFFFF ? NOTILE : (LONG_PTR)rec.midx;
+		tfs[i].eidx = rec.eidx;
+		tfs[i].flags = rec.flags;
+		for (j = 0; j < 4; j++) tfs[i].subidx[j] = rec.subidx[j];
+	}
+	if (i < n) { delete []tfs; fclose (file); LogWrn("Surface Tile TOC not found for %s", fname); return false; } // not upstream: a short TOC counts as missing
 
 	if (bPreloadTile) {
 		if (tilever >= 1) { // convert texture offsets to indices
@@ -278,7 +292,7 @@ int compare_idx (const void *el1, const void *el2)
 {
 	const IDXLIST *idx1 = static_cast<const IDXLIST*>(el1);
 	const IDXLIST *idx2 = static_cast<const IDXLIST*>(el2);
-	return (idx1->ofs < idx2->ofs ? -1 : idx1->ofs > idx2->ofs ? 1 : 0);
+	return ((uintptr_t)idx1->ofs < (uintptr_t)idx2->ofs ? -1 : (uintptr_t)idx1->ofs > (uintptr_t)idx2->ofs ? 1 : 0); // not upstream: unsigned, so NOTILE sorts last as a DWORD -1 did
 }
 
 // =======================================================================
@@ -1228,7 +1242,7 @@ int TileBuffer::ReadDDSSurface (VkDev *pDev, const char *fname, LONG_PTR ofs, Vk
 	if (dwMagic != MAKEFOURCC('D','D','S',' ')) return -4;
 
 	// Read the surface description
-	fread(&ddsd, sizeof(DDSURFACEDESC2), 1, f);
+	if (fread(&ddsd, sizeof(DDSURFACEDESC2), 1, f) != 1) { fclose(f); return -2; } // not upstream: a short header is a failed read
 
 	VkFormat Format;
 
@@ -1269,7 +1283,7 @@ int TileBuffer::ReadDDSSurface (VkDev *pDev, const char *fname, LONG_PTR ofs, Vk
 		if ((*pTex)==NULL) return -8;
 		{ // LockRect
 			if (ddsd.dwFlags & DDSD_LINEARSIZE) {
-				fread(rect.data(), nread, 1, f);
+				if (fread(rect.data(), 1, nread, f) != nread) { SAFE_DELETE(*pTex); fclose(f); return -2; } // not upstream: a short tile is a failed read
 				(*pTex)->Upload(0, 0, rect.data(), rect.size()); // UnlockRect
 				fclose(f);
 				return 0;
@@ -1288,7 +1302,7 @@ int TileBuffer::ReadDDSSurface (VkDev *pDev, const char *fname, LONG_PTR ofs, Vk
 		if ((*pTex)==NULL) return -8;
 		{ // LockRect
 			if (ddsd.dwFlags & DDSD_LINEARSIZE) {
-				fread(rect.data(), nread, 1, f);
+				if (fread(rect.data(), 1, nread, f) != nread) { SAFE_DELETE(*pTex); fclose(f); return -2; } // not upstream: a short tile is a failed read
 				(*pTex)->Upload(0, 0, rect.data(), rect.size()); // UnlockRect, UpdateTexture
 				fclose(f);
 				return 0;

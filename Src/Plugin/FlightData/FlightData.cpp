@@ -243,7 +243,7 @@ namespace oapi {
 			fprintf(m_LogFile, "# ____TIME");
 			for(auto &graph: m_graphs) {
 				for(auto &ds: graph.m_datastreams) {
-					fprintf(m_LogFile, ds.m_header.c_str());
+					fputs(ds.m_header.c_str(), m_LogFile); // not upstream: the header is text, not a format
 				}
 			}
 			fprintf(m_LogFile, "\n");

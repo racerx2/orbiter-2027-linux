@@ -370,7 +370,7 @@ Planet::Planet (char *fname)
 	// old style surface basis list
 	if (GetItemInt (ifs, "NumBases", n)) { // link bases as children of the planet
 		for (i = 0; i < n; i++) {
-			char bstr[10], cbuf[256], nm[128];
+			char bstr[16], cbuf[256], nm[128]; // not upstream: bstr fits "Base" and any int
 			double lng, lat;
 			sprintf (bstr, "Base%d", i+1);
 			if (GetItemString (ifs, bstr, cbuf) &&
@@ -619,11 +619,9 @@ void Planet::ScanLabelLists (ifstream &cfg)
 
 void Planet::ScanLabelLegend()
 {
-	char path[256];
-	if (labelpath) strncpy (path, labelpath, 256);
-	else           sprintf (path, "%s%s/", g_pOrbiter->Cfg()->CfgDirPrm.ConfigDir, name.c_str());
-	strcat (path, "Label.cfg");
-	std::ifstream ifs(oapiResolvePath(path));
+	std::string path = labelpath ? std::string(labelpath) : std::string(g_pOrbiter->Cfg()->CfgDirPrm.ConfigDir) + name + "/"; // not upstream: no fixed-size path
+	path += "Label.cfg";
+	std::ifstream ifs(oapiResolvePath(path.c_str()));
 	while (ifs.good()) {
 		char typestr[16], activestr[16], markerstr[16], namebuf[256], *name;
 		int r,g,b;

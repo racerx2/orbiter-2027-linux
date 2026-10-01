@@ -134,31 +134,32 @@ INT16 *ElevationManager::LoadElevationTile (int lvl, int ilat, int ilng, double 
 			g_pOrbiter->Cfg()->PTexPath(path, fname);
 			if (f = fopen(oapiResolvePath(path).c_str(), "rb")) {
 				elev = new INT16[ndat];
-				ELEVFILEHEADER hdr;
-				fread (&hdr, sizeof(ELEVFILEHEADER), 1, f);
+				ELEVFILEHEADER hdr = {}; // not upstream: zeroed, so a short read leaves no stale fields
+				bool ok = fread (&hdr, sizeof(ELEVFILEHEADER), 1, f) == 1; // not upstream: a short file is dropped like a missing one
 				if (hdr.hdrsize != sizeof(ELEVFILEHEADER)) {
 					fseek (f, hdr.hdrsize, SEEK_SET);
 				}
 				scale  = hdr.scale;
 				offset = hdr.offset;
-				switch (hdr.dtype) {
+				if (ok) switch (hdr.dtype) { // not upstream: no header, no data
 				case 0: // flat tile, defined by offset
 					for (i = 0; i < ndat; i++) elev[i] = 0;
 					break;
 				case 8: {
 					UINT8 *tmp = new UINT8[ndat];
-					fread (tmp, sizeof(UINT8), ndat, f);
-					for (i = 0; i < ndat; i++)
+					ok = fread (tmp, sizeof(UINT8), ndat, f) == (size_t)ndat; // not upstream: short data drops the tile
+					if (ok) for (i = 0; i < ndat; i++)
 						elev[i] = (INT16)tmp[i];
 					delete []tmp;
 					tmp = NULL;
 					}
 					break;
 				case -16:
-					fread (elev, sizeof(INT16), ndat, f);
+					ok = fread (elev, sizeof(INT16), ndat, f) == (size_t)ndat; // not upstream: short data drops the tile
 					break;
 				}
 				fclose(f);
+				if (!ok) { delete []elev; elev = 0; } // not upstream: then the tree archive is tried, as for a missing file
 			}
 		}
 		if (!elev && treeMgr[0]) {
@@ -217,22 +218,24 @@ bool ElevationManager::LoadElevationTile_mod (int lvl, int ilat, int ilng, doubl
 			sprintf (fname, "%s\\Elev_mod\\%02d\\%06d\\%06d.elv", cbody->Name(), lvl, ilat, ilng);
 			g_pOrbiter->Cfg()->PTexPath(path, fname);
 			if (f = fopen(oapiResolvePath(path).c_str(), "rb")) {
-				ELEVFILEHEADER hdr;
-				fread (&hdr, sizeof(ELEVFILEHEADER), 1, f);
+				ELEVFILEHEADER hdr = {}; // not upstream: zeroed, so a short read leaves no stale fields
+				bool ok = fread (&hdr, sizeof(ELEVFILEHEADER), 1, f) == 1; // not upstream: a short file falls through like a missing one
 				if (hdr.hdrsize != sizeof(ELEVFILEHEADER)) {
 					fseek (f, hdr.hdrsize, SEEK_SET);
 				}
-				rescale = (do_rescale = (hdr.scale != tgt_res)) ? hdr.scale/tgt_res : 1.0;
-				offset  = (do_shift   = (hdr.offset != 0.0)) ? (INT16)(hdr.offset/tgt_res) : 0;
-				switch (hdr.dtype) {
+				if (ok) { // not upstream: no scale or offset from a partly read header, the INT16 cast could overflow
+					rescale = (do_rescale = (hdr.scale != tgt_res)) ? hdr.scale/tgt_res : 1.0;
+					offset  = (do_shift   = (hdr.offset != 0.0)) ? (INT16)(hdr.offset/tgt_res) : 0;
+				}
+				if (ok) switch (hdr.dtype) { // not upstream: elev is left untouched without a header
 				case 0: // overwrite the entire tile with a flat offset
 					for (i = 0; i < ndat; i++) elev[i] = offset;
 					break;
 				case 8: {
 					const UINT8 mask = UCHAR_MAX;
 					UINT8 *tmp = new UINT8[ndat];
-					fread (tmp, sizeof(UINT8), ndat, f);
-					for (i = 0; i < ndat; i++) {
+					ok = fread (tmp, sizeof(UINT8), ndat, f) == (size_t)ndat; // not upstream: short data leaves elev untouched
+					if (ok) for (i = 0; i < ndat; i++) {
 						if (tmp[i] != mask) {
 							elev[i] = (INT16)(do_rescale ? (INT16)(tmp[i]*rescale) : (INT16)tmp[i]);
 							if (do_shift) elev[i] += offset;
@@ -246,8 +249,8 @@ bool ElevationManager::LoadElevationTile_mod (int lvl, int ilat, int ilng, doubl
 					const INT16 mask = SHRT_MAX;
 					INT16 *tmp = new INT16[ndat];
 					INT16 ofs = (INT16)hdr.offset;
-					fread (tmp, sizeof(INT16), ndat, f);
-					for (i = 0; i < ndat; i++) {
+					ok = fread (tmp, sizeof(INT16), ndat, f) == (size_t)ndat; // not upstream: short data leaves elev untouched
+					if (ok) for (i = 0; i < ndat; i++) {
 						if (tmp[i] != mask) {
 							elev[i] = (do_rescale ? (INT16)(tmp[i]*rescale) : tmp[i]);
 							if (do_shift) elev[i] += offset;
@@ -259,7 +262,7 @@ bool ElevationManager::LoadElevationTile_mod (int lvl, int ilat, int ilng, doubl
 					break;
 				}
 				fclose(f);
-				return true;
+				if (ok) return true; // not upstream: else try the tree archive, as for a missing file
 			}
 		}
 		if (treeMgr[1]) {

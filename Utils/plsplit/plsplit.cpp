@@ -171,7 +171,8 @@ void ReadBMP_header (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 	if (id[0] != 'B' || id[1] != 'M') FatalError ("Wrong input file format");
 
 	BYTE *tmp = new BYTE[bmfh.bfOffBits];
-	fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp);
+	if (bmfh.bfOffBits < sizeof(BITMAPFILEHEADER)+sizeof(BITMAPINFOHEADER) || fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp) != bmfh.bfOffBits-sizeof(BITMAPFILEHEADER))
+		FatalError ("Cannot read bitmap file header"); // not upstream: offset below the info header, or short file
 	bmi = (BITMAPINFO*)tmp;
 
 	mapw = bmi->bmiHeader.biWidth;
@@ -205,7 +206,8 @@ BGR *ReadBMP (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 	if (id[0] != 'B' || id[1] != 'M') FatalError ("Wrong input file format");
 
 	BYTE *tmp = new BYTE[bmfh.bfOffBits];
-	fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp);
+	if (bmfh.bfOffBits < sizeof(BITMAPFILEHEADER)+sizeof(BITMAPINFOHEADER) || fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp) != bmfh.bfOffBits-sizeof(BITMAPFILEHEADER))
+		FatalError ("Cannot read bitmap file header"); // not upstream: offset below the info header, or short file
 	bmi = (BITMAPINFO*)tmp;
 
 	mapw = bmi->bmiHeader.biWidth;
@@ -220,14 +222,14 @@ BGR *ReadBMP (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 	case 8: {
 		BYTE b;
 		for (i = 0; i < imgsize; i++) {
-			fread (&b, 1, 1, fbmp);
+			if (!fread (&b, 1, 1, fbmp)) FatalError ("Cannot read bitmap data"); // not upstream: short file
 			img[i].r = bmi->bmiColors[b].rgbRed;
 			img[i].g = bmi->bmiColors[b].rgbGreen;
 			img[i].b = bmi->bmiColors[b].rgbBlue;
 		}}
 		break;
 	case 24:
-		fread (img, sizeof(BGR), imgsize, fbmp);
+		if (fread (img, sizeof(BGR), imgsize, fbmp) != imgsize) FatalError ("Cannot read bitmap data"); // not upstream: short file
 		break;
 	default:
 		FatalError ("Unsupported source colour depth");
@@ -258,7 +260,8 @@ Alpha *ReadBMPAlpha (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 	if (id[0] != 'B' || id[1] != 'M') FatalError ("Wrong input file format");
 
 	BYTE *tmp = new BYTE[bmfh.bfOffBits];
-	fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp);
+	if (bmfh.bfOffBits < sizeof(BITMAPFILEHEADER)+sizeof(BITMAPINFOHEADER) || fread (tmp, 1, bmfh.bfOffBits-sizeof(BITMAPFILEHEADER), fbmp) != bmfh.bfOffBits-sizeof(BITMAPFILEHEADER))
+		FatalError ("Cannot read bitmap file header"); // not upstream: offset below the info header, or short file
 	bmi = (BITMAPINFO*)tmp;
 
 	mapw = bmi->bmiHeader.biWidth;
@@ -273,14 +276,14 @@ Alpha *ReadBMPAlpha (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 	case 8: {
 		BYTE b;
 		for (i = 0; i < imgsize; i++) {
-			fread (&b, 1, 1, fbmp);
+			if (!fread (&b, 1, 1, fbmp)) FatalError ("Cannot read bitmap data"); // not upstream: short file
 			aimg[i] = bmi->bmiColors[b].rgbBlue;
 		}}
 		break;
 	case 24: {
 		BGR bgr;
 		for (i = 0; i < imgsize; i++) {
-			fread (&bgr, sizeof(BGR), 1, fbmp);
+			if (!fread (&bgr, sizeof(BGR), 1, fbmp)) FatalError ("Cannot read bitmap data"); // not upstream: short file
 			aimg[i] = bgr.b;
 		}}
 		break;

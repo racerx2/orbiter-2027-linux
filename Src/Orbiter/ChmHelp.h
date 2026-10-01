@@ -9,10 +9,12 @@
 #include <vector>
 
 class QWidget;
+class QWindow;
 
 // HH_DISPLAY_TOPIC counterpart: opens the help window on a topic of a help file ("file.chm" or "file.chm::/topic.htm");
 // topic may be NULL for the project's default topic. Returns false if the help file is not found.
 bool HtmlHelp (QWidget *owner, const char *file, const char *topic);
+bool HtmlHelp (QWindow *owner, const char *file, const char *topic); // hwndCaller a QWindow (the render window): the help stays above it and closes with it
 
 // page inside a help file as a URL the ChmBrowser loads: chm:<absolute .chm path>/<topic>
 QUrl ChmUrl (const QString &chmfile, const QString &topic);

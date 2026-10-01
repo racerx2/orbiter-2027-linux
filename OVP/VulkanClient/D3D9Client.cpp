@@ -58,6 +58,7 @@
 #include <QImage>
 #include <QFont>
 #include <QFontMetrics>
+#include <QMessageBox> // not upstream: the lost device message
 #include <QClipboard>
 #include <QDBusInterface>
 #include <QDBusReply>
@@ -1300,7 +1301,12 @@ void D3D9Client::clbkRenderScene()
 
 	scene_time = D3D9GetTime();
 
-	// TestCooperativeLevel and the lost device message left out: Vulkan has no lost device state to restore
+	if (!pDevice->IsOK()) { // TestCooperativeLevel: a failed submit or a lost device (not upstream: VkDev::IsOK)
+		bFailed=true;
+		QMessageBox box(QMessageBox::NoIcon, "VulkanClient: Lost Device", "Connection to the Vulkan device is lost\nExit the simulation with Ctrl+Q and restart.", QMessageBox::Ok); // not upstream: the true fullscreen notes left out (Alt-Tab and dialogs work in every mode)
+		oapiExecOwned(&box, pFramework->GetRenderWindow()); // MessageBoxA(pFramework->GetRenderWindow(), ...)
+		return;
+	}
 
 	UINT mem = UINT(GetAvailableTextureMem(pDevice)>>20);
 	if (mem<32) TileBuffer::HoldThread(true);
@@ -1382,6 +1388,7 @@ bool D3D9Client::clbkDisplayFrame()
 	}
 
 	if (Config->PresentLocation == 0) PresentScene();
+	if (bFailed && Config->PresentLocation == 1) pFramework->Present(); // not upstream: clbkRenderScene stops before its PresentScene, and a Vulkan frame must still end
 
 	double frmt = (1000000.0/Config->FrameRate) - (time - framer_rater_limit);
 
@@ -1814,7 +1821,7 @@ bool D3D9Client::RenderWndProc (QWindow *hWnd, QEvent *event)
 	D3D9Pick pick;
 
 	if (hRenderWnd!=hWnd) {
-		if (!event->isInputEvent()) return false; // WM_NCDESTROY exception: Qt's teardown events (hide, surface, delete) go on
+		if (!event->isInputEvent() || event->type() == QEvent::Enter) return false; // WM_NCDESTROY exception: Qt's teardown events (hide, surface, delete) go on; not upstream: Enter too, sent as a window above it closes
 		LogErr("Invalid Window !! RenderWndProc() called after calling clbkDestroyRenderWindow() event=0x%X", (UINT)event->type());
 		return true;
 	}
@@ -2985,7 +2992,11 @@ bool D3D9Client::OutputLoadStatus(const char *txt, int line)
 
 	if (pTextScreen) {
 
-		// TestCooperativeLevel left out: Vulkan has no lost device state to test
+		if (!pDevice->IsOK()) { // TestCooperativeLevel (not upstream: VkDev::IsOK)
+			LogErr("TestCooperativeLevel() Failed");
+			pDevice->Flush(); // not upstream: ends the frame the skipped Present would have, so its deferred releases go
+			return false;
+		}
 
 		RECT txt = _RECT( loadd_x, loadd_y, loadd_x+loadd_w, loadd_y+loadd_h );
 
@@ -3047,7 +3058,7 @@ void D3D9Client::SplashScreen()
 	LogAlw("Splash Window Size = [%u, %u]", rS.right - rS.left, rS.bottom - rS.top);
 	LogAlw("Splash Window LeftTop = [%d, %d]", rS.left, rS.top);
 
-	// TestCooperativeLevel left out: Vulkan has no lost device state to test
+	HR(pDevice->IsOK() ? 0 : -1); // TestCooperativeLevel (not upstream: VkDev::IsOK)
 	pDevice->Clear(true, true, true, 0x0, 1.0f, 0L); // D3DCLEAR_TARGET|D3DCLEAR_ZBUFFER|D3DCLEAR_STENCIL
 	const VkImageUsageFlags u = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT; // offscreen plain: blits, GetDC
 	pTextScreen = new VkSurf(pDevice, loadd_w, loadd_h, VK_FORMAT_B8G8R8A8_UNORM, u); // CreateOffscreenPlainSurface(D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT)

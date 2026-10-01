@@ -282,15 +282,17 @@ static QString DlgString (const char *text)
 	return s;
 }
 
+static void RefitText (QWidget *w);
+
 void oapiSetDlgText (QWidget *hWnd, const char *text)
 {
 	if (!hWnd) return;
 	QString s = DlgString (text);
-	if (QLabel *w = qobject_cast<QLabel*> (hWnd)) w->setText (s);
+	if (QLabel *w = qobject_cast<QLabel*> (hWnd)) { w->setText (s); RefitText (w); }
 	else if (QLineEdit *w = qobject_cast<QLineEdit*> (hWnd)) w->setText (s);
 	else if (QPlainTextEdit *w = qobject_cast<QPlainTextEdit*> (hWnd)) { QSignalBlocker b (w); w->setPlainText (s); } // multi-line EN_CHANGE: not for WM_SETTEXT
 	else if (QTextEdit *w = qobject_cast<QTextEdit*> (hWnd)) w->setPlainText (s);
-	else if (QAbstractButton *w = qobject_cast<QAbstractButton*> (hWnd)) w->setText (s);
+	else if (QAbstractButton *w = qobject_cast<QAbstractButton*> (hWnd)) { w->setText (s); RefitText (w); }
 	else if (QGroupBox *w = qobject_cast<QGroupBox*> (hWnd)) w->setTitle (s);
 	else if (QComboBox *w = qobject_cast<QComboBox*> (hWnd)) { if (w->isEditable()) w->setEditText (s); }
 	else if (hWnd->isWindow()) hWnd->setWindowTitle (s);
@@ -766,54 +768,85 @@ static void FitLabelHeight (QWidget *dlg, const std::vector<std::pair<const RESC
 	l->setGeometry (g);
 }
 
-// labels that don't fit their .rc box in this font (and a larger check indicator) grow to the right, then to the left, into free space
+// width a one-line label or a check box needs for its text in this font (and a larger check indicator); 0: not fitted
+static int FitNeed (const RESCONTROL *c, QWidget *w, const QFontMetrics &fm)
+{
+	using namespace rs;
+	if ((c->kind == RES_CHECKBOX || c->kind == RES_RADIOBUTTON) && !(c->style & BS_PUSHLIKE))
+		return w->sizeHint().width();
+	if (c->kind == RES_STATIC && (c->style & 0x1F) <= SS_RIGHT) {
+		QString s = static_cast<QLabel*>(w)->text();
+		if (s.contains ('\n') || w->height() >= 2*fm.height()) return 0;
+		return fm.horizontalAdvance (s) + 2;
+	}
+	return 0;
+}
+
+// a label or check box that doesn't fit its box grows to the right, then to the left, into free space
+static void FitWidth (QWidget *dlg, const std::vector<std::pair<const RESCONTROL*, QWidget*>> &ctl, const RESCONTROL *c, QWidget *w, int need)
+{
+	using namespace rs;
+	QRect g = w->geometry();
+	if (need <= g.width()) return;
+	int rlimit = dlg->width() - 2, llimit = 1;
+	for (auto &[oc, o] : ctl) {
+		if (o == w) continue;
+		QRect og = o->geometry();
+		if (oc->kind == RES_GROUPBOX) {
+			if (og.contains (g.center())) {
+				if (og.right() > g.right()) rlimit = std::min (rlimit, og.right() - 4);
+				if (og.left() < g.left()) llimit = std::max (llimit, og.left() + 4);
+			}
+		} else if (og.top() < g.bottom() && og.bottom() > g.top()) {
+			if (og.left() > g.left()) rlimit = std::min (rlimit, og.left() - 2);
+			if (og.right() < g.right()) llimit = std::max (llimit, og.right() + 2);
+		}
+	}
+	int rfree = std::max (0, rlimit - g.right()), lfree = std::max (0, g.left() - llimit);
+	int grow = need - g.width();
+	DWORD a = (c->kind == RES_STATIC ? c->style & 0x3 : 0);
+	if (a == SS_RIGHT) g.setLeft (g.left() - std::min (grow, lfree)); // text keeps its anchor edge
+	else if (a == SS_CENTER) {
+		int h = std::min ((grow+1)/2, std::min (lfree, rfree));
+		g.adjust (-h, 0, h, 0);
+	} else {
+		int r = std::min (grow, rfree);
+		g.setRight (g.right() + r);
+		if (r < grow) g.setLeft (g.left() - std::min (grow - r, lfree));
+	}
+	w->setGeometry (g);
+}
+
+// labels that don't fit their .rc box in this font (and a larger check indicator) grow into free space
 static void FitLabels (QWidget *dlg, const std::vector<std::pair<const RESCONTROL*, QWidget*>> &ctl)
 {
 	using namespace rs;
 	QFontMetrics fm (dlg->font());
 	for (auto &[c, w] : ctl) {
-		int need;
-		if ((c->kind == RES_CHECKBOX || c->kind == RES_RADIOBUTTON) && !(c->style & BS_PUSHLIKE))
-			need = w->sizeHint().width();
-		else if (c->kind == RES_STATIC && (c->style & 0x1F) <= SS_RIGHT) {
+		if (c->kind == RES_STATIC && (c->style & 0x1F) <= SS_RIGHT) {
 			QLabel *l = static_cast<QLabel*>(w);
-			QString s = l->text();
-			if (s.contains ('\n') || w->height() >= 2*fm.height()) {
+			if (l->text().contains ('\n') || w->height() >= 2*fm.height()) {
 				if (l->wordWrap()) FitLabelHeight (dlg, ctl, l);
 				continue;
 			}
-			need = fm.horizontalAdvance (s) + 2;
-		} else continue;
-		QRect g = w->geometry();
-		if (need <= g.width()) continue;
-		int rlimit = dlg->width() - 2, llimit = 1;
-		for (auto &[oc, o] : ctl) {
-			if (o == w) continue;
-			QRect og = o->geometry();
-			if (oc->kind == RES_GROUPBOX) {
-				if (og.contains (g.center())) {
-					if (og.right() > g.right()) rlimit = std::min (rlimit, og.right() - 4);
-					if (og.left() < g.left()) llimit = std::max (llimit, og.left() + 4);
-				}
-			} else if (og.top() < g.bottom() && og.bottom() > g.top()) {
-				if (og.left() > g.left()) rlimit = std::min (rlimit, og.left() - 2);
-				if (og.right() < g.right()) llimit = std::max (llimit, og.right() + 2);
-			}
 		}
-		int rfree = std::max (0, rlimit - g.right()), lfree = std::max (0, g.left() - llimit);
-		int grow = need - g.width();
-		DWORD a = (c->kind == RES_STATIC ? c->style & 0x3 : 0);
-		if (a == SS_RIGHT) g.setLeft (g.left() - std::min (grow, lfree)); // text keeps its anchor edge
-		else if (a == SS_CENTER) {
-			int h = std::min ((grow+1)/2, std::min (lfree, rfree));
-			g.adjust (-h, 0, h, 0);
-		} else {
-			int r = std::min (grow, rfree);
-			g.setRight (g.right() + r);
-			if (r < grow) g.setLeft (g.left() - std::min (grow - r, lfree));
-		}
-		w->setGeometry (g);
+		FitWidth (dlg, ctl, c, w, FitNeed (c, w, fm));
 	}
+}
+
+// not upstream: a text set later gets the width FitLabels gave the template's text (SetDlgItemText clips in the .rc box)
+static void RefitText (QWidget *w)
+{
+	QVariant v = w->property ("resCtl");
+	QWidget *dlg = w->parentWidget();
+	if (!v.isValid() || !dlg || !dlg->property ("resBaseX").isValid()) return; // not a control of a template
+	const RESCONTROL *c = (const RESCONTROL*)v.value<void*>();
+	int need = FitNeed (c, w, QFontMetrics (dlg->font()));
+	if (need <= w->width()) return;
+	std::vector<std::pair<const RESCONTROL*, QWidget*>> ctl;
+	for (QObject *o : dlg->children())
+		if (QWidget *x = qobject_cast<QWidget*> (o); x && x->property ("resCtl").isValid()) ctl.push_back ({(const RESCONTROL*)x->property ("resCtl").value<void*>(), x});
+	FitWidth (dlg, ctl, c, w, need);
 }
 
 // items of a menu template into a menu bar or popup; it: the next item, n: items at this level (-1: up to end)
@@ -921,6 +954,7 @@ QWidget *CreateResDialog (void *hModule, int resId, QWidget *parent, QWindow *ow
 		QWidget *w = CreateControl (c, dlg, hModule, r, radiogroup, prev);
 		w->setObjectName (c->idname ? QString::fromUtf8 (c->idname) : QString ("id%1").arg (c->id));
 		w->setProperty ("resId", c->id);
+		w->setProperty ("resCtl", QVariant::fromValue ((void*)c)); // the template entry, for RefitText (templates are static tables)
 		w->setGeometry (r);
 		if (c->style & WS_DISABLED) w->setEnabled (false);
 		if (!(c->style & WS_VISIBLE)) w->hide();

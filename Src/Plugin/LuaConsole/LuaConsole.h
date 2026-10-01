@@ -14,7 +14,6 @@
 #define NLINE 100 // number of buffered lines
 
 class LuaConsoleDlg;
-class ConsoleConfig; // g++ doesn't take the friend declaration below as a declaration (MSVC does)
 enum class LineType {
 	LUA_IN,
 	LUA_OUT,

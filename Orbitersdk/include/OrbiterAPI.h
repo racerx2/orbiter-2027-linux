@@ -5436,7 +5436,7 @@ enum FontStyle {
  * \note After use, the font should be deallocated with oapiReleaseFont.
  * \sa oapiReleaseFont
  */
-OAPIFUNC oapi::Font *oapiCreateFont (int height, bool prop, char *face, FontStyle style = FONT_NORMAL);
+OAPIFUNC oapi::Font *oapiCreateFont (int height, bool prop, const char *face, FontStyle style = FONT_NORMAL); // not upstream: const, face is only read
 
 /**
  * \brief Creates a font resource for drawing text into surfaces.
@@ -5446,7 +5446,7 @@ OAPIFUNC oapi::Font *oapiCreateFont (int height, bool prop, char *face, FontStyl
  * \param style font decoration style (see notes)
  * \param orientation text orientation [1/10 deg]
  * \return pointer to font resource, or NULL if not supported.
- * \note Identical to oapiCreateFont(int,bool,char*,FontStyle), but
+ * \note Identical to oapiCreateFont(int,bool,const char*,FontStyle), but
  *   contains the additional orientation parameter.
  */
 OAPIFUNC oapi::Font *oapiCreateFont (int height, bool prop, const char *face, FontStyle style, int orientation);
@@ -6055,7 +6055,7 @@ typedef void (*CustomFunc)(void *context);
 	*  where context is the pointer passed to oapiRegisterCustomCmd().
 	* \sa oapiUnregisterCustomCmd
 	*/
-OAPIFUNC DWORD      oapiRegisterCustomCmd (char *label, char *desc, CustomFunc func, void *context);
+OAPIFUNC DWORD      oapiRegisterCustomCmd (const char *label, const char *desc, CustomFunc func, void *context); // not upstream: const, the strings are only read
 
 	/**
 	* \brief Unregister a previously defined custom function.
@@ -6351,7 +6351,7 @@ OAPIFUNC bool oapiSaveScenario (const char *fname, const char *desc);
 	* \param file file handle
 	* \param line line to be written (zero-terminated)
 	*/
-OAPIFUNC void oapiWriteLine (FILEHANDLE file, char *line);
+OAPIFUNC void oapiWriteLine (FILEHANDLE file, const char *line); // not upstream: const, line is only read
 
 	/**
 	* \brief Writes a line to the Orbiter log file (orbiter.log) in the main orbiter directory.
@@ -6362,7 +6362,7 @@ OAPIFUNC void oapiWriteLine (FILEHANDLE file, char *line);
 	*  from within the simulation loop.
 	* \sa oapiWriteLogV
 	*/
-OAPIFUNC void oapiWriteLog (char *line);
+OAPIFUNC void oapiWriteLog (const char *line); // not upstream: const, line is only read
 
 	/**
 	* \brief Writes a formatted string with variable number of arguments to orbiter.log.
@@ -6389,7 +6389,7 @@ OAPIFUNC void __writeLogError(const char *func, const char *file, int line, cons
 	* \param item item id
 	* \param string string to be written (zero-terminated)
 	*/
-OAPIFUNC void oapiWriteScenario_string (FILEHANDLE scn, char *item, char *string);
+OAPIFUNC void oapiWriteScenario_string (FILEHANDLE scn, const char *item, char *string); // not upstream: const, item is only read
 
 	/**
 	* \brief Writes an integer-valued item to a scenario file.
@@ -6397,7 +6397,7 @@ OAPIFUNC void oapiWriteScenario_string (FILEHANDLE scn, char *item, char *string
 	* \param item item id
 	* \param i integer value to be written
 	*/
-OAPIFUNC void oapiWriteScenario_int (FILEHANDLE scn, char *item, int i);
+OAPIFUNC void oapiWriteScenario_int (FILEHANDLE scn, const char *item, int i); // not upstream: const, item is only read
 
 	/**
 	* \brief Writes a floating point-valued item to a scenario file.
@@ -6452,7 +6452,7 @@ OAPIFUNC bool oapiReadItem_string (FILEHANDLE f, char *item, char *string);
 	* \return \e true if tag was found in the file, \e false if not.
 	* \sa oapiReadItem_string for more details.
 	*/
-OAPIFUNC bool oapiReadItem_float (FILEHANDLE f, char *item, double &d);
+OAPIFUNC bool oapiReadItem_float (FILEHANDLE f, const char *item, double &d); // not upstream: const, item is only read
 
 	/**
 	* \brief Read the value of a tag from a configuration file.
@@ -6497,7 +6497,7 @@ OAPIFUNC bool oapiReadItem_vec (FILEHANDLE f, char *item, VECTOR3 &vec);
 	*  Use the oapiWriteLine function.
 	* \sa oapiReadItem_string
 	*/
-OAPIFUNC void oapiWriteItem_string (FILEHANDLE f, char *item, char *string);
+OAPIFUNC void oapiWriteItem_string (FILEHANDLE f, const char *item, char *string); // not upstream: const, item is only read
 
 	/**
 	* \brief Write a tag and its value to a configuration file.
@@ -6506,7 +6506,7 @@ OAPIFUNC void oapiWriteItem_string (FILEHANDLE f, char *item, char *string);
 	* \param d double value
 	* \sa oapiWriteItem_string for more details
 	*/
-OAPIFUNC void oapiWriteItem_float (FILEHANDLE f, char *item, double d);
+OAPIFUNC void oapiWriteItem_float (FILEHANDLE f, const char *item, double d); // not upstream: const, item is only read
 
 	/**
 	* \brief Write a tag and its value to a configuration file.
@@ -6631,7 +6631,7 @@ OAPIFUNC DWORD oapiGetColour (DWORD red, DWORD green, DWORD blue);
 	*  box. Normal key functions resume after the box is closed.
 	* \sa oapiOpenInputBoxEx
 	*/
-OAPIFUNC void oapiOpenInputBox (char *title, bool (*Clbk)(void*,char*,void*), char *buf = 0, int vislen = 20, void *usrdata = 0);
+OAPIFUNC void oapiOpenInputBox (const char *title, bool (*Clbk)(void*,char*,void*), char *buf = 0, int vislen = 20, void *usrdata = 0); // not upstream: const, title is only read
 
 OAPIFUNC void oapiOpenInputBoxEx (const char *title, bool (*Clbk_enter)(void*,char*,void*), bool (*Clbk_cancel)(void*,char*,void*), char *buf = 0, int vislen = 20, void *usrdata = 0, DWORD flags = 0);
 

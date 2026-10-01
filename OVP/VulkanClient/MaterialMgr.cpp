@@ -163,7 +163,7 @@ bool MatMgr::LoadConfiguration(bool bAppend)
 	_TRACE;
 
 	char cbuf[256];
-	char path[256];
+	char path[MAX_PATH]; // not upstream: was 256, ConfigDir (< 512) + class name (< 256) always fit
 	char classname[256];
 	char meshname[64];
 	char shadername[64];
@@ -181,7 +181,7 @@ bool MatMgr::LoadConfiguration(bool bAppend)
 	AutoFile file;
 
 	if (file.IsInvalid()) {
-		snprintf(path, 256, "%sGC\\%s.cfg", cfgdir, classname);
+		snprintf(path, sizeof(path), "%sGC\\%s.cfg", cfgdir, classname);
 		file.pFile = fopen(oapiResolvePath(path).c_str(), "r");	
 	}
 
@@ -328,7 +328,7 @@ bool MatMgr::SaveConfiguration()
 	_TRACE;
 	bool bIfStatement = false;
 
-	char path[256];
+	char path[MAX_PATH]; // not upstream: was 256, ConfigDir (< 512) + class name (< 256) always fit
 	char classname[256];
 	
 	
@@ -343,7 +343,7 @@ bool MatMgr::SaveConfiguration()
 	parse_vessel_classname(classname);
 
 	AutoFile file;
-	snprintf(path, 256, "%sGC\\%s.cfg", cfgdir, classname);
+	snprintf(path, sizeof(path), "%sGC\\%s.cfg", cfgdir, classname);
 	
 	// If the target file contains configurations those are not loaded into the editor,
 	// Load them before overwriting the file
@@ -399,7 +399,7 @@ bool MatMgr::LoadCameraConfig()
 	_TRACE;
 
 	char cbuf[256];
-	char path[256];
+	char path[MAX_PATH]; // not upstream: was 256, ConfigDir (< 512) + class name (< 256) always fit
 	char classname[256];
 
 	OBJHANDLE hObj = vObj->GetObject();
@@ -414,7 +414,7 @@ bool MatMgr::LoadCameraConfig()
 
 	AutoFile file;
 
-	snprintf(path, 256, "%sGC\\%s_ecam.cfg", cfgdir, classname);
+	snprintf(path, sizeof(path), "%sGC\\%s_ecam.cfg", cfgdir, classname);
 	file.pFile = fopen(oapiResolvePath(path).c_str(), "r");	
 	
 	if (file.IsInvalid()) return true;

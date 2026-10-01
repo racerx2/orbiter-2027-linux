@@ -325,8 +325,8 @@ void Atlantis::LoadMeshes()
 	SetMeshVisibilityMode (mesh_vc, MESHVIS_VC);
 
 	// Optonal meshes
-	mesh_cargo      = NULL;
-	mesh_platform   = NULL;
+	mesh_cargo      = 0; // not upstream: 0 as NULL gave, the field is a UINT mesh index
+	mesh_platform   = 0; // not upstream: as mesh_cargo
 
 	// Visual handle
 	vis             = NULL;

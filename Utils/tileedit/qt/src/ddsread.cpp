@@ -43,15 +43,15 @@ Image ddsread(const char *fname)
     }
 
     char magic[4];
-    fread(magic, sizeof(char), 4, f);
-    if (strncmp(magic, "DDS ", 4)) {
+    size_t n = fread(magic, sizeof(char), 4, f); // not upstream: short file is an invalid format
+    if (n != 4 || strncmp(magic, "DDS ", 4)) {
         std::cerr << "ddsread: Invalid file format" << std::endl;
         exit(1);
     }
 
     DDSHEADER ddsh;
-    fread(&ddsh, sizeof(DDSHEADER), 1, f);
-    if (ddsh.dwSize != sizeof(DDSHEADER)) {
+    n = fread(&ddsh, sizeof(DDSHEADER), 1, f);
+    if (n != 1 || ddsh.dwSize != sizeof(DDSHEADER)) {
         std::cerr << "ddsread: Invalid header size" << std::endl;
         exit(1);
     }

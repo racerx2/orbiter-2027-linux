@@ -168,7 +168,7 @@ class Boiler:public Valve		//this in e_systems 'cause it needs a power source
 };
 class Clock:public e_object
 {public:
-   char time[10];
+   char time[36]; // not upstream: room for "%2i:%2i:%2i" with any three ints (35 chars + NUL)
    int h_hour;
    int h_min;
    int h_sec;

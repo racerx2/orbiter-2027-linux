@@ -75,12 +75,12 @@ struct WavContext
         if (bShowLoopAndVolume)
         {
             snprintf(cbuf, 256, "[soundID = %d, playbackType = %s (%d), bLoop = %d, volume = %.2lf, bPaused = %d, bEnabled = %d, filename = '%s']",
-                soundID, PlaybackTypeToStr(playbackType), playbackType, bLoop, volume, bPaused, bEnabled, static_cast<const char *>(csSoundFilename.c_str()));
+                soundID, PlaybackTypeToStr(playbackType), static_cast<int>(playbackType), bLoop, volume, bPaused, bEnabled, static_cast<const char *>(csSoundFilename.c_str())); // not upstream: %d takes the enum's int value
         }
         else
         {
             snprintf(cbuf, 256, "[soundID = %d, playbackType = %s (%d), filename = '%s']",
-                soundID, PlaybackTypeToStr(playbackType), playbackType, static_cast<const char *>(csSoundFilename.c_str()));
+                soundID, PlaybackTypeToStr(playbackType), static_cast<int>(playbackType), static_cast<const char *>(csSoundFilename.c_str())); // not upstream: %d takes the enum's int value
         }
         
         return cbuf;
