@@ -64,7 +64,8 @@ int oapiGetModuleVersion ()
 	return v;
 }
 
-DLLCLBK int GetModuleVersion (void)
+// not upstream: weak, so a module's own GetModuleVersion wins
+DLLCLBK __attribute__((weak)) int GetModuleVersion (void)
 {
 	return oapiGetModuleVersion();
 }

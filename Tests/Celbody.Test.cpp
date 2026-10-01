@@ -197,7 +197,7 @@ static void PolarPos (const double *s, double *p)
 	p[2] = rad*cos(s[1])*sin(s[0]);
 }
 
-struct BodyRange { const char *name; double rmin, rmax, vtol = 1e-5, itol = 10.0; };
+struct BodyRange { const char *name; double rmin, rmax, vtol = 1e-5, itol = 10.0; int ver = 2; };
 
 // distance from the parent (or barycentre) at J2000 must lie between periapsis and apoapsis (+-1%)
 // vtol/itol: TASS17 (Satsat) returns osculating two-body velocities, not the derivative of its perturbed positions
@@ -224,6 +224,15 @@ static const BodyRange bodies[] = {
 	{"Titan",     1.174e9,  1.269e9, 5e-5, 10.0},
 	{"Hyperion",  1.286e9,  1.680e9, 2e-3, 200.0},
 	{"Iapetus",   3.424e9,  3.700e9, 5e-5, 10.0},
+	// the eight moons with new 64-bit modules (CELBODY version 1)
+	{"Phobos",    9.14e6,   9.62e6,  1e-5, 10.0, 1},
+	{"Deimos",    2.321e7,  2.370e7, 1e-5, 10.0, 1},
+	{"Miranda",   1.283e8,  1.314e8, 1e-5, 10.0, 1},
+	{"Ariel",     1.888e8,  1.931e8, 1e-5, 10.0, 1},
+	{"Umbriel",   2.623e8,  2.697e8, 1e-5, 10.0, 1},
+	{"Titania",   4.313e8,  4.413e8, 1e-5, 10.0, 1},
+	{"Oberon",    5.768e8,  5.901e8, 1e-5, 10.0, 1},
+	{"Triton",    3.511e8,  3.584e8, 1e-5, 10.0, 1},
 };
 
 TEST_CASE("Celbody modules load through the Orbitersdk entry point", "[celbody]")
@@ -235,7 +244,7 @@ TEST_CASE("Celbody modules load through the Orbitersdk entry point", "[celbody]"
 		REQUIRE(m.hDLL);
 		REQUIRE(m.body);
 		CHECK(std::find (initlib_handles.begin(), initlib_handles.end(), m.hDLL) != initlib_handles.end());
-		CHECK(m.body->Version() == 2);
+		CHECK(m.body->Version() == b.ver);
 		CHECK(m.body->bEphemeris());
 		CHECK(OwnProc (m.hDLL, "GetModuleVersion"));
 	}
