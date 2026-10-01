@@ -47,7 +47,7 @@ Item {
                 x: 22; y: 14
                 width: parent.width - 44
                 Text { text: "NEXT FLIGHT"; color: Theme.textDim; font.family: Theme.font; font.pixelSize: 12; font.weight: Font.DemiBold; font.letterSpacing: 2.6; bottomPadding: 8 }
-                StatusRow { rowHeight: page.rh; label: "Graphics client"; value: Format.client(page.s); dot: Format.isConsole(page.s) ? Theme.textFaint : Theme.ok }
+                StatusRow { rowHeight: page.rh; label: "Graphics client"; value: Format.client(page.s); dot: Format.isConsole(page.s) ? Theme.warn : Theme.ok }
                 StatusRow { rowHeight: page.rh; label: "Device"; value: page.s.device || "—" }
                 StatusRow { rowHeight: page.rh; label: "Display"; value: Format.display(page.s) }
                 StatusRow { rowHeight: page.rh; label: "Active add-ons"; value: "" + (page.s.activeModules || 0) }
@@ -78,7 +78,7 @@ Item {
                         width: skinCol.width; height: sk.implicitHeight + 24
                         radius: 10
                         readonly property bool current: modelData.id === Launcher.skin
-                        color: current ? Qt.rgba(0.96, 0.65, 0.14, 0.12) : Qt.rgba(1, 1, 1, 0.03)
+                        color: current ? Theme.tint(0.12) : Qt.rgba(1, 1, 1, 0.03)
                         border.color: current ? Theme.accent : Theme.line
                         Column {
                             id: sk

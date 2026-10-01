@@ -129,7 +129,7 @@ Item {
                     Text { anchors.verticalCenter: parent.verticalCenter; text: "FLIGHT SETUP"; color: Theme.textDim; font.family: Theme.font; font.pixelSize: 12; font.weight: Font.DemiBold; font.letterSpacing: 2.6 }
                     TextLink { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; text: "EDIT  →"; onClicked: app.go("SETTINGS") }
                 }
-                StatusRow { label: "Graphics"; value: play.setup.graphicsClient || "—"; dot: play.setup.graphicsClient ? Theme.ok : Theme.textFaint }
+                StatusRow { label: "Graphics"; value: Format.client(play.setup); dot: Format.isConsole(play.setup) ? Theme.textFaint : Theme.ok }
                 StatusRow { label: "Device"; value: play.setup.device || ""; visible: value !== "" }
                 StatusRow { label: "Display"; value: Format.display(play.setup) }
                 StatusRow { label: "Add-ons"; value: (play.setup.activeModules || 0) + " active" }

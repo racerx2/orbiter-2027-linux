@@ -28,19 +28,10 @@ function vessel(info) {
     return info.focusClass && info.focusClass !== info.focus ? info.focus + " (" + info.focusClass + ")" : info.focus;
 }
 
-// thumbnail kind for Thumb.qml from where the focus vessel is
+// picture kind for MiniOrbit.qml: "landed-<body>" or "orbit-<body>"
 function kind(info) {
-    if (!info || info.isFolder) return "orbit";
-    var b = info.focusBody || "";
-    if (info.focusStatus === "Landed") {
-        if (b === "Mars") return "mars";
-        if (b === "Earth") return "runwayday";
-        if (b === "Moon") return "moon";
-        return "deep";
-    }
-    if (b === "Earth" || b === "") return "orbit";
-    if (b === "Moon") return "lunarorbit";
-    return "deep";
+    if (!info || info.isFolder) return "orbit-Earth";
+    return (info.focusStatus === "Landed" ? "landed-" : "orbit-") + (info.focusBody || "Earth");
 }
 
 function seed(path) {

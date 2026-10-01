@@ -91,7 +91,7 @@ Scenario paths are the classic ones: folder names and the scenario name joined b
 | `startPaused` | bool, writable | the "Start paused" option |
 | `recent`, `favourites` | list of paths | recently launched, and marked with `toggleFavourite` |
 | `modules` | list | plugin modules: `{name, category, info, active, locked}` |
-| `setup` | map | `{graphicsClient, device, fullscreen, width, height, activeModules, nonsphericalGravity, radiationPressure, distributedMass, atmWind}` |
+| `setup` | map | `{graphicsClient, device, fullscreen, width, height, activeModules, nonsphericalGravity, radiationPressure, distributedMass, atmWind}`; `graphicsClient` is the Video tab's text, "Console mode (no engine loaded)" without a client |
 | `active` | bool | the skin is shown and the Launchpad is the active window |
 | `page` | string, writable | kept for the skin while its view is rebuilt after a flight |
 | `state` | map, writable | same, for up to 64 KiB of data |

@@ -155,7 +155,7 @@ namespace custom {
 		QString m_page;
 		QVariantMap m_state;
 		int logCount = 0;
-		static const int MAX_LOG = 1000; // Launcher.log lines per skin activation
+		static const int MAX_LOG = 1000; // Orbiter.log lines from Launcher.log per skin activation
 	};
 
 }
