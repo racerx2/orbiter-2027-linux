@@ -105,6 +105,12 @@ void SatEphem (int ksat, double mjd, double *ret)
 		static double r[6];
 
 		posired (mjd+2400000.5, ksat, r, r+3);
+		if (ksat == SAT_HYPERION) { // not upstream: TASS gives Hyperion an osculating velocity up to 7 m/s off its motion, so use the derivative of the position
+			double jp = mjd+2400000.5 + 60.0/86400.0, jm = mjd+2400000.5 - 60.0/86400.0, rp[6], rm[6];
+			posired (jp, ksat, rp, rp+3);
+			posired (jm, ksat, rm, rm+3);
+			for (i = 0; i < 3; i++) r[i+3] = (rp[i]-rm[i]) * 365.25/(jp-jm); // AU/year
+		}
 
 		// map from default to orbiter frame of reference: xyz -> xzy
 		// and change units from AU and AU/year to m and m/s
