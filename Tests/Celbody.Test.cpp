@@ -222,7 +222,7 @@ static const BodyRange bodies[] = {
 	{"Dione",     3.73e8,   3.82e8, 5e-5, 10.0},
 	{"Rhea",      5.21e8,   5.33e8, 5e-5, 10.0},
 	{"Titan",     1.174e9,  1.269e9, 5e-5, 10.0},
-	{"Hyperion",  1.286e9,  1.680e9, 2e-3, 200.0},
+	{"Hyperion",  1.286e9,  1.680e9, 1e-5, 10.0}, // Satsat returns the derivative of Hyperion's position
 	{"Iapetus",   3.424e9,  3.700e9, 5e-5, 10.0},
 	// the eight moons with new 64-bit modules (CELBODY version 1)
 	{"Phobos",    9.14e6,   9.62e6,  1e-5, 10.0, 1},
@@ -233,6 +233,10 @@ static const BodyRange bodies[] = {
 	{"Titania",   4.313e8,  4.413e8, 1e-5, 10.0, 1},
 	{"Oberon",    5.768e8,  5.901e8, 1e-5, 10.0, 1},
 	{"Triton",    3.511e8,  3.584e8, 1e-5, 10.0, 1},
+	// modules for the bodies upstream gives only a cfg Kepler orbit: 0.99 x min and 1.01 x max over 1800-2200
+	{"Proteus",   1.1641e8,  1.1888e8,  1e-5, 10.0, 1},
+	{"Nereid",    1.3286e9,  9.7833e9,  1e-5, 10.0, 1},
+	{"Vesta",     3.1784e11, 3.8918e11, 1e-5, 10.0, 1},
 };
 
 TEST_CASE("Celbody modules load through the Orbitersdk entry point", "[celbody]")
@@ -315,6 +319,96 @@ TEST_CASE("Interpolated ephemerides follow the exact ones", "[celbody]")
 		}
 		INFO(b.name << " max interpolation error " << maxerr << " m");
 		CHECK(maxerr < b.itol);
+	}
+}
+
+struct HorizonsState { const char *name; double mjd, x, y, z, tol; };
+
+// JPL Horizons positions [m] in Orbiter's x, z, y order (nep098_merged, JPL#36, sat441l), fetched 2026-10-01; tables at 2000, a seam, 2026, the first and last segment
+static const HorizonsState horizons[] = {
+	{"Proteus", 51544.5, 4.605179358222e+07, -5.371470149603e+07, -9.401116452485e+07, 20000},
+	{"Proteus", 61314.5, 1.057110914431e+08, -2.834648979754e+07, 4.306630856295e+07, 20000},
+	{"Nereid", -21502.0, -1.246628825615e+09, 4.956620525161e+08, 7.383220659554e+09, 10000},
+	{"Nereid", 51544.5, 8.937645622070e+08, 6.795867691287e+08, 9.317777487860e+09, 10000},
+	{"Nereid", 51560.001533406365, 2.906031895582e+08, 6.283270770493e+08, 9.074602873049e+09, 10000},
+	{"Nereid", 61314.5, -9.307838647058e+08, 4.861848624614e+08, 8.060498231531e+09, 10000},
+	{"Nereid", 124590.0, 2.993091168722e+09, 7.533574030416e+08, 8.992352147833e+09, 10000},
+	{"Vesta", -94552.5, -3.053123555849e+11, 2.952365701987e+10, 1.799541444510e+11, 50000},
+	{"Vesta", 51544.5, -2.024927599995e+11, 3.214885425221e+10, -2.502976747755e+11, 50000},
+	{"Vesta", 51601.31357254289, -1.124252094738e+11, 2.272042055231e+10, -3.003997218336e+11, 50000},
+	{"Vesta", 61314.5, 3.495935383930e+11, -4.566607556951e+10, 1.043191306148e+11, 50000},
+	{"Vesta", 234165.5, -2.743866829350e+11, 2.893082480883e+10, 2.437714596967e+11, 50000},
+	{"Hyperion", 51544.5, 1.710492869804e+08, -6.593858184561e+08, 1.274310893164e+09, 20000000},
+	{"Hyperion", 61314.5, -6.835348535917e+08, -5.744101335684e+08, 1.269662312169e+09, 20000000},
+};
+
+TEST_CASE("Modules for the cfg-orbit bodies follow JPL Horizons", "[celbody]")
+{
+	for (const HorizonsState &h : horizons) {
+		CelbodyModule m (h.name);
+		REQUIRE(m.body);
+		double s[6];
+		m.Ephem (h.mjd, s);
+		double d = sqrt ((s[0]-h.x)*(s[0]-h.x) + (s[1]-h.y)*(s[1]-h.y) + (s[2]-h.z)*(s[2]-h.z));
+		INFO(h.name << " mjd " << h.mjd << " error " << d << " m");
+		CHECK(d < h.tol);
+	}
+}
+
+struct ChebTable { const char *name, *file, *header; };
+
+// the CHEB1 header each table was built with
+static const ChebTable tables[] = {
+	{"Vesta",  "Config/Vesta/Data/vesta.cheb",   "CHEB1 -94553 128.20553822152885 2564 20"},
+	{"Nereid", "Config/Nereid/Data/nereid.cheb", "CHEB1 -21503 32.00306681270537 4565 24"},
+};
+
+TEST_CASE("Chebyshev tables have the expected header and are continuous at every segment end", "[celbody]")
+{
+	for (const ChebTable &t : tables) {
+		INFO(t.name);
+		std::ifstream ifs (t.file, std::ios::binary);
+		REQUIRE(ifs);
+		std::string hdr;
+		std::getline (ifs, hdr);
+		CHECK(hdr == t.header);
+		double t0, L;
+		int nseg, n;
+		REQUIRE(sscanf (hdr.c_str(), "CHEB1 %lf %lf %d %d", &t0, &L, &nseg, &n) == 4);
+		CelbodyModule m (t.name);
+		REQUIRE(m.body);
+		const double e = 1e-7; // [days]
+		double dpmax = 0.0, dvmax = 0.0;
+		for (int k = 1; k < nseg; k++) {
+			double a[6], b[6], tk = t0 + k*L;
+			m.Ephem (tk - e, a);
+			m.Ephem (tk + e, b);
+			for (int i = 0; i < 3; i++) {
+				dpmax = std::max (dpmax, fabs (b[i] - a[i] - (a[i+3] + b[i+3])*e*86400.0));
+				dvmax = std::max (dvmax, fabs (b[i+3] - a[i+3]));
+			}
+		}
+		INFO("max position jump " << dpmax << " m, velocity jump " << dvmax << " m/s");
+		CHECK(dpmax < 1.0);
+		CHECK(dvmax < 1e-3);
+	}
+}
+
+TEST_CASE("Outside their tables Vesta and Nereid use the fitted orbit", "[celbody]")
+{
+	static const struct { const char *name; double mjd; } outside[] = {{"Vesta", 240000.0}, {"Nereid", 130000.0}};
+	for (const auto &t : outside) {
+		const BodyRange *b = std::find_if (std::begin (bodies), std::end (bodies), [&](const BodyRange &r) { return !strcmp (r.name, t.name); });
+		REQUIRE(b != std::end (bodies));
+		CelbodyModule m (t.name);
+		REQUIRE(m.body);
+		double s[6];
+		m.Ephem (t.mjd, s);
+		double r = sqrt (s[0]*s[0] + s[1]*s[1] + s[2]*s[2]);
+		INFO(t.name << " r=" << r);
+		CHECK(std::isfinite (r));
+		CHECK(r > b->rmin);
+		CHECK(r < b->rmax);
 	}
 }
 

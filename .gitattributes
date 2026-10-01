@@ -1,1 +1,3 @@
 * text=auto
+# not upstream: Chebyshev ephemeris tables are binary
+*.cheb binary
