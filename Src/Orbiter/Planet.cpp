@@ -363,18 +363,18 @@ Planet::Planet (char *fname)
 			}
 		}
 	} else { // by default, scan folder 'Config/<pname>/Base'
-		sprintf (cbuf, "%s/Base", name.c_str());
-		ScanBases (cbuf);
+		if (snprintf (cbuf, sizeof cbuf, "%s/Base", name.c_str()) >= (int)sizeof cbuf) LOGOUT_WARN ("Path too long: %s", name.c_str()); // not upstream: bounded; a name that doesn't fit: no ScanBases
+		else ScanBases (cbuf); // not upstream: only when the path fit
 	}
 
 	// old style surface basis list
 	if (GetItemInt (ifs, "NumBases", n)) { // link bases as children of the planet
 		for (i = 0; i < n; i++) {
-			char bstr[16], cbuf[256], nm[128]; // not upstream: bstr fits "Base" and any int
+			char bstr[16], cbuf[256], nm[256]; // not upstream: bstr fits "Base" and any int; nm as long as the value
 			double lng, lat;
 			sprintf (bstr, "Base%d", i+1);
 			if (GetItemString (ifs, bstr, cbuf) &&
-				sscanf (cbuf, "%s%lf%lf", nm, &lng, &lat) == 3) {
+				sscanf (cbuf, "%255s%lf%lf", nm, &lng, &lat) == 3) { // not upstream: width of nm
 				Base *base = new Base (nm, this, Rad(lng), Rad(lat)); TRACENEW
 				base->Attach (this);
 			}
@@ -403,9 +403,13 @@ Planet::Planet (char *fname)
 	nlabellist = 0;
 	labelpath = 0;
 	if (GetItemString (ifs, "MarkerPath", cbuf)) {
-		if (cbuf[strlen(cbuf)-1] != '\\') strcat (cbuf, "\\");
-		labelpath = new char[strlen(cbuf)+1]; TRACENEW
-		strcpy (labelpath, cbuf);
+		if (cbuf[strlen(cbuf)-1] != '\\' && strlen(cbuf)+1 >= sizeof cbuf) { // not upstream: no room for the '\' counts as missing
+			LOGOUT_WARN ("Value of item MarkerPath too long, ignored");
+		} else { // not upstream: the '\' fits
+			if (cbuf[strlen(cbuf)-1] != '\\') strcat (cbuf, "\\");
+			labelpath = new char[strlen(cbuf)+1]; TRACENEW
+			strcpy (labelpath, cbuf);
+		}
 	}
 	//if (label_version <= 1)
 		ScanLabelLists (ifs);
@@ -464,7 +468,7 @@ void Planet::ScanBases (char *path)
 
 	// check for period limiter
 	if ((pc = strstr (path, "PERIOD")) != NULL) {
-		if (sscanf (pc+6, "%s%s", cbuf, cbuf+128) == 2) {
+		if (sscanf (pc+6, "%127s%127s", cbuf, cbuf+128) == 2) { // not upstream: widths of the two halves
 			double dt;
 			if (sscanf (cbuf, "%lf", &dt) == 1 && dt > td.MJD_ref) return;
 			if (sscanf (cbuf+128, "%lf", &dt) == 1 && dt < td.MJD_ref) return;
@@ -485,8 +489,12 @@ void Planet::ScanBases (char *path)
 		trim_string (path);
 	}
 
-	sprintf (spath, "%s/dummy", path);
+	if (snprintf (spath, sizeof spath, "%s/dummy", path) >= (int)sizeof spath) { // not upstream: bounded; a path that doesn't fit: no base scan
+		LOGOUT_WARN ("Path too long: %s", path);
+		return;
+	}
 	strcpy (cbuf, g_pOrbiter->ConfigPath(spath));
+	if (!cbuf[0]) return; // not upstream: ConfigPath gave "" (too long, it warned): no base scan
 	fs::path configdir = fs::path(oapiResolvePath(cbuf)).parent_path();
 	std::error_code ec;
 	for (const auto& entry : SortedEntries (fs::directory_iterator(configdir, ec))) { // not upstream: NTFS order
@@ -498,7 +506,10 @@ void Planet::ScanBases (char *path)
 				pc = trim_string(cbuf);
 			} while (!pc[0]);
 			if (strncasecmp(pc, "BASE-V2.0", 9)) continue;
-			sprintf(spath, "%s\\%s", path, entry.path().stem().string().c_str());
+			if (snprintf(spath, sizeof spath, "%s\\%s", path, entry.path().stem().string().c_str()) >= (int)sizeof spath) { // not upstream: bounded; no base with a cut name
+				LOGOUT_WARN("Path too long: %s", entry.path().stem().string().c_str());
+				continue;
+			}
 			Base* base = new Base(spath, this); TRACENEW
 			if (!AddBase(base))
 				delete base;
@@ -559,29 +570,25 @@ void Planet::ScanLabelLists (ifstream &cfg)
 				char item[256], value[256];
 				for (;;) {
 					if (!ulf.getline(cbuf, 256) || !strncasecmp(cbuf, "END_HEADER", 10)) break;
-					sscanf(cbuf, "%s %s", item, value);
+					if (sscanf(cbuf, "%s %s", item, value) < 2) continue; // not upstream: a blank or one-token line would leave item or value unset
 					if (!strcasecmp(item, "InitialState")) {
 						if (!strcasecmp(value, "on")) ll->active = true;
 					}
 					else if (!strcasecmp(item, "ColourIdx")) {
 						int col;
-						sscanf(value, "%d", &col);
-						ll->colour = max(0, min(5, col));
+						if (sscanf(value, "%d", &col) == 1) ll->colour = max(0, min(5, col)); // not upstream: a value that isn't a number keeps the default
 					}
 					else if (!strcasecmp(item, "ShapeIdx")) {
 						int shape;
-						sscanf(value, "%d", &shape);
-						ll->shape = max(0, min(6, shape));
+						if (sscanf(value, "%d", &shape) == 1) ll->shape = max(0, min(6, shape)); // not upstream: a value that isn't a number keeps the default
 					}
 					else if (!strcasecmp(item, "Size")) {
 						float size;
-						sscanf(value, "%f", &size);
-						ll->size = max(0.1f, min(2.0f, size));
+						if (sscanf(value, "%f", &size) == 1) ll->size = max(0.1f, min(2.0f, size)); // not upstream: a value that isn't a number keeps the default
 					}
 					else if (!strcasecmp(item, "DistanceFactor")) {
 						float distfac;
-						sscanf(value, "%f", &distfac);
-						ll->distfac = max(1e-5f, min(1e3f, distfac));
+						if (sscanf(value, "%f", &distfac) == 1) ll->distfac = max(1e-5f, min(1e3f, distfac)); // not upstream: a value that isn't a number keeps the default
 					}
 				}
 			}

@@ -53,6 +53,25 @@ double RecordingSpeed = 1.0;
 double WarpDelay = 0.0;
 Vessel *vfocus = NULL;  // focus vessel as defined by playback stream
 
+static bool ResolveInPlace (char *buf, size_t size, int len) // not upstream: buf (snprintf gave len) case-resolved in place; false and "" when either doesn't fit
+{
+	std::string path;
+	if (len >= 0 && (size_t)len < size) path = oapiResolvePath (buf);
+	if (path.empty () || path.size () >= size) {
+		buf[0] = '\0';
+		return false;
+	}
+	memcpy (buf, path.c_str (), path.size () + 1);
+	return true;
+}
+
+static char *TokenValue (char *s, size_t ofs) // not upstream: the text at s+ofs as upstream read it: inside the token, the rest of the line (strtok) just past it, NULL past the line's end
+{
+	size_t n = strlen (s);
+	if (ofs <= n) return s + ofs;
+	return (ofs == n + 1 ? strtok (NULL, "") : NULL);
+}
+
 // ================================================================
 // Local prototypes
 // ================================================================
@@ -97,13 +116,17 @@ void Vessel::FRecorder_Activate (bool active, const char *fname, bool append)
 		if (!append) FRecorder_Reset();
 		bFRrecord = true;
 		char cbuf[256];
-		sprintf (cbuf, "Flights/%s/%s.pos", fname, name.c_str());
-		strcpy (cbuf, oapiResolvePath (cbuf).c_str()); // Linux: case-insensitive path, resolved once for all recording streams
+		Tofs = td.SimT0; // not upstream: moved before the length check, the system recorder's events use it even when no vessel is recorded
+		MJDofs = td.MJD0; // not upstream: as above
+		int len = snprintf (cbuf, sizeof cbuf, "Flights/%s/%s.pos", fname, name.c_str()); // not upstream: bounded
+		if (!ResolveInPlace (cbuf, sizeof cbuf, len)) { // not upstream: case-insensitive path, resolved once for all streams; N: the .att/.atc names are built from it in 256 bytes
+			LOGOUT_WARN ("Flight recorder: file name too long for record %s, vessel %s; the vessel isn't recorded", fname, name.c_str());
+			bFRrecord = false;
+			return;
+		}
 		if (FRfname) delete []FRfname;
 		FRfname = new char[strlen(cbuf)+1]; TRACENEW
 		strcpy (FRfname, cbuf);
-		Tofs = td.SimT0;
-		MJDofs = td.MJD0;
 		//frec_last.frm = 1;  // for now, record in equatorial frame by default
 		frec_last.crd = 1;  // for now, record in polar coordinates by default
 	} else {
@@ -363,8 +386,9 @@ bool Vessel::FRecorder_Read (const char *scname)
 
 	for (i = strlen(scname)-1; i > 0; i--)
 		if (scname[i-1] == '\\' || scname[i-1] == '/') break;
-	sprintf (fname, "Flights/%s/%s.pos", scname+i, name.c_str());
-	strcpy (fname, oapiResolvePath (fname).c_str()); // Linux: case-insensitive path, resolved once for the .pos/.att/.atc streams
+	int len = snprintf (fname, sizeof fname, "Flights/%s/%s.pos", scname+i, name.c_str()); // not upstream: bounded
+	if (!ResolveInPlace (fname, sizeof fname, len)) // not upstream: case-insensitive path, resolved once for the .pos/.att/.atc streams; P: "" fails the open below
+		LOGOUT_WARN ("Flight recorder: playback file name too long for record %s, vessel %s", scname+i, name.c_str()); // not upstream: one warning
 
 	ifstream ifs (fname);
 	if (!ifs) {
@@ -443,7 +467,8 @@ bool Vessel::FRecorder_Read (const char *scname)
 			// assumes that MJDofs from all streams are the same!
 		} else {
 			double a[3];
-			sscanf (cbuf, "%lf%lf%lf%lf", &simt, a+0, a+1, a+2);
+			if (sscanf (cbuf, "%lf%lf%lf%lf", &simt, a+0, a+1, a+2) != 4) // not upstream: a line without its four values is skipped, as in the .pos reader (simt and a were used unset)
+				continue; // not upstream: as above
 			if (nfrec_att == nbuf_att) { // re-allocate
 				FRecord_att *tmp = new FRecord_att[nbuf_att += 1024]; TRACENEW
 				if (nfrec_att) {
@@ -463,6 +488,12 @@ bool Vessel::FRecorder_Read (const char *scname)
 
 			nfrec_att++;
 		}
+	}
+
+	if (nfrec < 1) { // not upstream: no position sample (CheckEnd reads frec[nfrec-1]); as a missing file; Play reads frec_att only with 2 or more samples
+		FRecorder_Clear ();
+		bFRplayback = false;
+		return false;
 	}
 
 	// open articulation event stream
@@ -491,6 +522,10 @@ void Vessel::FRecorder_Play ()
 		int i;
 		static Vector s;
 
+		if (nfrec < 2) { // not upstream: one sample has nothing to interpolate (frec[1] was read unset); the vessel holds its state until CheckEnd ends the playback
+			sv->Set (*s0); // not upstream: the vessel keeps its current state for this frame (s1 held the state from two frames back)
+			return;
+		}
 		while (cfrec+2 < nfrec && frec[cfrec+1].simt < td.SimT1) cfrec++;
 		dT = frec[cfrec+1].simt - frec[cfrec].simt;
 		dt = td.SimT1 - frec[cfrec].simt;
@@ -540,7 +575,7 @@ void Vessel::FRecorder_Play ()
 		sv->vel += frec[cfrec].ref->s1->vel;
 	
 		// attitude
-		if (td.SimT1 < frec_att[nfrec_att-1].simt) {
+		if (nfrec_att > 1 && td.SimT1 < frec_att[nfrec_att-1].simt) { // not upstream: fewer than two attitude samples have nothing to interpolate (frec_att[1], or frec_att[-1] with none, was read unset); skipped as past the last sample
 
 			// store old orientation for calculating angular velocities
 			Vector r1 (sv->R.m11, sv->R.m21, sv->R.m31);
@@ -612,7 +647,7 @@ void Vessel::FRecorder_PlayEvent ()
 					} else {
 						for (i = 0; i < NTHGROUP; i++)
 							if (!strncasecmp (s, THGROUPSTR[i], strlen (THGROUPSTR[i]))) break;
-						if (i < NTHGROUP && sscanf (s+strlen(THGROUPSTR[i])+1, "%lf", &lvl)) {
+						if (i < NTHGROUP && strlen (s) > strlen (THGROUPSTR[i]) && sscanf (s+strlen(THGROUPSTR[i])+1, "%lf", &lvl) == 1) { // not upstream: a group token needs its ':' value (the offset read the next token or past the line; EOF passed)
 							ThrustGroupSpec* tgs = GetThrusterGroup((THGROUP_TYPE)i);
 							if (tgs) {
 								for (auto it = tgs->ts.begin(); it != tgs->ts.end(); it++)
@@ -639,35 +674,35 @@ void Vessel::FRecorder_PlayEvent ()
 					bForceActive = true;
 			} else if (!strncasecmp (s, "NAVMODE", 7)) {
 				if (!strcmp (s+7, "CLR")) {
-					sscanf (s+11, "%d", &i);
-					ClrNavMode (i, false, true);
+					if ((e = TokenValue (s, 11)) && sscanf (e, "%d", &i) == 1 && i >= 1 && i <= 7) // not upstream: a line without its mode, or with one outside 1..7, is skipped (i was used unset; 1 << (i-1) is undefined outside 1..32)
+						ClrNavMode (i, false, true); // not upstream: as above
 				} else {
-					sscanf (s+8, "%d", &i);
-					SetNavMode (i, true);
+					if ((e = TokenValue (s, 8)) && sscanf (e, "%d", &i) == 1 && i >= 0 && i <= 7) // not upstream: as above, 0 (clear all) to 7
+						SetNavMode (i, true); // not upstream: as above
 				}
 			} else if (!strcasecmp (s, "RCSMODE")) {
-				sscanf (s+8, "%d", &i);
-				SetAttMode (i, true);
+				if ((e = TokenValue (s, 8)) && sscanf (e, "%d", &i) == 1 && i >= RCS_NONE && i <= RCS_LIN) // not upstream: a line without its mode, or with one SetAttMode would store unchecked (revmode[attmode] is [3]), is skipped
+					SetAttMode (i, true); // not upstream: as above
 			} else if (!strcasecmp (s, "ADCMODE")) {
-				sscanf (s+8, "%d", &i);
-				SetADCtrlMode (i, true);
+				if ((e = TokenValue (s, 8)) && sscanf (e, "%d", &i) == 1 && i >= 0 && i <= 7) // not upstream: a line without its mode, or with one outside the SDK's bit flags 0..7, is skipped
+					SetADCtrlMode (i, true); // not upstream: as above
 			} else if (!strcasecmp (s, "UNDOCK")) {
 				while (s = strtok (NULL, " \t\n")) {
 					int dock;
-					sscanf (s, "%d", &dock);
-					Undock (dock);
+					if (sscanf (s, "%d", &dock) == 1) // not upstream: a non-numeric token is skipped (dock was used unset)
+						Undock (dock); // not upstream: as above
 				}
 			} else if (!strcasecmp (s, "DETACH")) {
 				double v;
-				int res = sscanf (s+7, "%d%lf", &id, &v);
+				int res = ((e = TokenValue (s, 7)) ? sscanf (e, "%d%lf", &id, &v) : 0); // not upstream: s+7 was past the line on a bare DETACH
 				if (res < 2) v = 0.0;
-				AttachmentSpec *as = GetAttachmentFromIndex (false, id);
+				AttachmentSpec *as = (res >= 1 ? GetAttachmentFromIndex (false, id) : 0); // not upstream: a line without the id is skipped (id was used unset)
 				if (as) DetachChild (as, v);
 			} else if (!strcasecmp (s, "ATTACH")) {
 				DWORD pidx, cidx;
-				char cname[128], modestr[32];
-				int res = sscanf (s+7, "%s%d%d%s", cname, &pidx, &cidx, modestr);
-				Vessel *child = g_psys->GetVessel (cname, true);
+				char cname[256] = "", modestr[32] = ""; // not upstream: cname [128]; a name of the line fits
+				int res = ((e = TokenValue (s, 7)) ? sscanf (e, "%255s%d%d%31s", cname, &pidx, &cidx, modestr) : 0); // not upstream: widths; s+7 was past the line on a bare ATTACH
+				Vessel *child = (res >= 3 ? g_psys->GetVessel (cname, true) : 0); // not upstream: a line without the name and both indices is skipped (they were used unset)
 				bool loose = (res > 3 && !strcasecmp (modestr,"LOOSE") ? true : false);
 				if (child) {
 					AttachmentSpec *asp = GetAttachmentFromIndex (false, pidx);
@@ -678,49 +713,53 @@ void Vessel::FRecorder_PlayEvent ()
 			} else if (!strncasecmp (s, "LIGHTSOURCE", 11)) { // light emitter event
 				s = strtok (NULL, " \t\n");
 				DWORD idx;
-				if (sscanf (s, "%d", &idx) == 1 && idx < nemitter) {
+				if (s && sscanf (s, "%d", &idx) == 1 && idx < nemitter) { // not upstream: a bare LIGHTSOURCE line has no token
 					s = strtok (NULL, " \t\n");
-					if (!strcasecmp (s, "ACTIVATE")) {
+					if (s && !strcasecmp (s, "ACTIVATE")) { // not upstream: as above
 						DWORD flag;
-						if (sscanf (s+9, "%d", &flag) == 1)
+						if ((e = TokenValue (s, 9)) && sscanf (e, "%d", &flag) == 1) // not upstream: s+9 was past the line when ACTIVATE ended it
 							emitter[idx]->Activate (flag != 0);
 					}
 				}
 			} else if (!strncasecmp (s, "TACC", 4)) { // DEPRECATED - now stored in system stream
-				if (sscanf (s+5, "%lf%lf", &RecordingSpeed, &WarpDelay) < 2)
+				int res = ((e = TokenValue (s, 5)) ? sscanf (e, "%lf%lf", &RecordingSpeed, &WarpDelay) : 0); // not upstream: s+5 was past the line on a bare TACC
+				if (res == 1) // not upstream: the delay is optional; a line without the factor is skipped
 					WarpDelay = 0.0;
-				if (g_pOrbiter->Cfg()->CfgRecPlayPrm.bReplayWarp)
+				if (res >= 1 && g_pOrbiter->Cfg()->CfgRecPlayPrm.bReplayWarp) // not upstream: as above
 						g_pOrbiter->SetWarpFactor (RecordingSpeed, true, WarpDelay);
 			} else if (!strncasecmp (s, "CAMERA", 6)) { // DEPRECATED - now stored in system stream
 				s = strtok (NULL, " \t\n");
-				if (!strncasecmp (s, "PRESET", 6)) {
-					sscanf (s+7, "%d", &i);
-					g_camera->RecallPreset (i);
+				if (s && !strncasecmp (s, "PRESET", 6)) { // not upstream: a bare CAMERA line has no token
+					if ((e = TokenValue (s, 7)) && sscanf (e, "%d", &i) == 1) // not upstream: a line without the index is skipped (i was used unset)
+						g_camera->RecallPreset (i); // not upstream: as above
 				}
 			} else if (!strncasecmp (s, "NOTE", 4)) { // DEPRECATED - now stored in system stream
 				oapi::ScreenAnnotation *sa = g_pOrbiter->SNotePB();
 				if (sa) {
 					if (!strcmp (s+4, "COL")) {
 						double r, g, b;
-						sscanf (s+8, "%lf%lf%lf", &r, &g, &b);
-						VECTOR3 col = {r,g,b};
-						sa->SetColour (col);
+						if ((e = TokenValue (s, 8)) && sscanf (e, "%lf%lf%lf", &r, &g, &b) == 3) { // not upstream: a line without its three values is skipped (they were used unset)
+							VECTOR3 col = {r,g,b}; // not upstream: as above
+							sa->SetColour (col); // not upstream: as above
+						} // not upstream: as above
 					} else if (!strcmp (s+4, "SIZE")) {
 						double scale;
-						sscanf (s+9, "%lf", &scale);
-						sa->SetSize (scale);
+						if ((e = TokenValue (s, 9)) && sscanf (e, "%lf", &scale) == 1) // not upstream: a line without its value is skipped
+							sa->SetSize (scale); // not upstream: as above
 					} else if (!strcmp (s+4, "POS")) {
 						double x1, y1, x2, y2;
-						sscanf (s+8, "%lf%lf%lf%lf", &x1, &y1, &x2, &y2);
-						sa->SetPosition (x1, y1, x2, y2);
+						if ((e = TokenValue (s, 8)) && sscanf (e, "%lf%lf%lf%lf", &x1, &y1, &x2, &y2) == 4) // not upstream: a line without its four values is skipped
+							sa->SetPosition (x1, y1, x2, y2); // not upstream: as above
 					} else if (!strcmp (s+4, "OFF")) {
 						sa->ClearText();
 					} else {
-						sa->SetText (s+5);
+						e = TokenValue (s, 5); // not upstream: s+5 was past the line on a bare NOTE
+						sa->SetText (e ? e : (char*)""); // not upstream: an emptied note plays as SetText (""), as upstream
 					}
 				}
 			} else if (modIntf.v->Version() >= 1) { // pass event to vessel
-				e = s+(strlen(s)+1);
+				e = strtok (NULL, ""); // not upstream: the rest of the line; s+strlen(s)+1 was past the line when the tag ended it
+				if (!e) e = (char*)""; // not upstream: an add-on event with an empty payload is still delivered
 				//e = strtok (NULL, " \t");
 				((VESSEL2*)modIntf.v)->clbkPlaybackEvent (td.SimT1, frec_eng_simt, s, e);
 			}
@@ -800,8 +839,12 @@ void Orbiter::FRecorder_Activate (bool active, const char *fname, bool append)
 		if (!append) FRecorder_Reset();
 		bRecord = true;
 		char cbuf[256];
-		sprintf (cbuf, "Flights\\%s\\system.dat", fname);
-		strcpy (cbuf, oapiResolvePath (cbuf).c_str()); // Linux: '\' separators and case resolved once
+		int len = snprintf (cbuf, sizeof cbuf, "Flights\\%s\\system.dat", fname); // not upstream: bounded
+		if (!ResolveInPlace (cbuf, sizeof cbuf, len)) { // not upstream: '\' separators and case resolved once; N: a record name that doesn't fit isn't recorded
+			LOGOUT_WARN ("Flight recorder: record name too long, not recorded: %s", fname);
+			bRecord = false;
+			return;
+		}
 		if (FRsysname) delete []FRsysname;
 		FRsysname = new char[strlen(cbuf)+1]; TRACENEW
 		strcpy (FRsysname, cbuf);
@@ -827,8 +870,9 @@ void Orbiter::FRecorder_OpenPlayback (const char *scname)
 
 	for (i = strlen(scname)-1; i > 0; i--)
 		if (scname[i-1] == '\\' || scname[i-1] == '/') break;
-	sprintf (cbuf, "Flights\\%s\\system.dat", scname+i);
-	strcpy (cbuf, oapiResolvePath (cbuf).c_str()); // Linux: '\' separators and case resolved once
+	int len = snprintf (cbuf, sizeof cbuf, "Flights\\%s\\system.dat", scname+i); // not upstream: bounded
+	if (!ResolveInPlace (cbuf, sizeof cbuf, len)) // not upstream: '\' separators and case resolved once; P: "" fails the open below
+		LOGOUT_WARN ("Flight recorder: playback record name too long: %s", scname+i); // not upstream: one warning
 	if (FRsysname) delete []FRsysname;
 	FRsysname = new char[strlen(cbuf)+1]; TRACENEW
 	strcpy (FRsysname, cbuf);
@@ -871,57 +915,60 @@ void Orbiter::FRecorder_Play ()
 {
 	// scan system event stream
 	while (FRsys_stream && td.SimT1 > frec_sys_simt) {
-		char cbuf[1024], *s;
+		char cbuf[1024], *s, *e; // not upstream: e, a token's value
 		int i;
 		FRsys_stream->getline (cbuf, 1024);
 		if (size_t n = strlen (cbuf); n && cbuf[n-1] == '\r') cbuf[n-1] = '\0'; // not upstream: CRLF files (Windows text mode dropped the CR)
 		s = strtok (cbuf, " \t");
 		if (s) {
 			if (!strncasecmp (s, "TACC", 4)) {
-				if (sscanf (s+5, "%lf%lf", &RecordingSpeed, &WarpDelay) < 2)
+				int res = ((e = TokenValue (s, 5)) ? sscanf (e, "%lf%lf", &RecordingSpeed, &WarpDelay) : 0); // not upstream: s+5 was past the line on a bare TACC
+				if (res == 1) // not upstream: the delay is optional; a line without the factor is skipped
 					WarpDelay = 0.0;
-				if (Cfg()->CfgRecPlayPrm.bReplayWarp)
+				if (res >= 1 && Cfg()->CfgRecPlayPrm.bReplayWarp) // not upstream: as above
 						SetWarpFactor (RecordingSpeed, true, WarpDelay);
 			} else if (!strncasecmp (s, "CAMERA", 6)) {
 				s = strtok (NULL, " \t\n");
-				if (!strncasecmp (s, "PRESET", 6)) {
-					sscanf (s+7, "%d", &i);
-					g_camera->RecallPreset (i);
-				} else if (!strncasecmp (s, "SET", 3)) {
-					CameraMode *cm = CameraMode::Create (s+4);
+				if (s && !strncasecmp (s, "PRESET", 6)) { // not upstream: a bare CAMERA line has no token
+					if ((e = TokenValue (s, 7)) && sscanf (e, "%d", &i) == 1) // not upstream: a line without the index is skipped (i was used unset)
+						g_camera->RecallPreset (i); // not upstream: as above
+				} else if (s && !strncasecmp (s, "SET", 3)) { // not upstream: as above
+					CameraMode *cm = ((e = TokenValue (s, 4)) ? CameraMode::Create (e) : 0); // not upstream: s+4 was past the line when SET ended it
 					if (cm) g_camera->SetCMode (cm);
 					delete cm;
 				}
 			} else if (!strncasecmp (s, "FOCUS", 5)) {
 				s = strtok (NULL, " \t\n");
-				vfocus = g_psys->GetVessel (s, true);
-				if (vfocus && Cfg()->CfgRecPlayPrm.bReplayFocus)
+				if (s) vfocus = g_psys->GetVessel (s, true); // not upstream: a bare FOCUS line is skipped (GetVessel (NULL) crashed)
+				if (s && vfocus && Cfg()->CfgRecPlayPrm.bReplayFocus) // not upstream: as above
 					g_pOrbiter->SetFocusObject (vfocus);
 			} else if (!strncasecmp (s, "NOTE", 4)) {
 				oapi::ScreenAnnotation *sa = SNotePB();
 				if (sa) {
 					if (!strcmp (s+4, "COL")) {
 						double r, g, b;
-						sscanf (s+8, "%lf%lf%lf", &r, &g, &b);
-						VECTOR3 col = {r,g,b};
-						sa->SetColour (col);
+						if ((e = TokenValue (s, 8)) && sscanf (e, "%lf%lf%lf", &r, &g, &b) == 3) { // not upstream: a line without its three values is skipped (they were used unset)
+							VECTOR3 col = {r,g,b}; // not upstream: as above
+							sa->SetColour (col); // not upstream: as above
+						} // not upstream: as above
 					} else if (!strcmp (s+4, "SIZE")) {
 						double scale;
-						sscanf (s+9, "%lf", &scale);
-						sa->SetSize (scale);
+						if ((e = TokenValue (s, 9)) && sscanf (e, "%lf", &scale) == 1) // not upstream: a line without its value is skipped
+							sa->SetSize (scale); // not upstream: as above
 					} else if (!strcmp (s+4, "POS")) {
 						double x1, y1, x2, y2;
-						sscanf (s+8, "%lf%lf%lf%lf", &x1, &y1, &x2, &y2);
-						sa->SetPosition (x1, y1, x2, y2);
+						if ((e = TokenValue (s, 8)) && sscanf (e, "%lf%lf%lf%lf", &x1, &y1, &x2, &y2) == 4) // not upstream: a line without its four values is skipped
+							sa->SetPosition (x1, y1, x2, y2); // not upstream: as above
 					} else if (!strcmp (s+4, "OFF")) {
 						sa->ClearText();
 					} else {
-						sa->SetText (s+5);
+						e = TokenValue (s, 5); // not upstream: s+5 was past the line on a bare NOTE
+						sa->SetText (e ? e : (char*)""); // not upstream: an emptied note plays as SetText (""), as upstream
 					}
 				}
 			} else if (!strncasecmp (s, "JUMPTOTIME", 10)) {
 				double jumptime;
-				if (sscanf (s+11, "%lf", &jumptime) && jumptime > td.SimT0) {
+				if ((e = TokenValue (s, 11)) && sscanf (e, "%lf", &jumptime) == 1 && jumptime > td.SimT0) { // not upstream: s+11 was past the line on a bare JUMPTOTIME; EOF passed with jumptime unset
 					double tgtmjd = td.MJD0 + (jumptime-td.SimT0)/86400.0;
 					g_pOrbiter->Timejump(tgtmjd, PROP_ORBITAL_FIXEDSURF);
 				}

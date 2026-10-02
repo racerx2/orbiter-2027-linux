@@ -54,15 +54,16 @@ bool Vessel::ParseScenarioLine (char *line, VESSELSTATUS &vs)
 	} else if (!strncasecmp (line, "BASE", 4)) {
 		line = trim_string (line+4);
 		if (pd = strtok (line, ":")) {
-			strcpy (cbuf, pd);
+			bool fit = ((size_t)snprintf (cbuf, sizeof cbuf, "%s", pd) < sizeof cbuf); // not upstream: a module can pass a line longer than cbuf
+			if (!fit) LOGOUT_WARN ("Base name too long: %s", pd); // not upstream: a name that doesn't fit isn't looked up
 			// at this point we assume that vs.rbody has already been assigned,
 			// i.e. that the STATUS LANDED line has already been parsed
-			Base *base = ((Planet*)vs.rbody)->GetBase (trim_string(cbuf));
+			Base *base = (fit && vs.rbody && ((Body*)vs.rbody)->Type() == OBJTP_PLANET ? ((Planet*)vs.rbody)->GetBase (trim_string(cbuf)) : 0); // not upstream: as a base not found; no body (BASE before STATUS, unknown body) or a star has no base
 			vs.base = (OBJHANDLE)base;
 			if (pd = strtok (NULL, ":")) {
 				sscanf (pd, "%d", &vs.port);
 				vs.port--;
-				base->Pad_EquPos (vs.port, vs.vdata[0].x, vs.vdata[0].y);
+				if (base) base->Pad_EquPos (vs.port, vs.vdata[0].x, vs.vdata[0].y); // not upstream: a base not found has no pads
 				// place ship in centre of landing pad by default
 			}
 		}
@@ -80,8 +81,8 @@ bool Vessel::ParseScenarioLine (char *line, VESSELSTATUS &vs)
 	} else if (!strncasecmp (line, "ELEMENTS", 8)) {
 		double a, e, i, theta, omegab, L, elmjd;
 		Vector rpos, rvel;
-		sscanf (line+8, "%lf%lf%lf%lf%lf%lf%lf",  &a, &e, &i, &theta, &omegab, &L, &elmjd);
-		if (vs.rbody) {
+		bool elok = (sscanf (line+8, "%lf%lf%lf%lf%lf%lf%lf",  &a, &e, &i, &theta, &omegab, &L, &elmjd) == 7); // not upstream: all seven elements read
+		if (elok && vs.rbody) { // not upstream: a short line is ignored
 			el->Set (a, e, i*RAD, theta*RAD, omegab*RAD, L*RAD, elmjd);
 			el->Setup (mass, ((Body*)vs.rbody)->Mass(), td.MJD_ref);
 			el->Update (rpos, rvel);
@@ -170,13 +171,14 @@ bool Vessel::ParseScenarioLine2 (char *line, void *status)
 
 		line = trim_string (line+4);
 		if (pd = strtok (line, ":")) {
-			strcpy (cbuf, pd);
+			bool fit = ((size_t)snprintf (cbuf, sizeof cbuf, "%s", pd) < sizeof cbuf); // not upstream: a module can pass a line longer than cbuf
+			if (!fit) LOGOUT_WARN ("Base name too long: %s", pd); // not upstream: a name that doesn't fit isn't looked up
 			// at this point we assume that vs.rbody has already been assigned,
 			// i.e. that the STATUS LANDED line has already been parsed
-			Base *base = ((Planet*)vs->rbody)->GetBase (trim_string(cbuf));
+			Base *base = (fit && vs->rbody && ((Body*)vs->rbody)->Type() == OBJTP_PLANET ? ((Planet*)vs->rbody)->GetBase (trim_string(cbuf)) : 0); // not upstream: as a base not found; no body (BASE before STATUS, unknown body) or a star has no base
 			if (!base) {
 				char cerr[1024];
-				sprintf (cerr, "Scenario parse error for vessel %s: base '%s' not found on body '%s'.", name.c_str(), trim_string(cbuf), ((Planet*)vs->rbody)->Name());
+				snprintf (cerr, sizeof cerr, "Scenario parse error for vessel %s: base '%s' not found on body '%s'.", name.c_str(), trim_string(cbuf), vs->rbody ? ((Planet*)vs->rbody)->Name() : ""); // not upstream: message cut to cerr; no body named when rbody is unset
 				LOGOUT_ERR("%s", cerr); // not upstream: text passed as "%s"
 				g_pOrbiter->TerminateOnError();
 			}
@@ -208,18 +210,20 @@ bool Vessel::ParseScenarioLine2 (char *line, void *status)
 			if (*pd == ':') nn++;
 		}
 		vs->nfuel = nn;
-		vs->fuel = new VESSELSTATUS2::FUELSPEC[nn]; TRACENEW
+		vs->fuel = new VESSELSTATUS2::FUELSPEC[nn](); TRACENEW // not upstream: value-initialised
 		// pass 2: read propellant definitions
-		for (nn = 0, pd = strtok (line+8, " "); pd; pd = strtok (NULL, " "))
+		for (nn = 0, pd = strtok (line+8, " "); pd && nn < vs->nfuel; pd = strtok (NULL, " ")) // not upstream: stops at the array size
 			if (sscanf (pd, "%d%c%lf", &n, &c, &lvl) == 3) {
 				vs->fuel[nn].idx = n;
 				vs->fuel[nn].level = lvl;
 				nn++;
 			}
+		vs->nfuel = nn; // not upstream: the number of records kept
+		if (!nn) { delete []vs->fuel; vs->fuel = 0; } // not upstream: no record kept, no array (the nfuel guards rely on it)
 
 	} else if (!strncasecmp (line, "FUEL", 4)) { // global propellant resource setting
 
-		if (sscanf (line+4, "%lf", &lvl)) { // old style fuel definition
+		if (sscanf (line+4, "%lf", &lvl) == 1) { // not upstream: == 1, EOF left lvl unset; old style fuel definition
 			if (vs->nfuel) delete []vs->fuel;
 			vs->fuel = new VESSELSTATUS2::FUELSPEC[vs->nfuel = 1]; TRACENEW
 			vs->fuel[0].idx = (DWORD)-1; // mark 'global'
@@ -232,18 +236,20 @@ bool Vessel::ParseScenarioLine2 (char *line, void *status)
 		// pass 1: find out how many thruster defintions there are
 		for (nn = 0, pd = line+7; *pd; pd++) if (*pd == ':') nn++;
 		vs->nthruster = nn;
-		vs->thruster = new VESSELSTATUS2::THRUSTSPEC[nn]; TRACENEW
+		vs->thruster = new VESSELSTATUS2::THRUSTSPEC[nn](); TRACENEW // not upstream: value-initialised
 		// pass 2: read thruster definitions
-		for (nn = 0, pd = strtok (line+7, " "); pd; pd = strtok (NULL, " "))
+		for (nn = 0, pd = strtok (line+7, " "); pd && nn < vs->nthruster; pd = strtok (NULL, " ")) // not upstream: stops at the array size
 			if (sscanf (pd, "%d%c%lf", &n, &c, &lvl) == 3) {
 				vs->thruster[nn].idx = n;
 				vs->thruster[nn].level = lvl;
 				nn++;
 			}
+		vs->nthruster = nn; // not upstream: the number of records kept
+		if (!nn) { delete []vs->thruster; vs->thruster = 0; } // not upstream: no record kept, no array (the nthruster guards rely on it)
 
 	} else if (!strncasecmp (line, "ENGINE_MAIN", 11)) { // old style main/retro thruster status
 
-		if (sscanf (line+11, "%lf", &lvl)) {
+		if (sscanf (line+11, "%lf", &lvl) == 1) { // not upstream: == 1, EOF left lvl unset
 			if (lvl > 0) {
 				ThrustGroupSpec& tgs = m_thrusterGroupDef[THGROUP_MAIN];
 				for (auto it = tgs.ts.begin(); it != tgs.ts.end(); it++) {
@@ -276,7 +282,7 @@ bool Vessel::ParseScenarioLine2 (char *line, void *status)
 		}
 	} else if (!strncasecmp (line, "ENGINE_HOVR", 11)) { // old style hover thruster status
 
-		if (sscanf (line+11, "%lf", &lvl) && lvl > 0) {
+		if (sscanf (line+11, "%lf", &lvl) == 1 && lvl > 0) { // not upstream: == 1, EOF left lvl unset
 			ThrustGroupSpec& tgs = m_thrusterGroupDef[THGROUP_HOVER];
 			for (auto it = tgs.ts.begin(); it != tgs.ts.end(); it++) {
 				for (nn = 0; nn < m_thruster.size(); nn++) {
@@ -294,20 +300,21 @@ bool Vessel::ParseScenarioLine2 (char *line, void *status)
 
 	} else if (!strncasecmp (line, "DOCKINFO", 8)) {
 
-		if (vs->ndockinfo) delete []vs->dockinfo;
+		delete []vs->dockinfo; // not upstream: ndockinfo is the kept count; dockinfo is NULL (Vessel::Read memsets vs) or this parser's array
 		// pass 1: find number of dock info records
 		for (nn = 0, pd = line+8; *pd; pd++) if (*pd == ':') nn++;
 		vs->ndockinfo = nn;
-		vs->dockinfo = new VESSELSTATUS2::DOCKINFOSPEC[nn]; TRACENEW
+		vs->dockinfo = new VESSELSTATUS2::DOCKINFOSPEC[nn](); TRACENEW // not upstream: value-initialised
 		// pass 2: read dock info records
-		for (nn = 0, pd = strtok (line+8, " "); pd; pd = strtok (NULL, " ")) {
-			sscanf (pd, "%d:%d,%s", &vs->dockinfo[nn].idx, &vs->dockinfo[nn].ridx, cbuf);
+		for (nn = 0, pd = strtok (line+8, " "); pd && nn < vs->ndockinfo; pd = strtok (NULL, " ")) { // not upstream: stops at the array size
+			if (sscanf (pd, "%d:%d,%255s", &vs->dockinfo[nn].idx, &vs->dockinfo[nn].ridx, cbuf) != 3) continue; // not upstream: width of cbuf, only records that parse are kept
 			// DODGY - cast name into 4 bytes of vessel pointer!
 			vs->dockinfo[nn].rvessel = 0;
 			BYTE *tmp = (BYTE*)&vs->dockinfo[nn].rvessel;
 			for (int i = 0; cbuf[i]; i++) tmp[i%4] += cbuf[i];
 			nn++;
 		}
+		vs->ndockinfo = nn; // not upstream: the number of records kept
 
 	} else if (!strncasecmp (line, "RPOS", 4)) {
 		sscanf (line+4, "%lf%lf%lf", &vs->rpos.x, &vs->rpos.y, &vs->rpos.z);
@@ -324,8 +331,8 @@ bool Vessel::ParseScenarioLine2 (char *line, void *status)
 	} else if (!strncasecmp (line, "ELEMENTS", 8)) {
 		double a, e, i, theta, omegab, L, elmjd;
 		Vector rpos, rvel;
-		sscanf (line+8, "%lf%lf%lf%lf%lf%lf%lf",  &a, &e, &i, &theta, &omegab, &L, &elmjd);
-		if (vs->rbody) {
+		bool elok = (sscanf (line+8, "%lf%lf%lf%lf%lf%lf%lf",  &a, &e, &i, &theta, &omegab, &L, &elmjd) == 7); // not upstream: all seven elements read
+		if (elok && vs->rbody) { // not upstream: a short line is ignored
 			el->Set (a, e, i*RAD, theta*RAD, omegab*RAD, L*RAD, elmjd);
 			el->Setup (mass, ((Body*)vs->rbody)->Mass(), td.MJD_ref);
 			el->Update (rpos, rvel);
@@ -365,17 +372,21 @@ bool Vessel::ParseScenarioLine2 (char *line, void *status)
 bool Vessel::ParseScenarioLineDirect (char *line)
 {
 	if (!strncasecmp (line, "RCSMODE", 7)) {
-		sscanf (line+7, "%d", &attmode);
+		int m; // not upstream: attmode indexes [3] tables (GetManualControlLevel, ShuttleA's RCS indicator)
+		if (sscanf (line+7, "%d", &m) == 1 && m >= 0 && m <= 2) attmode = m; // not upstream: only modes 0-2 are stored
 		return true;
 	} else if (!strncasecmp (line, "AFCMODE", 7)) {
 		sscanf (line+7, "%d", &ctrlsurfmode);
 		return true;
 	} else if (!strncasecmp (line, "ATTACHED", 8)) {
 		char cbuf[256];
-		sscanf (line+8, "%d:%d,%s", &attach_status.ci, &attach_status.pi, cbuf);
-		if (attach_status.pname) delete []attach_status.pname;
-		attach_status.pname = new char[strlen(cbuf)+1]; TRACENEW
-		strcpy (attach_status.pname, cbuf);
+		DWORD ci, pi; // not upstream: parsed into locals, assigned only when the whole line parsed
+		if (sscanf (line+8, "%d:%d,%255s", &ci, &pi, cbuf) == 3) { // not upstream: width of cbuf, the parent only when its name was read
+			attach_status.ci = ci, attach_status.pi = pi; // not upstream: assigned with the name
+			if (attach_status.pname) delete []attach_status.pname;
+			attach_status.pname = new char[strlen(cbuf)+1]; TRACENEW
+			strcpy (attach_status.pname, cbuf);
+		} // not upstream: end of the parsed-line block
 		return true;
 	} else if (!strncasecmp (line, "FLIGHTDATA", 10)) {
 		bRequestPlayback = true;

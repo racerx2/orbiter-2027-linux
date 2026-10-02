@@ -184,14 +184,20 @@ ScreenAnnotation *GraphicsClient::clbkCreateAnnotation ()
 bool GraphicsClient::TexturePath (const char *fname, char *path) const
 {
 	// first try htex directory
-	strcpy (path, g_pOrbiter->Cfg()->CfgDirPrm.HightexDir);
-	strcat (path, fname);
+	if (snprintf (path, MAX_PATH, "%s%s", g_pOrbiter->Cfg()->CfgDirPrm.HightexDir, fname) >= MAX_PATH) { // not upstream: bounded; a path that doesn't fit counts as missing
+		LOGOUT_WARN ("Path too long: %s", fname);
+		path[0] = '\0';
+		return false;
+	}
 	std::string r = oapiResolvePath (path); // the resolved path is returned: callers open it directly
 	if (fs::exists(r)) { snprintf (path, MAX_PATH, "%s", r.c_str()); return true; }
 
 	// try tex directory
-	strcpy (path, g_pOrbiter->Cfg()->CfgDirPrm.TextureDir);
-	strcat (path, fname);
+	if (snprintf (path, MAX_PATH, "%s%s", g_pOrbiter->Cfg()->CfgDirPrm.TextureDir, fname) >= MAX_PATH) { // not upstream: bounded; a path that doesn't fit counts as missing
+		LOGOUT_WARN ("Path too long: %s", fname);
+		path[0] = '\0';
+		return false;
+	}
 
 	r = oapiResolvePath (path);
 	if (fs::exists(r)) { snprintf (path, MAX_PATH, "%s", r.c_str()); return true; }
@@ -203,8 +209,7 @@ bool GraphicsClient::TexturePath (const char *fname, char *path) const
 
 bool GraphicsClient::PlanetTexturePath(const char* planetname, char* path) const
 {
-	g_pOrbiter->Cfg()->PTexPath(path, planetname);
-	return true;
+	return g_pOrbiter->Cfg()->PTexPath(path, MAX_PATH, planetname); // not upstream: sized (MAX_PATH, as TexturePath), false when the path doesn't fit
 }
 
 // ======================================================================
@@ -440,6 +445,8 @@ bool GraphicsClient::WriteImageDataToFile (const ImageData &data,
 		"TIFF",
 	};
 
+	if ((unsigned)fmt > IMAGE_TIF) return false; // not upstream: extension[] and Format[] cover BMP..TIF (DDS is saved by the client itself)
+
 	if (data.bpp != 24)
 		return false;  // can only deal with 24bit images for now
 
@@ -450,8 +457,10 @@ bool GraphicsClient::WriteImageDataToFile (const ImageData &data,
 		return false;
 
 	char cbuf[256];
-	strcpy (cbuf, fname);
-	strcat (cbuf, extension[fmt]);
+	if (snprintf (cbuf, sizeof cbuf, "%s%s", fname, extension[fmt]) >= (int)sizeof cbuf) { // not upstream: bounded; a name that doesn't fit isn't written
+		LOGOUT_WARN ("Path too long: %s", fname);
+		return false;
+	}
 	QString path = QString::fromStdString (oapiResolvePath (cbuf));
 
 	// GUID_WICPixelFormat24bppBGR rows, top-down

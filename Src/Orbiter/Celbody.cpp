@@ -137,13 +137,15 @@ CelestialBody::CelestialBody (char *fname)
 		char *str;
 		str = strtok (cbuf, " \t");
 		while (str) {
+			double c; // not upstream: read first, appended only when it is a number
+			if (sscanf (str, "%lf", &c) != 1) { str = strtok (NULL, " \t"); continue; } // not upstream: a non-number token is skipped
 			double *tmp = new double[njcoeff+1]; TRACENEW
 			if (njcoeff) {
 				memcpy (tmp, jcoeff, njcoeff*sizeof(double));
 				delete []jcoeff;
 			}
 			jcoeff = tmp;
-			sscanf (str, "%lf", jcoeff + njcoeff++);
+			jcoeff[njcoeff++] = c; // not upstream: the value read above
 			str = strtok (NULL, " \t");
 		}
 	}
@@ -753,10 +755,14 @@ void CelestialBody::RegisterModule (char *dllname)
 	char cbuf[256];
 	module = 0;                              // reset new interface
 	memset (&modIntf, 0, sizeof (modIntf));  // reset old interface
-	sprintf (cbuf, "Modules/Celbody/%s.so", dllname); // try new module location
-	hMod = dlopen (oapiResolvePath (cbuf).c_str(), RTLD_NOW);
+	hMod = 0; // not upstream: stays 0 when a module path doesn't fit
+	if (snprintf (cbuf, sizeof cbuf, "Modules/Celbody/%s.so", dllname) < (int)sizeof cbuf) // try new module location; not upstream: bounded, a path that doesn't fit is not tried
+		hMod = dlopen (oapiResolvePath (cbuf).c_str(), RTLD_NOW); // not upstream: only when the path fit
 	if (!hMod) {
-		sprintf (cbuf, "Modules/%s.so", dllname);  // try legacy module location
+		if (snprintf (cbuf, sizeof cbuf, "Modules/%s.so", dllname) >= (int)sizeof cbuf) {  // try legacy module location; not upstream: bounded, a name that doesn't fit: no dlopen
+			LOGOUT_WARN ("Path too long: Modules/%s.so", dllname);
+			return;
+		}
 		hMod = dlopen (oapiResolvePath (cbuf).c_str(), RTLD_NOW);
 	}
 	if (!hMod) {
@@ -938,9 +944,22 @@ void CELBODY2::clbkInit (FILEHANDLE cfg)
 		// 1: try Config\<Name>\Atmosphere.cfg for interactive setting
 		char fname[256], name[256];
 		oapiGetObjectName (hBody, name, 256);
-		strcat (name, "\\Atmosphere.cfg");
-		FILEHANDLE hFile = oapiOpenFile (name, FILE_IN, CONFIG);
-		if (oapiReadItem_string (hFile, (char*)"MODULE_ATM", fname) || oapiReadItem_string (cfg, (char*)"MODULE_ATM", fname)) {
+		FILEHANDLE hFile = 0; // not upstream: no file when the path doesn't fit
+		if (strlen (name) + strlen ("\\Atmosphere.cfg") < sizeof name) { // not upstream: append only with room, else only cfg is read
+			strcat (name, "\\Atmosphere.cfg");
+			hFile = oapiOpenFile (name, FILE_IN, CONFIG);
+		} else LOGOUT_WARN ("Path too long: %s\\Atmosphere.cfg", name); // not upstream
+		auto ReadAtm = [&] (FILEHANDLE f) { // not upstream: oapiReadItem_string into a local [512], a value that doesn't fit fname counts as not read
+			char tmp[512];
+			if (!f || !oapiReadItem_string (f, (char*)"MODULE_ATM", tmp)) return false;
+			if (strlen (tmp) >= sizeof fname) {
+				LOGOUT_WARN ("Value of item MODULE_ATM too long, ignored");
+				return false;
+			}
+			strcpy (fname, tmp);
+			return true;
+		};
+		if (ReadAtm (hFile) || ReadAtm (cfg)) { // not upstream: hFile may be 0
 			if (strcasecmp (fname, "[None]"))
 				LoadAtmosphereModule (fname);
 		}

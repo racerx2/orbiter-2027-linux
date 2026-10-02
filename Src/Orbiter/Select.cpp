@@ -138,7 +138,7 @@ bool InputBox::OpenEx(const char *_title, char *_buf, int _vislen,
     active = true;
 
     if (_buf)
-        strcpy(inputbuf, _buf);
+        snprintf(inputbuf, sizeof inputbuf, "%s", _buf); // not upstream: add-on text cut to inputbuf
     else
         inputbuf[0] = '\0';
 
@@ -147,7 +147,7 @@ bool InputBox::OpenEx(const char *_title, char *_buf, int _vislen,
 
 void InputBox::OnDraw() {
     char buf[256];
-    sprintf(buf, "%s###InputBox", title.c_str());
+    snprintf(buf, sizeof buf, "%.*s###InputBox", (int)(sizeof buf - sizeof "###InputBox"), title.c_str()); // not upstream: a long title is cut, the ID suffix stays
 
     bool firstTime = false;
     if (opened) {

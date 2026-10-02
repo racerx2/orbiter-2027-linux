@@ -80,7 +80,7 @@ void DlgPlaybackEditor::OnDraw() {
 			ImGui::TableNextRow();
 			ImGui::TableSetColumnIndex(0);
 			char label[32];
-			sprintf(label, "%0.2f###line%d", e->T0(),i);
+			snprintf(label, sizeof label, "%0.2f###line%d", e->T0(),i); // not upstream: bounded, the event time comes from the file (D)
 			ImGuiSelectableFlags selectable_flags = ImGuiSelectableFlags_SpanAllColumns;
 			if (ImGui::Selectable(label, item_is_selected, selectable_flags))
 			{
@@ -88,7 +88,7 @@ void DlgPlaybackEditor::OnDraw() {
 			}
 
 			char tag[32];
-			e->TagStr(tag);
+			e->TagStr(tag, sizeof tag); // not upstream: sized
 			ImGui::TableSetColumnIndex(1);
 			ImGui::Text("%s",tag);
 			ImGui::TableSetColumnIndex(2);
@@ -256,26 +256,35 @@ PlaybackEvent *PlaybackEvent::Create (char *event)
 			if (!s || sscanf (s, "%d", &pr) != 1) return NULL;
 			TRACENEW; return new CameraEvent (t, pr);
 		} else if (!strcmp (s, "SET")) {
-			TRACENEW; return new CameraEvent (t, s+4);
+			char *m = strtok (NULL, ""); // not upstream: the rest of the line; s+4 was past the line when SET ended it
+			if (m && strlen (m) >= 256) { // not upstream: N, a mode too long for the event is dropped as a malformed line
+				LOGOUT_WARN ("Playback editor: camera mode too long, event at %g dropped", t);
+				return NULL;
+			}
+			TRACENEW; return new CameraEvent (t, m ? m : (char*)""); // not upstream: no mode is "SET ", which playback ignores
 		}
 	} else if (!strcasecmp (s, "NOTE")) {
-		TRACENEW; return new NoteEvent (t, strtok (NULL, "\n"));
+		char *n = strtok (NULL, "\n"); // not upstream: NULL on an empty NOTE line, which the editor writes for an emptied note
+		TRACENEW; return new NoteEvent (t, n ? n : ""); // not upstream: an empty note round-trips
 	} else if (!strcasecmp (s, "NOTEOFF")) {
 		TRACENEW; return new NoteoffEvent (t);
 	} else if (!strcasecmp (s, "NOTEPOS")) {
 		double x0, y0, x1, y1;
-		int res = sscanf (s+8, "%lf %lf %lf %lf", &x0, &y0, &x1, &y1);
+		char *v = strtok (NULL, ""); // not upstream: the rest of the line; s+8 was past the line when NOTEPOS ended it
+		int res = (v ? sscanf (v, "%lf %lf %lf %lf", &x0, &y0, &x1, &y1) : 0); // not upstream: no values count as missing
 		if (res != 4) return NULL;
 		else { TRACENEW; return new NoteposEvent (t, x0, y0, x1, y1); }
 	} else if (!strcasecmp (s, "NOTECOL")) {
 		double r, g, b;
-		int res = sscanf (s+8, "%lf %lf %lf", &r, &g, &b);
+		char *v = strtok (NULL, ""); // not upstream: the rest of the line; s+8 was past the line when NOTECOL ended it
+		int res = (v ? sscanf (v, "%lf %lf %lf", &r, &g, &b) : 0); // not upstream: no values count as missing
 		if (res != 3) return NULL;
 		else { TRACENEW; return new NotecolEvent (t, r, g, b); }
 	} else if (!strcasecmp (s, "NOTESIZE")) {
 		double scale;
-		int res = sscanf (s+9, "%lf", &scale);
-		if (!res) return NULL;
+		char *v = strtok (NULL, ""); // not upstream: the rest of the line; s+9 was past the line when NOTESIZE ended it
+		int res = (v ? sscanf (v, "%lf", &scale) : 0); // not upstream: no value counts as missing
+		if (res != 1) return NULL; // not upstream: !res let EOF through with scale unset
 		else { TRACENEW; return new NotesizeEvent (t, scale); }
 	} else {
 		TRACENEW; return new GenericEvent (t, s, strtok (NULL, "\n"));
@@ -286,7 +295,7 @@ PlaybackEvent *PlaybackEvent::Create (char *event)
 PlaybackEvent::PlaybackEvent (double _t0)
 {
 	t0 = _t0;
-	sprintf(m_tmp_t0, "%0.2f", t0);
+	snprintf(m_tmp_t0, sizeof m_tmp_t0, "%0.2f", t0); // not upstream: bounded, the time comes from the file (D)
 }
 
 void PlaybackEvent::TimeStr (char *str)
@@ -341,9 +350,9 @@ void GenericEvent::SetContent (const char *_content)
 	} else content = 0;
 }
 
-void GenericEvent::TagStr (char *str)
+void GenericEvent::TagStr (char *str, size_t n) // not upstream: sized
 {
-	strcpy (str, tag);
+	snprintf (str, n, "%s", tag); // not upstream: cut and terminated, the tag comes from the file (D)
 }
 
 void GenericEvent::DescStr (char *str)
@@ -366,8 +375,8 @@ void GenericEvent::DrawPreview() {
 
 void GenericEvent::DrawEdit() {
 	PlaybackEvent::DrawEdit();
-	char ltag[4096];
-	char lcontent[4096];
+	char ltag[4096] = ""; // not upstream: "" when there is no tag
+	char lcontent[4096] = ""; // not upstream: "" when there is no content (e.g. "t ENDSESSION"), it was shown uninitialised
 	if(tag) strncpy(ltag, tag, 4095);
 	if(content) strncpy(lcontent, content, 4095);
 	ltag[4095]='\0';
@@ -386,12 +395,12 @@ TaccEvent::TaccEvent (double _t0, double _tacc, float _delay): PlaybackEvent (_t
 {
 	tmp_tacc = tacc = _tacc;
 	delay = _delay;
-	sprintf(tmp_delay, "%f", delay);
+	snprintf(tmp_delay, sizeof tmp_delay, "%f", delay); // not upstream: bounded, the delay comes from the file (D)
 }
 
-void TaccEvent::TagStr (char *str)
+void TaccEvent::TagStr (char *str, size_t n) // not upstream: sized
 {
-	strcpy (str, "TACC");
+	snprintf (str, n, "TACC"); // not upstream: sized
 }
 
 void TaccEvent::DescStr (char *str)
@@ -405,9 +414,9 @@ void TaccEvent::DescStr (char *str)
 
 void TaccEvent::Write (ofstream &ofs)
 {
-	char cbuf[256];
-	if (delay) sprintf (cbuf, "%f %f", tacc, delay);
-	else       sprintf (cbuf, "%f", tacc);
+	char cbuf[640]; // not upstream: [256]; two %f of any double (317 characters each) fit, so the output is unchanged
+	if (delay) snprintf (cbuf, sizeof cbuf, "%f %f", tacc, delay); // not upstream: bounded
+	else       snprintf (cbuf, sizeof cbuf, "%f", tacc); // not upstream: bounded
 	WriteEvent (ofs, "TACC", cbuf);
 }
 
@@ -441,6 +450,7 @@ CameraEvent::CameraEvent (double _t0, int _preset): PlaybackEvent (_t0)
 		char cbuf[256];
 		CameraMode *cm = g_camera->GetCMode();
 		cm->Store (cbuf);
+		if (!*cbuf) LOGOUT_WARN ("Camera mode too long for a playback event; the event is inert (\"SET \")"); // not upstream: Store gave "" (N)
 		SetInlineMode (cbuf);
 	}
 }
@@ -461,16 +471,14 @@ void CameraEvent::SetPreset (int _preset, bool editmode)
 void CameraEvent::SetInlineMode (char *mode, bool editmode)
 {
 	if(!editmode) {
-		strcpy (modestr, "SET ");
-		strcat (modestr, mode);
+		snprintf (modestr, sizeof modestr, "SET %s", mode); // not upstream: bounded; Store and Create give at most 255 characters, which fit
 	}
-	strcpy (m_tmp_modestr, "SET ");
-	strcat (m_tmp_modestr, mode);
+	snprintf (m_tmp_modestr, sizeof m_tmp_modestr, "SET %s", mode); // not upstream: as modestr
 }
 
-void CameraEvent::TagStr (char *str)
+void CameraEvent::TagStr (char *str, size_t n) // not upstream: sized
 {
-	strcpy (str, "CAMERA");
+	snprintf (str, n, "CAMERA"); // not upstream: sized
 }
 
 void CameraEvent::DescStr (char *str)
@@ -513,8 +521,8 @@ void CameraEvent::DrawEdit() {
 	CameraMode *cm = g_camera->GetCMode();
 	char cbuf[256];
 	cm->Store (cbuf);
-	ImGui::SameLine();
-	if(ImGui::Button(cbuf)) {
+	if (*cbuf) ImGui::SameLine(); // not upstream: no button for a mode Store couldn't fit (it gave "")
+	if(*cbuf && ImGui::Button(cbuf)) { // not upstream: as above
 		SetInlineMode (cbuf, true);
 	}
 }
@@ -537,9 +545,9 @@ NoteEvent::~NoteEvent ()
 	if (note) free(note);
 }
 
-void NoteEvent::TagStr (char *str)
+void NoteEvent::TagStr (char *str, size_t n) // not upstream: sized
 {
-	strcpy (str, "NOTE");
+	snprintf (str, n, "NOTE"); // not upstream: sized
 }
 
 void NoteEvent::DescStr (char *str)
@@ -582,9 +590,9 @@ NoteposEvent::NoteposEvent (double _t0, double _x0, double _y0, double _x1, doub
 	y1 = _y1;
 }
 
-void NoteposEvent::TagStr (char *str)
+void NoteposEvent::TagStr (char *str, size_t n) // not upstream: sized
 {
-	strcpy (str, "NOTEPOS");
+	snprintf (str, n, "NOTEPOS"); // not upstream: sized
 }
 
 void NoteposEvent::DescStr (char *str)
@@ -688,9 +696,9 @@ NotecolEvent::NotecolEvent (double _t0, double _r, double _g, double _b): Playba
 	m_tmp[2] = (float)b;
 }
 
-void NotecolEvent::TagStr (char *str)
+void NotecolEvent::TagStr (char *str, size_t n) // not upstream: sized
 {
-	strcpy (str, "NOTECOL");
+	snprintf (str, n, "NOTECOL"); // not upstream: sized
 }
 
 void NotecolEvent::DescStr (char *str)
@@ -727,12 +735,12 @@ void NotecolEvent::ApplyChanges() {
 NotesizeEvent::NotesizeEvent (double _t0, double _size): PlaybackEvent (_t0)
 {
 	size = _size;
-	sprintf(m_tmp_size,"%f",size);
+	snprintf(m_tmp_size, sizeof m_tmp_size, "%f",size); // not upstream: bounded, the size comes from the file (D)
 }
 
-void NotesizeEvent::TagStr (char *str)
+void NotesizeEvent::TagStr (char *str, size_t n) // not upstream: sized
 {
-	strcpy (str, "NOTESIZE");
+	snprintf (str, n, "NOTESIZE"); // not upstream: sized
 }
 
 void NotesizeEvent::DescStr (char *str)
@@ -766,9 +774,9 @@ NoteoffEvent::NoteoffEvent (double _t0): PlaybackEvent (_t0)
 {
 }
 
-void NoteoffEvent::TagStr (char *str)
+void NoteoffEvent::TagStr (char *str, size_t n) // not upstream: sized
 {
-	strcpy (str, "NOTEOFF");
+	snprintf (str, n, "NOTEOFF"); // not upstream: sized
 }
 
 void NoteoffEvent::DescStr (char *str)

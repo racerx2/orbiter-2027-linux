@@ -1695,7 +1695,7 @@ private:
 	char *onlinehelp;  // string for online help support (or NULL if none)
 
 	struct MeshList {
-		Str64 meshname;    // mesh file names for the visual
+		char meshname[256]; // not upstream: was Str64, long names keep working; mesh file names for the visual
 		MESHHANDLE hMesh;  // pointer to preloaded mesh, if present
 		VECTOR3 meshofs;   // mesh offset in vessel coords
 		DWORD_PTR crc;         // mesh id

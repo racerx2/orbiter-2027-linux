@@ -93,7 +93,7 @@ BaseObject *BaseObject::Create (const Base *_base, istream &is)
 
 int BaseObject::Read (istream &is)
 {
-	char cbuf[256], label[32], *value, *cp;
+	char cbuf[256], label[256] = "", *value, *cp; // not upstream: label holds any token of a 255-character line; set before a blank first line
 	int r, res = 0;
 	do {
 		if (!is.getline (cbuf, 256)) return 1; // premature end of file
@@ -395,7 +395,7 @@ int Block::ParseLine (const char *label, const char *value)
 	if (!strncasecmp (label, "TEX", 3)) {
 		float su, sv;
 		int i;
-		char name[32];
+		char name[256]; // not upstream: texture names have no length limit, the line is 255
 		if (sscanf (label+3, "%d", &i) != 1 || i < 1 || i > 3) {
 			ParseError("Block: TEXn: Expected integer value 1-3 for n");
 			res = 2;
@@ -404,9 +404,11 @@ int Block::ParseLine (const char *label, const char *value)
 			ParseError("Block: TEXn: expected 3 values (*char, scalar, scalar)");
 			res = 2;
 		} 
-		texid[i-1] = NameToId (name);
-		tuscale[i-1] = su;
-		tvscale[i-1] = sv;
+		if (!res) { // not upstream: only with n in range and all three values read
+			texid[i-1] = NameToId (name);
+			tuscale[i-1] = su;
+			tvscale[i-1] = sv;
+		} // not upstream: end of the TEXn guard
 	}
 	return res;
 }
@@ -644,7 +646,7 @@ int Hangar::ParseLine (const char *label, const char *value)
 	if (!strncasecmp (label, "TEX", 3)) {
 		float su, sv;
 		int i;
-		char name[32];
+		char name[256]; // not upstream: texture names have no length limit, the line is 255
 		if (sscanf (label+3, "%d", &i) != 1 || i < 1 || i > 3) {
 			ParseError("Hangar: TEXn: Expected integer value 1-3 for n");
 			res = 2;
@@ -653,9 +655,11 @@ int Hangar::ParseLine (const char *label, const char *value)
 			ParseError("Hangar: TEXn: expected 3 values (*char, scalar, scalar)");
 			res = 2;
 		}
-		texid[i-1] = NameToId (name);
-		tuscale[i-1] = su;
-		tvscale[i-1] = sv;
+		if (!res) { // not upstream: only with n in range and all three values read
+			texid[i-1] = NameToId (name);
+			tuscale[i-1] = su;
+			tvscale[i-1] = sv;
+		} // not upstream: end of the TEXn guard
 	}
 	return res;
 }
@@ -893,7 +897,7 @@ int Hangar2::ParseLine (const char *label, const char *value)
 	} else if (!strncasecmp (label, "TEX", 3)) {
 		float su, sv;
 		int i;
-		char name[32];
+		char name[256]; // not upstream: texture names have no length limit, the line is 255
 		if (sscanf (label+3, "%d", &i) != 1 || i < 1 || i > 3) {
 			ParseError("Hangar2: TEXn: Expected integer value 1-3 for n");
 			res = 2;
@@ -902,9 +906,11 @@ int Hangar2::ParseLine (const char *label, const char *value)
 			ParseError("Hangar2: TEXn: expected 3 values (*char, scalar, scalar)");
 			res = 2;
 		}
-		texid[i-1] = NameToId (name);
-		tuscale[i-1] = su;
-		tvscale[i-1] = sv;
+		if (!res) { // not upstream: only with n in range and all three values read
+			texid[i-1] = NameToId (name);
+			tuscale[i-1] = su;
+			tvscale[i-1] = sv;
+		} // not upstream: end of the TEXn guard
 	}
 	return res;
 }
@@ -1099,7 +1105,7 @@ int Hangar3::ParseLine (const char *label, const char *value)
 	if (!strncasecmp (label, "TEX", 3)) {
 		float su, sv;
 		int i;
-		char name[32];
+		char name[256]; // not upstream: texture names have no length limit, the line is 255
 		if (sscanf (label+3, "%d", &i) != 1 || i < 1 || i > 3) {
 			ParseError("Hangar3: TEXn: Expected integer value 1-3 for n");
 			res = 2;
@@ -1108,9 +1114,11 @@ int Hangar3::ParseLine (const char *label, const char *value)
 			ParseError("Hangar3: TEXn: expected 3 values (*char, scalar, scalar)");
 			res = 2;
 		}
-		texid[i-1] = NameToId (name);
-		tuscale[i-1] = su;
-		tvscale[i-1] = sv;
+		if (!res) { // not upstream: only with n in range and all three values read
+			texid[i-1] = NameToId (name);
+			tuscale[i-1] = su;
+			tvscale[i-1] = sv;
+		} // not upstream: end of the TEXn guard
 	}
 	return res;
 }
@@ -1340,7 +1348,7 @@ int Tank::ParseLine (const char *label, const char *value)
 	} else if (!strncasecmp (label, "TEX", 3)) {
 		float su, sv;
 		int i;
-		char name[32];
+		char name[256]; // not upstream: texture names have no length limit, the line is 255
 		if (sscanf (label+3, "%d", &i) != 1 || i < 1 || i > 2) {
 			ParseError("Tank: TEXn: Expected integer value 1-2 for n");
 			res = 2;
@@ -1349,9 +1357,11 @@ int Tank::ParseLine (const char *label, const char *value)
 			ParseError("Tank: TEXn: expected 3 values (*char, scalar, scalar)");
 			res = 2;
 		}
-		texid[i-1] = NameToId (name);
-		tuscale[i-1] = su;
-		tvscale[i-1] = sv;
+		if (!res) { // not upstream: only with n in range and all three values read
+			texid[i-1] = NameToId (name);
+			tuscale[i-1] = su;
+			tvscale[i-1] = sv;
+		} // not upstream: end of the TEXn guard
 	}
 	return res;
 }
@@ -1953,7 +1963,7 @@ void Runway::ExportGroup (int grp, NTVERTEX *vtx, WORD *idx, DWORD &idx_ofs)
 
 int Runway::Read (istream &is)
 {
-	char cbuf[256], *cp, label[32];
+	char cbuf[256], *cp, label[256] = ""; // not upstream: label holds any token of a 255-character line; set before a blank first line
 	int i;
 	DWORD k;
 
@@ -1970,8 +1980,8 @@ int Runway::Read (istream &is)
 			width *= 0.5f;
 		} else if (!strncasecmp (label, "ILS", 3)) {
 			float freq;
-			sscanf (cp+3, "%d%f", &i, &freq);
-			ILSfreq[i-1] = freq;
+			if (sscanf (cp+3, "%d%f", &i, &freq) == 2 && i >= 1 && i <= 2) // not upstream: runway end 1 or 2 and a frequency
+				ILSfreq[i-1] = freq; // not upstream: indented under the check
 		} else if (!strcasecmp (label, "NRWSEG")) {
 			if (nrwseg) {
 				delete []rwseg;
@@ -1992,8 +2002,8 @@ int Runway::Read (istream &is)
 		} else if (!strncasecmp (label, "RWSEG", 5)) {
 			float seglen, tu0, tu1, tv0, tv1;
 			DWORD subseg;
-			sscanf (cp+5, "%d%d%f%f%f%f%f", &i, &subseg, &seglen, &tu0, &tu1, &tv0, &tv1);
-			if (--i >= 0 && i < (int)nrwseg) {
+			int nv = sscanf (cp+5, "%d%d%f%f%f%f%f", &i, &subseg, &seglen, &tu0, &tu1, &tv0, &tv1); // not upstream: count of values read
+			if (nv == 7 && --i >= 0 && i < (int)nrwseg) { // not upstream: only a complete line
 				rwseg[i].subseg = subseg;
 				rwseg[i].len    = seglen;
 				rwseg[i].tu0    = tu0;
@@ -2110,7 +2120,7 @@ RunwayLights::~RunwayLights ()
 
 int RunwayLights::Read (istream &is)
 {
-	char cbuf[256], *cp, label[32];
+	char cbuf[256], *cp, label[256] = ""; // not upstream: label holds any token of a 255-character line; set before a blank first line
 
 	do {
 		if (!is.getline (cbuf, 256)) return 1; // premature end of file
@@ -2126,14 +2136,20 @@ int RunwayLights::Read (istream &is)
 			sscanf (cp+5, "%f", &width);
 			width *= 0.5f;
 		} else if (!strcasecmp (label, "PAPI")) {
-			if (!papi) { papi = new struct PAPIDATA; TRACENEW }
-			sscanf (cp+4, "%f%f%f", &papi->apprangle, &papi->aperture, &papi->ofs);
-			papi->apprangle *= (float)RAD;
-			papi->aperture *= (float)RAD;
+			struct PAPIDATA p; // not upstream: read into a local, stored only when all three values were read
+			if (sscanf (cp+4, "%f%f%f", &p.apprangle, &p.aperture, &p.ofs) == 3) { // not upstream: a short line counts as no PAPI line
+				if (!papi) { papi = new struct PAPIDATA(); TRACENEW } // not upstream: value-initialised
+				*papi = p;
+				papi->apprangle *= (float)RAD;
+				papi->aperture *= (float)RAD;
+			} // not upstream: end of the PAPI check
 		} else if (!strcasecmp (label, "VASI")) {
-			if (!vasi) { vasi = new struct VASIDATA; TRACENEW }
-			sscanf (cp+4, "%f%f%f", &vasi->apprangle, &vasi->lightsep, &vasi->ofs);
-			vasi->apprangle *= (float)RAD;
+			struct VASIDATA v; // not upstream: read into a local, stored only when all three values were read
+			if (sscanf (cp+4, "%f%f%f", &v.apprangle, &v.lightsep, &v.ofs) == 3) { // not upstream: a short line counts as no VASI line
+				if (!vasi) { vasi = new struct VASIDATA(); TRACENEW } // not upstream: value-initialised
+				*vasi = v;
+				vasi->apprangle *= (float)RAD;
+			} // not upstream: end of the VASI check
 		}
 	} while (strcasecmp (label, "END"));
 	return 0;
@@ -2435,7 +2451,7 @@ BeaconArray::BeaconArray (const Base *_base): BaseObject (_base)
 
 int BeaconArray::Read (istream &is)
 {
-	char cbuf[256], *cp, label[32];
+	char cbuf[256], *cp, label[256] = ""; // not upstream: label holds any token of a 255-character line; set before a blank first line
 	do {
 		if (!is.getline (cbuf, 256)) return 1; // premature end of file
 		cp = trim_string (cbuf);
@@ -2697,7 +2713,7 @@ Train1::~Train1 ()
 
 int Train1::Read (istream &is)
 {
-	char cbuf[256], *cp, label[32];
+	char cbuf[256], *cp, label[256] = ""; // not upstream: label holds any token of a 255-character line; set before a blank first line
 
 	do {
 		if (!is.getline (cbuf, 256)) return 1; // premature end of file
@@ -2972,7 +2988,7 @@ Train2::~Train2 ()
 
 int Train2::Read (istream &is)
 {
-	char cbuf[256], *cp, label[32];
+	char cbuf[256], *cp, label[256] = ""; // not upstream: label holds any token of a 255-character line; set before a blank first line
 
 	do {
 		if (!is.getline (cbuf, 256)) return 1; // premature end of file
@@ -3262,7 +3278,7 @@ SolarPlant::~SolarPlant ()
 
 int SolarPlant::Read (istream &is)
 {
-	char cbuf[256], *cp, label[32];
+	char cbuf[256], *cp, label[256] = ""; // not upstream: label holds any token of a 255-character line; set before a blank first line
 	int i;
 
 	do {
@@ -3275,8 +3291,11 @@ int SolarPlant::Read (istream &is)
 			sscanf (cp+5, "%f", &scale);
 		else if (!strcasecmp (label, "SPACING"))
 			sscanf (cp+7, "%f%f", &sepx, &sepz);
-		else if (!strcasecmp (label, "GRID"))
-			sscanf (cp+4, "%d%d", &nrow, &ncol);
+		else if (!strcasecmp (label, "GRID")) { // not upstream: braces for the GRID check
+			int nr, nc; // not upstream: read into locals; nrow*ncol*21 (Idx entries) must fit in int, else the default 2x2 stays
+			if (sscanf (cp+4, "%d%d", &nr, &nc) == 2 && nr >= 1 && nc >= 1 && (long long)nr*nc*21 <= INT_MAX)
+				nrow = nr, ncol = nc;
+		} // not upstream: end of the GRID check
 		else if (!strcasecmp (label, "ROT")) {
 			sscanf (cp+3, "%f", &rot);
 			rot *= (float)RAD;

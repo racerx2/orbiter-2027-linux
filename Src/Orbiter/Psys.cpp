@@ -185,6 +185,8 @@ bool PlanetarySystem::Read (char *fname, const Config* config, OutputLoadStatusC
 		AddStar (new Star (cbuf)); TRACENEW
 	}
 
+	if (stars.empty ()) return false; // not upstream: planets attach to stars[0]; no Star1 leaves nObj() 0, the caller's failure path
+
 	// read planets
 	for (i = 0;; i++) {
 		sprintf (label, "Planet%d", i+1);
@@ -215,7 +217,7 @@ bool PlanetarySystem::Read (char *fname, const Config* config, OutputLoadStatusC
 void PlanetarySystem::OutputLoadStatus (const char *bname, OutputLoadStatusCallback outputLoadStatus, void* callbackContext)
 {
 	char cbuf[256];
-	sprintf (cbuf, "%s: %s", m_Name.c_str(), bname);
+	snprintf (cbuf, sizeof cbuf, "%s: %s", m_Name.c_str(), bname); // not upstream: bounded; status text is cut
 	outputLoadStatus(cbuf, 0, callbackContext);
 }
 
@@ -243,29 +245,25 @@ void PlanetarySystem::ScanLabelLists (ifstream &cfg, bool bScanHeaders)
 				char item[256], value[256];
 				for (;;) {
 					if (!ulf.getline(cbuf, 256) || !strncasecmp(cbuf, "END_HEADER", 10)) break;
-					sscanf(cbuf, "%s %s", item, value);
+					if (sscanf(cbuf, "%s %s", item, value) < 2) continue; // not upstream: a blank or one-token line would leave item or value unset
 					if (!strcasecmp(item, "InitialState")) {
 						if (!strcasecmp(value, "on")) list.active = true;
 					}
 					else if (!strcasecmp(item, "ColourIdx")) {
 						int col;
-						sscanf(value, "%d", &col);
-						list.colour = max(0, min(5, col));
+						if (sscanf(value, "%d", &col) == 1) list.colour = max(0, min(5, col)); // not upstream: a value that isn't a number keeps the default
 					}
 					else if (!strcasecmp(item, "ShapeIdx")) {
 						int shape;
-						sscanf(value, "%d", &shape);
-						list.shape = max(0, min(6, shape));
+						if (sscanf(value, "%d", &shape) == 1) list.shape = max(0, min(6, shape)); // not upstream: a value that isn't a number keeps the default
 					}
 					else if (!strcasecmp(item, "Size")) {
 						float size;
-						sscanf(value, "%f", &size);
-						list.size = max(0.1f, min(2.0f, size));
+						if (sscanf(value, "%f", &size) == 1) list.size = max(0.1f, min(2.0f, size)); // not upstream: a value that isn't a number keeps the default
 					}
 					else if (!strcasecmp(item, "DistanceFactor")) {
 						float distfac;
-						sscanf(value, "%f", &distfac);
-						list.distfac = max(1e-5f, min(1e3f, distfac));
+						if (sscanf(value, "%f", &distfac) == 1) list.distfac = max(1e-5f, min(1e3f, distfac)); // not upstream: a value that isn't a number keeps the default
 					}
 					else if (!strcasecmp(item, "Frame")) {
 						if (strcasecmp(value, "Ecliptic"))

@@ -2263,25 +2263,31 @@ DLLEXPORT void oapiSetMainInfoVisibilityMode (DWORD mode)
 DLLEXPORT FILEHANDLE oapiOpenFile (const char *fname, FileAccessMode mode, PathRoot root)
 {
 	char cbuf[512];
+	const char *path; // not upstream: copied into cbuf with snprintf below
 	switch (root) {
 	case CONFIG:
-		strcpy (cbuf, g_pOrbiter->Cfg()->ConfigPathNoext (fname));
+		path = g_pOrbiter->Cfg()->ConfigPathNoext (fname); // not upstream: copied below
 		break;
 	case SCENARIOS:
-		strcpy (cbuf, g_pOrbiter->ScnPath (fname));
+		path = g_pOrbiter->ScnPath (fname); // not upstream: copied below
 		break;
 	case TEXTURES:
-		strcpy (cbuf, g_pOrbiter->TexPath (fname));
+		path = g_pOrbiter->TexPath (fname); // not upstream: copied below
 		break;
 	case TEXTURES2:
-		strcpy (cbuf, g_pOrbiter->HTexPath (fname));
+		path = g_pOrbiter->HTexPath (fname); // not upstream: copied below
 		break;
 	case MESHES:
-		strcpy (cbuf, g_pOrbiter->MeshPath (fname));
+		path = g_pOrbiter->MeshPath (fname); // not upstream: copied below
 		break;
 	default:
-		strcpy (cbuf, fname);
+		path = fname; // not upstream: copied below
 		break;
+	}
+	if (!path) path = ""; // not upstream: HTexPath is NULL without a high-res texture dir; "" fails to open in every mode
+	if (snprintf (cbuf, sizeof cbuf, "%s", path) >= (int)sizeof cbuf) { // not upstream: a path that doesn't fit is "", so the open fails
+		LOGOUT_WARN ("Path too long: %s", path);
+		cbuf[0] = '\0';
 	}
 
 	std::string rp = oapiResolvePath (cbuf); // '\' separators and case as on disk
@@ -2431,7 +2437,10 @@ DLLEXPORT void oapiWriteItem_vec (FILEHANDLE file, char *item, const VECTOR3 &ve
 
 DLLEXPORT bool oapiReadItem_string (FILEHANDLE f, char *item, char *string)
 {
-	return GetItemString (*(ifstream*)f, item, string);
+	char tmp[512]; // not upstream: the sized reader fills a local buffer, then upstream's contract (at most 510 characters) for the caller's
+	if (!GetItemString (*(ifstream*)f, item, tmp)) return false; // not upstream: sized
+	strcpy (string, tmp); // not upstream: the SDK buffer has no size, as upstream
+	return true; // not upstream
 }
 
 DLLEXPORT bool oapiReadItem_float (FILEHANDLE f, const char *item, double &val) // not upstream: const item
@@ -2636,9 +2645,9 @@ DLLEXPORT void ExitLib (void *hModule)
 DLLEXPORT int Date2Int (char *date)
 {
 	static const char *mstr[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-	char ms[32];
-	int day, month, year, v;
-	sscanf (date, "%s%d%d", ms, &day, &year);
+	char ms[32] = ""; // not upstream: "" when the date doesn't parse
+	int day = 0, month, year = 0, v; // not upstream: 0 when the date doesn't parse
+	sscanf (date, "%31s%d%d", ms, &day, &year); // not upstream: width of ms
 	for (month = 0; month < 12; month++)
 		if (!strncasecmp (ms, mstr[month], 3)) break;
 	v = (year%100)*10000 + (month+1)*100 + day;
@@ -2647,8 +2656,8 @@ DLLEXPORT int Date2Int (char *date)
 
 DLLEXPORT void WriteScenario_state (FILEHANDLE f, char *tag, const AnimState &s)
 {
-	char cbuf[256];
-	sprintf (cbuf, "%d %0.4f", s.action-1, s.pos);
+	char cbuf[640]; // not upstream: holds "%d %0.4f" of any int and double
+	snprintf (cbuf, sizeof cbuf, "%d %0.4f", s.action-1, s.pos); // not upstream: bounded
 	oapiWriteScenario_string (f, tag, cbuf);
 }
 
@@ -2656,7 +2665,7 @@ DLLEXPORT void sscan_state (char *str, AnimState &s)
 {
 	int a;
 	double p;
-	sscanf (str, "%d%lf", &a, &p);
+	if (sscanf (str, "%d%lf", &a, &p) != 2) return; // not upstream: a line without both values leaves the state as set, as an absent line
 	s.action = (AnimState::Action)(a+1);
 	s.pos = p;
 }

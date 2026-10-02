@@ -337,7 +337,7 @@ char *readline (istream &is)
 	return 0; // never gets here
 }
 
-bool GetItemString (istream &is, const char *label, char *val)
+bool GetItemString (istream &is, const char *label, char *val, size_t n) // not upstream: sized
 {
 	char cbuf[512], *cl, *cv;
 	int i;
@@ -356,6 +356,10 @@ bool GetItemString (istream &is, const char *label, char *val)
 		if (!strcasecmp (cl, label)) {
 			while (*cv == ' ' || *cv == '\t') cv++;
 			if (*cv) {
+				if (strlen (cv) >= n) { // not upstream: a value that doesn't fit counts as missing, val untouched
+					LOGOUT_WARN ("Value of item %s too long, ignored", label);
+					return false;
+				}
 				strcpy (val, cv);
 				return true;
 			} else {
@@ -370,31 +374,31 @@ bool GetItemString (istream &is, const char *label, char *val)
 
 bool GetItemReal (istream &is, const char *label, double &val)
 {
-	if (!GetItemString (is, label, g_cbuf)) return false;
+	if (!GetItemString (is, label, g_cbuf, sizeof g_cbuf)) return false; // not upstream: sized
 	return (sscanf (g_cbuf, "%lf", &val) == 1);
 }
 
 bool GetItemInt (istream &is, const char *label, int &val)
 {
-	if (!GetItemString (is, label, g_cbuf)) return false;
+	if (!GetItemString (is, label, g_cbuf, sizeof g_cbuf)) return false; // not upstream: sized
 	return (sscanf (g_cbuf, "%d", &val) == 1);
 }
 
 bool GetItemSize(istream& is, const char* label, size_t& val)
 {
-	if (!GetItemString(is, label, g_cbuf)) return false;
+	if (!GetItemString(is, label, g_cbuf, sizeof g_cbuf)) return false; // not upstream: sized
 	return (sscanf(g_cbuf, "%zu", &val) == 1);
 }
 
 bool GetItemHex (istream &is, const char *label, int &val)
 {
-	if (!GetItemString (is, label, g_cbuf)) return false;
+	if (!GetItemString (is, label, g_cbuf, sizeof g_cbuf)) return false; // not upstream: sized
 	return (sscanf (g_cbuf, "%x", &val) == 1);
 }
 
 bool GetItemBool (istream &is, const char *label, bool &val)
 {
-	if (!GetItemString (is, label, g_cbuf)) return false;
+	if (!GetItemString (is, label, g_cbuf, sizeof g_cbuf)) return false; // not upstream: sized
 	if (!strncasecmp (g_cbuf, "true", 4)) { val = true; return true; }
 	else if (!strncasecmp (g_cbuf, "false", 5)) { val = false; return true; }
 	return false;
@@ -403,7 +407,7 @@ bool GetItemBool (istream &is, const char *label, bool &val)
 bool GetItemVector (istream &is, const char *label, Vector &val)
 {
 	double x, y, z;
-	if (!GetItemString (is, label, g_cbuf)) return false;
+	if (!GetItemString (is, label, g_cbuf, sizeof g_cbuf)) return false; // not upstream: sized
 	if (sscanf (g_cbuf, "%lf%lf%lf", &x, &y, &z) != 3) return false;
 	val.Set (x,y,z);
 	return true;
@@ -412,7 +416,7 @@ bool GetItemVector (istream &is, const char *label, Vector &val)
 bool GetItemVECTOR (istream &is, const char *label, VECTOR3 &val)
 {
 	double x, y, z;
-	if (!GetItemString (is, label, g_cbuf)) return false;
+	if (!GetItemString (is, label, g_cbuf, sizeof g_cbuf)) return false; // not upstream: sized
 	if (sscanf (g_cbuf, "%lf%lf%lf", &x, &y, &z) != 3) return false;
 	val.x = x; val.y = y; val.z = z;
 	return true;
@@ -482,42 +486,43 @@ bool Config::Load(const char *fname)
 
 	GetBool ("EchoAllParams", bEchoAll);
 
+	auto GetDir = [&] (const char *item, char (&dir)[256]) { // not upstream: read into a local buffer, copied with its '\' only when non-empty and it fits
+		char val[256];
+		if (!GetString (ifs, item, val) || !val[0]) return false;
+		size_t len = strlen (val);
+		if (val[len-1] != '\\' && len+1 >= sizeof dir) {
+			LOGOUT_WARN ("Value of %s too long, ignored", item);
+			return false;
+		}
+		strcpy (dir, val);
+		if (val[len-1] != '\\') strcat (dir, "\\");
+		return true;
+	};
+
 	// configuration directory
-	if (GetString (ifs, "ConfigDir", CfgDirPrm.ConfigDir))
-		if (CfgDirPrm.ConfigDir[strlen(CfgDirPrm.ConfigDir)-1] != '\\')
-			strcat (CfgDirPrm.ConfigDir, "\\");
+	GetDir ("ConfigDir", CfgDirPrm.ConfigDir); // not upstream: a rejected or empty value keeps the default
 	strcpy (cfgpath, CfgDirPrm.ConfigDir); cfglen = strlen (cfgpath);
 
 	// mesh directory
-	if (GetString (ifs, "MeshDir", CfgDirPrm.MeshDir))
-		if (CfgDirPrm.MeshDir[strlen(CfgDirPrm.MeshDir)-1] != '\\')
-			strcat (CfgDirPrm.MeshDir, "\\");
+	GetDir ("MeshDir", CfgDirPrm.MeshDir); // not upstream: a rejected or empty value keeps the default
 	strcpy (mshpath, CfgDirPrm.MeshDir);   mshlen = strlen (mshpath);
 
 	// texture directory
-	if (GetString (ifs, "TextureDir", CfgDirPrm.TextureDir))
-		if (CfgDirPrm.TextureDir[strlen(CfgDirPrm.TextureDir)-1] != '\\')
-			strcat (CfgDirPrm.TextureDir, "\\");
+	GetDir ("TextureDir", CfgDirPrm.TextureDir); // not upstream: a rejected or empty value keeps the default
 	strcpy (texpath, CfgDirPrm.TextureDir);  texlen = strlen (texpath);
 
 	// highres texture directory
-	if (GetString (ifs, "HightexDir", CfgDirPrm.HightexDir)) {
-		if (CfgDirPrm.HightexDir[strlen(CfgDirPrm.HightexDir)-1] != '\\')
-			strcat (CfgDirPrm.HightexDir, "\\");
+	if (GetDir ("HightexDir", CfgDirPrm.HightexDir)) { // not upstream: a rejected or empty value keeps the default
 		strcpy (htxpath, CfgDirPrm.HightexDir);  htxlen = strlen (htxpath);
 	}
 
 	// planetary texture directory
-	if (GetString(ifs, "PlanetTexDir", CfgDirPrm.PlanetTexDir)) {
-		if (CfgDirPrm.PlanetTexDir[strlen(CfgDirPrm.PlanetTexDir) - 1] != '\\')
-			strcat(CfgDirPrm.PlanetTexDir, "\\");
+	if (GetDir ("PlanetTexDir", CfgDirPrm.PlanetTexDir)) { // not upstream: a rejected or empty value keeps the default
 		strcpy(ptxpath, CfgDirPrm.PlanetTexDir); ptxlen = strlen(ptxpath);
 	}
 
 	// scenario directory
-	if (GetString (ifs, "ScenarioDir", CfgDirPrm.ScnDir))
-		if (CfgDirPrm.ScnDir[strlen(CfgDirPrm.ScnDir)-1] != '\\')
-			strcat (CfgDirPrm.ScnDir, "\\");
+	GetDir ("ScenarioDir", CfgDirPrm.ScnDir); // not upstream: a rejected or empty value keeps the default
 	strcpy (scnpath, CfgDirPrm.ScnDir); scnlen = strlen (scnpath);
 
 	// Device information
@@ -595,7 +600,7 @@ bool Config::Load(const char *fname)
 	if (GetString (ifs, "PertPropSubsampling", cbuf))
 		sscanf (cbuf, "%d%lf", &CfgPhysicsPrm.PPropSubMax, &CfgPhysicsPrm.PPropSubLimit);
 	GetReal (ifs, "PertPropNonsphericalLimit", CfgPhysicsPrm.PPropStepLimit);
-	GetInt (ifs, "PropStages", CfgPhysicsPrm.nLPropLevel);
+	if (GetInt (ifs, "PropStages", i) && i >= 1 && i <= MAX_PROP_LEVEL) CfgPhysicsPrm.nLPropLevel = i; // not upstream: 1..MAX_PROP_LEVEL (it indexes [MAX_PROP_LEVEL] arrays), else the default stays
 	for (i = 0; i < MAX_PROP_LEVEL; i++) {
 		int n, mode;
 		double ttgt, atgt, tlim, alim;
@@ -663,19 +668,15 @@ bool Config::Load(const char *fname)
 		CfgVisualPrm.StarPrm.map_log = (i != 0);
 	}
 	GetBool(ifs, "EnableBackgroundStarmap", CfgVisualPrm.bUseStarImage);
-	if (GetString(ifs, "CSphereStarPath", cbuf))
-		strncpy(CfgVisualPrm.StarImagePath, cbuf, 128);
+	GetString(ifs, "CSphereStarPath", CfgVisualPrm.StarImagePath); // not upstream: read into the [128] member, too long counts as missing
 	GetBool(ifs, "EnableBackgroundImage", CfgVisualPrm.bUseBgImage);
-	if (GetString(ifs, "CSphereBgPath", cbuf))
-		strncpy(CfgVisualPrm.CSphereBgPath, cbuf, 128);
+	GetString(ifs, "CSphereBgPath", CfgVisualPrm.CSphereBgPath); // not upstream: read into the [128] member, too long counts as missing
 	GetReal (ifs, "CSphereBgIntensity", CfgVisualPrm.CSphereBgIntens);
 
 	// screen capture parameters
 	GetInt (ifs, "CaptureTarget", CfgCapturePrm.ImageTgt);
-	if (GetString (ifs, "CaptureFile", cbuf))
-		strncpy (CfgCapturePrm.ImageFile, cbuf, 128);
-	if (GetString (ifs, "CaptureSequenceDir", cbuf))
-		strncpy (CfgCapturePrm.SequenceDir, cbuf, 128);
+	GetString (ifs, "CaptureFile", CfgCapturePrm.ImageFile); // not upstream: read into the [128] member, too long counts as missing
+	GetString (ifs, "CaptureSequenceDir", CfgCapturePrm.SequenceDir); // not upstream: read into the [128] member, too long counts as missing
 	GetInt (ifs, "CaptureImageFormat", CfgCapturePrm.ImageFormat);
 	GetInt (ifs, "CaptureImageQuality", CfgCapturePrm.ImageQuality);
 	GetInt (ifs, "CaptureSequenceStart", CfgCapturePrm.SequenceStart);
@@ -1389,43 +1390,47 @@ BOOL Config::Write (const char *fname) const
 	return TRUE;
 }
 
+static char *MemberPath (char *buf, size_t size, int len, const char *name, const char *ext) // not upstream: bounded builder for the path members; too long gives "" after the kept prefix
+{
+	int n = snprintf (buf+len, size-len, "%s%s", name, ext);
+	if (n < 0 || (size_t)n >= size-len) {
+		LOGOUT_WARN ("Path too long: %s%s", name, ext);
+		buf[len] = '\0';
+		return buf+len;
+	}
+	return buf;
+}
+
 char *Config::ConfigPath (const char *name) const
 {
-	strcpy (cfgpath+cfglen, name);
-	return strcat (cfgpath, ".cfg");
+	return MemberPath (cfgpath, sizeof cfgpath, cfglen, name, ".cfg"); // not upstream: bounded
 }
 
 char *Config::ConfigPathNoext (const char *name)
 {
-	strcpy (cfgpath+cfglen, name);
-	return cfgpath;
+	return MemberPath (cfgpath, sizeof cfgpath, cfglen, name, ""); // not upstream: bounded
 }
 
 char *Config::MeshPath (const char *name)
 {
-	strcpy (mshpath+mshlen, name);
-	return strcat (mshpath, ".msh");
+	return MemberPath (mshpath, sizeof mshpath, mshlen, name, ".msh"); // not upstream: bounded
 }
 
 char *Config::TexPath (const char *name, const char *ext)
 {
-	strcpy (texpath+texlen, name);
-	return strcat (texpath, ext ? ext : ".dds");
+	return MemberPath (texpath, sizeof texpath, texlen, name, ext ? ext : ".dds"); // not upstream: bounded
 }
 
 char *Config::HTexPath (const char *name, const char *ext)
 {
 	if (!htxlen) return 0;
-	strcpy (htxpath+htxlen, name);
-	return strcat (htxpath, ext ? ext : ".dds");
+	return MemberPath (htxpath, sizeof htxpath, htxlen, name, ext ? ext : ".dds"); // not upstream: bounded
 }
 
 char* Config::PTexPath(const char* name, const char* ext)
 {
 	if (!ptxlen) return 0;
-	strcpy(ptxpath + ptxlen, name);
-	if (ext) strcat(ptxpath, ext);
-	return ptxpath;
+	return MemberPath (ptxpath, sizeof ptxpath, ptxlen, name, ext ? ext : ""); // not upstream: bounded
 }
 
 const char *Config::ScnPath (const char *name)
@@ -1433,23 +1438,30 @@ const char *Config::ScnPath (const char *name)
 	if (name[0] == '/') { // assume full absolute path
 		return name;
 	} else {
-		strcpy (scnpath+scnlen, name);
-		return strcat (scnpath, ".scn");
+		return MemberPath (scnpath, sizeof scnpath, scnlen, name, ".scn"); // not upstream: bounded
 	}
 }
 
-void Config::TexPath (char *cbuf, const char *name, const char *ext)
+bool Config::TexPath (char *cbuf, size_t n, const char *name, const char *ext) // not upstream: sized, false and "" when the path doesn't fit
 {
-	strncpy (cbuf, texpath, texlen);
-	if (ext) sprintf (cbuf+texlen, "%s.%s", name, ext);
-	else     strcpy (cbuf+texlen, name);
+	int len = ext ? snprintf (cbuf, n, "%.*s%s.%s", texlen, texpath, name, ext) : snprintf (cbuf, n, "%.*s%s", texlen, texpath, name);
+	if (len < 0 || (size_t)len >= n) {
+		if (n) cbuf[0] = '\0';
+		LOGOUT_WARN ("Path too long: %s", name);
+		return false;
+	}
+	return true;
 }
 
-void Config::PTexPath(char* cbuf, const char* name, const char* ext)
+bool Config::PTexPath(char* cbuf, size_t n, const char* name, const char* ext) // not upstream: sized, false and "" when the path doesn't fit
 {
-	strncpy(cbuf, ptxpath, ptxlen);
-	if (ext) sprintf(cbuf + ptxlen, "%s.%s", name, ext);
-	else     strcpy(cbuf + ptxlen, name);
+	int len = ext ? snprintf(cbuf, n, "%.*s%s.%s", ptxlen, ptxpath, name, ext) : snprintf(cbuf, n, "%.*s%s", ptxlen, ptxpath, name);
+	if (len < 0 || (size_t)len >= n) {
+		if (n) cbuf[0] = '\0';
+		LOGOUT_WARN("Path too long: %s", name);
+		return false;
+	}
+	return true;
 }
 
 bool Config::IsActiveModule(const std::string& name)
@@ -1470,7 +1482,7 @@ void Config::DelActiveModule (const std::string& name)
 		m_activeModules.erase(it);
 }
 
-bool Config::GetString (istream &is, const char *category, char *val)
+bool Config::GetString (istream &is, const char *category, char *val, size_t n) // not upstream: sized
 {
 	char cbuf[512];
 	int i;
@@ -1492,6 +1504,10 @@ bool Config::GetString (istream &is, const char *category, char *val)
 	if (!cbuf[i]) return false;
 	i++;
 	while (cbuf[i] == ' ' || cbuf[i] == '\t') i++;
+	if (strlen (cbuf+i) >= n) { // not upstream: a value that doesn't fit counts as missing, val untouched
+		LOGOUT_WARN ("Value of %s too long, ignored", category);
+		return false;
+	}
 	strcpy (val, cbuf+i);
 	return true;
 }
@@ -1531,12 +1547,12 @@ bool Config::GetVector (istream &is, const char *category, Vector &val)
 	return true;
 }
 
-bool Config::GetString (const char *category, char *val)
+bool Config::GetString (const char *category, char *val, size_t n) // not upstream: sized
 {
 	if (!Root) return false;
 	ifstream ifs (oapiResolvePath (Root));
 	if (!ifs) return false;
-	return GetString (ifs, category, val);
+	return GetString (ifs, category, val, n); // not upstream: sized
 }
 
 bool Config::GetReal (const char *category, double &val)

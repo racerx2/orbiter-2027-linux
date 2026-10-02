@@ -36,7 +36,7 @@ public:
 	virtual ~PlaybackEvent () {}
 	inline double T0() const { return t0; }
 	void TimeStr (char *str);
-	virtual void TagStr (char *str) = 0;
+	virtual void TagStr (char *str, size_t n) = 0; // not upstream: sized, a file's tag can be longer than the caller's buffer
 	virtual void DescStr (char *str) { str[0] = '\0'; }
 	virtual void Write (std::ofstream &ofs) = 0;
 	void WriteEvent (std::ofstream &ofs, const char *eventtype, const char *event);
@@ -56,7 +56,7 @@ public:
 	~GenericEvent ();
 	void SetTag (const char *_tag);
 	void SetContent (const char *_content);
-	void TagStr (char *str) override;
+	void TagStr (char *str, size_t n) override; // not upstream: sized
 	void DescStr (char *str) override;
 	void Write (std::ofstream &ofs) override;
 	void DrawPreview() override;
@@ -73,7 +73,7 @@ class TaccEvent: public PlaybackEvent {
 public:
 	TaccEvent (double _t0, double _tacc, float _delay = 0.0);
 	inline double Tacc() const { return tacc; }
-	void TagStr (char *str) override;
+	void TagStr (char *str, size_t n) override; // not upstream: sized
 	void DescStr (char *str) override;
 	void Write (std::ofstream &ofs) override;
 	void DrawPreview() override;
@@ -95,7 +95,7 @@ public:
 	CameraEvent (double _t0, char *_modestr);
 	void SetPreset (int _preset, bool editmode = false);
 	void SetInlineMode (char *mode, bool editmode = false);
-	void TagStr (char *str) override;
+	void TagStr (char *str, size_t n) override; // not upstream: sized
 	void DescStr (char *str) override;
 	void Write (std::ofstream &ofs) override;
 	void DrawPreview() override;
@@ -103,8 +103,8 @@ public:
 	void ApplyChanges() override;
 
 private:
-	char modestr[256];
-	char m_tmp_modestr[256];
+	char modestr[260]; // not upstream: [256]; "SET " and a 255-character mode
+	char m_tmp_modestr[260]; // not upstream: as modestr
 };
 
 // =========================================================
@@ -113,7 +113,7 @@ class NoteEvent: public PlaybackEvent {
 public:
 	NoteEvent (double _t0, const char *_note);
 	~NoteEvent ();
-	void TagStr (char *str) override;
+	void TagStr (char *str, size_t n) override; // not upstream: sized
 	void DescStr (char *str) override;
 	void Write (std::ofstream &ofs) override;
 	void DrawPreview() override;
@@ -130,7 +130,7 @@ private:
 class NoteposEvent: public PlaybackEvent {
 public:
 	NoteposEvent (double _t0, double _x0, double _y0, double _x1, double _y1);
-	void TagStr (char *str) override;
+	void TagStr (char *str, size_t n) override; // not upstream: sized
 	void DescStr (char *str) override;
 	void Write (std::ofstream &ofs) override;
 	void DrawPreview() override;
@@ -153,7 +153,7 @@ private:
 class NotecolEvent: public PlaybackEvent {
 public:
 	NotecolEvent (double _t0, double _r, double _g, double _b);
-	void TagStr (char *str) override;
+	void TagStr (char *str, size_t n) override; // not upstream: sized
 	void DescStr (char *str) override;
 	void Write (std::ofstream &ofs) override;
 	void DrawPreview() override;
@@ -170,7 +170,7 @@ private:
 class NotesizeEvent: public PlaybackEvent {
 public:
 	NotesizeEvent (double _t0, double _size);
-	void TagStr (char *str) override;
+	void TagStr (char *str, size_t n) override; // not upstream: sized
 	void DescStr (char *str) override;
 	void Write (std::ofstream &ofs) override;
 	void DrawPreview() override;
@@ -187,7 +187,7 @@ private:
 class NoteoffEvent: public PlaybackEvent {
 public:
 	NoteoffEvent (double _t0);
-	void TagStr (char *str) override;
+	void TagStr (char *str, size_t n) override; // not upstream: sized
 	void DescStr (char *str) override;
 	void Write (std::ofstream &ofs) override;
 	void DrawPreview() override;

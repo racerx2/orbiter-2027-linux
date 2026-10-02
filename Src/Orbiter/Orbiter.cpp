@@ -519,23 +519,35 @@ int Orbiter::GetVersion () const
 	return v;
 }
 
+static bool ResolveInPlace (char *buf, size_t size, int len) // not upstream: buf (snprintf gave len) case-resolved in place; false and "" when either doesn't fit
+{
+	std::string p;
+	if (len >= 0 && (size_t)len < size) p = oapiResolvePath (buf);
+	if (p.empty () || p.size () >= size) {
+		buf[0] = '\0';
+		return false;
+	}
+	memcpy (buf, p.c_str (), p.size () + 1);
+	return true;
+}
+
 //! Finds legacy module consisting of a single DLL
 //! @return true on success
 //! @param cbufOut returns path to the plugin DLL
-static bool FindStandaloneDll(const char *path, const char *name, char* cbufOut)
+static bool FindStandaloneDll(const char *path, const char *name, char* cbufOut, size_t n) // not upstream: sized
 {
-	sprintf (cbufOut, "%s/%s.so", path, name);
-	strcpy (cbufOut, oapiResolvePath (cbufOut).c_str());
+	int len = snprintf (cbufOut, n, "%s/%s.so", path, name); // not upstream: bounded
+	if (!ResolveInPlace (cbufOut, n, len)) return false; // not upstream: N, a path that doesn't fit is "" and isn't loaded
 	return fs::exists(cbufOut);
 }
 
 //! Finds module consisting of a plugin DLL inside a plugin-specific folder
 //! @return true on success
 //! @param cbufOut returns path to the plugin DLL
-static bool FindDllInPluginFolder(const char *path, const char *name, char* cbufOut)
+static bool FindDllInPluginFolder(const char *path, const char *name, char* cbufOut, size_t n) // not upstream: sized
 {
-	sprintf(cbufOut, "%s/%s/%s.so", path, name, name);
-	strcpy (cbufOut, oapiResolvePath (cbufOut).c_str());
+	int len = snprintf(cbufOut, n, "%s/%s/%s.so", path, name, name); // not upstream: bounded
+	if (!ResolveInPlace (cbufOut, n, len)) return false; // not upstream: N, a path that doesn't fit is "" and isn't loaded
 	return fs::exists(cbufOut);
 }
 
@@ -575,14 +587,14 @@ void *Orbiter::LoadModule (const char *path, const char *name)
 	// Load the module DLL
 	void *hDLL = NULL;
 	char cbuf[PATH_MAX+512]; // not upstream: 256; holds the working directory and the module path
-	if (FindStandaloneDll(path, name, cbuf)) // try to find standalone plugin file
+	if (FindStandaloneDll(path, name, cbuf, sizeof cbuf)) // not upstream: sized; try to find standalone plugin file
 	{
 		hDLL = dlopen (cbuf, RTLD_NOW); // LoadLibrary
 	}
 	else // try to find plugin in a plugin folder
 	{
 		char cbuf2[512];
-		if (FindDllInPluginFolder(path, name, cbuf2))
+		if (FindDllInPluginFolder(path, name, cbuf2, sizeof cbuf2)) // not upstream: sized
 		{
 			// absolute path; the module finds the libraries in its folder through its RUNPATH ($ORIGIN), as LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR did
 			sprintf(cbuf, "%s/%s", cwd, cbuf2);
@@ -590,6 +602,7 @@ void *Orbiter::LoadModule (const char *path, const char *name)
 		}
 		else
 		{
+			if (!*cbuf || !*cbuf2) LOGOUT_WARN ("Module name too long for its path: %s", name); // not upstream: N, the one warning for a path that didn't fit
 			LOGOUT_ERR("Could not find a module named %s. Tried %s and %s.", name, cbuf, cbuf2);
 			return NULL;
 		}
@@ -753,7 +766,7 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 	}
 
 	// read simulation environment state
-	strcpy (ScenarioName, scenario);
+	snprintf (ScenarioName, sizeof ScenarioName, "%s", scenario); // not upstream: bounded; nothing is cut, ScnPath (scenario) fit its [256] in Launch or the session ended
 	g_qsaveid = 0;
 	launch_tick = 3;
 
@@ -1124,13 +1137,13 @@ void Orbiter::UpdateServerWnd (QWidget *hWnd)
 	char cbuf[256];
 	sprintf (cbuf, "%0.0fs", td.SysT0);
 	oapiSetDlgItemText (hWnd, IDC_STATIC1, cbuf);
-	sprintf (cbuf, "%0.0fs", td.SimT0);
+	snprintf (cbuf, sizeof cbuf, "%0.0fs", td.SimT0); // not upstream: bounded, a played-back JUMPTOTIME sets any SimT0 (D)
 	oapiSetDlgItemText (hWnd, IDC_STATIC2, cbuf);
-	sprintf (cbuf, "%0.5f", td.MJD0);
+	snprintf (cbuf, sizeof cbuf, "%0.5f", td.MJD0); // not upstream: bounded, the date comes from the scenario (D)
 	oapiSetDlgItemText (hWnd, IDC_STATIC3, cbuf);
 	sprintf (cbuf, "%0.1fx", td.Warp());
 	oapiSetDlgItemText (hWnd, IDC_STATIC4, cbuf);
-	sprintf (cbuf, "%f", td.SimDT);
+	snprintf (cbuf, sizeof cbuf, "%f", td.SimDT); // not upstream: bounded, the fixed step comes unchecked from Orbiter.cfg or --fixedstep (D)
 	oapiSetDlgItemText (hWnd, IDC_STATIC5, cbuf);
 	sprintf (cbuf, "%f", td.FPS());
 	oapiSetDlgItemText (hWnd, IDC_STATIC6, cbuf);
@@ -1320,7 +1333,7 @@ bool Orbiter::KillVessels ()
 			// echo deletion on console window
 			if (m_pConsole) {
 				char cbuf[256];
-				sprintf (cbuf, "Vessel %s deleted", vessel->Name());
+				snprintf (cbuf, sizeof cbuf, "Vessel %s deleted", vessel->Name()); // not upstream: cut (D)
 				m_pConsole->Echo(cbuf);
 			}
 			// kill the vessel
@@ -1364,9 +1377,9 @@ void Orbiter::SetWarpFactor (double warp, bool force, double delay)
 		td.SetWarp (warp, delay);
 		if (td.WarpChanged()) ApplyWarpFactor();
 		if (bRecord && pConfig->CfgRecPlayPrm.bRecordWarp) {
-			char cbuf[256];
-			if (delay) sprintf (cbuf, "%f %f", warp, delay);
-			else       sprintf (cbuf, "%f", warp);
+			char cbuf[640]; // not upstream: [256]; two %f of any double (317 characters each) fit, so the output is unchanged (the delay can come from a played-back .atc)
+			if (delay) snprintf (cbuf, sizeof cbuf, "%f %f", warp, delay); // not upstream: bounded
+			else       snprintf (cbuf, sizeof cbuf, "%f", warp); // not upstream: bounded
 			FRecorder_SaveEvent ("TACC", cbuf);
 			//for (DWORD i = 0; i < g_psys->nVessel(); i++)
 			//	g_psys->GetVessel(i)->FRecorder_SaveEvent ("TACC", cbuf);
@@ -1477,11 +1490,13 @@ VOID Orbiter::Quicksave ()
 {
 	int i;
 	char desc[256], fname[256];
-	sprintf (desc, "Orbiter saved state at T = %0.0f", td.SimT0);
+	snprintf (desc, sizeof desc, "Orbiter saved state at T = %0.0f", td.SimT0); // not upstream: bounded, a played-back JUMPTOTIME sets any SimT0 (D)
 	for (i = strlen(ScenarioName)-1; i > 0; i--)
 		if (ScenarioName[i-1] == '/' || ScenarioName[i-1] == '\\') break;
-	sprintf (fname, "Quicksave/%s %04d", ScenarioName+i, ++g_qsaveid);
-	if(SaveScenario (fname, desc, 0))
+	int n = snprintf (fname, sizeof fname, "Quicksave/%s %04d", ScenarioName+i, ++g_qsaveid); // not upstream: bounded
+	bool fits = (n >= 0 && (size_t)n < sizeof fname); // not upstream: W, nothing is saved at a cut name
+	if (!fits) LOGOUT_WARN ("Quicksave: scenario name too long: %s", ScenarioName+i); // not upstream: as above
+	if(fits && SaveScenario (fname, desc, 0)) // not upstream: as above
 		oapiAddNotification(OAPINOTIF_SUCCESS, "Scenario saved successfully", fname);
 	else
 		oapiAddNotification(OAPINOTIF_ERROR, "Failed to save scenario", fname);
@@ -1525,8 +1540,13 @@ void Orbiter::ToggleLabelDisplay()
 VOID Orbiter::SavePlaybackScn (const char *fname)
 {
 	char desc[256], scn[256] = "Playback/";
-	sprintf (desc, "Orbiter playback scenario at T = %0.0f", td.SimT0);
-	strcat (scn, fname);
+	snprintf (desc, sizeof desc, "Orbiter playback scenario at T = %0.0f", td.SimT0); // not upstream: bounded, a played-back JUMPTOTIME sets any SimT0 (D)
+	size_t len = strlen (scn); // not upstream: bounded append
+	int n = snprintf (scn + len, sizeof scn - len, "%s", fname); // not upstream: as above
+	if (n < 0 || (size_t)n >= sizeof scn - len) { // not upstream: W, nothing is saved at a cut name
+		LOGOUT_WARN ("Playback scenario name too long: %s", fname);
+		return;
+	}
 	SaveScenario (scn, desc, 0);
 }
 
@@ -1559,6 +1579,13 @@ bool Orbiter::ToggleRecorder (bool force, bool append)
 		}
 	} else sname = 0;
 	FRecorder_Activate (bStartRecorder, sname, append);
+	if (bStartRecorder && !bRecord) { // not upstream: the record name didn't fit (FRecorder_Activate warned); no vessel starts, or it would record unstoppably
+		if (!append) { // not upstream: PrepareDir's empty Flights/<name> goes again, or the next REC would find it "already exists"
+			std::error_code ec; // not upstream: as above, nothing throws into the dialog's draw code
+			fs::remove (fs::path (oapiResolvePath ((std::string ("Flights/") + sname).c_str())), ec); // not upstream: as above, the path as PrepareDir resolves it; removes only an empty directory
+		}
+		return true;
+	}
 	for (i = 0; i < n; i++)
 		g_psys->GetVessel(i)->FRecorder_Activate (bStartRecorder, sname, append);
 	if (bStartRecorder)
@@ -1705,8 +1732,11 @@ SURFHANDLE Orbiter::RegisterExhaustTexture (char *name)
 {
 	if (gclient) {
 		char path[256];
-		strcpy (path, name);
-		strcat (path, ".dds");
+		int n = snprintf (path, sizeof path, "%s.dds", name); // not upstream: bounded
+		if (n < 0 || (size_t)n >= sizeof path) { // not upstream: N, no texture, as for a missing one
+			LOGOUT_WARN ("Exhaust texture name too long: %s", name);
+			return NULL;
+		}
 		return gclient->clbkLoadTexture (path, 0x8);
 	} else {
         return NULL;
