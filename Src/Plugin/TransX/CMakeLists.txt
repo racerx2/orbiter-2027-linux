@@ -49,6 +49,9 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/Doc/TransX\ readme.txt ${ORBITER_BINARY_DOC_DIR}/TransX/TransX\ readme.txt
 )
 
+set_property(TARGET TransX APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Doc/TransX Licence.txt") # not upstream: a changed data file relinks the module, so its PRE_BUILD copy runs
+set_property(TARGET TransX APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Doc/TransX readme.txt") # not upstream: a changed data file relinks the module, so its PRE_BUILD copy runs
+
 # Installation
 install(TARGETS TransX
 	LIBRARY

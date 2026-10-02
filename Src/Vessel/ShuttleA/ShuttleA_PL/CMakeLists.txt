@@ -45,6 +45,8 @@ add_custom_command(
 	COMMAND ${CMAKE_COMMAND} -E copy_directory ${TEXTURE_SOURCE_DIR}/ ${ORBITER_BINARY_TEXTURES_DIR}/ShuttleA
 )
 
+orbiter_link_depends_dirs(ShuttleA_PL ${CONFIG_SOURCE_DIR} ${MESH_SOURCE_DIR} ${TEXTURE_SOURCE_DIR}) # not upstream: a changed data file relinks the module, so its PRE_BUILD copy runs
+
 # Installation
 install(TARGETS ShuttleA_PL
 	LIBRARY

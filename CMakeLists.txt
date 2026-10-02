@@ -253,6 +253,13 @@ function(srcdir_to_tgtlist srcdir tgtroot srclist tgtlist)
 	set(tgtlist ${local_tgtlist} PARENT_SCOPE)
 endfunction()
 
+function(orbiter_link_depends_dirs tgt) # not upstream: a changed data file relinks its module, so the module's PRE_BUILD copy runs
+	foreach(dir ${ARGN})
+		file(GLOB_RECURSE files CONFIGURE_DEPENDS LIST_DIRECTORIES false "${dir}/*")
+		set_property(TARGET ${tgt} APPEND PROPERTY LINK_DEPENDS ${files})
+	endforeach()
+endfunction()
+
 
 # Installation
 # BinAssets left out: it only holds msvcr71/msvcp71.dll, the Windows runtime for old add-ons

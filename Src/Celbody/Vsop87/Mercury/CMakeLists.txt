@@ -37,6 +37,9 @@ add_custom_command(
 	COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/../Data/Vsop87B_mer.dat ${CMAKE_BINARY_DIR}/Config/${CELBODY}/Data/Vsop87B.dat
 )
 
+orbiter_link_depends_dirs(${CELBODY} ${CMAKE_CURRENT_SOURCE_DIR}/Config) # not upstream: a changed data file relinks the module, so its PRE_BUILD copy runs
+set_property(TARGET ${CELBODY} APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../Data/Vsop87B_mer.dat) # not upstream: a changed data file relinks the module, so its PRE_BUILD copy runs
+
 set_target_properties(${CELBODY}
 	PROPERTIES
 	FOLDER Celbody/Vsop87

@@ -216,6 +216,8 @@ add_custom_command(
 	COMMAND ${CMAKE_COMMAND} -E copy_directory ${D3D9_SOURCE_DIR}/shaders/ ${ORBITER_BINARY_MODULE_DIR}/VulkanClient
 )
 
+orbiter_link_depends_dirs(D3D9Client ${D3D9_SOURCE_DIR}/shaders) # not upstream: a changed data file relinks the module, so its PRE_BUILD copy runs
+
 add_custom_command(OUTPUT ${INCLUDE_TARGET_DIR}/gcCoreAPI.h ${INCLUDE_TARGET_DIR}/gcGUI.h
 	DEPENDS ${D3D9_SOURCE_DIR}/gcGUI.h ${D3D9_SOURCE_DIR}/gcCore.h ${D3D9_SOURCE_DIR}/gcCore.cpp ${D3D9_SOURCE_DIR}/samples/InterfaceBuilder/InterfaceBuilder.py
 	COMMAND ${InterfaceBuilder} ${D3D9_SOURCE_DIR}/gcCore.h ${INCLUDE_TARGET_DIR}/gcCoreAPI.h ${D3D9_SOURCE_DIR}/gcCore.cpp

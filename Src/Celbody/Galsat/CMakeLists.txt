@@ -33,6 +33,8 @@ add_custom_command(
 	COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/ephem_e15.dat ${CMAKE_BINARY_DIR}/Config/Jupiter/Data/
 )
 
+set_property(TARGET Galsat APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/ephem_e15.dat) # not upstream: a changed data file relinks the module, so its PRE_BUILD copy runs
+
 set(GALSAT_LIB Galsat) # target name: CMake links a raw path to a prefix-less .so as -l<name>
 
 add_subdirectory(Io)
