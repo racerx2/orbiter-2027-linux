@@ -1,5 +1,7 @@
 #include "OrbiterPlatform.h" // windows.h left out: DWORD/WORD/BYTE
 #include <cstring>
+#include <cstdint> // not upstream: uint64_t for the size checks
+#include <sys/stat.h> // not upstream: fstat, the file size
 #include <iostream>
 #include "ddsread.h"
 
@@ -33,6 +35,11 @@ struct DDSHEADER {
 
 std::vector<DWORD> ExtractDXT1 (WORD *data, DWORD ndata, DWORD height, DWORD width);
 
+static bool dxt1BlocksFit(const DDSHEADER &ddsh, uint64_t nbytes) // not upstream: ceil(w/4)*ceil(h/4) 8-byte blocks within nbytes, in 64 bits
+{
+    return ((uint64_t)ddsh.dwWidth + 3) / 4 * (((uint64_t)ddsh.dwHeight + 3) / 4) * 8 <= nbytes;
+}
+
 Image ddsread(const char *fname)
 {
     Image img;
@@ -58,6 +65,16 @@ Image ddsread(const char *fname)
 
     if (strncmp((char*)&ddsh.ddspf.dwFourCC, "DXT1", 4)) {
         std::cerr << "ddsread: Only implemented for DXT1 format" << std::endl;
+        exit(1);
+    }
+
+    struct stat st; // not upstream: the file size, for the checks before the allocation
+    if (fstat(fileno(f), &st) || (uint64_t)st.st_size < 4 + sizeof(DDSHEADER) + (uint64_t)ddsh.dwLinearSize) { // not upstream: dwLinearSize within the file, else the short-file exit
+        std::cerr << "ddsread: Unexpected end of file" << std::endl;
+        exit(1);
+    }
+    if (!dxt1BlocksFit(ddsh, ddsh.dwLinearSize / 2 * 2)) { // not upstream: the image's DXT1 blocks fit the data read
+        std::cerr << "ddsread: Image size exceeds the data size" << std::endl;
         exit(1);
     }
 
@@ -89,6 +106,10 @@ Image ddsscan(const BYTE *data, int ndata)
 	data += 4;
 	ndata -= 4;
 
+	if (ndata < (int)sizeof(DDSHEADER)) { // not upstream: the header is copied only when the data holds it (ndata >= 4 + sizeof(DDSHEADER))
+		std::cerr << "ddsread: Invalid header size" << std::endl;
+		exit(1);
+	}
 	DDSHEADER ddsh;
 	memcpy(&ddsh, data, sizeof(DDSHEADER));
 	data += sizeof(DDSHEADER);
@@ -103,8 +124,12 @@ Image ddsscan(const BYTE *data, int ndata)
 		exit(1);
 	}
 
-	if (ndata < ddsh.dwLinearSize) {
+	if ((DWORD)ndata < ddsh.dwLinearSize) { // not upstream: unsigned compare, ndata >= 0 after the header check
 		std::cerr << "ddsread: Unexpected end of file" << std::endl;
+		exit(1);
+	}
+	if (!dxt1BlocksFit(ddsh, (DWORD)ndata)) { // not upstream: the image's DXT1 blocks fit the node data
+		std::cerr << "ddsread: Image size exceeds the data size" << std::endl;
 		exit(1);
 	}
 	ndata = ddsh.dwLinearSize / 2;
@@ -124,7 +149,7 @@ std::vector<DWORD> ExtractDXT1 (WORD *data, DWORD ndata, DWORD h, DWORD w)
     DWORD lookup, idx, tgt, shift, xx, yy;
     bool noalpha;
 
-    DWORD len = h*w;
+    size_t len = (size_t)h*w; // not upstream: size_t, h*w wrapped in 32 bits
     DWORD A, R, G, B;
 
     size_t nxblock = w/4;

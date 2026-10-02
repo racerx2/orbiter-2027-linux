@@ -1,6 +1,7 @@
 #include "dxt_io.h"
 #include <png.h>
 #include <libdxt.h>
+#include <iostream> // not upstream: std::cerr
 
 struct DDS_PIXELFORMAT {
 	DWORD dwSize;
@@ -63,6 +64,12 @@ void dxt1write(const char *fname, const Image &idata)
 	DDS_HEADER hdr;
 	setdxt1header(idata, hdr);
 	FILE *f = fopen(fname, "wb");
+	if (!f) { // not upstream: an unwritable path writes nothing (fwrite (NULL) crashed)
+		std::cerr << "tileedit: cannot open, not written: " << fname << std::endl;
+		delete[]dxt1;
+		delete[]inp;
+		return;
+	}
 	fwrite(magic, 1, 4, f);
 	fwrite(&hdr, sizeof(DDS_HEADER), 1, f);
 	fwrite(dxt1, n, 1, f);

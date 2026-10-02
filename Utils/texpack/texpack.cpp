@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <string>
+#include <vector> // not upstream: -e's visited flags
 #include <cstdio>
 #include <cstring>
 #include <strings.h>
@@ -133,6 +134,13 @@ static dirent *readdir_ext(DIR *h, const char *ext)
 
 // -----------------------------------------------------------------------------
 
+static bool tile_in_range(int lvl, int ilat, int ilng) // not upstream: a tile's indices inside its level's range (root4[] has 2 entries)
+{
+	if (lvl <= 3) return ilat == 0 && ilng == 0;
+	if (lvl == 4) return ilat == 0 && ilng >= 0 && ilng < 2;
+	return ilat >= 0 && (lvl - 4 >= 31 || ilat < (1 << (lvl - 4))) && ilng >= 0 && (lvl - 3 >= 31 || ilng < (1 << (lvl - 3)));
+}
+
 void MemTree::AddLevel(int lvl)
 {
 	char lvlpath[256];
@@ -153,7 +161,10 @@ void MemTree::AddLevel(int lvl)
 				DIR *h2 = opendir(latpath); // "*.<ext>" pattern: readdir_ext
 				BOOL ok2 = (h2 && (fdata2 = readdir_ext(h2, ext)));
 				while (ok2) {
-					sscanf(fdata2->d_name, "%d", &ilng);
+					if (sscanf(fdata2->d_name, "%d", &ilng) != 1 || !tile_in_range(lvl, ilat, ilng)) { // not upstream: a bad name left ilng unset or wrote past root4[]
+						std::cerr << "Invalid tile name " << latpath << "/" << fdata2->d_name << std::endl;
+						exit(1);
+					}
 					InsertNode(lvl, ilat, ilng);
 					ok2 = ((fdata2 = readdir_ext(h2, ext)) != 0);
 				}
@@ -299,6 +310,8 @@ private:
 	static_assert(sizeof(Header) == 48, "Header: .tree file layout"); // not upstream: MSVC layout check
 
 	TOCEntry *toc;      // array of tree nodes
+	int64_t fsize = 0;  // not upstream: archive file size, bounds the sizes read from it
+	std::vector<bool> visited; // not upstream: -e reaches each node once
 
 	char ext[16];       // file extension for this layer
 	bool deflateData;   // compress data?
@@ -482,7 +495,17 @@ size_t TreeTOC::fwrite(FILE *f)
 size_t TreeTOC::fread(FILE *f)
 {
 	size_t n = ::fread(&header, sizeof(Header), 1, f);
+	if (!n) { // not upstream: a half-read header crashed on the NULL toc
+		std::cerr << "Unexpected end of file" << std::endl;
+		exit(1);
+	}
 	if (n) {
+		struct stat st; // not upstream: the file size bounds the node count and the node sizes
+		fsize = fstat(fileno(f), &st) ? 0 : (int64_t)st.st_size; // not upstream: no size, so any node count fails below
+		if ((int64_t)header.ntoc > (fsize - (int64_t)sizeof(Header)) / (int64_t)sizeof(TOCEntry)) { // not upstream: a node count larger than the file
+			std::cerr << "Unexpected end of file" << std::endl;
+			exit(1);
+		}
 		if (toc) delete []toc;
 		toc = new TOCEntry[header.ntoc];
 		n += ::fread(toc, sizeof(TOCEntry), header.ntoc, f);
@@ -556,6 +579,7 @@ void TreeTOC::WriteSubtreeData(const MemTreeNode *node, FILE *f)
 
 void TreeTOC::ExtractData(FILE *f, int maxlevel)
 {
+	visited.assign(header.ntoc, false); // not upstream: no node visited yet
 	ExtractSubtreeData(header.rootPos1, 1, 0, 0, f, maxlevel);
 	ExtractSubtreeData(header.rootPos2, 2, 0, 0, f, maxlevel);
 	ExtractSubtreeData(header.rootPos3, 3, 0, 0, f, maxlevel);
@@ -570,19 +594,40 @@ void TreeTOC::ExtractSubtreeData (DWORD idx, int lvl, int ilat, int ilng, FILE *
 	if (lvl > maxlevel) return;
 
 	if (idx >= header.ntoc) return; // sanity check
+	if (visited[idx]) { // not upstream: a node reached twice (a child pointing back up) wrote tiles until the disk filled
+		std::cerr << "Corrupt archive: node " << idx << " reached twice" << std::endl;
+		exit(1);
+	}
+	visited[idx] = true; // not upstream: reached once
 	TOCEntry *entry = toc+idx;
 
 	DWORD esize = entry->size;
 	if (!esize) return; // node contains no data
+	if (esize > (64u << 20)) { // not upstream: larger than any tile, a corrupt size
+		std::cerr << "Corrupt archive: node " << idx << " size " << esize << std::endl;
+		exit(1);
+	}
 
 	DWORD zsize = (DWORD)((idx < header.ntoc-1 ? toc[idx+1].pos : header.totlength) - entry->pos);
+	int64_t zend = (idx < header.ntoc-1 ? toc[idx+1].pos : header.totlength); // not upstream: the node's end as zsize takes it, before the DWORD cast
+	if (entry->pos < 0 || entry->pos > fsize || zend < entry->pos || (int64_t)header.dataOfs + entry->pos + (int64_t)zsize > fsize) { // not upstream: a node ending before it starts (a wrapped size) or past the end of the file
+		std::cerr << "Unexpected end of file" << std::endl;
+		exit(1);
+	}
 	BYTE *zbuf = new BYTE[zsize];
 
-	fseeko(f, (int64_t)header.dataOfs + entry->pos, SEEK_SET);
-	int nread = ::fread(zbuf, 1, zsize, f);
+	int sk = fseeko(f, (int64_t)header.dataOfs + entry->pos, SEEK_SET); // not upstream: checked below
+	size_t nread = ::fread(zbuf, 1, zsize, f); // not upstream: size_t, checked below
+	if (sk || nread != zsize) { // not upstream: a short node wrote uninitialised bytes as a tile
+		std::cerr << "Unexpected end of file" << std::endl;
+		exit(1);
+	}
 
 	BYTE *ebuf = new BYTE[esize];
-	inflate_node_data(zbuf, zsize, ebuf, esize);
+	if (inflate_node_data(zbuf, zsize, ebuf, esize) != esize) { // not upstream: a node that doesn't inflate to its size wrote uninitialised bytes as a tile
+		std::cerr << "Corrupt archive: node " << idx << " does not inflate to " << esize << " bytes" << std::endl;
+		exit(1);
+	}
 
 	char fname[256];
 	sprintf (fname, "%s/%s", root, layer);
@@ -594,6 +639,10 @@ void TreeTOC::ExtractSubtreeData (DWORD idx, int lvl, int ilat, int ilng, FILE *
 	sprintf (fname+strlen(fname), "/%06d.%s", ilng, ext);
 	std::cout << "inflating " << fname << std::endl;
 	FILE *fout = fopen(fname, "wb");
+	if (!fout) { // not upstream: an unwritable tile crashed in fwrite (NULL)
+		std::cerr << "Cannot write " << fname << std::endl;
+		exit(1);
+	}
 	::fwrite(ebuf, esize, 1, fout);
 	fclose(fout);
 
@@ -676,6 +725,10 @@ int main(int narg, char *arg[])
 		mkdir(outf, 0777);
 		sprintf(outf+strlen(outf), "/%s.tree", layer);
 		FILE *f = fopen(outf, "wb");
+		if (!f) { // not upstream: an unwritable archive crashed in toc.fwrite (NULL)
+			std::cerr << "Cannot write " << outf << std::endl;
+			exit(1);
+		}
 
 		// write table of contents
 		toc.fwrite(f);
@@ -693,6 +746,10 @@ int main(int narg, char *arg[])
 		char fname[256];
 		sprintf(fname, "%s/Archive/%s.tree", root, layer);
 		FILE *f = fopen(fname, "rb");
+		if (!f) { // not upstream: a missing archive crashed in toc.fread (NULL)
+			std::cerr << "Cannot open " << fname << std::endl;
+			exit(1);
+		}
 		toc.fread(f);
 		toc.ExtractData(f, maxlevel);
 		fclose(f);

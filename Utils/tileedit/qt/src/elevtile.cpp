@@ -172,7 +172,10 @@ void ElevTile::LoadData(ElevData &edata, int lvl, int ilat, int ilng)
 {
 	if (s_openMode & 0x1) { // try cache
 		char path[1024];
-		sprintf(path, "%s/%s/%02d/%06d/%06d.elv", s_root.c_str(), Layer().c_str(), lvl, ilat, ilng);
+		if (snprintf(path, sizeof(path), "%s/%s/%02d/%06d/%06d.elv", s_root.c_str(), Layer().c_str(), lvl, ilat, ilng) >= (int)sizeof(path)) { // not upstream: snprintf; a path that doesn't fit counts as missing
+			std::cerr << "tileedit: path too long, not read: " << path << std::endl;
+			path[0] = '\0';
+		}
 		edata = elvread(path);
 	}
 	if (edata.data.size() == 0 && s_openMode & 0x2 && s_treeMgr) { // try archive
@@ -190,7 +193,10 @@ void ElevTile::LoadModData(ElevData &edata, int lvl, int ilat, int ilng)
 	bool found = false;
 	if (s_openMode & 0x1) { // try cache
 		char path[1024];
-		sprintf(path, "%s/%s_mod/%02d/%06d/%06d.elv", s_root.c_str(), Layer().c_str(), m_lvl, m_ilat, m_ilng);
+		if (snprintf(path, sizeof(path), "%s/%s_mod/%02d/%06d/%06d.elv", s_root.c_str(), Layer().c_str(), m_lvl, m_ilat, m_ilng) >= (int)sizeof(path)) { // not upstream: snprintf; a path that doesn't fit counts as missing
+			std::cerr << "tileedit: path too long, not read: " << path << std::endl;
+			path[0] = '\0';
+		}
 		found = elvmodread(path, edata);
 	}
 	if (!found && s_openMode & 0x2 && s_treeModMgr) { // try archive
@@ -239,7 +245,10 @@ void ElevTile::Save()
 {
 	if (m_modified) {
 		char path[1024];
-		sprintf(path, "%s/%s/%02d/%06d/%06d.elv", s_root.c_str(), Layer().c_str(), m_lvl, m_ilat, m_ilng);
+		if (snprintf(path, sizeof(path), "%s/%s/%02d/%06d/%06d.elv", s_root.c_str(), Layer().c_str(), m_lvl, m_ilat, m_ilng) >= (int)sizeof(path)) { // not upstream: snprintf; a path that doesn't fit isn't written, the tile stays modified
+			std::cerr << "tileedit: path too long, not written: " << path << std::endl;
+			return;
+		}
 		int nlat = (m_lvl < 4 ? 1 : 1 << (m_lvl - 4));
 		int nlng = (m_lvl < 4 ? 1 : 1 << (m_lvl - 3));
 		double latmax = (1.0 - (double)m_ilat / (double)nlat) * M_PI - 0.5*M_PI;
@@ -260,7 +269,10 @@ void ElevTile::SaveMod()
 		char path[1024];
 		sprintf(path, "%s_mod", Layer().c_str());
 		::ensureLayerDir(s_root.c_str(), path, m_lvl, m_ilat);
-		sprintf(path, "%s/%s_mod/%02d/%06d/%06d.elv", s_root.c_str(), Layer().c_str(), m_lvl, m_ilat, m_ilng);
+		if (snprintf(path, sizeof(path), "%s/%s_mod/%02d/%06d/%06d.elv", s_root.c_str(), Layer().c_str(), m_lvl, m_ilat, m_ilng) >= (int)sizeof(path)) { // not upstream: snprintf; a path that doesn't fit isn't written, the tile stays modified
+			std::cerr << "tileedit: path too long, not written: " << path << std::endl;
+			return;
+		}
 		int nlat = (m_lvl < 4 ? 1 : 1 << (m_lvl - 4));
 		int nlng = (m_lvl < 4 ? 1 : 1 << (m_lvl - 3));
 		double latmax = (1.0 - (double)m_ilat / (double)nlat) * M_PI - 0.5*M_PI;

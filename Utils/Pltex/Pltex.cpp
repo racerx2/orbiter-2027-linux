@@ -46,6 +46,7 @@
 #include <iomanip>
 #include <algorithm> // windows.h min/max -> std::min/max
 #include <vector>
+#include <string> // not upstream: ReadName
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -150,6 +151,7 @@ struct MERGEDATA {
 	DWORD ntile, ns, nm;
 	FILE *texf1, *texf2, *texfm;
 	FILE *maskf1, *maskf2, *maskfm;
+	DWORD ntd1, ntd2; // not upstream: sizes of td1, td2 (tdm holds ntd1+ntd2)
 };
 
 const int HEMISPHERE_BOTH = 0;
@@ -168,9 +170,9 @@ void CreateLocalArea ();
 bool CreateSubPatch (double baselat0, double baselat1, double baselng0, double baselng1, int idx, PATCHDATA &pd, int lvl);
 void CreateCloudMap ();
 void MergeTextures ();
-void MergeTrees (MERGEDATA &md, DWORD idx1, DWORD idx2, DWORD idxm, bool baselvl);
+void MergeTrees (MERGEDATA &md, DWORD idx1, DWORD idx2, DWORD idxm, bool baselvl, int depth); // not upstream: depth bounds a subidx cycle
 void SortTextures (const char *rootname);
-void CopyTexturesAtLevel (TILEFILESPEC *td, DWORD baseidx, DWORD lvl, DWORD tgtlvl, DWORD &texidx, DWORD &maskidx,
+void CopyTexturesAtLevel (TILEFILESPEC *td, DWORD ntd, DWORD baseidx, DWORD lvl, DWORD tgtlvl, DWORD &texidx, DWORD &maskidx, // not upstream: ntd, the table size
 	FILE *srctexf, FILE *srcmaskf, FILE *tgttexf, FILE *tgtmaskf);
 
 void SetOutputHeader (BITMAPFILEHEADER &bmfh, BITMAPINFOHEADER &bmih, LONG w, LONG h);
@@ -274,6 +276,41 @@ static void waitkey ()
 	tcsetattr (STDIN_FILENO, TCSANOW, &t0);
 }
 
+// not upstream: a name built into buf with snprintf; one that doesn't fit is an error, never a cut name
+static void MakeName (char *buf, size_t n, const char *name, const char *ext)
+{
+	int len = snprintf (buf, n, "%s%s", name, ext);
+	if (len < 0 || (size_t)len >= n) FatalError ("File name too long");
+}
+
+// not upstream: a name read from cin; cin >> char[N] cut a longer one silently and left the rest for the next prompt
+static void ReadName (char *buf, size_t n)
+{
+	string s;
+	if (cin >> s) MakeName (buf, n, s.c_str (), "");
+}
+
+// not upstream: the value after a command-line option; a missing one is the usage error
+static const char *OptValue (int argc, char *argv[], int &i)
+{
+	if (i + 1 >= argc) FatalError ("Command line parsing error");
+	return argv[++i];
+}
+
+// not upstream: a tile count from a .bin file: at least the 364 level-8 tiles, no more records than the file holds
+static void CheckTileCount (DWORD ntd, FILE *f)
+{
+	long fsize = filelength (fileno (f));
+	if (ntd < 364 || fsize < 0 || ntd > (unsigned long)fsize / sizeof (TILEFILESPEC)) FatalError ("Tile file parse error");
+}
+
+// not upstream: palette entries a BMP holds between its 40-byte info header and its pixels (0 below 54 bytes)
+static DWORD PaletteSize (DWORD offbits)
+{
+	const DWORD hsize = sizeof (BITMAPFILEHEADER) + sizeof (BITMAPINFOHEADER);
+	return offbits < hsize ? 0 : (offbits - hsize) / sizeof (RGBQUAD);
+}
+
 
 const double eps = 1e-10;
 const char *dxtex = "./dxtex"; // DxTex.exe -> dxtex (Utils/plsplit/dxtex.cpp), run from the working folder as upstream
@@ -300,24 +337,24 @@ int main (int argc, char *argv[])
 	char task;
 
 	OpenToolTerminal (argc, argv); // /SUBSYSTEM:CONSOLE: a console window of its own
-	if (!getcwd (g_cwd, 256)) FatalError ("Cannot get working directory");
+	if (!getcwd (g_cwd, sizeof g_cwd - 1)) FatalError ("Cannot get working directory"); // not upstream: room for the "/" (a 255-character cwd overflowed)
 	strcat (g_cwd, "/");
 
 	for (i = 1; i < argc; i++) {
 		if (argv[i][0] != '-') FatalError ("Command line parsing error");
 		switch (argv[i][1]) {
 		case 'i':
-			strcpy (fname, argv[++i]);
+			MakeName (fname, sizeof fname, OptValue (argc, argv, i), ""); // not upstream: value checked, a name too long is an error
 			break;
 		case 'a':
-			strcpy (aname, argv[++i]);
+			MakeName (aname, sizeof aname, OptValue (argc, argv, i), ""); // not upstream: value checked, a name too long is an error
 			have_alpha = true;
 			break;
 		case 'l':
-			sscanf (argv[++i], "%d", &g_minres);
+			sscanf (OptValue (argc, argv, i), "%d", &g_minres); // not upstream: a missing value is the usage error
 			break;
 		case 'h':
-			sscanf (argv[++i], "%d", &g_maxres);
+			sscanf (OptValue (argc, argv, i), "%d", &g_maxres); // not upstream: a missing value is the usage error
 			break;
 		}
 	}
@@ -380,6 +417,7 @@ void CreateGlobalSurface ()
 	FILE *texf = 0, *mtexf = 0;
 	int maxlevel = 8;
 	char *cbuf = g_cwd+strlen(g_cwd);
+	size_t ncbuf = sizeof g_cwd - strlen (g_cwd); // not upstream: the room left in g_cwd
 	bool mixed = false, nlights = false, needmask = false;
 	double mixed_tol;
 	WORD pflag[501];
@@ -395,8 +433,8 @@ void CreateGlobalSurface ()
 		cout << "edge) to 90 deg North (top edge). The width:height ratio of the\n";
 		cout << "bitmap should be approximately 2:1 for best results.\n\n";
 		cout << ">> Surface map file name (.bmp): ";
-		cin >> fname;
-		if (!strcasecmp (fname+(strlen(fname)-4), ".bmp"))
+		ReadName (fname, sizeof fname); // not upstream: a name longer than the buffer is an error, not cut
+		if (strlen (fname) >= 4 && !strcasecmp (fname+(strlen(fname)-4), ".bmp")) // not upstream: a shorter name read before the array
 			fname[strlen(fname)-4] = '\0';
 		cout << endl;
 	}
@@ -433,8 +471,8 @@ void CreateGlobalSurface ()
 		cout << "contain only 2 colours: white for any specular reflection areas (water),\n";
 		cout << "and black for diffuse reflection areas (land).\n\n";
 		cout << ">> Mask map file name (.bmp): ";
-		cin >> aname;
-		if (!strcasecmp (aname+(strlen(aname)-4), ".bmp"))
+		ReadName (aname, sizeof aname); // not upstream: a name longer than the buffer is an error, not cut
+		if (strlen (aname) >= 4 && !strcasecmp (aname+(strlen(aname)-4), ".bmp")) // not upstream: a shorter name read before the array
 			aname[strlen(aname)-4] = '\0';
 		cout << endl;
 
@@ -480,8 +518,8 @@ void CreateGlobalSurface ()
 		cout << "8-bit or 24-bit BMP format. It should be black in non-lit areas, and bright\n";
 		cout << "(but not necessarily white) in lit areas.\n\n";
 		cout << ">> City light map file name: (.bmp): ";
-		cin >> lname;
-		if (!strcasecmp (lname+(strlen(lname)-4), ".bmp"))
+		ReadName (lname, sizeof lname); // not upstream: a name longer than the buffer is an error, not cut
+		if (strlen (lname) >= 4 && !strcasecmp (lname+(strlen(lname)-4), ".bmp")) // not upstream: a shorter name read before the array
 			lname[strlen(lname)-4] = '\0';
 		cout << endl;
 
@@ -525,8 +563,7 @@ void CreateGlobalSurface ()
 
 	img = ReadBMP (fname, mapw, maph, bpp);
 	patch = new RGB[PS*PS];
-	strcpy (cbuf, fname);
-	strcat (cbuf, ".tex");
+	MakeName (cbuf, ncbuf, fname, ".tex"); // not upstream: bounded by g_cwd, a name too long is an error
 	texf = fopen (cbuf, "wb");
 
 	if (mixed) {
@@ -554,11 +591,9 @@ void CreateGlobalSurface ()
 		memset (lpatch, 0, sizeof(RGB)*PS*PS);
 		//apatch = new Alpha[PS*PS];
 		//memset (apatch, 0, sizeof(Alpha)*PS*PS);
-		strcpy (cbuf, fname);
-		strcat (cbuf, "_lmask.tex");
+		MakeName (cbuf, ncbuf, fname, "_lmask.tex"); // not upstream: bounded by g_cwd, a name too long is an error
 		mtexf = fopen (cbuf, "wb");
-		strcpy (cbuf, fname);
-		strcat (cbuf, "_lmask.bin");
+		MakeName (cbuf, ncbuf, fname, "_lmask.bin"); // not upstream: bounded by g_cwd, a name too long is an error
 		selective_alpha = true;
 	}
 
@@ -841,7 +876,7 @@ void CreateGlobalSurface ()
 			(BYTE)minres,
 			(BYTE)maxres
 		};
-		strcpy (cbuf, fname); strcat (cbuf, "_lmask.bin");
+		MakeName (cbuf, ncbuf, fname, "_lmask.bin"); // not upstream: bounded by g_cwd, a name too long is an error
 		FILE *binf = fopen (cbuf, "wb");
 		fwrite (&lmfh, sizeof (LMASKFILEHEADER), 1, binf);
 		fwrite (pflag, sizeof(WORD), idx, binf);
@@ -886,6 +921,7 @@ void CreateLocalArea ()
 	Alpha *aimg = 0, *atgt, *apatch = 0;
 	char c;
 	char *cbuf = g_cwd+strlen(g_cwd);
+	size_t ncbuf = sizeof g_cwd - strlen (g_cwd); // not upstream: the room left in g_cwd
 	FILE *texf = 0, *mtexf = 0;
 	bool mixed = false, skipwater = false, nlights = false, needmask = false, mipmap = false, global;
 	double transp, landlimit, mixed_tol, light_tol;
@@ -905,8 +941,8 @@ void CreateLocalArea ()
 		cout << "surface patch in cylindrical projection, with longitude linear along the\n";
 		cout << "horizontal axis, and latitude linear along the vertical axis.\n\n";
 		cout << ">> Surface map file name (.bmp): ";
-		cin >> fname;
-		if (!strcasecmp (fname+(strlen(fname)-4), ".bmp"))
+		ReadName (fname, sizeof fname); // not upstream: a name longer than the buffer is an error, not cut
+		if (strlen (fname) >= 4 && !strcasecmp (fname+(strlen(fname)-4), ".bmp")) // not upstream: a shorter name read before the array
 			fname[strlen(fname)-4] = '\0';
 		cout << endl;
 	}
@@ -957,8 +993,8 @@ void CreateLocalArea ()
 		cout << "contain only 2 colours: white for any specular reflection areas (water),\n";
 		cout << "and black for diffuse reflection areas (land).\n\n";
 		cout << ">> Mask map file name (.bmp): ";
-		cin >> aname;
-		if (!strcasecmp (aname+(strlen(aname)-4), ".bmp"))
+		ReadName (aname, sizeof aname); // not upstream: a name longer than the buffer is an error, not cut
+		if (strlen (aname) >= 4 && !strcasecmp (aname+(strlen(aname)-4), ".bmp")) // not upstream: a shorter name read before the array
 			aname[strlen(aname)-4] = '\0';
 		cout << endl;
 
@@ -1027,8 +1063,8 @@ void CreateLocalArea ()
 		cout << "8-bit or 24-bit BMP format. It should be black in non-lit areas, and bright\n";
 		cout << "(but not necessarily white) in lit areas.\n\n";
 		cout << ">> City light map file name: (.bmp): ";
-		cin >> lname;
-		if (!strcasecmp (lname+(strlen(lname)-4), ".bmp"))
+		ReadName (lname, sizeof lname); // not upstream: a name longer than the buffer is an error, not cut
+		if (strlen (lname) >= 4 && !strcasecmp (lname+(strlen(lname)-4), ".bmp")) // not upstream: a shorter name read before the array
 			lname[strlen(lname)-4] = '\0';
 		cout << endl;
 
@@ -1225,17 +1261,17 @@ void CreateLocalArea ()
 
 	SortTextures ("tmp");
 	remove ("tmp_tile.bin");
-	strcpy (cbuf, fname); strcat (cbuf, "_tile.bin");
+	MakeName (cbuf, ncbuf, fname, "_tile.bin"); // not upstream: bounded by g_cwd, a name too long is an error
 	remove (cbuf);
 	rename ("tmp_tile.bin.sort", cbuf);
 	remove ("tmp_tile.tex");
-	strcpy (cbuf, fname); strcat (cbuf, "_tile.tex");
+	MakeName (cbuf, ncbuf, fname, "_tile.tex"); // not upstream: bounded by g_cwd, a name too long is an error
 	remove (cbuf);
 	rename ("tmp_tile.tex.sort", cbuf);
 
 	if (mixed) {
 		remove ("tmp_tile_lmask.tex");
-		strcpy (cbuf, fname); strcat (cbuf, "_tile_lmask.tex");
+		MakeName (cbuf, ncbuf, fname, "_tile_lmask.tex"); // not upstream: bounded by g_cwd, a name too long is an error
 		remove (cbuf);
 		rename ("tmp_tile_lmask.tex.sort", cbuf);
 	}
@@ -1357,7 +1393,7 @@ bool CreateSubPatch (double baselat0, double baselat1, double baselng0, double b
 
 void SortTextures (const char *rootname)
 {
-	char cbuf[256], rtname[256];
+	char cbuf[512], rtname[256]; // not upstream: cbuf 512, room for a 255-character name and its suffix
 	char idstr[9] = "        ";
 	DWORD i, ntd, texofs, maskofs, level;
 	FILE *binf, *texf, *maskf, *binfm, *texfm, *maskfm;
@@ -1368,24 +1404,24 @@ void SortTextures (const char *rootname)
 		cout << "                         ------------------\n\n";
 		cout << "Enter the base name for the set of texture files.\n";
 		cout << ">> Base name: ";
-		cin >> rtname;
+		ReadName (rtname, sizeof rtname); // not upstream: a name longer than the buffer is an error, not cut
 		rootname = rtname;
 	}
 
 	cout << "\nSorting texture files ..." << endl;
 
-	strcpy (cbuf, rootname); strcat (cbuf, "_tile.bin");
+	MakeName (cbuf, sizeof cbuf, rootname, "_tile.bin"); // not upstream: bounded, a name too long is an error
 	if (!(binf = fopen (cbuf, "rb"))) FatalError ("File not found");
-	strcpy (cbuf, rootname); strcat (cbuf, "_tile.tex");
+	MakeName (cbuf, sizeof cbuf, rootname, "_tile.tex"); // not upstream: bounded, a name too long is an error
 	if (!(texf = fopen (cbuf, "rb"))) FatalError ("File not found");
-	strcpy (cbuf, rootname); strcat (cbuf, "_tile_lmask.tex");
+	MakeName (cbuf, sizeof cbuf, rootname, "_tile_lmask.tex"); // not upstream: bounded, a name too long is an error
 	maskf = fopen (cbuf, "rb");
-	strcpy (cbuf, rootname); strcat (cbuf, "_tile.bin.sort");
+	MakeName (cbuf, sizeof cbuf, rootname, "_tile.bin.sort"); // not upstream: bounded, a name too long is an error
 	if (!(binfm = fopen (cbuf, "wb"))) FatalError ("Could not open output file");
-	strcpy (cbuf, rootname); strcat (cbuf, "_tile.tex.sort");
+	MakeName (cbuf, sizeof cbuf, rootname, "_tile.tex.sort"); // not upstream: bounded, a name too long is an error
 	if (!(texfm = fopen (cbuf, "wb"))) FatalError ("Could not open output file");
 	if (maskf) {
-		strcpy (cbuf, rootname); strcat (cbuf, "_tile_lmask.tex.sort");
+		MakeName (cbuf, sizeof cbuf, rootname, "_tile_lmask.tex.sort"); // not upstream: bounded, a name too long is an error
 		if (!(maskfm = fopen (cbuf, "wb"))) FatalError ("Could not open output file");
 	} else maskfm = 0;
 
@@ -1393,6 +1429,7 @@ void SortTextures (const char *rootname)
 	if (nid < 4 || strncmp (idstr, TileID, 4)) fseek (binf, 0, SEEK_SET); // no header: old version
 
 	if (fread (&ntd, sizeof(DWORD), 1, binf) != 1) FatalError ("Tile file parse error"); // not upstream: short file
+	CheckTileCount (ntd, binf); // not upstream: fewer than the 364 level-8 tiles, or more than the file holds
 	td = new TILEFILESPEC[ntd]; if (fread (td, sizeof(TILEFILESPEC), ntd, binf) != ntd) FatalError ("Tile file parse error"); // not upstream: short file
 
 	texofs = maskofs = 0;
@@ -1400,7 +1437,7 @@ void SortTextures (const char *rootname)
 		cout << "Level " << level << " \t";
 		InitProgress (364, 40);
 		for (i = 0; i < 364; i++) {
-			CopyTexturesAtLevel (td, i, 9, level, texofs, maskofs, texf, maskf, texfm, maskfm);
+			CopyTexturesAtLevel (td, ntd, i, 9, level, texofs, maskofs, texf, maskf, texfm, maskfm); // not upstream: ntd
 			IncProgress();
 		}
 	}
@@ -1417,25 +1454,28 @@ void SortTextures (const char *rootname)
 	if (maskfm) fclose (maskfm);
 }
 
-void CopyTexturesAtLevel (TILEFILESPEC *td, DWORD baseidx, DWORD lvl, DWORD tgtlvl, DWORD &texofs, DWORD &maskofs,
+void CopyTexturesAtLevel (TILEFILESPEC *td, DWORD ntd, DWORD baseidx, DWORD lvl, DWORD tgtlvl, DWORD &texofs, DWORD &maskofs, // not upstream: ntd, the table size
 	FILE *srctexf, FILE *srcmaskf, FILE *tgttexf, FILE *tgtmaskf)
 {
 	DWORD i, subidx, tsize;
 
 	for (i = 0; i < 4; i++) {
 		if (subidx = td[baseidx].subidx[i]) {
+			if (subidx >= ntd) FatalError ("Tile file parse error"); // not upstream: a subtile index past the table
 			if (lvl < tgtlvl) {
-				CopyTexturesAtLevel (td, subidx, lvl+1, tgtlvl, texofs, maskofs, srctexf, srcmaskf, tgttexf, tgtmaskf);
+				CopyTexturesAtLevel (td, ntd, subidx, lvl+1, tgtlvl, texofs, maskofs, srctexf, srcmaskf, tgttexf, tgtmaskf); // not upstream: ntd
 			} else {
 				TILEFILESPEC &tds = td[subidx];
 				if (tds.sidx != (DWORD)-1) {
-					tsize = CopyDDS (tgttexf, srctexf, tds.sidx, true);
+					if (!(tsize = CopyDDS (tgttexf, srctexf, tds.sidx, true))) // not upstream: a failed copy is an error, as in MergeTrees
+						FatalError ("Texture file parse error"); // not upstream: MergeTrees' message
 					tds.sidx = texofs;
 					texofs += tsize;
 					//tds.sidx = texidx++;
 				}
 				if (srcmaskf && tgtmaskf && tds.midx != (DWORD)-1) {
-					tsize = CopyDDS (tgtmaskf, srcmaskf, tds.midx, true);
+					if (!(tsize = CopyDDS (tgtmaskf, srcmaskf, tds.midx, true))) // not upstream: a failed copy is an error, as in MergeTrees
+						FatalError ("Mask file parse error"); // not upstream: MergeTrees' message
 					tds.midx = maskofs;
 					maskofs += tsize;
 					//tds.midx = maskidx++;
@@ -1447,7 +1487,7 @@ void CopyTexturesAtLevel (TILEFILESPEC *td, DWORD baseidx, DWORD lvl, DWORD tgtl
 
 void MergeTextures ()
 {
-	char fname2[256], cbuf[256], errstr[256] = "File not found: ";
+	char fname2[256], cbuf[512], errstr[512] = "File not found: "; // not upstream: cbuf, errstr 512, room for a 255-character name and its suffix
 	char idstr[9] = "        ";
 	FILE *binf1, *binf2, *texf1, *texf2, *texfm, *maskf1, *maskf2, *maskfm = NULL;
 	DWORD i, ntd1, ntd2, ntdm;
@@ -1466,7 +1506,7 @@ void MergeTextures ()
 	cout << "  <basename1>_tile.tex       (surface texture file)\n";
 	cout << "  <basename1>_tile_lmask.tex (land-water mask file; optional)\n\n";
 	cout << ">> Base name 1: ";
-	cin >> fname;
+	ReadName (fname, sizeof fname); // not upstream: a name longer than the buffer is an error, not cut
 
 	cout << "\n\nEnter the base name for the second set of texture files. This is the\n";
 	cout << "set that will be merged into the first set.\n";
@@ -1475,31 +1515,31 @@ void MergeTextures ()
 	cout << "  <basename2>_tile.tex       (surface texture file)\n";
 	cout << "  <basename2>_tile_lmask.tex (land-water mask file; optional)\n\n";
 	cout << ">> Base name 2: ";
-	cin >> fname2;
+	ReadName (fname2, sizeof fname2); // not upstream: a name longer than the buffer is an error, not cut
 
-	strcpy (cbuf, fname); strcat (cbuf, "_tile.bin");
+	MakeName (cbuf, sizeof cbuf, fname, "_tile.bin"); // not upstream: bounded, a name too long is an error
 	if (!(binf1 = fopen (cbuf, "rb"))) {
-		strcat (errstr, cbuf);
+		snprintf (errstr + strlen (errstr), sizeof errstr - strlen (errstr), "%s", cbuf); // not upstream: bounded (message text)
 		FatalError (errstr);
 	}
-	strcpy (cbuf, fname); strcat (cbuf, "_tile.tex");
+	MakeName (cbuf, sizeof cbuf, fname, "_tile.tex"); // not upstream: bounded, a name too long is an error
 	if (!(texf1 = fopen (cbuf, "rb"))) {
-		strcat (errstr, cbuf);
+		snprintf (errstr + strlen (errstr), sizeof errstr - strlen (errstr), "%s", cbuf); // not upstream: bounded (message text)
 		FatalError (errstr);
 	}
-	strcpy (cbuf, fname); strcat (cbuf, "_tile_lmask.tex");
+	MakeName (cbuf, sizeof cbuf, fname, "_tile_lmask.tex"); // not upstream: bounded, a name too long is an error
 	maskf1 = fopen (cbuf, "rb");
-	strcpy (cbuf, fname2); strcat (cbuf, "_tile.bin");
+	MakeName (cbuf, sizeof cbuf, fname2, "_tile.bin"); // not upstream: bounded, a name too long is an error
 	if (!(binf2 = fopen (cbuf, "rb"))) {
-		strcat (errstr, cbuf);
+		snprintf (errstr + strlen (errstr), sizeof errstr - strlen (errstr), "%s", cbuf); // not upstream: bounded (message text)
 		FatalError (errstr);
 	}
-	strcpy (cbuf, fname2); strcat (cbuf, "_tile.tex");
+	MakeName (cbuf, sizeof cbuf, fname2, "_tile.tex"); // not upstream: bounded, a name too long is an error
 	if (!(texf2 = fopen (cbuf, "rb"))) {
-		strcat (errstr, cbuf);
+		snprintf (errstr + strlen (errstr), sizeof errstr - strlen (errstr), "%s", cbuf); // not upstream: bounded (message text)
 		FatalError (errstr);
 	}
-	strcpy (cbuf, fname2); strcat (cbuf, "_tile_lmask.tex");
+	MakeName (cbuf, sizeof cbuf, fname2, "_tile_lmask.tex"); // not upstream: bounded, a name too long is an error
 	maskf2 = fopen (cbuf, "rb");
 
 	if (!(texfm = fopen ("merge_tile.tex", "wb"))) FatalError ("Could not open output file");
@@ -1512,6 +1552,8 @@ void MergeTextures ()
 	if (nid < 4 || strncmp (idstr, TileID, 4)) fseek (binf2, 0, SEEK_SET); // old format
 	if (fread (&ntd1, sizeof(DWORD), 1, binf1) != 1) FatalError ("Tile file parse error"); // not upstream: short file
 	if (fread (&ntd2, sizeof(DWORD), 1, binf2) != 1) FatalError ("Tile file parse error"); // not upstream: short file
+	CheckTileCount (ntd1, binf1); // not upstream: fewer than the 364 level-8 tiles, or more than the file holds
+	CheckTileCount (ntd2, binf2); // not upstream: fewer than the 364 level-8 tiles, or more than the file holds
 	td1 = new TILEFILESPEC[ntd1]; if (fread (td1, sizeof(TILEFILESPEC), ntd1, binf1) != ntd1) FatalError ("Tile file parse error"); // not upstream: short file
 	td2 = new TILEFILESPEC[ntd2]; if (fread (td2, sizeof(TILEFILESPEC), ntd2, binf2) != ntd2) FatalError ("Tile file parse error"); // not upstream: short file
 	tdm = new TILEFILESPEC[ntd1+ntd2]; // max size of merged descriptors
@@ -1523,10 +1565,10 @@ void MergeTextures ()
 	cout << endl << "Merging  \t";
 	InitProgress (364, 40);
 
-	MERGEDATA md = {td1, td2, tdm, ntdm, 0, 0, texf1, texf2, texfm, maskf1, maskf2, maskfm};
+	MERGEDATA md = {td1, td2, tdm, ntdm, 0, 0, texf1, texf2, texfm, maskf1, maskf2, maskfm, ntd1, ntd2}; // not upstream: ntd1, ntd2
 
 	for (i = 0; i < 364; i++) { // loop over level 8 patches
-		MergeTrees (md, i, i, i, true);
+		MergeTrees (md, i, i, i, true, 0); // not upstream: depth 0 at level 8
 		IncProgress ();
 	}
 
@@ -1568,9 +1610,11 @@ void MergeTextures ()
 
 }
 
-void MergeTrees (MERGEDATA &md, DWORD idx1, DWORD idx2, DWORD idxm, bool baselvl)
+void MergeTrees (MERGEDATA &md, DWORD idx1, DWORD idx2, DWORD idxm, bool baselvl, int depth) // not upstream: depth
 {
 	DWORD tsize;
+	if (depth > 32 || idx1 >= md.ntd1 || idx2 >= md.ntd2 || idxm >= md.ntd1 + md.ntd2) // not upstream: an index past its table, or a subidx cycle (valid trees end at depth 6)
+		FatalError ("Tile file parse error"); // not upstream: the existing message
 	TILEFILESPEC *t1 = (baselvl || idx1 ? md.td1 + idx1 : 0);
 	TILEFILESPEC *t2 = (baselvl || idx2 ? md.td2 + idx2 : 0);
 	if (!t1 && !t2) return;
@@ -1578,6 +1622,7 @@ void MergeTrees (MERGEDATA &md, DWORD idx1, DWORD idx2, DWORD idxm, bool baselvl
 	tm->sidx = (DWORD)-1;
 	tm->midx = (DWORD)-1;
 	tm->eidx = (DWORD)-1;
+	tm->flags = 0; // not upstream: left unset when neither tile has a texture
 
 	// merge surface textures
 	if (t2 && t2->sidx != (DWORD)-1) {
@@ -1617,7 +1662,7 @@ void MergeTrees (MERGEDATA &md, DWORD idx1, DWORD idx2, DWORD idxm, bool baselvl
 		DWORD sub2 = (t2 ? t2->subidx[j] : 0);
 		if (sub1 || sub2) {
 			tm->subidx[j] = md.ntile;
-			MergeTrees (md, sub1, sub2, md.ntile, false);
+			MergeTrees (md, sub1, sub2, md.ntile, false, depth+1); // not upstream: depth
 		} else {
 			tm->subidx[j] = 0;
 		}
@@ -1632,6 +1677,7 @@ void CreateCloudMap ()
 	bool transp;
 	char c;
 	char *cbuf = g_cwd+strlen(g_cwd);
+	size_t ncbuf = sizeof g_cwd - strlen (g_cwd); // not upstream: the room left in g_cwd
 	DWORD patchflag;
 	WORD bpp;
 	LONG mapw, maph;
@@ -1650,8 +1696,8 @@ void CreateCloudMap ()
 	cout << "latitude. The width:height ratio of the bitmap should be approximately\n";
 	cout << "2:1 for best results.\n\n";
 	cout << ">> Cloud colour map file name (.bmp): ";
-	cin >> fname;
-	if (!strcasecmp (fname+(strlen(fname)-4), ".bmp"))
+	ReadName (fname, sizeof fname); // not upstream: a name longer than the buffer is an error, not cut
+	if (strlen (fname) >= 4 && !strcasecmp (fname+(strlen(fname)-4), ".bmp")) // not upstream: a shorter name read before the array
 		fname[strlen(fname)-4] = '\0';
 	cout << endl;
 
@@ -1685,8 +1731,8 @@ void CreateCloudMap ()
 		cout << "contain only grey levels, where the brightness encodes opacity. White\n";
 		cout << "pixels are fully opaque, black pixels are fully transparent.\n\n";
 		cout << ">> Opacity map file name (.bmp): ";
-		cin >> aname;
-		if (!strcasecmp (aname+(strlen(aname)-4), ".bmp"))
+		ReadName (aname, sizeof aname); // not upstream: a name longer than the buffer is an error, not cut
+		if (strlen (aname) >= 4 && !strcasecmp (aname+(strlen(aname)-4), ".bmp")) // not upstream: a shorter name read before the array
 			aname[strlen(aname)-4] = '\0';
 		cout << endl;
 	}
@@ -1716,8 +1762,7 @@ void CreateCloudMap ()
 
 	img = ReadBMP (fname, mapw, maph, bpp);
 	patch = new RGB[PS*PS];
-	strcpy (cbuf, fname);
-	strcat (cbuf, ".tex");
+	MakeName (cbuf, ncbuf, fname, ".tex"); // not upstream: bounded by g_cwd, a name too long is an error
 	texf = fopen (cbuf, "wb");
 
 	if (transp) {
@@ -2516,13 +2561,12 @@ WORD CatMaskDDS (FILE *texf, RGB *img, Alpha *aimg, LONG imgw, LONG imgh)
 
 void ReadBMP_data (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 {
-	char cbuf[256], *id;
+	char cbuf[512], *id; // not upstream: cbuf 512, room for a 255-character name and ".bmp"
 	FILE *fbmp;
 	BITMAPFILEHEADER bmfh;
 	BITMAPINFO *bmi;
 
-	strcpy (cbuf, fname);
-	strcat (cbuf, ".bmp");
+	MakeName (cbuf, sizeof cbuf, fname, ".bmp"); // not upstream: bounded, a name too long is an error
 	fbmp = fopen (cbuf, "rb");
 	if (!fbmp) FatalError ("Input file not found");
 	if (!fread (&bmfh, sizeof (BITMAPFILEHEADER), 1, fbmp))
@@ -2545,15 +2589,14 @@ void ReadBMP_data (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 
 RGB *ReadBMP (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 {
-	char cbuf[256], *id;
+	char cbuf[512], *id; // not upstream: cbuf 512, room for a 255-character name and ".bmp"
 	FILE *fbmp;
 	BITMAPFILEHEADER bmfh;
 	BITMAPINFO *bmi;
 	DWORD i, imgsize;
 	RGB *img;
 
-	strcpy (cbuf, fname);
-	strcat (cbuf, ".bmp");
+	MakeName (cbuf, sizeof cbuf, fname, ".bmp"); // not upstream: bounded, a name too long is an error
 	fbmp = fopen (cbuf, "rb");
 	if (!fbmp) FatalError ("Input file not found");
 	if (!fread (&bmfh, sizeof (BITMAPFILEHEADER), 1, fbmp))
@@ -2569,16 +2612,19 @@ RGB *ReadBMP (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 	mapw = bmi->bmiHeader.biWidth;
 	maph = bmi->bmiHeader.biHeight;
 	bpp  = bmi->bmiHeader.biBitCount;
-	imgsize = mapw*maph;
+	imgsize = (DWORD)mapw*(DWORD)maph; // not upstream: unsigned, the int product overflowed on a corrupt header (checked below)
 	if (bmi->bmiHeader.biCompression != BI_RGB)
 		FatalError ("Cannot process compressed source bitmaps");
+	if (mapw <= 0 || maph <= 0 || (uint64_t)mapw * (uint64_t)maph > 0xFFFFFFFFu) FatalError ("Cannot read bitmap file header"); // not upstream: a pixel count that wraps imgsize
 
 	img = new RGB[imgsize];
 	switch (bpp) {
 	case 8: {
 		BYTE b;
+		DWORD npal = PaletteSize (bmfh.bfOffBits); // not upstream: entries the file's palette holds
 		for (i = 0; i < imgsize; i++) {
 			if (!fread (&b, 1, 1, fbmp)) FatalError ("Cannot read bitmap data"); // not upstream: short file
+			if (b >= npal) FatalError ("Cannot read bitmap data"); // not upstream: an index past the palette
 			img[i].r = bmi->bmiColors[b].rgbRed;
 			img[i].g = bmi->bmiColors[b].rgbGreen;
 			img[i].b = bmi->bmiColors[b].rgbBlue;
@@ -2597,7 +2643,7 @@ RGB *ReadBMP (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 
 RGB *ReadBMP_band (char *fname, LONG &mapw, LONG &maph, WORD &bpp, LONG line0, LONG nlines)
 {
-	char cbuf[256], *id;
+	char cbuf[512], *id; // not upstream: cbuf 512, room for a 255-character name and ".bmp"
 	FILE *fbmp;
 	BITMAPFILEHEADER bmfh;
 	BITMAPINFO *bmi;
@@ -2605,8 +2651,7 @@ RGB *ReadBMP_band (char *fname, LONG &mapw, LONG &maph, WORD &bpp, LONG line0, L
 	LONG i, j;
 	RGB *img;
 
-	strcpy (cbuf, fname);
-	strcat (cbuf, ".bmp");
+	MakeName (cbuf, sizeof cbuf, fname, ".bmp"); // not upstream: bounded, a name too long is an error
 	fbmp = fopen (cbuf, "rb");
 	if (!fbmp) FatalError ("Input file not found");
 	if (!fread (&bmfh, sizeof (BITMAPFILEHEADER), 1, fbmp))
@@ -2624,19 +2669,22 @@ RGB *ReadBMP_band (char *fname, LONG &mapw, LONG &maph, WORD &bpp, LONG line0, L
 	mapw = bmi->bmiHeader.biWidth;
 	maph = nlines;
 	bpp  = bmi->bmiHeader.biBitCount;
-	imgsize = mapw*maph;
+	imgsize = (DWORD)mapw*(DWORD)maph; // not upstream: unsigned, the int product overflowed on a corrupt header (checked below)
 	if (bmi->bmiHeader.biCompression != BI_RGB)
 		FatalError ("Cannot process compressed source bitmaps");
+	if (mapw <= 0 || maph <= 0 || (uint64_t)mapw * (uint64_t)maph > 0xFFFFFFFFu) FatalError ("Cannot read bitmap file header"); // not upstream: a pixel count that wraps imgsize
 
 	img = new RGB[imgsize];
 	switch (bpp) {
 	case 8: {
 		BYTE *line = new BYTE[mapw];
+		DWORD npal = PaletteSize (bmfh.bfOffBits); // not upstream: entries the file's palette holds
 		for (j = 0; j < line0; j++)
 			if (fread (line, 1, mapw, fbmp) != (size_t)mapw) FatalError ("Cannot read bitmap data"); // skip these lines; not upstream: short file
 		for (j = 0; j < nlines; j++) {
 			if (fread (line, 1, mapw, fbmp) != (size_t)mapw) FatalError ("Cannot read bitmap data"); // not upstream: short file
 			for (i = 0; i < mapw; i++) {
+				if (line[i] >= npal) FatalError ("Cannot read bitmap data"); // not upstream: an index past the palette
 				img[j*mapw+i].r = bmi->bmiColors[line[i]].rgbRed;
 				img[j*mapw+i].g = bmi->bmiColors[line[i]].rgbGreen;
 				img[j*mapw+i].b = bmi->bmiColors[line[i]].rgbBlue;
@@ -2661,15 +2709,14 @@ RGB *ReadBMP_band (char *fname, LONG &mapw, LONG &maph, WORD &bpp, LONG line0, L
 
 Alpha *ReadBMPAlpha (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 {
-	char cbuf[256], *id;
+	char cbuf[512], *id; // not upstream: cbuf 512, room for a 255-character name and ".bmp"
 	FILE *fbmp;
 	BITMAPFILEHEADER bmfh;
 	BITMAPINFO *bmi;
 	DWORD i, imgsize;
 	Alpha *aimg;
 
-	strcpy (cbuf, fname);
-	strcat (cbuf, ".bmp");
+	MakeName (cbuf, sizeof cbuf, fname, ".bmp"); // not upstream: bounded, a name too long is an error
 	fbmp = fopen (cbuf, "rb");
 	if (!fbmp) FatalError ("Input file not found");
 	if (!fread (&bmfh, sizeof (BITMAPFILEHEADER), 1, fbmp))
@@ -2685,16 +2732,19 @@ Alpha *ReadBMPAlpha (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 	mapw = bmi->bmiHeader.biWidth;
 	maph = bmi->bmiHeader.biHeight;
 	bpp  = bmi->bmiHeader.biBitCount;
-	imgsize = mapw*maph;
+	imgsize = (DWORD)mapw*(DWORD)maph; // not upstream: unsigned, the int product overflowed on a corrupt header (checked below)
 	if (bmi->bmiHeader.biCompression != BI_RGB)
 		FatalError ("Cannot process compressed source bitmaps");
+	if (mapw <= 0 || maph <= 0 || (uint64_t)mapw * (uint64_t)maph > 0xFFFFFFFFu) FatalError ("Cannot read bitmap file header"); // not upstream: a pixel count that wraps imgsize
 
 	aimg = new Alpha[imgsize];
 	switch (bpp) {
 	case 8: {
 		BYTE b;
+		DWORD npal = PaletteSize (bmfh.bfOffBits); // not upstream: entries the file's palette holds
 		for (i = 0; i < imgsize; i++) {
 			if (!fread (&b, 1, 1, fbmp)) FatalError ("Cannot read bitmap data"); // not upstream: short file
+			if (b >= npal) FatalError ("Cannot read bitmap data"); // not upstream: an index past the palette
 			aimg[i] = bmi->bmiColors[b].rgbBlue;
 		}}
 		break;
@@ -2715,7 +2765,7 @@ Alpha *ReadBMPAlpha (char *fname, LONG &mapw, LONG &maph, WORD &bpp)
 
 Alpha *ReadBMPAlpha_band (char *fname, LONG &mapw, LONG &maph, WORD &bpp, LONG line0, LONG nlines)
 {
-	char cbuf[256], *id;
+	char cbuf[512], *id; // not upstream: cbuf 512, room for a 255-character name and ".bmp"
 	FILE *fbmp;
 	BITMAPFILEHEADER bmfh;
 	BITMAPINFO *bmi;
@@ -2723,8 +2773,7 @@ Alpha *ReadBMPAlpha_band (char *fname, LONG &mapw, LONG &maph, WORD &bpp, LONG l
 	LONG i, j;
 	Alpha *aimg;
 
-	strcpy (cbuf, fname);
-	strcat (cbuf, ".bmp");
+	MakeName (cbuf, sizeof cbuf, fname, ".bmp"); // not upstream: bounded, a name too long is an error
 	fbmp = fopen (cbuf, "rb");
 	if (!fbmp) FatalError ("Input file not found");
 	if (!fread (&bmfh, sizeof (BITMAPFILEHEADER), 1, fbmp))
@@ -2742,19 +2791,22 @@ Alpha *ReadBMPAlpha_band (char *fname, LONG &mapw, LONG &maph, WORD &bpp, LONG l
 	mapw = bmi->bmiHeader.biWidth;
 	maph = nlines;
 	bpp  = bmi->bmiHeader.biBitCount;
-	imgsize = mapw*maph;
+	imgsize = (DWORD)mapw*(DWORD)maph; // not upstream: unsigned, the int product overflowed on a corrupt header (checked below)
 	if (bmi->bmiHeader.biCompression != BI_RGB)
 		FatalError ("Cannot process compressed source bitmaps");
+	if (mapw <= 0 || maph <= 0 || (uint64_t)mapw * (uint64_t)maph > 0xFFFFFFFFu) FatalError ("Cannot read bitmap file header"); // not upstream: a pixel count that wraps imgsize
 
 	aimg = new Alpha[imgsize];
 	switch (bpp) {
 	case 8: {
 		BYTE *line = new BYTE[mapw];
+		DWORD npal = PaletteSize (bmfh.bfOffBits); // not upstream: entries the file's palette holds
 		for (j = 0; j < line0; j++)
 			if (fread (line, 1, mapw, fbmp) != (size_t)mapw) FatalError ("Cannot read bitmap data"); // skip these lines; not upstream: short file
 		for (j = 0; j < nlines; j++) {
 			if (fread (line, 1, mapw, fbmp) != (size_t)mapw) FatalError ("Cannot read bitmap data"); // not upstream: short file
 			for (i = 0; i < mapw; i++) {
+				if (line[i] >= npal) FatalError ("Cannot read bitmap data"); // not upstream: an index past the palette
 				aimg[j*mapw+i] = bmi->bmiColors[line[i]].rgbBlue;
 			}
 		}
@@ -2848,6 +2900,7 @@ DWORD CopyDDS (FILE *ftgt, FILE *fsrc, DWORD idx, bool idx_is_ofs)
 
 	static const DWORD MAXMIP = 32;
 	DWORD i, j, s, dwMagic, size, tsize;
+	DWORD bs = 8; // not upstream: smallest mip level size, the format's block size
 	DDSURFACEDESC2 ddsd;
 
 	if (!maxmip) {
@@ -2872,21 +2925,23 @@ DWORD CopyDDS (FILE *ftgt, FILE *fsrc, DWORD idx, bool idx_is_ofs)
 		if (fread (&ddsd, sizeof(DDSURFACEDESC2), 1, fsrc) != 1) return 0; // not upstream: short file
 		if (!(ddsd.dwFlags & DDSD_LINEARSIZE)) return 0;
 		size = ddsd.dwLinearSize;
+		if (!size || size > (DWORD)(PS*PS*4)) return 0; // not upstream: a zero size, or more than an uncompressed 256x256 RGBA level, is no texture
+		if ((ddsd.dwFlags & DDSD_MIPMAPCOUNT) && ddsd.dwMipMapCount > maxmip) return 0; // not upstream: more mip levels than buffers
+		bs = (ddsd.ddpfPixelFormat.dwFourCC == MAKEFOURCC('D','X','T','1') ? 8 : 16); // not upstream: DXT1 blocks are 8 bytes, DXT2-5 blocks 16
 		if (size > mipsize[0]) { // re-allocate buffers
 			for (j = 0, s = size; j < maxmip; j++) {
 				if (mipsize[j]) delete []mipbuf[j];
 				mipsize[j] = s;
 				mipbuf[j] = new BYTE[s];
 				s >>= 2;
-				s = max (s, (DWORD)8); // Minimum texture size. This appears to be
-					            // correct for DXT1, but may differ for other formats!
+				s = max (s, (DWORD)16); // not upstream: at least 16 bytes, the largest block size (the buffers are shared by all formats)
 			}
 		}
-		if (fread (mipbuf[0], 1, size, fsrc) != size) return 0; // not upstream: short file; bytes counted, so a zero size still passes
+		if (fread (mipbuf[0], 1, size, fsrc) != size) return 0; // not upstream: short file
 		if (ddsd.dwFlags & DDSD_MIPMAPCOUNT) {
 			for (j = 1, s = size; j < ddsd.dwMipMapCount; j++) {
 				s >>= 2;
-				s = max (s, (DWORD)8);
+				s = max (s, bs); // not upstream: the format's block size (upstream 8, short for DXT2-5)
 				if (fread (mipbuf[j], 1, s, fsrc) != s) return 0; // not upstream: short file
 			}
 		}
@@ -2898,7 +2953,7 @@ DWORD CopyDDS (FILE *ftgt, FILE *fsrc, DWORD idx, bool idx_is_ofs)
 	if (ddsd.dwFlags & DDSD_MIPMAPCOUNT) {
 		for (j = 1, s = size; j < ddsd.dwMipMapCount; j++) {
 			s >>= 2;
-			s = max (s, (DWORD)8);
+			s = max (s, bs); // not upstream: the format's block size (upstream 8, short for DXT2-5)
 			fwrite (mipbuf[j], s, 1, ftgt);             tsize += s;
 		}
 	}

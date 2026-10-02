@@ -86,7 +86,7 @@ void Tile::ensureLayerDir()
 void Tile::ensureTmpLayerDir()
 {
 	char cbuf[1024];
-	sprintf(cbuf, "%s/tileedit.tmp", s_root.c_str());
+	if (snprintf(cbuf, sizeof(cbuf), "%s/tileedit.tmp", s_root.c_str()) >= (int)sizeof(cbuf)) return; // not upstream: snprintf; no mkdir of a cut-off path
 	mkdir(cbuf, 0777);
 	::ensureLayerDir(cbuf, Layer().c_str(), m_lvl, m_ilat);
 }
@@ -118,7 +118,10 @@ int DXT1Tile::TileSize() const
 void DXT1Tile::SaveDXT1()
 {
 	char path[1024];
-	sprintf(path, "%s/%s/%02d/%06d/%06d.dds", s_root.c_str(), Layer().c_str(), m_lvl, m_ilat, m_ilng);
+	if (snprintf(path, sizeof(path), "%s/%s/%02d/%06d/%06d.dds", s_root.c_str(), Layer().c_str(), m_lvl, m_ilat, m_ilng) >= (int)sizeof(path)) { // not upstream: snprintf; a path that doesn't fit isn't written
+		std::cerr << "tileedit: path too long, not written: " << path << std::endl;
+		return;
+	}
 	ensureLayerDir();
 	dxt1write(path, m_idata);
 }
@@ -126,7 +129,10 @@ void DXT1Tile::SaveDXT1()
 void DXT1Tile::SavePNGtmp()
 {
 	char path[1024];
-	sprintf(path, "%s/tileedit.tmp/%s/%02d/%06d/%06d.png", s_root.c_str(), Layer().c_str(), m_lvl, m_ilat, m_ilng);
+	if (snprintf(path, sizeof(path), "%s/tileedit.tmp/%s/%02d/%06d/%06d.png", s_root.c_str(), Layer().c_str(), m_lvl, m_ilat, m_ilng) >= (int)sizeof(path)) { // not upstream: snprintf; a path that doesn't fit isn't written
+		std::cerr << "tileedit: path too long, not written: " << path << std::endl;
+		return;
+	}
 	ensureTmpLayerDir();
 	pngwrite_tmp(path, m_idata);
 }
@@ -146,7 +152,10 @@ bool DXT1Tile::LoadDXT1(const ZTreeMgr *mgr, TileLoadMode mode)
 bool DXT1Tile::LoadPNGtmp()
 {
 	char path[1024];
-	sprintf(path, "%s/tileedit.tmp/%s/%02d/%06d/%06d.png", s_root.c_str(), Layer().c_str(), m_lvl, m_ilat, m_ilng);
+	if (snprintf(path, sizeof(path), "%s/tileedit.tmp/%s/%02d/%06d/%06d.png", s_root.c_str(), Layer().c_str(), m_lvl, m_ilat, m_ilng) >= (int)sizeof(path)) { // not upstream: snprintf; a path that doesn't fit counts as missing
+		std::cerr << "tileedit: path too long, not read: " << path << std::endl;
+		path[0] = '\0';
+	}
 	bool ok = pngread_tmp(path, m_idata);
 	if (ok && (m_idata.width != TileSize() || m_idata.height != TileSize()))
 		ok = false;
@@ -184,10 +193,15 @@ void DXT1Tile::LoadSubset(const ZTreeMgr *mgr)
 
 void DXT1Tile::LoadData(Image &im, int lvl, int ilat, int ilng, const ZTreeMgr *mgr)
 {
+	const DWORD sz = (lvl == 1 ? 128 : lvl == 2 ? 256 : TILE_SURFSTRIDE); // not upstream: tile size of the level loaded; another size counts as missing
 	if (s_openMode & 0x1) { // try cache
 		char path[1024];
-		sprintf(path, "%s/%s/%02d/%06d/%06d.dds", s_root.c_str(), Layer().c_str(), lvl, ilat, ilng);
+		if (snprintf(path, sizeof(path), "%s/%s/%02d/%06d/%06d.dds", s_root.c_str(), Layer().c_str(), lvl, ilat, ilng) >= (int)sizeof(path)) { // not upstream: snprintf; a path that doesn't fit counts as missing
+			std::cerr << "tileedit: path too long, not read: " << path << std::endl;
+			path[0] = '\0';
+		}
 		im = ddsread(path);
+		if (im.width != sz || im.height != sz) im = Image(); // not upstream: a wrong-size cache tile falls through to the archive
 	}
 	if (im.data.size() == 0 && s_openMode & 0x2 && mgr) { // try archive
 		BYTE *buf;
@@ -195,6 +209,7 @@ void DXT1Tile::LoadData(Image &im, int lvl, int ilat, int ilng, const ZTreeMgr *
 		if (ndata) {
 			im = ddsscan(buf, ndata);
 			mgr->ReleaseData(buf);
+			if (im.width != sz || im.height != sz) im = Image(); // not upstream: a wrong-size node counts as missing
 		}
 	}
 }
