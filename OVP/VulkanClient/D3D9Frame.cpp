@@ -122,6 +122,7 @@ void CD3DFramework9::Clear()
 	swapFormat		  = VK_FORMAT_UNDEFINED;
 	swapExtent		  = { 0, 0 };
 	iAcquire		  = 0;
+	tPace			  = std::chrono::steady_clock::time_point(); // not upstream: the epoch, so the first hidden frame starts the deadline from now
 	for (int i = 0; i < VkDev::NFRAMES; i++) acquireSem[i] = VK_NULL_HANDLE;
 	swapImages.clear();
 	presentSem.clear();
@@ -670,7 +671,11 @@ int CD3DFramework9::Present()
 		if (failed || !bNoVSync) { // paced as FIFO presenting would have (a failed device never spins)
 			QScreen *s = hWnd ? hWnd->screen() : nullptr;
 			double hz = (s && s->refreshRate() > 1.0) ? s->refreshRate() : 60.0;
-			std::this_thread::sleep_for(std::chrono::microseconds((long long)(1e6 / hz)));
+			auto interval = std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(1.0 / hz)); // not upstream: a deadline instead of a sleep after the frame's work
+			auto now = std::chrono::steady_clock::now(); // not upstream: as above
+			tPace += interval; // not upstream: as above
+			if (tPace < now) tPace = now; // not upstream: a late frame doesn't sleep and starts no backlog
+			else std::this_thread::sleep_until(tPace); // not upstream: as above
 		}
 		return failed ? -1 : 0;
 	}

@@ -985,27 +985,32 @@ bool vPlanet::LoadAtmoConfig()
 
 	oapiGetObjectName(hObj, name, 32);
 
+	const char *cut = NULL; // not upstream: the name whose path didn't fit
 	auto it = Config->AtmoCfg.find(name);
 	if (it != Config->AtmoCfg.end()) {
-		snprintf(path, 256, "GC/%s", it->second.c_str());
+		if (snprintf(path, 256, "GC/%s", it->second.c_str()) >= 256) cut = it->second.c_str(); // not upstream: rule N, a cut path counts as missing
 	}
 	else {
-		snprintf(path, sizeof(path), "GC/%s.atm.cfg", name);
+		if (snprintf(path, sizeof(path), "GC/%s.atm.cfg", name) >= (int)sizeof(path)) cut = name; // not upstream: as above
 		Config->AtmoCfg[name] = string(name) + ".atm.cfg";
 	}
+	if (cut) { LogWrn("Atmospheric configuration name too long: %s", cut); path[0] = '\0'; } // not upstream: one warning, the Mercury fallback below is used
 	
-	FILEHANDLE hFile = oapiOpenFile(path, FILE_IN_ZEROONFAIL, CONFIG);
+	FILEHANDLE hFile = cut ? NULL : oapiOpenFile(path, FILE_IN_ZEROONFAIL, CONFIG); // not upstream: nothing is opened at a cut path
 	if (!hFile) hFile = oapiOpenFile("GC/Mercury.atm.cfg", FILE_IN_ZEROONFAIL, CONFIG);
 	if (!hFile) LogErr("Failed to initialize configuration for [%s]", name);
 
 	LogAlw("Loading Atmospheric Configuration file [%s] Handle=%s", path, _PTR(hFile));
 
-	if (oapiReadItem_string(hFile, (char*)"Shader", ShaderName) == false) snprintf(ShaderName, 32, "%s", "Auto");
-	if (oapiReadItem_string(hFile, (char*)"ConfigName", AtmoConfigName) == false) snprintf(AtmoConfigName, 32, "%s", "Custom");
+	char tmp[512]; // not upstream: oapiReadItem_string writes up to 511 bytes, the members hold 32
+	if (!hFile || oapiReadItem_string(hFile, (char*)"Shader", tmp) == false || strlen(tmp) >= sizeof(ShaderName)) snprintf(ShaderName, 32, "%s", "Auto"); // not upstream: no cfg or a longer name counts as not read
+	else memcpy(ShaderName, tmp, strlen(tmp) + 1); // not upstream: copied when it fits
+	if (!hFile || oapiReadItem_string(hFile, (char*)"ConfigName", tmp) == false || strlen(tmp) >= sizeof(AtmoConfigName)) snprintf(AtmoConfigName, 32, "%s", "Custom"); // not upstream: as Shader
+	else memcpy(AtmoConfigName, tmp, strlen(tmp) + 1); // not upstream: copied when it fits
 
-	LoadStruct(hFile, &SPrm, 0);
-	LoadStruct(hFile, &OPrm, 1);
-	LoadStruct(hFile, &HPrm, 2);
+	if (hFile) LoadStruct(hFile, &SPrm, 0); // not upstream: without a cfg nothing is read, the parameters keep their defaults
+	if (hFile) LoadStruct(hFile, &OPrm, 1); // not upstream: as above
+	if (hFile) LoadStruct(hFile, &HPrm, 2); // not upstream: as above
 
 	oapiCloseFile(hFile, FILE_IN_ZEROONFAIL);
 
@@ -1122,14 +1127,16 @@ void vPlanet::SaveAtmoConfig()
 
 	oapiGetObjectName(hObj, name, 64);
 
+	const char *cut = NULL; // not upstream: the name whose path didn't fit
 	auto it = Config->AtmoCfg.find(name);
 	if (it != Config->AtmoCfg.end()) {
-		snprintf(path, 256, "GC/%s", it->second.c_str());
+		if (snprintf(path, 256, "GC/%s", it->second.c_str()) >= 256) cut = it->second.c_str(); // not upstream: rule W, nothing is written at a cut path
 	}
 	else {
-		snprintf(path, sizeof(path), "GC/%s.atm.cfg", name);
+		if (snprintf(path, sizeof(path), "GC/%s.atm.cfg", name) >= (int)sizeof(path)) cut = name; // not upstream: as above
 		Config->AtmoCfg[name] = string(name) + ".atm.cfg";
 	}
+	if (cut) { LogWrn("Atmospheric configuration name too long, not saved: %s", cut); return; } // not upstream: one warning, no write
 
 	FILEHANDLE hFile = oapiOpenFile(path, FILE_OUT, CONFIG);
 

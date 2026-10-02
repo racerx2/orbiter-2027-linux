@@ -17,6 +17,7 @@
 #include "OrbiterAPI.h"
 #include <cstdio>
 #include <cstring>
+#include <sys/stat.h> // not upstream: fstat, the archive's size bounds what is read from it
 
 #define MAKEFOURCC(a, b, c, d) ((DWORD)(BYTE)(a) | ((DWORD)(BYTE)(b) << 8) | ((DWORD)(BYTE)(c) << 16) | ((DWORD)(BYTE)(d) << 24)) // mmsyscom.h (windows.h left out)
 
@@ -128,7 +129,10 @@ bool ZTreeMgr::OpenArchive ()
 {
 	const char *name[6] = { "Surf", "Mask", "Elev", "Elev_mod", "Label", "Cloud" };
 	char fname[MAX_PATH];
-	snprintf (fname, MAX_PATH, "%s\\Archive\\%s.tree", path, name[layer]);
+	if (snprintf (fname, MAX_PATH, "%s\\Archive\\%s.tree", path, name[layer]) >= MAX_PATH) { // not upstream: a path that doesn't fit counts as missing
+		oapiWriteLogV("ZTreeMgr: path too long: %s, archive %s.tree", path, name[layer]);
+		return false;
+	}
 	if (!(treef = fopen(oapiResolvePath(fname).c_str(), "rb"))) {
 		return false;
 	}
@@ -146,6 +150,15 @@ bool ZTreeMgr::OpenArchive ()
 	}
 	dofs = (int64_t)tfh.dataOfs;
 
+	struct stat st; // not upstream: the file size bounds the node count and the node sizes
+	if (fstat(fileno(treef), &st)) { st.st_size = 0; } // not upstream: no size, so any node count fails below
+	fsize = (int64_t)st.st_size; // not upstream: kept for ReadData
+	if ((int64_t)tfh.nodeCount > (fsize - (int64_t)sizeof(TreeFileHeader)) / (int64_t)sizeof(TreeNode)) { // not upstream: a node count larger than the file is a bad file
+		fclose(treef);
+		treef = NULL;
+		return false;
+	}
+
 	if (!toc.fread(tfh.nodeCount, treef)) {
 		fclose(treef);
 		treef = NULL;
@@ -160,8 +173,11 @@ bool ZTreeMgr::OpenArchive ()
 
 DWORD ZTreeMgr::Idx (int lvl, int ilat, int ilng)
 {
+	if (lvl < 1) { return (DWORD)-1; } // not upstream: levels start at 1
 	if (lvl <= 4) {
-		return (lvl == 1 ? rootPos1 : lvl == 2 ? rootPos2 : lvl == 3 ? rootPos3 : rootPos4[ilng]);
+		if (lvl == 4 && (ilng < 0 || ilng > 1)) { return (DWORD)-1; } // not upstream: level 4 has two tiles
+		DWORD idx = (lvl == 1 ? rootPos1 : lvl == 2 ? rootPos2 : lvl == 3 ? rootPos3 : rootPos4[ilng]); // not upstream: checked below
+		return idx < toc.size() ? idx : (DWORD)-1; // not upstream: an index past the TOC is no tile
 	} else {
 		int plvl = lvl-1;
 		int pilat = ilat/2;
@@ -169,7 +185,8 @@ DWORD ZTreeMgr::Idx (int lvl, int ilat, int ilng)
 		DWORD pidx = Idx(plvl, pilat, pilng);
 		if (pidx == (DWORD)-1) { return pidx; }
 		int cidx = ((ilat&1) << 1) + (ilng&1);
-		return toc[pidx].child[cidx];
+		DWORD idx = toc[pidx].child[cidx]; // not upstream: checked below
+		return idx < toc.size() ? idx : (DWORD)-1; // not upstream: an index past the TOC is no tile
 	}
 }
 
@@ -178,17 +195,21 @@ DWORD ZTreeMgr::Idx (int lvl, int ilat, int ilng)
 DWORD ZTreeMgr::ReadData (DWORD idx, BYTE **outp)
 {
 	if (idx == (DWORD)-1) { return 0; } // sanity check
+	if (idx >= toc.size()) { return 0; } // not upstream: an index past the TOC is no tile
 
 	DWORD esize = NodeSizeInflated(idx);
 	if (!esize) {// node doesn't have data, but has descendants with data
 		return 0;
 	}
+	if (esize > (64u << 20)) { return 0; } // not upstream: larger than any tile, a corrupt size is no data
 
 	if (fseeko(treef, toc[idx].pos+dofs, SEEK_SET)) {
 		return 0;
 	}
 
 	DWORD zsize = NodeSizeDeflated(idx);
+	int64_t zend = (idx < toc.size()-1 ? toc[idx+1].pos : toc.totlength); // not upstream: the node's end as NodeSizeDeflated takes it, before the DWORD cast
+	if (toc[idx].pos < 0 || toc[idx].pos > fsize || zend < toc[idx].pos || toc[idx].pos + dofs + (int64_t)zsize > fsize) { return 0; } // not upstream: a node ending before it starts (a wrapped size) or past the end of the file is no data
 	BYTE *zbuf = new BYTE[zsize];
 	if (fread(zbuf, 1, zsize, treef) != zsize) { delete []zbuf; return 0; } // not upstream: a short node is no data
 

@@ -172,7 +172,7 @@ void ProcessPlanetFlats(OBJHANDLE hPlanet)
 			{
 				int height, dim1, dim2, falloff, read;
 				double lat, lng, phi;
-				if ((read = fscanf(f, "%s %d %lf %lf %d %d %lf %d", fname, &height, &lng, &lat, &dim1, &dim2, &phi, &falloff)) < 5) continue; // Skip incomplete lines
+				if ((read = fscanf(f, "%4095s %d %lf %lf %d %d %lf %d", fname, &height, &lng, &lat, &dim1, &dim2, &phi, &falloff)) < 5) continue; // Skip incomplete lines; not upstream: %4095s, fname is MAX_PATH
 				if (fname[0] == '/' && fname[1] == '/') continue; // Skip commented lines
 				for (char *c = fname; *c; c++) *c = (char)tolower(*c); // _strlwr
 				if (read < 6)	dim2 = dim1; // Fallback for one dimension only

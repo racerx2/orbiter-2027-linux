@@ -179,6 +179,7 @@ bool TileLabel::Read ()
 		while (ifs >> typestr >> lat >> lng >> altstr >> std::ws) {
 			std::getline(ifs, name, '\n');
 			if (!name.empty() && name.back() == '\r') name.pop_back(); // not upstream: CRLF files (Windows text mode dropped the CR)
+			if (name.empty()) continue; // not upstream: a label without a name has nothing to draw (its NULL text would abort the render)
 			TLABEL *item = new TLABEL;
 			item->lat = lat * RAD;
 			item->lng = lng * RAD;
@@ -192,9 +193,10 @@ bool TileLabel::Read ()
 		ZTreeMgr *mgr = tile->smgr->ZTreeManager(4);
 		DWORD ndata = mgr->ReadData(lvl+4, ilat, ilng, &buf);
 		if (ndata) {
-			std::istringstream iss((char*)buf);
+			std::istringstream iss(std::string((char*)buf, ndata)); // not upstream: exactly the node, which has no terminator
 			while (/*iss.tellg() < ndata &&*/ iss >> typestr >> lat >> lng >> altstr >> std::ws) {
 				std::getline(iss, name, '\n');
+				if (name.empty()) continue; // not upstream: as above
 
 				TLABEL *item = new TLABEL;
 				item->lat = lat * RAD;

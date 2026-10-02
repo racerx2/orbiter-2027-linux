@@ -23,6 +23,8 @@
 #include "OapiExtension.h"
 #include "VkTexFile.h"
 #include <chrono>
+#include <sys/stat.h> // not upstream: fstat, the _tile.bin size bounds its TOC count
+#include <climits> // not upstream: INT_MAX, the _lmask.bin patch count stays a non-negative int
 
 using namespace oapi;
 
@@ -163,12 +165,15 @@ bool TileManager::LoadPatchData ()
 		if (!strncmp (lmfh.id, "PLTA0100", 8)) { // v.1.00 format
 			minres = lmfh.minres;
 			maxres = lmfh.maxres;
+			struct stat st; // not upstream: the file size bounds npatch
+			rd = rd && minres >= 1 && maxres <= 8 && minres <= maxres && !fstat (fileno (binf), &st) && lmfh.npatch <= (DWORD)INT_MAX && (size_t)lmfh.npatch <= (size_t)st.st_size / sizeof(WORD); // not upstream: levels 1-8 (patchidx has 9 entries), a count larger than the file is a bad file
 			npatch = rd ? lmfh.npatch : 0;
 			tflag = new WORD[npatch];
 			rd = rd && fread (tflag, sizeof(WORD), npatch, binf) == (size_t)npatch;
 		} else {                                 // pre-v.1.00 format
 			fseek (binf, 0, SEEK_SET);
 			rd = fread (&minres, 1, 1, binf) == 1 && fread (&maxres, 1, 1, binf) == 1;
+			rd = rd && minres >= 1 && maxres <= 8 && minres <= maxres; // not upstream: levels 1-8, patchidx has 9 entries
 			npatch = rd ? patchidx[maxres] - patchidx[minres-1] : 0;
 			tflag = new WORD[npatch];
 			for (i = 0; i < npatch; i++) {
@@ -185,7 +190,7 @@ bool TileManager::LoadPatchData ()
 		}
 
 		for (i = idx = 0; i < patchidx[maxbaselvl]; i++) {
-			if (i < patchidx[minres-1]) {
+			if (i < patchidx[minres-1] || idx >= npatch) { // not upstream: past the file's npatch entries too
 				tiledesc[i].flag = 1; // no mask information -> assume opaque, no lights
 			} else {
 				flag = (BYTE)tflag[idx++];
@@ -235,7 +240,8 @@ bool TileManager::LoadTileData ()
 	}
 
 	DWORD n, i, j;
-	if (fread (&n, sizeof(DWORD), 1, file) != 1 || n < 364) { fclose (file); LogWrn("Surface Tile TOC not found for %s", fname); return false; } // not upstream: a short file counts as missing, the level-8 loop reads tfs[0..363]
+	struct stat st; // not upstream: the file size bounds n before the allocation
+	if (fread (&n, sizeof(DWORD), 1, file) != 1 || n < 364 || fstat (fileno (file), &st) || (size_t)n > (size_t)st.st_size / sizeof(TILEFILEREC)) { fclose (file); LogWrn("Surface Tile TOC not found for %s", fname); return false; } // not upstream: a short file or a count larger than the file counts as missing, the level-8 loop reads tfs[0..363]
 	TILEFILESPEC *tfs = new TILEFILESPEC[n];
 	TILEFILEREC rec; // not upstream: the file's 32-byte records are widened into tfs
 	for (i = 0; i < n && fread (&rec, sizeof(TILEFILEREC), 1, file) == 1; i++) {
@@ -277,7 +283,7 @@ bool TileManager::LoadTileData ()
 		TILEDESC &tile8i = tile8[i];
 		for (j = 0; j < 4; j++)
 			if (tfs[i].subidx[j])
-				AddSubtileData (tile8i, tfs, i, j, 9);
+				AddSubtileData (tile8i, tfs, n, i, j, 9); // not upstream: n, the TOC size
 	}
 
 	fclose (file);
@@ -297,9 +303,10 @@ int compare_idx (const void *el1, const void *el2)
 
 // =======================================================================
 
-bool TileManager::AddSubtileData (TILEDESC &td, TILEFILESPEC *tfs, DWORD idx, DWORD sub, DWORD lvl)
+bool TileManager::AddSubtileData (TILEDESC &td, TILEFILESPEC *tfs, DWORD ntfs, DWORD idx, DWORD sub, DWORD lvl) // not upstream: ntfs, the TOC size
 {
 	DWORD j, subidx = tfs[idx].subidx[sub];
+	if (subidx >= ntfs) return true; // not upstream: an index past the TOC is no subtile
 	TILEFILESPEC &t = tfs[subidx];
 	bool bSubtiles = false;
 	for (j = 0; j < 4; j++)
@@ -322,7 +329,7 @@ bool TileManager::AddSubtileData (TILEDESC &td, TILEFILESPEC *tfs, DWORD idx, DW
 			// recursively step down to higher resolutions
 			if (bSubtiles) {
 				for (j = 0; j < 4; j++) {
-					if (t.subidx[j]) AddSubtileData (*td.subtile[sub], tfs, subidx, j, lvl+1);
+					if (t.subidx[j]) AddSubtileData (*td.subtile[sub], tfs, ntfs, subidx, j, lvl+1); // not upstream: ntfs
 				}
 			}
 			nhitex++;
@@ -1237,9 +1244,9 @@ int TileBuffer::ReadDDSSurface (VkDev *pDev, const char *fname, LONG_PTR ofs, Vk
 	fseek(f, (long)ofs, SEEK_SET);
 
 	// Read the magic number
-	if (!fread(&dwMagic, sizeof(DWORD), 1, f))	return -2;
+	if (!fread(&dwMagic, sizeof(DWORD), 1, f))	{ fclose(f); return -2; } // not upstream: every failure closes the file
 
-	if (dwMagic != MAKEFOURCC('D','D','S',' ')) return -4;
+	if (dwMagic != MAKEFOURCC('D','D','S',' ')) { fclose(f); return -4; } // not upstream: closed
 
 	// Read the surface description
 	if (fread(&ddsd, sizeof(DDSURFACEDESC2), 1, f) != 1) { fclose(f); return -2; } // not upstream: a short header is a failed read
@@ -1262,7 +1269,7 @@ int TileBuffer::ReadDDSSurface (VkDev *pDev, const char *fname, LONG_PTR ofs, Vk
 
 		default:
 			LogErr("INVALID TEXTURE FORMAT in ReadDDSSurface()");
-			return -5;
+			fclose(f); return -5; // not upstream: closed
 	}
 
 	if (ddsd.dwHeight>4096 || ddsd.dwWidth>4096) LogErr("Attempting to load very large surface tile (%u,%u)", ddsd.dwWidth, ddsd.dwHeight);
@@ -1278,7 +1285,7 @@ int TileBuffer::ReadDDSSurface (VkDev *pDev, const char *fname, LONG_PTR ofs, Vk
 		if ((*pTex)->img == VK_NULL_HANDLE) {
 			SAFE_DELETE(*pTex);
 			LogErr("Surface Tile Allocation Failed. w=%u, h=%u", ddsd.dwWidth, ddsd.dwHeight);
-			return -10;
+			fclose(f); return -10; // not upstream: closed
 		}
 		if ((*pTex)==NULL) return -8;
 		{ // LockRect
@@ -1295,7 +1302,7 @@ int TileBuffer::ReadDDSSurface (VkDev *pDev, const char *fname, LONG_PTR ofs, Vk
 		if ((*pTex)->img == VK_NULL_HANDLE) {
 			SAFE_DELETE(*pTex);
 			LogErr("Surface Tile Allocation Failed. w=%u, h=%u", ddsd.dwWidth, ddsd.dwHeight);
-			return -9;
+			fclose(f); return -9; // not upstream: closed
 		}
 		// D3DPOOL_SYSTEMMEM texture: rect holds the level in system memory
 
@@ -1311,6 +1318,7 @@ int TileBuffer::ReadDDSSurface (VkDev *pDev, const char *fname, LONG_PTR ofs, Vk
 	}
 
 	fclose(f);
+	SAFE_DELETE(*pTex); // not upstream: nothing was read into it and the callers drop it
 	return -7;
 }
 
