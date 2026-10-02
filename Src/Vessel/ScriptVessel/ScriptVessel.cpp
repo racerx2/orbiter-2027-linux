@@ -289,19 +289,22 @@ static std::set<std::string> GetGlobalFunctions(lua_State* L)
 
 void ScriptVessel::clbkSetClassCaps (FILEHANDLE cfg)
 {
-	char script[256], cmd[256];
+	char script[256] = "", cmd[256], tmp[512]; // not upstream: script "" when the cfg has no Script; tmp takes the 511 bytes oapiReadItem_string may write
 	int i;
 
 	// Save global functions provided by lua
 	auto globals = GetGlobalFunctions(L);
 
-	oapiReadItem_string (cfg, (char*)"Script", script);
+	if (oapiReadItem_string (cfg, (char*)"Script", tmp)) { // not upstream: via tmp, a value that doesn't fit counts as not read
+		if (strlen (tmp) < sizeof script) strcpy (script, tmp);
+		else oapiWriteLogV ("ScriptVessel: %s: Script too long, ignored", GetClassName ());
+	}
 	for (char *c = script; *c; c++) if (*c == '\\') *c = '/'; // not upstream: fs::path splits only at '/' on Linux
 	fs::path script_path(script);
 	std::string parent_path = script_path.parent_path().string(); // u8string() is std::u8string in C++20; string() is UTF-8 here
 	// Add the script path to the package path so that we can "require" additional files
-	sprintf(cmd, "package.path = package.path .. ';Config/Vessels/%s/?.lua'", parent_path.c_str());
-	oapiExecScriptCmd(hInterp, cmd);
+	bool fits = snprintf(cmd, sizeof cmd, "package.path = package.path .. ';Config/Vessels/%s/?.lua'", parent_path.c_str()) < (int)sizeof cmd; // not upstream: a command that doesn't fit isn't run, the script counts as missing
+	if (fits) oapiExecScriptCmd(hInterp, cmd); // not upstream: only when it fits
 
 	bool strictmode = false;
 	oapiReadItem_bool (cfg, (char*)"StrictMode", strictmode);
@@ -312,8 +315,9 @@ void ScriptVessel::clbkSetClassCaps (FILEHANDLE cfg)
 	}
 
 	// Load the vessel script
-	sprintf (cmd, "run_global('Config/Vessels/%s')", script);
-	oapiExecScriptCmd (hInterp, cmd);
+	if (fits && snprintf (cmd, sizeof cmd, "run_global('Config/Vessels/%s')", script) < (int)sizeof cmd) // not upstream: a command that doesn't fit isn't run
+		oapiExecScriptCmd (hInterp, cmd);
+	else oapiWriteLogV ("ScriptVessel: script path too long, not loaded: %s", script); // not upstream: the script counts as missing
 
 	// find new global functions provided by the module
 	lua_pushglobaltable(L);

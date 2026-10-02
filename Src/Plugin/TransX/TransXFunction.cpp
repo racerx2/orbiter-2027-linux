@@ -65,13 +65,15 @@ void TransXFunction::restoreself(FILEHANDLE scn)
 {
 	//Search for the terminator, then return
 	char *bufferpointer;
-	char tempbuffer[18], finalbuffer[18];
+	char tempbuffer[18] = "", finalbuffer[18] = ""; // not upstream: both start empty
 	bool ok;
 	do
 	{
 		ok=oapiReadScenario_nextline(scn,bufferpointer);
+		if (!ok) break; // not upstream: at the end of the scenario bufferpointer is unset
 		strncpy(tempbuffer,bufferpointer,16);
-		sscanf(tempbuffer,"%s",finalbuffer);
+		tempbuffer[16]='\0'; // not upstream: strncpy leaves a 16-character copy unterminated
+		sscanf(tempbuffer,"%17s",finalbuffer); // not upstream: width of finalbuffer
 	}
 	while (strcmp(finalbuffer,"Finish")!=0 && ok==true);
 }
@@ -105,15 +107,14 @@ bool TransXFunction::loadhandle(FILEHANDLE scn,OBJHANDLE *handle)
 
 void TransXFunction::findfinish(FILEHANDLE scn)
 {
-	char *tbuffer,*member;
+	char *tbuffer,*member=0; // not upstream: member is unset when getlineelement fails
 	int length;
 	do
 	{
 		if (!oapiReadScenario_nextline(scn,tbuffer)) return;
 		parser.parseline(tbuffer);
-		parser.getlineelement(0,&member, &length);
 	}
-	while (strcmp(member,"Finish"));
+	while (!parser.getlineelement(0,&member, &length) || strcmp(member,"Finish")); // not upstream: a blank line has no member, the search goes on
 }
 
 

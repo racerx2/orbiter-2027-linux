@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <strings.h>
 #include <fstream>
+#include <string> // not upstream: std::string vessel names
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui.h"
@@ -1012,17 +1013,17 @@ void Atlantis::SeparateMMU (void)
 	if (GetDockStatus(hDock)) return; // something is already attached to this docking port
 
 	int i;
-	char name[256];
+	std::string name; // not upstream: no fixed buffer, a long vessel name keeps working
 	OBJHANDLE hVessel;
 	for (i = 0; ; i++) {
-		sprintf (name, "%s-MMU-%d", GetName(), i+1);
-		hVessel = oapiGetVesselByName(name);
+		name = std::string (GetName()) + "-MMU-" + std::to_string (i+1); // not upstream: was sprintf "%s-MMU-%d" into name[256]
+		hVessel = oapiGetVesselByName(name.data()); // not upstream: std::string
 		if (!hVessel) break;
 	}
 
 	VESSELSTATUS vs;
 	GetStatus (vs);
-	hMMU = oapiCreateVessel (name, "Nasa_MMU", vs);
+	hMMU = oapiCreateVessel (name.c_str(), "Nasa_MMU", vs); // not upstream: std::string
 	Dock (hMMU, 0, 0, 1);
 	oapiSetFocusObject (hMMU);
 }
@@ -1451,11 +1452,11 @@ void Atlantis::clbkLoadStateEx (FILEHANDLE scn, void *vs)
 		//} else if (!strncasecmp (line, "MET", 3)) {
 		//	sscanf (line+3, "%lf", &met);
 		} else if (!strncasecmp (line, "GEAR", 4)) {
-			sscanf (line+4, "%d%lf", &action, &gear_proc);
-			gear_status = (AnimState::Action)(action+1);
+			if (sscanf (line+4, "%d%lf", &action, &gear_proc) >= 1) // not upstream: a bare GEAR line keeps the default
+				gear_status = (AnimState::Action)(action+1); // not upstream: only when action was read
 		} else if (!strncasecmp (line, "SPEEDBRAKE", 10)) {
-			sscanf (line+10, "%d%lf", &action, &spdb_proc);
-			spdb_status = (AnimState::Action)(action+1);
+			if (sscanf (line+10, "%d%lf", &action, &spdb_proc) >= 1) // not upstream: a bare SPEEDBRAKE line keeps the default
+				spdb_status = (AnimState::Action)(action+1); // not upstream: only when action was read
 		} else if (!strncasecmp (line, "SRB_IGNITION_TIME", 17)) {
 			sscanf (line+17, "%lf", &srbtime);
 		} else if (!strncasecmp (line, "SAT_OFS_X", 9)) {
@@ -1465,7 +1466,7 @@ void Atlantis::clbkLoadStateEx (FILEHANDLE scn, void *vs)
 		} else if (!strncasecmp (line, "SAT_OFS_Z", 9)) {
 			sscanf (line+9, "%lf", &sts_sat_z);
 		} else if (!strncasecmp (line, "CARGO_STATIC_MESH", 17)) {
-			sscanf (line+17, "%s", cargo_static_mesh_name);
+			sscanf (line+17, "%255s", cargo_static_mesh_name); // not upstream: width of cargo_static_mesh_name
 			do_cargostatic = true;
 		} else if (!strncasecmp (line, "CARGO_STATIC_OFS", 16)) {
 			sscanf (line+16, "%lf%lf%lf", &cargo_static_ofs.x, &cargo_static_ofs.y, &cargo_static_ofs.z);
@@ -1565,7 +1566,7 @@ void Atlantis::clbkSaveState (FILEHANDLE scn)
 
 void Atlantis::clbkPostCreation ()
 {
-	char name[256];
+	std::string name; // not upstream: no fixed buffer, a long vessel name keeps working
 	VESSELSTATUS vs;
 	VESSEL *pV;
 
@@ -1585,12 +1586,11 @@ void Atlantis::clbkPostCreation ()
 	if (status < 3) {
 		OBJHANDLE hET = GetDockStatus (GetDockHandle (1));
 		if (!hET) {
-			strcpy (name, GetName());
-			strcat (name, "_ET");
-			hET = oapiGetVesselByName(name);
+			name = std::string (GetName()) + "_ET"; // not upstream: was strcpy + strcat into name[256]
+			hET = oapiGetVesselByName(name.data()); // not upstream: std::string
 			if (!hET || strcmp (oapiGetVesselInterface(hET)->GetClassName(), "Atlantis_Tank")) {
 				GetStatus (vs);
-				hET = oapiCreateVessel (name, "Atlantis_Tank", vs);
+				hET = oapiCreateVessel (name.c_str(), "Atlantis_Tank", vs); // not upstream: std::string
 			}
 			Dock (hET, 1, 0, 1);
 		}
@@ -1600,11 +1600,11 @@ void Atlantis::clbkPostCreation ()
 			for (UINT i = 0; i < 2; i++) {
 				OBJHANDLE hSRB = pV->GetDockStatus (pV->GetDockHandle (i+1));
 				if (!hSRB) {
-					sprintf (name, "%s-SRB%d", GetName(), i+1);
-					hSRB = oapiGetVesselByName(name);
+					name = std::string (GetName()) + "-SRB" + std::to_string (i+1); // not upstream: was sprintf "%s-SRB%d" into name[256]
+					hSRB = oapiGetVesselByName(name.data()); // not upstream: std::string
 					if (!hSRB || strcmp (oapiGetVesselInterface(hSRB)->GetClassName(), "Atlantis_SRB")) {
 						GetStatus (vs);
-						hSRB = oapiCreateVessel (name, "Atlantis_SRB", vs);
+						hSRB = oapiCreateVessel (name.c_str(), "Atlantis_SRB", vs); // not upstream: std::string
 					}
 					pV->Dock (hSRB, i+1, 0, 1);
 				}
@@ -1708,9 +1708,8 @@ void Atlantis::clbkPreStep (double simt, double simdt, double mjd)
 		}
 
 		if (do_eva) {
-			char name[256];
-			strcpy (name, GetName()); strcat (name, "-MMU");
-			OBJHANDLE hvessel = oapiGetVesselByName (name);
+			std::string name = std::string (GetName()) + "-MMU"; // not upstream: was strcpy + strcat into name[256], a long vessel name keeps working
+			OBJHANDLE hvessel = oapiGetVesselByName (name.data()); // not upstream: std::string
 			if (!hvessel) {
 				SeparateMMU ();
 			}
