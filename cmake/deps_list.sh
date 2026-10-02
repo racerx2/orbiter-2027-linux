@@ -47,6 +47,6 @@ dl_path() { PATH=$PATH:/usr/sbin:/sbin ldconfig -p | awk -v n="$1" '$1 == n && /
 	for lib in $NEEDED $DLOPEN; do echo "rpm $lib()(64bit)"; done
 	echo "dnf qt6-qtwayland"
 	echo "zypper qt6-wayland"
-	for p in qt6-base qt6-wayland libpng vulkan-icd-loader libpipewire libglvnd glu; do echo "pacman $p"; done
+	for p in qt6-base qt6-wayland libpng vulkan-icd-loader libpipewire libglvnd glu zlib; do echo "pacman $p"; done # not upstream: zlib is the system's libz.so.1 now
 } | awk 'NF > 1 && !seen[$0]++' >"$OUT"
 echo "deps_list.sh: $(awk '$1 == "apt"' "$OUT" | wc -l) apt, $(awk '$1 == "rpm"' "$OUT" | wc -l) rpm entries in $OUT"

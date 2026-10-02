@@ -11,7 +11,6 @@ ImPlot.txt                           ImPlot (Evan Pezent), MIT
 Lua.txt                              Lua 5.1 (Lua.org, PUC-Rio), MIT
 LuaFileSystem.txt                    LuaFileSystem (Kepler Project and authors), MIT, Orbitersdk/Utils/lfs.so
 wayland-protocols.txt                pointer-constraints, relative-pointer, keyboard-shortcuts-inhibit (Red Hat, Jonas Ådahl), MIT, in Orbiter
-zlib.txt                             zlib 1.2.11 (Jean-loup Gailly, Mark Adler)
 libxmp.txt                           libxmp-lite 4.6.3 (Claudio Matsuoka, Hipolito Carraro Jr), MIT, in Modules/Plugin/XRSound.so
 stb_vorbis.txt                       stb_vorbis 1.22 (Sean Barrett), MIT or public domain, in XRSound.so
 dr_libs.txt                          dr_mp3 and dr_flac (David Reid), public domain or MIT-0, in XRSound.so

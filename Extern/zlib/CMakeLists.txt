@@ -1,27 +1,6 @@
 project(zlib)
 
-Include(FetchContent)
-
-set(SKIP_INSTALL_ALL ON)
-
-# zlib 1.2.11 asks for CMake 2.4.4, which CMake 4 refuses without a policy floor
-set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
-
-# not upstream: zlib 1.2.11 has K&R definitions, which C23 (GCC 15's default) removed; gnu17, as minigzip needs fileno
-set(CMAKE_C_STANDARD 17)
-
-FetchContent_Declare(
-  zlib
-  GIT_REPOSITORY https://github.com/madler/zlib.git
-  GIT_TAG v1.2.11
-)
-FetchContent_MakeAvailable(zlib)
-target_include_directories(zlib INTERFACE ${zlib_SOURCE_DIR})
-target_include_directories(zlib INTERFACE ${zlib_BINARY_DIR})
-
-set_target_properties(zlib PROPERTIES
-    ARCHIVE_OUTPUT_DIRECTORY ${ORBITER_BINARY_ROOT_DIR}
-    LIBRARY_OUTPUT_DIRECTORY ${ORBITER_BINARY_ROOT_DIR}
-    RUNTIME_OUTPUT_DIRECTORY ${ORBITER_BINARY_ROOT_DIR}
-)
-install(TARGETS zlib LIBRARY DESTINATION ${ORBITER_INSTALL_ROOT_DIR})
+find_package(ZLIB REQUIRED) # not upstream: the system zlib (zlib1g-dev); Qt, libpng and FreeType load it too, a bundled z.so took over their calls
+add_library(zlib INTERFACE) # not upstream: the name the consumers link, as upstream's target
+target_link_libraries(zlib INTERFACE ZLIB::ZLIB) # not upstream: works whether or not ZLIB was found before (an ALIAS of a directory-scoped imported target would not)
+# FetchContent of zlib 1.2.11, its output folders and install(TARGETS zlib) left out: nothing is built or bundled

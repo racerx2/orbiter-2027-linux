@@ -13,6 +13,6 @@ sources, then a copy step (pure Lua) or a library target (C) in Extern/CMakeList
 
 1. Create a new directory (e.g. `mylib`)
 1. Add a line to Extern/CMakeLists.txt: `add_subdirectory(mylib)`
-1. Copy `Extern/zlib/CMakeLists.txt` to new directory
-1. Edit the file replacing `zlib` with `mylib` and adding new repository URL
+1. Copy `Extern/Lua/CMakeLists.txt` to new directory
+1. Edit the file replacing `lua` with `mylib` and adding new repository URL
 1. Add other tweaks to `CMakeLists.txt` as necessary

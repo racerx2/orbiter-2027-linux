@@ -32,7 +32,7 @@ jobs:
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ca-certificates git cmake ninja-build g++ pkg-config python3 libvulkan-dev glslang-dev glslang-tools qt6-base-dev \
-            libwayland-dev wayland-protocols libpipewire-0.3-dev libpng-dev libgl-dev libglu1-mesa-dev fonts-dejavu-core spirv-tools
+            libwayland-dev wayland-protocols libpipewire-0.3-dev libpng-dev libgl-dev libglu1-mesa-dev fonts-dejavu-core spirv-tools zlib1g-dev # not upstream: the system zlib, named, not only through libpng-dev
       - uses: actions/checkout@v6
       - name: Configure
         run: cmake --preset linux-x64-release
