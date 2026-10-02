@@ -75,6 +75,11 @@ M. Chapront-Touze, J. Chapront\\
 Astron. Astrophys. 124, 50 (1983)\\
 Astron. Astrophys. 190, 342 (1988)\\
 \\
+\textbf{TASS 1.7}\\
+Saturn satellite theory for Mimas, Enceladus, Tethys, Dione, Rhea, Titan, Hyperion and Iapetus\\
+A. Vienne, L. Duriez, Astron. Astrophys. 297, 588 (1995)\\
+L. Duriez, A. Vienne, Astron. Astrophys. 324, 366 (1997) (Hyperion)\\
+\\
 \textbf{Earth precession parameters}\\
 IAU SOFA C Library\\
 \url{http://www.iausofa.org/}\\
@@ -82,21 +87,21 @@ IAU SOFA C Library\\
 \textbf{Planetary precession parameters}\\
 IAU/IAG Working Group\\
 Report of the IAU/IAG Working Group on cartographic coordinates and rotational elements 2006, \url{http://www.springerlink.com/content/e637756732j60270/}\\
+Spin axes and prime meridians of the Sun, Jupiter, Uranus, Neptune, Vesta and 17 moons fitted in the Linux version to the IAU WGCCRE rotation model as NAIF's pck00011 gives it: Archinal et al., "Report of the IAU Working Group on Cartographic Coordinates and Rotational Elements: 2015", Celest. Mech. Dyn. Astr. 130, 22 (2018), and its Correction, Celest. Mech. Dyn. Astr. 131, 61 (2019); all 31 bodies with an IAU model are within 0.2° (pole) and 0.5° (prime meridian) of pck00011 over 1950-2050\\
 \\
-\textbf{Phobos and Deimos ephemeris modules}\\
-Carl Romanik ("Chode")\\
-Code based on: Sinclair, Astron. Astrophys. 220, 321 (1989)\\
-"Testing against Horizons shows agreement within 20km for Phobos, 50km for Deimos for 2000-2024."\\
+\textbf{Phobos, Deimos, Miranda, Ariel, Umbriel, Titania, Oberon and Triton ephemeris modules}\\
+64-bit modules of the Linux version: precessing Kepler orbits, with periodic terms for Miranda, Ariel, Titania and Oberon\\
+Fitted to JPL Horizons over 1800-2200: Mars satellites mar099, Uranus satellites ura184\_merged, Neptune satellites nep098\_merged\\
+JPL Solar System Dynamics \url{https://ssd.jpl.nasa.gov/horizons/}\\
+Largest position difference from Horizons at 15,000 random epochs not used in the fit (10,000 over 1800-2200 and 5,000 more over 1990-2040), 2000-2040 / 1800-2200: Phobos 7 / 31 km, Deimos 128 / 209 km, Miranda 227 / 1,048 km, Ariel 275 / 1,008 km, Umbriel 870 / 1,270 km, Titania 1,069 / 1,624 km, Oberon 1,039 / 1,444 km, Triton 93 / 497 km\\
 \\
-\textbf{Miranda, Ariel, Umbriel, Titania, Oberon ephemeris modules}\\
-Carl Romanik ("Chode")\\
-Code based on: Laskar and Jacobson, Astron. Astrophys. 188, 212 (1987)\\
-"According to the Horizons documentation, this is the same theory they use for Uranus, and the agreement of the DLLs with Horizons looks to be within about 50km."\\
+\textbf{Proteus, Nereid and Vesta ephemeris modules}\\
+Proteus: a precessing Kepler orbit with periodic terms, fitted to JPL Horizons (nep098\_merged) over 1800-2200, within 20 km\\
+Nereid and Vesta: Chebyshev tables of JPL Horizons ephemerides (Nereid nep098\_merged, 1800-2199; Vesta JPL\#36, 1600-2500), within 2.5 and 3 km of the Horizons data used; fitted orbits outside the tables\\
 \\
-\textbf{Triton ephemeris module}\\
-Carl Romanik ("Chode")\\
-Code based on: Jacobson et al., Astron. Astrophys. 247, 565 (1991)\\
-"This also appears to be what Horizons use, and the DLL agrees within about 1000km."
+\textbf{Carl Romanik ("Chode")}\\
+Semi-major axes in the Phobos, Deimos and Proteus configuration files, the rotation periods of Nereid and Hyperion, and the positions of Venera 9 to 12 and the Pioneer Venus night probe on Venus\\
+His 32-bit Phobos, Deimos, Miranda, Ariel, Umbriel, Titania, Oberon and Triton modules, which upstream Orbiter keeps as Windows binaries, are replaced in the Linux version by the modules above
 \\
 \subsubsection{Harmonic Gravity Models}
 \textbf{Mercury Harmonic Gravity Model}\\
