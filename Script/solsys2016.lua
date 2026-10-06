@@ -866,6 +866,126 @@ while t1 < 700 do
 	oapi.set_cameramode({mode='ground',ref='Nereid',lng=lg, lat=lt, alt=a, phi=ph, tht=th, alt_above_ground=0})
 end
 
+d0 = 8.0
+d1 = 2.8
+ph0 = 0.45
+ph1 = -0.25
+th0 = 0.3
+th1 = 0.15
+h:set_text('Pluto')
+par1:set_text('Dwarf planet  Radius: 1,188km  Mass: 1.303×10^22kg  Mean orbital radius: 5.906×10^9km (39.5AU)  Orbital period: 7.824×10^9s (247.9 years)')
+oapi.set_cameratarget(oapi.get_objhandle('Pluto'))
+oapi.set_cameramode({mode='track',trackmode='targetfromref',reldist=d0,phi=ph0,tht=th0,ref='Sun'})
+oapi.set_cameraaperture(25*RAD)
+while t1 < 720 do
+	tstep()
+	step = (t1-700)/20
+	d = d0 + (d1-d0)*step
+	ph = ph0 + (ph1-ph0)*step
+	th = th0 + (th1-th0)*step
+	oapi.set_cameramode({mode='track',trackmode='targetfromref',reldist=d,phi=ph,tht=th,ref='Sun'})
+end
+
+d0 = 6.0
+d1 = 3.2
+ph0 = -0.3
+ph1 = 0.25
+th0 = 0.2
+th1 = 0.1
+h:set_text('Charon')
+par1:set_text('Natural satellite of Pluto  Radius: 606km  Mass: 1.590×10^21kg  Mean orbital radius: 19,596km  Orbital period: 5.5186×10^5s (6.387 days)')
+oapi.set_cameratarget(oapi.get_objhandle('Charon'))
+oapi.set_cameramode({mode='track',trackmode='targetfromref',reldist=d0,phi=ph0,tht=th0,ref='Sun'})
+oapi.set_cameraaperture(25*RAD)
+while t1 < 730 do
+	tstep()
+	step = (t1-720)/10
+	d = d0 + (d1-d0)*step
+	ph = ph0 + (ph1-ph0)*step
+	th = th0 + (th1-th0)*step
+	oapi.set_cameramode({mode='track',trackmode='targetfromref',reldist=d,phi=ph,tht=th,ref='Sun'})
+end
+
+d0 = 6.0
+d1 = 3.5
+ph0 = 0.3
+ph1 = -0.2
+th0 = 0.2
+th1 = 0.1
+h:set_text('Styx')
+par1:set_text('Natural satellite of Pluto  Size: 16×9×8km  Mass: 6.1×10^14kg  Mean orbital radius: 42,656km  Orbital period: 1.742×10^6s (20.16 days)')
+oapi.set_cameratarget(oapi.get_objhandle('Styx'))
+oapi.set_cameramode({mode='track',trackmode='targetfromref',reldist=d0,phi=ph0,tht=th0,ref='Sun'})
+oapi.set_cameraaperture(25*RAD)
+while t1 < 740 do
+	tstep()
+	step = (t1-730)/10
+	d = d0 + (d1-d0)*step
+	ph = ph0 + (ph1-ph0)*step
+	th = th0 + (th1-th0)*step
+	oapi.set_cameramode({mode='track',trackmode='targetfromref',reldist=d,phi=ph,tht=th,ref='Sun'})
+end
+
+d0 = 6.0
+d1 = 3.5
+ph0 = -0.3
+ph1 = 0.2
+th0 = 0.2
+th1 = 0.1
+h:set_text('Nix')
+par1:set_text('Natural satellite of Pluto  Size: 48×34×31km  Mass: 2.24×10^16kg  Mean orbital radius: 48,694km  Orbital period: 2.147×10^6s (24.85 days)')
+oapi.set_cameratarget(oapi.get_objhandle('Nix'))
+oapi.set_cameramode({mode='track',trackmode='targetfromref',reldist=d0,phi=ph0,tht=th0,ref='Sun'})
+oapi.set_cameraaperture(25*RAD)
+while t1 < 750 do
+	tstep()
+	step = (t1-740)/10
+	d = d0 + (d1-d0)*step
+	ph = ph0 + (ph1-ph0)*step
+	th = th0 + (th1-th0)*step
+	oapi.set_cameramode({mode='track',trackmode='targetfromref',reldist=d,phi=ph,tht=th,ref='Sun'})
+end
+
+d0 = 6.0
+d1 = 3.5
+ph0 = 0.3
+ph1 = -0.2
+th0 = 0.2
+th1 = 0.1
+h:set_text('Kerberos')
+par1:set_text('Natural satellite of Pluto  Size: 19×10×9km  Mass: 9.0×10^14kg  Mean orbital radius: 57,783km  Orbital period: 2.779×10^6s (32.17 days)')
+oapi.set_cameratarget(oapi.get_objhandle('Kerberos'))
+oapi.set_cameramode({mode='track',trackmode='targetfromref',reldist=d0,phi=ph0,tht=th0,ref='Sun'})
+oapi.set_cameraaperture(25*RAD)
+while t1 < 760 do
+	tstep()
+	step = (t1-750)/10
+	d = d0 + (d1-d0)*step
+	ph = ph0 + (ph1-ph0)*step
+	th = th0 + (th1-th0)*step
+	oapi.set_cameramode({mode='track',trackmode='targetfromref',reldist=d,phi=ph,tht=th,ref='Sun'})
+end
+
+d0 = 6.0
+d1 = 3.5
+ph0 = -0.3
+ph1 = 0.2
+th0 = 0.2
+th1 = 0.1
+h:set_text('Hydra')
+par1:set_text('Natural satellite of Pluto  Size: 52×37×29km  Mass: 3.01×10^16kg  Mean orbital radius: 64,738km  Orbital period: 3.301×10^6s (38.20 days)')
+oapi.set_cameratarget(oapi.get_objhandle('Hydra'))
+oapi.set_cameramode({mode='track',trackmode='targetfromref',reldist=d0,phi=ph0,tht=th0,ref='Sun'})
+oapi.set_cameraaperture(25*RAD)
+while t1 < 770 do
+	tstep()
+	step = (t1-760)/10
+	d = d0 + (d1-d0)*step
+	ph = ph0 + (ph1-ph0)*step
+	th = th0 + (th1-th0)*step
+	oapi.set_cameramode({mode='track',trackmode='targetfromref',reldist=d,phi=ph,tht=th,ref='Sun'})
+end
+
 --[[
 lng0 = -50.00000
 lng1 = -18.39718
@@ -910,9 +1030,9 @@ par1:set_text("This concludes the journey through Orbiter's solar system.    Let
 oapi.set_cameratarget(oapi.get_objhandle('Moon'))
 oapi.set_cameramode({mode='ground',ref='Moon',lng=lng0, lat=lat0, alt=alt0, phi=ph0, tht=th0, alt_above_ground=0})
 oapi.set_cameraaperture(3*RAD)
-while t1 < 720 do
+while t1 < 790 do
 	tstep()
-	stepr = (t1-700)/20
+	stepr = (t1-770)/20
 	step = math.sin(stepr*math.pi/2)
 	lg = lng0 + (lng1-lng0)*step
 	lt = lat0 + (lat1-lat0)*step
