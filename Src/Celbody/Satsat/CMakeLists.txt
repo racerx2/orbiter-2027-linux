@@ -33,6 +33,8 @@ add_custom_command(
 	COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/tass17.dat ${CMAKE_BINARY_DIR}/Config/Saturn/Data/
 )
 
+set_property(TARGET Satsat APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tass17.dat) # not upstream: a changed data file relinks the module, so its PRE_BUILD copy runs
+
 set(SATSAT_LIB Satsat) # target name: CMake links a raw path to a prefix-less .so as -l<name>
 
 add_subdirectory(Mimas)

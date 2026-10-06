@@ -268,6 +268,7 @@ bool ScnEditor::SaveScenario (QWidget *hDlg)
 				continue;
 			}
 			else if (text[i] == '\n') {
+				if ((size_t)j + 8 + sizeof "</p>" > sizeof desc) break; // not upstream: no room for "</p>\n<p>" and the closing "</p>", the text is cut as at j == 4090
 				strcpy(desc + j, "</p>\n<p>");
 				j = strlen(desc);
 			}
@@ -412,9 +413,15 @@ void ScnEditor::Pause (bool pause)
 void *ScnEditor::LoadVesselLibrary (const VESSEL *vessel)
 {
 	// load vessel-specific editor extensions
-	char cbuf[256], path[300];
+	char cbuf[256], path[300], tmp[512]; // not upstream: tmp takes the 511 bytes GetEditorModule may write
 	if (hEdLib) dlclose (hEdLib); // remove previous library
-	if (vessel->GetEditorModule (cbuf)) {
+	bool found = vessel->GetEditorModule (tmp); // not upstream: via tmp
+	if (found && strlen (tmp) >= sizeof cbuf) { // not upstream: a name that doesn't fit counts as no editor module
+		oapiWriteLogV ("ScnEditor: %s: EditorModule too long, ignored", vessel->GetClassName ());
+		found = false;
+	}
+	if (found) { // not upstream: the copy fits
+		strcpy (cbuf, tmp); // not upstream: fits, checked above
 		snprintf (path, 300, "Modules/%s.so", cbuf); // LoadLibrary found it through the Modules folder on the DLL path
 		hEdLib = dlopen (oapiResolvePath (path).c_str(), RTLD_NOW);
 	}
@@ -905,9 +912,12 @@ int EditorTab_New::GetSelVesselTp (char *name, int len)
 
 	// build path
 	while ((hItem = hItem->parent())) { // TreeView_GetParent
-		snprintf (cbuf, 256, "%s", hItem->text (0).toUtf8().constData()); // TreeView_GetItem
-		strcat (cbuf, "/");
-		strcat (cbuf, name);
+		int len_path = snprintf (cbuf, 256, "%s/%s", hItem->text (0).toUtf8().constData(), name); // not upstream: one bounded build, was snprintf + 2 strcat (TreeView_GetItem)
+		if (len_path >= 256 || len_path >= len) { // not upstream: a path that doesn't fit counts as no type selected
+			oapiWriteLogV ("ScnEditor: vessel class path too long, ignored: %s", cbuf);
+			name[0] = '\0';
+			return 0;
+		}
 		strcpy (name, cbuf);
 	}
 	return type;
@@ -931,7 +941,14 @@ bool EditorTab_New::UpdateVesselBmp ()
 		sprintf (pathname, "Vessels/%s.cfg", classname);
 		FILEHANDLE hFile = oapiOpenFile (pathname, FILE_IN, CONFIG);
 		if (!hFile) return false;
-		if (oapiReadItem_string (hFile, (char*)"ImageBmp", imagename)) {
+		char tmp[512]; // not upstream: takes the 511 bytes oapiReadItem_string may write
+		bool found = oapiReadItem_string (hFile, (char*)"ImageBmp", tmp); // not upstream: via tmp
+		if (found && strlen (tmp) >= sizeof imagename) { // not upstream: a value that doesn't fit counts as not read
+			oapiWriteLogV ("ScnEditor: %s: ImageBmp too long, ignored", classname);
+			found = false;
+		}
+		if (found) { // not upstream: the copy fits
+			strcpy (imagename, tmp); // not upstream: fits, checked above
 			hVesselBmp = new QImage (QString::fromStdString (oapiResolvePath (imagename))); // LoadImage (LR_LOADFROMFILE)
 			if (hVesselBmp->isNull()) { delete hVesselBmp; hVesselBmp = NULL; }
 		}
@@ -1853,7 +1870,7 @@ void EditorTab_Statevec::ScanVesselList ()
 		if (hV == ed->hVessel) continue;                  // skip myself
 		VESSEL *vessel = oapiGetVesselInterface (hV);
 		if ((vessel->GetFlightStatus() & 1) == 1) continue; // skip landed vessels
-		strcpy (cbuf, vessel->GetName());
+		snprintf (cbuf, sizeof cbuf, "%s", vessel->GetName()); // not upstream: bounded list text, cut as GetVesselFromList reads it back
 		DlgItem<QListWidget> (hTab, IDC_STATECPY)->addItem (QString::fromUtf8 (cbuf));
 	}
 }
@@ -2156,7 +2173,7 @@ void EditorTab_Landed::ScanVesselList ()
 		if (hV == ed->hVessel) continue;                  // skip myself
 		VESSEL *vessel = oapiGetVesselInterface (hV);
 		if ((vessel->GetFlightStatus() & 1) == 0) continue; // skip vessels in flight
-		strcpy (cbuf, vessel->GetName());
+		snprintf (cbuf, sizeof cbuf, "%s", vessel->GetName()); // not upstream: bounded list text, cut as GetVesselFromList reads it back
 		DlgItem<QListWidget> (hTab, IDC_STATECPY)->addItem (QString::fromUtf8 (cbuf));
 	}
 }

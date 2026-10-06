@@ -122,7 +122,7 @@ protected:
 	bool LoadTileData ();
 	// load binary definition file for LOD levels > 8
 
-	bool AddSubtileData (TILEDESC &td, TILEFILESPEC *tfs, DWORD idx, DWORD sub, DWORD lvl);
+	bool AddSubtileData (TILEDESC &td, TILEFILESPEC *tfs, DWORD ntfs, DWORD idx, DWORD sub, DWORD lvl); // not upstream: ntfs, the TOC size subidx is checked against
 	// add a high-resolution subtile specification to the tree
 
 	void LoadTextures (char *modstr = 0);

@@ -1191,8 +1191,11 @@ bool VideoTab::GetConfigName(const char* file, string& cfg, string& planet)
 	FILEHANDLE hFile = oapiOpenFile(filename.c_str(), FILE_IN_ZEROONFAIL, CONFIG);
 	if (hFile) {
 		char ConfigName[32] = {}; char PlanetName[32] = {};
-		bool bA = oapiReadItem_string(hFile, (char*)"ConfigName", ConfigName);
-		bool bB = oapiReadItem_string(hFile, (char*)"Planet", PlanetName);
+		char tmp[512]; // not upstream: oapiReadItem_string writes up to 511 bytes
+		bool bA = oapiReadItem_string(hFile, (char*)"ConfigName", tmp) && strlen(tmp) < sizeof(ConfigName); // not upstream: a longer name counts as not read
+		if (bA) memcpy(ConfigName, tmp, strlen(tmp) + 1); // not upstream: copied when it fits
+		bool bB = oapiReadItem_string(hFile, (char*)"Planet", tmp) && strlen(tmp) < sizeof(PlanetName); // not upstream: a longer name counts as not read
+		if (bB) memcpy(PlanetName, tmp, strlen(tmp) + 1); // not upstream: copied when it fits
 		oapiCloseFile(hFile, FILE_IN_ZEROONFAIL);
 		cfg = string(ConfigName);
 		planet = string(PlanetName);

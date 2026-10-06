@@ -1244,12 +1244,12 @@ void DeltaGlider::clbkLoadStateEx (FILEHANDLE scn, void *vs)
 		if (!strncasecmp (line, "TANKCONFIG", 10)) {
 			if (ssys_scram) sscanf (line+10, "%d", &tankconfig);
 		} else if (!strncasecmp (line, "PSNGR", 5)) {
-			DWORD i, res, pi[4];
-			res = sscanf (line+5, "%d%d%d%d", pi+0, pi+1, pi+2, pi+3);
-			for (i = 0; i < res; i++)
+			DWORD i, pi[4]; // not upstream: res is an int
+			int res = sscanf (line+5, "%d%d%d%d", pi+0, pi+1, pi+2, pi+3); // not upstream: int, EOF (-1) on a bare PSNGR line
+			for (i = 0; res > 0 && i < (DWORD)res; i++) // not upstream: no loop on EOF
 				if (pi[i]-1 < 4) psngr[pi[i]-1] = true;
 		} else if (!strncasecmp (line, "SKIN", 4)) {
-			sscanf (line+4, "%s", skinpath);
+			sscanf (line+4, "%31s", skinpath); // not upstream: width of skinpath[32]
 			char fname[256];
 			strcpy (fname, "DG/Skins/");
 			strcat (fname, skinpath);

@@ -41,6 +41,8 @@ add_custom_command(
 #	COMMAND ${CMAKE_COMMAND} -E copy_directory ${TEXTURE_SOURCE_DIR}/ ${ORBITER_BINARY_TEXTURES_DIR}   # this should really go to its own subdirectory
 #)
 
+orbiter_link_depends_dirs(Solarsail ${CONFIG_SOURCE_DIR} ${MESH_SOURCE_DIR}) # not upstream: a changed data file relinks the module, so its PRE_BUILD copy runs
+
 # scan mesh files for labels and output to header file
 add_custom_command(OUTPUT meshres.h
 	COMMAND ${ORBITER_TOOL_MESHC} /I ${MESH_SOURCE_DIR}/SolarSail.msh /P - /O meshres.h

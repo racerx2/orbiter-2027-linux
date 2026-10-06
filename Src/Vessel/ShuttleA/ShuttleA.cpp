@@ -401,9 +401,9 @@ bool ShuttleA::RotatePods (UINT which, UINT mode)
 		}
 
 		if (podswitch[pod] != mode) {
-			char cbuf[256];
+			char cbuf[640]; // not upstream: "%d SET %f" of any double fits (at most 334 bytes)
 			if (mode == 0) {
-				sprintf (cbuf, "%d SET %f", pod+1, pod_angle_request[pod]);
+				snprintf (cbuf, sizeof cbuf, "%d SET %f", pod+1, pod_angle_request[pod]); // not upstream: bounded, never cuts at 640
 			} else {
 				sprintf (cbuf, "%d %s", pod+1, mode==1 ? "FWD" : "BACK");
 			}
@@ -426,8 +426,8 @@ void ShuttleA::CommandPodAngle (UINT which, double angle)
 	}
 	oapiTriggerPanelRedrawArea (0, AID_PODANGLEINDICATOR);
 
-	char cbuf[256];
-	sprintf (cbuf, "%d SET %f", which, angle);
+	char cbuf[640]; // not upstream: "%d SET %f" of any double fits (at most 334 bytes)
+	snprintf (cbuf, sizeof cbuf, "%d SET %f", which, angle); // not upstream: bounded, never cuts at 640
 	RecordEvent ("POD", cbuf);
 }
 
@@ -1392,10 +1392,10 @@ bool ShuttleA::clbkPlaybackEvent (double simt, double event_t, const char *event
 		ActivateLandingGear (!strcasecmp (event, "UP") ? DOOR_CLOSING : DOOR_OPENING);
 		return true;
 	} else if (!strcasecmp (event_type, "POD")) {
-		UINT which;
-		double angle;
-		char action[256];
-		sscanf (event, "%d %s %lf", &which, action, &angle);
+		UINT which = 0; // not upstream: set when the event has fewer tokens
+		double angle = 0; // not upstream: as which
+		char action[256] = ""; // not upstream: as which
+		sscanf (event, "%d %255s %lf", &which, action, &angle); // not upstream: width of action
 		if (!strcasecmp (action, "SET")) CommandPodAngle (which, angle);
 		else if (!strcasecmp (action, "FWD")) CommandPodAngle (which, PI);
 		else if (!strcasecmp (action, "BACK")) CommandPodAngle (which, 0);
@@ -1407,8 +1407,8 @@ bool ShuttleA::clbkPlaybackEvent (double simt, double event_t, const char *event
 			ActivateCargo (0);
 		else if (!strncasecmp (event, "GRAPPLE", 7)) {
 			int grapple;
-			sscanf (event+7, "%d", &grapple);
-			ToggleGrapple (grapple);
+			if (sscanf (event+7, "%d", &grapple) == 1 && grapple >= 0 && grapple < 6) // not upstream: a missing or out-of-range index (payload_attachment[6]) is ignored
+				ToggleGrapple (grapple); // not upstream: only for a valid index
 		}
 		return true;
 	}

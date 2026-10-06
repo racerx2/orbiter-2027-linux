@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <math.h>
 #include <png.h>
+#include <iostream> // not upstream: std::cerr
 #include "elv_io.h"
 
 #pragma pack(push,1)
@@ -39,8 +40,7 @@ ElevData elvread(const char *fname)
 		return edata;
 
 	int res = fread(&hdr, sizeof(ELEVFILEHEADER), 1, f);
-	if (res != 1 || strncmp(hdr.id, "ELE\01", 4))
-		return edata;
+	if (res != 1 || strncmp(hdr.id, "ELE\01", 4)) { fclose(f); return edata; } // not upstream: the file is closed on a bad header
 
 	if (hdr.hdrsize != sizeof(ELEVFILEHEADER)) {
 		fseek(f, hdr.hdrsize, SEEK_SET);
@@ -89,13 +89,14 @@ bool elvmodread(const char *fname, ElevData &edata)
 	ELEVFILEHEADER hdr;
 	int i;
 
+	if (edata.data.size() < (size_t)ndat) return false; // not upstream: the destination holds ndat values (so min_element never sees an empty vector), else no mod data
+
 	FILE *f = fopen(fname, "rb");
 	if (!f)
 		return false;
 
 	int res = fread(&hdr, sizeof(ELEVFILEHEADER), 1, f);
-	if (res != 1 || strncmp(hdr.id, "ELE\01", 4))
-		return false;
+	if (res != 1 || strncmp(hdr.id, "ELE\01", 4)) { fclose(f); return false; } // not upstream: the file is closed on a bad header
 
 	if (hdr.hdrsize != sizeof(ELEVFILEHEADER)) {
 		fseek(f, hdr.hdrsize, SEEK_SET);
@@ -145,7 +146,7 @@ ElevData elvscan(const BYTE *data, int ndata)
 	double scale, offset;
 	int i;
 
-	if (ndata < sizeof(ELEVFILEHEADER))
+	if (ndata < (int)sizeof(ELEVFILEHEADER)) // not upstream: signed compare, a negative ndata doesn't pass
 		return edata;
 
 	memcpy(&hdr, data, sizeof(ELEVFILEHEADER));
@@ -154,6 +155,8 @@ ElevData elvscan(const BYTE *data, int ndata)
 
 	if (strncmp(hdr.id, "ELE\01", 4) || hdr.hdrsize != sizeof(ELEVFILEHEADER))
 		return edata;
+	int nbyte = (hdr.dtype == 0 ? 0 : hdr.dtype == 8 ? 1 : hdr.dtype == -16 ? 2 : -1); // not upstream: bytes per sample; an unknown dtype is no tile
+	if (nbyte < 0 || ndata < ndat * nbyte) return edata; // not upstream: a node shorter than its samples is no tile
 
 	scale = hdr.scale;
 	offset = hdr.offset;
@@ -194,7 +197,7 @@ bool elvmodscan(const BYTE*data, int ndata, ElevData &edata)
 	ELEVFILEHEADER hdr;
 	int i;
 
-	if (ndata < sizeof(ELEVFILEHEADER))
+	if (ndata < (int)sizeof(ELEVFILEHEADER)) // not upstream: signed compare, a negative ndata doesn't pass
 		return false;
 
 	memcpy(&hdr, data, sizeof(ELEVFILEHEADER));
@@ -203,6 +206,9 @@ bool elvmodscan(const BYTE*data, int ndata, ElevData &edata)
 
 	if (strncmp(hdr.id, "ELE\01", 4) || hdr.hdrsize != sizeof(ELEVFILEHEADER))
 		return false;
+	int nbyte = (hdr.dtype == 0 ? 0 : hdr.dtype == 8 ? 1 : hdr.dtype == -16 ? 2 : -1); // not upstream: bytes per sample; an unknown dtype is no tile
+	if (nbyte < 0 || ndata < ndat * nbyte) return false; // not upstream: a node shorter than its samples is no tile
+	if (edata.data.size() < (size_t)ndat) return false; // not upstream: the destination holds ndat values
 
 	double *e = edata.data.data();
 	double offset = hdr.offset;
@@ -298,6 +304,10 @@ void elvwrite(const char *fname, const ElevData &edata, double latmin, double la
 	hdr.offset = shift * hdr.scale;
 
 	FILE *f = fopen(fname, "wb");
+	if (!f) { // not upstream: an unwritable path writes nothing (fwrite (NULL) crashed)
+		std::cerr << "tileedit: cannot open, not written: " << fname << std::endl;
+		return;
+	}
 	fwrite(&hdr, sizeof(ELEVFILEHEADER), 1, f);
 	if (hdr.dtype == 8) {
 		for (int i = 0; i < edata.data.size(); i++) {
@@ -375,6 +385,10 @@ void elvmodwrite(const char *fname, const ElevData &edata, const ElevData &ebase
 	hdr.offset = shift * hdr.scale;
 
 	FILE *f = fopen(fname, "wb");
+	if (!f) { // not upstream: an unwritable path writes nothing (fwrite (NULL) crashed)
+		std::cerr << "tileedit: cannot open, not written: " << fname << std::endl;
+		return;
+	}
 	fwrite(&hdr, sizeof(ELEVFILEHEADER), 1, f);
 	if (hdr.dtype == 8) {
 		for (int i = 0; i < edata.data.size(); i++) {
@@ -409,6 +423,7 @@ bool elvread_png(const char *fname, const ElevPatchMetaInfo &meta, ElevData &eda
 		int nblock_y = meta.ilat1 - meta.ilat0;
 		int w = nblock_x*TILE_FILERES + 3;
 		int h = nblock_y*TILE_FILERES + 3;
+		if (image.width != (png_uint_32)w || image.height != (png_uint_32)h) { png_image_free(&image); return false; } // not upstream: another size than the metadata is a read error, as in dxtread_png (a taller PNG wrote past buf)
 		int n = w*h;
 		unsigned short *buf = new unsigned short[n];
 		png_image_finish_read(&image, NULL, buf, w, NULL);

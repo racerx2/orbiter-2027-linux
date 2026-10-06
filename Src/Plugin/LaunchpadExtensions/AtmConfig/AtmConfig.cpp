@@ -124,11 +124,18 @@ char *AtmConfig::Description()
 void AtmConfig::Read (const char *celbody)
 {
 	char cfgname[256];
-	strcpy (cfgname, celbody); strcat (cfgname, "/Atmosphere.cfg");
+	if (snprintf (cfgname, sizeof cfgname, "%s/Atmosphere.cfg", celbody) >= (int)sizeof cfgname) { // not upstream: a name that doesn't fit counts as a missing cfg
+		oapiWriteLogV ("AtmConfig: cfg path too long, not read: %s/Atmosphere.cfg", celbody);
+		module_curr = 0; // what a missing cfg gives
+		return;
+	}
 	FILEHANDLE hFile = oapiOpenFile (cfgname, FILE_IN, CONFIG);
 	if (hFile) {
-		char name[256];
-		oapiReadItem_string (hFile, (char*)ModuleItem, name);
+		char name[256] = "", tmp[512]; // not upstream: name "" when the item is missing; tmp takes the 511 bytes oapiReadItem_string may write
+		if (oapiReadItem_string (hFile, (char*)ModuleItem, tmp)) { // not upstream: via tmp, a value that doesn't fit counts as not read
+			if (strlen (tmp) < sizeof name) strcpy (name, tmp);
+			else oapiWriteLogV ("AtmConfig: %s too long, ignored", ModuleItem);
+		}
 		for (module_curr = module_first; module_curr; module_curr = module_curr->next)
 			if (!strcasecmp (module_curr->module_name, name)) break;
 		oapiCloseFile (hFile, FILE_IN);
@@ -138,7 +145,10 @@ void AtmConfig::Read (const char *celbody)
 void AtmConfig::Write (const char *celbody)
 {
 	char cfgname[256];
-	strcpy (cfgname, celbody); strcat (cfgname, "/Atmosphere.cfg");
+	if (snprintf (cfgname, sizeof cfgname, "%s/Atmosphere.cfg", celbody) >= (int)sizeof cfgname) { // not upstream: a name that doesn't fit writes no file
+		oapiWriteLogV ("AtmConfig: cfg path too long, not written: %s/Atmosphere.cfg", celbody);
+		return;
+	}
 	FILEHANDLE hFile = oapiOpenFile (cfgname, FILE_OUT, CONFIG);
 	if (hFile) {
 		if (module_curr && module_curr->module_name[0])
@@ -281,9 +291,9 @@ void AtmConfig::ScanModules (const char *celbody)
 			void *hModule = dlopen(module.string().c_str(), RTLD_NOW);
 			if (hModule) {
 				char* (*name_func)() = (char* (*)())dlsym(hModule, "ModelName");
-				if (name_func) strncpy(ms->model_name, name_func(), 255);
+				if (name_func) snprintf(ms->model_name, sizeof ms->model_name, "%s", name_func()); // not upstream: strncpy left 255+ characters unterminated
 				char* (*desc_func)() = (char* (*)())dlsym(hModule, "ModelDesc");
-				if (desc_func) strncpy(ms->model_desc, desc_func(), 511);
+				if (desc_func) snprintf(ms->model_desc, sizeof ms->model_desc, "%s", desc_func()); // not upstream: strncpy left 511+ characters unterminated
 				dlclose(hModule);
 			}
 		}

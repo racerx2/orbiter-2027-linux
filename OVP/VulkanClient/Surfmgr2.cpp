@@ -57,6 +57,16 @@ static void VtxInterpolate (VERTEX_2TEX &res, const VERTEX_2TEX &a, const VERTEX
 
 int compare_lights(const void * a, const void * b);
 
+static bool ElevNodeOk (const BYTE *buf, DWORD ndata, int ndat) // not upstream: a .tree elevation node must hold its header and ndat samples of a known dtype, else it counts as no tile
+{
+	ELEVFILEHEADER hdr;
+	if (ndata < sizeof(ELEVFILEHEADER)) return false;
+	memcpy(&hdr, buf, sizeof(ELEVFILEHEADER));
+	if (hdr.hdrsize < 0 || (DWORD)hdr.hdrsize > ndata) return false;
+	if (hdr.dtype != 0 && hdr.dtype != 8 && hdr.dtype != -16) return false;
+	return ndata - (DWORD)hdr.hdrsize >= (DWORD)ndat * (hdr.dtype == 8 ? 1 : hdr.dtype == -16 ? 2 : 0);
+}
+
 
 // =======================================================================
 // =======================================================================
@@ -238,6 +248,7 @@ INT16 *SurfTile::ReadElevationFile (const char *name, int lvl, int ilat, int iln
 			case -16:
 				rd = fread (e, sizeof(INT16), ndat, f) == (size_t)ndat;
 				break;
+			default: rd = false; break; // not upstream: an unknown dtype counts as missing (e holds a recycled buffer's data)
 			}
 			fclose (f);
 			if (!rd) { g_pMemgr_i->Free(e); e = NULL; g_pMemgr_f->Free(elev); elev = NULL; ehdr = hdr0; } // not upstream: a short file counts as missing, the archive is tried next
@@ -246,6 +257,7 @@ INT16 *SurfTile::ReadElevationFile (const char *name, int lvl, int ilat, int iln
 	if (!e && smgr->ZTreeManager(2)) { // try loading from compressed archive
 		BYTE *buf;
 		DWORD ndata = smgr->ZTreeManager(2)->ReadData(lvl, ilat, ilng, &buf);
+		if (ndata && !ElevNodeOk(buf, ndata, ndat)) { smgr->ZTreeManager(2)->ReleaseData(buf); ndata = 0; } // not upstream: a short or corrupt node is no tile, ehdr keeps its value
 		if (ndata) {
 			BYTE *p = buf;
 			e = g_pMemgr_i->New(ndat);
@@ -354,6 +366,7 @@ INT16 *SurfTile::ReadElevationFile (const char *name, int lvl, int ilat, int iln
 		if (!ok && smgr->ZTreeManager(3)) { // try loading from compressed archive
 			BYTE *buf;
 			DWORD ndata = smgr->ZTreeManager(3)->ReadData(lvl, ilat, ilng, &buf);
+			if (ndata && !ElevNodeOk(buf, ndata, ndat)) { smgr->ZTreeManager(3)->ReleaseData(buf); ndata = 0; } // not upstream: a short or corrupt node is no mod
 			if (ndata) {
 				BYTE *p = buf;
 				ELEVFILEHEADER *phdr = (ELEVFILEHEADER*)p;
@@ -382,10 +395,11 @@ INT16 *SurfTile::ReadElevationFile (const char *name, int lvl, int ilat, int iln
 					} break;
 				case -16: {
 					const INT16 mask = SHRT_MAX;
-					INT16 *buf16 = (INT16*)p;
+					INT16 v; // not upstream: each sample copied, p is odd after an odd hdrsize
 					for (i = 0; i < ndat; i++) {
-						if (buf16[i] != mask) {
-							e[i] = (do_rescale ? (INT16)(buf16[i] * rescale) : buf16[i]);
+						memcpy(&v, p + i * sizeof(INT16), sizeof(INT16)); // not upstream: as above
+						if (v != mask) { // not upstream: v
+							e[i] = (do_rescale ? (INT16)(v * rescale) : v); // not upstream: v
 							if (do_shift) e[i] += offset;
 							elev[i] = float(e[i]) * float(tgt_res);
 						}
@@ -1776,6 +1790,7 @@ float* TileManager2<SurfTile>::BrowseElevationData(int lvl, int ilat, int ilng, 
 				delete[]tmp;
 				break;
 			}
+			default: rd = false; break; // not upstream: an unknown dtype counts as missing (elev would stay uninitialised)
 			}
 			fclose(f);
 			if (!rd) { delete[] elev; elev = NULL; } // not upstream: a short file counts as missing, the archive is tried next
@@ -1784,19 +1799,20 @@ float* TileManager2<SurfTile>::BrowseElevationData(int lvl, int ilat, int ilng, 
 	if (!elev && (flags & gcTileFlags::TREE) && ZTreeManager(2)) { // try loading from compressed archive
 		BYTE* buf;
 		DWORD ndata = ZTreeManager(2)->ReadData(lvl + 4, ilat, ilng, &buf);
+		if (ndata && !ElevNodeOk(buf, ndata, ndat)) { ZTreeManager(2)->ReleaseData(buf); ndata = 0; } // not upstream: a short or corrupt node is no tile
 		if (ndata) {
 			BYTE* p = buf;
 			elev = new float[ndat];
 			memcpy(&ehdr, p, sizeof(ELEVFILEHEADER));
 			p += ehdr.hdrsize;
-			INT16* pi = (INT16*)p;
+			INT16 v; // not upstream: each sample copied, p is odd after an odd hdrsize
 			switch (ehdr.dtype) {
 			case 0:
 				for (i = 0; i < ndat; i++) elev[i] = 0.0f; break;
 			case 8:
 				for (i = 0; i < ndat; i++) elev[i] = float(*p++); break;
 			case -16:
-				for (i = 0; i < ndat; i++) elev[i] = float(*pi++); break;
+				for (i = 0; i < ndat; i++) { memcpy(&v, p + i * sizeof(INT16), sizeof(INT16)); elev[i] = float(v); } break; // not upstream: memcpy, as above
 			}
 			ZTreeManager(2)->ReleaseData(buf);
 		}
@@ -1855,6 +1871,7 @@ float* TileManager2<SurfTile>::BrowseElevationData(int lvl, int ilat, int ilng, 
 		if (!ok && (flags & gcTileFlags::TREE) && ZTreeManager(3)) { // try loading from compressed archive
 			BYTE* buf;
 			DWORD ndata = ZTreeManager(3)->ReadData(lvl + 4, ilat, ilng, &buf);
+			if (ndata && !ElevNodeOk(buf, ndata, ndat)) { ZTreeManager(3)->ReleaseData(buf); ndata = 0; } // not upstream: a short or corrupt node is no mod
 			if (ndata) {
 				BYTE* p = buf;
 				ELEVFILEHEADER* phdr = (ELEVFILEHEADER*)p;
@@ -1874,10 +1891,12 @@ float* TileManager2<SurfTile>::BrowseElevationData(int lvl, int ilat, int ilng, 
 				}
 				case -16: {
 					const INT16 mask = SHRT_MAX;
-					INT16* buf16 = (INT16*)p;
-					for (i = 0; i < ndat; i++)
-						if (buf16[i] != mask)
-							elev[i] = float(trunc(float(buf16[i]) * phdr->scale) + trunc(phdr->offset));
+					INT16 v; // not upstream: each sample copied, p is odd after an odd hdrsize
+					for (i = 0; i < ndat; i++) { // not upstream: memcpy, as above
+						memcpy(&v, p + i * sizeof(INT16), sizeof(INT16)); // not upstream: as above
+						if (v != mask) // not upstream: v
+							elev[i] = float(trunc(float(v) * phdr->scale) + trunc(phdr->offset)); // not upstream: v
+					} // not upstream: as above
 					break;
 				}
 				}

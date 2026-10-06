@@ -48,14 +48,14 @@ add_dependencies(tileedit
 	fastdxt
 )
 
-# extern/libpng and extern/zlib headers left out: PNG::PNG and the zlib target carry their own
+# extern/libpng and extern/zlib headers left out: PNG::PNG and the zlib target (the system zlib) carry their own
 target_include_directories(tileedit PUBLIC
 	${CMAKE_CURRENT_SOURCE_DIR}
 	${CMAKE_CURRENT_SOURCE_DIR}/../extern/fastdxt
 	${ORBITER_SOURCE_SDK_INCLUDE_DIR} # not upstream: OrbiterPlatform.h stands in for windows.h (DWORD, BYTE, ...)
 )
 
-# prebuilt Windows zlib.lib/libpng16_static.lib left out: the repo's zlib target and system libpng
+# prebuilt Windows zlib.lib/libpng16_static.lib left out: the system zlib (the zlib target) and system libpng
 target_link_libraries(tileedit
 	Qt6::Widgets
 	Qt6::Core
@@ -66,11 +66,6 @@ target_link_libraries(tileedit
 )
 
 # WIN32_EXECUTABLE left out: no GUI/console subsystem split on Linux
-# not upstream: build-tree RPATH reaches z.so in the build root (upstream linked zlib statically); install keeps $ORIGIN/..
-set_target_properties(tileedit
-	PROPERTIES
-	BUILD_WITH_INSTALL_RPATH OFF
-)
 
 # windeployqt left out: Qt 6 comes from the system, so no tmp/ deploy copy is made
 

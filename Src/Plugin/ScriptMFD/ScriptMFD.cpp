@@ -80,6 +80,18 @@ int LuaCall(lua_State *L, int narg, int nres)
 	return res;
 }
 
+static bool ReadItemString (FILEHANDLE hFile, const char *item, char *val, size_t n) // not upstream: oapiReadItem_string may write 511 bytes; a value that doesn't fit val counts as not read
+{
+	char tmp[512];
+	if (!oapiReadItem_string (hFile, (char*)item, tmp)) return false;
+	if (strlen (tmp) >= n) {
+		oapiWriteLogV ("ScriptMFD: %s too long, ignored", item);
+		return false;
+	}
+	strcpy (val, tmp);
+	return true;
+}
+
 // ==============================================================
 // API interface
 
@@ -93,9 +105,9 @@ DLLCLBK void InitModule (void *hDLL)
 	while (ifs.getline (cbuf, 256)) {
 		cbuf[strcspn (cbuf, "\r")] = '\0'; // CRLF cfg: Linux streams keep the '\r'
 		FILEHANDLE hFile = oapiOpenFile (cbuf, FILE_IN, CONFIG);
-		if (oapiReadItem_string (hFile, (char*)"Name", name) &&
-			oapiReadItem_string (hFile, (char*)"Script", script) &&
-			oapiReadItem_string (hFile, (char*)"Key", key)) {
+		if (ReadItemString (hFile, "Name", name, sizeof name) && // not upstream: sized
+			ReadItemString (hFile, "Script", script, sizeof script) && // not upstream: sized
+			ReadItemString (hFile, "Key", key, sizeof key)) { // not upstream: sized
 				SCRIPTMFDMODESPEC *tmp = new SCRIPTMFDMODESPEC[nmode+1];
 				if (nmode) {
 					memcpy (tmp, modespec, nmode*sizeof(SCRIPTMFDMODESPEC));
@@ -112,7 +124,7 @@ DLLCLBK void InitModule (void *hDLL)
 				else
 					sscanf (key, "%d", &modespec[nmode].key);
 				modespec[nmode].persist = 0;
-				if (oapiReadItem_string (hFile, (char*)"Persist", persist))
+				if (ReadItemString (hFile, "Persist", persist, sizeof persist)) // not upstream: sized
 					if (!strcasecmp(persist, "vessel"))
 						modespec[nmode].persist = 1;
 				nmode++;
@@ -216,8 +228,9 @@ ScriptMFD::ScriptMFD (DWORD w, DWORD h, VESSEL *vessel, const SCRIPTMFDMODESPEC 
 		lua_setfield (L, LUA_GLOBALSINDEX, "mfd");
 
 		// run the MFD script
-		sprintf (cmd, "run_global('Config/MFD/%s')", spec->script);
-		oapiExecScriptCmd (hInterp, cmd);
+		if (snprintf (cmd, sizeof cmd, "run_global('Config/MFD/%s')", spec->script) < (int)sizeof cmd) // not upstream: a command that doesn't fit isn't run, the script counts as missing
+			oapiExecScriptCmd (hInterp, cmd);
+		else oapiWriteLogV ("ScriptMFD: script path too long, not loaded: %s", spec->script); // not upstream: one warning
 
 		if (persist) {
 			VINTERP **tmp = new VINTERP*[nvinterp+1];

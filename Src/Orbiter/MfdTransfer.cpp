@@ -129,7 +129,7 @@ void Instrument_Transfer::UpdateDraw (oapi::Sketchpad *skp)
 	} else bValid = false;
 	if (bValid) {
 		skp->SetTextColor (draw[2][1].col);
-		sprintf (cbuf, "[Ref: %s]", elref->Name());
+		snprintf (cbuf, sizeof cbuf, "[Ref: %s]", elref->Name()); // not upstream: display text cut to cbuf
 		skp->Text (cw/2+cw*9, 1, cbuf, strlen(cbuf));
 		skp->SetTextColor (draw[0][0].col);
 	} else {
@@ -258,7 +258,7 @@ void Instrument_Transfer::UpdateDraw (oapi::Sketchpad *skp)
 	}
 
 	y = y0;
-	sprintf (cbuf, "Src %s", src == vessel ? "[self]" : src->Name());
+	snprintf (cbuf, sizeof cbuf, "Src %s", src == vessel ? "[self]" : src->Name()); // not upstream: display text cut to cbuf
 	skp->Text (x0, y, cbuf, strlen(cbuf)); y += ch;
 	sprintf (cbuf, "TrL% 7.2fº", DEG*shpel->TrueLng());
 	skp->Text (x0, y, cbuf, strlen(cbuf)); y += ch;
@@ -275,11 +275,11 @@ void Instrument_Transfer::UpdateDraw (oapi::Sketchpad *skp)
 		skp->Text (x0, y, "HTO", 3); y += ch;
 		sprintf (cbuf, "SMa%s", DistStr (shpel2->a));          // semi-major axis
 		skp->Text (x0, y, cbuf, strlen(cbuf)); y += ch;
-		sprintf (cbuf, "TLe% 7.2fº", DEG*l_eject);             // longitude of ejection point
+		snprintf (cbuf, sizeof cbuf, "TLe% 7.2fº", DEG*l_eject); // not upstream: l_eject comes from the scenario, cut to cbuf; longitude of ejection point
 		skp->Text (x0, y, cbuf, strlen(cbuf)); y += ch;
 		sprintf (cbuf, "DTe%s", DistStr(dte));                 // time to ejection point
 		skp->Text (x0, y, cbuf, strlen(cbuf)); y += ch;
-		sprintf (cbuf, "Dv %s", DistStr (deltav));             // Dvel at ejection point
+		snprintf (cbuf, sizeof cbuf, "Dv %s", DistStr (deltav)); // not upstream: deltav comes from the scenario, cut to cbuf; Dvel at ejection point
 		skp->Text (x0, y, cbuf, strlen(cbuf)); y += ch;
 		if (dt0 >= 0.0) {
 			sprintf (cbuf, "TLi% 7.2fº", DEG*posangle(rlng+shpel2->omegab));
@@ -292,7 +292,7 @@ void Instrument_Transfer::UpdateDraw (oapi::Sketchpad *skp)
 
 	skp->SetTextColor (draw[1][0].col); y = y0;
 	if (bTarget) {
-		strcpy (cbuf, "Tgt "); strcat (cbuf, tgt->Name());
+		snprintf (cbuf, sizeof cbuf, "Tgt %s", tgt->Name()); // not upstream: display text cut to cbuf
 		skp->Text (x1, y, cbuf, strlen(cbuf)); y += ch;
 		sprintf (cbuf, "TrL% 7.2fº", DEG*tgtel->TrueLng());
 		skp->Text (x1, y, cbuf, strlen(cbuf)); y += ch;
@@ -651,7 +651,7 @@ int Instrument_Transfer::ProcessMessage (int msg, void *data)
 bool Instrument_Transfer::ReadParams (ifstream &ifs)
 {
 	char cbuf[256], *pc;
-	char cref[128] = "", ctgt[128] = "", csrc[128] = "";
+	char cref[256] = "", ctgt[256] = "", csrc[256] = ""; // not upstream: room for a 255-character line
 	double le, dv;
 	bool xferprm = false;
 
@@ -668,9 +668,9 @@ bool Instrument_Transfer::ReadParams (ifstream &ifs)
 			strcpy (ctgt, trim_string (pc+6));
 		} else if (!strncasecmp (pc, "SIMORBIT", 8)) {
 			char flag[32];
-			int res = sscanf (pc+8, "%lf%lf%s", &le, &dv, flag);
+			int res = sscanf (pc+8, "%lf%lf%31s", &le, &dv, flag); // not upstream: width of flag
 			enable_hyp = (res == 3 && !strcasecmp (flag, "SHOW"));
-			xferprm = true;
+			xferprm = (res >= 2); // not upstream: le and dv only when both were read
 		}
 	}
 	if (csrc[0]) SelectSrc (csrc);

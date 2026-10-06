@@ -31,6 +31,8 @@ add_custom_command(
 	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/Config/ ${CMAKE_BINARY_DIR}/Config	
 )
 
+orbiter_link_depends_dirs(${CELBODY} ${CMAKE_CURRENT_SOURCE_DIR}/Config) # not upstream: a changed data file relinks the module, so its PRE_BUILD copy runs
+
 set_target_properties(${CELBODY}
 	PROPERTIES
 	FOLDER Celbody/Satsat

@@ -25,7 +25,7 @@ DlgElevImport::DlgElevImport(tileedit *parent)
 	m_pathEdited = m_metaEdited = false;
 	m_haveMeta = false;
 	m_propagationLevel = ui->spinPropagationLevel->value();
-	memset(&m_metaInfo, 0, sizeof(ElevPatchMetaInfo));
+	m_metaInfo = ElevPatchMetaInfo(); // not upstream: value-initialised, memset on a struct holding a std::vector
 }
 
 void DlgElevImport::onOpenFileDialog()
@@ -78,7 +78,7 @@ void DlgElevImport::onMetaFileChanged(const QString &name)
 		ui->spinIlng1->setMaximum(m_metaInfo.ilng1 - 1);
 	}
 	else {
-		memset(&m_metaInfo, 0, sizeof(ElevPatchMetaInfo));
+		m_metaInfo = ElevPatchMetaInfo(); // not upstream: value-initialised, memset zeroed the vector and leaked its buffer
 		ui->labelLvl->setText("-");
 		ui->spinIlat0->setValue(0);
 		ui->spinIlat1->setValue(0);
@@ -120,6 +120,7 @@ bool DlgElevImport::scanMetaFile(const char *fname, ElevPatchMetaInfo &meta)
 {
 	FILE *f = fopen(fname, "rt");
 	if (!f) return false;
+	meta.missing.clear(); // not upstream: a rescan doesn't append to the last list
 
 	int ilat, ilng, n;
 	double smin, emin, smean, emean, smax, emax;
@@ -192,6 +193,11 @@ void DlgElevImport::accept()
 		return;
 	}
 	ElevTileBlock *eblock = ElevTileBlock::Load(m_metaInfo.lvl, m_metaInfo.ilat0, m_metaInfo.ilat1, m_metaInfo.ilng0, m_metaInfo.ilng1);
+	if (!eblock) { // not upstream: Load returns 0 when a tile of the range has no data at any level
+		QMessageBox mbox(QMessageBox::Warning, tr("tileedit: Warning"), tr("No tile data for the import range"), QMessageBox::Close);
+		mbox.exec();
+		return;
+	}
 	if (!elvread_png(ui->editPath->text().toLocal8Bit(), m_metaInfo, eblock->getData())) {
 		QMessageBox mbox(QMessageBox::Warning, tr("tileedit: Warning"), tr("Error reading PNG file"), QMessageBox::Close);
 		mbox.exec();

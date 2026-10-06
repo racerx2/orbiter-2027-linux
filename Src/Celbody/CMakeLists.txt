@@ -17,3 +17,8 @@ add_subdirectory(Oberon)
 add_subdirectory(Triton)
 add_subdirectory(Proteus)
 add_subdirectory(Nereid)
+add_subdirectory(Charon) # not upstream: the Pluto system
+add_subdirectory(Styx) # not upstream: the Pluto system
+add_subdirectory(Nix) # not upstream: the Pluto system
+add_subdirectory(Kerberos) # not upstream: the Pluto system
+add_subdirectory(Hydra) # not upstream: the Pluto system

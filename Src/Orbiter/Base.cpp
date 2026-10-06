@@ -152,7 +152,7 @@ Base::Base (char *fname, Planet *_planet, double _lng, double _lat)
 		int res, texflag, ilng, ilat;
 		for (;;) {
 			if (!ifs.getline(cbuf,256) || !strncasecmp (cbuf, "END_SURFTILELIST", 16)) break;
-			sscanf (cbuf, "%d%d%d%d", &res, &ilng, &ilat, &texflag);
+			if (sscanf (cbuf, "%d%d%d%d", &res, &ilng, &ilat, &texflag) != 4 || res < 0 || res > 9) continue; // not upstream: a short line or a res outside nlat[10] is skipped
 			if (ntile == ntilebuf) {
 				SurftileSpec *tmp = new SurftileSpec[ntilebuf+32]; TRACENEW
 				if (ntile) {
@@ -243,10 +243,14 @@ void Base::CreateStaticDeviceObjects ()
 
 	for (int i = 0; i < ngenerictex; i++) {
 		if (gclient) {
-			sprintf (fname, "%s.dds", generic_tex_name[i]);
-			generic_dtex[i] = gclient->clbkLoadTexture (fname);
-			sprintf (fname, "%s_n.dds", generic_tex_name[i]);
-			generic_ntex[i] = gclient->clbkLoadTexture (fname);
+			if (snprintf (fname, sizeof fname, "%s.dds", generic_tex_name[i]) >= (int)sizeof fname) { // not upstream: bounded; a name that doesn't fit: no texture, as a missing one
+				LOGOUT_WARN ("Path too long: %s.dds", generic_tex_name[i]);
+				generic_dtex[i] = NULL;
+			} else generic_dtex[i] = gclient->clbkLoadTexture (fname); // not upstream: only when the name fit
+			if (snprintf (fname, sizeof fname, "%s_n.dds", generic_tex_name[i]) >= (int)sizeof fname) { // not upstream: bounded; a name that doesn't fit: no texture, as a missing one
+				LOGOUT_WARN ("Path too long: %s_n.dds", generic_tex_name[i]);
+				generic_ntex[i] = NULL;
+			} else generic_ntex[i] = gclient->clbkLoadTexture (fname); // not upstream: only when the name fit
 		} else {
 			generic_dtex[i] = NULL;
 			generic_ntex[i] = NULL;
@@ -335,10 +339,11 @@ bool Base::InitSurfaceTiles () const
 		// 2. Load the textures
 		if (!tile[i].tex && (tile[i].texflag & 1)) {
 			char cbuf[256];
-			sprintf (cbuf, "%s_%d_%c%04d_%c%04d.dds", cbody->Name(), tile[i].res,
+			if (snprintf (cbuf, sizeof cbuf, "%s_%d_%c%04d_%c%04d.dds", cbody->Name(), tile[i].res, // not upstream: bounded; a name that doesn't fit: no texture, as a missing one
 				tile[i].ilng >= 0 ? 'e':'w', abs(tile[i].ilng),
-				tile[i].ilat >= 0 ? 'n':'s', abs(tile[i].ilat));
-			tile[i].tex = g_pOrbiter->LoadTexture (cbuf);			
+				tile[i].ilat >= 0 ? 'n':'s', abs(tile[i].ilat)) >= (int)sizeof cbuf) // not upstream: result checked
+				LOGOUT_WARN ("Path too long: %s", cbody->Name()); // not upstream
+			else tile[i].tex = g_pOrbiter->LoadTexture (cbuf); // not upstream: only when the name fit
 		}
 	}
 
@@ -590,14 +595,14 @@ int Base::OccupyPad (Vessel *vessel, int pad, bool forcepad)
 	DWORD i;
 
 	if (forcepad) {
-		if (pad < 0) return -1;
+		if (pad < 0 || (DWORD)pad >= npad) return -1; // not upstream: a pad that doesn't exist counts as no pad (lspec has npad entries, NULL for 0)
 		if (lspec[pad].status == 0) padfree--;
 		lspec[pad].status = 1;
 		lspec[pad].vessel = vessel;
 		return pad;
 	}
 	if (!padfree) return -1;
-	if (pad >= 0 && lspec[pad].status == 0) {
+	if (pad >= 0 && (DWORD)pad < npad && lspec[pad].status == 0) { // not upstream: a pad that doesn't exist counts as no pad (random free pad)
 		lspec[pad].status = 1;
 		lspec[pad].vessel = vessel;
 		padfree--;

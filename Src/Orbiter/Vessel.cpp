@@ -151,7 +151,7 @@ Vessel::Vessel (const PlanetarySystem *psys, const char *_name, const char *_cla
 {
 	char cbuf[256];
 
-	sprintf (cbuf, "%s (%s)", _classname ? _classname : _name, _name);
+	snprintf (cbuf, sizeof cbuf, "%s (%s)", _classname ? _classname : _name, _name); // not upstream: status text cut to cbuf
 	g_pOrbiter->OutputLoadStatus (cbuf, 0);
 
 	name = _name;
@@ -237,8 +237,10 @@ Vessel::~Vessel ()
 bool Vessel::OpenConfigFile (ifstream &cfgfile) const
 {
 	char cbuf[256];
-	strcpy (cbuf, "Vessels\\");
-	strcat (cbuf, classname ? classname : name.c_str());
+	if ((size_t)snprintf (cbuf, sizeof cbuf, "Vessels\\%s", classname ? classname : name.c_str()) >= sizeof cbuf) { // not upstream: a class name that doesn't fit counts as no cfg file
+		LOGOUT_WARN ("Vessel class name too long: %s", classname ? classname : name.c_str());
+		return false;
+	}
 	// first search in $CONFIGDIR\Vessels
 	cfgfile.open (oapiResolvePath (g_pOrbiter->ConfigPath (cbuf)));
 	if (cfgfile.good()) return true;
@@ -701,7 +703,7 @@ void Vessel::ReadGenericCaps (ifstream &ifs)
 
 	if (FindLine (ifs, "BEGIN_ATTACHMENT")) {
 		Vector pos, dir, rot;
-		char type;
+		char type = 0; // not upstream: a blank first line reads no type
 		int n;
 		bool toparent;
 		for (;;) {
@@ -991,19 +993,23 @@ void Vessel::InitSupervessel (bool isprimary)
 	DWORD i;
 
 	// Initialise vessel-vessel docking
-	for (i = 0; i < ndock; i++)
+	for (i = 0; i < ndock; i++) { // not upstream: braces for the matedock check
+		if (dock[i]->mate && dock[i]->matedock >= dock[i]->mate->nDock ()) dock[i]->mate = 0, dock[i]->matedock = 0; // not upstream: a mate dock index out of range drops the record
 		if (dock[i]->mate && (!supervessel || !supervessel->isComponent (dock[i]->mate))) {
 			if (isprimary) g_psys->DockVessels (this, dock[i]->mate, i, dock[i]->matedock, false);
 			else           g_psys->DockVessels (dock[i]->mate, this, dock[i]->matedock, i, false);
 			RegisterDocking (i, dock[i]->mate, dock[i]->matedock);
 			dock[i]->mate->RegisterDocking (dock[i]->matedock, this, i);
 		}
+	} // not upstream: end of the loop body
 
 	// Initialise child-parent attachment
 	if (attach_status.pname) {
 		Vessel *prnt = g_psys->GetVessel (attach_status.pname, true);
-		if (prnt)
-			prnt->AttachChild (this, prnt->GetAttachmentFromIndex (false, attach_status.pi), GetAttachmentFromIndex (true, attach_status.ci), false);
+		if (prnt) { // not upstream: braces for the attachment check
+			AttachmentSpec *asp = prnt->GetAttachmentFromIndex (false, attach_status.pi), *asc = GetAttachmentFromIndex (true, attach_status.ci); // not upstream: either index can be out of range (scenario data)
+			if (asp && asc) prnt->AttachChild (this, asp, asc, false); // not upstream: otherwise unattached, as for an unknown parent name
+		} // not upstream: end of the parent block
 		delete []attach_status.pname;
 		attach_status.pname = 0;
 	}
@@ -3064,9 +3070,10 @@ bool Vessel::AttachChild (Vessel *child, AttachmentSpec *as, AttachmentSpec *asc
 		DWORD pidx = GetAttachmentIndex (as);
 		DWORD cidx = child->GetAttachmentIndex (asc);
 		char cbuf[256];
-		sprintf (cbuf, "%s %d %d", child->Name(), pidx, cidx);
-		if (allow_loose) strcat (cbuf, " LOOSE");
-		FRecorder_SaveEvent ("ATTACH", cbuf);
+		if ((size_t)snprintf (cbuf, sizeof cbuf, "%s %d %d%s", child->Name(), pidx, cidx, allow_loose ? " LOOSE" : "") < sizeof cbuf) // not upstream: an event that doesn't fit isn't recorded
+			FRecorder_SaveEvent ("ATTACH", cbuf); // not upstream: indented under the fit test
+		else // not upstream: one warning instead
+			LOGOUT_WARN ("Vessel name too long for the ATTACH event: %s", child->Name()); // not upstream: N rule warning
 	}
 	return true;
 }
@@ -3089,8 +3096,10 @@ bool Vessel::DetachChild (AttachmentSpec *asp, double v)
 	if (bFRrecord) {
 		DWORD pidx = GetAttachmentIndex (asp);
 		char cbuf[256];
-		sprintf (cbuf, "%d, %0.3f", pidx, v);
-		FRecorder_SaveEvent ("DETACH", cbuf);
+		if ((size_t)snprintf (cbuf, sizeof cbuf, "%d, %0.3f", pidx, v) < sizeof cbuf) // not upstream: an event that doesn't fit isn't recorded
+			FRecorder_SaveEvent ("DETACH", cbuf); // not upstream: indented under the fit test
+		else // not upstream: one warning instead
+			LOGOUT_WARN ("Detach velocity out of range for the DETACH event: %g", v); // not upstream: N rule warning
 	}
 	return true;
 }
@@ -3304,7 +3313,10 @@ UINT Vessel::InsertMesh (const char *mname, UINT idx, const VECTOR3 *ofs)
 	UINT i;
 	idx = MakeFreeMeshEntry (idx);
 
-	strcpy (meshlist[idx]->meshname, mname);
+	if ((size_t)snprintf (meshlist[idx]->meshname, sizeof meshlist[idx]->meshname, "%s", mname) >= sizeof meshlist[idx]->meshname) { // not upstream: a name that doesn't fit isn't loaded (no mesh, as a missing file)
+		LOGOUT_WARN ("Mesh name too long: %s", mname);
+		meshlist[idx]->meshname[0] = '\0';
+	}
 	if (ofs) memcpy (&meshlist[idx]->meshofs, ofs, sizeof(VECTOR3));
 	else     memset (&meshlist[idx]->meshofs, 0, sizeof(VECTOR3));
 
@@ -5954,7 +5966,7 @@ bool Vessel::LoadModule (ifstream &classf)
 		found = RegisterModule (cbuf);
 		if (!found) {
 			const char *err = dlerror(); // GetLastError counterpart
-			LOGOUT_ERR ("Could not load vessel module: %s (%s)", cbuf, err ? err : "unknown error"); // not upstream: dlerror text, no fixed buffer
+			if (err) LOGOUT_ERR ("Could not load vessel module: %s (%s)", cbuf, err); // not upstream: dlerror text, no fixed buffer; none when no dlopen ran (RegisterModule warned)
 		}
 		if (modIntf.ovcInit)
 			modIntf.v = modIntf.ovcInit ((OBJHANDLE)this, flightmodel);
@@ -5969,7 +5981,11 @@ bool Vessel::LoadModule (ifstream &classf)
 bool Vessel::RegisterModule (const char *dllname)
 {
 	char cbuf[256];
-	sprintf (cbuf, "Modules/%s.so", dllname);
+	if ((size_t)snprintf (cbuf, sizeof cbuf, "Modules/%s.so", dllname) >= sizeof cbuf) { // not upstream: a module name that doesn't fit isn't loaded
+		LOGOUT_WARN ("Vessel module name too long: %s", dllname);
+		dlerror (); // not upstream: clears a stale error, so LoadModule logs none
+		return false;
+	}
 	hMod = dlopen (oapiResolvePath (cbuf).c_str(), RTLD_NOW);
 	if (!hMod)
 		return false;
@@ -6065,7 +6081,10 @@ bool Vessel::EditorModule (char *cbuf) const
 {
 	ifstream classf;
 	if (!OpenConfigFile (classf)) return false;
-	return GetItemString (classf, "EditorModule", cbuf);
+	char tmp[512]; // not upstream: the sized reader needs an array; 512 holds any value, as upstream
+	if (!GetItemString (classf, "EditorModule", tmp)) return false; // not upstream: cbuf untouched when missing
+	strcpy (cbuf, tmp); // not upstream: SDK contract, the caller's buffer as upstream
+	return true; // not upstream: GetItemString's result
 }
 
 // ==============================================================

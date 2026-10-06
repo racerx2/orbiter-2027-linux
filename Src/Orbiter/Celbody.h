@@ -216,6 +216,11 @@ private:
 
 	double rot_T, rot_omega; // siderial rotation time and angular velocity
 	double Dphi;             // rotation offset at t=0
+	enum { MAXROTTERM = 4 }; // not upstream: SidRotTerms capacity
+	double rot_accel;        // not upstream: quadratic spin term [rad/day^2] about J2000 (SidRotAccel)
+	double rotterm[MAXROTTERM][4]; // not upstream: SidRotTerms: amplitude [rad], period [days], phase [rad], phase drift [rad/day^2]
+	int nrotterm;            // not upstream: number of SidRotTerms
+	double RotExtra (double mjd) const; // not upstream: the SidRotAccel and SidRotTerms angle at mjd
 	Vector R_axis;           // rotation axis direction (north pole) in global coords
 
 	double *jcoeff;          // coefficients Jn of the harmonic expansion of planet ellipsoid shape, starting with J2 (jcoeff[0]=J2, jcoeff[1]=J3, etc.)

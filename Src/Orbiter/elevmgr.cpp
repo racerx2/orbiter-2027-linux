@@ -5,6 +5,7 @@
 #include "Celbody.h"
 #include "Planet.h"
 #include "Orbiter.h"
+#include "Log.h" // not upstream: LOGOUT_WARN for names that don't fit
 #include <filesystem>
 
 using std::min;
@@ -35,6 +36,13 @@ struct ELEVFILEHEADER { // file header for patch elevation data file
 
 #pragma pack(pop)
 
+static bool ElevNodeOk (const ELEVFILEHEADER *phdr, DWORD ndata, int ndat) // not upstream: a tree node's header and samples lie inside the node and its dtype is known
+{
+	if (ndata < sizeof(ELEVFILEHEADER)) return false;
+	int k = (phdr->dtype == 0 ? 0 : phdr->dtype == 8 ? 1 : phdr->dtype == -16 ? 2 : -1);
+	return k >= 0 && phdr->hdrsize >= 0 && (DWORD)phdr->hdrsize <= ndata && ndata - (DWORD)phdr->hdrsize >= (DWORD)(ndat*k);
+}
+
 ElevationManager::ElevationManager (const CelestialBody *_cbody)
 : cbody(_cbody)
 {
@@ -49,9 +57,10 @@ ElevationManager::ElevationManager (const CelestialBody *_cbody)
 	}
 	if (tilesource & 0x0002) {
 		char cbuf[256];
-		g_pOrbiter->Cfg()->PTexPath (cbuf, cbody->Name());
-		treeMgr[0] = ZTreeMgr::CreateFromFile(cbuf, ZTreeMgr::LAYER_ELEV);
-		treeMgr[1] = ZTreeMgr::CreateFromFile(cbuf, ZTreeMgr::LAYER_ELEVMOD);
+		if (g_pOrbiter->Cfg()->PTexPath (cbuf, sizeof cbuf, cbody->Name())) { // not upstream: sized; a path that doesn't fit gives no archive
+			treeMgr[0] = ZTreeMgr::CreateFromFile(cbuf, ZTreeMgr::LAYER_ELEV);
+			treeMgr[1] = ZTreeMgr::CreateFromFile(cbuf, ZTreeMgr::LAYER_ELEVMOD);
+		} else treeMgr[0] = treeMgr[1] = 0; // not upstream
 	} else {
 		for (int i = 0; i < 2; i++)
 			treeMgr[i] = 0;
@@ -59,15 +68,20 @@ ElevationManager::ElevationManager (const CelestialBody *_cbody)
 
 	// Check if Elev dir exists
 	char path[MAX_PATH]; char fname[MAX_PATH];
-	sprintf(fname, "%s\\Elev", cbody->Name());
-	g_pOrbiter->Cfg()->PTexPath(path, fname);
-	auto x = std::filesystem::status(oapiResolvePath(path));
-	bDirExists = std::filesystem::is_directory(x);
+	bDirExists = bModExists = false; // not upstream: stay false when a path doesn't fit
+	int len = snprintf(fname, sizeof fname, "%s\\Elev", cbody->Name()); // not upstream: bounded
+	if ((size_t)len >= sizeof fname) LOGOUT_WARN("Path too long: %s", cbody->Name()); // not upstream: no Elev dir
+	else if (g_pOrbiter->Cfg()->PTexPath(path, sizeof path, fname)) { // not upstream: sized; a path that doesn't fit: no Elev dir
+		auto x = std::filesystem::status(oapiResolvePath(path));
+		bDirExists = std::filesystem::is_directory(x);
+	}
 
-	sprintf(fname, "%s\\Elev_mod", cbody->Name());
-	g_pOrbiter->Cfg()->PTexPath(path, fname);
-	auto y = std::filesystem::status(oapiResolvePath(path));
-	bModExists = std::filesystem::is_directory(y);
+	len = snprintf(fname, sizeof fname, "%s\\Elev_mod", cbody->Name()); // not upstream: bounded
+	if ((size_t)len >= sizeof fname) LOGOUT_WARN("Path too long: %s", cbody->Name()); // not upstream: no Elev_mod dir
+	else if (g_pOrbiter->Cfg()->PTexPath(path, sizeof path, fname)) { // not upstream: sized; a path that doesn't fit: no Elev_mod dir
+		auto y = std::filesystem::status(oapiResolvePath(path));
+		bModExists = std::filesystem::is_directory(y);
+	}
 }
 
 ElevationManager::~ElevationManager ()
@@ -107,9 +121,9 @@ bool ElevationManager::HasElevationTile(int lvl, int ilat, int ilng) const
 	if (mode) {
 		if (tilesource & 0x0001 && bDirExists) {
 			char fname[256], path[256];
-			sprintf(fname, "%s\\Elev\\%02d\\%06d\\%06d.elv", cbody->Name(), lvl, ilat, ilng);
-			g_pOrbiter->Cfg()->PTexPath(path, fname);
-			if (std::filesystem::exists(oapiResolvePath(path))) return true;
+			int len = snprintf(fname, sizeof fname, "%s\\Elev\\%02d\\%06d\\%06d.elv", cbody->Name(), lvl, ilat, ilng); // not upstream: bounded
+			if ((size_t)len >= sizeof fname) LOGOUT_WARN("Path too long: %s", cbody->Name()); // not upstream: the file source is skipped, the tree is tried
+			else if (g_pOrbiter->Cfg()->PTexPath(path, sizeof path, fname) && std::filesystem::exists(oapiResolvePath(path))) return true; // not upstream: sized; a path that doesn't fit skips the file source
 		}
 		if (treeMgr[0]) {
 			if (treeMgr[0]->Idx(lvl, ilat, ilng) != DWORD(-1)) return true;
@@ -130,9 +144,9 @@ INT16 *ElevationManager::LoadElevationTile (int lvl, int ilat, int ilng, double 
 		if (tilesource & 0x0001 && bDirExists) {
 			FILE *f;
 			char fname[256], path[256];
-			sprintf (fname, "%s\\Elev\\%02d\\%06d\\%06d.elv", cbody->Name(), lvl, ilat, ilng);
-			g_pOrbiter->Cfg()->PTexPath(path, fname);
-			if (f = fopen(oapiResolvePath(path).c_str(), "rb")) {
+			int len = snprintf (fname, sizeof fname, "%s\\Elev\\%02d\\%06d\\%06d.elv", cbody->Name(), lvl, ilat, ilng); // not upstream: bounded
+			if ((size_t)len >= sizeof fname) LOGOUT_WARN ("Path too long: %s", cbody->Name()); // not upstream: the file source is skipped
+			else if (g_pOrbiter->Cfg()->PTexPath(path, sizeof path, fname) && (f = fopen(oapiResolvePath(path).c_str(), "rb"))) { // not upstream: sized; a path that doesn't fit skips the file source
 				elev = new INT16[ndat];
 				ELEVFILEHEADER hdr = {}; // not upstream: zeroed, so a short read leaves no stale fields
 				bool ok = fread (&hdr, sizeof(ELEVFILEHEADER), 1, f) == 1; // not upstream: a short file is dropped like a missing one
@@ -157,6 +171,9 @@ INT16 *ElevationManager::LoadElevationTile (int lvl, int ilat, int ilng, double 
 				case -16:
 					ok = fread (elev, sizeof(INT16), ndat, f) == (size_t)ndat; // not upstream: short data drops the tile
 					break;
+				default: // not upstream: an unknown dtype drops the tile (elev would stay uninitialised)
+					ok = false;
+					break;
 				}
 				fclose(f);
 				if (!ok) { delete []elev; elev = 0; } // not upstream: then the tree archive is tried, as for a missing file
@@ -169,6 +186,11 @@ INT16 *ElevationManager::LoadElevationTile (int lvl, int ilat, int ilng, double 
 				BYTE *p = buf;
 				elev = new INT16[ndat];
 				ELEVFILEHEADER *phdr = (ELEVFILEHEADER*)p;
+				if (!ElevNodeOk (phdr, ndata, ndat)) { // not upstream: a short or corrupt node counts as no tile
+					delete []elev;
+					treeMgr[0]->ReleaseData(buf);
+					return 0;
+				}
 				p += phdr->hdrsize;
 				scale  = phdr->scale;
 				offset = phdr->offset;
@@ -215,9 +237,9 @@ bool ElevationManager::LoadElevationTile_mod (int lvl, int ilat, int ilng, doubl
 		if (tilesource & 0x0001 && bModExists) {
 			FILE *f;
 			char fname[256], path[256];
-			sprintf (fname, "%s\\Elev_mod\\%02d\\%06d\\%06d.elv", cbody->Name(), lvl, ilat, ilng);
-			g_pOrbiter->Cfg()->PTexPath(path, fname);
-			if (f = fopen(oapiResolvePath(path).c_str(), "rb")) {
+			int len = snprintf (fname, sizeof fname, "%s\\Elev_mod\\%02d\\%06d\\%06d.elv", cbody->Name(), lvl, ilat, ilng); // not upstream: bounded
+			if ((size_t)len >= sizeof fname) LOGOUT_WARN ("Path too long: %s", cbody->Name()); // not upstream: the file source is skipped
+			else if (g_pOrbiter->Cfg()->PTexPath(path, sizeof path, fname) && (f = fopen(oapiResolvePath(path).c_str(), "rb"))) { // not upstream: sized; a path that doesn't fit skips the file source
 				ELEVFILEHEADER hdr = {}; // not upstream: zeroed, so a short read leaves no stale fields
 				bool ok = fread (&hdr, sizeof(ELEVFILEHEADER), 1, f) == 1; // not upstream: a short file falls through like a missing one
 				if (hdr.hdrsize != sizeof(ELEVFILEHEADER)) {
@@ -271,6 +293,10 @@ bool ElevationManager::LoadElevationTile_mod (int lvl, int ilat, int ilng, doubl
 			if (ndata) {
 				BYTE *p = buf;
 				ELEVFILEHEADER *phdr = (ELEVFILEHEADER*)p;
+				if (!ElevNodeOk (phdr, ndata, ndat)) { // not upstream: a short or corrupt node counts as no tile
+					treeMgr[1]->ReleaseData(buf);
+					return false;
+				}
 				p += phdr->hdrsize;
 				INT16 ofs = (INT16)phdr->offset;
 				rescale = (do_rescale = (phdr->scale != tgt_res)) ? phdr->scale/tgt_res : 1.0;
@@ -290,10 +316,11 @@ bool ElevationManager::LoadElevationTile_mod (int lvl, int ilat, int ilng, doubl
 					} break;
 				case -16: {
 					const INT16 mask = SHRT_MAX;
-					INT16 *buf16 = (INT16*)p;
+					INT16 v; // not upstream: each sample read with memcpy, an odd hdrsize leaves p unaligned
 					for (i = 0; i < ndat; i++) {
-						if (buf16[i] != mask) {
-							elev[i] = (do_rescale ? (INT16)(buf16[i]*rescale) : buf16[i]);
+						memcpy (&v, p + i*sizeof(INT16), sizeof(INT16)); // not upstream: unaligned read
+						if (v != mask) { // not upstream: v
+							elev[i] = (do_rescale ? (INT16)(v*rescale) : v); // not upstream: v
 							if (do_shift) elev[i] += offset;
 						}
 					}

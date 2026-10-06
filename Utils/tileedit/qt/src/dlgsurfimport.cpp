@@ -24,7 +24,7 @@ DlgSurfImport::DlgSurfImport(tileedit *parent)
 	connect(ui->checkPropagateChanges, SIGNAL(stateChanged(int)), this, SLOT(onPropagateChanges(int)));
 	m_pathEdited = m_metaEdited = false;
 	m_haveMeta = false;
-	memset(&m_metaInfo, 0, sizeof(SurfPatchMetaInfo));
+	m_metaInfo = SurfPatchMetaInfo(); // not upstream: value-initialised, memset on a struct holding a std::vector
 }
 
 void DlgSurfImport::onOpenFileDialog()
@@ -81,7 +81,7 @@ void DlgSurfImport::onMetaFileChanged(const QString &name)
 		ui->spinIlng1->setValue(m_metaInfo.ilng1 - 1);
 	}
 	else {
-		memset(&m_metaInfo, 0, sizeof(SurfPatchMetaInfo));
+		m_metaInfo = SurfPatchMetaInfo(); // not upstream: value-initialised, memset zeroed the vector and leaked its buffer
 		ui->spinLvl->setValue(1);
 		ui->spinIlat0->setValue(0);
 		ui->spinIlat1->setValue(0);
@@ -125,6 +125,11 @@ void DlgSurfImport::accept()
 	m_metaInfo.colourMatch = ui->comboColourmatch->currentIndex();
 
 	SurfTileBlock *sblock = SurfTileBlock::Load(m_metaInfo.lvl, m_metaInfo.ilat0, m_metaInfo.ilat1, m_metaInfo.ilng0, m_metaInfo.ilng1);
+	if (!sblock) { // not upstream: Load returns 0 when a tile of the range has no data at any level
+		QMessageBox mbox(QMessageBox::Warning, tr("tileedit: Warning"), tr("No tile data for the import range"), QMessageBox::Close);
+		mbox.exec();
+		return;
+	}
 	int res = dxtread_png(ui->editPath->text().toLocal8Bit(), m_metaInfo, sblock->getData());
 	if (res != 0) {
 		QString msg("Error reading PNG file:\n");
@@ -163,6 +168,7 @@ bool DlgSurfImport::scanMetaFile(const char *fname, SurfPatchMetaInfo &meta)
 {
 	FILE *f = fopen(fname, "rt");
 	if (!f) return false;
+	meta.missing.clear(); // not upstream: a rescan doesn't append to the last list
 
 	int ilat, ilng, n;
 	char str[1024];

@@ -21,8 +21,8 @@ using namespace std;
 
 Nav *ParseNav (const char *line, const Planet *planet)
 {
-	char typestr[32];
-	sscanf (line, "%s", typestr);
+	char typestr[32] = ""; // not upstream: a blank line reads nothing
+	sscanf (line, "%31s", typestr); // not upstream: width of typestr
 	if (!strcasecmp (typestr, "VOR") && planet) {
 		TRACENEW; return new Nav_VOR (planet, line+3);
 	}
@@ -117,7 +117,10 @@ Nav_VOR::Nav_VOR (const Planet *_planet, const char *str)
 : Nav()
 {
 	planet = _planet;
-	sscanf (str, "%s%lf%lf%f%f", id, &lng, &lat, &freq, &range);
+	lng = lat = 0.0; // not upstream: a short line leaves them unread
+	char tmp[256] = ""; // not upstream: id[8] can't take a long token
+	sscanf (str, "%255s%lf%lf%f%f", tmp, &lng, &lat, &freq, &range); // not upstream: read into tmp
+	snprintf (id, sizeof id, "%s", tmp); // not upstream: id cut to 7 characters
 	lng *= RAD, lat *= RAD, range *= 1e3;
 	step = (DWORD)((freq - NAV_RADIO_FREQ_MIN)*20.0 + 0.5);
 	planet->EquatorialToLocal (lng, lat, planet->Size() + planet->Elevation (lng, lat), lpos);

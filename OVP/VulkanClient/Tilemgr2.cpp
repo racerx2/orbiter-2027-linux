@@ -1101,7 +1101,7 @@ TileManager2Base::TileManager2Base (vPlanet *vplanet, int _maxres, int _gridres)
 	elevRes = *(double*)oapiGetObjectParam (obj, OBJPRM_PLANET_ELEVRESOLUTION);
 	LogClr("Teal", "Planet ElevRes %s = %g", vplanet->GetName(), elevRes);
 
-	char path[1024];
+	char path[MAX_PATH]; // not upstream: the PlanetTexturePath contract is MAX_PATH
 	gc->PlanetTexturePath(cbody_name, path);
 	m_dataRootDir = path;
 }

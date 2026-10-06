@@ -62,6 +62,7 @@ Camera::Camera (double _nearplane, double _farplane)
 	memset (&cockpitprm, 0, sizeof(cockpitprm));
 	go.panspeed = g_pOrbiter->Cfg()->CfgCameraPrm.Panspeed;
 	go.tgtlock = true;
+	go.lng = go.lat = go.alt = go.alt0 = go.phi = go.tht = 0.0; // not upstream: a short GROUNDLOCATION/GROUNDDIRECTION line or none left them unset
 	go.terrain_limit = g_pOrbiter->Cfg()->CfgCameraPrm.TerrainLimit;
 	gos.planet[0] = gos.site[0] = gos.addr[0] = '\0';
 	planet_proxy = 0;
@@ -237,6 +238,8 @@ void Camera::SetCMode (const CameraMode *cm)
 {
 	bool ext = (cm->GetMode() != CameraMode::CM_COCKPIT);
 	Body *tgt = (Body*)cm->GetTarget();
+	Body *ctgt = (tgt ? tgt : target); // not upstream: the body a cockpit mode would attach to
+	if (!ext && ctgt && ctgt->Type() != OBJTP_VESSEL) return; // not upstream: a cockpit mode for a non-vessel is unusable (as Create treats an unknown target); SetFocusObject cast it to Vessel
 
 	if ((tgt && tgt != target) || ext != external_view) {
 		if (!tgt) tgt = target;
@@ -762,7 +765,7 @@ void Camera::SetGroundMode (ExtCamMode mode, const Body *ref, double lng, double
 	}
 	go.lng = lng;
 	go.lat = lat;
-	double elev = GroundElevation ((const Planet*)ref, lng, lat, alt);
+	double elev = (ref->Type() == OBJTP_PLANET ? GroundElevation ((const Planet*)ref, lng, lat, alt) : 0.0); // not upstream: only planets have an elevation manager, as in Update
 	if (alt_above_ground) { // measure altitude from elevated ground
 		go.alt = alt;
 		go.alt0 = alt+elev;
@@ -1380,7 +1383,7 @@ CameraMode *Camera::GetPreset (DWORD idx)
 
 bool Camera::Read (ifstream &ifs)
 {
-	char cbuf[256] = "", ctrackmode[64] = "", cdirref[64] = "", * pc = NULL;
+	char cbuf[256] = "", ctrackmode[256] = "", cdirref[256] = "", * pc = NULL; // not upstream: [64]; a token of the 255-character line fits
 	Body *tg = 0;
 	double rd = 4.0, ph = 0.0, th = 0.0;
 	int n = 0;
@@ -1405,12 +1408,14 @@ bool Camera::Read (ifstream &ifs)
 		} else if (!strncasecmp (pc, "FOV", 3)) {
 			double a;
 			n = sscanf (pc+3, "%lf", &a);
-			if (a < 10.0) a = 10.0;
-			else if (a > 160.0) a = 160.0;
-			a *= RAD*0.5;
-			ap_int = ap_ext = a;
+			if (n == 1) { // not upstream: a bare or non-numeric FOV line keeps the defaults (a was used unset)
+				if (a < 10.0) a = 10.0;
+				else if (a > 160.0) a = 160.0;
+				a *= RAD*0.5;
+				ap_int = ap_ext = a;
+			} // not upstream: as above
 		} else if (!strncasecmp (pc, "TRACKMODE", 9)) {
-			n = sscanf (pc+9, "%s%s", ctrackmode, cdirref);
+			n = sscanf (pc+9, "%255s%255s", ctrackmode, cdirref); // not upstream: widths of the buffers
 		} else if (!strncasecmp (pc, "GROUNDLOCATION", 14)) {
 			n = sscanf (pc+14, "%lf%lf%lf", &go.lng, &go.lat, &go.alt);
 			go.lng *= RAD, go.lat *= RAD;
@@ -1483,11 +1488,15 @@ void Camera::Write (ostream &ofs) const
 	}
 	ofs << "  FOV " << 2.0*DEG* *ap << endl;
 	if (npreset) {
-		char cbuf[256] = "    ";
+		char cbuf[260] = "    "; // not upstream: [256]; Store may write 256 bytes at +4
 		ofs << "  BEGIN_PRESET" << endl;
 		for (DWORD i = 0; i < npreset; i++) {
 			preset[i]->Store (cbuf+4);
-			ofs << cbuf << endl;
+			if (cbuf[4] && strlen (cbuf) <= 255) ofs << cbuf << endl; // not upstream: Read's getline (cbuf, 256) takes at most 255 characters
+			else { // not upstream: a placeholder ("-" reads back as AddPreset (0)) keeps the later preset indices
+				LOGOUT_WARN ("Camera preset %u is too long for the scenario file; saved as a placeholder", (unsigned)i);
+				ofs << "    -" << endl;
+			}
 		}
 		ofs << "  END_PRESET" << endl;
 	}
@@ -1619,15 +1628,18 @@ void CameraMode_Cockpit::Init (char *str)
 
 void CameraMode_Cockpit::GetDescr (char *str, int len)
 {
-	char cbuf[256] = "";
-	if (target) strcat (cbuf, ((Body*)target)->Name()), strcat (cbuf, " ");
+	char cbuf[272] = ""; // not upstream: [256]; a name cut at 255, then the mode words
+	if (target) snprintf (cbuf, 256, "%s ", ((Body*)target)->Name()); // not upstream: cut (D)
 	strcat (cbuf, "Cockpit ");
-	strncpy (str, cbuf, len-1);
+	if (len > 0) snprintf (str, len, "%s", cbuf); // not upstream: cut and terminated (D); strncpy left it unterminated
 }
 
 void CameraMode_Cockpit::Store (char *str)
 {
-	sprintf (str, "Cockpit:%s:%0.2f", target ? ((Body*)target)->Name() : "-", fov);
+	char tmp[256]; // not upstream: the SDK gives str no size; 256 is what every caller passes
+	int n = snprintf (tmp, sizeof tmp, "Cockpit:%s:%0.2f", target ? ((Body*)target)->Name() : "-", fov); // not upstream: bounded
+	if (n >= 0 && (size_t)n < sizeof tmp) memcpy (str, tmp, n+1); // not upstream: only a whole result
+	else str[0] = '\0'; // not upstream: N, too long; the callers skip ""
 }
 
 // ============================================================
@@ -1636,12 +1648,13 @@ CameraMode_Track::CameraMode_Track (): CameraMode ()
 {
 	reldist = 0;     // use current distance and position
 	tmode = TM_CURRENT; // use current track mode
+	phi = theta = 0; // not upstream: a blank or short mode part leaves them unread
 }
 
 void CameraMode_Track::Init (char *str)
 {
-	char tm[64], rf[256];
-	sscanf (str, "%s%lf%lf%lf%s", tm, &reldist, &phi, &theta, rf);
+	char tm[64] = "", rf[256] = ""; // not upstream: "" for a blank mode part
+	sscanf (str, "%63s%lf%lf%lf%255s", tm, &reldist, &phi, &theta, rf); // not upstream: widths of the buffers
 	if (!strcasecmp (tm, "RELATIVE"))
 		tmode = TM_RELATIVE;
 	else if (!strcasecmp (tm, "ABSDIR"))
@@ -1664,26 +1677,28 @@ void CameraMode_Track::Init (char *str)
 void CameraMode_Track::Store (char *str)
 {
 	static const char *tmstr[6] = {"CURRENT","RELATIVE", "ABSDIR", "GLOBAL", "TARGETTOREF", "TARGETFROMREF"};
-	sprintf (str, "Track:%s:%0.2f:%s %0.3f %0.3f %0.3f", // "%s%:" typo: MSVC printed ":", glibc prints "%:"
+	char tmp[256]; // not upstream: the SDK gives str no size; 256 is what every caller passes
+	int n = snprintf (tmp, sizeof tmp, "Track:%s:%0.2f:%s %0.3f %0.3f %0.3f", // not upstream: bounded; "%s%:" typo: MSVC printed ":", glibc prints "%:"
 		target ? ((Body*)target)->Name() : "-", fov,
 		tmstr[tmode], reldist, phi, theta);
-	if (tmode == TM_TARGETTOREF || tmode == TM_TARGETFROMREF) {
-		strcat (str, " ");
-		strcat (str, ((Body*)ref)->Name());
+	if (n >= 0 && (size_t)n < sizeof tmp && (tmode == TM_TARGETTOREF || tmode == TM_TARGETFROMREF)) { // not upstream: appended only after a whole head
+		n += snprintf (tmp+n, sizeof tmp - n, " %s", ((Body*)ref)->Name()); // not upstream: bounded, at the offset
 	}
+	if (n >= 0 && (size_t)n < sizeof tmp) memcpy (str, tmp, n+1); // not upstream: only a whole result
+	else str[0] = '\0'; // not upstream: N, too long; the callers skip ""
 }
 
 void CameraMode_Track::GetDescr (char *str, int len)
 {
-	char cbuf[256] = "";
-	if (target) strcat (cbuf, ((Body*)target)->Name()), strcat (cbuf, " ");
+	char cbuf[272] = ""; // not upstream: [256]; a name cut at 255, then the mode words
+	if (target) snprintf (cbuf, 256, "%s ", ((Body*)target)->Name()); // not upstream: cut (D)
 	strcat (cbuf, "Track ");
 	switch (tmode) {
 	case TM_RELATIVE: strcat (cbuf, "relative "); break;
 	case TM_ABSDIR:   strcat (cbuf, "fixed "); break;
 	case TM_GLOBAL:   strcat (cbuf, "global "); break;
 	}
-	strncpy (str, cbuf, len-1);
+	if (len > 0) snprintf (str, len, "%s", cbuf); // not upstream: cut and terminated (D); strncpy left it unterminated
 }
 
 void CameraMode_Track::SetTrackMode (TrackMode trackmode, OBJHANDLE refobj)
@@ -1712,14 +1727,15 @@ CameraMode_Ground::CameraMode_Ground (): CameraMode ()
 {
 	ref = 0;    // use current planet
 	alt = 0;    // use current position
+	lng = lat = phi = theta = 0; // not upstream: a blank or short mode part leaves them unread
 	alt_above_ground = true;
 	tgtlock = true;
 }
 
 void CameraMode_Ground::Init (char *str)
 {
-	char rf[256], alt_mode;
-	int i = sscanf (str, "%s%lf%lf%lf%c%lf%lf", rf, &lng, &lat, &alt, &alt_mode, &phi, &theta);
+	char rf[256] = "", alt_mode = 0; // not upstream: "" for a blank mode part; alt_mode is unread when the altitude ends the line
+	int i = sscanf (str, "%255s%lf%lf%lf%c%lf%lf", rf, &lng, &lat, &alt, &alt_mode, &phi, &theta); // not upstream: width of rf
 	lng *= RAD, lat *= RAD;
 	alt_above_ground = (toupper(alt_mode) != 'M');
 	tgtlock = (i < 7);
@@ -1728,19 +1744,22 @@ void CameraMode_Ground::Init (char *str)
 
 void CameraMode_Ground::Store (char *str)
 {
-	sprintf (str, "Ground:%s:%0.2f:%s %0.5f %0.5f %0.2f%s",
+	char tmp[256]; // not upstream: the SDK gives str no size; 256 is what every caller passes
+	int n = snprintf (tmp, sizeof tmp, "Ground:%s:%0.2f:%s %0.5f %0.5f %0.2f%s", // not upstream: bounded
 		target ? ((Body*)target)->Name() : "-", fov,
-		((Body*)ref)->Name(), lng*DEG, lat*DEG, alt, alt_above_ground ? "" : "M");
-	if (!tgtlock) sprintf (str+strlen(str), " %0.2f %0.2f",
+		ref ? ((Body*)ref)->Name() : "-", lng*DEG, lat*DEG, alt, alt_above_ground ? "" : "M"); // not upstream: ref 0 (current planet) as "-", read back as GetObj ("-") == 0
+	if (!tgtlock && n >= 0 && (size_t)n < sizeof tmp) n += snprintf (tmp+n, sizeof tmp - n, " %0.2f %0.2f", // not upstream: bounded, at the offset
 		phi, theta);
+	if (n >= 0 && (size_t)n < sizeof tmp) memcpy (str, tmp, n+1); // not upstream: only a whole result
+	else str[0] = '\0'; // not upstream: N, too long; the callers skip ""
 }
 
 void CameraMode_Ground::GetDescr (char *str, int len)
 {
-	char cbuf[256] = "";
-	if (target) strcat (cbuf, ((Body*)target)->Name()), strcat (cbuf, " ");
+	char cbuf[272] = ""; // not upstream: [256]; a name cut at 255, then the mode words
+	if (target) snprintf (cbuf, 256, "%s ", ((Body*)target)->Name()); // not upstream: cut (D)
 	strcat (cbuf, "Ground ");
-	strncpy (str, cbuf, len-1);
+	if (len > 0) snprintf (str, len, "%s", cbuf); // not upstream: cut and terminated (D); strncpy left it unterminated
 }
 
 void CameraMode_Ground::SetPosition (double longitude, double latitude, double altitude, OBJHANDLE hRef)

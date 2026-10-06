@@ -87,6 +87,8 @@ add_custom_command(
 	COMMAND ${CMAKE_COMMAND} -E copy_directory ${THUMBNAIL_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Images/Vessels/Default
 )
 
+orbiter_link_depends_dirs(ShuttleA ${CONFIG_SOURCE_DIR} ${MESH_SOURCE_DIR} ${TEXTURE_SOURCE_DIR} ${SCRIPT_SOURCE_DIR} ${THUMBNAIL_SOURCE_DIR}) # not upstream: a changed data file relinks the module, so its PRE_BUILD copy runs
+
 add_dependencies(ShuttleA
 	${OrbiterTgt}
 	Orbitersdk

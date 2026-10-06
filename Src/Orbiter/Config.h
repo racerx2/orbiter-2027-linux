@@ -305,7 +305,8 @@ char *readline (std::istream &is);
 // buffer containing the line. The buffer is grown dynamically to
 // hold a string of arbitrary length.
 
-bool GetItemString (std::istream &is, const char *label, char *val);
+bool GetItemString (std::istream &is, const char *label, char *val, size_t n); // not upstream: sized, a value that doesn't fit counts as missing
+template<size_t N> bool GetItemString (std::istream &is, const char *label, char (&val)[N]) { return GetItemString (is, label, val, N); } // not upstream: array callers get their size
 bool GetItemReal   (std::istream &is, const char *label, double &val);
 bool GetItemInt    (std::istream &is, const char *label, int &val);
 bool GetItemSize   (std::istream &is, const char *label, size_t &val);
@@ -374,10 +375,12 @@ public:
 	const char *ScnPath    (const char *name);
 	// Return full path for scenario file name
 
-	void TexPath (char *cbuf, const char *name, const char *ext=0);
+	bool TexPath (char *cbuf, size_t n, const char *name, const char *ext=0); // not upstream: sized, false and "" when the path doesn't fit
 	// fill cbuf with the complete path for file name.ext in the texture directory
-	void PTexPath(char* cbuf, const char* name, const char* ext = 0);
+	bool PTexPath(char* cbuf, size_t n, const char* name, const char* ext = 0); // not upstream: sized, false and "" when the path doesn't fit
 	// fill cbuf with the complete path for file name.ext in the planetary texture directory
+	void TexPath (char *cbuf, const char *name, const char *ext=0) = delete; // not upstream: an unsized call must not bind to the returning overload
+	void PTexPath(char* cbuf, const char* name, const char* ext = 0) = delete; // not upstream: an unsized call must not bind to the returning overload
 
 	bool bEchoAll;          // echo all configuration parameters (or only non-default ones)?
 	RECT rLaunchpad;        // launchpad dialog position
@@ -437,7 +440,8 @@ public:
 	// return a specific parameter setting (paramtype defined in GraphicsAPI.h)
 
 	// Read items from master config
-	bool GetString (const char *category, char *val);
+	bool GetString (const char *category, char *val, size_t n); // not upstream: sized
+	template<size_t N> bool GetString (const char *category, char (&val)[N]) { return GetString (category, val, N); } // not upstream: array callers get their size
 	bool GetReal (const char *category, double &val);
 	bool GetInt (const char *category, int &val);
 	bool GetSize (const char* category, size_t& val);
@@ -445,7 +449,8 @@ public:
 	bool GetVector (const char *category, Vector &val);
 
 private:
-	bool GetString (std::istream &is, const char *category, char *val);
+	bool GetString (std::istream &is, const char *category, char *val, size_t n); // not upstream: sized, a value that doesn't fit counts as missing
+	template<size_t N> bool GetString (std::istream &is, const char *category, char (&val)[N]) { return GetString (is, category, val, N); } // not upstream: array callers get their size
 	bool GetReal (std::istream &is, const char *category, double &val);
 	bool GetInt (std::istream &is, const char *category, int &val);
 	bool GetSize (std::istream& is, const char* category, size_t& val);

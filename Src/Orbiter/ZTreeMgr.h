@@ -116,6 +116,7 @@ private:
 	DWORD rootPos3;    // index of level-3 tile ((DWORD)-1 for not present)
 	DWORD rootPos4[2]; // index of the level-4 tiles (quadtree roots; (DWORD)-1 for not present)
 	int64_t dofs;
+	int64_t fsize = 0; // not upstream: archive file size, bounds the sizes read from it
 };
 
 #endif // !__ZTREEMGR_H

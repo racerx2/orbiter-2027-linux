@@ -9,6 +9,7 @@
 #include "Camera.h"
 #include "Dialogs.h"
 #include "DlgMenuCfg.h"
+#include "Log.h" // not upstream: LOGOUT_WARN for a value that doesn't fit
 
 // =======================================================================
 // Externs
@@ -149,9 +150,15 @@ public:
 			for(int i = 1;;i++) {
 				char buf[64];
 				char dst[256];
+				char tmp[512]; // not upstream: oapiReadItem_string writes up to 511 bytes, copied into dst only when it fits
 				bool state;
 				sprintf(buf, "MenuItem%d", i);
-				bool s = oapiReadItem_string (f, buf, dst);
+				bool s = oapiReadItem_string (f, buf, tmp); // not upstream: local buffer
+				if (s && strlen (tmp) >= sizeof dst) { // not upstream: a value that doesn't fit counts as not read
+					LOGOUT_WARN ("Value of item %s too long, ignored", buf);
+					s = false;
+				}
+				if (s) strcpy (dst, tmp); // not upstream: fits
 				sprintf(buf, "MenuItemEnabled%d", i);
 				s &= oapiReadItem_bool (f, buf, state);
 				if(!s)

@@ -18,6 +18,7 @@
 #include "PinesGrav.h"
 #include "Util.h"
 #include <dlfcn.h>
+#include <cmath> // not upstream: std::isfinite for the spin terms
 
 using namespace std;
 
@@ -65,6 +66,30 @@ CelestialBody::CelestialBody (char *fname)
 	GetItemReal (ifs, "LAN", Lrel0);
 	GetItemReal (ifs, "LAN_MJD", mjd_rel);
 	GetItemReal (ifs, "PrecessionPeriod", prec_T);
+	char tbuf[512]; // not upstream: buffer for SidRotAccel and SidRotTerms, as long as a cfg line
+	if (GetItemString (ifs, "SidRotAccel", tbuf) && (sscanf (tbuf, "%lf", &rot_accel) != 1 || !std::isfinite (rot_accel))) { // not upstream: quadratic spin term [rad/day^2] about J2000
+		LOGOUT_WARN ("%s: SidRotAccel is not a finite number, ignored", fname);
+		rot_accel = 0.0;
+	}
+	if (GetItemString (ifs, "SidRotTerms", tbuf)) { // not upstream: periodic spin terms, groups of amplitude [rad], period [days], phase at J2000 [rad], phase drift [rad/day^2]
+		double v[4];
+		int nv = 0;
+		const char *last = "";
+		for (char *str = strtok (tbuf, " \t"); str; str = strtok (NULL, " \t")) {
+			last = str;
+			if (nrotterm == MAXROTTERM || sscanf (str, "%lf", v + nv) != 1 || !std::isfinite (v[nv]) || (nv == 1 && fabs (v[1]) < 1e-6)) {
+				LOGOUT_WARN ("%s: SidRotTerms: bad value or too many terms at %s, the rest is ignored", fname, str);
+				nv = 0;
+				break;
+			}
+			if (++nv == 4) {
+				for (int i = 0; i < 4; i++) rotterm[nrotterm][i] = v[i];
+				nrotterm++;
+				nv = 0;
+			}
+		}
+		if (nv) LOGOUT_WARN ("%s: SidRotTerms: incomplete last term ignored at %s", fname, last);
+	}
 
 	// precession parameters
 	GetItemReal (ifs, "PrecessionObliquity", eps_ref);
@@ -112,13 +137,15 @@ CelestialBody::CelestialBody (char *fname)
 		char *str;
 		str = strtok (cbuf, " \t");
 		while (str) {
+			double c; // not upstream: read first, appended only when it is a number
+			if (sscanf (str, "%lf", &c) != 1) { str = strtok (NULL, " \t"); continue; } // not upstream: a non-number token is skipped
 			double *tmp = new double[njcoeff+1]; TRACENEW
 			if (njcoeff) {
 				memcpy (tmp, jcoeff, njcoeff*sizeof(double));
 				delete []jcoeff;
 			}
 			jcoeff = tmp;
-			sscanf (str, "%lf", jcoeff + njcoeff++);
+			jcoeff[njcoeff++] = c; // not upstream: the value read above
 			str = strtok (NULL, " \t");
 		}
 	}
@@ -180,6 +207,8 @@ void CelestialBody::DefaultParam ()
 	prec_T            = 0.0;   // no precession
 	rot_T             = 1e100; // no planet rotation
 	Dphi              = 0.0;
+	rot_accel         = 0.0;   // not upstream: no quadratic spin term
+	nrotterm          = 0;     // not upstream: no periodic spin terms
 	njcoeff           = 0;     // shape for gravity calculations: spherical by default
 	cbody             = 0;     // no parent body
 	nsecondary        = 0;     // no child bodies
@@ -525,7 +554,7 @@ void CelestialBody::UpdateRotation ()
 	// Rotation of object around its local axis of rotation (y-axis)
 	// See "Planetary axis precession" in "Orbiter Technical Reference" for algorithm
 
-	rotation = posangle (Dphi + td.SimT1*rot_omega - Lrel*cos_eps + rotation_off);
+	rotation = posangle (Dphi + td.SimT1*rot_omega - Lrel*cos_eps + rotation_off + RotExtra (td.MJD1)); // not upstream: + RotExtra
 	double cosr = cos(rotation), sinr = sin(rotation);
 	s1->R.Set (cosr, 0.0, -sinr,
 	           0.0,  1.0,  0.0,
@@ -536,10 +565,18 @@ void CelestialBody::UpdateRotation ()
 	s1->Q.Set (s1->R);
 }
 
+double CelestialBody::RotExtra (double mjd) const // not upstream: the SidRotAccel and SidRotTerms angle at mjd
+{
+	double d = mjd - MJD2000, r = rot_accel*d*d;
+	for (int i = 0; i < nrotterm; i++)
+		r += rotterm[i][0] * sin (Pi2*d/rotterm[i][1] + rotterm[i][2] + rotterm[i][3]*d*d);
+	return r;
+}
+
 void CelestialBody::GetRotation (double t, Matrix &rot) const
 {
 	// Note: this function assumes current precession, i.e. mjd sufficiently close to td.mjd
-	double r = posangle (Dphi + t*rot_omega - Lrel*cos_eps + rotation_off);
+	double r = posangle (Dphi + t*rot_omega - Lrel*cos_eps + rotation_off + RotExtra (td.MJD (t))); // not upstream: + RotExtra
 	double cosr = cos(r), sinr = sin(r);
 	rot.Set (cosr, 0.0, -sinr,
 	 	     0.0,  1.0,  0.0,
@@ -718,10 +755,14 @@ void CelestialBody::RegisterModule (char *dllname)
 	char cbuf[256];
 	module = 0;                              // reset new interface
 	memset (&modIntf, 0, sizeof (modIntf));  // reset old interface
-	sprintf (cbuf, "Modules/Celbody/%s.so", dllname); // try new module location
-	hMod = dlopen (oapiResolvePath (cbuf).c_str(), RTLD_NOW);
+	hMod = 0; // not upstream: stays 0 when a module path doesn't fit
+	if (snprintf (cbuf, sizeof cbuf, "Modules/Celbody/%s.so", dllname) < (int)sizeof cbuf) // try new module location; not upstream: bounded, a path that doesn't fit is not tried
+		hMod = dlopen (oapiResolvePath (cbuf).c_str(), RTLD_NOW); // not upstream: only when the path fit
 	if (!hMod) {
-		sprintf (cbuf, "Modules/%s.so", dllname);  // try legacy module location
+		if (snprintf (cbuf, sizeof cbuf, "Modules/%s.so", dllname) >= (int)sizeof cbuf) {  // try legacy module location; not upstream: bounded, a name that doesn't fit: no dlopen
+			LOGOUT_WARN ("Path too long: Modules/%s.so", dllname);
+			return;
+		}
 		hMod = dlopen (oapiResolvePath (cbuf).c_str(), RTLD_NOW);
 	}
 	if (!hMod) {
@@ -903,9 +944,22 @@ void CELBODY2::clbkInit (FILEHANDLE cfg)
 		// 1: try Config\<Name>\Atmosphere.cfg for interactive setting
 		char fname[256], name[256];
 		oapiGetObjectName (hBody, name, 256);
-		strcat (name, "\\Atmosphere.cfg");
-		FILEHANDLE hFile = oapiOpenFile (name, FILE_IN, CONFIG);
-		if (oapiReadItem_string (hFile, (char*)"MODULE_ATM", fname) || oapiReadItem_string (cfg, (char*)"MODULE_ATM", fname)) {
+		FILEHANDLE hFile = 0; // not upstream: no file when the path doesn't fit
+		if (strlen (name) + strlen ("\\Atmosphere.cfg") < sizeof name) { // not upstream: append only with room, else only cfg is read
+			strcat (name, "\\Atmosphere.cfg");
+			hFile = oapiOpenFile (name, FILE_IN, CONFIG);
+		} else LOGOUT_WARN ("Path too long: %s\\Atmosphere.cfg", name); // not upstream
+		auto ReadAtm = [&] (FILEHANDLE f) { // not upstream: oapiReadItem_string into a local [512], a value that doesn't fit fname counts as not read
+			char tmp[512];
+			if (!f || !oapiReadItem_string (f, (char*)"MODULE_ATM", tmp)) return false;
+			if (strlen (tmp) >= sizeof fname) {
+				LOGOUT_WARN ("Value of item MODULE_ATM too long, ignored");
+				return false;
+			}
+			strcpy (fname, tmp);
+			return true;
+		};
+		if (ReadAtm (hFile) || ReadAtm (cfg)) { // not upstream: hFile may be 0
 			if (strcasecmp (fname, "[None]"))
 				LoadAtmosphereModule (fname);
 		}

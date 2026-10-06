@@ -690,7 +690,7 @@ bool Instrument_Docking::ClbkSelection_Target (Select *menu, int item, char *str
 		char cbuf[256];
 		if (vessel = g_psys->GetVessel (str, true)) {
 			for (i = 0; i < vessel->nDock(); i++) {
-				sprintf (cbuf, "%s, dock %d", vessel->Name(), i+1);
+				snprintf (cbuf, sizeof cbuf, "%s, dock %d", vessel->Name(), i+1); // not upstream: menu text cut to cbuf
 				menu->Append (cbuf);
 			}
 			return true;
@@ -717,13 +717,13 @@ bool Instrument_Docking::CallbackTarget (InputBox*, char *str, void *data)
 
 bool Instrument_Docking::SetTarget (char *str)
 {
-	char name[256];
+	char name[256] = ""; // not upstream: empty input reads nothing
 	int dock;
-	bool bdock = (sscanf (str, "%s%d", name, &dock) == 2);
+	bool bdock = (sscanf (str, "%255s%d", name, &dock) == 2); // not upstream: width of name
 	int len = strlen(name);
-	if (name[len-1] == ',') {
+	if (len && name[len-1] == ',') { // not upstream: len 0 has no last character
 		name[len-1] = '\0';
-		bdock = (sscanf (str+len+5, "%d", &dock) == 1);
+		bdock = ((size_t)len+5 <= strlen (str) && sscanf (str+len+5, "%d", &dock) == 1); // not upstream: str+len+5 only inside str
 	}
 	Vessel *obj = g_psys->GetVessel (name, true);
 	if (!obj) return false;

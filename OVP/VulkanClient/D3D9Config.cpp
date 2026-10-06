@@ -210,11 +210,11 @@ bool D3D9Config::ReadParams ()
 	if (oapiReadItem_float (hFile, (char*)"GFXGlare", d))						GFXGlare = max(0.1, min(10.0, d));
 
 
-	oapiReadItem_string (hFile, (char*)"SolCfg", SolCfg);
-	oapiReadItem_string (hFile, (char*)"DebugLineFont", DebugFont);
+	char tmp[512]; // not upstream: oapiReadItem_string writes up to 511 bytes; a value too long for its destination counts as not read
+	if (oapiReadItem_string (hFile, (char*)"SolCfg", tmp) && strlen(tmp) < 64) memcpy(SolCfg, tmp, strlen(tmp) + 1); // not upstream: SolCfg is new char[64]
+	if (oapiReadItem_string (hFile, (char*)"DebugLineFont", tmp) && strlen(tmp) < 64) memcpy(DebugFont, tmp, strlen(tmp) + 1); // not upstream: DebugFont is new char[64]
 
-	char Temp[256];
-	if (oapiReadItem_string(hFile, (char*)"EarthAtmoCfg", Temp)) AtmoCfg["Earth"] = Temp;
+	if (oapiReadItem_string(hFile, (char*)"EarthAtmoCfg", tmp) && strlen(tmp) < 256) AtmoCfg["Earth"] = tmp; // not upstream: read into tmp, upstream's Temp[256] is the limit
 
 	oapiCloseFile (hFile, FILE_IN_ZEROONFAIL);
 

@@ -28,6 +28,7 @@
 // d3d9.h/d3dx9.h left out: VkCore.h (via D3D9Client.h)
 #include "Orbitersdk.h"
 #include "D3D9Client.h"
+#include <chrono> // not upstream: tPace
 
 class SurfNative;
 
@@ -86,6 +87,7 @@ private:
 	std::vector<VkSemaphore> presentSem;       // one per swapchain image
 	VkSemaphore            acquireSem[VkDev::NFRAMES];
 	int                    iAcquire;
+	std::chrono::steady_clock::time_point tPace; // not upstream: deadline of the next hidden or failed frame
 	VkDevCaps              caps;
     RECT                   rcScreenRect;       // Screen rect for window
 
