@@ -44,7 +44,7 @@ namespace custom {
 		LauncherCfg &Cfg () { return cfg; }
 		void SaveCfg ();
 
-		bool InSkinView () const;               // QML view shown
+		bool InSkinView () const;               // QML or forms view shown
 		bool CanAct () const;                   // classic actions allowed now (7.2 of the design)
 		void EnterClassicView ();
 		void Log (const QString &line) const;
@@ -63,7 +63,7 @@ namespace custom {
 		void Apply (const QString &id, bool startClassic);
 		void Unapply ();
 		bool ApplyQss (const SkinManifest &m);
-		bool LoadModule (QString &err);
+		bool LoadModule (bool forms, QString &err);
 		bool CreateView (QString &err);
 		void DestroyView ();
 		void EnterSkinView ();
@@ -100,7 +100,8 @@ namespace custom {
 		std::vector<SkinManifest> skins;
 		QString activeId;
 		SkinManifest active;
-		bool qml = false;
+		bool skinView = false;   // the active skin has a view (QML or forms)
+		bool formsView = false;  // custom: forms skins; that view is a form
 		View mode = NONE;
 		bool waiting = false;
 		bool torn = false;
@@ -112,10 +113,14 @@ namespace custom {
 		QString switchTarget;
 		QString launching;       // the scenario selected when Launch was pressed
 
-		void *module = nullptr;
-		LauncherQmlCreateFn qmlCreate = nullptr;
-		LauncherQmlDestroyFn qmlDestroy = nullptr;
-		LauncherQmlFocusFn qmlFocus = nullptr;
+		struct ViewModule {
+			void *handle = nullptr;
+			LauncherQmlCreateFn create = nullptr;
+			LauncherQmlDestroyFn destroy = nullptr;
+			LauncherQmlFocusFn focus = nullptr;
+		};
+		ViewModule qmlModule, formsModule; // each loaded once, kept until exit
+		ViewModule &Module () { return formsView ? formsModule : qmlModule; }
 	};
 
 }

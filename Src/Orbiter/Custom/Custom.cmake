@@ -10,6 +10,7 @@ target_sources(Orbiter PRIVATE
 	Custom/UiForm.cpp
 	Custom/LayoutApply.cpp
 	Custom/LayoutSkin.cpp
+	Custom/SkinCopy.cpp
 )
 
 add_custom_target(CopySkins ALL

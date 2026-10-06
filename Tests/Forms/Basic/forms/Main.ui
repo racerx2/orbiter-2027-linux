@@ -1,0 +1,393 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>launcher</class>
+ <widget class="QWidget" name="launcher">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>800</width>
+    <height>600</height>
+   </rect>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">QWidget { background: transparent; }
+QFrame#card { border-image: url(:/t/images/dot.png); }
+QPushButton[current=&quot;true&quot;] { color: red; }</string>
+  </property>
+  <property name="scripts" stdset="0">
+   <stringlist>
+    <string>Logic.js</string>
+   </stringlist>
+  </property>
+  <widget class="Starfield" name="stars">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>800</width>
+     <height>600</height>
+    </rect>
+   </property>
+   <property name="pixmap">
+    <pixmap resource="skin.qrc">:/t/images/preview.png</pixmap>
+   </property>
+   <property name="scaledContents">
+    <bool>true</bool>
+   </property>
+   <property name="anchor" stdset="0">
+    <string>fill</string>
+   </property>
+   <property name="count" stdset="0">
+    <number>50</number>
+   </property>
+   <property name="drift" stdset="0">
+    <number>20</number>
+   </property>
+  </widget>
+  <widget class="QWidget" name="chrome">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>800</width>
+     <height>600</height>
+    </rect>
+   </property>
+   <property name="anchor" stdset="0">
+    <string>fill</string>
+   </property>
+   <layout class="QVBoxLayout" name="chromeLayout" stretch="0,0,0,0,0,1,0">
+    <property name="spacing">
+     <number>4</number>
+    </property>
+    <property name="leftMargin">
+     <number>10</number>
+    </property>
+    <property name="topMargin">
+     <number>10</number>
+    </property>
+    <property name="rightMargin">
+     <number>10</number>
+    </property>
+    <property name="bottomMargin">
+     <number>10</number>
+    </property>
+    <item>
+     <widget class="QLabel" name="title">
+      <property name="text">
+       <string>Title</string>
+      </property>
+      <property name="bind" stdset="0">
+       <string>path ? (info.name || path) : 'None'</string>
+      </property>
+      <property name="maxLines" stdset="0">
+       <number>2</number>
+      </property>
+      <property name="letterSpacing" stdset="0">
+       <double>2.500000000000000</double>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <layout class="QHBoxLayout" name="buttons">
+      <property name="spacing">
+       <number>6</number>
+      </property>
+      <item>
+       <widget class="QPushButton" name="go">
+        <property name="text">
+         <string>GO</string>
+        </property>
+        <property name="cursor">
+         <cursorShape>PointingHandCursor</cursorShape>
+        </property>
+        <property name="action" stdset="0">
+         <string>Launcher.launch(path)</string>
+        </property>
+        <property name="enableIf" stdset="0">
+         <string>Launcher.canLaunch</string>
+        </property>
+        <property name="bind_current" stdset="0">
+         <string>page === 'B'</string>
+        </property>
+        <property name="glowColor" stdset="0">
+         <color alpha="255">
+          <red>245</red>
+          <green>165</green>
+          <blue>36</blue>
+         </color>
+        </property>
+        <property name="glowRings" stdset="0">
+         <number>3</number>
+        </property>
+        <property name="glowStep" stdset="0">
+         <double>3.000000000000000</double>
+        </property>
+        <property name="glowAlpha" stdset="0">
+         <double>0.160000000000000</double>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="paused">
+        <property name="text">
+         <string>Start paused</string>
+        </property>
+        <property name="bind" stdset="0">
+         <string>Launcher.startPaused</string>
+        </property>
+        <property name="action" stdset="0">
+         <string>Launcher.startPaused = !Launcher.startPaused</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="buttonsSpacer">
+        <property name="orientation">
+         <enum>Qt::Orientation::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>40</width>
+          <height>20</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <widget class="QLineEdit" name="search">
+      <property name="placeholderText">
+       <string>Search</string>
+      </property>
+      <property name="model" stdset="0">
+       <string>ui.query</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QStackedWidget" name="pages">
+      <property name="currentIndex">
+       <number>1</number>
+      </property>
+      <property name="bind" stdset="0">
+       <string>page</string>
+      </property>
+      <widget class="QWidget" name="pageA">
+       <property name="page" stdset="0">
+        <string>A</string>
+       </property>
+       <property name="key_Return" stdset="0">
+        <string>ui.pressed = (ui.pressed || 0) + 1</string>
+       </property>
+       <layout class="QVBoxLayout" name="pageALayout">
+        <item>
+         <widget class="QLabel" name="aLabel">
+          <property name="bind" stdset="0">
+           <string>'query: ' + (ui.query || '')</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="pageB">
+       <property name="page" stdset="0">
+        <string>B</string>
+       </property>
+       <layout class="QVBoxLayout" name="pageBLayout">
+        <item>
+         <widget class="QLabel" name="bLabel">
+          <property name="text">
+           <string>Page B</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+    </item>
+    <item>
+     <widget class="QWidget" name="cards">
+      <property name="minimumSize">
+       <size>
+        <width>0</width>
+        <height>80</height>
+       </size>
+      </property>
+      <property name="list" stdset="0">
+       <string>Logic.cards()</string>
+      </property>
+      <property name="fit" stdset="0">
+       <bool>true</bool>
+      </property>
+      <layout class="QHBoxLayout" name="cardsLayout">
+       <property name="spacing">
+        <number>10</number>
+       </property>
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+       <item>
+        <widget class="QFrame" name="card">
+         <property name="minimumSize">
+          <size>
+           <width>100</width>
+           <height>80</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>100</width>
+           <height>80</height>
+          </size>
+         </property>
+         <property name="template" stdset="0">
+          <bool>true</bool>
+         </property>
+         <property name="action" stdset="0">
+          <string>Launcher.currentScenario = item.path</string>
+         </property>
+         <property name="doubleAction" stdset="0">
+          <string>Launcher.launch(item.path)</string>
+         </property>
+         <widget class="QLabel" name="cardTitle">
+          <property name="geometry">
+           <rect>
+            <x>8</x>
+            <y>50</y>
+            <width>84</width>
+            <height>20</height>
+           </rect>
+          </property>
+          <property name="bind" stdset="0">
+           <string>item.title + ' #' + index</string>
+          </property>
+          <property name="anchor" stdset="0">
+           <string>left right bottom</string>
+          </property>
+         </widget>
+        </widget>
+       </item>
+       <item>
+        <spacer name="cardsSpacer">
+         <property name="orientation">
+          <enum>Qt::Orientation::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>0</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="QScrollArea" name="grid">
+      <property name="verticalScrollBarPolicy">
+       <enum>Qt::ScrollBarPolicy::ScrollBarAlwaysOff</enum>
+      </property>
+      <property name="widgetResizable">
+       <bool>true</bool>
+      </property>
+      <widget class="QWidget" name="gridBody">
+       <property name="geometry">
+        <rect>
+         <x>0</x>
+         <y>0</y>
+         <width>760</width>
+         <height>200</height>
+        </rect>
+       </property>
+       <property name="list" stdset="0">
+        <string>Logic.many()</string>
+       </property>
+       <property name="cellWidth" stdset="0">
+        <number>120</number>
+       </property>
+       <property name="cellHeight" stdset="0">
+        <number>100</number>
+       </property>
+       <widget class="QFrame" name="cell">
+        <property name="geometry">
+         <rect>
+          <x>0</x>
+          <y>0</y>
+          <width>110</width>
+          <height>90</height>
+         </rect>
+        </property>
+        <property name="template" stdset="0">
+         <bool>true</bool>
+        </property>
+        <widget class="QLabel" name="cellText">
+         <property name="geometry">
+          <rect>
+           <x>4</x>
+           <y>4</y>
+           <width>100</width>
+           <height>20</height>
+          </rect>
+         </property>
+         <property name="bind" stdset="0">
+          <string>'cell ' + item</string>
+         </property>
+        </widget>
+       </widget>
+      </widget>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLabel" name="ticker">
+      <property name="tick" stdset="0">
+       <number>100</number>
+      </property>
+      <property name="bind" stdset="0">
+       <string>'t' + (ui.ticks = (ui.ticks || 0) + 1)</string>
+      </property>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QLabel" name="toast">
+   <property name="geometry">
+    <rect>
+     <x>350</x>
+     <y>500</y>
+     <width>100</width>
+     <height>30</height>
+    </rect>
+   </property>
+   <property name="anchor" stdset="0">
+    <string>hcenter bottom</string>
+   </property>
+   <property name="clickThrough" stdset="0">
+    <bool>true</bool>
+   </property>
+  </widget>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>Starfield</class>
+   <extends>QLabel</extends>
+   <header>starfield.h</header>
+  </customwidget>
+ </customwidgets>
+ <resources>
+  <include location="skin.qrc"/>
+ </resources>
+ <connections/>
+</ui>

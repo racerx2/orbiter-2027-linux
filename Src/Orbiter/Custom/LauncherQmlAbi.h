@@ -1,4 +1,4 @@
-// custom: launcher skins; C interface between Orbiter and Modules/Launcher/LauncherQml.so
+// custom: launcher skins; C interface between Orbiter and Modules/Launcher/LauncherQml.so (and LauncherForms.so)
 
 #ifndef __CUSTOM_LAUNCHERQMLABI_H
 #define __CUSTOM_LAUNCHERQMLABI_H
@@ -27,5 +27,10 @@ typedef void (*LauncherQmlFocusFn) (QWidget *view); // gives the skin's root ite
 #define LAUNCHERQML_CREATE "LauncherQml_Create"
 #define LAUNCHERQML_DESTROY "LauncherQml_Destroy"
 #define LAUNCHERQML_FOCUS "LauncherQml_Focus"
+
+// custom: forms skins; Modules/Launcher/LauncherForms.so takes the same init (entry = the form) and functions
+#define LAUNCHERFORMS_CREATE "LauncherForms_Create"
+#define LAUNCHERFORMS_DESTROY "LauncherForms_Destroy"
+#define LAUNCHERFORMS_FOCUS "LauncherForms_Focus"
 
 #endif // !__CUSTOM_LAUNCHERQMLABI_H

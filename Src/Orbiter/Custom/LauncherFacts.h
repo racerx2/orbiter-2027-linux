@@ -30,6 +30,7 @@ namespace custom {
 		int api = 1;
 		std::string qml, qss;    // relative to dir
 		std::string ui;          // custom: launcher layouts; a folder of Qt Designer forms, relative to dir
+		std::string forms;       // custom: forms skins; the launcher's Qt Designer form, relative to dir
 		int minWidth = 0, minHeight = 0, width = 0, height = 0;
 		bool ok = false;         // usable by this build
 		std::string reason;      // why not, if !ok

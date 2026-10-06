@@ -1,0 +1,17 @@
+<RCC>
+  <qresource prefix="/horizon">
+    <file>images/preview-stars.jpg</file>
+    <file>images/preview-planet.png</file>
+    <file>images/preview-thumb.png</file>
+    <file>images/orbitmark.png</file>
+    <file>images/play.png</file>
+    <file>images/star.png</file>
+    <file>images/star-on.png</file>
+    <file>images/lens.png</file>
+    <file>images/folder.png</file>
+    <file>images/toggle-on.png</file>
+    <file>images/toggle-off.png</file>
+    <file>images/toggle-on-disabled.png</file>
+    <file>images/toggle-off-disabled.png</file>
+  </qresource>
+</RCC>

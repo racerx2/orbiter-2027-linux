@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/t">
+    <file>images/dot.png</file>
+    <file>images/preview.png</file>
+  </qresource>
+</RCC>

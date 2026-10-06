@@ -12,13 +12,22 @@ The window title shows the key while a skin is active. It also works when a skin
 A reset stores Classic even when `ORBITER_LAUNCHER_SKIN` chose the skin (the variable still wins at the next
 start). Some keyboards have no Latin layout configured; there Ctrl+Shift+L may not arrive, so use the variable.
 
-There are three kinds, and a skin can be any mix of them:
+There are four kinds, and a skin can mix them (but has one launcher: QML or Qt Designer):
 
 - **Style sheet (QSS)**: a Qt style sheet, CSS syntax, applied to the classic Launchpad. Example: `Dark`.
-- **QML launcher**: a new front end written in QML. The classic Launchpad keeps working underneath; the skin reads
-  and drives it through the `Launcher` object. Example: `Horizon`.
+- **Qt Designer launcher**: a new front end made as one Qt Designer form with a little JavaScript, edited in Qt
+  Designer. The classic Launchpad keeps working underneath; the skin reads and drives it through the `Launcher`
+  object. Examples: `Horizon`, `PlanetaryDefense` (see Qt Designer launchers below).
+- **QML launcher**: the same, written in QML. Examples: `HorizonQml`, `PlanetaryDefenseQml` (the QML versions of
+  the two skins above).
 - **Layout (Qt Designer)**: the classic Launchpad's windows as Qt Designer forms, edited in Qt Designer. Make one
   with **New layout...** in the skin list (see Layouts below).
+
+**Copy...** in the skin list copies a skin's folder under a new name, to change your own copy: the build and an
+update of Orbiter replace the files of the skins that come with it (Dark, Horizon, PlanetaryDefense, HorizonQml,
+PlanetaryDefenseQml). **Open in Qt Designer** on one of those offers the copy first. A copy takes at most 4000
+files, folders and links, and 64 MiB; links inside the skin stay links, links out of it are left out and listed.
+It is all or nothing: a copy that fails leaves no folder behind.
 
 ## A skin folder
 
@@ -32,6 +41,7 @@ Version = 1.0
 Description = One or two sentences for the skin list.
 Api = 1
 Qml = qml/Main.qml
+Forms = forms/Main.ui
 Qss = style.qss
 Ui = ui
 MinWidth = 1100
@@ -40,10 +50,11 @@ Width = 1400
 Height = 860
 ```
 
-- `Qml`, `Qss` and `Ui` are optional, but at least one is needed. `Ui` is a folder of Qt Designer forms. Paths are
-  relative to the skin folder and must stay inside it (no `..`, no absolute paths, no links out of the folder).
-- `Api` is the launcher API version the skin needs (this build: 1). `MinWidth`..`Height` are for QML skins: the
-  smallest and the preferred size of the Launchpad window while the skin shows.
+- `Qml`, `Forms`, `Qss` and `Ui` are optional, but at least one is needed; `Qml` and `Forms` not both. `Ui` is a
+  folder of Qt Designer forms, `Forms` the Qt Designer launcher's form. Paths are relative to the skin folder and
+  must stay inside it (no `..`, no absolute paths, no links out of the folder).
+- `Api` is the launcher API version the skin needs (this build: 1). `MinWidth`..`Height` are for QML and Qt
+  Designer launchers: the smallest and the preferred size of the Launchpad window while the skin shows.
 - There are no comments at the end of a line: `#` and `;` inside a value are part of it.
 
 ## Style sheets
@@ -51,7 +62,7 @@ Height = 860
 - Change colours, borders and backgrounds. Don't change font sizes, font families or padding of labels: the classic
   layout is sized from the dialog font, so bigger text gets clipped.
 - Controls are named after their resource ids: `QPushButton#IDLAUNCH`, `QWidget#IDC_BLACKBOX`, `#IDC_SCN_LIST`...
-  The "Back to skin" button of QML skins is `QPushButton#customSkinBack`.
+  The "Back to skin" button of QML and Qt Designer launchers is `QPushButton#customSkinBack`.
 - `${SKIN}` is replaced by the skin folder's path; write `url("${SKIN}/image.svg")` with the quotes.
 - The style sheet also reaches windows opened from the Launchpad (help, add-on dialogs), but not message boxes
   opened without a parent.
@@ -114,6 +125,107 @@ controls come back, except those the classic code shows and hides: the Scenarios
 Video page and the Options pages, which come back at the next start). Places stay until the next start, which uses
 the stock layout; the title says so.
 
+## Qt Designer launchers
+
+A Qt Designer launcher is one form, `forms/Main.ui`, that Orbiter builds as widgets, with JavaScript files for its
+logic. It uses the same `Launcher` object as QML skins (Launcher API 1 below).
+
+```
+Skins/Horizon/
+  skin.cfg           Forms = forms/Main.ui, Qss = style.qss (the classic pages' colours)
+  style.qss
+  forms/
+    Main.ui          the whole launcher: background, top bar, a QStackedWidget with one page per tab, footer, toast
+    skin.qrc         the pictures, so Designer shows them (prefix /horizon; Planetary Defense: /pd)
+    Format.js        texts for the scenario facts
+    Logic.js         the logic, and update(): the names every binding sees
+    images/          icons, toggle pictures, and previews of the painted widgets for Designer
+```
+
+**Editing.** Extra > Launchpad skin > **Open in Qt Designer** opens `forms/Main.ui` in Qt 6 Designer (for a skin
+that comes with Orbiter, after offering a copy; Apply the copy to see it). While the skin is the active one, save
+in Designer and the launcher builds the form again about half a second later; a form that can't be used keeps the
+old one and says why in Orbiter.log and in the launcher.
+
+- Pages: the page area is a QStackedWidget; right-click it > Page n, or use the arrows at its top right. Each page
+  has a dynamic property `page` with its name.
+- Lists show one card, row or chip: the template, edited in place; Orbiter repeats it for each element.
+- Bindings, actions and the like are dynamic properties: Property Editor > Dynamic Properties, the green +.
+- Pictures: `:/horizon/images/...` names from skin.qrc in `pixmap`, `icon` and style sheet `url()`. Orbiter reads
+  them from the skin folder; files outside it are refused. Pictures up to 4096 x 4096.
+- The look is the root widget's `styleSheet`. It begins with a reset, because the classic pages' style sheet
+  reaches these widgets too; rules pick widgets by the dynamic property `role` (`QLabel[role="h1"]`) and by states
+  set from bindings (`QFrame[role="card"][current="true"]`).
+- The painted widgets (stars, planet, thumbnails, orbit diagram) are QLabels promoted to their class; Designer shows
+  a preview picture. Designer doesn't show letter spacing, line height, elision, glows, live data or animation.
+- Layouts work as in Designer. A widget in a parent without a layout keeps its place; `anchor` keeps its distance
+  to edges of the parent.
+- Widget classes: QWidget, QFrame, Line, QLabel, QPushButton, QToolButton, QCheckBox, QRadioButton, QLineEdit,
+  QStackedWidget, QScrollArea, QGroupBox, QTabWidget, QProgressBar and the painted classes. A widget promoted to
+  another class is built as the class it was promoted from, with a warning; other classes stop the load.
+
+**JavaScript.** The root's string list `scripts` names the files (in `forms/`, at most 16 of 1 MiB), run in that
+order. Expressions in the properties are JavaScript. Names:
+
+| Name | |
+|---|---|
+| `Launcher` | the Launcher API 1 object |
+| `update()` | your function: each refresh calls it first; each key of the object it returns is a name for that refresh |
+| `ui` | an object for the skin's own state (search text, filters) |
+| `view` | `width`, `height`, `revision` (counts Launcher changes, for caches), `toast(text)`, `hasFocus(name)`, `focus(name)` |
+| `toast(text)` | shows a short message in the widget named `toast` |
+| `w` | the script objects of painted widgets by name: `w.diagram.flow`, `w.diagram.reset()` |
+| `Orbits` | planet and asteroid positions and the Apophis clock for Planetary Defense: `countdown(ms)`, `epochText(mjd)`, `dayText(mjd)`, `mjdOfMs(ms)`, `pad(v, n)`, `planet(name, mjd)`, `neo(name, mjd)`, `neoSet(name, mjd)`, `neoSets(name)`, `planetNames`, `neoNames`, `MJD_MIN`, `MJD_MAX`, `NEO_YEARS` |
+
+A refresh runs after every Launcher change, action, edit, resize and focus change: `update()`, then the bindings of
+the shown widgets (hidden pages are left until they show). A script error stops the load; an error in a binding is
+written to Orbiter.log once and leaves the widget as it was. A call that runs longer than 2 s is stopped.
+
+**Dynamic properties.** `item` and `index` are the list element and its position inside a template.
+
+| Property | On | |
+|---|---|---|
+| `bind` | QLabel, buttons (text), checkable buttons and QCheckBox (checked), QStackedWidget (page name, or a page number), QProgressBar, QLineEdit, QGroupBox (title) | the main value |
+| `bind_<name>` | any | sets `<name>`: a Qt property (`toolTip`, `maximumHeight`), a dynamic property for style sheet rules, a property below, or `fixedWidth`, `fixedHeight`, `layoutMargins` (`[l, t, r, b]`), `layoutSpacing` |
+| `showIf`, `enableIf` | any | shown, enabled while true |
+| `model` | QLineEdit | two-way: shows the value and assigns what is typed (`ui.query`); Escape clears it |
+| `action`, `doubleAction` | any | statements on click, double click; checkable buttons don't toggle themselves, the binding shows the state |
+| `key_<Key>` | any | statements for that key (`key_Return`, `key_Up`) when the focused widget doesn't use it; not while Ctrl, Alt or Meta is held |
+| `list` | a container with a layout | an array; the container's template children are repeated for each element |
+| `template`, `templateIf` | children of a `list` container | a template; `templateIf` picks among several |
+| `maxItems`, `fit` | the `list` container | at most N; only the clones that fit whole |
+| `cellWidth`, `columns` | a `list` container with a grid layout | columns from the width, or a number |
+| `cellWidth`, `cellHeight` | a `list` container that is a QScrollArea's content, without a layout | a grid that makes only the rows in view (thousands of scenarios) |
+| `flow` | a container with a box layout | wraps its items to new rows |
+| `tick` | any | runs the widget's bindings every N ms while the Launchpad is active (clocks) |
+| `fade` | any with `showIf` | fades in and out over N ms |
+| `disabledOpacity` | any | drawn at that opacity while disabled |
+| `anchor` | a child of a parent without layout | `left right top bottom hcenter vcenter fill` |
+| `letterSpacing`, `lineHeight`, `maxLines`, `elide`, `autoSize` | QLabel (`letterSpacing` any text) | letter spacing in px; line height factor; at most N lines with "…"; one line with "…"; size to the text |
+| `fitContent` | QScrollArea | as tall as its content, up to the room it has |
+| `hover`, `clickThrough` | any | `:hover` in style sheets; mouse clicks pass through |
+| `glowColor`, `glowRings`, `glowStep`, `glowWidth`, `glowRadius`, `glowAlpha`, `glowHoverAlpha`, `glowFade` | any | soft rings around the widget, as the QML skins' glows |
+| `page` | pages of a QStackedWidget | the page's name |
+| `scripts` | the root | the JavaScript files |
+
+**Painted widgets.**
+
+| Class | Properties |
+|---|---|
+| `Starfield` | `seed`, `count`, `alpha`, `drift` (px), `driftPeriod` (ms) |
+| `Planet` | `glare`, `pulse` (Horizon's Earth and sun) |
+| `ScenarioThumb` | `kind`, `seed`, `corner` (Horizon's card pictures) |
+| `GridBackdrop` | `step` (Planetary Defense's grid) |
+| `MiniOrbit` | `kind`, `seed`, `corner` (Planetary Defense's card pictures) |
+| `OrbitDiagram` | `baseMjd`, `fromScenario`, `focusBody`, `system`; script object with `flow`, `offset`, `mjd`, `baseMjd`, `focusPlanet`, `hiddenNeos`, `epochOutside`, `reset()` |
+
+**Safety.** A Qt Designer launcher runs JavaScript inside Orbiter with your rights. The JavaScript has no file or
+network access, and the form loads pictures and scripts only from its skin folder; `Launcher.openUrl` is the way
+out. Rich text in labels and tool tips shows pictures from the skin only, `<link>` style sheets are removed, and so
+are styles with `&` or `@` and style elements broken up by comments; `openExternalLinks` stays off, Markdown
+labels show plain text, and style sheets can't set `text`, `toolTip`, `styleSheet` and the like through
+`qproperty-`. Install skins you trust, as you would add-ons.
+
 ## QML skins
 
 Import the API with `import Orbiter.Launcher 1.0` and use the `Launcher` object. Only `QtQuick` and `QtQml` (with
@@ -146,7 +258,7 @@ Scenario paths are the classic ones: folder names and the scenario name joined b
 | `apiVersion` | int | 1 |
 | `version`, `build` | string | Orbiter's version and build text |
 | `skin`, `skinUrl` | string, url | active skin id; its folder as a `file:` URL ending in `/` |
-| `skins` | list | `{id, name, author, version, description, kind, layout, compatible, reason}`; `kind` is `qml`, `qss`, `qml+qss` or `ui` (a layout only); `layout`: the skin has a layout |
+| `skins` | list | `{id, name, author, version, description, kind, layout, compatible, reason}`; `kind` is `qml`, `qml+qss`, `forms`, `forms+qss`, `qss` or `ui` (a layout only); `layout`: the skin has a layout |
 | `scenarios` | list | the scenario tree in order: `{path, name, folder, isFolder, depth}` |
 | `currentScenario` | string, writable | the selected scenario or folder |
 | `currentIsScenario` | bool | the selection is a scenario |

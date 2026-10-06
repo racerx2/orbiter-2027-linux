@@ -1,4 +1,4 @@
-// custom: launcher skins; the skin host of the Launchpad dialog (QSS and QML skins, modes, teardown)
+// custom: launcher skins; the skin host of the Launchpad dialog (QSS, QML and forms skins, modes, teardown)
 
 #include "LauncherSkin.h"
 #include "ClassicHider.h"
@@ -36,6 +36,7 @@ namespace {
 	const char *CFG_FILE = "Launcher.cfg";
 	const char *SKIN_DIR = "Skins";
 	const char *MODULE_FILE = "Modules/Launcher/LauncherQml.so";
+	const char *FORMS_MODULE_FILE = "Modules/Launcher/LauncherForms.so"; // custom: forms skins
 	const size_t MAX_SKINS = 200;
 	const char *TITLE_HINT = " — Ctrl+Shift+L: classic Launchpad";
 	const char *UNDONE_HINT = " — restart for the stock layout";
@@ -218,7 +219,7 @@ void custom::LauncherSkin::SyncEscape ()
 {
 	const bool on = !torn && (!activeId.isEmpty () || LayoutShown ());
 	if (resetKey) {
-		resetKey->SetQml (on && qml);
+		resetKey->SetQml (on && skinView && !formsView);
 		if (on) resetKey->Install ();
 		else resetKey->Remove ();
 	}
@@ -282,10 +283,11 @@ void custom::LauncherSkin::Apply (const QString &id, bool startClassic)
 		return;
 	}
 	const SkinManifest m = *found;
-	if (!m.qml.empty ()) {
+	const bool hasView = (!m.qml.empty () || !m.forms.empty ()), forms = !m.forms.empty (); // custom: forms skins
+	if (hasView) {
 		QString err;
-		if (!LoadModule (err)) {
-			Fail (id, err, "The Qt Quick libraries may be missing (Ubuntu: libqt6quickwidgets6).");
+		if (!LoadModule (forms, err)) {
+			Fail (id, err, forms ? "The Qt QML library may be missing (Ubuntu: libqt6qml6)." : "The Qt Quick libraries may be missing (Ubuntu: libqt6quickwidgets6).");
 			return;
 		}
 	}
@@ -297,11 +299,13 @@ void custom::LauncherSkin::Apply (const QString &id, bool startClassic)
 		Fail (id, "the style sheet can't be read", QString ());
 		return;
 	}
-	if (!m.qml.empty ()) {
+	if (hasView) {
 		if (!api) api = new LauncherApi (lp, this);
 		api->SkinSwitched ();
+		formsView = forms;
 		QString err;
 		if (!CreateView (err)) {
+			formsView = false;
 			dlg->setStyleSheet (LayoutRootStyle ());
 			activeId.clear ();
 			active = SkinManifest ();
@@ -309,7 +313,7 @@ void custom::LauncherSkin::Apply (const QString &id, bool startClassic)
 			Fail (id, err, err.contains ("\"QtQuick\" is not installed") ? "Install the Qt Quick QML modules (Ubuntu: qml6-module-qtquick)." : QString ());
 			return;
 		}
-		qml = true;
+		skinView = true;
 		if (!back) {
 			back = new QPushButton (dlg);
 			back->setObjectName ("customSkinBack");
@@ -328,13 +332,14 @@ void custom::LauncherSkin::Apply (const QString &id, bool startClassic)
 
 void custom::LauncherSkin::Unapply ()
 {
-	if (qml) {
+	if (skinView) {
 		if (mode == SKIN) hider->Restore ();
 		LayoutSkin::SetSkinView (dlg, false);
 		DestroyView ();
 		if (back) back->hide ();
 		ApplyMinSize (false);
-		qml = false;
+		skinView = false;
+		formsView = false;
 	}
 	mode = NONE;
 	if (!activeId.isEmpty () && !active.qss.empty ()) dlg->setStyleSheet (LayoutRootStyle ());
@@ -369,40 +374,42 @@ void custom::LauncherSkin::Fail (const QString &id, const QString &reason, const
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// the QML module and view
+// the view modules (QML, custom: forms skins) and the view
 
-bool custom::LauncherSkin::LoadModule (QString &err)
+bool custom::LauncherSkin::LoadModule (bool forms, QString &err)
 {
-	if (module) return true;
+	ViewModule &mod = (forms ? formsModule : qmlModule);
+	if (mod.handle) return true;
 	std::error_code ec;
-	std::string path = fs::absolute (MODULE_FILE, ec).string ();
+	std::string path = fs::absolute (forms ? FORMS_MODULE_FILE : MODULE_FILE, ec).string ();
 	void *h = dlopen (path.c_str (), RTLD_NOW | RTLD_LOCAL);
 	if (!h) {
 		const char *e = dlerror ();
 		err = "can't load " + QString::fromStdString (path) + ": " + QString::fromUtf8 (e ? e : "unknown error");
 		return false;
 	}
-	auto c = (LauncherQmlCreateFn)dlsym (h, LAUNCHERQML_CREATE);
-	auto d = (LauncherQmlDestroyFn)dlsym (h, LAUNCHERQML_DESTROY);
+	auto c = (LauncherQmlCreateFn)dlsym (h, forms ? LAUNCHERFORMS_CREATE : LAUNCHERQML_CREATE);
+	auto d = (LauncherQmlDestroyFn)dlsym (h, forms ? LAUNCHERFORMS_DESTROY : LAUNCHERQML_DESTROY);
 	if (!c || !d) {
-		err = "LauncherQml.so has no " LAUNCHERQML_CREATE "/" LAUNCHERQML_DESTROY;
+		err = forms ? "LauncherForms.so has no " LAUNCHERFORMS_CREATE "/" LAUNCHERFORMS_DESTROY : "LauncherQml.so has no " LAUNCHERQML_CREATE "/" LAUNCHERQML_DESTROY;
 		dlclose (h);
 		return false;
 	}
-	module = h; // stays loaded until exit
-	qmlCreate = c;
-	qmlDestroy = d;
-	qmlFocus = (LauncherQmlFocusFn)dlsym (h, LAUNCHERQML_FOCUS);
+	mod.handle = h; // stays loaded until exit
+	mod.create = c;
+	mod.destroy = d;
+	mod.focus = (LauncherQmlFocusFn)dlsym (h, forms ? LAUNCHERFORMS_FOCUS : LAUNCHERQML_FOCUS);
 	return true;
 }
 
 bool custom::LauncherSkin::CreateView (QString &err)
 {
-	if (!qmlCreate || !api) {
-		err = "the QML module isn't loaded";
+	ViewModule &mod = Module ();
+	if (!mod.create || !api) {
+		err = "the launcher module isn't loaded";
 		return false;
 	}
-	std::string dir = active.dir, entry = active.qml;
+	std::string dir = active.dir, entry = (formsView ? active.forms : active.qml);
 	LauncherQmlInit init;
 	init.abi = LAUNCHERQML_ABI;
 	init.qtVersion = QT_VERSION_STR;
@@ -412,10 +419,10 @@ bool custom::LauncherSkin::CreateView (QString &err)
 	init.entry = entry.c_str ();
 	init.log = LogLine;
 	char buf[2048] = "";
-	QWidget *w = qmlCreate (&init, buf, sizeof (buf));
+	QWidget *w = mod.create (&init, buf, sizeof (buf));
 	if (!w) {
 		err = QString::fromUtf8 (buf);
-		if (err.isEmpty ()) err = "the QML view could not be created";
+		if (err.isEmpty ()) err = "the skin's view could not be created";
 		return false;
 	}
 	view = w;
@@ -428,7 +435,8 @@ void custom::LauncherSkin::DestroyView ()
 	if (!view) return;
 	QWidget *w = view;
 	view = nullptr;
-	if (qmlDestroy) qmlDestroy (w);
+	ViewModule &mod = Module ();
+	if (mod.destroy) mod.destroy (w);
 	else delete w;
 	UpdateActive ();
 }
@@ -438,12 +446,12 @@ void custom::LauncherSkin::DestroyView ()
 
 bool custom::LauncherSkin::InSkinView () const
 {
-	return qml && mode == SKIN && view && view->isVisible ();
+	return skinView && mode == SKIN && view && view->isVisible ();
 }
 
 void custom::LauncherSkin::EnterSkinView ()
 {
-	if (!qml || torn) return;
+	if (!skinView || torn) return;
 	hider->Hide (); // before a (re)load of the view, so the classic controls don't show meanwhile
 	LayoutSkin::SetSkinView (dlg, true);
 	if (back) back->hide ();
@@ -464,7 +472,7 @@ void custom::LauncherSkin::EnterSkinView ()
 	view->setGeometry (dlg->rect ());
 	view->show ();
 	view->raise ();
-	view->setFocus ();
+	if (!view->isAncestorOf (QApplication::focusWidget ())) view->setFocus (); // custom: forms skins; a line edit inside keeps it
 	mode = SKIN;
 	UpdateActive ();
 	QMetaObject::invokeMethod (this, [this]() { FocusSkin (); }, Qt::QueuedConnection);
@@ -473,13 +481,13 @@ void custom::LauncherSkin::EnterSkinView ()
 void custom::LauncherSkin::FocusSkin ()
 {
 	if (torn || !InSkinView ()) return;
-	if (!view->hasFocus ()) view->setFocus (Qt::ActiveWindowFocusReason);
-	if (qmlFocus) qmlFocus (view); // the QML root loses its focus while the view isn't shown or active
+	if (!view->hasFocus () && !view->isAncestorOf (QApplication::focusWidget ())) view->setFocus (Qt::ActiveWindowFocusReason);
+	if (Module ().focus) Module ().focus (view); // the QML root loses its focus while the view isn't shown or active
 }
 
 void custom::LauncherSkin::EnterClassicView ()
 {
-	if (!qml || torn) return;
+	if (!skinView || torn) return;
 	if (view) view->hide ();
 	hider->Restore ();
 	LayoutSkin::SetSkinView (dlg, false);
@@ -537,7 +545,7 @@ void custom::LauncherSkin::ApplyMinSize (bool skin)
 void custom::LauncherSkin::UpdateActive ()
 {
 	if (!api) return;
-	api->SetActive (!torn && qml && mode == SKIN && !waiting && view && view->isVisible ()
+	api->SetActive (!torn && skinView && mode == SKIN && !waiting && view && view->isVisible ()
 		&& dlg->isVisible () && !dlg->isMinimized () && dlg->isActiveWindow ());
 }
 
@@ -557,7 +565,7 @@ bool custom::LauncherSkin::eventFilter (QObject *obj, QEvent *event)
 			break;
 		case QEvent::KeyPress: {
 			int k = static_cast<QKeyEvent*> (event)->key ();
-			if (mode == SKIN && qml && (k == Qt::Key_Return || k == Qt::Key_Enter)) return true; // Enter belongs to the skin
+			if (mode == SKIN && skinView && (k == Qt::Key_Return || k == Qt::Key_Enter)) return true; // Enter belongs to the skin
 			} break;
 		case QEvent::Show:
 			UpdateActive ();
@@ -602,7 +610,7 @@ void custom::LauncherSkin::OnWaitHidden ()
 {
 	if (torn) return;
 	waiting = false;
-	if (qml && mode == SKIN && !switchPending) EnterSkinView (); // recreates the view after a flight and hides Launch/Help/Exit again
+	if (skinView && mode == SKIN && !switchPending) EnterSkinView (); // recreates the view after a flight and hides Launch/Help/Exit again
 	UpdateActive ();
 	ScheduleTry ();
 }

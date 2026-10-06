@@ -136,6 +136,51 @@ TEST_CASE("ReadSkin: layout skins", "[launcher]")
 	CHECK(os.str ().find ("LayoutRun") == std::string::npos);
 }
 
+TEST_CASE("ReadSkin: forms skins", "[launcher]")
+{
+	TmpDir t;
+	t.Write ("f/skin.cfg", "Name = Mine\nForms = forms/Main.ui\nQss = style.qss\n");
+	t.Write ("f/forms/Main.ui", "<ui/>");
+	t.Write ("f/style.qss", "QWidget {}\n");
+	SkinManifest m = ReadSkin ((t.root / "f").string ());
+	CHECK(m.ok);
+	CHECK(m.forms == "forms/Main.ui");
+	CHECK(m.qml.empty ());
+	CHECK(m.ui.empty ());
+
+	t.Write ("both/skin.cfg", "Forms = Main.ui\nQml = Main.qml\n");
+	t.Write ("both/Main.ui", "<ui/>");
+	t.Write ("both/Main.qml", "Item {}\n");
+	SkinManifest b = ReadSkin ((t.root / "both").string ());
+	CHECK(!b.ok);
+	CHECK(b.reason.find ("one launcher") != std::string::npos);
+
+	t.Write ("nofile/skin.cfg", "Forms = forms/Main.ui\n");
+	CHECK(!ReadSkin ((t.root / "nofile").string ()).ok);
+	t.Write ("out/skin.cfg", "Forms = ../f/forms/Main.ui\n");
+	CHECK(!ReadSkin ((t.root / "out").string ()).ok);
+	t.Write ("flink/skin.cfg", "Forms = Main.ui\n");
+	t.Write ("flink/Main.ui", "<ui/>");
+	fs::create_directory_symlink ("/etc", t.root / "flink/etc");
+	SkinManifest l = ReadSkin ((t.root / "flink").string ());
+	CHECK(!l.ok);
+	CHECK(l.reason.find ("links outside") != std::string::npos);
+
+	t.Write ("fdir/skin.cfg", "Forms = forms\n");
+	t.Write ("fdir/forms/Main.ui", "<ui/>");
+	SkinManifest d = ReadSkin ((t.root / "fdir").string ());
+	CHECK(!d.ok);
+	CHECK(d.reason.find ("Forms file not found") != std::string::npos);
+
+	t.Write ("fui/skin.cfg", "Forms = Main.ui\nUi = ui\n");
+	t.Write ("fui/Main.ui", "<ui/>");
+	t.Write ("fui/ui/IDD_MAIN.ui", "<ui/>");
+	SkinManifest u = ReadSkin ((t.root / "fui").string ());
+	CHECK(u.ok);
+	CHECK(u.forms == "Main.ui");
+	CHECK(u.ui == "ui");
+}
+
 TEST_CASE("Launcher.cfg round trip, recents and favourites", "[launcher]")
 {
 	TmpDir t;

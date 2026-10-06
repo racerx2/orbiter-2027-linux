@@ -1,0 +1,29 @@
+/* Horizon: the classic pages opened from the skin, in its colours; colours, borders and backgrounds only */
+QWidget { background-color: #070c16; color: #eef3fb; selection-background-color: #f5a524; selection-color: #1b1203; }
+QLabel, QCheckBox, QRadioButton { background-color: transparent; }
+QWidget#IDC_BLACKBOX { background-color: #000000; color: #b0b0f0; }
+QPushButton { background-color: #0f1828; border: 1px solid #253247; border-radius: 3px; }
+QPushButton:hover { background-color: #172338; border-color: #3c4f6d; }
+QPushButton:pressed, QPushButton:checked { background-color: #f5a524; color: #1b1203; border-color: #f5a524; }
+QPushButton:disabled { color: #56627a; border-color: #182233; }
+QPushButton#IDLAUNCH { background-color: #f5a524; color: #1b1203; border-color: #ffc65c; font-weight: bold; }
+QPushButton#IDLAUNCH:hover { background-color: #ffc65c; }
+QPushButton#IDLAUNCH:disabled { background-color: #33291a; color: #7a6a4a; }
+QPushButton#customSkinBack { background-color: #0f1828; color: #ffc65c; border: 1px solid #f5a524; border-radius: 11px; padding: 3px 12px; }
+QPushButton#customSkinBack:hover { background-color: #f5a524; color: #1b1203; }
+QTreeView, QListView, QTextEdit, QPlainTextEdit, QTextBrowser { background-color: #04080f; border: 1px solid #1c2638; alternate-background-color: #08101c; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background-color: #04080f; border: 1px solid #253247; border-radius: 2px; }
+QComboBox QAbstractItemView { background-color: #04080f; border: 1px solid #253247; }
+QGroupBox { border: 1px solid #1c2638; margin-top: 8px; }
+QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; color: #a3b0c4; }
+QTabBar::tab { background-color: #0f1828; border: 1px solid #1c2638; padding: 3px 8px; }
+QTabBar::tab:selected { background-color: #172338; border-bottom: 2px solid #f5a524; }
+QHeaderView::section { background-color: #0f1828; border: 1px solid #1c2638; }
+QScrollBar:vertical { background: #04080f; width: 12px; }
+QScrollBar::handle:vertical { background: #253247; min-height: 24px; border-radius: 4px; }
+QScrollBar:horizontal { background: #04080f; height: 12px; }
+QScrollBar::handle:horizontal { background: #253247; min-width: 24px; border-radius: 4px; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0px; height: 0px; }
+QProgressBar { background-color: #04080f; border: 1px solid #253247; }
+QProgressBar::chunk { background-color: #f5a524; }
+QToolTip { background-color: #0f1828; color: #eef3fb; border: 1px solid #253247; }

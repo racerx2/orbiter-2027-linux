@@ -216,6 +216,7 @@ SkinManifest ReadSkin (const std::string &dirPath, int supportedApi)
 		else if (e.key == "qml") m.qml = e.value;
 		else if (e.key == "qss") m.qss = e.value;
 		else if (e.key == "ui") m.ui = e.value;
+		else if (e.key == "forms") m.forms = e.value;
 		else if (e.key == "minwidth") m.minWidth = ToInt (e.value, 0, 0, 16384);
 		else if (e.key == "minheight") m.minHeight = ToInt (e.value, 0, 0, 16384);
 		else if (e.key == "width") m.width = ToInt (e.value, 0, 0, 16384);
@@ -230,15 +231,20 @@ SkinManifest ReadSkin (const std::string &dirPath, int supportedApi)
 		m.reason = "needs a newer Orbiter (launcher API " + std::to_string (m.api) + ")";
 		return m;
 	}
-	if (m.qml.empty () && m.qss.empty () && m.ui.empty ()) {
-		m.reason = "skin.cfg names no Qml file, Qss file or Ui folder";
+	if (m.qml.empty () && m.qss.empty () && m.ui.empty () && m.forms.empty ()) {
+		m.reason = "skin.cfg names no Qml file, Forms file, Qss file or Ui folder";
+		return m;
+	}
+	if (!m.qml.empty () && !m.forms.empty ()) {
+		m.reason = "skin.cfg names both a Qml file and a Forms file; a skin has one launcher";
 		return m;
 	}
 	std::string r;
 	if (!m.qml.empty () && !(r = CheckFile (dir, m.qml, "Qml")).empty ()) { m.reason = r; return m; }
 	if (!m.qss.empty () && !(r = CheckFile (dir, m.qss, "Qss")).empty ()) { m.reason = r; return m; }
 	if (!m.ui.empty () && !(r = CheckDir (dir, m.ui, "Ui")).empty ()) { m.reason = r; return m; }
-	if ((!m.qml.empty () || !m.ui.empty ()) && !(r = CheckQmlTree (dir)).empty ()) { m.reason = r; return m; }
+	if (!m.forms.empty () && !(r = CheckFile (dir, m.forms, "Forms")).empty ()) { m.reason = r; return m; }
+	if ((!m.qml.empty () || !m.ui.empty () || !m.forms.empty ()) && !(r = CheckQmlTree (dir)).empty ()) { m.reason = r; return m; }
 	m.ok = true;
 	return m;
 }
