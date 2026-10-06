@@ -103,12 +103,46 @@ TEST_CASE("ReadSkin: QML skins may not link out or load plugins", "[launcher]")
 	CHECK(!ReadSkin ((t.root / "qmlout").string ()).ok);
 }
 
+TEST_CASE("ReadSkin: layout skins", "[launcher]")
+{
+	TmpDir t;
+	t.Write ("lay/skin.cfg", "Name = My Launchpad\nUi = ui\n");
+	t.Write ("lay/ui/IDD_MAIN.ui", "<ui/>");
+	SkinManifest m = ReadSkin ((t.root / "lay").string ());
+	CHECK(m.ok);
+	CHECK(m.ui == "ui");
+	CHECK(m.qml.empty ());
+	CHECK(m.qss.empty ());
+
+	t.Write ("nodir/skin.cfg", "Ui = missing\n");
+	CHECK(!ReadSkin ((t.root / "nodir").string ()).ok);
+	t.Write ("outdir/skin.cfg", "Ui = ../lay/ui\n");
+	CHECK(!ReadSkin ((t.root / "outdir").string ()).ok);
+	t.Write ("file/skin.cfg", "Ui = skin.cfg\n");
+	CHECK(!ReadSkin ((t.root / "file").string ()).ok);
+	t.Write ("uilink/skin.cfg", "Ui = ui\n");
+	t.Write ("uilink/ui/IDD_MAIN.ui", "<ui/>");
+	fs::create_directory_symlink ("/etc", t.root / "uilink/ui/etc");
+	SkinManifest l = ReadSkin ((t.root / "uilink").string ());
+	CHECK(!l.ok);
+	CHECK(l.reason.find ("links outside") != std::string::npos);
+
+	std::istringstream is ("Skin = lay\nLayoutRun = lay\n");
+	LauncherCfg c = ReadLauncherCfg (is);
+	CHECK(c.layoutRun == "lay");
+	std::ostringstream os;
+	c.layoutRun.clear ();
+	WriteLauncherCfg (os, c);
+	CHECK(os.str ().find ("LayoutRun") == std::string::npos);
+}
+
 TEST_CASE("Launcher.cfg round trip, recents and favourites", "[launcher]")
 {
 	TmpDir t;
 	std::string path = (t.root / "Launcher.cfg").string ();
 	LauncherCfg c;
 	c.skin = "Horizon";
+	c.layoutRun = "My_Launchpad";
 	AddRecent (c, "Delta-glider/Brighton Beach");
 	AddRecent (c, "2024 Edition/# Welcome to Orbiter 2024");
 	AddRecent (c, "Delta-glider/Brighton Beach");
@@ -123,6 +157,7 @@ TEST_CASE("Launcher.cfg round trip, recents and favourites", "[launcher]")
 	LauncherCfg r;
 	REQUIRE(LoadLauncherCfg (path, r));
 	CHECK(r.skin == "Horizon");
+	CHECK(r.layoutRun == "My_Launchpad");
 	REQUIRE(r.recent.size () == 2);
 	CHECK(r.recent[1] == "2024 Edition/# Welcome to Orbiter 2024");
 	REQUIRE(r.favourites.size () == 1);

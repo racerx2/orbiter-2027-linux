@@ -22,6 +22,7 @@
 #include "Memstat.h"
 #include "ResDialog.h"
 #include "Custom/LauncherSkin.h" // custom: launcher skins
+#include "Custom/LayoutSkin.h" // custom: launcher layouts
 #include <QApplication>
 #include <QCloseEvent>
 #include <QKeyEvent>
@@ -113,6 +114,7 @@ orbiter::LaunchpadDialog::~LaunchpadDialog ()
 bool orbiter::LaunchpadDialog::Create (bool startvideotab)
 {
 	if (!hDlg) {
+		custom::LayoutSkin::Install (pCfg, hInst); // custom: launcher layouts
 		QWidget *hWnd = oapiCreateResDialog (hInst, IDD_MAIN, NULL);
 		if (!hWnd) return false;
 		OnInitDialog (hWnd);

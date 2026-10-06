@@ -88,7 +88,7 @@ Item {
                             Text { text: modelData.name; color: Theme.text; font.family: Theme.font; font.pixelSize: 16; font.weight: Font.DemiBold }
                             Text {
                                 width: parent.width
-                                text: [modelData.kind === "qml+qss" ? "QML launcher and style sheet" : modelData.kind === "qml" ? "QML launcher" : modelData.kind === "qss" ? "Style sheet" : "", modelData.author ? "by " + modelData.author : ""].filter(function (t) { return t !== ""; }).join("  ·  ")
+                                text: [modelData.kind === "qml+qss" ? "QML launcher and style sheet" : modelData.kind === "qml" ? "QML launcher" : modelData.kind === "qss" ? "Style sheet" : "", modelData.layout ? "Layout" : "", modelData.author ? "by " + modelData.author : ""].filter(function (t) { return t !== ""; }).join("  ·  ")
                                 visible: text !== ""
                                 color: Theme.textFaint; font.family: Theme.font; font.pixelSize: 12
                             }

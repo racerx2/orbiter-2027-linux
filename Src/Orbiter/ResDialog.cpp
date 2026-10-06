@@ -3,6 +3,7 @@
 #include "ResDialog.h"
 #include "Util.h"
 #include "Log.h"
+#include "Custom/LayoutHook.h" // custom: launcher layouts
 #include <QAction>
 #include <QApplication>
 #include <QBuffer>
@@ -92,6 +93,8 @@ __attribute__((weak)) void LogOut_Warning (const char *func, const char *file, i
 	va_end (ap);
 	fputc ('\n', stderr);
 }
+
+custom::ResDialogHook custom::g_resDialogHook = nullptr; // custom: launcher layouts
 
 struct CtrlClass { void *hModule; RESCTRLFACTORY create; };
 
@@ -952,6 +955,12 @@ QWidget *CreateResDialog (void *hModule, int resId, QWidget *parent, QWindow *ow
 		const RESCONTROL *c = d->ctrl + i;
 		QRect r (px(c->x), py(c->y), px(c->cx), py(c->cy));
 		QWidget *w = CreateControl (c, dlg, hModule, r, radiogroup, prev);
+		{ // custom: launcher skins; the dialog font set on each control, which a skin's style sheet would replace with the application font
+			for (QWidget *x : w->findChildren<QWidget*> ())
+				if (!x->isWindow () && !x->testAttribute (Qt::WA_SetFont)) x->setFont (font);
+			if (!w->testAttribute (Qt::WA_SetFont)) w->setFont (font);
+			if (c->kind == RES_COMBOBOX) r.setHeight (w->sizeHint ().height ());
+		}
 		w->setObjectName (c->idname ? QString::fromUtf8 (c->idname) : QString ("id%1").arg (c->id));
 		w->setProperty ("resId", c->id);
 		w->setProperty ("resCtl", QVariant::fromValue ((void*)c)); // the template entry, for RefitText (templates are static tables)
@@ -984,6 +993,7 @@ QWidget *CreateResDialog (void *hModule, int resId, QWidget *parent, QWindow *ow
 		dlg->winId();
 		if (dlg->windowHandle()) dlg->windowHandle()->setTransientParent (owner);
 	}
+	if (custom::g_resDialogHook) custom::g_resDialogHook (dlg, d, hModule); // custom: launcher layouts
 	if (show && (d->style & WS_VISIBLE)) dlg->show();
 	return dlg;
 }

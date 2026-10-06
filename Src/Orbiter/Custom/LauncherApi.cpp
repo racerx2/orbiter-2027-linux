@@ -369,7 +369,8 @@ QVariantList custom::LauncherApi::skins () const
 		e["author"] = QString::fromStdString (m.author);
 		e["version"] = QString::fromStdString (m.version);
 		e["description"] = QString::fromStdString (m.description);
-		e["kind"] = (!m.qml.empty () && !m.qss.empty () ? "qml+qss" : !m.qml.empty () ? "qml" : "qss");
+		e["kind"] = (!m.qml.empty () && !m.qss.empty () ? "qml+qss" : !m.qml.empty () ? "qml" : !m.qss.empty () ? "qss" : "ui");
+		e["layout"] = !m.ui.empty (); // custom: launcher layouts
 		e["compatible"] = m.ok;
 		e["reason"] = QString::fromStdString (m.reason);
 		l.append (e);

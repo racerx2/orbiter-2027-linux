@@ -113,6 +113,13 @@ set_target_properties(ClassicHider.Test PROPERTIES AUTOMOC ON)
 target_link_libraries(ClassicHider.Test Qt6::Widgets Qt6::Test DlgCtrl)
 orbiter_rc_resources(ClassicHider.Test ${ORBITER_SOURCE_DIR}/Orbiter.rc EXE SYMBOL OrbiterResources)
 set_tests_properties(ClassicHider.Test PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
+# custom: launcher layouts; export, the .ui reader and writer (uic on every export), applying and undoing, offscreen
+add_unit_test(LayoutApply.Test ${ORBITER_SOURCE_DIR}/Custom/UiForm.cpp ${ORBITER_SOURCE_DIR}/Custom/LayoutApply.cpp ${ORBITER_SOURCE_DIR}/ResDialog.cpp ${ORBITER_SOURCE_DIR}/ResDialog.h)
+set_target_properties(LayoutApply.Test PROPERTIES AUTOMOC ON)
+target_link_libraries(LayoutApply.Test Qt6::Widgets DlgCtrl)
+target_compile_definitions(LayoutApply.Test PRIVATE LAYOUT_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/Layout")
+orbiter_rc_resources(LayoutApply.Test ${ORBITER_SOURCE_DIR}/Orbiter.rc EXE SYMBOL OrbiterResources)
+set_tests_properties(LayoutApply.Test PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen TIMEOUT 120)
 
 if (BUILD_ORBITER_SERVER)
 

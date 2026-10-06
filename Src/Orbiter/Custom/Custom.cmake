@@ -7,6 +7,9 @@ target_sources(Orbiter PRIVATE
 	Custom/LauncherSkin.cpp
 	Custom/LauncherItem.cpp
 	Custom/ResetKey.cpp
+	Custom/UiForm.cpp
+	Custom/LayoutApply.cpp
+	Custom/LayoutSkin.cpp
 )
 
 add_custom_target(CopySkins ALL

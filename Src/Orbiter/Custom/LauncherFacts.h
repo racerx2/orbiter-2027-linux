@@ -29,6 +29,7 @@ namespace custom {
 		std::string name, author, version, description;
 		int api = 1;
 		std::string qml, qss;    // relative to dir
+		std::string ui;          // custom: launcher layouts; a folder of Qt Designer forms, relative to dir
 		int minWidth = 0, minHeight = 0, width = 0, height = 0;
 		bool ok = false;         // usable by this build
 		std::string reason;      // why not, if !ok
@@ -41,6 +42,7 @@ namespace custom {
 		std::string skin;                     // stored skin id, "" = classic
 		std::vector<std::string> recent;      // newest first
 		std::vector<std::string> favourites;
+		std::string layoutRun;                // custom: launcher layouts; the layout of the last run, "" = stock
 	};
 
 	LauncherCfg ReadLauncherCfg (std::istream &is);

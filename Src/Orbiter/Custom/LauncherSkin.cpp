@@ -4,6 +4,7 @@
 #include "ClassicHider.h"
 #include "LauncherApi.h"
 #include "LauncherItem.h"
+#include "LayoutSkin.h"
 #include "ResetKey.h"
 #include "Orbiter.h"
 #include "Launchpad.h"
@@ -37,6 +38,18 @@ namespace {
 	const char *MODULE_FILE = "Modules/Launcher/LauncherQml.so";
 	const size_t MAX_SKINS = 200;
 	const char *TITLE_HINT = " — Ctrl+Shift+L: classic Launchpad";
+	const char *UNDONE_HINT = " — restart for the stock layout";
+
+	// custom: launcher layouts; the layout's part of the dialog's style sheet while it is shown
+	QString LayoutRootStyle ()
+	{
+		return (custom::LayoutSkin::InUse () && !custom::LayoutSkin::Undone () ? custom::LayoutSkin::RootStyle () : QString ());
+	}
+
+	bool LayoutShown ()
+	{
+		return custom::LayoutSkin::InUse () && !custom::LayoutSkin::Undone ();
+	}
 
 	void LogLine (const char *line)
 	{
@@ -61,23 +74,33 @@ custom::LauncherSkin::LauncherSkin (LaunchpadDialog *lp): QObject (lp->GetTab (0
 	item = new LauncherItem (this);
 	lp->RegisterExtraParam (item, nullptr);
 	if (QPushButton *b = DlgItem<QPushButton> (dlg, IDLAUNCH)) {
-		connect (b, &QPushButton::pressed, this, [this]() { launching = SelectedScenario (); }); // click() and Enter press it too
+		connect (b, &QPushButton::pressed, this, [this]() { launching = SelectedScenario (); CommitLayoutRun (); }); // click() and Enter press it too; Launch writes Orbiter.cfg
 		connect (b, &QPushButton::clicked, this, [this]() { RecordLaunch (); }); // after the classic handler, which launched
 	}
 	dlg->installEventFilter (this);
 	if (hWait) hWait->installEventFilter (this);
 	connect (qApp, &QCoreApplication::aboutToQuit, this, [this]() { Teardown (); });
 
-	QString id;
 	const Config *c = lp->Cfg ();
-	if (!c->CfgDemoPrm.bDemo) {
-		if (qEnvironmentVariableIsSet ("ORBITER_LAUNCHER_SKIN")) id = QString::fromUtf8 (qgetenv ("ORBITER_LAUNCHER_SKIN")).trimmed ();
-		else id = StoredSkin ();
-		if (!id.compare ("classic", Qt::CaseInsensitive)) id.clear ();
-	}
+	const QString id = LayoutSkin::StartSkin (c, cfg); // the same choice the layout was made by
 	ScanSkins ();
+	if (LayoutSkin::InUse ()) {
+		ApplyMinSize (false);
+		QSize ref = LayoutSkin::RefSize ();
+		QScreen *s = dlg->screen ();
+		QRect avail = (s ? s->availableGeometry () : QRect (0, 0, 1920, 1080));
+		if (ref.isValid () && (dlg->width () < ref.width () || dlg->height () < ref.height ()))
+			dlg->resize (std::min (std::max (dlg->width (), ref.width ()), std::max (dlg->minimumWidth (), avail.width ())),
+				std::min (std::max (dlg->height (), ref.height ()), std::max (dlg->minimumHeight (), avail.height ())));
+		if (int n = LayoutSkin::Errors ()) {
+			QString msg = QString ("Layout '%1': %2 dialog%3 could not be applied and stay%4 as they are; see Orbiter.log.")
+				.arg (LayoutSkin::Id ()).arg (n).arg (n == 1 ? "" : "s").arg (n == 1 ? "s" : "");
+			AddPending ([this, msg]() { QMessageBox::warning (dlg, "Orbiter: Launchpad layout", msg); });
+		}
+	}
 	if (!id.isEmpty ()) Apply (id, c->CfgCmdlinePrm.bOpenVideoTab);
 	SyncEscape ();
+	LayoutSkin::Dump (dlg, "start");
 	AddPending ([this]() { if (api) api->RefreshAll (); });
 }
 
@@ -142,20 +165,58 @@ void custom::LauncherSkin::RequestSkin (const QString &id)
 		if (api) api->SkinSwitched ();
 		SyncEscape ();
 		if (!InSkinView ()) FocusClassic (); // the focused QML view may be gone
+		const QString note = RestartNote (switchTarget); // custom: launcher layouts
+		if (!note.isEmpty ()) QMessageBox::information (dlg, "Orbiter: Launchpad skin", note);
 	});
 }
 
 void custom::LauncherSkin::ResetToClassic ()
 {
-	if (torn || resetting || activeId.isEmpty ()) return;
-	resetting = true;
+	const bool layout = LayoutShown ();
+	if (torn || resetting || (activeId.isEmpty () && !layout)) return;
 	Log ("Ctrl+Shift+L: back to Classic");
+	if (layout) { // custom: launcher layouts; its looks go at once, its places at the next start
+		LayoutSkin::Undo ();
+		if (activeId.isEmpty () || active.qss.empty ()) dlg->setStyleSheet (QString ());
+		baseTitle = LayoutSkin::StockTitle () + QString::fromUtf8 (UNDONE_HINT);
+	}
+	if (activeId.isEmpty ()) {
+		cfg.skin.clear ();
+		SaveCfg ();
+		SyncEscape ();
+		return;
+	}
+	resetting = true;
 	RequestSkin (QString ()); // queued: the view that got the key must not go away under it
+}
+
+QString custom::LauncherSkin::RestartNote (const QString &id) const
+{
+	if (NextLayout (id) == (LayoutShown () ? LayoutSkin::Id () : QString ())) return QString ();
+	if (qEnvironmentVariableIsSet ("ORBITER_LAUNCHER_SKIN"))
+		return "ORBITER_LAUNCHER_SKIN is set, so the next start uses its skin and layout, not this choice.";
+	return "The layout changes when Orbiter starts again.";
+}
+
+// custom: launcher layouts; Launcher.cfg's LayoutRun is stored when Orbiter.cfg gets this run's list widths (launch, exit)
+void custom::LauncherSkin::CommitLayoutRun ()
+{
+	const std::string run = LayoutSkin::RunId ().toStdString ();
+	if (torn || cfg.layoutRun == run) return;
+	cfg.layoutRun = run;
+	SaveCfg ();
+}
+
+QString custom::LauncherSkin::NextLayout (const QString &id) const
+{
+	for (const auto &m : skins)
+		if (QString::fromStdString (m.id) == id) return (m.ok && !m.ui.empty () ? id : QString ());
+	return QString ();
 }
 
 void custom::LauncherSkin::SyncEscape ()
 {
-	const bool on = !torn && !activeId.isEmpty ();
+	const bool on = !torn && (!activeId.isEmpty () || LayoutShown ());
 	if (resetKey) {
 		resetKey->SetQml (on && qml);
 		if (on) resetKey->Install ();
@@ -241,7 +302,7 @@ void custom::LauncherSkin::Apply (const QString &id, bool startClassic)
 		api->SkinSwitched ();
 		QString err;
 		if (!CreateView (err)) {
-			dlg->setStyleSheet (QString ());
+			dlg->setStyleSheet (LayoutRootStyle ());
 			activeId.clear ();
 			active = SkinManifest ();
 			api->SkinSwitched ();
@@ -269,13 +330,14 @@ void custom::LauncherSkin::Unapply ()
 {
 	if (qml) {
 		if (mode == SKIN) hider->Restore ();
+		LayoutSkin::SetSkinView (dlg, false);
 		DestroyView ();
 		if (back) back->hide ();
 		ApplyMinSize (false);
 		qml = false;
 	}
 	mode = NONE;
-	if (!activeId.isEmpty () && !active.qss.empty ()) dlg->setStyleSheet (QString ());
+	if (!activeId.isEmpty () && !active.qss.empty ()) dlg->setStyleSheet (LayoutRootStyle ());
 	activeId.clear ();
 	active = SkinManifest ();
 	if (api) api->SkinSwitched ();
@@ -291,7 +353,8 @@ bool custom::LauncherSkin::ApplyQss (const SkinManifest &m)
 	dir.replace ("\\", "\\\\");
 	dir.replace ("\"", "\\\"");
 	text.replace ("${SKIN}", dir);
-	dlg->setStyleSheet (text);
+	const QString root = LayoutRootStyle (); // custom: launcher layouts; the layout's root style first, the skin's after it
+	dlg->setStyleSheet (root.isEmpty () ? text : root + "\n" + text);
 	return true;
 }
 
@@ -300,6 +363,7 @@ void custom::LauncherSkin::Fail (const QString &id, const QString &reason, const
 	LOGOUT_WARN ("Launcher skin '%s': %s", id.toUtf8 ().constData (), reason.toUtf8 ().constData ());
 	QString msg = "The Launchpad skin '" + id + "' could not be used:\n" + reason.left (600) + "\n\n";
 	if (!hint.isEmpty ()) msg += hint + "\n\n";
+	if (LayoutShown () && id == LayoutSkin::Id ()) msg += "The layout stays until the next start.\n\n"; // custom: launcher layouts
 	msg += "Details are in Orbiter.log. Choose Classic in Extra > Launchpad skin, or start Orbiter with ORBITER_LAUNCHER_SKIN=classic.";
 	AddPending ([this, msg]() { QMessageBox::warning (dlg, "Orbiter: Launchpad skin", msg); });
 }
@@ -381,6 +445,7 @@ void custom::LauncherSkin::EnterSkinView ()
 {
 	if (!qml || torn) return;
 	hider->Hide (); // before a (re)load of the view, so the classic controls don't show meanwhile
+	LayoutSkin::SetSkinView (dlg, true);
 	if (back) back->hide ();
 	ApplyMinSize (true);
 	if (!view) {
@@ -388,6 +453,7 @@ void custom::LauncherSkin::EnterSkinView ()
 		if (!CreateView (err)) {
 			QString id = activeId;
 			hider->Restore ();
+			LayoutSkin::SetSkinView (dlg, false);
 			mode = CLASSIC;
 			Unapply ();
 			SyncEscape ();
@@ -416,6 +482,7 @@ void custom::LauncherSkin::EnterClassicView ()
 	if (!qml || torn) return;
 	if (view) view->hide ();
 	hider->Restore ();
+	LayoutSkin::SetSkinView (dlg, false);
 	ApplyMinSize (false);
 	if (back) {
 		PlaceBack ();
@@ -441,16 +508,19 @@ void custom::LauncherSkin::PlaceBack ()
 
 void custom::LauncherSkin::ApplyMinSize (bool skin)
 {
-	if (!skin) {
-		dlg->setMinimumSize (CLASSIC_MINW, CLASSIC_MINH);
-		return;
-	}
 	QScreen *s = dlg->screen ();
 	QRect avail = (s ? s->availableGeometry () : QRect (0, 0, 1920, 1080));
 	QSize frame = (dlg->isVisible () ? dlg->frameGeometry ().size () - dlg->size () : QSize (0, 0));
-	int aw = std::max (CLASSIC_MINW, avail.width () - frame.width ()), ah = std::max (CLASSIC_MINH, avail.height () - frame.height ());
-	int mw = std::clamp (active.minWidth, CLASSIC_MINW, aw);
-	int mh = std::clamp (active.minHeight, CLASSIC_MINH, ah);
+	const QSize lo = LayoutSkin::MinSize ().expandedTo (QSize (CLASSIC_MINW, CLASSIC_MINH)); // custom: launcher layouts; 550 x 350 without one
+	const int lw = std::min (lo.width (), std::max (CLASSIC_MINW, avail.width () - frame.width ()));
+	const int lh = std::min (lo.height (), std::max (CLASSIC_MINH, avail.height () - frame.height ()));
+	if (!skin) {
+		dlg->setMinimumSize (lw, lh);
+		return;
+	}
+	int aw = std::max (lw, avail.width () - frame.width ()), ah = std::max (lh, avail.height () - frame.height ());
+	int mw = std::clamp (active.minWidth, lw, aw);
+	int mh = std::clamp (active.minHeight, lh, ah);
 	bool small = (dlg->width () < mw || dlg->height () < mh); // before setMinimumSize grows it to the minimum
 	dlg->setMinimumSize (mw, mh);
 	if (small) {
@@ -482,6 +552,8 @@ bool custom::LauncherSkin::eventFilter (QObject *obj, QEvent *event)
 		case QEvent::Resize:
 			if (view) view->setGeometry (dlg->rect ());
 			PlaceBack ();
+			if (qEnvironmentVariableIsSet ("ORBITER_LAYOUT_DUMP")) // custom: launcher layouts; after the classic rules ran
+				QMetaObject::invokeMethod (this, [this]() { LayoutSkin::Dump (dlg, "resize"); }, Qt::QueuedConnection);
 			break;
 		case QEvent::KeyPress: {
 			int k = static_cast<QKeyEvent*> (event)->key ();
@@ -581,6 +653,7 @@ bool custom::LauncherSkin::CanAct () const
 void custom::LauncherSkin::Teardown ()
 {
 	if (torn) return;
+	CommitLayoutRun (); // before CloseApp writes Orbiter.cfg
 	torn = true;
 	pending.clear ();
 	SyncEscape (); // filter off, title back

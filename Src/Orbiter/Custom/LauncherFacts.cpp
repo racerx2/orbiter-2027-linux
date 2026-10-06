@@ -140,6 +140,22 @@ static std::string CheckFile (const fs::path &dir, const std::string &rel, const
 	return std::string ();
 }
 
+// a folder inside the skin folder (custom: launcher layouts)
+static std::string CheckDir (const fs::path &dir, const std::string &rel, const char *key)
+{
+	fs::path p (rel);
+	bool dotdot = false;
+	for (const auto &part : p)
+		if (part == "..") dotdot = true;
+	if (rel.empty () || p.is_absolute () || dotdot)
+		return std::string (key) + " must be a relative path inside the skin folder: " + rel;
+	std::error_code ec;
+	fs::path f = fs::canonical (dir / p, ec);
+	if (ec || !fs::is_directory (f, ec)) return std::string (key) + " folder not found: " + rel;
+	if (!Inside (dir, f)) return std::string (key) + " folder is outside the skin folder: " + rel;
+	return std::string ();
+}
+
 // a QML skin may not link out of its folder or load native code through a qmldir "plugin" line
 static std::string CheckQmlTree (const fs::path &dir)
 {
@@ -199,6 +215,7 @@ SkinManifest ReadSkin (const std::string &dirPath, int supportedApi)
 		else if (e.key == "api") m.api = ToInt (e.value, 0, 0, 1000000), haveApi = true;
 		else if (e.key == "qml") m.qml = e.value;
 		else if (e.key == "qss") m.qss = e.value;
+		else if (e.key == "ui") m.ui = e.value;
 		else if (e.key == "minwidth") m.minWidth = ToInt (e.value, 0, 0, 16384);
 		else if (e.key == "minheight") m.minHeight = ToInt (e.value, 0, 0, 16384);
 		else if (e.key == "width") m.width = ToInt (e.value, 0, 0, 16384);
@@ -213,14 +230,15 @@ SkinManifest ReadSkin (const std::string &dirPath, int supportedApi)
 		m.reason = "needs a newer Orbiter (launcher API " + std::to_string (m.api) + ")";
 		return m;
 	}
-	if (m.qml.empty () && m.qss.empty ()) {
-		m.reason = "skin.cfg names neither a Qml nor a Qss file";
+	if (m.qml.empty () && m.qss.empty () && m.ui.empty ()) {
+		m.reason = "skin.cfg names no Qml file, Qss file or Ui folder";
 		return m;
 	}
 	std::string r;
 	if (!m.qml.empty () && !(r = CheckFile (dir, m.qml, "Qml")).empty ()) { m.reason = r; return m; }
 	if (!m.qss.empty () && !(r = CheckFile (dir, m.qss, "Qss")).empty ()) { m.reason = r; return m; }
-	if (!m.qml.empty () && !(r = CheckQmlTree (dir)).empty ()) { m.reason = r; return m; }
+	if (!m.ui.empty () && !(r = CheckDir (dir, m.ui, "Ui")).empty ()) { m.reason = r; return m; }
+	if ((!m.qml.empty () || !m.ui.empty ()) && !(r = CheckQmlTree (dir)).empty ()) { m.reason = r; return m; }
 	m.ok = true;
 	return m;
 }
@@ -238,6 +256,7 @@ LauncherCfg ReadLauncherCfg (std::istream &is)
 		if (e.key == "skin") c.skin = e.value;
 		else if (e.key == "recent") add (c.recent, e.value, MAX_RECENT);
 		else if (e.key == "favourite") add (c.favourites, e.value, MAX_FAVOURITES);
+		else if (e.key == "layoutrun") c.layoutRun = e.value;
 	}
 	return c;
 }
@@ -250,6 +269,7 @@ void WriteLauncherCfg (std::ostream &os, const LauncherCfg &cfg)
 		if (OneLine (s) && !s.empty ()) os << "Recent = " << s << "\n";
 	for (const auto &s : cfg.favourites)
 		if (OneLine (s) && !s.empty ()) os << "Favourite = " << s << "\n";
+	if (!cfg.layoutRun.empty () && OneLine (cfg.layoutRun)) os << "LayoutRun = " << cfg.layoutRun << "\n";
 }
 
 bool LoadLauncherCfg (const std::string &path, LauncherCfg &cfg)

@@ -48,6 +48,9 @@ namespace custom {
 		bool CanAct () const;                   // classic actions allowed now (7.2 of the design)
 		void EnterClassicView ();
 		void Log (const QString &line) const;
+		QString NextLayout (const QString &id) const; // the layout a skin brings at the next start, "" for none
+		QString RestartNote (const QString &id) const; // what choosing that skin means for the layout, "" if nothing
+		void CommitLayoutRun ();
 
 	protected:
 		bool eventFilter (QObject *obj, QEvent *event) override;
