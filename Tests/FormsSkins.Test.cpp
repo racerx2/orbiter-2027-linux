@@ -497,10 +497,10 @@ TEST_CASE ("Planetary Defense: the classic pages' style sheet doesn't change the
 	}
 }
 
-TEST_CASE ("Orbits: the C++ positions and texts agree with the QML skin's Orbits.js")
+TEST_CASE ("Orbits: the C++ positions and texts agree with Orbits.js, the QML skin's original")
 {
 	App ();
-	QFile f (SKINS + "/PlanetaryDefenseQml/qml/Orbits.js");
+	QFile f (QStringLiteral (FORMS_FIXTURES) + "/Orbits.js");
 	REQUIRE (f.open (QIODevice::ReadOnly));
 	QString src = QString::fromUtf8 (f.readAll ());
 	src.replace (".pragma library", "");

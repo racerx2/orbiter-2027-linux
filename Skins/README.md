@@ -18,16 +18,15 @@ There are four kinds, and a skin can mix them (but has one launcher: QML or Qt D
 - **Qt Designer launcher**: a new front end made as one Qt Designer form with a little JavaScript, edited in Qt
   Designer. The classic Launchpad keeps working underneath; the skin reads and drives it through the `Launcher`
   object. Examples: `Horizon`, `PlanetaryDefense` (see Qt Designer launchers below).
-- **QML launcher**: the same, written in QML. Examples: `HorizonQml`, `PlanetaryDefenseQml` (the QML versions of
-  the two skins above).
+- **QML launcher**: the same, written in QML (see QML skins below).
 - **Layout (Qt Designer)**: the classic Launchpad's windows as Qt Designer forms, edited in Qt Designer. Make one
   with **New layout...** in the skin list (see Layouts below).
 
 **Copy...** in the skin list copies a skin's folder under a new name, to change your own copy: the build and an
-update of Orbiter replace the files of the skins that come with it (Dark, Horizon, PlanetaryDefense, HorizonQml,
-PlanetaryDefenseQml). **Open in Qt Designer** on one of those offers the copy first. A copy takes at most 4000
-files, folders and links, and 64 MiB; links inside the skin stay links, links out of it are left out and listed.
-It is all or nothing: a copy that fails leaves no folder behind.
+update of Orbiter replace the files of the skins that come with it (Dark, Horizon, PlanetaryDefense). **Open in
+Qt Designer** on one of those offers the copy first. A copy takes at most 4000 files, folders and links, and
+64 MiB; links inside the skin stay links, links out of it are left out and listed. It is all or nothing: a copy
+that fails leaves no folder behind.
 
 ## A skin folder
 
@@ -204,7 +203,7 @@ written to Orbiter.log once and leaves the widget as it was. A call that runs lo
 | `letterSpacing`, `lineHeight`, `maxLines`, `elide`, `autoSize` | QLabel (`letterSpacing` any text) | letter spacing in px; line height factor; at most N lines with "…"; one line with "…"; size to the text |
 | `fitContent` | QScrollArea | as tall as its content, up to the room it has |
 | `hover`, `clickThrough` | any | `:hover` in style sheets; mouse clicks pass through |
-| `glowColor`, `glowRings`, `glowStep`, `glowWidth`, `glowRadius`, `glowAlpha`, `glowHoverAlpha`, `glowFade` | any | soft rings around the widget, as the QML skins' glows |
+| `glowColor`, `glowRings`, `glowStep`, `glowWidth`, `glowRadius`, `glowAlpha`, `glowHoverAlpha`, `glowFade` | any | soft rings around the widget |
 | `page` | pages of a QStackedWidget | the page's name |
 | `scripts` | the root | the JavaScript files |
 

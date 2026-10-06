@@ -73,7 +73,7 @@ namespace {
 	// custom: forms skins; the skins that come with Orbiter: an update replaces their files
 	bool Shipped (const QString &id)
 	{
-		static const QStringList ids = {"Dark", "Horizon", "HorizonQml", "PlanetaryDefense", "PlanetaryDefenseQml"};
+		static const QStringList ids = {"Dark", "Horizon", "PlanetaryDefense"};
 		return ids.contains (id);
 	}
 

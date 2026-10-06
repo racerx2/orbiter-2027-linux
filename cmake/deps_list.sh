@@ -31,7 +31,7 @@ owner() {
 QT=$(dirname "$(path_of libQt6Core.so.6)")/qt6/plugins
 RUNTIME=$(ls "$QT"/platforms/libqxcb.so "$QT"/platforms/libqwayland*.so "$QT"/wayland-shell-integration/libxdg-shell.so \
 	"$QT"/imageformats/libqjpeg.so "$QT"/imageformats/libqico.so 2>/dev/null)
-# custom: launcher skins; the QML modules the Horizon skin imports, found through their qmldir files at run time
+# custom: launcher skins; the QML modules QML skins import, found through their qmldir files at run time
 QMLDIR=$(dirname "$(path_of libQt6Core.so.6)")/qt6/qml
 QMLRT=$(ls "$QMLDIR"/QtQuick/qmldir "$QMLDIR"/QtQml/qmldir "$QMLDIR"/QML/qmldir "$QMLDIR"/QtQml/Models/qmldir \
 	"$QMLDIR"/QtQml/WorkerScript/qmldir 2>/dev/null)
