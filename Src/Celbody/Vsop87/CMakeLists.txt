@@ -32,6 +32,7 @@ add_subdirectory(Jupiter)
 add_subdirectory(Saturn)
 add_subdirectory(Uranus)
 add_subdirectory(Neptune)
+add_subdirectory(Pluto) # not upstream: the Pluto system
 
 # Installation
 install(TARGETS
