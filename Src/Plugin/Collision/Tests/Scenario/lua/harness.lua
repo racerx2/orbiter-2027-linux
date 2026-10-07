@@ -77,7 +77,10 @@ function H.start(c) -- clbkSimulationStart of CollTestHarness
 		H.f:write('H scn=', c.scn, ' h=', c.h, ' version=', g(oapi.get_orbiter_version()), ' run=', c.run, '\n')
 	end
 	if c.test ~= '' then H.T = dofile('./Script/Tests/Coll/' .. c.test .. '.lua') or {} end
-	if c.script ~= '' then H.co = coroutine.create(function() run(c.script) end) end -- the scenario's own script: proc.skip yields here
+	if c.script ~= '' then -- the scenario's own script as a coroutine: proc.skip yields; loadfile, as dofile is a C call a yield cannot cross
+		local chunk = assert(loadfile('./Script/' .. c.script .. '.lua'))
+		H.co = coroutine.create(chunk)
+	end
 end
 
 function H.fail(msg)

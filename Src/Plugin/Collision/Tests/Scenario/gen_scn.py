@@ -1,5 +1,6 @@
 # not upstream: generated scenarios of the collision addon scenario tests (Design CA E4 7.4-7.5, design-C-T 4.7, 7.2)
 import math
+import os
 import re
 
 GGRAV = 6.67259e-11  # OrbiterAPI.h
@@ -55,7 +56,17 @@ def surface(p):  # BB: DG landed on pad 1, ShuttlePB landed on pad 2 (G4)
     return s + 'END_SHIPS\n'
 
 
-GENERATORS = {'pair': pair, 'surface': surface}
+def ascent(p, args):  # G3: Demo/Atlantis Ascent AP with the autopilot engaged by its scenario state, liftoff at simt 4 s (AscentAP.cpp:81-91, :537-551)
+    path = os.path.join(args.root, 'Scenarios', 'Demo', 'Atlantis Ascent AP.scn')  # its script's Shift-key MFD presses crash headless: no pane (Orbiter.cpp:2402)
+    text = open(path, encoding='latin-1').read()
+    text = re.sub(r'(?m)^(\s*)ASCENTAP 0 0 (.*)$', r'\1ASCENTAP 1 1 \2', text)
+    text = re.sub(r'(?m)^(\s*)MET 0\.000 0\.000 0\.000 0\.000$', r'\1MET -4.000 -1.000 -1.000 -1.000', text)
+    if 'ASCENTAP 1 1 ' not in text or 'MET -4.000' not in text:
+        raise ValueError('Atlantis Ascent AP.scn changed: ASCENTAP or MET line not found')
+    return set_script(text, None)[0]
+
+
+GENERATORS = {'pair': pair, 'surface': surface, 'ascent': ascent}
 
 
 def params(text):
@@ -71,7 +82,8 @@ def generate(spec, args=None):  # "name" or "name:k=v,k=v"
     name, _, rest = spec.partition(':')
     if name not in GENERATORS:
         raise ValueError('unknown generated scenario %r' % name)
-    return GENERATORS[name](params(rest))
+    fn = GENERATORS[name]
+    return fn(params(rest), args) if fn.__code__.co_argcount == 2 else fn(params(rest))
 
 
 def set_script(text, script):  # replaces the scenario's Script line (None: removes it); returns the text and the old script

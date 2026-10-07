@@ -211,7 +211,7 @@ def golden_path(ctx, name):
 def golden_write(ctx, r, name):
     p = golden_path(ctx, name)
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    text = ctx.golden_header + '\n' + '\n'.join(r.dump.lines) + '\n'
+    text = ctx.golden_header + '\n' + '\n'.join(r.dump.body_lines()) + '\n'  # no H line: its run id changes every run
     with gzip.GzipFile(p, 'wb', mtime=0) as f:
         f.write(text.encode('latin-1'))
     return p
@@ -219,7 +219,7 @@ def golden_write(ctx, r, name):
 
 def golden_compare(ctx, r, name):  # T 4.5: header mismatch skips, missing golden skips, body bitwise
     p = golden_path(ctx, name)
-    if os.environ.get('COLL_GOLDEN_WRITE') == '1':
+    if os.environ.get('COLL_GOLDEN_WRITE') == '1' and r.spec.addon == 'off':  # goldens come from addon-off runs only (addon: none)
         golden_write(ctx, r, name)
         print('golden written: %s' % p)
     if not os.path.isfile(p):
@@ -229,7 +229,7 @@ def golden_compare(ctx, r, name):  # T 4.5: header mismatch skips, missing golde
     head = text.split('\n', 1)[0]
     if head != ctx.golden_header:
         raise Skip('golden header differs: %s | this build: %s' % (head, ctx.golden_header))
-    same_dumps(Dump(text), r.dump, 'run %s vs golden %s' % (r.spec.id, name))
+    same_dumps(Dump(text.split('\n', 1)[1]), r.dump, 'run %s vs golden %s' % (r.spec.id, name))
 
 
 def quiet(r):  # G5 family: A1 pinned, writes=0, notices=0, no Collision t= line (E4 7.6 item 7)
