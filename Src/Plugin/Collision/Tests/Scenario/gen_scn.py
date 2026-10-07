@@ -40,19 +40,20 @@ def pair(p):  # P0 LEO pair (T 7.2): A at the P0 orbit, B 6 m + g0 ahead along z
     ca, cb = p.get('A', 'ShuttlePB'), p.get('B', 'ShuttlePB')
     v0 = v_circ('Earth', R_P0)
     s = head('PB-A', 'P0 pair g0=%s vA=%s vB=%s' % (g0, va, vb))
-    s += 'PB-A:%s\n  STATUS Orbiting Earth\n  RPOS %s 0 0\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0\nEND\n' % (ca, g(R_P0), g(v0 + va))
-    s += 'PB-B:%s\n  STATUS Orbiting Earth\n  RPOS %s 0 %s\n  RVEL 0 0 %s\n  AROT 0 180 0\n  PRPLEVEL 0:0\nEND\n' % (cb, g(R_P0 + x), g(6.0 + g0), g(v0 + vb))
     if p.get('director') == '1':
         s += director('Earth')
+    s += 'PB-A:%s\n  STATUS Orbiting Earth\n  RPOS %s 0 0\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0\nEND\n' % (ca, g(R_P0), g(v0 + va))
+    s += 'PB-B:%s\n  STATUS Orbiting Earth\n  RPOS %s 0 %s\n  RVEL 0 0 %s\n  AROT 0 180 0\n  PRPLEVEL 0:0\nEND\n' % (cb, g(R_P0 + x), g(6.0 + g0), g(v0 + vb))
     return s + 'END_SHIPS\n'
 
 
 def surface(p):  # BB: DG landed on pad 1, ShuttlePB landed on pad 2 (G4)
     s = head('GL', 'Brighton Beach surface pair', 'Moon')
-    s += 'GL:DeltaGlider\n  STATUS Landed Moon\n  BASE Brighton Beach:1\n  HEADING 0.00\n  PRPLEVEL 0:0.5 1:1\n  NOSECONE 0 0.0000\n  GEAR 1 1.0000\nEND\n'
-    s += 'PB:ShuttlePB\n  STATUS Landed Moon\n  BASE Brighton Beach:2\n  HEADING 90.00\n  PRPLEVEL 0:0\nEND\n'
     if p.get('director') == '1':
         s += director('Moon')
+    rc = '  RCOVER 1.0000 0.0000\n' if p.get('rcover') == '1' else ''  # retro covers open and at rest: state, speed (AnimState2, Instrument.cpp:242-260)
+    s += 'GL:DeltaGlider\n  STATUS Landed Moon\n  BASE Brighton Beach:1\n  HEADING 0.00\n  PRPLEVEL 0:0.5 1:1\n  NOSECONE 0 0.0000\n  GEAR 1 1.0000\n%sEND\n' % rc
+    s += 'PB:ShuttlePB\n  STATUS Landed Moon\n  BASE Brighton Beach:2\n  HEADING 90.00\n  PRPLEVEL 0:0\nEND\n'
     return s + 'END_SHIPS\n'
 
 
@@ -112,27 +113,36 @@ def ship_planet(text):
     return m.group(1) if m and m.group(1) in PLANETS else 'Earth'
 
 
-def insert_actions(text, actions):  # into the first test-module block, else a director appended as the last ship (T 4.6)
+def insert_actions(text, actions):  # into the first test-module block, else a director listed first (E4 7.4); "@<ship>:<line>" goes into that ship's block
+    own = {}
+    for a in actions:
+        if a.startswith('@') and ':' in a:
+            n, l = a[1:].split(':', 1)
+            own.setdefault(n, []).append(l.strip())
+    actions = [a for a in actions if not (a.startswith('@') and ':' in a)]
     lines = text.splitlines()
-    out, inships, inblock, done = [], False, None, False
+    out, inships, inblock, name, done = [], False, None, None, not actions
     for l in lines:
         s = l.strip()
         if s.upper() == 'BEGIN_SHIPS':
             inships = True
         elif inships and s.upper() == 'END_SHIPS':
-            if not done:
-                out += director(ship_planet(text)).rstrip('\n').split('\n')[:-1]
-                out += ['  ' + a for a in actions] + ['END']
-                done = True
             inships = False
         elif inships and inblock is None and s and s.upper() != 'END':
-            inblock = s.split(':', 1)[1].strip() if ':' in s else s
+            name, inblock = (s.split(':', 1)[0].strip(), s.split(':', 1)[1].strip()) if ':' in s else (s, s)
         elif inships and inblock is not None and s.upper() == 'END':
+            out += ['  ' + a for a in own.pop(name, [])]
             if inblock in TESTCLASSES and not done:
                 out += ['  ' + a for a in actions]
                 done = True
             inblock = None
         out.append(l)
+    if own:
+        raise ValueError('no ship block for %s' % ', '.join(sorted(own)))
     if not done:
-        raise ValueError('scenario has no BEGIN_SHIPS block')
+        i = next((n for n, l in enumerate(out) if l.strip().upper() == 'BEGIN_SHIPS'), None)
+        if i is None:
+            raise ValueError('scenario has no BEGIN_SHIPS block')
+        d = director(ship_planet(text)).rstrip('\n').split('\n')
+        out[i + 1:i + 1] = d[:-1] + ['  ' + a for a in actions] + ['END']
     return '\n'.join(out) + '\n'

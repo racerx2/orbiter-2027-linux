@@ -466,12 +466,12 @@ def lua_str(s):
 
 def split_actions(spec, data):
     lines = []
-    if spec.actions.startswith('@'):
+    if spec.actions.startswith('@') and spec.actions.endswith('.txt'):  # @<file> in act/; "@<ship>:<line>" targets a ship block
         with open(os.path.join(data, 'act', spec.actions[1:])) as f:
             lines = [l.strip() for l in f if l.strip() and not l.lstrip().startswith(';')]
     elif spec.actions:
         lines = [l.strip() for l in spec.actions.split(',') if l.strip()]
-    lua = [l for l in lines if l.split()[0] in ('LUACALL', 'LUASTATUS', 'LUASAVE')]
+    lua = [l for l in lines if l.split()[0] in ('LUACALL', 'LUASTATUS', 'LUASAVE')]  # the harness's; TEST* lines go to the scenario
     return [l for l in lines if l not in lua], lua
 
 
@@ -802,6 +802,11 @@ def main(argv=None):
         return SKIP
     except scnlib.CheckFail as e:
         log('FAIL: %s' % e)
+        return 1
+    except Exception:  # a broken check or runner: a test error with its traceback, never a pass
+        import traceback
+        traceback.print_exc()
+        log('ERROR: runner or check raised')
         return 1
     log('PASS')
     return 0

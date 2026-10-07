@@ -26,6 +26,15 @@ function(coll_test_module name)
 endfunction()
 
 coll_test_module(CollTestHarness PLUGIN)
+coll_test_module(CollTestVessel)
+coll_test_module(CollTestAnim)
+if (COLL_STANDALONE)
+	target_include_directories(CollTestVessel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}) # CollisionAPI.h of this source tree
+else ()
+	target_include_directories(CollTestVessel PRIVATE ${ORBITER_BINARY_SDK_DIR}/include) # the build tree's copy (E4 4.4)
+	add_dependencies(CollTestVessel CollisionData)
+endif ()
+target_link_libraries(CollTestVessel ${CMAKE_DL_LIBS}) # collaFind
 
 # coll_scenario_test(<name> SCN <stock path | gen:<setup>> FRAMES <n> [STEP <h>] [TIMEOUT <s>] [EVERY <n>] [CHECK <checks/x.py>] [LUA <lua/x.lua>]
 #	RUNS "id|mode|addon|order|args|inherit|actions" ... [CFG ..] [ACFG ..] [ARGS ..] [MODULES ..] [LABELS ..] [VISUAL])
@@ -98,3 +107,19 @@ coll_scenario_test(Coll.Off.Golden.Surface SCN gen:surface FRAMES 600 EVERY 5 CH
 coll_scenario_test(G5.Smack SCN "Delta-glider/Smack!" FRAMES 1500 EVERY 10 CHECK golden LABELS golden RUNS "c1|headless|on||||")
 coll_scenario_test(G5.Surface SCN gen:surface FRAMES 600 EVERY 5 CHECK golden LABELS golden RUNS "c1|headless|on||||")
 coll_scenario_test(G5.Far SCN gen:pair:g0=1000 FRAMES 600 EVERY 5 CHECK golden LABELS golden RUNS "c0|headless|off||||" "c1|headless|on||||")
+
+# T0.7 test modules and actions (E4 7.4, 7.10)
+coll_scenario_test(Scn.Place0 SCN gen:pair:g0=1000 FRAMES 10 CHECK place0 RUNS "main|headless|off||||TESTPLACEREL 5 PB-B PB-A 0 0 6 0 0 0 0 180 0")
+coll_scenario_test(Scn.Actions SCN gen:pair:g0=1000,A=CollTestVessel,B=CollTestVessel FRAMES 100 CHECK actions RUNS "main|headless|off||||@actions.txt")
+coll_scenario_test(Scn.PlaceBase SCN gen:surface FRAMES 10 CHECK placebase
+	RUNS "main|headless|off||||TESTCREATE 1 PL CollTestVessel PB 0 30 0 0 0 0,TESTPLACEBASE 3 PL Brighton_Beach 100 3 -173.21 0 0 0 90")
+coll_scenario_test(Scn.LuaCall SCN gen:surface:rcover=1 FRAMES 500 CHECK luacall RUNS "ref|headless|off||||" "call|headless|off||||LUACALL 5 GL Retro 0")
+coll_scenario_test(Coll.MXCSR SCN gen:pair:g0=1000,director=1 FRAMES 10 CHECK mxcsr RUNS "off|headless|off||||" "on|headless|on||||")
+coll_scenario_test(Scn.Jitter SCN gen:pair:g0=1000,director=1 FRAMES 60 CHECK jitter LABELS paced RUNS "main|paced|off||||TESTPACE 16.7,TESTSLEEP 30 100")
+coll_scenario_test(G5.Warp SCN gen:pair:g0=1000,director=1 FRAMES 500 EVERY 5 CHECK g5pair LABELS golden
+	RUNS "off|headless|off||||TESTWARP 100 10,TESTWARP 200 100,TESTWARP 300 1000,TESTWARP 400 1" "on|headless|on||||TESTWARP 100 10,TESTWARP 200 100,TESTWARP 300 1000,TESTWARP 400 1")
+# G5.Land: the DG dropped 2 m on the flat Moon 2 km from Brighton Beach touches down in frame 80 (probe run); TESTMASS from 2 frames before to 2 after
+set(land "TESTPLACEBASE 1 GL Brighton_Beach 0 4.5576 2000 0 0 0 0,TESTMASS 78 82 GL 12000")
+coll_scenario_test(G5.Land SCN gen:surface:director=1 FRAMES 300 CHECK g5pair LABELS golden RUNS "off|headless|off||||${land}" "on|headless|on||||${land}")
+coll_scenario_test(Scn.Anim SCN gen:pair:g0=1000,director=1,A=CollTestAnim,B=CollTestAnimVC FRAMES 100 CHECK anim
+	RUNS "main|headless|off||||@PB-A:TESTANIMCYCLE 20,TESTCREATE 30 TA CollTestAnim PB-A 0 50 0 0 0 0")
