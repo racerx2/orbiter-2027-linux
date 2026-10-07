@@ -388,9 +388,12 @@ void CollDmgSession::Commit (const std::vector<CollImpactEvent> &ev, double simt
 	notices.insert (notices.end (), later.begin (), later.end ());
 }
 
-// pose without scale or shear (dent2 M4)
+static double Det3 (const Matrix &A) { return A.m11 * (A.m22 * A.m33 - A.m23 * A.m32) - A.m12 * (A.m21 * A.m33 - A.m23 * A.m31) + A.m13 * (A.m21 * A.m32 - A.m22 * A.m31); }
+
+// pose without scale, shear or reflection (dent2 M4)
 static bool RigidPose (const CollAffine &X)
 {
+	if (!(Det3 (X.A) > 0.0)) return false;
 	Matrix T = transp (X.A) * X.A;
 	const double e[9] = { T.m11 - 1, T.m12, T.m13, T.m21, T.m22 - 1, T.m23, T.m31, T.m32, T.m33 - 1 };
 	for (double x : e) if (!(std::fabs (x) < 1e-6)) return false;
@@ -430,6 +433,7 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, d
 	double rayT = sh->RayRest (mesh, grp, s.c, -s.n, DENT_RAY_TMIN, DENT_LIM_T, hit) ? hit.t : -1.0;
 	const CollPart &P = sh->Part ((uint32_t)part);
 	const CollGeom &G = P.Geom ();
+	if (!(std::fabs (Det3 (P.pose[1].A)) > 1e-12)) return; // degenerate pose: no frame to dent in
 	CollAffine Pi = CollInverse (P.pose[1]);
 	DentViewData view;
 	int nview = ViewNear (sh, mesh, (uint32_t)part, Pi, CollApply (P.pose[1], s.c), Rmax, view);
@@ -462,6 +466,7 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, d
 		nr.push_back (q);
 	}
 	double V = mat.sigma_c > 0 ? E / mat.sigma_c : 0;
+	unsigned ncopy = 0; // copies stored or grown besides the hit part's record
 	int k0 = DentMath::FindCoalesce (v.d.rec, nr[0]); // decided once on the hit part (dent2 B1, B2)
 	if (k0 >= 0 && (v.match[k0] != (int)mesh || nr[0].p.R > v.d.rec[k0].p.R)) k0 = -1;
 	if (k0 >= 0) {
@@ -473,16 +478,18 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, d
 		for (const DentRecord &x : nr) {
 			if (!(dh > 0)) break;
 			int k = DentMath::FindCoalesce (v.d.rec, x);
-			if (k < 0 || v.match[k] != (int)mesh) continue; // a copy without a partner: skipped
+			if (k < 0 || v.match[k] != (int)mesh || x.p.R > v.d.rec[k].p.R) continue; // no partner, or a smaller one: skipped
 			DentRecord &o = v.d.rec[k];
 			o.p.h = std::min (o.p.h + dh, DENT_LIM_H);
 			DentMath::Quantise (o.p);
 			n.coalesced++;
+			if (grown) ncopy++;
 			grown = true;
 			if (rec.active) { std::vector<std::string> l; CollSide::Dent (frameT - rec.t0, Alias (v, h), (uint32_t)k, o, l); for (auto &s2 : l) Side (s2); }
 		}
 		if (grown) SyncCollider (v, sh, mesh, true); // grown records replay the mesh from rest
-		p.h = v.d.rec[k0].p.h;
+		p = v.d.rec[k0].p; // the grown record for the note and the log; dh <= 0 (at its cap): energy only, as before
+		cw = CollApply (P.pose[1], p.c), nw = Unit (CollApplyDir (P.pose[1], p.n));
 	} else {
 		for (DentRecord &x : nr) {
 			if (v.d.rec.size () >= DENT_MAX_VESSEL) {
@@ -492,6 +499,7 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, d
 			v.d.rec.push_back (x);
 			v.match.push_back ((int)mesh);
 			SyncCollider (v, sh, mesh, false);
+			if (&x != &nr[0]) ncopy++;
 			n.dents++;
 			if (rec.active) { std::vector<std::string> l; CollSide::Dent (frameT - rec.t0, Alias (v, h), (uint32_t)(v.d.rec.size () - 1), x, l); for (auto &s2 : l) Side (s2); }
 		}
@@ -501,7 +509,7 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, d
 	if (cfg.logLevel >= 1) {
 		double m = sdk.EmptyMass (h);
 		Log ("Collision dent t=%.17g '%s' mesh=%u grp=%u E=%.6g R=%.6g h=%.6g T=%.6g parts=%d copies=%u%s eabs=%.6g (%.6g J/kg)", t, v.name.c_str (), mesh, grp, E, p.R, p.h, p.T,
-			nview, (unsigned)(nr.size () - 1), k0 >= 0 ? " grown" : "", v.d.eabs, m > 0 ? v.d.eabs / m : 0.0);
+			nview, ncopy, k0 >= 0 ? " grown" : "", v.d.eabs, m > 0 ? v.d.eabs / m : 0.0);
 	}
 }
 
