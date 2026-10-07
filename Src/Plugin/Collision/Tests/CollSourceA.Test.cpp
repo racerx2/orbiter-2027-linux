@@ -94,6 +94,45 @@ TEST_CASE ("E2-U3 MeshProbe ONCE", "[CollSourceA]")
 	REQUIRE (s.Count ().n[CSK_PROBE] == 1);
 }
 
+TEST_CASE ("E2-U3 MeshProbe ONCE, DelMesh leaves a hole without a count change", "[CollSourceA]")
+{
+	CollFakeSdk s;
+	s.File (".\\Meshes\\box.msh", BoxMsh ());
+	auto *v = s.AddVessel ("V1", "Once");
+	v->slot.resize (2);
+	v->slot[0].kind = CollFakeSdk::NAME; v->slot[0].name = "box";
+	v->slot[1].kind = CollFakeSdk::NAME; v->slot[1].name = "box";
+	CollCfgValues c = Cfg (); c.meshProbeOnce = { "Once" };
+	CollGeomSession g (s, c);
+	g.SimulationStart (0, false);
+	g.BeginFrame (0, 0.1);
+	REQUIRE (s.misuse == 0);
+	v->slot[0].kind = CollFakeSdk::HOLE;
+	for (int i = 0; i < 5; i++) g.BeginFrame (0, 0.1);
+	REQUIRE (s.misuse == 0);
+	REQUIRE (g.Slots (0)[0].present);
+	v->slot.resize (3); // a count change probes again and sees the hole
+	g.BeginFrame (0, 0.1);
+	REQUIRE (s.misuse == 0);
+	REQUIRE (!g.Slots (0)[0].present);
+}
+
+TEST_CASE ("E2-U11 class keys of vessels without a class name", "[CollSourceA]")
+{
+	CollFakeSdk s;
+	s.File (".\\Config\\Vessels\\A.cfg", "EnableCollider = FALSE\nDockZoneRadius = 3\n");
+	s.File (".\\Config\\Vessels\\B.cfg", "DockZoneRadius = 4\n");
+	s.AddVessel ("A"); s.AddVessel ("B"); s.AddVessel ("C");
+	CollGeomSession g (s, Cfg ());
+	g.SimulationStart (0, false);
+	g.BeginFrame (0, 0.1);
+	REQUIRE (!g.Keys (0).enableCollider);
+	REQUIRE (g.Keys (0).dockZoneRadius == 3);
+	REQUIRE (g.Keys (1).enableCollider);
+	REQUIRE (g.Keys (1).dockZoneRadius == 4);
+	REQUIRE (g.Keys (2).dockZoneRadius == 1.5);
+}
+
 TEST_CASE ("E2-U4 animation diff and E2-U6 prediction", "[CollSourceA]")
 {
 	CollFakeSdk s;

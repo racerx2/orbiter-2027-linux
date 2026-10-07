@@ -92,10 +92,11 @@ void CollGeomSession::Merge ()
 
 void CollGeomSession::ReadKeys (CollVesselSrc &r)
 {
-	auto it = classKeys.find (r.cls);
+	std::string cls = r.cls.empty () ? r.name : r.cls;
+	std::string ck = r.cls.empty () ? "#" + r.name : r.cls; // a vessel without a class name keys on its own name
+	auto it = classKeys.find (ck);
 	if (it == classKeys.end ()) {
 		CollClassKeys k;
-		std::string cls = r.cls.empty () ? r.name : r.cls;
 		auto readFile = [&](const std::string &path) {
 			std::string text;
 			if (path.empty () || !sdk.ReadText (sdk.Resolve (path), text)) return false;
@@ -116,7 +117,7 @@ void CollGeomSession::ReadKeys (CollVesselSrc &r)
 		};
 		if (!readFile (CollCfgPath (dirs, "Vessels\\" + cls, ".cfg"))) readFile (CollCfgPath (dirs, cls, ".cfg"));
 		for (auto &c : cfg.meshProbeOnce) if (CollLower (c) == CollLower (cls)) k.meshProbe = 1;
-		it = classKeys.emplace (r.cls, k).first;
+		it = classKeys.emplace (ck, k).first;
 	}
 	r.keys = it->second;
 	r.probeOnce = r.keys.meshProbe == 1;
@@ -178,13 +179,10 @@ void CollGeomSession::PollSlots (CollVesselSrc &r)
 			const char *nm = sdk.TplName (tpl);
 			name = nm ? nm : "";
 		} else {
-			bool live;
-			if (r.probeOnce && !countChanged && s.kind == SLOT_NAME) live = true;
-			else live = sdk.ProbeSlot (r.h, i);
-			if (!live) { if (s.kind != SLOT_DEAD) Kill (r, i); continue; }
+			if (r.probeOnce && !countChanged && s.kind == SLOT_NAME) { UpdateInfo (r, i); continue; } // no probe: no dangerous getter, keep ofs and mode
+			if (!sdk.ProbeSlot (r.h, i)) { if (s.kind != SLOT_DEAD) Kill (r, i); continue; }
 			kind = SLOT_NAME;
-			if (r.probeOnce && !countChanged && s.kind == SLOT_NAME) name = s.name;
-			else { const char *nm = sdk.MeshName (r.h, i); name = nm ? nm : ""; }
+			const char *nm = sdk.MeshName (r.h, i); name = nm ? nm : "";
 		}
 		Vector ofs = sdk.MeshOffset (r.h, i);
 		uint16_t mode = sdk.MeshVisMode (r.h, i);
