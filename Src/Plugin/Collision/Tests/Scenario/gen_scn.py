@@ -67,7 +67,32 @@ def ascent(p, args):  # G3: Demo/Atlantis Ascent AP with the autopilot engaged b
     return set_script(text, None)[0]
 
 
-GENERATORS = {'pair': pair, 'surface': surface, 'ascent': ascent}
+def orbit(t, r, theta0):  # the circular P0 orbit in the ecliptic frame of Earth: position and velocity at simt t
+    v = v_circ('Earth', r)
+    th = theta0 + v / r * t
+    return (r * math.cos(th), 0.0, r * math.sin(th)), (-v * math.sin(th), 0.0, v * math.cos(th))
+
+
+def synthplay(p, args):  # a live PB-A and a PB-B played back from synthetic records along the P0 orbit 1 km ahead (E4 7.5 step 6, T0.8)
+    stem = re.sub(r'[^A-Za-z0-9]+', '_', args.name).strip('_')
+    th0 = 1006.0 / R_P0
+    dur = args.frames * args.step + 5
+    pos, att = ['STARTMJD %s' % g(MJD), 'REF Earth', 'FRM ECLIPTIC', 'CRD CARTESIAN'], ['STARTMJD %s' % g(MJD), 'FRM ECLIPTIC', 'REF Earth']
+    t = 0.0
+    while t <= dur:
+        x, v = orbit(t, R_P0, th0)
+        pos.append('%s %s %s %s %s %s %s' % (g(t), g(x[0]), g(x[1]), g(x[2]), g(v[0]), g(v[1]), g(v[2])))
+        att.append('%s 0 %s 0' % (g(t), g(math.pi)))
+        t += 1.0
+    x, v = orbit(0.0, R_P0, th0)
+    s = head('PB-A', 'synthetic playback: PB-B from Flights/%s' % stem)
+    s += 'PB-A:ShuttlePB\n  STATUS Orbiting Earth\n  RPOS %s 0 0\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0\nEND\n' % (g(R_P0), g(v_circ('Earth', R_P0)))
+    s += 'PB-B:ShuttlePB\n  STATUS Orbiting Earth\n  RPOS %s %s %s\n  RVEL %s %s %s\n  AROT 0 180 0\n  PRPLEVEL 0:0\n  FLIGHTDATA\nEND\nEND_SHIPS\n' % (
+        g(x[0]), g(x[1]), g(x[2]), g(v[0]), g(v[1]), g(v[2]))
+    return s, {'Flights/%s/PB-B.pos' % stem: '\n'.join(pos) + '\n', 'Flights/%s/PB-B.att' % stem: '\n'.join(att) + '\n'}
+
+
+GENERATORS = {'pair': pair, 'surface': surface, 'ascent': ascent, 'synthplay': synthplay}
 
 
 def params(text):

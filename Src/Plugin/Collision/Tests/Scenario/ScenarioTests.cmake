@@ -123,3 +123,10 @@ set(land "TESTPLACEBASE 1 GL Brighton_Beach 0 4.5576 2000 0 0 0 0,TESTMASS 78 82
 coll_scenario_test(G5.Land SCN gen:surface:director=1 FRAMES 300 CHECK g5pair LABELS golden RUNS "off|headless|off||||${land}" "on|headless|on||||${land}")
 coll_scenario_test(Scn.Anim SCN gen:pair:g0=1000,director=1,A=CollTestAnim,B=CollTestAnimVC FRAMES 100 CHECK anim
 	RUNS "main|headless|off||||@PB-A:TESTANIMCYCLE 20,TESTCREATE 30 TA CollTestAnim PB-A 0 50 0 0 0 0")
+
+# T0.8 recorder by simulated key, playback, synthetic records, the clear of E4 7.5
+coll_scenario_test(Scn.RecPlay SCN gen:pair:g0=1000,director=1 FRAMES 300 CHECK recplay
+	RUNS "rec|headless|off||||TESTRECORD 1 300" "play|headless|off||@scn=Playback/{stem}|rec|")
+coll_scenario_test(Scn.RecTwice SCN gen:pair:g0=1000,director=1 FRAMES 100 CHECK rectwice
+	RUNS "rec|headless|off||||TESTRECORD 1 100" "rec|headless|off||||TESTRECORD 1 100")
+coll_scenario_test(Scn.SynthPlay SCN gen:synthplay FRAMES 300 CHECK synthplay RUNS "main|headless|off||||")

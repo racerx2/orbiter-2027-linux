@@ -279,7 +279,13 @@ bool CollTestVessel::Pre (const Words &w, double simt) // the actions of a vesse
 		}
 		return false;
 	}
-	if (a == "TESTRECORD" || a == "TESTPAUSE" || a == "TESTDELETEPOST" || a == "TESTJUMPPOST" || I (w, 1) != k) return false;
+	if (a == "TESTRECORD") { // TESTRECORD k0 k1: Ctrl-C (ToggleRecPlay, Keymap.cpp:214) starts the recorder at k0 and stops it at k1 (E4 7.5)
+		if (k != I (w, 1) && k != I (w, 2)) return false;
+		DWORD mod[1] = {OAPI_KEY_LCONTROL};
+		oapiSimulateBufferedKey (OAPI_KEY_C, mod, 1);
+		return true;
+	}
+	if (a == "TESTPAUSE" || a == "TESTDELETEPOST" || a == "TESTJUMPPOST" || I (w, 1) != k) return false;
 	VESSEL *v = Vi (S (w, 2));
 	if (a == "TESTPLACEREL") { // TESTPLACEREL k v ref x y z vx vy vz ax ay az: v at ref's state, offsets in ref's frame
 		VESSEL *ref = Vi (S (w, 3));

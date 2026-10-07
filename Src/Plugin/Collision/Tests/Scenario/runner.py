@@ -497,6 +497,13 @@ def write_scenario(a, spec, sbx, stem, runid):  # step 6: the run's scenario is 
     src = (spec.scn or a.scn).replace('{stem}', stem)
     if src.startswith('gen:'):
         text = gen_scn.generate(src[4:], a)
+        if isinstance(text, tuple):  # synthetic flight records, written after the clear (E4 7.5 step 6), only into Flights/
+            text, files = text
+            for rel, data in sorted(files.items()):
+                if rel.split('/')[0] != 'Flights' or '..' in rel.split('/'):
+                    raise TestError('generated file outside Flights/: %s' % rel)
+                ensure_dir(os.path.dirname(sbx.path(rel)))
+                write_if_changed(sbx.path(rel), data)
     else:
         p = sbx.path('Scenarios', src + '.scn')
         if not os.path.isfile(p):
@@ -696,6 +703,7 @@ def do_run(a, spec, ctx, runid):
             raise Skipped('lavapipe ICD missing')
         if not os.path.exists('/tmp/.X11-unix/X58'):
             raise Skipped('no X server on %s (fixture Scn.Xvfb.Start)' % XDISPLAY)
+    t0 = time.time()
     sbx.mirror(spec.client())  # step 2
     write_if_changed(sbx.path('run.id'), runid + '\n')
     n = guard_and_clear(a.work, a.name, spec.id)  # steps 3-4
@@ -706,9 +714,12 @@ def do_run(a, spec, ctx, runid):
     write_if_changed(sbx.path('Orbiter.cfg'), orbiter_cfg(a, spec, a.cfg + spec.cfg))
     rc, status, secs = launch(a, sbx, spec, scn)
     r = scnlib.RunResult(spec, sbx.dir, rc, status, secs, pins, runid, cleared=n)
+    r.start = t0
     log('run %s: exit %s%s in %.1f s, %s' % (spec.id, rc, ' (%s)' % status if status else '', secs, sbx.dir))
     ctx.runs[spec.id] = r
-    ctx.order.append(spec.id)
+    if spec.id not in ctx.order:
+        ctx.order.append(spec.id)
+    ctx.history.append(r)
     scnlib.run_checks(ctx, r, a)
 
 
@@ -718,6 +729,7 @@ def load_check(a):
     p = os.path.join(a.data, 'checks', a.check + '.py')
     if not os.path.isfile(p):
         raise TestError('check not found: %s' % p)
+    sys.path.insert(0, os.path.dirname(p))  # checks may share helpers
     spec = importlib.util.spec_from_file_location('check_' + a.check, p)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)

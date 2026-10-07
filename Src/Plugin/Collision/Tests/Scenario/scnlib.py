@@ -97,6 +97,13 @@ class RunResult:
         self.log = log_lines(read_text(os.path.join(d, 'Orbiter.log')))
         dp = os.path.join(d, 'TestOut', 'state.dump')
         self.dump = Dump(read_text(dp)) if spec.dump and os.path.isfile(dp) else None
+        self.files = {}  # Flights/ and Scenarios/Playback/ at the end of the run: relpath -> (size, mtime)
+        for top in ('Flights', os.path.join('Scenarios', 'Playback')):
+            for base, _, files in os.walk(os.path.join(d, top)):
+                for f in files:
+                    p = os.path.join(base, f)
+                    st = os.stat(p)
+                    self.files[os.path.relpath(p, d)] = (st.st_size, st.st_mtime)
 
     def path(self, *p):
         return os.path.join(self.dir, *p)
@@ -113,7 +120,7 @@ class RunResult:
 
 class Context:
     def __init__(self, args, golden_header):
-        self.args, self.runs, self.order, self.golden_header = args, {}, [], golden_header
+        self.args, self.runs, self.order, self.golden_header, self.history = args, {}, [], golden_header, []  # history: every execution, a run id may repeat
 
     def first(self):
         return self.runs[self.order[0]]
