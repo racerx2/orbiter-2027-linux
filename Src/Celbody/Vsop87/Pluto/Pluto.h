@@ -14,6 +14,9 @@
 class Pluto: public PsrModule {
 public:
 	Pluto ();
+	bool clbkAtmParam (double alt, ATMPARAM *prm) override;
+private:
+	double pb[5]; // pressure at the base of each atmosphere layer [Pa]
 };
 
 #endif // !__VSOP87_PLUTO

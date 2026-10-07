@@ -513,3 +513,35 @@ TEST_CASE("Atmosphere modules give physical densities", "[celbody]")
 		dlclose (hAtm);
 	}
 }
+
+TEST_CASE("Pluto's atmosphere follows the New Horizons profile", "[celbody]")
+{
+	CelbodyModule m ("Pluto");
+	REQUIRE(m.body);
+	ATMPARAM a;
+	REQUIRE(m.body->clbkAtmParam (0.0, &a));
+	CHECK(fabs (a.p - 1.15) < 1e-9);
+	CHECK(fabs (a.T - 38.0) < 1e-9);
+	CHECK(fabs (a.rho - 1.15/(296.8*38.0)) < 1e-12);
+	double plast = a.p;
+	for (double alt = 1e3; alt <= 600e3; alt += 1e3) {
+		REQUIRE(m.body->clbkAtmParam (alt, &a));
+		INFO("alt " << alt << " T=" << a.T << " p=" << a.p);
+		CHECK(a.p < plast);
+		CHECK(a.T > 37.0);
+		CHECK(a.T < 109.0);
+		plast = a.p;
+	}
+	const double rad = 1.1883e6;
+	for (double z : {4e3, 14e3, 30e3, 200e3}) { // layer bases in geopotential altitude: no jump
+		double h = z*rad/(rad - z);
+		ATMPARAM lo, hi;
+		m.body->clbkAtmParam (h - 0.01, &lo);
+		m.body->clbkAtmParam (h + 0.01, &hi);
+		INFO("layer base " << z);
+		CHECK(fabs (hi.p - lo.p) < 1e-5*lo.p);
+		CHECK(fabs (hi.T - lo.T) < 1e-3);
+	}
+	m.body->clbkAtmParam (30e3, &a);
+	CHECK(a.T > 105.0); // stratopause
+}
