@@ -22,6 +22,7 @@ add_subdirectory(ScriptMFD)
 # TrackIR left out: NaturalPoint's NPClient library and its registry lookup are Windows only
 add_subdirectory(TransX)
 add_subdirectory(Notes)
+add_subdirectory(Collision) # not upstream: collision and impact damage addon
 
 # ==========================================================================
 # SDK Sample Installation

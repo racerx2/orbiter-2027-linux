@@ -78,14 +78,6 @@ set(common_src
 # Surface base classes
 	Base.cpp
 	Baseobj.cpp
-# not upstream: collisions and impact damage (Design C)
-	CollGeom.cpp
-	CollAnim.cpp
-	CollShape.cpp
-	CollDetect.cpp
-	CollSolve.cpp
-	CollSolveFrame.cpp
-	DentMath.cpp
 # Cockpit classes
 	Defpanel.cpp
 	hud.cpp
@@ -132,9 +124,6 @@ set(common_src
 # ImGui platform backend
 	imgui_impl_qt.cpp
 )
-if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang") # not upstream: dent geometry must not depend on FMA contraction
-	set_source_files_properties(DentMath.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
-endif()
 
 set(Orbiter_includes
 	${CMAKE_CURRENT_SOURCE_DIR}
