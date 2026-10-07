@@ -1,4 +1,4 @@
-# not upstream: dynamic symbols of Collision.so (Design CA E4 3.4, 7.10): exports, no STB_GNU_UNIQUE, SONAME, allowed imports
+# not upstream: dynamic symbols of Collision.so (Design CA E4 3.4, 7.10): exports, no STB_GNU_UNIQUE, SONAME, NEEDED, allowed imports (sanitizer runtimes included)
 import argparse
 import os
 import re
@@ -12,6 +12,8 @@ FORBIDDEN = {'rand', 'srand', 'setlocale', 'fesetenv', 'fesetround'}
 RUNTIME = ('GLIBC_', 'GLIBCXX_', 'CXXABI_', 'GCC_')
 CRT_WEAK = {'_ITM_deregisterTMCloneTable', '_ITM_registerTMCloneTable', '__gmon_start__'}
 STD = re.compile(r'^_Z(?:T[ISV]|GV)?Z?N?K?(?:St|9__gnu_cxx)')  # std:: or __gnu_cxx:: entities, their typeinfo, vtables, guards, local statics
+NEEDED_OK = {'libstdc++.so.6', 'libm.so.6', 'libgcc_s.so.1', 'libc.so.6'}  # E4 3.4; no Qt
+SANITIZER = re.compile(r'^lib(?:asan|ubsan|lsan|tsan|hwasan)\.so\.\d+$')  # a sanitizer build binds libc and operator new to these unversioned
 
 
 def nm(*args):
@@ -39,6 +41,17 @@ def sdk_names(sdk):
     return words | {'InitLib', 'Date2Int', 'GImGui'}  # module glue of the SDK library (Orbitersdk.cpp), ImGui context (imconfig.h)
 
 
+def find_lib(name, cxx):
+    for c in (cxx, 'c++'):  # the compiler that linked the module knows its runtime
+        if c and shutil.which(c):
+            p = subprocess.run([c, '-print-file-name=' + name], capture_output=True, text=True).stdout.strip()
+            if os.path.isabs(p) and os.path.isfile(p):
+                return p
+    out = subprocess.run(['ldconfig', '-p'], capture_output=True, text=True).stdout if shutil.which('ldconfig') else ''
+    m = re.search(r'^\s*%s \([^)]*\) => (\S+)$' % re.escape(name), out, re.M)
+    return m.group(1) if m else ''
+
+
 def demangled_words(name):
     out = subprocess.run(['c++filt', name], capture_output=True, text=True).stdout.strip()
     return re.findall(r'[A-Za-z_]\w*', out.split('(')[0])
@@ -51,15 +64,28 @@ def main():
     ap.add_argument('--exe', default='')
     ap.add_argument('--sdk', default='')
     ap.add_argument('--require-colla', action='store_true')  # from E3 step 5 on
+    ap.add_argument('--cxx', default='')  # the compiler that linked the module, to find a sanitizer runtime
     a = ap.parse_args()
     if not shutil.which('nm') or not shutil.which('readelf'):
         print('skip: binutils missing')
         return 77
     errors = []
 
-    dyn = subprocess.run(['readelf', '-d', a.so], capture_output=True, text=True, check=True).stdout
-    if '[Collision.so]' not in dyn:
+    dyn = subprocess.run(['readelf', '-d', a.so], capture_output=True, text=True, check=True, env=dict(os.environ, LC_ALL='C')).stdout
+    if not re.search(r'\(SONAME\)[^\[\n]*\[Collision\.so\]', dyn):
         errors.append('SONAME is not Collision.so')
+    sanitizer = set()
+    for lib in re.findall(r'\(NEEDED\)[^\[\n]*\[([^\]]+)\]', dyn):
+        if lib in NEEDED_OK:
+            continue
+        if not SANITIZER.match(lib):
+            errors.append('NEEDED %s is not one of %s' % (lib, ', '.join(sorted(NEEDED_OK))))
+            continue
+        path = find_lib(lib, a.cxx)
+        if not path:
+            errors.append('sanitizer runtime %s not found' % lib)
+            continue
+        sanitizer |= {name for _, name in nm('--defined-only', path)}
 
     colla = colla_exports(a.api)
     if len(colla) != 5:
@@ -98,6 +124,8 @@ def main():
             if not ver.lstrip('@').startswith(RUNTIME):
                 errors.append('import %s from an unexpected library' % name)
         elif kind == 'w' and base in CRT_WEAK:
+            pass
+        elif base in sanitizer:
             pass
         elif exe:
             if base not in exe:

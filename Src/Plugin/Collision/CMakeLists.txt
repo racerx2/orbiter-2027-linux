@@ -201,7 +201,7 @@ if (COLL_MAKE_TESTS)
 		coll_add_test(${t} TIMEOUT 30 COMMAND $<TARGET_FILE:${t}> LABELS collision)
 		set(tdir ${CMAKE_CURRENT_SOURCE_DIR}/Tests)
 		coll_add_test(Collision.Symbols.Test TIMEOUT 60 SKIP 77 LABELS collision COMMAND ${Python3_EXECUTABLE} ${tdir}/Collision.Symbols.Test.py
-			--so $<TARGET_FILE:Collision> --api ${CMAKE_CURRENT_SOURCE_DIR}/CollisionAPI.h --exe ${COLL_EXE} --sdk ${COLL_SDK_INCLUDE})
+			--so $<TARGET_FILE:Collision> --api ${CMAKE_CURRENT_SOURCE_DIR}/CollisionAPI.h --exe ${COLL_EXE} --sdk ${COLL_SDK_INCLUDE} --cxx ${CMAKE_CXX_COMPILER})
 		coll_add_test(Collision.Strings.Test TIMEOUT 30 LABELS collision COMMAND ${Python3_EXECUTABLE} ${tdir}/Collision.Strings.Test.py --so $<TARGET_FILE:Collision>)
 		set(COLLISION_WIN2024_HEADERS "" CACHE PATH "Orbiter 2024 Orbitersdk/include for the optional Windows header check (ctest -L windows)")
 		if (COLLISION_WIN2024_HEADERS)
