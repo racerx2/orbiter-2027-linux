@@ -824,8 +824,8 @@ istream &operator>> (istream &is, Mesh &mesh)
 	for (g = 0, term = false; g < ngrp && !term; g++) {
 
 		// set defaults
-		NTVERTEX *vtx;
-		WORD *idx;
+		NTVERTEX *vtx = NULL; // not upstream: NULL until GEOM is read
+		WORD *idx = NULL;
 		mtrl_idx = SPEC_INHERIT;
 		tex_idx  = SPEC_INHERIT;
 		zbias    = 0;
@@ -833,7 +833,7 @@ istream &operator>> (istream &is, Mesh &mesh)
 		uflag    = 0;
 		bool bnormal = true, calcnml = false;
 		bool flipidx = false;
-		nvtx = ntri = 0;
+		nvtx = ntri = nidx = 0; // not upstream: nidx reset per group
 
 		for (;;) {
 			if (!is.getline (cbuf, 256)) { term = true; break; }
@@ -864,6 +864,7 @@ istream &operator>> (istream &is, Mesh &mesh)
 				flag ^= 0x04;
 			} else if (!strncasecmp (cbuf, "GEOM", 4)) {    // read geometry
 				if (sscanf (cbuf+4, "%d%d", &nvtx, &ntri) != 2) break; // parse error - skip group
+				if (nvtx < 1 || nvtx > 1048576 || ntri < 1 || ntri > 1048576) { nvtx = ntri = 0; break; } // not upstream: counts out of range skip the group
 				nidx = ntri*3;
 				vtx = new NTVERTEX[nvtx]; TRACENEW
 				memset (vtx, 0, sizeof (NTVERTEX)*nvtx);
@@ -905,6 +906,7 @@ istream &operator>> (istream &is, Mesh &mesh)
 						break;
 					}
 					sscanf (cbuf, "%hd%hd%hd", idx+j, idx+j+1, idx+j+2);
+					if (idx[j] >= nvtx || idx[j+1] >= nvtx || idx[j+2] >= nvtx) idx[j] = idx[j+1] = idx[j+2] = 0; // not upstream: an index past the vertex list makes a null triangle
 					j += 3;
 				}
 				if (flipidx)
@@ -916,16 +918,19 @@ istream &operator>> (istream &is, Mesh &mesh)
 			}
 		}
 		if (nvtx && nidx) {
-			mesh.AddGroup (vtx, nvtx, idx, nidx, mtrl_idx, tex_idx, zbias);
-			mesh.Grp[g].Flags = flag;
-			mesh.Grp[g].UsrFlag = uflag;
-			if (calcnml) mesh.CalcNormals (g, true);
+			int gi = mesh.AddGroup (vtx, nvtx, idx, nidx, mtrl_idx, tex_idx, zbias); // not upstream: the new group's index, not g
+			mesh.Grp[gi].Flags = flag;
+			mesh.Grp[gi].UsrFlag = uflag;
+			if (calcnml) mesh.CalcNormals (gi, true);
 			// flag 0x04 (MakeGroupVertexBuffer) left out: vertex buffers belong to the graphics client
+		} else { // not upstream: a skipped group frees its arrays
+			delete []vtx;
+			delete []idx;
 		}
 	}
 
 	// read material list
-	if (is.getline (cbuf, 256) && !strncmp (cbuf, "MATERIALS", 9) && (sscanf (cbuf+9, "%d", &nmtrl) == 1)) {
+	if (is.getline (cbuf, 256) && !strncmp (cbuf, "MATERIALS", 9) && (sscanf (cbuf+9, "%d", &nmtrl) == 1) && nmtrl >= 0 && nmtrl <= 65536) { // not upstream: count range
 		Str256 *matname = new Str256[nmtrl]; TRACENEW
 		Str256 mnm;
 		for (i = 0; i < nmtrl; i++) {
@@ -934,7 +939,7 @@ istream &operator>> (istream &is, Mesh &mesh)
 		}
 		for (i = 0; i < nmtrl; i++) {
 			memset (&mtrl, 0, sizeof (MATERIAL));
-			is.getline (cbuf, 256);
+			if (!is.getline (cbuf, 256)) break; // not upstream: stops at the end of the file
 			sscanf (cbuf+8, "%255s", mnm);
 			is.getline (cbuf, 256);
 			sscanf (cbuf, "%f%f%f%f", &mtrl.diffuse.r, &mtrl.diffuse.g, &mtrl.diffuse.b, &mtrl.diffuse.a);
@@ -953,12 +958,13 @@ istream &operator>> (istream &is, Mesh &mesh)
 
 	// read texture list
 	mesh.ReleaseTextures ();
-	if (is.getline (cbuf, 256) && !strncmp (cbuf, "TEXTURES", 8) && (sscanf (cbuf+8, "%d", &ntex) == 1)) {
+	if (is.getline (cbuf, 256) && !strncmp (cbuf, "TEXTURES", 8) && (sscanf (cbuf+8, "%d", &ntex) == 1) && ntex > 0 && ntex <= 65536) { // not upstream: count range, TEXTURES 0 leaked an empty array
 		mesh.Tex = new SURFHANDLE[mesh.nTex = ntex]; TRACENEW
 		Str256 texname, flagstr;
 		for (i = 0; i < ntex; i++) {
 			is.getline (cbuf, 256);
 			flagstr[0] = '\0';
+			strcpy (texname, "0"); // not upstream: a missing line loads no texture
 			sscanf (cbuf, "%255s%255s", texname, flagstr);
 			mesh.Tex[i] = 0;
 			if (texname[0] != '0' || texname[1] != '\0') {

@@ -105,6 +105,11 @@ add_test(NAME RcCond.Test COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_D
 # not upstream: folder listings in NTFS order, MakePath under a long working directory
 add_unit_test(Util.Test ${ORBITER_SOURCE_DIR}/Util.cpp ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
 target_link_libraries(Util.Test Qt6::Widgets)
+# not upstream: the .msh reader on malformed files, built with ASan
+add_unit_test(Mesh.Test ${ORBITER_SOURCE_DIR}/Mesh.cpp ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
+target_compile_definitions(Mesh.Test PRIVATE NOGRAPHICS)
+target_compile_options(Mesh.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(Mesh.Test PRIVATE -fsanitize=address)
 
 if (BUILD_ORBITER_SERVER)
 
