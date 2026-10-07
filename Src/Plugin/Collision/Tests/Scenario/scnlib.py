@@ -250,3 +250,178 @@ def norm3(v):
 
 def sub(a, b):
     return tuple(x - y for x, y in zip(a, b))
+
+
+# ---- geometry, impact frame, momentum (design-C-T 4.4)
+
+def dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+
+def cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def add(a, b):
+    return tuple(x + y for x, y in zip(a, b))
+
+
+def scale(a, s):
+    return tuple(x * s for x in a)
+
+
+def rot(d, k, name):  # R row-major m11..m33: global = R local
+    r = d.vec(k, name, 'R')
+    return (r[0:3], r[3:6], r[6:9])
+
+
+def rot_apply(R, v):
+    return tuple(dot(row, v) for row in R)
+
+
+def axis(d, k, name, i):  # body axis i (0 x, 1 y, 2 z) in the global frame: column i of R
+    R = rot(d, k, name)
+    return (R[0][i], R[1][i], R[2][i])
+
+
+def frame_of(d, t):  # the frame whose step holds t: SimT0(k) <= t < SimT0(k+1)
+    ks = sorted(d.frames)
+    for i, k in enumerate(ks):
+        nxt = d.frames[ks[i + 1]]['simt'] if i + 1 < len(ks) else float('inf')
+        if d.frames[k]['simt'] <= t < nxt:
+            return k
+    return None
+
+
+def gap_pb(d, k, a='PB-A', b='PB-B', touch=6.0):  # head-on ShuttlePB pair: noses touch at a centre distance of 6 m (T 4.4, 7.2)
+    return dot(sub(d.vec(k, b, 'p'), d.vec(k, a, 'p')), axis(d, k, a, 2)) - touch
+
+
+def free_bodies(d, k, names=None):  # bodies that are not attached children
+    f = d.frames[k]['V']
+    return [n for n in (names or sorted(f)) if f[n].get('par', '-') == '-']
+
+
+def momentum(d, k, names, O, vc):  # P and L about O in the frame moving at vc (T 4.4 items 2-3)
+    P, L, sP, sL = (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.0, 0.0
+    for n in names:
+        m = float(d.frames[k]['V'][n]['m'])
+        x, v, w, I = (d.vec(k, n, key) for key in ('p', 'v', 'w', 'I'))
+        rel, vr = sub(x, O), sub(v, vc)
+        spin = rot_apply(rot(d, k, n), tuple(m * i * wi for i, wi in zip(I, w)))
+        P = add(P, scale(v, m))
+        L = add(L, add(cross(rel, scale(vr, m)), spin))
+        sP += m * norm3(vr)
+        sL += norm3(rel) * m * norm3(vr) + norm3(spin)
+    return P, L, sP, sL
+
+
+def momentum_check(doff, don, k, names=None, ptol=1e-9, ltol=2e-5):  # differential: on vs off across the impact frame k (T 4.4)
+    names = free_bodies(doff, k, names)
+    ms = [float(doff.frames[k]['V'][n]['m']) for n in names]
+    M = sum(ms)
+    O = scale(tuple(map(sum, zip(*[scale(doff.vec(k, n, 'p'), m) for n, m in zip(names, ms)]))), 1 / M)
+    vc = scale(tuple(map(sum, zip(*[scale(doff.vec(k, n, 'v'), m) for n, m in zip(names, ms)]))), 1 / M)
+    Pf, Lf, sP, sL = momentum(doff, k + 1, names, O, vc)
+    Pn, Ln, _, _ = momentum(don, k + 1, names, O, vc)
+    dP, dL = norm3(sub(Pn, Pf)), norm3(sub(Ln, Lf))
+    if dP > ptol * sP:
+        fail('momentum: |dP| %.3g > %.3g at frame %d' % (dP, ptol * sP, k + 1))
+    if dL > ltol * sL:
+        fail('angular momentum: |dL| %.3g > %.3g at frame %d' % (dL, ltol * sL, k + 1))
+    return dP, dL
+
+
+# ---- PNG (pure Python: zlib and the five filter types) and the camera of design-C-T 5.3
+
+def png_decode(path_or_bytes):
+    import struct
+    import zlib
+    data = path_or_bytes if isinstance(path_or_bytes, (bytes, bytearray)) else open(path_or_bytes, 'rb').read()
+    if data[:8] != b'\x89PNG\r\n\x1a\n':
+        raise ValueError('not a PNG')
+    pos, idat, w = 8, b'', None
+    while pos < len(data):
+        n, t = struct.unpack('>I4s', data[pos:pos + 8])
+        body = data[pos + 8:pos + 8 + n]
+        if t == b'IHDR':
+            w, h, depth, ctype, _, _, inter = struct.unpack('>IIBBBBB', body)
+            if depth != 8 or ctype not in (0, 2, 4, 6) or inter:
+                raise ValueError('unsupported PNG: depth %d type %d interlace %d' % (depth, ctype, inter))
+            ch = {0: 1, 2: 3, 4: 2, 6: 4}[ctype]
+        elif t == b'IDAT':
+            idat += body
+        elif t == b'IEND':
+            break
+        pos += 12 + n
+    raw, stride, out, prev = zlib.decompress(idat), w * ch, bytearray(), bytearray(w * ch)
+    for y in range(h):
+        f, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for i in range(stride):
+            a = line[i - ch] if i >= ch else 0
+            b, c = prev[i], prev[i - ch] if i >= ch else 0
+            if f == 1:
+                line[i] = (line[i] + a) & 255
+            elif f == 2:
+                line[i] = (line[i] + b) & 255
+            elif f == 3:
+                line[i] = (line[i] + (a + b) // 2) & 255
+            elif f == 4:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+            elif f != 0:
+                raise ValueError('bad PNG filter %d' % f)
+        out += line
+        prev = line
+    return w, h, ch, bytes(out)
+
+
+def png_encode(w, h, ch, pix, filters=(0,)):  # test images for the self-test; filter per row cycles through `filters`
+    import struct
+    import zlib
+    stride, raw, prev = w * ch, bytearray(), bytearray(w * ch)
+    for y in range(h):
+        line, f = pix[y * stride:(y + 1) * stride], filters[y % len(filters)]
+        enc = bytearray(stride)
+        for i in range(stride):
+            a = line[i - ch] if i >= ch else 0
+            b, c = prev[i], prev[i - ch] if i >= ch else 0
+            p = a + b - c
+            pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+            pred = (0, a, b, (a + b) // 2, a if pa <= pb and pa <= pc else b if pb <= pc else c)[f]
+            enc[i] = (line[i] - pred) & 255
+        raw += bytes([f]) + enc
+        prev = bytearray(line)
+    ctype = {1: 0, 3: 2, 4: 6}[ch]
+
+    def chunk(t, b):
+        return struct.pack('>I', len(b)) + t + b + struct.pack('>I', zlib.crc32(t + b) & 0xffffffff)
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, ctype, 0, 0, 0))
+            + chunk(b'IDAT', zlib.compress(bytes(raw))) + chunk(b'IEND', b''))
+
+
+def camera_for_dent(c, n, size):  # T 5.3: camera POS r phi theta (degrees, r in target sizes) looking at a dent centre c with normal n
+    import math
+    d = max(5.0, norm3(c))
+    q = add(c, scale(n, d))
+    u = scale(q, 1 / norm3(q))
+    return norm3(q) / size, math.degrees(math.atan2(u[0], -u[2])), math.degrees(math.asin(-u[1]))
+
+
+def camera_project(pt, r, phi, theta, size, fov, width=1280, height=720):  # pixel of a target-frame point, camera at r*size*u looking at the origin
+    import math
+    ph, th = math.radians(phi), math.radians(theta)
+    u = (math.sin(ph) * math.cos(th), -math.sin(th), -math.cos(ph) * math.cos(th))  # Camera.cpp SetRelPos convention (T 5.3)
+    cam = scale(u, r * size)
+    fwd = scale(u, -1.0)
+    up0 = (0.0, 1.0, 0.0) if abs(fwd[1]) < 0.99 else (0.0, 0.0, 1.0)
+    right = cross(fwd, up0)
+    right = scale(right, 1 / norm3(right))
+    up = cross(right, fwd)
+    v = sub(pt, cam)
+    z = dot(v, fwd)
+    if z <= 0:
+        return None
+    f = (height / 2) / math.tan(math.radians(fov) / 2)
+    return width / 2 + f * dot(v, right) / z, height / 2 - f * dot(v, up) / z

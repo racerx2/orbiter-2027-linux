@@ -84,3 +84,6 @@ coll_scenario_test(Scn.ExitCode SCN gen:pair FRAMES 20 LUA exitcode CHECK exitco
 # T0.2 run-to-run determinism (design-C-T T0.2)
 coll_scenario_test(Scn.Twice SCN gen:pair:g0=1000 FRAMES 600 CHECK twice
 	RUNS "off1|headless|off||||" "off2|headless|off||||" "on1|headless|on||||" "on2|headless|on||||")
+
+# T0.3 checker self-tests: synthetic dumps and logs with planted errors (E4 T0.3)
+coll_add_test(Scn.Selftest TIMEOUT 60 SERIAL LABELS scenario coll COMMAND ${Python3_EXECUTABLE} ${COLL_SCN_DIR}/selftest.py --work ${COLL_TEST_BIN}/run)
