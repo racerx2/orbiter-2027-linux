@@ -65,6 +65,9 @@ if (MSVC)
 endif ()
 
 set(COLL_UNITS Vecmat CollGeom CollAnim CollShape CollDetect CollSolve CollSolveFrame DentMath CollCfg) # E1-E3 add their units
+foreach (part G F D I) # per-phase unit lists, each appends to COLL_UNITS
+	include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/units_${part}.cmake OPTIONAL)
+endforeach ()
 foreach (u ${COLL_UNITS})
 	add_library(Coll_${u} OBJECT ${u}.cpp)
 	target_include_directories(Coll_${u} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${COLL_SDK_INCLUDE})
@@ -198,6 +201,9 @@ if (COLL_MAKE_TESTS)
 	coll_slow_test(DentMath.Test Fuzz fuzz)
 	coll_unit_test(CollCfg.Test 30 UNITS CollCfg)
 	coll_unit_test(CollisionAPI.Test 30)
+	foreach (part G F D I) # per-phase test registrations
+		include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests_${part}.cmake OPTIONAL)
+	endforeach ()
 	target_sources(CollisionAPI.Test PRIVATE Tests/CollisionAPI.Check.cpp) # the public header alone in a TU
 	target_link_libraries(CollisionAPI.Test ${CMAKE_DL_LIBS})
 	if (NOT WIN32)
