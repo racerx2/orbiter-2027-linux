@@ -24,6 +24,7 @@ NOMIRROR = {'Tests', 'CMakeFiles', 'Testing', '_deps', 'CMakeCache.txt', 'cmake_
 SPECIAL = {'Config', 'Scenarios', 'Script', 'Flights', 'Images', 'Modules', 'Textures', 'Meshes'}
 LVP_ICDS = ['/usr/share/vulkan/icd.d/lvp_icd.json', '/usr/share/vulkan/icd.d/lvp_icd.x86_64.json']
 XDISPLAY = ':58'
+TEXBODIES = ('Earth', 'Moon', 'Mars')  # bodies whose textures upstream ships separately
 
 
 class TestError(Exception):  # exit 1: the test could not run as specified, or a guard refused
@@ -239,6 +240,9 @@ class Sandbox:
                 link_entries(s, os.path.join(dst, e), skip=('Archive',))  # planet archives never reach a test (T 2.3)
             else:
                 ensure_link(os.path.join(dst, e), s)
+        for b in TEXBODIES:  # without a texture folder or .tex the client waits in a modal box for the focus planet (VPlanet.cpp:541-548)
+            if not os.path.lexists(os.path.join(src, b)) and not os.path.exists(os.path.join(src, b + '.tex')):
+                ensure_dir(os.path.join(dst, b))
 
     def mirror_meshes(self):
         src, dst = os.path.join(self.root, 'Meshes'), self.path('Meshes')

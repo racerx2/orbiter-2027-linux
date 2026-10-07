@@ -208,7 +208,8 @@ void CollTestVessel::clbkLoadStateEx (FILEHANDLE scn, void *status)
 
 void CollTestVessel::clbkPostCreation ()
 {
-	Log ("ready '%s' mxcsr=0x%08x", GetName (), _mm_getcsr ()); // the FP environment, equal with the addon off and on (Coll.MXCSR)
+	unsigned csr = _mm_getcsr ();
+	Log ("ready '%s' mxcsr=0x%08x ctl=0x%04x", GetName (), csr, csr & 0xffc0); // ctl: DAZ, masks, rounding, FTZ; the low bits are sticky status flags
 	if (rngEvery) Log ("rng k=0 v=%.17g", oapiRand ());
 }
 

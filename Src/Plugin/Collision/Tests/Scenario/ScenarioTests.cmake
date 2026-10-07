@@ -130,3 +130,13 @@ coll_scenario_test(Scn.RecPlay SCN gen:pair:g0=1000,director=1 FRAMES 300 CHECK 
 coll_scenario_test(Scn.RecTwice SCN gen:pair:g0=1000,director=1 FRAMES 100 CHECK rectwice
 	RUNS "rec|headless|off||||TESTRECORD 1 100" "rec|headless|off||||TESTRECORD 1 100")
 coll_scenario_test(Scn.SynthPlay SCN gen:synthplay FRAMES 300 CHECK synthplay RUNS "main|headless|off||||")
+
+# T0.5, T0.6 client runs: VulkanClient on Xvfb :58 with lavapipe and the validation layer; label visual, off unless COLLISION_VISUAL_TESTS
+if (COLLISION_VISUAL_TESTS)
+	coll_add_test(Scn.Xvfb.Start TIMEOUT 60 SKIP 77 LABELS scenario coll visual PROPS FIXTURES_SETUP xvfb
+		COMMAND ${Python3_EXECUTABLE} ${COLL_SCN_DIR}/runner.py --xvfb-start --work ${COLL_TEST_BIN}/run)
+	coll_add_test(Scn.Xvfb.Stop TIMEOUT 60 LABELS scenario coll visual PROPS FIXTURES_CLEANUP xvfb
+		COMMAND ${Python3_EXECUTABLE} ${COLL_SCN_DIR}/runner.py --xvfb-stop --work ${COLL_TEST_BIN}/run)
+endif ()
+coll_scenario_test(Coll.HvC.Stock VISUAL SCN gen:hvc FRAMES 200 TIMEOUT 900 CHECK hvc CFG "EnableParticleStreams=FALSE"
+	RUNS "h|headless|on||||TESTRNGPROBE 50" "cf|client|on|client-first|||TESTRNGPROBE 50" "af|client|on|addon-first|||TESTRNGPROBE 50")

@@ -92,7 +92,17 @@ def synthplay(p, args):  # a live PB-A and a PB-B played back from synthetic rec
     return s, {'Flights/%s/PB-B.pos' % stem: '\n'.join(pos) + '\n', 'Flights/%s/PB-B.att' % stem: '\n'.join(att) + '\n'}
 
 
-GENERATORS = {'pair': pair, 'surface': surface, 'ascent': ascent, 'synthplay': synthplay}
+def hvc(p):  # Coll.HvC.Stock (T 4.5, T0.5): the P0 pair 1 km apart, ISS 3 km ahead and a DG 150 m behind it closing at 0.1 m/s; no contact, no clbkAnimate
+    v0 = v_circ('Earth', R_P0)
+    s = head('PB-A', 'headless vs client: P0 pair, ISS, DG approach') + director('Earth')
+    s += 'PB-A:ShuttlePB\n  STATUS Orbiting Earth\n  RPOS %s 0 0\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0\nEND\n' % (g(R_P0), g(v0))
+    s += 'PB-B:ShuttlePB\n  STATUS Orbiting Earth\n  RPOS %s 0 1006\n  RVEL 0 0 %s\n  AROT 0 180 0\n  PRPLEVEL 0:0\nEND\n' % (g(R_P0), g(v0))
+    s += 'ISS:ProjectAlpha_ISS\n  STATUS Orbiting Earth\n  RPOS %s 0 4000\n  RVEL 0 0 %s\n  AROT 0 0 0\nEND\n' % (g(R_P0), g(v0))
+    s += 'GL:DeltaGlider\n  STATUS Orbiting Earth\n  RPOS %s 0 3850\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0.5 1:1\nEND\n' % (g(R_P0), g(v0 + 0.1))
+    return s + 'END_SHIPS\n'
+
+
+GENERATORS = {'pair': pair, 'surface': surface, 'ascent': ascent, 'synthplay': synthplay, 'hvc': hvc}
 
 
 def params(text):
