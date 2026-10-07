@@ -252,3 +252,20 @@ TEST_CASE ("A17 unseen push in the speculative step: FREE path or touch, never a
 	}
 	g_collLog = nullptr;
 }
+
+TEST_CASE ("Quaternion from a matrix near a half turn with rounding noise: unit and the same rotation", "[CollAddonFrame]")
+{
+	for (double qs : { 0.0, 2.14e-6, 1e-4 }) {
+		double n = std::sqrt (qs*qs + 1.0 + 0.0035*0.0035);
+		Quaternion q (0.0, -1.0/n, 0.0035/n, qs/n);
+		Matrix R; R.Set (q);
+		R.m13 += 1e-11; R.m31 -= 1e-11;                 // a near half turn as Orbiter's integrated R holds it (smoke run, PB-B)
+		Quaternion p; p.Set (R);
+		Matrix P; P.Set (p);
+		double d = 0;
+		for (int k = 0; k < 9; k++) d = std::max (d, std::fabs (P.data[k] - R.data[k]));
+		CAPTURE (qs, p.qs, p.qvx, p.qvy, p.qvz, d);
+		REQUIRE (std::fabs (p.norm2 () - 1.0) <= 1e-14);
+		REQUIRE (d <= 1e-9);
+	}
+}

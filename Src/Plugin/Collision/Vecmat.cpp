@@ -454,34 +454,37 @@ const double eps = 1e-8;
 
 void Quaternion::Set (const Matrix &R)
 {
-	// set quaternion from rotation matrix
-	static const double eps = 1e-12;
-	double S, T = 1.0 + R.m11 + R.m22 + R.m33;
-	if (T > eps) {
+	// set quaternion from rotation matrix; not upstream: largest-pivot branch, normalised (the trace branch was unstable near a half turn)
+	double T = 1.0 + R.m11 + R.m22 + R.m33;
+	double X = 1.0 + R.m11 - R.m22 - R.m33, Y = 1.0 + R.m22 - R.m11 - R.m33, Z = 1.0 + R.m33 - R.m11 - R.m22;
+	double S;
+	if (T >= X && T >= Y && T >= Z) {
 		S = 2.0 * sqrt (T);
 		qvx = (R.m23-R.m32)/S;
 		qvy = (R.m31-R.m13)/S;
 		qvz = (R.m12-R.m21)/S;
 		qs  = 0.25*S;
-	} else if (R.m11 > R.m22 && R.m11 > R.m33) {
-		S = 2.0 * sqrt (1.0+R.m11-R.m22-R.m33);
+	} else if (X >= Y && X >= Z) {
+		S = 2.0 * sqrt (X);
 		qvx = 0.25*S;
 		qvy = (R.m12+R.m21)/S;
 		qvz = (R.m31+R.m13)/S;
 		qs  = (R.m23-R.m32)/S;
-	} else if (R.m22 > R.m33) {
-		S = 2.0 * sqrt (1.0+R.m22-R.m11-R.m33);
+	} else if (Y >= Z) {
+		S = 2.0 * sqrt (Y);
 		qvx = (R.m12+R.m21)/S;
 		qvy = 0.25*S;
 		qvz = (R.m23+R.m32)/S;
 		qs  = (R.m31-R.m13)/S;
 	} else {
-		S = 2.0 * sqrt (1.0+R.m33-R.m11-R.m22);
+		S = 2.0 * sqrt (Z);
 		qvx = (R.m31+R.m13)/S;
 		qvy = (R.m23+R.m32)/S;
 		qvz = 0.25*S;
 		qs  = (R.m12-R.m21)/S;
 	}
+	double n = sqrt (qvx*qvx + qvy*qvy + qvz*qvz + qs*qs);
+	if (n > 0.0) { qvx /= n; qvy /= n; qvz /= n; qs /= n; }
 }
 
 double Quaternion::norm2 () const

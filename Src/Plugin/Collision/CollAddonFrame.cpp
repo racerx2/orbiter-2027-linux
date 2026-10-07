@@ -1,5 +1,6 @@
 // not upstream: collision addon E1 5.3, frame driver at t0: records, TOUCH and FREE paths, past check, speculative contacts, delivery
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <numeric>
@@ -731,13 +732,14 @@ CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vecto
 		return c;
 	};
 	Matrix Js = Ml;
-	double eLast = 0;
+	double eLast = 0, eFloor = 0;
 	for (int it = 0; it < 8; it++) {
 		CollOrbState c = configure (write, xW, vWr, qa, wWr, wr.Fb, wr.Mb); mir.Step (c, h);
 		CollOrbState cs = cf; mir.Step (cs, h, c.lv, c.nsub);
 		Vector eP = tgtP - (c.s.vel - cs.s.vel)*m;
 		Vector eL = tgtL - (c.SpinL () - cs.SpinL ());
 		eLast = eP.length ()/(tgtP.length () + m*1e-3);
+		eFloor = 4096.0*DBL_EPSILON*m*c.s.vel.length ()/(tgtP.length () + m*1e-3); // rounding floor of heliocentric velocities (30 km/s)
 		if (eP.length () <= 1e-14*(tgtP.length () + m*1e-3) && eL.length () <= 1e-14*(tgtL.length () + 1e-3)) break;
 		if (write) vWr += eP/m;
 		else {
@@ -761,7 +763,7 @@ CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vecto
 		wWr += mul (InvM (Jw), eL);
 		if (count) F.st.deliveryIt++;
 	}
-	if (F.check && eLast > 1e-12) Fail ("delivery", eLast, 1.0);
+	if (F.check && eLast > std::max (1e-12, eFloor)) Fail ("delivery", eLast, 1.0);
 	wr.cdv = vWr - vW; wr.cdw = wWr - wW;
 	wr.state = write;
 	wr.attitude = !QEq (qa, o.s.Q);
