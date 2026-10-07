@@ -5,7 +5,7 @@
 #include <memory>
 #include "CollPlatform.h"
 class CollSession;
-class CollDialogA;
+class CollDialogStandIn;
 
 class CollPlugin : public oapi::Module {
 public:
@@ -40,6 +40,6 @@ private:
 	Jump jump;
 	int cmd = -1;                          // per process (W1)
 	int cmds = 0;                          // registered minus unregistered, printed at unload
-	CollDialogA *dlg = nullptr;            // per process, holds no session data
+	CollDialogStandIn *dlg = nullptr;      // per process, holds no session data; E3's CollDialogA replaces it in Phase D
 };
 #endif

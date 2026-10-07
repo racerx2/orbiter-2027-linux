@@ -203,7 +203,18 @@ TEST_CASE ("E3-U13 values")
 	CHECK (d == -0.25);
 	int i = 7;
 	CHECK_FALSE (CollCfg::Parse ("99999999999", i));
+	CHECK_FALSE (CollCfg::Parse ("+-1", i));
+	CHECK_FALSE (CollCfg::Parse ("++1", i));
+	CHECK_FALSE (CollCfg::Parse ("+", i));
 	CHECK (i == 7);
+	CHECK (CollCfg::Parse ("+0", i));
+	CHECK (i == 0);
+	d = 7;
+	CHECK_FALSE (CollCfg::Parse ("+-2.5", d));
+	CHECK_FALSE (CollCfg::Parse ("+", d));
+	CHECK (d == 7);
+	CHECK (CollCfg::Parse ("+2.5", d));
+	CHECK (d == 2.5);
 	std::vector<std::string> w = { "x" };
 	CHECK (CollCfg::Parse ("   ", w));
 	CHECK (w.empty ());

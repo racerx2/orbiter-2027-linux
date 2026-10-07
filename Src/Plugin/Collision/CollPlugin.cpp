@@ -9,9 +9,9 @@
 #if COLL_HAVE_IMGUI
 #include "imgui.h"
 
-class CollDialogA : public ImGuiDialog { // stand-in for E3's content (CollDialog.cpp, Phase D); E4 owns the object
+class CollDialogStandIn : public ImGuiDialog { // until Phase D: its own name, so E3's CollDialogA (CollDialog.cpp) cannot meet a second definition
 public:
-	explicit CollDialogA (const CollPlugin *p) : ImGuiDialog ("Collision damage"), plugin (p) {}
+	explicit CollDialogStandIn (const CollPlugin *p) : ImGuiDialog ("Collision damage"), plugin (p) {}
 protected:
 	void OnDraw () override
 	{
@@ -57,7 +57,7 @@ CollPlugin::CollPlugin (CollHModule h) : oapi::Module (h)
 	cmd = CollRegisterCmd ("Collision damage", g_cmdDesc, OnCustomCmd, this); // once per process, as Framerate
 	if (cmd >= 0) cmds++;
 #if COLL_HAVE_IMGUI
-	dlg = new CollDialogA (this); // no SDK call: the constructor stores the name
+	dlg = new CollDialogStandIn (this); // no SDK call: the constructor stores the name
 #endif
 }
 
@@ -154,13 +154,30 @@ void CollPlugin::clbkTimeJump (double simt, double simdt, double mjd)
 
 void CollPlugin::TimeJump (double, double, double) {} // E1's time-jump rule and E2's MarkJump (Phases F, G)
 
-void CollPlugin::clbkTimeAccChanged (double, double) {} // E1's warp clamp, Running only (Phase F)
+void CollPlugin::clbkTimeAccChanged (double, double)
+{
+	if (phase != Phase::Running) return; // a warp set in a vessel's PostCreation or the scenario script arrives before the start
+	// E1's warp clamp (Phase F)
+}
 
-void CollPlugin::clbkVesselJump (OBJHANDLE) {} // E1, Running only (Phase F)
+void CollPlugin::clbkVesselJump (OBJHANDLE)
+{
+	if (phase != Phase::Running) return; // DefSetStateEx in PostCreation raises it before the start
+	// E1 (Phase F)
+}
 
-void CollPlugin::clbkPause (bool) {} // E3's visual pass on pause entry (Phase D)
+void CollPlugin::clbkPause (bool)
+{
+	if (phase != Phase::Running) return; // a start paused arrives after the start, in the first time step
+	// E3's visual pass on pause entry (Phase D)
+}
 
-bool CollPlugin::clbkProcessKeyboardImmediate (char[256], bool) { return false; } // E3's optional pass, CollisionKeyPass (Phase D)
+bool CollPlugin::clbkProcessKeyboardImmediate (char[256], bool)
+{
+	if (phase != Phase::Running) return false;
+	// E3's optional pass, CollisionKeyPass (Phase D)
+	return false;
+}
 
 void CollPlugin::OnCustomCmd (void *ctx)
 {

@@ -23,6 +23,11 @@ bool EqualNoCase (const std::string &a, const char *b)
 	return i == a.size () && !b[i];
 }
 
+const char *SkipPlus (const char *b, const char *e) // from_chars takes no '+': one is skipped, but not before a '-'
+{
+	return b != e && *b == '+' && (b + 1 == e || b[1] != '-') ? b + 1 : b;
+}
+
 }
 
 bool CollCfg::Parse (const std::string &s, bool &out)
@@ -37,8 +42,7 @@ bool CollCfg::Parse (const std::string &s, int &out)
 {
 	std::string t = Trim (s);
 	int v = 0;
-	const char *b = t.data (), *e = t.data () + t.size ();
-	if (b != e && *b == '+') b++;
+	const char *e = t.data () + t.size (), *b = SkipPlus (t.data (), e);
 	auto r = std::from_chars (b, e, v);
 	if (b == e || r.ec != std::errc () || r.ptr != e) return false;
 	out = v;
@@ -49,8 +53,7 @@ bool CollCfg::Parse (const std::string &s, double &out)
 {
 	std::string t = Trim (s);
 	double v = 0;
-	const char *b = t.data (), *e = t.data () + t.size ();
-	if (b != e && *b == '+') b++;
+	const char *e = t.data () + t.size (), *b = SkipPlus (t.data (), e);
 	auto r = std::from_chars (b, e, v);
 	if (b == e || r.ec != std::errc () || r.ptr != e || !std::isfinite (v)) return false;
 	out = v;

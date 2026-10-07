@@ -287,6 +287,25 @@ void Command () // Ctrl-F4 "Collision damage" inside a session
 	CHECK (H.dlgList.size () == 1);
 }
 
+void Outside (OBJHANDLE v) // outside Running: the callbacks E4 11.4 gates, a warp from PostCreation included, and the command do nothing
+{
+	REQUIRE (H.cmds.size () == 1);
+	int opens = H.opens, bugs = H.bugs;
+	size_t logs = H.log.size ();
+	char kstate[256] = {};
+	H.noWorld = true;
+	H.module->clbkTimeAccChanged (10.0, 1.0);
+	H.module->clbkVesselJump (v);
+	H.module->clbkPause (true);
+	H.module->clbkPause (false);
+	CHECK_FALSE (H.module->clbkProcessKeyboardImmediate (kstate, false));
+	H.cmds[0].fn (H.cmds[0].ctx);
+	H.noWorld = false;
+	CHECK (H.opens == opens);
+	CHECK (H.bugs == bugs);
+	CHECK (H.log.size () == logs);
+}
+
 void NormalClose () // Orbiter.cpp CloseSession, ShutdownMode 0: dialog manager, then DestroyWorld, then clbkSimulationEnd
 {
 	H.dlgMgr = false;
@@ -319,25 +338,31 @@ TEST_CASE ("CollPlugin lifecycle: sessions, close paths, unload and re-load")
 	H.cfgMissing = false;
 	H.cfg = "CollisionModel = 1\nCollisionCheck = TRUE\nCollisionLog = 2\n";
 
-	// S1: scenario block, a vessel created in PostCreation, the command twice, a save, normal close
+	// S1: a save and the gated callbacks before any session, scenario block, a vessel created in PostCreation that sets the warp, the command twice, a save, normal close, the command after it
 	Make (0, "A", 1);
 	Make (1, "B", 1);
 	H.dlgMgr = true;
+	CHECK (SaveState (h) == std::vector<std::string> { "COLLA 1" });
+	Outside (H.world[0]);
 	LoadState (h, { "COLLA 1", "VESSEL 0 A ShuttlePB" });
 	H.module->clbkNewVessel (Make (2, "C", 1));
+	Outside (H.world[2]);
 	H.module->clbkSimulationStart (oapi::Module::RENDER_NONE);
 	Frames (3);
 	Command ();
 	Command ();
 	CHECK (SaveState (h) == std::vector<std::string> { "COLLA 1", "VESSEL 0 A ShuttlePB" });
 	NormalClose ();
+	Outside (&H.slots[0]); // a dead handle: ASan reports any read
 
-	// S2: no cfg file; a vessel created before the block is read keeps the session; the same handle values; delete and reuse
+	// S2: no cfg file; a vessel created before the block is read keeps the session; a save and the gated callbacks before the start; the same handle values; delete and reuse
 	H.cfgMissing = true;
 	Make (0, "A2", 0);
 	H.module->clbkNewVessel (Make (1, "B2", 0));
 	LoadState (h, { "COLLA 1", "BASE Earth:Cape Canaveral", "END_BASE" });
 	H.dlgMgr = true;
+	CHECK (SaveState (h) == std::vector<std::string> { "COLLA 1", "BASE Earth:Cape Canaveral", "END_BASE" }); // the pending block, before the start
+	Outside (H.world[1]);
 	H.module->clbkSimulationStart (oapi::Module::RENDER_NONE);
 	Frames (2);
 	OBJHANDLE b = H.world[1];
