@@ -60,7 +60,7 @@ void CollSession::Start (int renderMode)
 	pending.clear ();
 	started = true;
 	t.build = Us (Clock::now () - b);
-	if (!block.empty ()) CollLogF ("Collision: scenario block adopted (%zu lines)", block.size ());
+	if (!block.empty ()) CollLogF ("Collision: scenario block adopted, lines=%zu", block.size ());
 	CollLogF ("Collision: active version=%s session=%u model=%d response=%d check=%d damage=%d log=%d render=%d",
 		COLL_ADDON_VERSION, serial, cfg.model, (int)cfg.response, (int)cfg.check, CollDamageModel (), cfg.logLevel, renderMode);
 }
