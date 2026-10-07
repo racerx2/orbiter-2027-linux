@@ -13,6 +13,7 @@ if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 		message(FATAL_ERROR "ORBITER_DIR must name an installed Orbiter with Orbitersdk/include")
 	endif ()
 	set(COLL_SDK_INCLUDE ${ORBITER_DIR}/Orbitersdk/include)
+	find_path(COLL_IMGUI_INCLUDE imgui.h PATHS ${COLL_SDK_INCLUDE} ${ORBITER_DIR}/Extern/imgui/include NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH) # installed: in the SDK; a build tree: in Extern; Orbiter 2024: none
 	find_library(COLL_SDK_LIB Orbitersdk PATHS ${ORBITER_DIR}/Orbitersdk/lib NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH REQUIRED) # a cross toolchain must not re-root ORBITER_DIR
 	if (WIN32)
 		find_library(COLL_ORBITER_LIB Orbiter PATHS ${ORBITER_DIR}/Orbitersdk/lib NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH REQUIRED)
@@ -85,6 +86,9 @@ else ()
 	orbiter_rc_resources(Collision Collision.rc)
 endif ()
 if (COLL_STANDALONE)
+	if (COLL_IMGUI_INCLUDE)
+		target_include_directories(Collision PRIVATE ${COLL_IMGUI_INCLUDE})
+	endif ()
 	set_target_properties(Collision PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Modules/Plugin RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Modules/Plugin)
 else ()
 	target_link_libraries(Collision imgui) # include dir only: the ImGui code is in the SDK library
@@ -113,7 +117,7 @@ else ()
 	set_target_properties(CollisionData PROPERTIES FOLDER Data)
 endif ()
 
-install(TARGETS Collision LIBRARY DESTINATION ${COLL_DEST_PLUGIN} RUNTIME DESTINATION ${COLL_DEST_PLUGIN} COMPONENT Collision)
+install(TARGETS Collision LIBRARY DESTINATION ${COLL_DEST_PLUGIN} COMPONENT Collision RUNTIME DESTINATION ${COLL_DEST_PLUGIN} COMPONENT Collision) # COMPONENT binds to the kind before it
 install(FILES Config/Collision.cfg DESTINATION ${COLL_DEST_ROOT}/Config COMPONENT Collision)
 install(FILES CollisionAPI.h DESTINATION ${COLL_DEST_ROOT}/Orbitersdk/include COMPONENT Collision)
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Meshes)
