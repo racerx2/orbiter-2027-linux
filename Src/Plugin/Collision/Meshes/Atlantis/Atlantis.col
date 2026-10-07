@@ -1,0 +1,5 @@
+; not upstream: collision addon sidecar for Atlantis.msh (design D1 4.6)
+COLLIDER-V1
+EXCLUDE MATERIAL HUD
+MAT glass MATERIAL glass
+MAT gear LABEL nosewheel nosegear wheelR wheelL gearR gearL

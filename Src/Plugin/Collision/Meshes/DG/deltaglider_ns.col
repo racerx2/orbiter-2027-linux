@@ -1,0 +1,5 @@
+; not upstream: collision addon sidecar for deltaglider_ns.msh (design D1 4.6): cabin, pilots and HUD excluded
+COLLIDER-V1
+EXCLUDE MATERIAL dgint* dgpilot* pnsgr* psng* visor HUD_glass
+MAT glass MATERIAL cockpitglass
+MAT gear GROUP 95-97 99-101
