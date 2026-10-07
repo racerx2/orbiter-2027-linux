@@ -36,8 +36,7 @@ else ()
 endif ()
 target_link_libraries(CollTestVessel ${CMAKE_DL_LIBS}) # collaFind
 
-# coll_scenario_test(<name> SCN <stock path | gen:<setup>> FRAMES <n> [STEP <h>] [TIMEOUT <s>] [EVERY <n>] [CHECK <checks/x.py>] [LUA <lua/x.lua>]
-#	RUNS "id|mode|addon|order|args|inherit|actions" ... [CFG ..] [ACFG ..] [ARGS ..] [MODULES ..] [LABELS ..] [VISUAL])
+# coll_scenario_test(<name> SCN <stock path | gen:<setup>> FRAMES <n> [STEP h] [TIMEOUT s] [EVERY n] [CHECK x] [LUA x] RUNS "id|mode|addon|order|args|inherit|actions" .. [CFG ..] [ACFG ..] [ARGS ..] [MODULES ..] [LABELS ..] [VISUAL])
 function(coll_scenario_test name)
 	cmake_parse_arguments(PARSE_ARGV 1 S "VISUAL" "SCN;STEP;FRAMES;TIMEOUT;CHECK;EVERY;LUA" "RUNS;CFG;ACFG;ARGS;LABELS;MODULES")
 	if (NOT COLLISION_SCENARIO_TESTS OR (S_VISUAL AND NOT COLLISION_VISUAL_TESTS))
@@ -97,8 +96,7 @@ coll_scenario_test(Scn.Twice SCN gen:pair:g0=1000 FRAMES 600 CHECK twice
 # T0.3 checker self-tests: synthetic dumps and logs with planted errors (E4 T0.3)
 coll_add_test(Scn.Selftest TIMEOUT 60 SERIAL LABELS scenario coll COMMAND ${Python3_EXECUTABLE} ${COLL_SCN_DIR}/selftest.py --work ${COLL_TEST_BIN}/run)
 
-# T0.4 goldens (E4 7.6, design-C-T 7.3): G1-G4 addon off; G5 addon on in quiet scenes, A1 pinned, writes=0, notices=0
-# goldens: Tests/Scenario/golden/<name>.dump.gz, made by an off run with COLL_GOLDEN_WRITE=1; another compiler, build type or CPU skips (77)
+# T0.4 goldens (E4 7.6, design-C-T 7.3): G1-G4 addon off, G5 addon on in quiet scenes; golden/<name>.dump.gz from an off run with COLL_GOLDEN_WRITE=1, another compiler, build type or CPU skips (77)
 coll_scenario_test(Coll.Off.Golden.Pair SCN gen:pair:g0=0.5,vA=0.5,vB=-0.5 FRAMES 600 EVERY 5 CHECK golden LABELS golden RUNS "c0|headless|off||||")
 coll_scenario_test(Coll.Off.Golden.Smack SCN "Delta-glider/Smack!" FRAMES 1500 EVERY 10 CHECK golden LABELS golden RUNS "c0|headless|off||||")
 coll_scenario_test(Coll.Off.Golden.Ascent SCN gen:ascent STEP 0.05 FRAMES 3000 EVERY 10 TIMEOUT 600 CHECK golden LABELS golden long
@@ -140,3 +138,5 @@ if (COLLISION_VISUAL_TESTS)
 endif ()
 coll_scenario_test(Coll.HvC.Stock VISUAL SCN gen:hvc FRAMES 200 TIMEOUT 900 CHECK hvc CFG "EnableParticleStreams=FALSE"
 	RUNS "h|headless|on||||TESTRNGPROBE 50" "cf|client|on|client-first|||TESTRNGPROBE 50" "af|client|on|addon-first|||TESTRNGPROBE 50")
+coll_scenario_test(Scn.Visual.Smoke VISUAL SCN gen:pair:g0=20 FRAMES 70 TIMEOUT 600 CHECK visualsmoke
+	RUNS "a|client|off||||LUASHOT 60 smoke" "b|client|off||||LUASHOT 60 smoke")

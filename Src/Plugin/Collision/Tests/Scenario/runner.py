@@ -475,7 +475,7 @@ def split_actions(spec, data):
             lines = [l.strip() for l in f if l.strip() and not l.lstrip().startswith(';')]
     elif spec.actions:
         lines = [l.strip() for l in spec.actions.split(',') if l.strip()]
-    lua = [l for l in lines if l.split()[0] in ('LUACALL', 'LUASTATUS', 'LUASAVE')]  # the harness's; TEST* lines go to the scenario
+    lua = [l for l in lines if l.split()[0] in ('LUACALL', 'LUASTATUS', 'LUASAVE', 'LUASHOT')]  # the harness's; TEST* lines go to the scenario
     return [l for l in lines if l not in lua], lua
 
 

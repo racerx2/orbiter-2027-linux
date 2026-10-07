@@ -53,6 +53,8 @@ local function act(k, a) -- harness actions run in the frame hook of frame k, af
 	local v = a.v ~= '' and vessel.get_interface(a.v) or nil
 	if a.kind == 'LUASAVE' then
 		oapi.savescenario('Tests/Coll/Saved/' .. a.v, 'collision test save')
+	elseif a.kind == 'LUASHOT' then -- the back buffer as PNG: the frame rendered at the end of frame k-1 (T 5.2)
+		oapi.save_surface('Images/' .. a.v, nil, IMAGEFORMAT.PNG)
 	elseif v == nil then
 		oapi.write_log('CollTestHarness act k=' .. k .. ' ' .. a.kind .. ' ' .. a.v .. ' failed: no such vessel')
 		return
@@ -77,6 +79,13 @@ function H.start(c) -- clbkSimulationStart of CollTestHarness
 		H.f:write('H scn=', c.scn, ' h=', c.h, ' version=', g(oapi.get_orbiter_version()), ' run=', c.run, '\n')
 	end
 	if c.test ~= '' then H.T = dofile('./Script/Tests/Coll/' .. c.test .. '.lua') or {} end
+	for _, a in ipairs(c.actions) do
+		if a.kind == 'LUASHOT' then -- screenshots without the menu and info bars (T 5.2)
+			oapi.set_mainmenuvisibilitymode(1)
+			oapi.set_maininfovisibilitymode(1)
+			break
+		end
+	end
 	if c.script ~= '' then -- the scenario's own script as a coroutine: proc.skip yields; loadfile, as dofile is a C call a yield cannot cross
 		local chunk = assert(loadfile('./Script/' .. c.script .. '.lua'))
 		H.co = coroutine.create(chunk)
