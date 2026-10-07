@@ -1004,3 +1004,53 @@ TEST_CASE ("Y3' point work: a centred normal impact on four corners does no fric
 			} else REQUIRE (Wt > 0.01*loss);
 		}
 }
+
+TEST_CASE ("A15 addon phase-2 flags: SPECTRAP closes the gap, BALLISTIC gives zero closure, no flag unchanged", "[CollSolve]")
+{
+	const double h = 0.1, g0 = 0.05, gy = -9.81;
+	auto island = [&] (double vy, double gap, uint8_t kind, uint8_t flags) {
+		CollIsland isl;
+		isl.tau = 0.0; isl.h = h;
+		CollSBody a {};
+		a.dyn = true; a.m = 1.0; a.pmi = Vector (1, 1, 1); a.Rt = a.R1 = IMatrix ();
+		a.xt = Vector (0, 1, 0); a.vt = Vector (0, vy, 0); a.v1 = Vector (0, vy + gy*h, 0); a.x1 = a.xt + a.v1*h;
+		CollSBody s {};
+		s.dyn = false; s.Rt = s.R1 = IMatrix ();
+		isl.body = { a, s };
+		CollSContact c {};
+		c.a = 0; c.b = 1; c.p = Vector (); c.n = c.n2 = Vector (0, 1, 0); c.gap = gap; c.kind = kind; c.flags = flags;
+		c.mu = 0.0; c.e0 = 0.0; c.vy = 1.0;
+		isl.con.push_back (c);
+		REQUIRE (isl.Solve (CollSolveParams ()));
+		return isl;
+	};
+	SECTION ("SPECTRAP: closure tr (u1 + u2)/2 = g0 for an approach below g0/tr") {
+		CollIsland isl = island (-0.2, g0, COLL_SPECULATIVE, COLLP_SPECTRAP);
+		double u1 = -isl.UPost ()[0].y, u2 = -(isl.body[0].v1.y + (isl.body[0].dP1.y + isl.body[0].dP2.y));
+		REQUIRE (std::fabs (h*(u1 + u2)*0.5 - g0) <= 1e-12);
+		CollIsland plain = island (-0.2, g0, COLL_SPECULATIVE, 0);  // without the flag: approach capped at g0/tr, closure short of g0
+		double v2 = plain.body[0].v1.y + plain.body[0].dP1.y + plain.body[0].dP2.y;
+		REQUIRE (std::fabs (v2 + g0/h) <= 1e-12);
+		REQUIRE (h*(0.2 - v2)*0.5 < g0 - 1e-3);
+	}
+	SECTION ("SPECTRAP: approach above g0/tr is held at g0/tr in both phases") {
+		CollIsland isl = island (-10.0, g0, COLL_SPECULATIVE, COLLP_SPECTRAP);
+		double u1 = -isl.UPost ()[0].y, u2 = -(isl.body[0].v1.y + isl.body[0].dP1.y + isl.body[0].dP2.y);
+		REQUIRE (std::fabs (u1 - g0/h) <= 1e-12);
+		REQUIRE (std::fabs (h*(u1 + u2)*0.5 - g0) <= 1e-12);
+	}
+	SECTION ("BALLISTIC: a point separating at s1 may return at s1 by t1, zero net closure") {
+		CollIsland isl = island (0.3, 0.0, COLL_RESTING, COLLP_BALLISTIC);
+		double s1 = isl.UPost ()[0].y, u2 = -(isl.body[0].v1.y + isl.body[0].dP1.y + isl.body[0].dP2.y);
+		REQUIRE (std::fabs (s1 - 0.3) <= 1e-15);
+		REQUIRE (std::fabs (h*(u2 - s1)*0.5) <= 1e-12);
+		CollIsland plain = island (0.3, 0.0, COLL_RESTING, 0);    // without the flag: phase 2 stops the return at zero approach
+		REQUIRE (std::fabs (plain.body[0].v1.y + plain.body[0].dP2.y) <= 1e-12);
+	}
+	SECTION ("flags are ignored on the other kind") {
+		CollIsland a = island (-0.2, g0, COLL_SPECULATIVE, COLLP_BALLISTIC), b = island (-0.2, g0, COLL_SPECULATIVE, 0);
+		REQUIRE (a.body[0].dP2.y == b.body[0].dP2.y);
+		CollIsland c = island (0.5, 0.0, COLL_RESTING, COLLP_SPECTRAP), d = island (0.5, 0.0, COLL_RESTING, 0);
+		REQUIRE (c.body[0].dP2.y == d.body[0].dP2.y);
+	}
+}

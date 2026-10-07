@@ -69,19 +69,7 @@ void Join (std::vector<int> &u, int a, int b)
 	if (a != b) { if (a < b) u[b] = a; else u[a] = b; }
 }
 
-// one solved contact point: what events, supports and position correction need (8.1, 7.5, 4.6)
-struct Rec {
-	int res, pt;                   // solved result and point index
-	int con;                       // contact index in its island
-	CollOwnerKey oa, ob;           // owners per side (Y14)
-	uint8_t kind;                  // solve kind after the INACCURATE rule
-	double gap;                    // solve gap
-	double vapp, ln1, Wn, Wt;      // phase-1 approach, normal impulse, work
-	double vpost, slip, Jt;        // separation speed after phase 1, slip at tau, tangential impulse
-	double meff;                   // effective mass of the island at the owner pair's centroid
-	double jsum;                   // |J1| + |J2| of the point
-	bool surf, woke, corrected;
-};
+using Rec = CollEventRec;
 
 } // namespace
 
@@ -107,7 +95,7 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 {
 	stats = CollSolveStats {};
 	delta.clear (); ev.clear ();
-	inacc.erase (std::remove_if (inacc.begin (), inacc.end (), [simt0] (const InaccLog &x) { return simt0 - x.t >= 60.0; }), inacc.end ());
+	inacc.erase (std::remove_if (inacc.begin (), inacc.end (), [simt0] (const CollInaccLog &x) { return simt0 - x.t >= 60.0; }), inacc.end ());
 	const int nb = (int)body.size ();
 	if (rounds < 1) rounds = 1;
 	for (CollFrameBody &b : body) {
@@ -338,6 +326,7 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 				const CollPairResult &r = cur[srcRes[ci]];
 				int i = srcPt[ci];
 				Rec e {};
+				e.t = -1.0;
 				e.res = pos[srcRes[ci]]; e.pt = i; e.con = (int)ci;
 				e.oa = det.Owner (r, i, 0); e.ob = det.Owner (r, i, 1);
 				e.kind = c.kind; e.gap = c.gap;
@@ -580,6 +569,14 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 		}
 	}
 
+	CollFillEvents (det, solved, rec, h, simt0, p, host, ev, &body, &inacc);
+	res.swap (solved);
+}
+
+// events per owner pair and supports per dynamic body from the solved points (8.1, 8.2, 7.5); shared by Run and the addon driver
+void CollFillEvents (const CollDetect &det, const std::vector<CollPairResult> &solved, const std::vector<CollEventRec> &rec, double h, double simt0,
+	const CollSolveParams &p, CollSolveHost &host, std::vector<CollImpactEvent> &ev, std::vector<CollFrameBody> *body, std::vector<CollInaccLog> *inacc)
+{
 	// impact events, one per owner pair (8.1, 8.2); queued if FIRST or not SLOW, only with an impulse
 	std::vector<int> order (rec.size ());
 	std::iota (order.begin (), order.end (), 0);
@@ -592,7 +589,7 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 		size_t g1 = g0 + 1;
 		while (g1 < order.size () && SameKey (rec[order[g1]].oa, rec[order[g0]].oa) && SameKey (rec[order[g1]].ob, rec[order[g0]].ob)) g1++;
 		CollImpactEvent e {};
-		double sumLn = 0.0, tauMin = 1e300, jsum = 0.0;
+		double sumLn = 0.0, tauMin = 1e300, jsum = 0.0, tEv = -1.0;
 		bool first = false, resting = true, slow = true;
 		int best = order[g0];
 		for (size_t k = g0; k < g1; k++) {
@@ -607,6 +604,7 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 			e.vn += q.ln1*q.vapp; e.vn_post += q.ln1*q.vpost; e.vt += q.ln1*q.slip;
 			e.Jt += q.Jt;
 			tauMin = std::min (tauMin, r.tau);
+			if (q.t >= 0.0) tEv = tEv < 0.0 ? q.t : std::min (tEv, q.t);
 			if (r.kind == COLL_SPECULATIVE) e.flags |= COLLEV_SPECULATIVE;
 			if (r.flags & COLLF_INACCURATE) e.flags |= COLLEV_INACCURATE;
 			if (fl & COLLP_DEGENERATE) e.flags |= COLLEV_DEGENERATE;
@@ -619,12 +617,14 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 		if (slow) e.flags |= COLLEV_SLOW;
 		const CollOwnerKey &ka = rec[order[g0]].oa, &kb = rec[order[g0]].ob;
 		if (e.flags & COLLEV_INACCURATE) {                         // rate-limited warning per owner pair (3.2)
-			auto it = std::lower_bound (inacc.begin (), inacc.end (), std::make_pair (ka, kb), [] (const InaccLog &x, const std::pair<CollOwnerKey, CollOwnerKey> &k) {
+			std::vector<CollInaccLog> dummy;
+			std::vector<CollInaccLog> &il = inacc ? *inacc : dummy;
+			auto it = std::lower_bound (il.begin (), il.end (), std::make_pair (ka, kb), [] (const CollInaccLog &x, const std::pair<CollOwnerKey, CollOwnerKey> &k) {
 				return x.a < k.first || (!(k.first < x.a) && x.b < k.second); });
-			if (it == inacc.end () || !SameKey (it->a, ka) || !SameKey (it->b, kb)) {
+			if (it == il.end () || !SameKey (it->a, ka) || !SameKey (it->b, kb)) {
 				CollLog (COLLLOG_WARN, "Collision: INACCURATE contact (motion model error above tolerance), owners %u/%d.%d.%d - %u/%d.%d.%d at t %.3f",
 					ka.id, ka.planet, ka.base, ka.obj, kb.id, kb.planet, kb.base, kb.obj, simt0 + tauMin*h);
-				inacc.insert (it, InaccLog { ka, kb, simt0 });
+				il.insert (it, CollInaccLog { ka, kb, simt0 });
 			}
 		}
 		if (e.flags & COLLEV_DEGENERATE)
@@ -633,7 +633,7 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 		else e.vn = e.vn_post = e.vt = 0.0;
 		e.Jn = sumLn;
 		e.meff = rec[best].meff;
-		e.t = simt0 + tauMin*h;
+		e.t = tEv >= 0.0 ? tEv : simt0 + tauMin*h;
 		const CollPairResult &rb = solved[rec[best].res];
 		for (int side = 0; side < 2; side++) {
 			CollImpactSide &s = e.s[side];
@@ -669,8 +669,9 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 	}
 
 	// supports: buildings touched by each dynamic body, mean outward normal in the base frame (7.5)
-	for (int f = 0; f < nb; f++) {
-		if (!dyn[f]) continue;
+	for (int f = 0; body && f < (int)body->size (); f++) {
+		CollFrameBody &bf = (*body)[f];
+		if (!((bf.dyn && bf.m > 0.0) || bf.woke)) continue;
 		std::vector<CollOwnerKey> key;
 		std::vector<Vector> nsum;
 		for (const Rec &q : rec) {
@@ -693,8 +694,7 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 		std::stable_sort (ix.begin (), ix.end (), [&] (int a, int b) { return key[a] < key[b]; });
 		for (int j : ix) {
 			double l = nsum[j].length ();
-			body[f].sup.push_back (CollSupport { key[j], l > 0.0 ? nsum[j]/l : nsum[j] });
+			bf.sup.push_back (CollSupport { key[j], l > 0.0 ? nsum[j]/l : nsum[j] });
 		}
 	}
-	res.swap (solved);
 }

@@ -84,6 +84,10 @@ struct CollSContact {
 	double bias, kn, ln;        // solver scratch (4.5): velocity bias, effective mass along n, running phase's normal impulse
 	Vector t1, t2; double kt[2], lt[2]; // solver scratch: tangents, their effective masses, accumulated tangent impulses
 };
+enum : uint8_t {                 // addon point flags of CollSContact::flags, next to D2's COLLP_* (E1 frame change 2)
+	COLLP_SPECTRAP  = 16,        // SPECULATIVE: phase-2 trapezoid closure tr (u1 + u2)/2 <= gap
+	COLLP_BALLISTIC = 32         // TOI/RESTING: a point separating at s1 after phase 1 may approach at up to s1 by t1
+};
 struct CollSolveParams { int iters = COLL_ITERATIONS; double vrest = COLL_V_REST, vp = COLL_VP, vd = COLL_VD, slop = COLL_SLOP, beta = COLL_BETA, dxmax = COLL_DX_MAX, vsmax = COLL_V_PART_MAX; }; // vsmax = D2 CollParams::vPartMax (one value)
 struct CollDelta { Vector dv, dx, dLw, dth; }; // world dv, dx, spin-momentum change; body-frame rotation vector (6.1)
 
@@ -101,8 +105,13 @@ struct CollIsland {
 	bool Solve (const CollSolveParams &p);       // phase 1 with the energy guard, then phase 2; false: non-finite, response dropped
 	void Delta (int i, CollDelta &d) const;      // write-back deltas of dynamic body i (4.2)
 	bool Correct (const CollSolveParams &p, std::vector<CollDelta> &d); // 4.6 split impulse over contacts in con with gap < -slop (caller picks); d per body, dx, dth only
+	const std::vector<Vector> &UPre () const { return upre; }   // E1 frame change 3: read access for the addon driver
+	const std::vector<Vector> &UPost () const { return upost; }
+	const std::vector<Vector> &LeverOrigins () const { return xs; }
+	double MeffAt (const Vector &p, const Vector &n, int a, int b) const { return Meff (p, n, a, b); }
 private:
 	friend class CollFrameSolver;                // events, wake share and checks read the last solve
+	friend class CollAddonFrame;
 	bool guard = false;                          // last Solve: phase 1 redone without restitution (4.2 step 5)
 	int nonconv = 0;                             // last Solve: contacts still approaching after phase 2 (4.5)
 	double W1 = 0, W2 = 0, S1 = 0, S2 = 0;       // last Solve: work of each phase and its scale sum |ln| (|un| + 1e-3) (9)
@@ -135,6 +144,23 @@ struct CollFrameBody {                       // one CollDetect body as the drive
 	std::vector<CollSupport> sup;            // out: buildings touched, mean outward normal in the base frame (7.5)
 };
 struct CollBodyDelta { int body; CollDelta d; bool poscorr; }; // one write-back in application order; poscorr: position correction only
+struct CollEventRec {                        // one solved contact point: what events, supports and position correction need (8.1, 7.5, 4.6)
+	int res, pt;                             // solved result and point index
+	int con;                                 // contact index in its island
+	CollOwnerKey oa, ob;                     // owners per side (Y14)
+	uint8_t kind;                            // solve kind after the INACCURATE rule
+	double gap;                              // solve gap
+	double vapp, ln1, Wn, Wt;                // phase-1 approach, normal impulse, work
+	double vpost, slip, Jt;                  // separation speed after phase 1, slip at tau, tangential impulse
+	double meff;                             // effective mass of the island at the owner pair's centroid
+	double jsum;                             // |J1| + |J2| of the point
+	bool surf, woke, corrected;
+	double t;                                // event time of the point; < 0: simt0 + tau h of its result (E1 5.6)
+};
+struct CollInaccLog { CollOwnerKey a, b; double t; }; // owner pair warned for INACCURATE results and when
+// events per owner pair and building supports per dynamic body from solved points (8.1, 8.2, 7.5; E1 frame change 4); body may be null
+void CollFillEvents (const CollDetect &det, const std::vector<CollPairResult> &solved, const std::vector<CollEventRec> &rec, double h, double simt0,
+	const CollSolveParams &p, CollSolveHost &host, std::vector<CollImpactEvent> &ev, std::vector<CollFrameBody> *body, std::vector<CollInaccLog> *inacc);
 struct CollSolveStats { int islands, rounds, resweeps, nonconverged, exhausted, guards; };
 class CollFrameSolver {                      // own translation unit CollSolveFrame.cpp, so CollSolve.Test links without CollDetect.cpp
 public:
@@ -147,8 +173,7 @@ private:
 	int nWarn = 0, nQuiet = 0;               // check warnings written, and suppressed since the last summary (9)
 	double tWarn = 0;                        // sim time of the last summary
 	void Warn (double t, const char *msg);   // first 10 lines, then one summary per minute of sim time
-	struct InaccLog { CollOwnerKey a, b; double t; };
-	std::vector<InaccLog> inacc;             // owner pairs warned for INACCURATE results and when, sorted; one line per pair per sim minute
+	std::vector<CollInaccLog> inacc;         // owner pairs warned for INACCURATE results and when, sorted; one line per pair per sim minute
 };
 
 #endif // !__COLLSOLVE_H

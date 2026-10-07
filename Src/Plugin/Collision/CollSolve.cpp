@@ -281,6 +281,8 @@ bool CollIsland::Solve (const CollSolveParams &p)
 		g.n = n2l > 0.5 ? c.n2/n2l : c.n;
 		g.vka = c.vka_1; g.vkb = c.vkb_1;
 		c.bias = c.kind == COLL_SPECULATIVE ? -c.gap/std::max (tr, TR_MIN) : 0.0;
+		if (c.kind != COLL_SPECULATIVE && (c.flags & COLLP_BALLISTIC)) c.bias = -std::max (0.0, dotp (upost[i], c.n));
+		if (c.kind == COLL_SPECULATIVE && (c.flags & COLLP_SPECTRAP)) c.bias = -std::max (0.0, 2.0*c.gap/std::max (tr, TR_MIN) - std::max (0.0, -dotp (upost[i], c.n)));
 		SetupContact (k, c, g);
 	}
 	std::vector<double> un2 (nc);
