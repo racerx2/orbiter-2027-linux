@@ -1,0 +1,8 @@
+// not upstream: collision addon, Launchpad description and category
+#include "resource.h"
+
+STRINGTABLE
+BEGIN
+    IDS_INFO                "COLLISIONS:\r\n\r\nVessels and base buildings collide; hulls dent where hit; heavy impacts destroy vessels (thrust off with the Damage model option). Damage is saved in the scenario and shown in playback. Report: Custom functions (Ctrl-F4), Collision damage."
+    IDS_TYPE                "Physics"
+END
