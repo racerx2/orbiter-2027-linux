@@ -105,7 +105,8 @@ bool oapiUnregisterCustomCmd (int id)
 
 FILEHANDLE oapiOpenFile (const char *fname, FileAccessMode mode, PathRoot root)
 {
-	if (strcmp (fname, "Collision.cfg") || root != CONFIG || mode != FILE_IN_ZEROONFAIL) Bug ("unexpected oapiOpenFile");
+	if (strcmp (fname, "Collision.cfg")) return nullptr; // other cfg files (E2's client cfg) are missing here
+	if (root != CONFIG || mode != FILE_IN_ZEROONFAIL) Bug ("unexpected oapiOpenFile");
 	H.cfgOpens++;
 	return H.cfgMissing ? nullptr : (FILEHANDLE)&H.cfg;
 }
@@ -158,6 +159,98 @@ VESSEL *oapiGetVesselInterface (OBJHANDLE h)
 }
 
 int VESSEL::GetDamageModel () const { WorldCall (); return ((const FakeVessel *)(const void *)this)->damage; } // ASan: a destroyed vessel is poisoned
+
+// the rest of the SDK the module imports (CollSdkOrbiter.cpp): world reads see an empty, mesh-less world; every one is a world call
+namespace {
+const FakeVessel *Fv (const VESSEL *v) { return (const FakeVessel *)(const void *)v; }
+VECTOR3 Z () { return _V (0, 0, 0); }
+}
+double oapiGetMass (OBJHANDLE) { WorldCall (); return 1000; }
+double oapiGetSize (OBJHANDLE h) { WorldCall (); return Live (h) ? ((const FakeVessel *)h)->size : 0; }
+bool oapiIsVessel (OBJHANDLE h) { WorldCall (); return Live (h); }
+double oapiGetSimMJD () { return 51544.5; }
+double oapiGetSimTime () { return 0; }
+double oapiGetSysTime () { return 0; }
+MESHGROUPEX *oapiMeshGroupEx (MESHHANDLE, DWORD) { WorldCall (); return nullptr; }
+std::string oapiResolvePath (const char *path) { return path; }
+DWORD oapiGetBaseCount (OBJHANDLE) { WorldCall (); return 0; }
+void oapiGetGlobalPos (OBJHANDLE, VECTOR3 *pos) { WorldCall (); *pos = Z (); }
+void oapiGetGlobalVel (OBJHANDLE, VECTOR3 *vel) { WorldCall (); *vel = Z (); }
+int oapiGetMeshGroup (DEVMESHHANDLE, DWORD, GROUPREQUESTSPEC *) { WorldCall (); return -1; }
+bool oapiReadItem_int (FILEHANDLE, char *, int &) { return false; }
+bool oapiReadItem_bool (FILEHANDLE, char *, bool &) { return false; }
+bool oapiReadItem_float (FILEHANDLE, const char *, double &) { return false; }
+int oapiEditMeshGroup (DEVMESHHANDLE, DWORD, GROUPEDITSPEC *) { WorldCall (); return -1; }
+void oapiGetBaseEquPos (OBJHANDLE, double *lng, double *lat, double *rad) { WorldCall (); *lng = *lat = 0; if (rad) *rad = 0; }
+DWORD oapiGetGbodyCount () { WorldCall (); return 0; }
+void oapiGetObjectName (OBJHANDLE, char *name, int n) { WorldCall (); if (n > 0) *name = 0; }
+int oapiGetObjectType (OBJHANDLE h) { WorldCall (); return Live (h) ? OBJTP_VESSEL : OBJTP_INVALID; }
+OBJHANDLE oapiGetBaseByIndex (OBJHANDLE, int) { WorldCall (); return nullptr; }
+DWORD oapiMeshGroupCount (MESHHANDLE) { WorldCall (); return 0; }
+void oapiAddNotification (int, const char *, const char *) {}
+OBJHANDLE oapiGetGbodyByIndex (int) { WorldCall (); return nullptr; }
+const char *oapiGetMeshFilename (MESHHANDLE) { WorldCall (); return nullptr; }
+double oapiGetPlanetPeriod (OBJHANDLE) { WorldCall (); return 0; }
+VISHANDLE *oapiObjectVisualPtr (OBJHANDLE) { WorldCall (); return nullptr; }
+void oapiAnnotationSetPos (NOTEHANDLE, double, double, double, double) {}
+NOTEHANDLE oapiCreateAnnotation (bool, double, const VECTOR3 &) { return nullptr; }
+double oapiSurfaceElevation (OBJHANDLE, double, double) { WorldCall (); return 0; }
+void oapiAnnotationSetText (NOTEHANDLE, char *) {}
+void oapiGetRotationMatrix (OBJHANDLE, MATRIX3 *m) { WorldCall (); *m = _M (1, 0, 0, 0, 1, 0, 0, 0, 1); }
+double oapiGetTimeAcceleration () { WorldCall (); return 1; }
+void oapiSetTimeAcceleration (double) { WorldCall (); }
+UINT VESSEL::GetAnimPtr (ANIMATION **anim) const { WorldCall (); *anim = nullptr; return 0; }
+DEVMESHHANDLE VESSEL::GetDevMesh (VISHANDLE, UINT) const { WorldCall (); return nullptr; }
+const char *VESSEL::GetMeshName (UINT) const { WorldCall (); return nullptr; }
+char *VESSEL::GetClassName () const { WorldCall (); static char c[] = "FakeVessel"; return c; }
+double VESSEL::GetEmptyMass () const { WorldCall (); return 1000; }
+void VESSEL::GetGlobalPos (VECTOR3 &pos) const { WorldCall (); pos = _V (Fv (this)->size * 1000, 0, 0); }
+void VESSEL::GetGlobalVel (VECTOR3 &vel) const { WorldCall (); vel = Z (); }
+UINT VESSEL::GetMeshCount () const { WorldCall (); return 0; }
+void VESSEL::DefSetStateEx (const void *) const { WorldCall (); Bug ("state write in a mesh-less world"); }
+void VESSEL::GetAngularAcc (VECTOR3 &a) const { WorldCall (); a = Z (); }
+void VESSEL::GetAngularVel (VECTOR3 &a) const { WorldCall (); a = Z (); }
+DOCKHANDLE VESSEL::GetDockHandle (UINT) const { WorldCall (); return nullptr; }
+void VESSEL::GetDockParams (DOCKHANDLE, VECTOR3 &pos, VECTOR3 &dir, VECTOR3 &rot) const { WorldCall (); pos = dir = rot = Z (); }
+OBJHANDLE VESSEL::GetDockStatus (DOCKHANDLE) const { WorldCall (); return nullptr; }
+const OBJHANDLE VESSEL::GetGravityRef () const { WorldCall (); return nullptr; }
+bool VESSEL::GetMeshOffset (UINT, VECTOR3 &ofs) const { WorldCall (); ofs = Z (); return false; }
+bool VESSEL::GroundContact () const { WorldCall (); return false; }
+void VESSEL::SetAngularVel (const VECTOR3 &) const { WorldCall (); Bug ("spin write in a mesh-less world"); }
+bool VESSEL::GetForceVector (VECTOR3 &F) const { WorldCall (); F = Z (); return true; }
+SUPERVESSELHANDLE VESSEL::GetSupervessel () const { WorldCall (); return nullptr; }
+DWORD VESSEL::AttachmentCount (bool) const { WorldCall (); return 0; }
+const char *VESSEL::GetAttachmentId (ATTACHMENTHANDLE) const { WorldCall (); return nullptr; }
+DWORD VESSEL::GetFlightStatus () const { WorldCall (); return 0; }
+const MESHHANDLE VESSEL::GetMeshTemplate (UINT) const { WorldCall (); return nullptr; }
+bool VESSEL::GetThrustVector (VECTOR3 &T) const { WorldCall (); T = Z (); return false; }
+bool VESSEL::GetWeightVector (VECTOR3 &G) const { WorldCall (); G = Z (); return true; }
+DWORD VESSEL::GetThrusterCount () const { WorldCall (); return 0; }
+double VESSEL::GetPropellantMass (PROPELLANT_HANDLE) const { WorldCall (); return 0; }
+void VESSEL::GetRotationMatrix (MATRIX3 &R) const { WorldCall (); R = _M (1, 0, 0, 0, 1, 0, 0, 0, 1); }
+void VESSEL::SetPropellantMass (PROPELLANT_HANDLE, double) const { WorldCall (); Bug ("tank write"); }
+void VESSEL::SetRotationMatrix (const MATRIX3 &) const { WorldCall (); Bug ("attitude write in a mesh-less world"); }
+DWORD VESSEL::GetPropellantCount () const { WorldCall (); return 0; }
+ATTACHMENTHANDLE VESSEL::GetAttachmentHandle (bool, DWORD) const { WorldCall (); return nullptr; }
+void VESSEL::GetAttachmentParams (ATTACHMENTHANDLE, VECTOR3 &pos, VECTOR3 &dir, VECTOR3 &rot) const { WorldCall (); pos = dir = rot = Z (); }
+OBJHANDLE VESSEL::GetAttachmentStatus (ATTACHMENTHANDLE) const { WorldCall (); return nullptr; }
+bool VESSEL::GetSuperstructureCG (VECTOR3 &cg) const { WorldCall (); cg = Z (); return false; }
+PROPELLANT_HANDLE VESSEL::GetThrusterResource (THRUSTER_HANDLE) const { WorldCall (); return nullptr; }
+void VESSEL::SetThrusterResource (THRUSTER_HANDLE, PROPELLANT_HANDLE) const { WorldCall (); Bug ("thruster link write"); }
+double VESSEL::GetPropellantMaxMass (PROPELLANT_HANDLE) const { WorldCall (); return 0; }
+void VESSEL::DelPropellantResource (PROPELLANT_HANDLE &) const { WorldCall (); Bug ("tank delete"); }
+WORD VESSEL::GetMeshVisibilityMode (UINT) const { WorldCall (); return 0; }
+PROPELLANT_HANDLE VESSEL::CreatePropellantResource (double, double, double) const { WorldCall (); Bug ("tank create"); return nullptr; }
+THRUSTER_HANDLE VESSEL::GetThrusterHandleByIndex (DWORD) const { WorldCall (); return nullptr; }
+PROPELLANT_HANDLE VESSEL::GetPropellantHandleByIndex (DWORD) const { WorldCall (); return nullptr; }
+void VESSEL::GetPMI (VECTOR3 &pmi) const { WorldCall (); pmi = _V (1, 1, 1); }
+double VESSEL::GetMass () const { WorldCall (); return 1000; }
+char *VESSEL::GetName () const { WorldCall (); return const_cast<char *> (Fv (this)->name); }
+void VESSEL::AddForce (const VECTOR3 &, const VECTOR3 &) const { WorldCall (); Bug ("force in a mesh-less world"); }
+bool VESSEL::Playback () const { WorldCall (); return false; }
+UINT VESSEL::DockCount () const { WorldCall (); return 0; }
+bool VESSEL::Recording () const { WorldCall (); return false; }
+bool VESSEL::ShiftMesh (UINT, const VECTOR3 &) const { WorldCall (); return false; }
 
 void oapiOpenDialog (ImGuiDialog *d) // OrbiterAPI.cpp, DlgMgr.h: added once to the session's manager, activated
 {
@@ -344,14 +437,14 @@ TEST_CASE ("CollPlugin lifecycle: sessions, close paths, unload and re-load")
 	H.dlgMgr = true;
 	CHECK (SaveState (h) == std::vector<std::string> { "COLLA 1" });
 	Outside (H.world[0]);
-	LoadState (h, { "COLLA 1", "VESSEL 0 A ShuttlePB" });
+	LoadState (h, { "COLLA 1", "VESSEL 0 A ShuttlePB", "XDMG 1 7 0", "END_VESSEL" }); // class ShuttlePB: no live match, kept dormant
 	H.module->clbkNewVessel (Make (2, "C", 1));
 	Outside (H.world[2]);
 	H.module->clbkSimulationStart (oapi::Module::RENDER_NONE);
 	Frames (3);
 	Command ();
 	Command ();
-	CHECK (SaveState (h) == std::vector<std::string> { "COLLA 1", "VESSEL 0 A ShuttlePB" });
+	CHECK (SaveState (h) == std::vector<std::string> { "COLLA 1", "VESSEL 0 A ShuttlePB", "  XDMG 1 7 0", "END_VESSEL" });
 	NormalClose ();
 	Outside (&H.slots[0]); // a dead handle: ASan reports any read
 
@@ -434,7 +527,7 @@ TEST_CASE ("CollPlugin lifecycle: sessions, close paths, unload and re-load")
 	CHECK (got == lifecycle);
 	CHECK (Lines ("Collision: loaded (addon ").size () == 2);
 	CHECK (Lines ("Collision: active ") == std::vector<std::string> { A1 (1, 1, 1, 1, 2), A1 (2, 0, 0, 0, 1), A1 (3, 0, 0, 1, 3), A1 (4, 0, 0, 1, 4), A1 (1, 0, 0, 1, 4) });
-	CHECK (Lines ("Collision: scenario block adopted") == std::vector<std::string> { "Collision: scenario block adopted, lines=2", "Collision: scenario block adopted, lines=3", "Collision: scenario block adopted, lines=1" });
+	CHECK (Lines ("Collision damage block: ") == std::vector<std::string> { "Collision damage block: vessels=1 bases=0 unknown=0 skipped=0", "Collision damage block: vessels=0 bases=0 unknown=2 skipped=0", "Collision damage block: vessels=0 bases=0 unknown=0 skipped=0" });
 	CHECK (Lines ("Collision: Config/Collision.cfg not found").size () == 1);
 	std::vector<std::string> sums = Lines ("Collision summary: ");
 	REQUIRE (sums.size () == 5);

@@ -1,0 +1,37 @@
+BEGIN_DESC
+not upstream: collision addon smoke test: two ShuttlePBs in LEO (P0 layout), noses 6 m apart, closing at 2 m/s
+END_DESC
+
+BEGIN_ENVIRONMENT
+  System Sol
+  Date MJD 51982.5
+END_ENVIRONMENT
+
+BEGIN_FOCUS
+  Ship PB-A
+END_FOCUS
+
+BEGIN_CAMERA
+  TARGET PB-A
+  MODE Extern
+  POS 4.00 20.00 10.00
+  TRACKMODE TargetRelative
+  FOV 40.00
+END_CAMERA
+
+BEGIN_SHIPS
+PB-A:ShuttlePB
+  STATUS Orbiting Earth
+  RPOS 6778137 0 0
+  RVEL 0 0 7669.5581577927769
+  AROT 0 0 0
+  PRPLEVEL 0:0
+END
+PB-B:ShuttlePB
+  STATUS Orbiting Earth
+  RPOS 6778137 0 12
+  RVEL 0 0 7667.5581577927769
+  AROT 0 180 0
+  PRPLEVEL 0:0
+END
+END_SHIPS

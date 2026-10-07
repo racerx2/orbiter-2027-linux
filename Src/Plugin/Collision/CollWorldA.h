@@ -22,7 +22,7 @@ public:
 	virtual void Bases (double h, std::vector<CollABody> &out) { out.clear (); (void)h; } // kinematic base bodies (kind COLLB_BASE) with parts and motion
 	virtual void Zones (const std::vector<CollABody> &b, std::vector<CollZone> &out) { out.clear (); (void)b; } // active docking and attachment zones (8)
 	virtual CollH BaseHandle (int planet, int base) { (void)planet; (void)base; return nullptr; }
-	virtual void PartToVessel (uint32_t id, int mesh, Vector &p, Vector &n) { (void)id; (void)mesh; (void)p; (void)n; } // part rest frame -> vessel frame with pose[1]
+	virtual void PartToVessel (uint32_t id, int mesh, int grp, Vector &p, Vector &n) { (void)id; (void)mesh; (void)grp; (void)p; (void)n; } // part rest frame -> vessel frame with pose[1]
 };
 
 // E1's part of CollSession (E4 11.3); stage functions as E4 11.4

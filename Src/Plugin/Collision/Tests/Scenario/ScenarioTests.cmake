@@ -150,3 +150,6 @@ coll_scenario_test(Scn.Teardown SCN "Delta-glider/Smack!" FRAMES 60 CHECK teardo
 	RUNS "off|headless|off||${close}||" "on|headless|on||${close}||" "onfast|headless|on||||")
 coll_scenario_test(Scn.NormalClose SCN gen:pair:g0=1000,director=1,block=destroyed FRAMES 60 CHECK normalclose
 	RUNS "main|headless|on||${close}||TESTRECORD 1 1000")
+
+# integration smoke test: the scenario file Smoke-PB-headon.scn, PB-A and PB-B noses 6 m apart closing at 2 m/s, contact near t = 3 s
+coll_scenario_test(Coll.Smoke.HeadOn SCN Smoke-PB-headon.scn FRAMES 400 CHECK smoke RUNS "main|headless|on||||")

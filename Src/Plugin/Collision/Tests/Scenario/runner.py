@@ -538,6 +538,11 @@ def write_scenario(a, spec, sbx, stem, runid):  # step 6: the run's scenario is 
                     raise TestError('generated file outside Flights/: %s' % rel)
                 ensure_dir(os.path.dirname(sbx.path(rel)))
                 write_if_changed(sbx.path(rel), data)
+    elif src.endswith('.scn'):  # a scenario file of this folder (or an absolute path)
+        p = src if os.path.isabs(src) else os.path.join(a.data, src)
+        if not os.path.isfile(p):
+            raise TestError('scenario not found: %s' % p)
+        text = open(p, encoding='latin-1').read()
     else:
         p = sbx.path('Scenarios', src + '.scn')
         if not os.path.isfile(p):

@@ -9,6 +9,7 @@
 #include "OrbiterAPI.h"
 #include "ModuleAPI.h"
 #include "VesselAPI.h"
+#include "CollSdk.h"                          // COLLN_*
 
 #ifndef COLL_HAVE_IMGUI // the build never sets it; only the negative compile check (Collision.Win2024.Compile) forces it
 #ifdef OAPINOTIF_WARNING
@@ -20,7 +21,6 @@
 
 using CollHModule = decltype (std::declval<oapi::ModuleNV &> ().GetModule ()); // HINSTANCE in Orbiter 2024, void* in the port
 
-enum : int { COLLN_SUCCESS = 0, COLLN_WARNING = 1, COLLN_ERROR = 2, COLLN_INFO = 3 }; // the port's OAPINOTIF_* values, absent in 2024
 #ifdef OAPINOTIF_WARNING
 static_assert (COLLN_SUCCESS == OAPINOTIF_SUCCESS && COLLN_WARNING == OAPINOTIF_WARNING && COLLN_ERROR == OAPINOTIF_ERROR && COLLN_INFO == OAPINOTIF_INFO);
 #endif

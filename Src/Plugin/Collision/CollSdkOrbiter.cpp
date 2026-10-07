@@ -15,9 +15,7 @@
 #include "VesselAPI.h"
 #include "CollisionAPI.h"
 #include "CollSdkOrbiter.h"
-namespace collplat { // CollPlatform.h repeats CollSdk.h's COLLN_* enum; its macro is what this file needs
 #include "CollPlatform.h"
-}
 
 static_assert (sizeof (NTVERTEX) == 32, "NTVERTEX must keep the CollVtx layout");
 

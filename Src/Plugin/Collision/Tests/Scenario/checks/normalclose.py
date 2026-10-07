@@ -8,7 +8,7 @@ BLOCK = ['COLLA 1', 'VESSEL 0 PB-A ShuttlePB', 'XDMG 1 500000 0', 'END_VESSEL']
 
 def check(ctx):
     r = ctx.first()
-    order(r, ['Collision: session 1 created (load)', 'Collision: scenario block adopted, lines=4', 'Collision: active ',
+    order(r, ['Collision: session 1 created (load)', 'Collision damage block: vessels=1 bases=0 unknown=0 skipped=0', 'Collision: active ',
               'Collision summary: ', 'Collision perf: ', 'Collision: session 1 ended (end)', CLOSE])
     end = max(i for i, l in enumerate(r.log) if l.startswith('Collision: session 1 ended (end)'))
     if any(l.startswith('Collision write') for l in r.log[end:]):

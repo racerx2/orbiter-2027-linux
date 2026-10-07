@@ -5,11 +5,12 @@
 #include <memory>
 #include "CollPlatform.h"
 class CollSession;
-class CollDialogStandIn;
+class CollSdk;
+class CollDialogA;
 
 class CollPlugin : public oapi::Module {
 public:
-	explicit CollPlugin (CollHModule h);   // InitModule: the custom command and the dialog object, once per process
+	explicit CollPlugin (CollHModule h);   // InitModule: the process CollSdk, the custom command and the dialog object, once per process
 	~CollPlugin () override;
 	void Shutdown ();                      // ExitModule: a live session ends, then the command and the dialog go
 	void LoadState (FILEHANDLE scn);
@@ -33,13 +34,13 @@ private:
 	CollSession *Want (bool startsSession, const char *why);
 	void End (const char *why);
 	void TimeJump (double simt, double simdt, double mjd);
+	std::unique_ptr<CollSdk> proc;         // the process instance: command, dialog, log (W1)
 	std::unique_ptr<CollSession> s;
 	Phase phase = Phase::None;
 	uint32_t serial = 0;
 	bool inStep = false;
 	Jump jump;
-	int cmd = -1;                          // per process (W1)
-	int cmds = 0;                          // registered minus unregistered, printed at unload
-	CollDialogStandIn *dlg = nullptr;      // per process, holds no session data; E3's CollDialogA replaces it in Phase D
+	int cmd = 0;                           // per process (W1); 0 = none
+	CollDialogA *dlg = nullptr;            // per process, holds no session data
 };
 #endif

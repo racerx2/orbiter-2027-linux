@@ -1,34 +1,22 @@
 // not upstream: collision addon, module entry, session lifecycle and callback dispatch (Design CA E4 11.2-11.4)
 #define ORBITER_MODULE // exactly one file: ModuleDate and the module glue of the SDK library
+#include <cstdio>
 #include <string>
 #include <vector>
 #include "CollPlugin.h"
 #include "CollSession.h"
+#include "CollApiA.h"
 #include "CollCfg.h"
+#include "CollDamageA.h"
+#include "CollDialogA.h"
 #include "CollGeom.h"
-#if COLL_HAVE_IMGUI
-#include "imgui.h"
-
-class CollDialogStandIn : public ImGuiDialog { // until Phase D: its own name, so E3's CollDialogA (CollDialog.cpp) cannot meet a second definition
-public:
-	explicit CollDialogStandIn (const CollPlugin *p) : ImGuiDialog ("Collision damage"), plugin (p) {}
-protected:
-	void OnDraw () override
-	{
-		const CollSession *x = plugin->Session ();
-		if (x) ImGui::Text ("Collision session %u", x->Serial ());
-		else ImGui::TextUnformatted ("no session");
-	}
-private:
-	const CollPlugin *plugin;
-};
-#endif
+#include "CollSdkOrbiter.h"
 
 namespace {
 
 CollPlugin *g_plugin = nullptr;
-char g_cmdDesc[] = "Collision damage: vessels, buildings, repair"; // the core keeps this pointer for the process
-int g_logLevel = 0;                                                  // CollisionLog of the live session
+char g_cmdDesc[128] = "";            // the core keeps this pointer for the process
+int g_logLevel = 0;                  // CollisionLog of the live session
 
 void LogSink (int level, const char *msg) // the Phase A log hook while a session lives
 {
@@ -36,7 +24,13 @@ void LogSink (int level, const char *msg) // the Phase A log hook while a sessio
 	CollLogLine (msg);
 }
 
-CollCfgValues ReadCfg () // once per session, at its creation (E4 11.3); E2 step 9 moves it to CollSdk::CfgString
+CollDmgSession *CurDmg () // the running session's E3 part for the dialog and the exported API
+{
+	CollSession *x = g_plugin ? g_plugin->Session () : nullptr;
+	return x ? x->Dmg () : nullptr;
+}
+
+CollCfgValues ReadCfg () // once per session, at its creation (E4 11.3)
 {
 	FILEHANDLE f = CollOpenCfg ("Collision.cfg");
 	if (!f) {
@@ -54,11 +48,13 @@ CollCfgValues ReadCfg () // once per session, at its creation (E4 11.3); E2 step
 
 CollPlugin::CollPlugin (CollHModule h) : oapi::Module (h)
 {
-	cmd = CollRegisterCmd ("Collision damage", g_cmdDesc, OnCustomCmd, this); // once per process, as Framerate
-	if (cmd >= 0) cmds++;
+	proc = CollSdkOrbiterCreate (true);
+	snprintf (g_cmdDesc, sizeof g_cmdDesc, "%s", CollUiA::Description ());
+	cmd = proc->RegisterCmd (CollUiA::Label (), g_cmdDesc, OnCustomCmd, this); // once per process, as Framerate
 #if COLL_HAVE_IMGUI
-	dlg = new CollDialogStandIn (this); // no SDK call: the constructor stores the name
+	dlg = new CollDialogA (CurDmg); // no SDK call: the constructor stores the name
 #endif
+	CollApiA::SetSession (CurDmg);
 }
 
 CollPlugin::~CollPlugin () = default;
@@ -66,13 +62,15 @@ CollPlugin::~CollPlugin () = default;
 void CollPlugin::Shutdown ()
 {
 	End ("unload");
-	if (cmd >= 0 && CollUnregisterCmd (cmd)) cmds--;
-	cmd = -1;
+	CollApiA::SetSession (nullptr);
+	if (cmd) proc->UnregisterCmd (cmd);
+	cmd = 0;
 #if COLL_HAVE_IMGUI
 	delete dlg; // ~ImGuiDialog calls oapiCloseDialog, a no-op without a dialog manager
 #endif
 	dlg = nullptr;
-	CollLogF ("Collision: unloaded cmds=%d", cmds);
+	CollLogF ("Collision: unloaded cmds=%lld", (long long)proc->Count ().cmds);
+	proc.reset ();
 }
 
 CollSession *CollPlugin::Session () const { return phase == Phase::Running ? s.get () : nullptr; }
@@ -82,9 +80,9 @@ CollSession *CollPlugin::Want (bool startsSession, const char *why)
 	if (phase == Phase::Running && startsSession) End ("stale");
 	if (!s) {
 		CollCfgValues c = ReadCfg ();
-		s = std::make_unique<CollSession> (++serial, c);
 		g_logLevel = c.logLevel;
 		g_collLog = LogSink;
+		s = std::make_unique<CollSession> (++serial, c);
 		phase = Phase::Loading;
 		CollLogF ("Collision: session %u created (%s)", serial, why);
 	}
@@ -98,8 +96,8 @@ void CollPlugin::End (const char *why) // no world access: on the normal close p
 	if (!s) return;
 	uint32_t n = s->Serial ();
 	s->Close ();
-	g_collLog = nullptr;
 	s.reset ();
+	g_collLog = nullptr;
 	CollLogF ("Collision: session %u ended (%s)", n, why);
 }
 
@@ -120,17 +118,18 @@ void CollPlugin::clbkSimulationStart (RenderMode mode)
 
 void CollPlugin::clbkSimulationEnd () { End ("end"); }
 
-void CollPlugin::clbkNewVessel (OBJHANDLE h) { Want (false, "new vessel")->IdOf (h); }
+void CollPlugin::clbkNewVessel (OBJHANDLE h) { Want (false, "new vessel")->NewVessel (h, inStep); }
 
-void CollPlugin::clbkDeleteVessel (OBJHANDLE h) { if (s) s->Forget (h); }
+void CollPlugin::clbkDeleteVessel (OBJHANDLE h) { if (s) s->DeleteVessel (h, inStep); }
 
-void CollPlugin::clbkPreStep (double, double, double)
+void CollPlugin::clbkPreStep (double simt, double simdt, double)
 {
 	if (phase != Phase::Running || inStep) return;
 	inStep = true;
-	s->FrameBegin (); // PS1 BeginFrame: E2 PreStep and E1 snapshot come with Phases G and F
-	// PS2-PS7 in this order come with Phases G, F, D: E2 Deliver to E3 ShapesUpdated, E3 PrePhysics, E1 physics, E3 Commit, notices, E1 warp, E3 thrust cut
-	if (jump.pending) { // PS8: a time jump raised inside the pre-step
+	s->FrameBegin ();
+	s->PreStep (simt, simdt); // PS1-PS7
+	s->ApplyQueued ();        // PS8: vessels created or deleted by module code inside the pre-step
+	if (jump.pending) {       // PS8: a time jump raised inside the pre-step
 		jump.pending = false;
 		TimeJump (jump.simt, jump.simdt, jump.mjd);
 	}
@@ -141,8 +140,7 @@ void CollPlugin::clbkPreStep (double, double, double)
 void CollPlugin::clbkPostStep (double, double, double)
 {
 	if (phase != Phase::Running) return;
-	s->PostBegin (); // PO1-PO4 come with Phases G and D: E2 animation polls, E3 PostStep, test slot check, UiTick
-	s->PostEnd ();
+	s->PostStep (); // PO1-PO4
 }
 
 void CollPlugin::clbkTimeJump (double simt, double simdt, double mjd)
@@ -152,30 +150,30 @@ void CollPlugin::clbkTimeJump (double simt, double simdt, double mjd)
 	else TimeJump (simt, simdt, mjd);
 }
 
-void CollPlugin::TimeJump (double, double, double) {} // E1's time-jump rule and E2's MarkJump (Phases F, G)
+void CollPlugin::TimeJump (double, double, double) { if (s) s->TimeJump (); }
 
-void CollPlugin::clbkTimeAccChanged (double, double)
+void CollPlugin::clbkTimeAccChanged (double newWarp, double)
 {
 	if (phase != Phase::Running) return; // a warp set in a vessel's PostCreation or the scenario script arrives before the start
-	// E1's warp clamp (Phase F)
+	s->TimeAccChanged (newWarp);
 }
 
-void CollPlugin::clbkVesselJump (OBJHANDLE)
+void CollPlugin::clbkVesselJump (OBJHANDLE h)
 {
 	if (phase != Phase::Running) return; // DefSetStateEx in PostCreation raises it before the start
-	// E1 (Phase F)
+	s->VesselJump (h);
 }
 
-void CollPlugin::clbkPause (bool)
+void CollPlugin::clbkPause (bool pause)
 {
 	if (phase != Phase::Running) return; // a start paused arrives after the start, in the first time step
-	// E3's visual pass on pause entry (Phase D)
+	s->Pause (pause);
 }
 
 bool CollPlugin::clbkProcessKeyboardImmediate (char[256], bool)
 {
 	if (phase != Phase::Running) return false;
-	// E3's optional pass, CollisionKeyPass (Phase D)
+	s->KeyPass ();
 	return false;
 }
 
@@ -183,12 +181,8 @@ void CollPlugin::OnCustomCmd (void *ctx)
 {
 	CollPlugin *p = (CollPlugin *)ctx;
 	CollSession *x = p->Session ();
-	if (!x) return; // the core lists custom commands only in a session
-#if COLL_HAVE_IMGUI
-	if (p->dlg) CollOpenDialog (p->dlg);
-#else
-	CollLogF ("Collision damage: session %u (no dialog in this Orbiter; the report comes with Phase D)", x->Serial ());
-#endif
+	if (!x || !p->proc) return; // the core lists custom commands only in a session
+	CollUiA::OnCommand (*p->proc, x->Dmg (), p->dlg);
 }
 
 DLLCLBK void InitModule (CollHModule h)

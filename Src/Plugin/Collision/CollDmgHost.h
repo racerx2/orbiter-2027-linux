@@ -47,7 +47,7 @@ public:
 	CollDmgHostOf (GeomView &g, Ids &i) : gv (g), ids (i) {}
 	CollH Vessel (uint32_t id) override { return (CollH)ids.Vessel (id); }
 	uint32_t IdOf (CollH h) override { return ids.IdOf ((decltype (ids.Vessel (0)))h); }
-	CollShape *Shape (uint32_t id) override { auto *g = gv.Geom (id); return g ? g->shape : nullptr; }
+	CollShape *Shape (uint32_t id) override { auto *g = gv.Geom (id); return g ? const_cast<CollShape *> (g->shape) : nullptr; } // E2 owns the shape; E3 dents it
 	uint32_t SlotCount (uint32_t id) override { return (uint32_t)gv.Slots (id).size (); }
 	bool Slot (uint32_t id, uint32_t m, CollDmgSlot &out) override
 	{

@@ -267,7 +267,7 @@ void CollPhysSession::PS5Notices ()
 			c.mesh = s.mesh; c.group = s.grp; c.reserved = 0;
 			c.simt = e.t;
 			Vector p = s.c, nn = s.n;
-			geom.PartToVessel (n.id, s.mesh, p, nn);
+			geom.PartToVessel (n.id, s.mesh, s.grp, p, nn);
 			c.pos = V3 (p); c.nml = V3 (nn);
 			c.vn = e.vn; c.vt = e.vt; c.J = e.Jn; c.dE = std::max (0.0, e.dKE);
 			list.push_back (n);
