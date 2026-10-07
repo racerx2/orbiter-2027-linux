@@ -485,6 +485,19 @@ TEST_CASE("Atmosphere modules give physical densities", "[celbody]")
 		{"Earth", "EarthAtmNRLMSISE00", 400e3, 1e-13,  1e-10},
 		{"Mars",  "MarsAtm2006",        0.0,   0.005,  0.05},
 		{"Venus", "VenusAtm2006",       0.0,   40.0,   90.0},
+		// not upstream: aerobraking heights (US 1976 at 100 km, MGS/MRO near 105 km, Magellan near 140 km)
+		{"Earth", "EarthAtm2006",       100e3, 3e-7,   1e-6},
+		{"Mars",  "MarsAtm2006",        105e3, 5e-9,   5e-7},
+		{"Venus", "VenusAtm2006",       140e3, 3e-10,  3e-8},
+		// not upstream: the layered models at the surface (1 bar for the giants) and in the aerocapture band
+		{"Titan",   "TitanAtm2005",     0.0,    5.0,   5.5},
+		{"Titan",   "TitanAtm2005",     1000e3, 1e-10, 2e-9},
+		{"Jupiter", "JupiterAtm1995",   0.0,    0.15,  0.17},
+		{"Saturn",  "SaturnAtm2017",    0.0,    0.17,  0.20},
+		{"Uranus",  "UranusAtm1986",    0.0,    0.40,  0.44},
+		{"Neptune", "NeptuneAtm1989",   0.0,    0.42,  0.46},
+		{"Neptune", "NeptuneAtm1989",   200e3,  1e-5,  1e-4},
+		{"Io",      "IoAtm2007",        0.0,    5e-9,  9e-9},
 	};
 	for (const AtmCase &c : cases) {
 		INFO(c.module);
@@ -514,34 +527,93 @@ TEST_CASE("Atmosphere modules give physical densities", "[celbody]")
 	}
 }
 
-TEST_CASE("Pluto's atmosphere follows the New Horizons profile", "[celbody]")
+struct AtmProfile { const char *body; double p0, T0, R, Tmin, Tmax; std::vector<std::pair<double,double>> nodes; };
+
+// a module atmosphere (CELBODY::clbkAtmParam): surface values, pressure falling to 600 km, the temperature at each node, no jump there
+static void CheckProfile (const AtmProfile &c)
 {
-	CelbodyModule m ("Pluto");
+	INFO(c.body);
+	CelbodyModule m (c.body);
 	REQUIRE(m.body);
 	ATMPARAM a;
 	REQUIRE(m.body->clbkAtmParam (0.0, &a));
-	CHECK(fabs (a.p - 1.15) < 1e-9);
-	CHECK(fabs (a.T - 38.0) < 1e-9);
-	CHECK(fabs (a.rho - 1.15/(296.8*38.0)) < 1e-12);
+	CHECK(fabs (a.p - c.p0) < 1e-9*c.p0);
+	CHECK(fabs (a.T - c.T0) < 1e-9);
+	CHECK(fabs (a.rho - c.p0/(c.R*c.T0)) < 1e-9*a.rho);
 	double plast = a.p;
 	for (double alt = 1e3; alt <= 600e3; alt += 1e3) {
 		REQUIRE(m.body->clbkAtmParam (alt, &a));
 		INFO("alt " << alt << " T=" << a.T << " p=" << a.p);
 		CHECK(a.p < plast);
-		CHECK(a.T > 37.0);
-		CHECK(a.T < 109.0);
+		CHECK(a.T >= c.Tmin);
+		CHECK(a.T <= c.Tmax);
 		plast = a.p;
 	}
-	const double rad = 1.1883e6;
-	for (double z : {4e3, 14e3, 30e3, 200e3}) { // layer bases in geopotential altitude: no jump
-		double h = z*rad/(rad - z);
+	for (auto &n : c.nodes) {
 		ATMPARAM lo, hi;
-		m.body->clbkAtmParam (h - 0.01, &lo);
-		m.body->clbkAtmParam (h + 0.01, &hi);
-		INFO("layer base " << z);
+		m.body->clbkAtmParam (n.first - 0.01, &lo);
+		m.body->clbkAtmParam (n.first + 0.01, &hi);
+		INFO("node " << n.first << " T=" << lo.T);
+		CHECK(fabs (lo.T - n.second) < 1e-3);
 		CHECK(fabs (hi.p - lo.p) < 1e-5*lo.p);
 		CHECK(fabs (hi.T - lo.T) < 1e-3);
 	}
-	m.body->clbkAtmParam (30e3, &a);
-	CHECK(a.T > 105.0); // stratopause
+}
+
+TEST_CASE("Pluto's atmosphere follows the New Horizons profile", "[celbody]")
+{
+	CheckProfile ({"Pluto", 1.15, 38.0, 296.8, 38.0, 108.0, {{4e3, 38.0}, {14e3, 100.0}, {30e3, 108.0}, {200e3, 74.0}}});
+}
+
+TEST_CASE("Triton's atmosphere follows the Voyager profile", "[celbody]")
+{
+	CheckProfile ({"Triton", 1.45, 38.0, 297.0, 37.2, 100.0, {{8e3, 37.2}, {25e3, 50.0}, {50e3, 50.0}, {150e3, 85.0}, {400e3, 100.0}}});
+}
+
+struct LayerCase { const char *body, *module; double top, Tmin, Tmax; };
+
+TEST_CASE("Layered atmosphere modules fall smoothly to their limit", "[celbody]")
+{
+	static const LayerCase cases[] = {
+		{"Titan",   "TitanAtm2005",   1200e3, 70.4, 187.0},
+		{"Jupiter", "JupiterAtm1995", 3200e3, 110.0, 1000.0},
+		{"Saturn",  "SaturnAtm2017",  2900e3, 82.0, 420.0},
+		{"Uranus",  "UranusAtm1986",  2600e3, 53.0, 800.0},
+		{"Neptune", "NeptuneAtm1989", 1800e3, 52.0, 750.0},
+		{"Io",      "IoAtm2007",      120e3,  115.0, 115.0},
+	};
+	for (const LayerCase &c : cases) {
+		INFO(c.module);
+		CelbodyModule m (c.body);
+		REQUIRE(m.body);
+		void *hAtm = dlopen ((std::string ("Modules/Celbody/") + c.body + "/Atmosphere/" + c.module + ".so").c_str(), RTLD_NOW);
+		REQUIRE(hAtm);
+		ATMOSPHERE *(*create)(CELBODY2*) = (ATMOSPHERE*(*)(CELBODY2*))OwnProc (hAtm, "CreateAtmosphere");
+		void (*destroy)(ATMOSPHERE*) = (void(*)(ATMOSPHERE*))OwnProc (hAtm, "DeleteAtmosphere");
+		REQUIRE(create);
+		REQUIRE(destroy);
+		ATMOSPHERE *atm = create ((CELBODY2*)m.body);
+		ATMCONST ac;
+		memset (&ac, 0, sizeof(ac));
+		REQUIRE(atm->clbkConstants (&ac));
+		CHECK(ac.altlimit == c.top);
+		ATMOSPHERE::PRM_IN in;
+		memset (&in, 0, sizeof(in));
+		in.flag = ATMOSPHERE::PRM_ALT;
+		ATMOSPHERE::PRM_OUT out;
+		double plast = 2.0*ac.p0;
+		for (double alt = 0.0; alt <= c.top; alt += 1e3) {
+			in.alt = alt;
+			REQUIRE(atm->clbkParams (&in, &out));
+			INFO("alt " << alt << " T=" << out.T << " p=" << out.p);
+			CHECK(out.p < plast);
+			CHECK(out.p > 0.0);
+			CHECK(out.T >= c.Tmin - 1e-9);
+			CHECK(out.T <= c.Tmax + 1e-9);
+			CHECK(fabs (out.rho - out.p/(ac.R*out.T)) < 1e-9*out.rho);
+			plast = out.p;
+		}
+		destroy (atm);
+		dlclose (hAtm);
+	}
 }

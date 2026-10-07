@@ -38,6 +38,10 @@ set_target_properties(${CELBODY}
 	FOLDER Celbody/Satsat
 )
 
+add_subdirectory( # not upstream: the Huygens atmosphere model
+	Atmosphere
+)
+
 #Installation
 install(TARGETS
 	${CELBODY}

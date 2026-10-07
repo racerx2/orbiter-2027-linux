@@ -47,6 +47,10 @@ set_target_properties(${CELBODY}
 	FOLDER Celbody/Vsop87
 )
 
+add_subdirectory( # not upstream: the 2017 Cassini atmosphere model
+	Atmosphere
+)
+
 #Installation
 install(TARGETS
 	${CELBODY}

@@ -52,6 +52,8 @@ int GALOBJ::clbkFastEphemeris (double simt, int req, double *ret)
 
 void GALOBJ::clbkInit (FILEHANDLE cfg)
 {
+	CELBODY2::clbkInit (cfg); // not upstream: loads the atmosphere module (Io), as SATOBJ and the VSOP87 bodies do
+
 	// Initialise the sampling points
 	sp[0].t = 0;
 	sp[1].t = interval;
