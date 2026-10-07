@@ -12,9 +12,9 @@ WRAPPERS = ('CollOpenDialog', 'imgui.h')  # CollPlatform.h wrappers and the head
 CONSEQUENCES = ("only virtual member functions can be marked 'override'",)
 
 
-def clang_cmd(clang, a, extra):
+def clang_cmd(clang, a, extra, nominmax=True):
     return [clang, '--target=x86_64-w64-mingw32', '-fms-extensions', '-std=c++20', '-fsyntax-only', '-ferror-limit=0',
-            '-DNOMINMAX', '-DCOLL_ADDON_VERSION="0.0.0"', '-I' + a.src, '-I' + a.headers] + extra
+            '-DCOLL_ADDON_VERSION="0.0.0"', '-I' + a.src, '-I' + a.headers] + (['-DNOMINMAX'] if nominmax else []) + extra
 
 
 def errors(out):
@@ -71,6 +71,13 @@ def main():
                 fails.append('%s:%d: forced COLL_HAVE_IMGUI fails outside the ImGui and notification names: %s' % (os.path.basename(path), line, msg))
     if not hit:
         fails.append('forcing COLL_HAVE_IMGUI=1 broke nothing: the macro guards no 2024 difference')
+    api = os.path.join(a.src, 'Tests', 'CollisionAPI.Check.cpp')  # the public header as a Windows vessel module includes it, with or without NOMINMAX
+    api_ok = 0
+    for nominmax in (True, False):
+        r = subprocess.run(clang_cmd(a.clang, a, [api], nominmax), capture_output=True, text=True)
+        api_ok += not r.returncode
+        if r.returncode:
+            fails.append('CollisionAPI.h does not compile%s:\n%s' % ('' if nominmax else ' without NOMINMAX', r.stderr))
     windres = shutil.which('x86_64-w64-mingw32-windres')
     for rc in sorted(glob.glob(os.path.join(a.src, '*.rc'))) if windres else []:
         r = subprocess.run([windres, '-I' + a.src, '-I' + a.headers, rc, '-O', 'coff', '-o', os.devnull], capture_output=True, text=True)
@@ -79,8 +86,8 @@ def main():
 
     for f in fails:
         print('FAIL: ' + f)
-    print('%d of %d sources compile against %s (resources: %s); forced macro fails at: %s; not used yet: %s' % (
-        ok, len(sources), a.headers, 'windres' if windres else 'not checked', ', '.join(sorted(hit)) or '-', ', '.join(k for k in NAMES if k not in hit) or '-'))
+    print('%d of %d sources compile against %s, CollisionAPI.h %d of 2 (resources: %s); forced macro fails at: %s; not used yet: %s' % (
+        ok, len(sources), a.headers, api_ok, 'windres' if windres else 'not checked', ', '.join(sorted(hit)) or '-', ', '.join(k for k in NAMES if k not in hit) or '-'))
     return 1 if fails else 0
 
 
