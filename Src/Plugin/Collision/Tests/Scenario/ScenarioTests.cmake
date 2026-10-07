@@ -80,3 +80,7 @@ coll_add_test(Scn.RunnerGuard TIMEOUT 60 SKIP 77 SERIAL LABELS scenario coll COM
 coll_scenario_test(Scn.SanityCheck SCN "Delta-glider/Smack!" FRAMES 60 CHECK sanity RUNS "main|headless|off||||")
 coll_scenario_test(Scn.AddonLoad SCN "Delta-glider/Smack!" FRAMES 60 CHECK addonload RUNS "main|headless|on||||")
 coll_scenario_test(Scn.ExitCode SCN gen:pair FRAMES 20 LUA exitcode CHECK exitcode RUNS "main|headless|off||@exit=3||")
+
+# T0.2 run-to-run determinism (design-C-T T0.2)
+coll_scenario_test(Scn.Twice SCN gen:pair:g0=1000 FRAMES 600 CHECK twice
+	RUNS "off1|headless|off||||" "off2|headless|off||||" "on1|headless|on||||" "on2|headless|on||||")
