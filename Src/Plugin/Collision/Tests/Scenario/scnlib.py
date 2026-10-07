@@ -321,7 +321,7 @@ def momentum(d, k, names, O, vc):  # P and L about O in the frame moving at vc (
         rel, vr = sub(x, O), sub(v, vc)
         spin = rot_apply(rot(d, k, n), tuple(m * i * wi for i, wi in zip(I, w)))
         P = add(P, scale(v, m))
-        L = add(L, add(cross(rel, scale(vr, m)), spin))
+        L = add(L, sub(cross(rel, scale(vr, m)), spin))  # Orbiter's point velocity is crossp (r, w): the spin term enters negated
         sP += m * norm3(vr)
         sL += norm3(rel) * m * norm3(vr) + norm3(spin)
     return P, L, sP, sL

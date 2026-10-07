@@ -81,6 +81,7 @@ public:
 	const CollAStats &Stats () const { return st; }
 	const CollWarpInput &WarpIn () const { return warp; } // 9: look-ahead and load caps of the last Run
 	double hRest = 0.1;                            // 7.4 load cap for bodies with engines engaged, from the mirror
+	const CollDetect *FeatDet () const { return featDet; } // the detector whose results the host is asked about now, else NULL
 	static uint64_t Key (uint8_t kind, uint32_t id) { return ((uint64_t)(kind == COLLB_BASE ? 1 : 0) << 32) | id; }
 private:
 	std::vector<CollAIslandRec> isl;               // last frame's speculative islands (2.1)
@@ -91,6 +92,7 @@ private:
 	CollDetect kt;                                 // scratch detector of the kinematic touch (2.3)
 	struct Pend { uint64_t key; int body; CollOrbState conf, cf; Vector tgtP; double h; }; // a single body written with SetState: Finish re-solves its force
 	std::vector<Pend> pend;
+	const CollDetect *featDet = nullptr;
 	struct Impl;
 };
 #endif

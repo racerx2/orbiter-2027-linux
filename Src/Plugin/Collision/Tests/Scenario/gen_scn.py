@@ -105,7 +105,53 @@ def hvc(p):  # Coll.HvC.Stock (T 4.5, T0.5): the P0 pair 1 km apart, ISS 3 km ah
     return s + 'END_SHIPS\n'
 
 
-GENERATORS = {'pair': pair, 'surface': surface, 'ascent': ascent, 'synthplay': synthplay, 'hvc': hvc}
+def ksc(p):  # Coll.Base.KSC: CollTestVessels landed on Cape Canaveral pads 3-5, placed in frame 1 next to the HANGAR at base-local (7180, 0, -2180)
+    s = head('PE', 'Cape Canaveral hangar neighbours')
+    y = float(p.get('y', 1.55))  # touchdown points 1.5 m below the CG
+    acts = ['TESTPLACEBASE 1 PE Cape_Canaveral 7180 %s -2160 0 0 0 0' % g(y),  # 2.4 m east of the east wall, wings along the wall normal
+            'TESTPLACEBASE 1 PW Cape_Canaveral 7180 %s -2200 0 0 0 0' % g(y),  # 2.4 m west of the west wall
+            'TESTPLACEBASE 1 PM Cape_Canaveral 7163 %s -2195 0 0 0.5 90' % g(y)]  # 2.4 m north of the north wall, 0.5 m/s east along it
+    for n, pad in (('PE', 3), ('PW', 4), ('PM', 5)):
+        s += '%s:CollTestVessel\n  STATUS Landed Earth\n  BASE Cape Canaveral:%d\n  HEADING 0.00\n  PRPLEVEL 0:0\n' % (n, pad)
+        if n == 'PE':
+            s += ''.join('  %s\n' % a for a in acts)
+        s += 'END\n'
+    return s + 'END_SHIPS\n'
+
+
+def stack(p):  # Coll.Stack.Hit: PB-B docked onto PB-A in frame 1 (ports at y 1.3), TC nose to PB-A's nose 6 + g0 m apart closing at u in frame 3
+    g0, u = float(p.get('g0', 0.12)), float(p.get('u', 0.015))
+    v0 = v_circ('Earth', R_P0)
+    s = head('PB-A', 'docked stack hit nose to nose g0=%s u=%s' % (g0, u))
+    s += 'PB-A:CollTestVessel\n  STATUS Orbiting Earth\n  RPOS %s 0 0\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0\n' % (g(R_P0), g(v0))
+    s += '  TESTDOCK 1 PB-A 0 PB-B 0 1\n  TESTPLACEREL 3 TC PB-A 0 0 %s 0 0 %s 0 180 0\nEND\n' % (g(6.0 + g0), g(-u))
+    s += 'PB-B:CollTestVessel\n  STATUS Orbiting Earth\n  RPOS %s 0 60\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0\nEND\n' % (g(R_P0), g(v0))
+    s += 'TC:CollTestVessel\n  STATUS Orbiting Earth\n  RPOS %s 0 -120\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0\nEND\n' % (g(R_P0), g(v0))
+    return s + 'END_SHIPS\n'
+
+
+def attached(p):  # Coll.Stack.Attached: PL attached on top of PB-A (CollTestVessel points), TC onto PL's nose closing at u in frame 3
+    g0, u = float(p.get('g0', 0.12)), float(p.get('u', 0.1))
+    v0 = v_circ('Earth', R_P0)
+    s = head('PB-A', 'attached payload hit nose to nose g0=%s u=%s' % (g0, u))
+    s += 'PB-A:CollTestVessel\n  STATUS Orbiting Earth\n  RPOS %s 0 0\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0\n' % (g(R_P0), g(v0))
+    s += '  TESTPLACEREL 3 TC PB-A 0 3.8 %s 0 0 %s 0 180 0\nEND\n' % (g(6.0 + g0), g(-u))  # PL's CG 3.8 m above PB-A's (attachment points)
+    s += 'PL:CollTestVessel\n  STATUS Orbiting Earth\n  RPOS %s 3.8 0\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0\n  ATTACHED 0:0,PB-A\nEND\n' % (g(R_P0), g(v0))
+    s += 'TC:CollTestVessel\n  STATUS Orbiting Earth\n  RPOS %s 0 -120\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0\nEND\n' % (g(R_P0), g(v0))
+    return s + 'END_SHIPS\n'
+
+
+def wake(p):  # Coll.Landed.Wake: LP landed on Brighton Beach pad 2 (heading 90), HT placed in frame 1 east of it, nose to nose, closing at u
+    u, g0, dy = float(p.get('u', 1.0)), float(p.get('g0', 0.1)), float(p.get('dy', 0.2))
+    s = head('LP', 'landed partner hit at u=%s' % u, 'Moon')
+    s += 'LP:CollTestVessel\n  STATUS Landed Moon\n  BASE Brighton Beach:2\n  HEADING 90.00\n  PRPLEVEL 0:0\n  TESTLOGMSG 1\n'
+    s += '  TESTPLACEBASE 1 HT Brighton_Beach 100 %s %s 0 0 %s 270\nEND\n' % (g(1.5 + dy), g(-173.21 + 6.0 + g0), g(-u))
+    s += 'HT:CollTestVessel\n  STATUS Landed Moon\n  BASE Brighton Beach:1\n  HEADING 0.00\n  PRPLEVEL 0:0\n  TESTLOGMSG 1\nEND\n'
+    return s + 'END_SHIPS\n'
+
+
+GENERATORS = {'pair': pair, 'surface': surface, 'ascent': ascent, 'synthplay': synthplay, 'hvc': hvc, 'ksc': ksc, 'stack': stack, 'attached': attached,
+              'wake': wake}
 
 
 def params(text):

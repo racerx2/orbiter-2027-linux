@@ -60,7 +60,7 @@ struct Wk {                                              // one body of this fra
 	Vector x1, v1, w1; Quaternion q1;                    // predicted end
 	CollOrbState o;                                      // Orbiter's state of the body now; configured by the delivery
 	Vector Fprev, Mprev;
-	bool posChanged = false, past = false, entry = false, jump = false, noRec = false;
+	bool posChanged = false, past = false, entry = false, jump = false, noRec = false, woke = false;
 	Vector xs, vs, ws; Quaternion qs;                    // physical start of the last step; free start after a rollback
 	int det = -1, ver = -1;
 	uint64_t key = 0;
@@ -141,8 +141,8 @@ struct CollAddonFrame::Impl {
 	CollMotion PastKin (int i, double hh) const          // kinematic body over [t0 - hh, t0], extrapolated back
 	{
 		CollMotion m = b[i].kin;
-		m.c1 = m.c0; m.v1 = m.v0; m.q1 = m.q0; m.w1g = m.w0g;
-		m.c0 = m.c1 - m.v1*hh;
+		m.c1 = m.c0; m.v1 = m.v0; m.a1 = m.a0; m.q1 = m.q0; m.w1g = m.w0g;
+		m.c0 = m.c1 - m.v1*hh + m.a1*(0.5*hh*hh); m.v0 = m.v1 - m.a1*hh;
 		Quaternion q (m.q1);
 		CollRotate (q, tmul (QM (m.q1), m.w1g)*-hh);
 		m.q0 = q; m.h = hh; m.ta = 0; m.tb = 1;
@@ -183,6 +183,14 @@ struct CollAddonFrame::Impl {
 	}
 
 	void Run (std::vector<CollAWrite> &out, std::vector<CollImpactEvent> &ev, const std::vector<CollZone> &zones);
+	bool InitDyn (int i, bool woken);
+	void Wake (int i);
+	int FindRec (uint64_t key) const;
+	double PairDev (int i, int j);
+	void PastFlags ();
+	void Build (CollIsland &is, bool withSpec, std::vector<int> &map, const std::vector<int> &memb, const std::vector<int> &pidx,
+		const std::vector<APt> &pts, const std::vector<CollPairResult> &res, const Vector &O);
+	void WakePass (const std::vector<APt> &pts, const std::vector<CollPairResult> &res);
 	void Snapshot ();
 	void Decide (std::vector<RapItem> &rap);
 	void Reconcile ();
@@ -193,6 +201,54 @@ struct CollAddonFrame::Impl {
 	CollAWrite Apply (int i, const Plan &pl, bool count, Vector *tgtPOut = nullptr, CollOrbState *cfOut = nullptr);
 };
 
+// a dynamic body's working state, free accelerations and mirror state at t0 (3.1, 4.1); woken: a LANDED body made dynamic (6.6); true: no history
+bool CollAddonFrame::Impl::InitDyn (int i, bool woken)
+{
+	CollABody &B = b[i];
+	Wk &k = w[i];
+	k.dyn = true;
+	k.X = B.x; k.V = woken ? B.wakeV : B.v; k.W = woken ? B.wakeWb : B.wb; k.Q = B.q;
+	CollAMem &m = F.mem[k.key];
+	bool fresh = woken || !m.seen || m.memberHash != B.memberHash;
+	if (fresh) { m = CollAMem (); m.memberHash = B.memberHash; }
+	m.seen = true;
+	k.Fprev = m.Fprev; k.Mprev = m.Mprev;
+	Matrix R = QM (B.q);
+	if (B.stack && m.hasP && m.hPrev > 0) k.aFree = (B.v - m.vw)/m.hPrev - mul (R, k.Fprev/B.m);
+	else k.aFree = B.aTot - mul (R, k.Fprev/B.m);
+	k.alFree = B.arot - Divc (k.Mprev/B.m, B.pmi);
+	CollOrbState &o = k.o;
+	o.s.pos = B.x; o.s.vel = B.v; o.s.Q = B.q; o.s.R = R; o.s.omega = B.wb;
+	o.acc = B.aTot; o.arot = B.arot; o.m = B.m; o.pmi = B.pmi;
+	o.Fadd = o.Madd = Vector ();
+	o.aC = k.aFree;
+	Vector tauTot (B.arot.x*B.pmi.x + (B.pmi.y - B.pmi.z)*B.wb.y*B.wb.z, B.arot.y*B.pmi.y + (B.pmi.z - B.pmi.x)*B.wb.z*B.wb.x, B.arot.z*B.pmi.z + (B.pmi.x - B.pmi.y)*B.wb.x*B.wb.y);
+	o.tauU = tauTot - k.Mprev/B.m;
+	o.gReset = B.gEst; o.ground = B.ground; o.stack = B.stack;
+	return fresh;
+}
+
+// 6.6: a LANDED body woken in this frame: dynamic from its wake state, no history, written with SetState
+void CollAddonFrame::Impl::Wake (int i)
+{
+	InitDyn (i, true);
+	Wk &k = w[i];
+	k.woke = k.entry = k.noRec = true;
+	k.xs = k.X; k.vs = k.V; k.ws = k.W; k.qs = k.Q;
+	b[i].woke = true;
+	CollLog (COLLLOG_INFO, "Collision: LANDED body %u woken", b[i].id);
+}
+
+// a record's body now: by key, else the assembly that took its vessel (MEMBERS, 2.5)
+int CollAddonFrame::Impl::FindRec (uint64_t key) const
+{
+	int i = Find (key);
+	if (i >= 0 || (key >> 32)) return i;
+	for (size_t j = 0; j < b.size (); j++)
+		if (b[j].kind != COLLB_BASE && std::find (b[j].member.begin (), b[j].member.end (), (uint32_t)key) != b[j].member.end ()) return (int)j;
+	return -1;
+}
+
 // 1: snapshot, free accelerations, JUMP test and deviation from P (3.1, 3.2, 4.1), terrain re-run (2.5)
 void CollAddonFrame::Impl::Snapshot ()
 {
@@ -202,27 +258,10 @@ void CollAddonFrame::Impl::Snapshot ()
 		CollABody &B = b[i];
 		Wk &k = w[i];
 		k.key = Key (B.kind, B.id);
-		k.dyn = B.kind == COLLB_DYNAMIC && B.m > 0.0;
 		B.dev = 0; B.woke = B.loaded = B.jump = false;
-		if (!k.dyn) continue;
-		k.X = B.x; k.V = B.v; k.W = B.wb; k.Q = B.q;
+		if (!(B.kind == COLLB_DYNAMIC && B.m > 0.0)) continue;
+		bool fresh = InitDyn (i, false);
 		CollAMem &m = F.mem[k.key];
-		bool fresh = !m.seen || m.memberHash != B.memberHash;
-		if (fresh) { m = CollAMem (); m.memberHash = B.memberHash; }
-		m.seen = true;
-		k.Fprev = m.Fprev; k.Mprev = m.Mprev;
-		Matrix R = QM (B.q);
-		if (B.stack && m.hasP && m.hPrev > 0) k.aFree = (B.v - m.vw)/m.hPrev - mul (R, k.Fprev/B.m);
-		else k.aFree = B.aTot - mul (R, k.Fprev/B.m);
-		k.alFree = B.arot - Divc (k.Mprev/B.m, B.pmi);
-		CollOrbState &o = k.o;
-		o.s.pos = B.x; o.s.vel = B.v; o.s.Q = B.q; o.s.R = R; o.s.omega = B.wb;
-		o.acc = B.aTot; o.arot = B.arot; o.m = B.m; o.pmi = B.pmi;
-		o.Fadd = o.Madd = Vector ();
-		o.aC = k.aFree;
-		Vector tauTot (B.arot.x*B.pmi.x + (B.pmi.y - B.pmi.z)*B.wb.y*B.wb.z, B.arot.y*B.pmi.y + (B.pmi.z - B.pmi.x)*B.wb.z*B.wb.x, B.arot.z*B.pmi.z + (B.pmi.x - B.pmi.y)*B.wb.x*B.wb.y);
-		o.tauU = tauTot - k.Mprev/B.m;
-		o.gReset = B.gEst; o.ground = B.ground; o.stack = B.stack;
 		k.entry = (B.entry & (COLLE_NEW | COLLE_MEMBERS | COLLE_JUMP | COLLE_ACTIVATED)) != 0 || fresh;
 		if (m.hasP && !k.entry) {
 			if (B.groundNew) {                           // terrain re-run: P at the last level with PropSubMax substeps (2.5)
@@ -251,18 +290,20 @@ void CollAddonFrame::Impl::Snapshot ()
 void CollAddonFrame::Impl::Decide (std::vector<RapItem> &rap)
 {
 	enum { P_TOUCH, P_FREE };
-	std::vector<int> path (F.isl.size (), P_FREE), jskip (F.isl.size (), -1);
+	std::vector<int> path (F.isl.size (), P_FREE);
+	std::vector<char> skip (w.size (), 0);               // far JUMP: the body's share is dropped in every island (2.5)
 	for (size_t k = 0; k < F.isl.size (); k++) {
 		CollAIslandRec &I = F.isl[k];
 		bool touch = true;
 		for (CollABodyRec &r : I.b) {
-			int i = Find (r.key);
+			int i = FindRec (r.key);
 			if (i < 0) { touch = false; continue; }
-			if (!w[i].dyn || w[i].jump || r.memberHash != b[i].memberHash) {   // JUMP, LANDED, PLAYBACK, members (2.5)
+			bool members = r.memberHash != b[i].memberHash || w[i].key != r.key;
+			if (!w[i].dyn || w[i].jump || members) {      // JUMP, LANDED, PLAYBACK, members (2.5)
 				touch = false;
-				bool far = !w[i].dyn || r.memberHash != b[i].memberHash || (b[i].x - F.mem[w[i].key].P.s.pos).length () > COLLA_D_FAR;
-				if (far) jskip[k] = i;
-				CollLog (COLLLOG_INFO, "Collision rollback: body %u JUMP (%s)", b[i].id, far ? "far" : "near");
+				bool far = !w[i].dyn || (!members && (b[i].x - F.mem[w[i].key].P.s.pos).length () > COLLA_D_FAR);
+				if (far) skip[i] = 1;
+				CollLog (COLLLOG_INFO, "Collision rollback: body %u %s (%s)", b[i].id, members ? "MEMBERS" : "JUMP", far ? "far" : "near");
 			}
 		}
 		for (CollAPairRec &p : I.p) {
@@ -276,7 +317,7 @@ void CollAddonFrame::Impl::Decide (std::vector<RapItem> &rap)
 			if (dev > COLLA_DEV_TOL) { touch = false; CollLog (COLLLOG_INFO, "Collision rollback: deviation %.4f m", dev); }
 		}
 		path[k] = touch ? P_TOUCH : P_FREE;
-		if (!touch) for (CollABodyRec &r : I.b) { int i = Find (r.key); if (i >= 0) w[i].noRec = true; }
+		if (!touch) for (CollABodyRec &r : I.b) { int i = FindRec (r.key); if (i >= 0) w[i].noRec = true; }
 	}
 	for (Wk &k : w) if (k.dyn && k.entry) k.noRec = true;
 	Reconcile ();                                        // 7.5 on the snapshot state, before any undo
@@ -314,15 +355,17 @@ void CollAddonFrame::Impl::Decide (std::vector<RapItem> &rap)
 			w = save;
 		}
 		for (CollABodyRec &r : I.b) {                        // FREE path: rollback by the mirror-measured effect (2.4)
-			int i = Find (r.key);
-			if (i < 0 || i == jskip[k] || !w[i].dyn) continue;
+			int i = FindRec (r.key);
+			if (i < 0 || skip[i] || !w[i].dyn) continue;
 			if (!r.zero) {
 				Wk &K = w[i];
+				bool members = r.memberHash != b[i].memberHash || K.key != r.key;
+				double sc = members && r.aw.m > 0 && b[i].m > 0 ? r.aw.m/b[i].m : 1.0; // MEMBERS: the old body's momentum share on the new assembly (P exact)
 				Vector Ls = SpinL (i, K.Q, K.W) - r.dLs;
-				K.X -= r.dx; K.V -= r.dv; CollRotate (K.Q, -r.dth); K.W = OmegaOf (i, K.Q, Ls);
+				K.X -= r.dx*sc; K.V -= r.dv*sc; CollRotate (K.Q, -r.dth*sc); K.W = OmegaOf (i, K.Q, Ls);
 				K.posChanged = true;
 			}
-			w[i].xs = r.xs; w[i].vs = r.vs; w[i].ws = r.ws; w[i].qs = r.qs;
+			if (w[i].key == r.key) { w[i].xs = r.xs; w[i].vs = r.vs; w[i].ws = r.ws; w[i].qs = r.qs; }
 			if (!w[i].entry) w[i].past = true;
 		}
 		F.st.freePath++;
@@ -518,7 +561,8 @@ void CollAddonFrame::Impl::PastCheck (std::vector<CollImpactEvent> &ev)
 		for (int d = 0; d < ver.nBody (); d++) {
 			int i = verOf[d];
 			CollFrameBody &f = fb[d];
-			f.dyn = w[i].dyn; f.wakeable = false; f.id = b[i].id; f.m = b[i].m; f.pmi = b[i].pmi;
+			f.dyn = w[i].dyn; f.id = b[i].id; f.m = b[i].m; f.pmi = b[i].pmi;
+			f.wakeable = !w[i].dyn && b[i].wakeable && b[i].m > 0.0; f.wakeV1 = b[i].wakeV; f.wakeWb1 = b[i].wakeWb;
 			if (w[i].dyn) { f.x1 = w[i].X; f.v1 = w[i].V; f.wb1 = w[i].W; f.q1 = w[i].Q; }
 			else { f.x1 = b[i].kin.c0; f.v1 = b[i].kin.v0; f.q1 = b[i].kin.q0; f.wb1 = tmul (QM (b[i].kin.q0), b[i].kin.w0g); }
 		}
@@ -526,7 +570,10 @@ void CollAddonFrame::Impl::PastCheck (std::vector<CollImpactEvent> &ev)
 		fs2.check = F.check;
 		std::vector<CollBodyDelta> delta;
 		std::vector<CollImpactEvent> pev;
+		F.featDet = &ver;
 		fs2.Run (ver, keep, fb, hp, simt0 - hp, F.prm, F.rounds, host, delta, pev);
+		F.featDet = nullptr;
+		for (int d = 0; d < ver.nBody (); d++) if (fb[d].woke && !w[verOf[d]].dyn) Wake (verOf[d]); // the frame solver's wake (6.6)
 		for (const CollBodyDelta &d : delta) {
 			int i = verOf[d.body];
 			if (!w[i].dyn) continue;
@@ -669,8 +716,8 @@ CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vecto
 	Vector tgtP = (in.vNew - o.s.vel)*m + Fv*h;
 	Vector tgtL = (Lnew - o.SpinL ()) + M*h;
 	bool posw = B.posChanged || in.dxc.length () > 0 || in.dthc.length () > 0;
-	bool write = posw || (in.vNew - o.s.vel).length () > COLLA_V_WRITE;
-	if (b[i].ground && !posw && (in.vNew - o.s.vel).length () <= COLL_V_WAKE) write = false; // no DefSetStateEx on ground contact (6.6)
+	bool write = posw || B.woke || (in.vNew - o.s.vel).length () > COLLA_V_WRITE;
+	if (b[i].ground && !posw && !B.woke && (in.vNew - o.s.vel).length () <= COLL_V_WAKE) write = false; // no DefSetStateEx on ground contact (6.6)
 	Vector Fe = write ? Fv : Fv + (in.vNew - o.s.vel)*(m/h);
 	Quaternion qw (B.Q);
 	if (in.dthc.length () > 0) CollRotate (qw, in.dthc);
@@ -683,6 +730,7 @@ CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vecto
 	auto probe = [&] (const Quaternion &q, const Vector &v, const Vector &wv) {
 		CollOrbState base = o;
 		base.s.pos = B.X; base.s.vel = v; base.s.Q = q; base.s.R = QM (q); base.s.omega = wv;
+		base.ground = o.ground && !write;
 		base.acc = base.aC; base.Fadd = base.Madd = Vector ();
 		base.arot = base.arot - Divc (B.Mprev/m, o.pmi);
 		CollOrbState o0 = base;
@@ -699,7 +747,7 @@ CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vecto
 		}
 	};
 	for (int it = 0; it < 3; it++) {
-		mir.Choose (h, wa.length (), o.ground, lv, n);
+		mir.Choose (h, wa.length (), o.ground && !write, lv, n);
 		meth = mir.mode[lv]; k = h/n; g0 = CollOrbMirror::Gamma0 (meth); cx = CollOrbMirror::DxCoef (meth);
 		probe (qa, write ? in.vNew : o.s.vel, wa);
 		wr.Fb = Fe.length () > 0 ? mul (InvM (Ml), Fe*h) : Vector ();
@@ -786,6 +834,128 @@ CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vecto
 	return wr;
 }
 
+// 3.2: deviation from P of a pair in the pair frame, kinematic sides without deviation
+double CollAddonFrame::Impl::PairDev (int i, int j)
+{
+	double dev = 0;
+	Vector d;
+	for (int s = 0; s < 2; s++) {
+		int k = s ? j : i;
+		if (!w[k].dyn) continue;
+		const CollAMem &m = F.mem[w[k].key];
+		if (!m.hasP) continue;
+		Vector dk = b[k].x - m.P.s.pos;
+		d += s ? -dk : dk;
+		dev += b[k].rmax*QAngle (b[k].q, m.P.s.Q);
+	}
+	return dev + d.length ();
+}
+
+// 3.2: a body goes to the past check only with a nearby partner and a pair deviation above dev_tol (mirror gravity errors cancel)
+void CollAddonFrame::Impl::PastFlags ()
+{
+	const int nb = (int)w.size ();
+	auto cand = [&] (int i) { return w[i].dyn && !w[i].entry && F.mem[w[i].key].hasP; };
+	auto sweep = [&] (int i) { return w[i].dyn ? w[i].X - w[i].xs : b[i].kin.v0*hp; };
+	for (int i = 0; i < nb; i++)
+		for (int j = i + 1; j < nb; j++) {
+			bool ci = cand (i), cj = cand (j);
+			if (!ci && !cj) continue;
+			double reach = b[i].rmax + b[j].rmax + (sweep (i) - sweep (j)).length () + COLLA_DEV_TOL;
+			if ((Pos (i) - Pos (j)).length () > reach || PairDev (i, j) <= COLLA_DEV_TOL) continue;
+			if (ci) w[i].past = true;
+			if (cj) w[j].past = true;
+		}
+}
+
+// 6.6: a LANDED partner wakes when its share of a solve over its island's real points, with it kinematic, exceeds v_wake or w_wake
+void CollAddonFrame::Impl::WakePass (const std::vector<APt> &pts, const std::vector<CollPairResult> &res)
+{
+	const int nb = (int)w.size ();
+	bool cand = false;
+	for (const APt &q : pts) for (int s : { q.a, q.b }) cand = cand || (q.real && !w[s].dyn && b[s].wakeable && b[s].m > 0.0);
+	if (!cand) return;
+	std::vector<int> u (nb);
+	std::iota (u.begin (), u.end (), 0);
+	for (const APt &q : pts) if (w[q.a].dyn && w[q.b].dyn) { int x = Root (u, q.a), y = Root (u, q.b); if (x != y) u[std::max (x, y)] = std::min (x, y); }
+	std::vector<int> wake;
+	for (int root = 0; root < nb; root++) {
+		if (!w[root].dyn || Root (u, root) != root) continue;
+		std::vector<int> pidx, memb;
+		bool has = false;
+		for (size_t k = 0; k < pts.size (); k++) {
+			const APt &q = pts[k];
+			int d = w[q.a].dyn ? q.a : q.b, o = d == q.a ? q.b : q.a;
+			if (Root (u, d) != root) continue;
+			pidx.push_back ((int)k);
+			has = has || (q.real && !w[o].dyn && b[o].wakeable && b[o].m > 0.0);
+		}
+		if (!has) continue;
+		for (int i = 0; i < nb; i++) if (w[i].dyn && Root (u, i) == root) memb.push_back (i);
+		for (int k : pidx) for (int s : { pts[k].a, pts[k].b }) if (!w[s].dyn && std::find (memb.begin (), memb.end (), s) == memb.end ()) memb.push_back (s);
+		CollIsland ro;
+		std::vector<int> map;
+		Build (ro, false, map, memb, pidx, pts, res, w[memb[0]].X);
+		if (ro.con.empty () || !ro.Solve (F.prm)) continue;
+		for (size_t j = 0; j < memb.size (); j++) {
+			int s = memb[j];
+			if (w[s].dyn || !b[s].wakeable || !(b[s].m > 0.0)) continue;
+			const CollSBody &sb = ro.body[j];
+			Vector dv = (sb.dP1 + sb.dP2)/b[s].m, dw = Divc (tmul (sb.Rt, sb.dL1 + sb.dL2), Ib (s));
+			if (dv.length () > COLL_V_WAKE || dw.length () > COLL_W_WAKE) wake.push_back (s);
+		}
+	}
+	for (int s : wake) if (!w[s].dyn) { Wake (s); Predict (s); }
+}
+
+// 9: one island at t0 from its members (dynamic first) and points; kinematic partners carry their velocity field (5.4)
+void CollAddonFrame::Impl::Build (CollIsland &is, bool withSpec, std::vector<int> &map, const std::vector<int> &memb, const std::vector<int> &pidx,
+	const std::vector<APt> &pts, const std::vector<CollPairResult> &res, const Vector &O)
+{
+	auto idx = [&] (int i) { return (int)(std::find (memb.begin (), memb.end (), i) - memb.begin ()); };
+	is = CollIsland (); map.clear ();
+	is.tau = 0.0; is.h = h;
+	for (int i : memb) {
+		CollSBody sb {};
+		if (w[i].dyn) {
+			sb.dyn = true; sb.m = b[i].m; sb.pmi = b[i].pmi;
+			sb.Rt = QM (w[i].Q); sb.R1 = QM (w[i].q1);
+			sb.xt = w[i].X - O; sb.vt = w[i].V; sb.wt = mul (sb.Rt, w[i].W);
+			sb.v1 = w[i].v1; sb.x1 = sb.xt + sb.v1*h; sb.wb1 = w[i].w1;
+		} else {
+			sb.dyn = false; sb.Rt = QM (b[i].kin.q0); sb.R1 = QM (b[i].kin.q1); sb.xt = b[i].kin.c0 - O; sb.x1 = sb.xt;
+		}
+		is.body.push_back (sb);
+	}
+	for (int k : pidx) {
+		const APt &q = pts[k];
+		if (!q.real && !withSpec) { map.push_back (-1); continue; }
+		CollSContact c {};
+		c.a = idx (q.a); c.b = idx (q.b);
+		Vector mid = q.org + (q.pa + q.pb)*0.5;
+		c.p = mid - O; c.n = q.n;
+		Matrix RA = QM (w[q.a].dyn ? w[q.a].q1 : b[q.a].kin.q1)*transp (QM (Rot (q.a))), RBm = QM (w[q.b].dyn ? w[q.b].q1 : b[q.b].kin.q1)*transp (QM (Rot (q.b)));
+		Vector n2 = mul (RA, q.n) + mul (RBm, q.n);
+		c.n2 = n2.length () > 0 ? n2/n2.length () : q.n;
+		c.gap = q.gap;
+		c.kind = q.real ? COLL_RESTING : COLL_SPECULATIVE;
+		c.flags = (uint8_t)(q.flags | (q.real ? COLLP_BALLISTIC : COLLP_SPECTRAP));
+		CollSMat sa = host.Material (res[q.res], q.pt, 0), sbm = host.Material (res[q.res], q.pt, 1);
+		c.e0 = std::max (sa.e0, sbm.e0); c.vy = std::min (sa.vy, sbm.vy); c.mu = q.real ? std::sqrt (std::max (0.0, sa.mu*sbm.mu)) : 0.0;
+		for (int s = 0; s < 2; s++) {
+			int bi = s ? q.b : q.a;
+			Vector &vt = s ? c.vkb_t : c.vka_t, &v1 = s ? c.vkb_1 : c.vka_1;
+			if (w[bi].dyn) continue;
+			const CollMotion &km = b[bi].kin;
+			Matrix Rk = QM (km.q1)*transp (QM (km.q0));
+			vt = km.v0 + Xc (km.w0g, mid - km.c0);
+			v1 = km.v1 + Xc (km.w1g, mul (Rk, mid - km.c0));
+		}
+		map.push_back ((int)is.con.size ());
+		is.con.push_back (c);
+	}
+}
+
 void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollImpactEvent> &ev, const std::vector<CollZone> &zones)
 {
 	const int nb = (int)b.size ();
@@ -796,7 +966,7 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 	// 2-4: decisions, reconciliation, TOUCH and FREE paths
 	std::vector<RapItem> rap;
 	Decide (rap);
-	for (int i = 0; i < nb; i++) if (w[i].dyn && !w[i].entry && b[i].dev > COLLA_DEV_TOL) w[i].past = true;
+	PastFlags ();
 	// 5: past check
 	PastCheck (ev);
 	// 6: predict, forward detection (kinematic bodies first)
@@ -841,6 +1011,8 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 		for (APt &q : pts) for (const RapItem &it : rap)      // event time of a TOUCH path: the touch (5.6)
 			if (q.real && ((q.a == it.a && q.b == it.b) || (q.a == it.b && q.b == it.a)) && it.tauT < 1.0) q.t = simt0 - it.h + it.tauT*it.h;
 	}
+	// 8b: LANDED wake on real contacts (6.6), before the islands so a woken body joins them dynamic
+	WakePass (pts, res);
 	// 9: islands over dynamic bodies
 	std::vector<int> u (nb);
 	std::iota (u.begin (), u.end (), 0);
@@ -870,49 +1042,7 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 		bool anySpec = false, anyReal = false;
 		const Vector O = w[memb[0]].X;
 		auto idx = [&] (int i) { return (int)(std::find (memb.begin (), memb.end (), i) - memb.begin ()); };
-		auto build = [&] (CollIsland &is, bool withSpec, std::vector<int> &map) {
-			is = CollIsland (); map.clear ();
-			is.tau = 0.0; is.h = h;
-			for (int i : memb) {
-				CollSBody sb {};
-				if (w[i].dyn) {
-					sb.dyn = true; sb.m = b[i].m; sb.pmi = b[i].pmi;
-					sb.Rt = QM (w[i].Q); sb.R1 = QM (w[i].q1);
-					sb.xt = w[i].X - O; sb.vt = w[i].V; sb.wt = mul (sb.Rt, w[i].W);
-					sb.v1 = w[i].v1; sb.x1 = sb.xt + sb.v1*h; sb.wb1 = w[i].w1;
-				} else {
-					sb.dyn = false; sb.Rt = QM (b[i].kin.q0); sb.R1 = QM (b[i].kin.q1); sb.xt = b[i].kin.c0 - O; sb.x1 = sb.xt;
-				}
-				is.body.push_back (sb);
-			}
-			for (int k : pidx) {
-				const APt &q = pts[k];
-				if (!q.real && !withSpec) { map.push_back (-1); continue; }
-				CollSContact c {};
-				c.a = idx (q.a); c.b = idx (q.b);
-				Vector mid = q.org + (q.pa + q.pb)*0.5;
-				c.p = mid - O; c.n = q.n;
-				Matrix RA = QM (w[q.a].dyn ? w[q.a].q1 : b[q.a].kin.q1)*transp (QM (Rot (q.a))), RBm = QM (w[q.b].dyn ? w[q.b].q1 : b[q.b].kin.q1)*transp (QM (Rot (q.b)));
-				Vector n2 = mul (RA, q.n) + mul (RBm, q.n);
-				c.n2 = n2.length () > 0 ? n2/n2.length () : q.n;
-				c.gap = q.gap;
-				c.kind = q.real ? COLL_RESTING : COLL_SPECULATIVE;
-				c.flags = (uint8_t)(q.flags | (q.real ? COLLP_BALLISTIC : COLLP_SPECTRAP));
-				CollSMat sa = host.Material (res[q.res], q.pt, 0), sbm = host.Material (res[q.res], q.pt, 1);
-				c.e0 = std::max (sa.e0, sbm.e0); c.vy = std::min (sa.vy, sbm.vy); c.mu = q.real ? std::sqrt (std::max (0.0, sa.mu*sbm.mu)) : 0.0;
-				for (int s = 0; s < 2; s++) {
-					int bi = s ? q.b : q.a;
-					Vector &vt = s ? c.vkb_t : c.vka_t, &v1 = s ? c.vkb_1 : c.vka_1;
-					if (w[bi].dyn) continue;
-					const CollMotion &km = b[bi].kin;
-					Matrix Rk = QM (km.q1)*transp (QM (km.q0));
-					vt = km.v0 + Xc (km.w0g, mid - km.c0);
-					v1 = km.v1 + Xc (km.w1g, mul (Rk, mid - km.c0));
-				}
-				map.push_back ((int)is.con.size ());
-				is.con.push_back (c);
-			}
-		};
+		auto build = [&] (CollIsland &is, bool withSpec, std::vector<int> &map) { Build (is, withSpec, map, memb, pidx, pts, res, O); };
 		for (int k : pidx) (pts[k].real ? anyReal : anySpec) = true;
 		CollIsland all, ro;
 		std::vector<int> mapAll, mapRo;
@@ -1036,7 +1166,7 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 			e.Jt = (c.J1 - c.n*c.ln1).length ();
 			e.jsum = c.J1.length () + c.J2.length ();
 			e.meff = all.MeffAt (c.p, c.n, c.a, c.b);
-			e.corrected = false; e.surf = false; e.woke = false;
+			e.corrected = false; e.surf = false; e.woke = w[q.a].woke || w[q.b].woke;
 			erec.push_back (e);
 			// 14: resting row for next frame (7.5)
 			CollASupRow s {};
@@ -1081,7 +1211,9 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 	// events of the touch frames (5.6): FIRST real points, dKE and vn never negative
 	if (!erec.empty ()) {
 		std::vector<CollImpactEvent> e2;
+		F.featDet = &fwd;
 		CollFillEvents (fwd, solvedReal, erec, h, simt0, F.prm, host, e2, nullptr, nullptr);
+		F.featDet = nullptr;
 		for (CollImpactEvent &e : e2) {
 			if (!(e.flags & COLLEV_FIRST)) continue;
 			if (e.dKE < 0 || e.vn < 0) F.st.clampE++;
@@ -1227,7 +1359,7 @@ void CollAddonFrame::OnDelete (uint32_t vesselId)
 void CollAddonFrame::OnTimeJump ()
 {
 	isl.clear (); sup.clear ();
-	for (auto &m : mem) m.second.hasP = false;
+	for (auto &m : mem) { m.second.hasP = false; m.second.Fprev = m.second.Mprev = Vector (); } // Orbiter's cache is Gacc after the jump (Vessel.cpp:862-871)
 }
 
 void CollAddonFrame::Reset ()

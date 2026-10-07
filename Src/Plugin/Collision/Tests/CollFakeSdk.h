@@ -35,6 +35,9 @@ public:
 	std::vector<std::string> log, calls;
 	std::string annotation;
 	int misuse = 0, noteCalls = 0, dialogs = 0, cmdNext = 1;
+	struct Wr { char op; CollH h; Vector a, b; Matrix R; CollStateWrite s; }; // op: S state, A attitude, W spin, F force
+	std::vector<Wr> wr;                     // state-changing vessel calls in order
+	bool applyWrites = false;               // apply them to rd; a vessel with sv and svcg moves as a stack component (SuperVessel.cpp:309-388)
 	double simT = 0, mjd = 51544.5, sysT = 0, warp = 1;
 	bool clientCore = false, ended = false;
 	std::map<std::string, int> cfgInt;
@@ -144,10 +147,32 @@ public:
 	void Log (int, const char *msg) override { if (ended) Bad ("Log after EndSession"); log.push_back (msg); }
 	int LogCount (const char *needle) const { int n = 0; for (auto &l : log) if (l.find (needle) != std::string::npos) n++; return n; }
 protected:
-	void DoSetState (CollH, const CollStateWrite &) override {}
-	void DoSetAttitude (CollH, const Matrix &) override {}
-	void DoSetSpin (CollH, const Vector &) override {}
-	void DoAddForce (CollH, const Vector &, const Vector &) override {}
+	void DoSetState (CollH v, const CollStateWrite &st) override
+	{
+		wr.push_back ({ 'S', v, Vector (), Vector (), Matrix (), st });
+		Ves *x = V (v);
+		if (!x || !applyWrites) return;
+		Vector xr, vr; Matrix Rr;
+		if (st.rbody) GlobalState (st.rbody, xr, vr, Rr);
+		Matrix R; R.Set (st.arot);
+		Vector cg = xr + st.rpos + mul (x->rd.R, x->rd.svcg); // RPlace with the current rotation, then the orientation about the CG
+		x->rd.x = cg - mul (R, x->rd.svcg); x->rd.R = R; x->rd.v = vr + st.rvel; x->rd.w = st.vrot;
+	}
+	void DoSetAttitude (CollH v, const Matrix &R) override
+	{
+		wr.push_back ({ 'A', v, Vector (), Vector (), R, CollStateWrite {} });
+		Ves *x = V (v);
+		if (!x || !applyWrites) return;
+		Vector cg = x->rd.x + mul (x->rd.R, x->rd.svcg);
+		x->rd.x = cg - mul (R, x->rd.svcg); x->rd.R = R;
+	}
+	void DoSetSpin (CollH v, const Vector &w) override
+	{
+		wr.push_back ({ 'W', v, w, Vector (), Matrix (), CollStateWrite {} });
+		Ves *x = V (v);
+		if (x && applyWrites) x->rd.w = w;
+	}
+	void DoAddForce (CollH v, const Vector &F, const Vector &r) override { wr.push_back ({ 'F', v, F, r, Matrix (), CollStateWrite {} }); }
 	void DoSetTank (CollH, CollH, CollH) override {}
 	CollH DoCreateTank (CollH v, double maxMass, double mass) override { Ves *x = V (v); if (!x) return nullptr; x->tank.push_back ({ maxMass, mass, true }); x->tankList.push_back (&x->tank.back ()); return &x->tank.back (); }
 	void DoDelTank (CollH v, CollH tank) override { Ves *x = V (v); if (!x) return; for (size_t i = 0; i < x->tankList.size (); i++) if (x->tankList[i] == tank) { x->tankList.erase (x->tankList.begin () + i); break; } }

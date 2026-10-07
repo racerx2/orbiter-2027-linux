@@ -76,3 +76,19 @@ TEST_CASE ("Symplectic levels step and keep a free body on its line", "[CollOrbM
 		REQUIRE ((o.s.pos - (Vector (10, 20, 30) + Vector (1, -2, 3)*0.1)).length () <= 1e-12);
 	}
 }
+
+TEST_CASE ("A state write clears the ground contact: the next step uses the normal level (Vessel.cpp:865, review CA-F 9)", "[CollOrbMirror]")
+{
+	CollOrbMirror mir;
+	CollOrbState o = Body (Vector (0, -9.81, 0));
+	o.ground = true;
+	CollOrbState g = o;
+	mir.Step (g, 0.02);
+	o.DefSetStateEx (o.s.pos, o.s.vel, o.s.omega);
+	REQUIRE (!o.ground);
+	mir.Step (o, 0.02);
+	CAPTURE (g.lv, g.nsub, o.lv, o.nsub);
+	REQUIRE (o.lv == 0);
+	REQUIRE (o.nsub == 1);
+	REQUIRE ((g.lv != o.lv || g.nsub != o.nsub));
+}

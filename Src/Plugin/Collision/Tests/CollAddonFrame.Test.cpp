@@ -49,9 +49,18 @@ struct Geo {
 	explicit Geo (const CollGroupData &d) : g (d) { CollSrcGroup s { &g, CollSrc { 0, 0, 0, 0, 0 } }; REQUIRE (geom.Build (&s, 1, COLL_WELD_DEFAULT, nullptr)); }
 };
 struct Host : CollSolveHost {
-	const CollDetect *det = nullptr;
+	const CollAddonFrame *fr = nullptr;
+	const CollDetect *ver = nullptr;
+	int calls = 0, none = 0, verCalls = 0;
 	CollSMat Material (const CollPairResult &, int, int) override { return CollSMat (); }
-	void Feature (const CollPairResult &r, int i, int side, CollImpactSide &s) override { s.owner = CollOwnerRefOf (det->Owner (r, i, side)); }
+	void Feature (const CollPairResult &r, int i, int side, CollImpactSide &s) override // only from the detector the driver names (review CA-F 4)
+	{
+		calls++;
+		const CollDetect *d = fr->FeatDet ();
+		if (!d) { none++; return; }
+		if (d == ver) verCalls++;
+		s.owner = CollOwnerRefOf (d->Owner (r, i, side));
+	}
 };
 
 // "Orbiter": mirror bodies stepped by CollOrbMirror; the addon's writes applied as the SDK would
@@ -61,13 +70,14 @@ struct Sim {
 	CollDetect fwd, ver;
 	Host host;
 	Vector g;
-	struct TB { CollOrbState o; std::shared_ptr<Geo> geo; uint32_t id; double rmax; Vector push; };
+	struct TB { CollOrbState o; std::shared_ptr<Geo> geo; uint32_t id; double rmax; Vector push; bool landed = false, woke = false; };
 	std::vector<TB> tb;
 	std::shared_ptr<Geo> baseGeo; Vector basePos;
 	int events = 0, writes = 0, lastWrites = 0;
 	std::vector<CollImpactEvent> evs;
 	double t = 0;
-	Sim () { host.det = &fwd; fr.hRest = mir.HRest (); }
+	bool jumpNext = false;                               // the next frame follows a time jump: JUMP entry, Orbiter's cache reset to gravity
+	Sim () { host.fr = &fr; host.ver = &ver; fr.hRest = mir.HRest (); }
 	void Add (std::shared_ptr<Geo> geo, double m, const Vector &pmi, const Vector &x, const Vector &v, double rmax)
 	{
 		TB b;
@@ -94,10 +104,17 @@ struct Sim {
 		}
 		for (const TB &b : tb) {
 			CollABody k;
-			k.id = b.id; k.kind = COLLB_DYNAMIC; k.member = { b.id }; k.memberHash = b.id;
+			k.id = b.id; k.kind = b.landed ? COLLB_LANDED : COLLB_DYNAMIC; k.member = { b.id }; k.memberHash = b.id;
 			k.m = b.o.m; k.pmi = b.o.pmi;
 			k.x = b.o.s.pos; k.v = b.o.s.vel; k.wb = b.o.s.omega; k.q = b.o.s.Q;
 			k.aTot = b.o.acc; k.arot = b.o.arot; k.gEst = g; k.rmax = b.rmax;
+			if (jumpNext) k.entry |= COLLE_JUMP;
+			if (b.woke) k.entry |= COLLE_ACTIVATED;
+			if (b.landed) {                                  // kinematic at rest, wakeable (6.6)
+				k.kin = CollMotion {};
+				k.kin.c0 = k.kin.c1 = k.x; k.kin.q0 = k.kin.q1 = k.q; k.kin.h = h; k.kin.tb = 1; k.kin.a0ok = true;
+				k.wakeable = true; k.wakeV = k.v; k.wakeWb = k.wb;
+			}
 			CollPartRef p {};
 			p.geom = &b.geo->geom; p.skin = COLL_SKIN_DEFAULT; p.owner = CollOwnerKey { COLLO_VESSEL, b.id, -1, -1, -1, -1 }; p.partKey = 0; p.version = 0;
 			k.parts.push_back (p);
@@ -109,8 +126,11 @@ struct Sim {
 		int off = baseGeo ? 1 : 0;
 		std::vector<Vector> gx (bodies.size (), g);
 		lastWrites = 0;
+		jumpNext = false;
+		for (TB &b : tb) b.woke = false;
 		for (const CollAWrite &w : out) {
 			CollOrbState &o = tb[w.body - off].o;
+			if (w.state && tb[w.body - off].landed) { tb[w.body - off].landed = false; tb[w.body - off].woke = true; } // DefSetStateEx frees it (Vessel.cpp:864)
 			if (w.state) { o.DefSetStateEx (w.x, w.v, w.wb); lastWrites++; }
 			if (w.attitude) { Matrix R; R.Set (w.q); o.SetRotationMatrix (R); }
 		}
@@ -130,7 +150,7 @@ struct Sim {
 		writes += lastWrites;
 		events += (int)ev.size ();
 		for (const CollImpactEvent &e : ev) evs.push_back (e);
-		for (TB &b : tb) { b.o.aC = g + b.push; mir.Step (b.o, h); b.o.aC = g; }
+		for (TB &b : tb) if (!b.landed) { b.o.aC = g + b.push; mir.Step (b.o, h); b.o.aC = g; }
 		t += h;
 	}
 };
@@ -180,6 +200,9 @@ TEST_CASE ("A1 head-on spheres: one event, separation, momentum exact every fram
 			REQUIRE (S.evs[0].dKE >= 0.0);
 			REQUIRE (std::fabs (S.evs[0].vn - u) <= 0.02*u);   // approach at the touch, not the held one
 			REQUIRE (S.fr.Stats ().checkFail == 0);
+			REQUIRE (S.host.calls > 0);
+			REQUIRE (S.host.none == 0);
+			for (const CollImpactEvent &e : S.evs) REQUIRE (((e.s[0].owner.vesselId == 1 && e.s[1].owner.vesselId == 2) || (e.s[0].owner.vesselId == 2 && e.s[1].owner.vesselId == 1)));
 			if (u*h > 0.5) REQUIRE (S.fr.Stats ().spec > 0);
 		}
 	g_collLog = nullptr;
@@ -244,12 +267,77 @@ TEST_CASE ("A17 unseen push in the speculative step: FREE path or touch, never a
 			S.Frame (1.0/6.0);
 			gmin = std::min (gmin, MinGap (S));
 		}
-		CAPTURE (push, gmin, S.events, S.fr.Stats ().freePath, S.fr.Stats ().touchPath, S.fr.Stats ().past);
+		CAPTURE (push, gmin, S.events, S.fr.Stats ().freePath, S.fr.Stats ().touchPath, S.fr.Stats ().past, S.host.verCalls);
 		REQUIRE (S.events == 1);
+		REQUIRE (S.host.none == 0);
+		for (const CollImpactEvent &e : S.evs) REQUIRE (e.s[0].owner.vesselId + e.s[1].owner.vesselId == 3);
 		REQUIRE (gmin >= -0.25);
 		REQUIRE (S.tb[0].o.s.vel.x < S.tb[1].o.s.vel.x);
 		REQUIRE (S.fr.Stats ().checkFail == 0);
 	}
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("A21b time jump on a resting box: the support of the last frame is not solved twice (review CA-F 8)", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	for (double h : { 1.0/60.0, 0.1 }) {
+		Sim S;
+		S.g = Vector (0, -9.81, 0);
+		S.baseGeo = std::make_shared<Geo> (BoxMesh (Vector (20, 1, 20)));
+		S.basePos = Vector (0, -1, 0);
+		auto box = std::make_shared<Geo> (BoxMesh (Vector (1, 0.5, 1)));
+		S.Add (box, 1000, Vector ((0.25 + 1)/3, 2.0/3, (1 + 0.25)/3), Vector (0, 0.5 + 0.04 + 0.1, 0), Vector (), 1.6);
+		for (int f = 0; f*h < 3.0; f++) S.Frame (h);
+		double y0 = S.tb[0].o.s.pos.y, vmax = 0, ymax = -1e9;
+		S.fr.OnTimeJump ();
+		S.jumpNext = true;
+		S.tb[0].o.acc = S.g;                             // Vessel::Timejump -> RPlace: acc = Gacc (Vessel.cpp:862-871)
+		for (int f = 0; f*h < 1.0; f++) {
+			S.Frame (h);
+			vmax = std::max (vmax, std::fabs (S.tb[0].o.s.vel.y));
+			ymax = std::max (ymax, S.tb[0].o.s.pos.y);
+		}
+		CAPTURE (h, vmax, ymax - y0, S.events);
+		REQUIRE (vmax <= 0.02);
+		REQUIRE (ymax - y0 <= 0.005);
+		REQUIRE (S.fr.Stats ().checkFail == 0);
+	}
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("LANDED partner: a hard hit wakes it with P exact, a soft one leaves it LANDED (6.6, review CA-F 5)", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	for (double h : { 1.0/60.0, 0.1 })
+		for (double u : { 0.02, 2.0 }) {
+			Sim S;
+			auto sph = std::make_shared<Geo> (SphereMesh (1.0, 12, 24));
+			S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (-2.1 - 2.0*u*h, 0, 0), Vector (u, 0, 0), 1.05);
+			S.Add (sph, 2000, Vector (0.4, 0.4, 0.4), Vector (0, 0, 0), Vector (), 1.05);
+			S.tb[1].landed = true;
+			const Vector P0 = S.P ();
+			bool woke = false;
+			for (int f = 0; f*h < 3.0; f++) {
+				S.Frame (h);
+				if (!S.tb[1].landed && !woke) { woke = true; CAPTURE (f); REQUIRE ((S.P () - P0).length () <= 1e-9*S.Pscale ()); }
+			}
+			int flagged = 0;
+			for (const CollImpactEvent &e : S.evs) if (e.flags & COLLEV_WOKE_LANDED) flagged++;
+			CAPTURE (h, u, S.events, flagged, S.tb[0].o.s.vel.x, S.tb[1].o.s.vel.x);
+			REQUIRE (S.events >= 1);
+			REQUIRE (S.fr.Stats ().checkFail == 0);
+			if (u < 0.05) {
+				REQUIRE (S.tb[1].landed);
+				REQUIRE (flagged == 0);
+			} else {
+				REQUIRE (!S.tb[1].landed);
+				REQUIRE (flagged == 1);
+				REQUIRE (S.tb[1].o.s.vel.x > 0.5);
+				REQUIRE (S.tb[0].o.s.vel.x < S.tb[1].o.s.vel.x);
+				REQUIRE ((S.P () - P0).length () <= 1e-9*S.Pscale ());
+			}
+		}
 	g_collLog = nullptr;
 }
 

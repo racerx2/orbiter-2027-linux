@@ -26,6 +26,8 @@ class PhysGeomA : public CollPhysGeom {
 public:
 	PhysGeomA (CollGeomSession &g, CollSdk &s, std::function<CollH (uint32_t)> v) : geom (g), sdk (s), vessel (std::move (v)) {}
 	std::vector<CollH> live;                       // this frame's vessels, for the base distance filter
+	struct PlanetV { CollH h; double t; Vector v, a; };
+	std::vector<PlanetV> pvel;                     // planet velocity at the last pre-step: its acceleration by difference (E1 4.3)
 	bool Parts (uint32_t id, std::vector<CollPartRef> &fwd, std::vector<CollPartRef> &past, double &rmax) override
 	{
 		fwd.clear (); past.clear (); rmax = 0;
@@ -76,6 +78,7 @@ public:
 			if (!sh.nObj () || !r.hPlanet) continue;
 			Vector pp, pv; Matrix pR;
 			sdk.GlobalState (r.hPlanet, pp, pv, pR);
+			Vector ap = PlanetAcc (r.hPlanet, pv, h);
 			Vector xg = pp + mul (pR, r.rposP);
 			bool near = false;
 			for (const Vector &x : pos) near = near || (x - xg).length () < sh.rmax + 5000.0;
@@ -89,14 +92,9 @@ public:
 			B.memberHash = B.id;
 			B.m = 0;
 			B.planet = r.planetIdx;
-			B.x = xg; B.v = pv + crossp (w, xg - pp); B.q.Set (Rg); B.wb = tmul (Rg, w);
+			B.x = xg; B.v = CollSurfaceVel (pp, pv, w, xg); B.q.Set (Rg); B.wb = tmul (Rg, w);
 			B.rmax = sh.rmax + COLL_SKIN_MAX;
-			CollMotion &k = B.kin;
-			k = CollMotion {};
-			k.c0 = B.x; k.v0 = B.v; k.c1 = B.x + B.v * h; k.v1 = B.v;
-			k.q0 = B.q; k.q1 = B.q;
-			CollRotate (k.q1, B.wb * h);
-			k.w0g = k.w1g = w; k.h = h; k.ta = 0; k.tb = 1; k.a0ok = true;
+			CollKinMotion (B, CollSurfaceAcc (pp, ap, w, xg), w, h);
 			for (uint32_t i = 0; i < sh.nObj (); i++) {
 				const CollBaseObj &o = sh.Obj (i);
 				CollPartRef p {};
@@ -108,7 +106,18 @@ public:
 			out.push_back (B);
 		}
 	}
-	void Zones (const std::vector<CollABody> &b, std::vector<CollZone> &out) override // docking zones (E1 8.1); attachment zones are not wired
+	Vector PlanetAcc (CollH p, const Vector &v, double h)
+	{
+		double t = sdk.SimTime ();
+		for (PlanetV &x : pvel)
+			if (x.h == p) {
+				if (t > x.t) { x.a = t - x.t <= 2.5*h ? (v - x.v)/(t - x.t) : Vector (); x.t = t; x.v = v; }
+				return x.a;
+			}
+		pvel.push_back (PlanetV { p, t, v, Vector () });
+		return Vector ();
+	}
+	void Zones (const std::vector<CollABody> &b, double hs, std::vector<CollZone> &out) override // docking zones (E1 8.1); attachment zones are not wired
 	{
 		out.clear ();
 		struct Port { int body; uint32_t id; CollPortAt at[2]; Vector cb; double rdz; };
@@ -129,9 +138,9 @@ public:
 				q.body = i; q.id = p.vessel;
 				Vector g = x + mul (R, p.pos);
 				q.cb = tmul (Rb, g - B.x);
-				q.at[0].g = g; q.at[0].d = mul (R, p.dir); q.at[0].r = mul (R, p.rot); q.at[0].v = B.v + crossp (wg, g - B.x);
+				q.at[0].g = g; q.at[0].d = mul (R, p.dir); q.at[0].r = mul (R, p.rot); q.at[0].v = B.v + crossp (g - B.x, wg);
 				q.at[1] = q.at[0];
-				q.at[1].g = g + q.at[0].v * (B.kin.h > 0 ? B.kin.h : 0.0);
+				q.at[1].g = g + q.at[0].v * hs;
 				q.rdz = geom.Keys (p.vessel).dockZoneRadius;
 				ports.push_back (q);
 			}
@@ -178,23 +187,18 @@ public:
 	CollSMat Material (const CollPairResult &, int, int) override { return CollSMat (); }
 	void Feature (const CollPairResult &r, int i, int side, CollImpactSide &s) override
 	{
-		if (!phys) return;
-		const CollPartRef *pr = nullptr;
+		const CollDetect *d = phys ? phys->frame.FeatDet () : nullptr; // the detector whose results are being filled: never another frame's bodies
+		if (!d) return;
 		uint32_t tri = side ? r.pt[i].triB : r.pt[i].triA;
 		uint16_t pi = side ? r.pt[i].partB : r.pt[i].partA;
 		int bi = side ? r.bodyB : r.bodyA;
-		for (const CollDetect *d : { &phys->ver, &phys->fwd }) { // the past check and the forward pass add their bodies in different orders
-			if (bi < 0 || bi >= d->nBody ()) continue;
-			const CollBody &B = d->Body (bi);
-			if (pi >= B.parts.size ()) continue;
-			const CollPartRef &p = B.parts[pi];
-			CollOwnerRef o = CollOwnerRefOf (p.owner);
-			if (o.vesselId != s.owner.vesselId || o.planet != s.owner.planet || o.base != s.owner.base || o.obj != s.owner.obj) continue;
-			if (!p.geom || tri >= p.geom->tri.size ()) continue;
-			pr = &p;
-			break;
-		}
-		if (!pr) return;
+		if (bi < 0 || bi >= d->nBody ()) return;
+		const CollBody &B = d->Body (bi);
+		if (pi >= B.parts.size ()) return;
+		const CollPartRef *pr = &B.parts[pi];
+		CollOwnerRef o = CollOwnerRefOf (pr->owner);
+		if (o.vesselId != s.owner.vesselId || o.planet != s.owner.planet || o.base != s.owner.base || o.obj != s.owner.obj) return;
+		if (!pr->geom || tri >= pr->geom->tri.size ()) return;
 		s.mesh = pr->mesh;
 		s.tri = (int)tri;
 		if (s.owner.vesselId == 0) return;
@@ -396,6 +400,7 @@ void CollSession::PreStep (double simt, double simdt)
 
 void CollSession::TimeJump ()
 {
+	static_cast<PhysGeomA &> (*pgeom).pvel.clear ();
 	phys->OnTimeJump ();
 	geom->TimeJump ();
 }

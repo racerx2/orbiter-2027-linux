@@ -17,6 +17,22 @@ Vector EulerOf (const Matrix &R)                          // inverse of Vessel::
 VECTOR3 V3 (const Vector &v) { VECTOR3 r; r.x = v.x; r.y = v.y; r.z = v.z; return r; }
 }
 
+Vector CollSurfaceVel (const Vector &pp, const Vector &pv, const Vector &w, const Vector &x) { return pv + crossp (x - pp, w); }
+
+Vector CollSurfaceAcc (const Vector &pp, const Vector &ap, const Vector &w, const Vector &x) { return ap + crossp (crossp (x - pp, w), w); }
+
+void CollKinMotion (CollABody &B, const Vector &a, const Vector &w, double h)
+{
+	CollMotion &k = B.kin;
+	k = CollMotion {};
+	k.c0 = B.x; k.v0 = B.v; k.a0 = a;
+	k.c1 = B.x + B.v*h + a*(0.5*h*h); k.v1 = B.v + a*h; k.a1 = a;
+	k.q0 = B.q; k.q1 = B.q;
+	Matrix R; R.Set (B.q);
+	CollRotate (k.q1, tmul (R, w)*h);
+	k.w0g = k.w1g = w; k.h = h; k.ta = 0; k.tb = 1; k.a0ok = true;
+}
+
 CollPhysSession::CollPhysSession (CollSdk &s, CollPhysGeom &g, const CollCfgValues &c) : sdk (s), geom (g), cfg (c)
 {
 	frame.check = cfg.check;
@@ -92,7 +108,7 @@ void CollPhysSession::PS1Snapshot (double t, double dt, const std::vector<CollPh
 // PS3: solver bodies (1.4), entry bits (1.5), the frame driver (5.3), the write sequence (6.4)
 void CollPhysSession::PS3Physics (CollSolveHost &host)
 {
-	ev.clear ();
+	ev.clear (); wr.clear ();
 	if (!started || cfg.model == 0 || !(simdt > 0.0)) return;    // simdt == 0: nothing (1.2)
 	bool anyLive = false;
 	for (const Snap &s : snap) anyLive = anyLive || !s.rd.playback;
@@ -139,6 +155,7 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 			}
 		}
 		B.pmi = B.m > 0 ? I/B.m : Vector (1, 1, 1);
+		if (!a.stack) B.pmi = rd.pmi;                             // attachment tree: Orbiter turns the root alone with its own PMI (6.6)
 		B.kind = a.mixed ? COLLB_FROZEN : rd.playback ? COLLB_PLAYBACK : (rd.status & 1) ? COLLB_LANDED : COLLB_DYNAMIC;
 		// gravity estimate of a state write (6.3): point mass of the gravity reference
 		if (rd.gref) {
@@ -164,26 +181,23 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 		if (B.parts.empty ()) continue;
 		// kinematic motion over the step (4.3)
 		if (B.kind != COLLB_DYNAMIC) {
-			CollMotion &k = B.kin;
-			k = CollMotion {};
-			k.c0 = B.x; k.v0 = B.v; k.c1 = B.x + B.v*simdt; k.v1 = B.v;
-			k.q0 = B.q; k.q1 = B.q;
-			Vector wg = mul (R, B.wb);
-			if (B.kind == COLLB_LANDED && rd.gref) {               // planet-fixed: rotation about the planet axis
+			Vector wg = mul (R, B.wb), a;
+			if (B.kind == COLLB_LANDED && rd.gref) {               // planet-fixed: rotation about the planet axis, the landed cache acc (Vessel.cpp:4759)
 				double T = sdk.PlanetPeriod (rd.gref);
 				Vector pr, vr; Matrix Rp;
 				sdk.GlobalState (rd.gref, pr, vr, Rp);
 				wg = std::fabs (T) > 0 ? mul (Rp, Vector (0, 1, 0))*(2.0*3.14159265358979323846/T) : Vector ();
+				a = B.aTot;
 				B.wakeable = true; B.wakeV = B.v; B.wakeWb = B.wb;
 			}
-			CollRotate (k.q1, tmul (R, wg)*simdt);
-			k.w0g = k.w1g = wg; k.h = simdt; k.ta = 0; k.tb = 1; k.a0ok = true;
+			CollKinMotion (B, a, wg, simdt);
 		}
 		// entry bits (1.5)
 		const Last *l = nullptr;
 		for (const Last &x : last) if (x.id == B.id) l = &x;
 		if (!l) B.entry |= COLLE_NEW;
 		else {
+			B.groundNew = B.ground && !l->ground;                  // terrain re-run of the last step (2.5)
 			if (l->hash != B.memberHash) B.entry |= COLLE_MEMBERS;
 			if (l->kind != COLLB_DYNAMIC && B.kind == COLLB_DYNAMIC) B.entry |= COLLE_ACTIVATED;
 		}
@@ -197,17 +211,21 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 	geom.Bases (simdt, bases);
 	body.insert (body.begin (), bases.begin (), bases.end ());
 	std::vector<CollZone> zones;
-	if (cfg.dockZone || cfg.attachZone) geom.Zones (body, zones);
-	std::vector<CollAWrite> wr;
+	if (cfg.dockZone || cfg.attachZone) geom.Zones (body, simdt, zones);
 	frame.Run (fwd, ver, mirror, body, zones, simdt, simt, host, wr, ev);
 	last.clear ();
-	for (const CollABody &B : body) if (B.kind != COLLB_BASE) last.push_back (Last { B.id, B.kind, B.memberHash });
+	for (const CollABody &B : body) if (B.kind != COLLB_BASE) last.push_back (Last { B.id, B.kind, B.memberHash, B.ground });
 	queuedNew.clear (); jumped.clear ();
 	if (!cfg.response) { frame.OnTimeJump (); return; }       // detect and log only (1.1)
+	WriteBack (wr);
+}
+
+void CollPhysSession::WriteBack (std::vector<CollAWrite> &wl)
+{
 	// pass 1: position and attitude, then the weight of a single body written with SetState (6.4)
 	std::vector<Vector> gExact (body.size ());
 	for (size_t i = 0; i < body.size (); i++) gExact[i] = body[i].gEst;
-	for (const CollAWrite &w : wr) {
+	for (const CollAWrite &w : wl) {
 		const CollABody &B = body[w.body];
 		const Snap *r = SnapOf (B.member[0]);
 		if (!r || r->rd.playback) continue;
@@ -217,7 +235,7 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 			s.rbody = r->rd.gref;
 			Vector xr, vr; Matrix Rr;
 			if (s.rbody) sdk.GlobalState (s.rbody, xr, vr, Rr);
-			Vector xc = B.stack ? w.x - mul (R, r->rd.svcg) : w.x;
+			Vector xc = B.stack ? w.x - mul (r->rd.R, r->rd.svcg) : w.x; // RPlace takes the CG with the stack's current rotation (SuperVessel.cpp:309-317), SetAttitude turns about it
 			s.rpos = xc - xr; s.rvel = w.v - vr; s.vrot = w.wb; s.arot = EulerOf (R);
 			sdk.SetState (r->h, s);
 		}
@@ -228,14 +246,14 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 			if (rd.m > 0) gExact[w.body] = mul (R, rd.W)/rd.m;
 		}
 	}
-	frame.Finish (mirror, body, wr, gExact);
+	frame.Finish (mirror, body, wl, gExact);
 	// pass 2: spin and force; they do not touch the weight's inputs
-	for (const CollAWrite &w : wr) {
+	for (const CollAWrite &w : wl) {
 		const CollABody &B = body[w.body];
 		const Snap *r = SnapOf (B.member[0]);
 		if (!r || r->rd.playback) continue;
 		if (w.spin) sdk.SetSpin (r->h, w.wb);
-		if (w.Fb.length () > 0) sdk.AddForce (r->h, w.Fb, Vector ());
+		if (w.Fb.length () > 0) sdk.AddForce (r->h, w.Fb, B.stack ? r->rd.svcg : Vector ()); // at the stack CG: no lever torque (SuperVessel.cpp:780-786)
 		double ml = w.Mb.length ();
 		if (ml > 0) {
 			Vector a = std::fabs (w.Mb.x) < 0.6*ml ? Vector (1, 0, 0) : Vector (0, 1, 0);
@@ -261,7 +279,9 @@ void CollPhysSession::PS5Notices ()
 			c.hdr.magic = COLLA_MAGIC; c.hdr.version = COLLA_VERSION; c.hdr.kind = COLLA_KIND_CONTACT; c.hdr.size = sizeof (COLLA_CONTACTINFO);
 			c.flags = (o.owner.vesselId ? COLLA_CON_VESSEL : COLLA_CON_BUILDING) | COLLA_CON_FIRST;
 			if (e.flags & COLLEV_SLOW) c.flags |= COLLA_CON_SLOW;
-			if (e.flags & COLLEV_WOKE_LANDED) c.flags |= COLLA_CON_WOKE;
+			if (e.flags & COLLEV_WOKE_LANDED)                    // only the side that was woken (11)
+				for (const CollABody &B : body)
+					if (B.woke && std::find (B.member.begin (), B.member.end (), s.owner.vesselId) != B.member.end ()) c.flags |= COLLA_CON_WOKE;
 			if (o.owner.vesselId) { const Snap *x = SnapOf (o.owner.vesselId); c.hOther = x ? (OBJHANDLE)x->h : nullptr; c.otherObj = -1; }
 			else { c.hOther = (OBJHANDLE)geom.BaseHandle (o.owner.planet, o.owner.base); c.otherObj = o.owner.obj; }
 			c.mesh = s.mesh; c.group = s.grp; c.reserved = 0;
@@ -308,7 +328,7 @@ void CollPhysSession::PS6Warp ()
 
 void CollPhysSession::End ()
 {
-	snap.clear (); body.clear (); ev.clear (); last.clear (); queuedNew.clear (); jumped.clear ();
+	snap.clear (); body.clear (); ev.clear (); wr.clear (); last.clear (); queuedNew.clear (); jumped.clear ();
 	frame.Reset (); fwd.Reset (); ver.Reset ();
 	started = false;
 }

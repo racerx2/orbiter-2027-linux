@@ -153,3 +153,9 @@ coll_scenario_test(Scn.NormalClose SCN gen:pair:g0=1000,director=1,block=destroy
 
 # integration smoke test: the scenario file Smoke-PB-headon.scn, PB-A and PB-B noses 6 m apart closing at 2 m/s, contact near t = 3 s
 coll_scenario_test(Coll.Smoke.HeadOn SCN Smoke-PB-headon.scn FRAMES 400 CHECK smoke RUNS "main|headless|on||||")
+
+# E1 bodies other than a free pair (review CA-F 1-6): base buildings, a docked stack, an attachment tree, a LANDED partner
+coll_scenario_test(Coll.Base.KSC SCN gen:ksc FRAMES 600 CHECK ksc RUNS "main|headless|on||||")
+coll_scenario_test(Coll.Stack.Hit SCN gen:stack FRAMES 450 CHECK stackhit RUNS "off|headless|off||||" "on|headless|on||||")
+coll_scenario_test(Coll.Stack.Attached SCN gen:attached FRAMES 300 CHECK stackhit RUNS "off|headless|off||||" "on|headless|on||||")
+coll_scenario_test(Coll.Landed.Wake SCN gen:wake FRAMES 150 CHECK landedwake RUNS "main|headless|on||||")

@@ -150,6 +150,8 @@ void CollTestVessel::clbkSetClassCaps (FILEHANDLE cfg)
 	SetRotDrag (PB_RD);
 	SetTouchdownPoints (tdvtx, 12);
 	SetDockParams (_V (0, 1.3, -1), _V (0, 1, 0), _V (0, 0, -1));
+	CreateAttachment (false, _V (0, 2.5, 0), _V (0, 1, 0), _V (0, 0, 1), "COLLT"); // parent point 0: a payload 3.8 m above the CG (Coll.Stack.Attached)
+	CreateAttachment (true, _V (0, -1.3, 0), _V (0, -1, 0), _V (0, 0, 1), "COLLT"); // child point 0
 	PROPELLANT_HANDLE hpr = CreatePropellantResource (PB_FUELMASS);
 	THRUSTER_HANDLE th_main = CreateThruster (_V (0, 0, -4.35), _V (0, 0, 1), PB_MAXMAINTH, hpr, PB_ISP);
 	CreateThrusterGroup (&th_main, 1, THGROUP_MAIN);

@@ -19,7 +19,7 @@ struct CollOrbState {
 	Vector gReset;                            // gravity at the written position: acc after DefSetStateEx (Vessel.cpp:869-871)
 	bool ground = false, stack = false;       // GroundContact (last level, PropSubMax); stack: RPlace keeps acc (E1 6.5)
 	int lv = 0, nsub = 1, method = COLLM_RK2; // of the last Step
-	void DefSetStateEx (const Vector &p, const Vector &v, const Vector &w) { s.pos = p; s.vel = v; s.omega = w; if (!stack) acc = gReset; }
+	void DefSetStateEx (const Vector &p, const Vector &v, const Vector &w) { s.pos = p; s.vel = v; s.omega = w; ground = false; if (!stack) acc = gReset; } // RPlace_individual clears bSurfaceContact (Vessel.cpp:865)
 	void SetRotationMatrix (const Matrix &R) { s.R = R; s.Q.Set (R); }
 	void SetAngularVel (const Vector &w) { s.omega = w; }
 	void AddForce (const Vector &F, const Vector &r) { Fadd += F; Madd += crossp (F, r); }
