@@ -61,7 +61,7 @@ struct Sim {
 	CollDetect fwd, ver;
 	Host host;
 	Vector g;
-	struct TB { CollOrbState o; std::shared_ptr<Geo> geo; uint32_t id; double rmax; };
+	struct TB { CollOrbState o; std::shared_ptr<Geo> geo; uint32_t id; double rmax; Vector push; };
 	std::vector<TB> tb;
 	std::shared_ptr<Geo> baseGeo; Vector basePos;
 	int events = 0, writes = 0, lastWrites = 0;
@@ -130,7 +130,7 @@ struct Sim {
 		writes += lastWrites;
 		events += (int)ev.size ();
 		for (const CollImpactEvent &e : ev) evs.push_back (e);
-		for (TB &b : tb) mir.Step (b.o, h);
+		for (TB &b : tb) { b.o.aC = g + b.push; mir.Step (b.o, h); b.o.aC = g; }
 		t += h;
 	}
 };
@@ -178,7 +178,9 @@ TEST_CASE ("A1 head-on spheres: one event, separation, momentum exact every fram
 			REQUIRE (S.tb[0].o.s.vel.x < S.tb[1].o.s.vel.x);   // separating
 			REQUIRE (gmin >= -0.05);
 			REQUIRE (S.evs[0].dKE >= 0.0);
+			REQUIRE (std::fabs (S.evs[0].vn - u) <= 0.02*u);   // approach at the touch, not the held one
 			REQUIRE (S.fr.Stats ().checkFail == 0);
+			if (u*h > 0.5) REQUIRE (S.fr.Stats ().spec > 0);
 		}
 	g_collLog = nullptr;
 }
@@ -226,4 +228,27 @@ TEST_CASE ("A21 simdt == 0 frame: no write, records kept; time jump drops record
 	S.fr.OnTimeJump ();
 	S.Frame (0.1);
 	REQUIRE (S.fr.Stats ().checkFail == 0);
+}
+
+TEST_CASE ("A17 unseen push in the speculative step: FREE path or touch, never a pass-through, one event", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	for (double push : { 0.0, 40.0, 120.0 }) {
+		Sim S;
+		auto sph = std::make_shared<Geo> (SphereMesh (1.0, 12, 24));
+		S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (-2.0, 0, 0), Vector (5, 0, 0), 1.05);
+		S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (2.0, 0, 0), Vector (-5, 0, 0), 1.05);
+		double gmin = 1e9;
+		for (int f = 0; f < 30; f++) {
+			S.tb[0].push = (f == 1) ? Vector (0, push, 0) : Vector ();   // a module force after the plugin in the speculative step
+			S.Frame (1.0/6.0);
+			gmin = std::min (gmin, MinGap (S));
+		}
+		CAPTURE (push, gmin, S.events, S.fr.Stats ().freePath, S.fr.Stats ().touchPath, S.fr.Stats ().past);
+		REQUIRE (S.events == 1);
+		REQUIRE (gmin >= -0.25);
+		REQUIRE (S.tb[0].o.s.vel.x < S.tb[1].o.s.vel.x);
+		REQUIRE (S.fr.Stats ().checkFail == 0);
+	}
+	g_collLog = nullptr;
 }
