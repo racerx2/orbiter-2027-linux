@@ -475,7 +475,7 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, d
 		nr.push_back (q), nrF.push_back (Q.anim[1]);
 	}
 	CollAffine ofs = CollCompose (P.pose[1], CollInverse (P.anim[1])); // Translate(mesh offset)
-	for (uint32_t g = 0; g < slot.ngrp; g++) { // groups without a collider (cabin, pilots, tunnels) follow the record of their transform (dent2 D7)
+	for (uint32_t g = 0; !sh->CollMesh (mesh) && g < slot.ngrp; g++) { // groups without a collider (cabin, pilots, tunnels) follow the record of their transform (dent2 D7); not with a MESH collider
 		CollAffine F;
 		if (sh->PartOf (mesh, g) >= 0 || !sh->GroupPose (mesh, g, F)) continue;
 		size_t i = 0;

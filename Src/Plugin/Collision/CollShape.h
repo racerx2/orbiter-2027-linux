@@ -99,6 +99,7 @@ public:
 	CollGeom &MakePrivate (uint32_t part);                                                     // copy on write; rest = template vertices
 	bool     RenderFeature (uint32_t part, uint32_t tri, uint32_t &mesh, uint32_t &grp, uint32_t &otri) const; // MESH replacement: grp = FOLLOW visual group or ~0u, otri ~0u
 	bool     GroupPose (uint32_t mesh, uint32_t grp, CollAffine &F) const;         // animation transform at the last Update, no mesh offset
+	bool     CollMesh (uint32_t mesh) const;                                       // the slot collides with a sidecar MESH (groups are not visual groups)
 	double   PartRadius (uint32_t mesh, uint32_t grp) const;                       // part bounding radius [m], -1 if none
 	uint16_t Material (uint32_t mesh, uint32_t grp) const;                         // sidecar MAT id, 0 = vessel default
 	bool     RayRest (uint32_t mesh, uint32_t grp, const Vector &o, const Vector &d,

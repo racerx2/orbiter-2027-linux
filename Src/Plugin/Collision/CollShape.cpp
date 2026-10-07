@@ -875,6 +875,11 @@ bool CollShape::GroupPose (uint32_t mesh, uint32_t grp, CollAffine &F) const
 	return true;
 }
 
+bool CollShape::CollMesh (uint32_t mesh) const
+{
+	return mesh < slots.size() && slots[mesh].coll != nullptr;
+}
+
 double CollShape::PartRadius (uint32_t mesh, uint32_t grp) const
 {
 	int p = PartOf (mesh, grp);
