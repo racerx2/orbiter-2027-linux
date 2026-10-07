@@ -6,11 +6,9 @@
 #include <float.h>
 #include "Vecmat.h"
 
-int irand (int range)
-{
-	static const double drand_max = (double)(RAND_MAX+0.1);
-	return (int)((double)rand()*(double)range/drand_max);
-}
+namespace collvm { // not upstream: private copy in the collision addon
+
+// irand left out: collision code never draws from the shared rand() stream
 
 // =======================================================================
 // class Vector
@@ -775,3 +773,5 @@ void DirRotToMatrix(const Vector &Z, const Vector &Y, Matrix &R)
 
 	VectorBasisToMatrix(X, Y, Z, R);
 }
+
+} // namespace collvm

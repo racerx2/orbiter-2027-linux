@@ -8,6 +8,8 @@
 #include <memory.h>
 #include <ostream>
 
+namespace collvm { // not upstream: private copy in the collision addon
+
 // =======================================================================
 // Some useful constants
 
@@ -28,8 +30,7 @@ class Quaternion;
 // =======================================================================
 // Auxiliary functions
 
-// Returns integer random number in the range 0 <= r < range
-int irand (int range);
+// irand left out: collision code never draws from the shared rand() stream
 
 #ifdef UNDEF
 // Normalise argument to range -Pi <= a < Pi
@@ -476,5 +477,8 @@ void VectorBasisToMatrix(const Vector &X, const Vector &Y, const Vector &Z, Matr
 // This function is useful for rotations involving docking ports which are defined by an approach direction (Z)
 // and an up direction (Y) that defines the longitudinal rotation reference.
 void DirRotToMatrix(const Vector &Z, const Vector &Y, Matrix &R);
+
+} // namespace collvm
+using namespace collvm; // not upstream
 
 #endif // !__VECMAT_H

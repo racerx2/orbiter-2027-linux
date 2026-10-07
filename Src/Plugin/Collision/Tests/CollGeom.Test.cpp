@@ -12,7 +12,7 @@
 #include "CollGeom.h"
 #include "CollTestMsh.h"
 
-static bool operator== (const Vector &a, const Vector &b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+namespace collvm { static bool operator== (const Vector &a, const Vector &b) { return a.x == b.x && a.y == b.y && a.z == b.z; } } // found by ADL from Catch
 
 namespace {
 
