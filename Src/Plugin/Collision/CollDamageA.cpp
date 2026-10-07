@@ -400,6 +400,14 @@ static bool RigidPose (const CollAffine &X)
 	return true;
 }
 
+static bool SameAffine (const CollAffine &X, const CollAffine &Y)
+{
+	const double a[12] = { X.A.m11 - Y.A.m11, X.A.m12 - Y.A.m12, X.A.m13 - Y.A.m13, X.A.m21 - Y.A.m21, X.A.m22 - Y.A.m22, X.A.m23 - Y.A.m23,
+		X.A.m31 - Y.A.m31, X.A.m32 - Y.A.m32, X.A.m33 - Y.A.m33, X.t.x - Y.t.x, X.t.y - Y.t.y, X.t.z - Y.t.z };
+	for (double d : a) if (!(std::fabs (d) < 1e-9)) return false;
+	return true;
+}
+
 // parts of mesh whose t1 sphere meets the ball (cw, r), mapped into the frame toT o pose[1]; the hit part always (dent2 D2)
 static int ViewNear (const CollShape *sh, uint32_t mesh, uint32_t hit, const CollAffine &toT, const Vector &cw, double r, DentViewData &view)
 {
@@ -450,9 +458,10 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, d
 		return out;
 	};
 	std::vector<DentRecord> nr;
+	std::vector<CollAffine> nrF; // animation transform of each record's frame
 	DentRecord r {};
 	r.p = p, r.slot = mesh, r.key = slot.key, r.ngrp = slot.ngrp, r.nvtx = slot.nvtx, r.grp = partGroups (G), r.flags = 0;
-	nr.push_back (r);
+	nr.push_back (r), nrF.push_back (P.anim[1]);
 	Vector cw = CollApply (P.pose[1], p.c), nw = Unit (CollApplyDir (P.pose[1], p.n));
 	for (uint32_t j = 0; j < sh->nPart (); j++) { // partitions (D4 4.7)
 		const CollPart &Q = sh->Part (j);
@@ -463,8 +472,26 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, d
 		q.p.c = CollApply (Qi, cw), q.p.n = Unit (CollApplyDir (Qi, nw));
 		DentMath::Quantise (q.p);
 		q.grp = partGroups (Q.Geom ());
-		nr.push_back (q);
+		nr.push_back (q), nrF.push_back (Q.anim[1]);
 	}
+	CollAffine ofs = CollCompose (P.pose[1], CollInverse (P.anim[1])); // Translate(mesh offset)
+	for (uint32_t g = 0; g < slot.ngrp; g++) { // groups without a collider (cabin, pilots, tunnels) follow the record of their transform (dent2 D7)
+		CollAffine F;
+		if (sh->PartOf (mesh, g) >= 0 || !sh->GroupPose (mesh, g, F)) continue;
+		size_t i = 0;
+		while (i < nr.size () && !SameAffine (nrF[i], F)) i++;
+		if (i == nr.size ()) {
+			if (!RigidPose (F)) continue;
+			CollAffine Gi = CollInverse (CollCompose (ofs, F));
+			DentRecord q = r;
+			q.p.c = CollApply (Gi, cw), q.p.n = Unit (CollApplyDir (Gi, nw));
+			DentMath::Quantise (q.p);
+			q.grp.clear ();
+			nr.push_back (q), nrF.push_back (F);
+		}
+		nr[i].grp.push_back ((uint16_t)g);
+	}
+	for (DentRecord &x : nr) std::sort (x.grp.begin (), x.grp.end ());
 	double V = mat.sigma_c > 0 ? E / mat.sigma_c : 0;
 	unsigned ncopy = 0; // copies stored or grown besides the hit part's record
 	int k0 = DentMath::FindCoalesce (v.d.rec, nr[0]); // decided once on the hit part (dent2 B1, B2)

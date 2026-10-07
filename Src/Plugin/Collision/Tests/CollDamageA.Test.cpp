@@ -203,7 +203,7 @@ struct Rig {
 		host.slots[b.id] = { CollDmgSlot { true, DentMath::MeshKey ("plate"), 1, plate->nvtx, plate, "plate", 1 } };
 		return b.id;
 	}
-	uint32_t AddNosed (const std::string &name) // body plate (group 0) and a small animated nose plate 0.2 m in front (group 1): two parts
+	uint32_t AddNosed (const std::string &name, bool cabin = false) // body plate (group 0), small animated nose plate 0.2 m in front (group 1); cabin: group 2 behind the nose, no collider
 	{
 		uint32_t id = Add (name);
 		Body &b = body.back ();
@@ -216,14 +216,24 @@ struct Rig {
 			uint16_t a = (uint16_t)(j * 5 + i), c1 = (uint16_t)(a + 1), c = (uint16_t)(a + 5), d = (uint16_t)(c + 1);
 			g.idx.insert (g.idx.end (), { a, c1, c, c1, d, c });
 		}
-		m->nvtx = (uint32_t)(m->grp[0].vtx.size () + g.vtx.size ());
+		if (cabin) {
+			m->grp.push_back (g);
+			for (CollVtx &x : m->grp[2].vtx) x.z = 0.1f;
+			auto sc = std::make_shared<CollSidecar> ();
+			std::vector<std::string> w;
+			const char *txt = "COLLIDER-V1\nEXCLUDE GROUP 2\n";
+			REQUIRE (CollParseSidecar (txt, std::strlen (txt), "t.col", *sc, w));
+			b.mi.side = sc;
+		}
+		m->nvtx = 0;
+		for (auto &x : m->grp) m->nvtx += (uint32_t)x.vtx.size ();
 		b.mi.key = "nosed", b.mi.rest = m;
 		b.tv.reset (new TestVessel ()), b.mod.reset (new TestModule ());
 		b.tv->coll = &b.ca;
 		b.tv->meshGrp = { 2 };
 		UINT an = b.tv->CreateAnimation (0);
 		b.tv->AddAnimationComponent (an, 0, 1, b.mod->Lin (0, b.mod->Grp ({1}), 1, _V(0,0,1)));
-		host.slots[id] = { CollDmgSlot { true, DentMath::MeshKey ("nosed"), 2, m->nvtx, m, "nosed", 1 } };
+		host.slots[id] = { CollDmgSlot { true, DentMath::MeshKey ("nosed"), (uint16_t)m->grp.size (), m->nvtx, m, "nosed", 1 } };
 		return id;
 	}
 	Body &B (uint32_t id) { for (auto &b : body) if (b.id == id) return b; return body.front (); }
@@ -822,4 +832,21 @@ TEST_CASE ("dent2 crash-sized vessel dents")
 		CHECK (v->d.rec[0].p.h >= h1);
 		CHECK (v->d.rec[1].p.h == v->d.rec[0].p.h);
 	}
+}
+
+TEST_CASE ("dent2 D7 groups without a collider get the dent")
+{
+	Rig r;
+	uint32_t a = r.AddNosed ("DG-A", true), b = r.Add ("PB-B");
+	r.Begin ();
+	r.Frame ();
+	REQUIRE (r.B (a).sh->PartOf (0, 2) < 0);
+	CollImpactEvent e = Hit (a, -1, b, 30.0, 4.0e6);
+	e.s[0].grp = 1, e.s[0].c = Vector (0.1, 0.1, 0.2);
+	r.Frame ({ e });
+	const VesselDamageA *v = r.s.Damage (a);
+	REQUIRE (v);
+	bool has2 = false;
+	for (const DentRecord &x : v->d.rec) for (uint16_t g : x.grp) has2 = has2 || g == 2;
+	CHECK (has2);
 }
