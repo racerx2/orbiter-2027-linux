@@ -17,7 +17,7 @@ constexpr double   DENT_DESTROY_ENERGY = 1000.0;  // DestroyEnergy default [J/kg
 constexpr double   DENT_CATASTROPHIC   = 40000.0; // DMGF_CATASTROPHIC when one event's E_i / m reaches this [J/kg]
 constexpr double   DENT_WF_SHARE       = 0.25;    // share of Wf added to each passing side's eabs (2.1 step 7)
 constexpr double   DENT_KAPPA          = 0.3;     // h / R (4.2)
-constexpr double   DENT_RMAX_SIZE      = 0.5;     // R_max: vessels min(this * Size, PartRadius), buildings this * rb
+constexpr double   DENT_RMAX_SIZE      = 0.5;     // R_max: vessels this * Size, buildings this * rb
 constexpr double   DENT_FLOOR          = 0.66;    // vessel low-poly floor R >= d4 / this
 constexpr double   DENT_SLAB_LO        = 0.4;     // slab smoothstep from this * T (4.1)
 constexpr double   DENT_SLAB_HI        = 0.8;     // to this * T
@@ -88,7 +88,7 @@ struct DentInput {
 	double Rmax;               // radius cap (4.2 step 2)
 	double L;                  // Size (vessels) or rb (buildings) for the 0.25 L cap
 	double rayT;               // slab ray hit distance along -n from c, < 0 = no hit (4.3)
-	bool vessel;               // the low-poly floor applies (4.2 step 3)
+	bool vessel;               // the low-poly floor applies (4.2 step 3); depth cap DmaxVessel (no t_cap)
 };
 enum { DENT_OK = 0, DENT_SMALL = 1, DENT_NOSURFACE = 2, DENT_FLOOR_CAP = 3 }; // Solve: record, below 2 mm, S = 0 or beyond DENT_LIM_*; FLOOR_CAP: Damage's building cap only
 
@@ -121,6 +121,7 @@ namespace DentMath {
 	double SlabT (double rayT, double R);                         // T: 0 (plate) without a hit, below 0.5 R or beyond DENT_LIM_T, else rayT
 	double VolumeFactor (const DentParams &p, const DentMeshView &m); // S of 4.4 on current front faces; coincident faces (0.1 mm grid) once; h = V / S
 	double Dmax (double tcap, double T, double R, double L);      // min(t_cap, T > 0 ? 0.6 T : 0.5 R, 0.25 L)
+	double DmaxVessel (double T, double R, double L);             // min(T > 0 ? 0.6 T : inf, 0.5 R, 0.25 L): vessel crush, no t_cap
 	double DepthCap (const DentParams &p, const DentMeshView &m, double Dmax); // cumulative cap: min over q > 0.05 (none there: q > 0) of (Dmax - u) / q
 	int    Solve (const DentInput &in, const DentMeshView &m, DentParams &out); // 4.2-4.5 in order; vessel floor wins over Rmax; DENT_*
 	int    FindCoalesce (const std::vector<DentRecord> &rec, const DentRecord &r); // record of the same target and partition to grow (4.5), -1 if none

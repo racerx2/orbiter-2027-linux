@@ -10,6 +10,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "CollAnimTest.h"
 #include "CollDamageA.h"
 #include "CollApiA.h"
 #include "CollisionAPI.h"
@@ -187,7 +188,7 @@ std::shared_ptr<CollRestMesh> Plate () // 21 x 21 grid over [-5, 5]^2 in z = 0, 
 struct Rig {
 	DFake sdk; DHost host { sdk }; CollCfgValues cfg; CollDmgSession s { sdk, host, cfg };
 	std::shared_ptr<CollRestMesh> plate = Plate ();
-	struct Body { DFake::V *v; uint32_t id; std::unique_ptr<CollShape> sh; CollAnim ca; CollMeshInfo mi; };
+	struct Body { DFake::V *v; uint32_t id; std::unique_ptr<CollShape> sh; CollAnim ca; CollMeshInfo mi; std::unique_ptr<TestVessel> tv; std::unique_ptr<TestModule> mod; };
 	std::deque<Body> body; CollTemplateCache cache;
 	Rig () { cfg.logLevel = 1; }
 	uint32_t Add (const std::string &name, const std::string &cls = "ShuttlePB")
@@ -202,11 +203,37 @@ struct Rig {
 		host.slots[b.id] = { CollDmgSlot { true, DentMath::MeshKey ("plate"), 1, plate->nvtx, plate, "plate", 1 } };
 		return b.id;
 	}
+	uint32_t AddNosed (const std::string &name) // body plate (group 0) and a small animated nose plate 0.2 m in front (group 1): two parts
+	{
+		uint32_t id = Add (name);
+		Body &b = body.back ();
+		auto m = std::make_shared<CollRestMesh> (*plate);
+		m->name = "nosed";
+		m->grp.resize (2);
+		CollGroupData &g = m->grp[1];
+		for (int j = 0; j <= 4; j++) for (int i = 0; i <= 4; i++) g.vtx.push_back (CollVtx { -0.5f + 0.25f * i, -0.5f + 0.25f * j, 0.2f, 0, 0, 1, 0, 0 });
+		for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) {
+			uint16_t a = (uint16_t)(j * 5 + i), c1 = (uint16_t)(a + 1), c = (uint16_t)(a + 5), d = (uint16_t)(c + 1);
+			g.idx.insert (g.idx.end (), { a, c1, c, c1, d, c });
+		}
+		m->nvtx = (uint32_t)(m->grp[0].vtx.size () + g.vtx.size ());
+		b.mi.key = "nosed", b.mi.rest = m;
+		b.tv.reset (new TestVessel ()), b.mod.reset (new TestModule ());
+		b.tv->coll = &b.ca;
+		b.tv->meshGrp = { 2 };
+		UINT an = b.tv->CreateAnimation (0);
+		b.tv->AddAnimationComponent (an, 0, 1, b.mod->Lin (0, b.mod->Grp ({1}), 1, _V(0,0,1)));
+		host.slots[id] = { CollDmgSlot { true, DentMath::MeshKey ("nosed"), 2, m->nvtx, m, "nosed", 1 } };
+		return id;
+	}
 	Body &B (uint32_t id) { for (auto &b : body) if (b.id == id) return b; return body.front (); }
 	void Begin (CollStoreBlock &&blk = CollStoreBlock ()) { s.Begin (std::move (blk)); }
 	void Frame (const std::vector<CollImpactEvent> &ev = {})
 	{
-		for (auto &b : body) b.sh->Update (&b.mi, 1, b.ca, nullptr, 0, cache);
+		for (auto &b : body) {
+			if (b.tv) b.tv->Step ();
+			b.sh->Update (&b.mi, 1, b.ca, b.tv ? b.tv->anim : nullptr, b.tv ? b.tv->nanim : 0, cache);
+		}
 		for (auto &b : body) s.ShapesUpdated (b.id, b.sh.get (), std::vector<CollDmgSlotEv> ());
 		s.PrePhysics ();
 		s.Commit (ev, sdk.simt);
@@ -733,4 +760,66 @@ TEST_CASE ("E3 review CA-GD: playback gaps and a replacement that moves mesh")
 	REQUIRE (c1);
 	CHECK_FALSE (c1->g[0].edit.empty ());
 	CHECK ((c0 == nullptr || c0->g[0].edit.empty ())); // the old mesh no longer shows the record
+}
+
+TEST_CASE ("dent2 crash-sized vessel dents")
+{
+	Rig r;
+	uint32_t a = r.AddNosed ("DG-A"), b = r.Add ("PB-B");
+	r.Begin ();
+	r.Frame ();
+	REQUIRE (r.B (a).sh->nPart () == 2);
+	REQUIRE (r.B (a).sh->PartRadius (0, 1) < 1.0);
+	auto hit = [&] (double vn, double dKE) {
+		CollImpactEvent e = Hit (a, -1, b, vn, dKE);
+		e.s[0].grp = 1, e.s[0].c = Vector (0.1, 0.1, 0.2);
+		return e;
+	};
+	SECTION ("big hit: R beyond the nose part, copied to the body part, h past the old 0.5 m t_cap") {
+		r.Frame ({ hit (30.0, 4.0e6) });
+		const VesselDamageA *v = r.s.Damage (a);
+		REQUIRE (v);
+		REQUIRE (v->d.rec.size () == 2);
+		CHECK (v->d.rec[0].p.R > 1.0);
+		CHECK (v->d.rec[0].p.h > 0.5);
+		CHECK (v->d.rec[0].p.h <= 0.5 * v->d.rec[0].p.R + 1e-9);
+		CHECK (v->d.rec[0].grp == std::vector<uint16_t> { 1 });
+		CHECK (v->d.rec[1].grp == std::vector<uint16_t> { 0 });
+		CHECK (v->d.rec[1].p.R == v->d.rec[0].p.R);
+		CHECK (v->d.rec[1].p.h == v->d.rec[0].p.h);
+		CHECK (r.sdk.Logged ("parts=2 copies=1"));
+	}
+	SECTION ("dent grows with energy") {
+		Rig r2;
+		uint32_t a2 = r2.AddNosed ("DG-A"), b2 = r2.Add ("PB-B");
+		r2.Begin ();
+		r2.Frame ();
+		CollImpactEvent e = Hit (a2, -1, b2, 30.0, 4.0e5);
+		e.s[0].grp = 1, e.s[0].c = Vector (0.1, 0.1, 0.2);
+		r2.Frame ({ e });
+		r.Frame ({ hit (30.0, 4.0e6) });
+		REQUIRE (r2.s.Damage (a2));
+		REQUIRE (r.s.Damage (a));
+		CHECK (r.s.Damage (a)->d.rec[0].p.R > r2.s.Damage (a2)->d.rec[0].p.R);
+		CHECK (r.s.Damage (a)->d.rec[0].p.h > r2.s.Damage (a2)->d.rec[0].p.h);
+	}
+	SECTION ("small then large at one spot: the large one is its own record (R grows)") {
+		r.Frame ({ hit (5.0, 2.0e4) });
+		size_t n1 = r.s.Damage (a)->d.rec.size ();
+		REQUIRE (n1 >= 1);
+		double R1 = r.s.Damage (a)->d.rec[0].p.R;
+		r.Frame ({ hit (30.0, 4.0e6) });
+		const VesselDamageA *v = r.s.Damage (a);
+		REQUIRE (v->d.rec.size () > n1);
+		CHECK (v->d.rec[n1].p.R > R1);
+	}
+	SECTION ("same hit twice: grown once per record, copies keep one depth") {
+		r.Frame ({ hit (30.0, 4.0e6) });
+		double h1 = r.s.Damage (a)->d.rec[0].p.h;
+		r.Frame ({ hit (30.0, 1.0e6) });
+		const VesselDamageA *v = r.s.Damage (a);
+		REQUIRE (v->d.rec.size () == 2);
+		CHECK (v->d.rec[0].p.h >= h1);
+		CHECK (v->d.rec[1].p.h == v->d.rec[0].p.h);
+	}
 }

@@ -554,6 +554,12 @@ double DentMath::Dmax (double tcap, double T, double R, double L)
 	return std::min (std::min (tcap, T > 0.0 ? DENT_DMAX_T * T : DENT_DMAX_R * R), DENT_DMAX_L * L);
 }
 
+double DentMath::DmaxVessel (double T, double R, double L)
+{
+	double d = std::min (DENT_DMAX_R * R, DENT_DMAX_L * L);
+	return T > 0.0 ? std::min (d, DENT_DMAX_T * T) : d;
+}
+
 double DentMath::DepthCap (const DentParams &p, const DentMeshView &m, double Dmax)
 {
 	const Vector *cur = m.cur ? m.cur : m.rest;
@@ -585,7 +591,7 @@ int DentMath::Solve (const DentInput &in, const DentMeshView &m, DentParams &out
 	double S = VolumeFactor (out, m);
 	if (!(S > 0.0)) return DENT_NOSURFACE;
 	double h = V / S;
-	double cap = DepthCap (out, m, Dmax (mat.t_cap, out.T, R, in.L));
+	double cap = DepthCap (out, m, in.vessel ? DmaxVessel (out.T, R, in.L) : Dmax (mat.t_cap, out.T, R, in.L));
 	if (h > cap) h = cap;
 	if (h > DENT_LIM_H) h = DENT_LIM_H;
 	if (!(h > 0.0)) h = 0.0;

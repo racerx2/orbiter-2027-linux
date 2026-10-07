@@ -2212,3 +2212,11 @@ TEST_CASE("U13 parser fuzz, long (sanitizer runs)", "[.fuzz]")
 	REQUIRE(longLines == 0);
 	REQUIRE(outside == 0);
 }
+
+TEST_CASE ("dent2 DmaxVessel: no material cap, 0.5 R, 0.25 L, 0.6 T")
+{
+	CHECK (DentMath::DmaxVessel (0.0, 4.0, 100.0) == 2.0);
+	CHECK (DentMath::DmaxVessel (0.0, 4.0, 4.0) == 1.0);
+	CHECK (DentMath::DmaxVessel (1.0, 4.0, 100.0) == 0.6);
+	CHECK (DentMath::Dmax (0.5, 0.0, 4.0, 100.0) == 0.5); // buildings keep t_cap
+}
