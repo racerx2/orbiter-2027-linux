@@ -299,6 +299,31 @@ def guard_and_clear(work, test, run):
     return n
 
 
+def selftest_skipscan(base):  # T0.9: a process named like a compiler makes the real scan report a build
+    fake = os.path.join(base, 'ninja')
+    sleep = shutil.which('sleep')
+    if not sleep:
+        return 0
+    copy_file(sleep, fake)
+    os.chmod(fake, 0o755)
+    p = subprocess.Popen([fake, '30'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(20):
+            found = compilers_running()
+            if 'ninja' in found:
+                break
+            time.sleep(0.1)
+        try:
+            skip_checks()
+            log('selftest skipscan: a running "ninja" was not reported')
+            return 1
+        except Skipped:
+            return 0
+    finally:
+        p.kill()
+        p.wait()
+
+
 def selftest_guards(work):  # T0.1: planted unsafe Flights folders give the step-3 error and delete nothing; a skipped run deletes nothing
     base = os.path.join(os.path.realpath(work), 'Scn.RunnerGuard')
     ensure_dir(os.path.join(base, 'outside'))
@@ -361,6 +386,7 @@ def selftest_guards(work):  # T0.1: planted unsafe Flights folders give the step
     if rc != SKIP or not os.path.isfile(k3):
         log('selftest skipped: exit %s, planted file %s' % (rc, 'kept' if os.path.isfile(k3) else 'deleted'))
         errors += 1
+    errors += selftest_skipscan(base)
     log('runner guard selftest: %s' % ('FAIL' if errors else 'PASS'))
     return 1 if errors else 0
 
@@ -383,7 +409,7 @@ class RunSpec:
         if self.order not in ('client-first', 'addon-first'):
             raise TestError('bad order %r' % self.order)
         self.args, self.cfg, self.acfg, self.exit, self.endon, self.stdin, self.dump = [], [], [], 0, None, None, True
-        self.scn = None
+        self.scn, self.limit, self.expect = None, True, None
         for t in shlex.split(args):
             if t.startswith('@cfg:'):
                 self.cfg.append(item(t[5:]))
@@ -397,6 +423,10 @@ class RunSpec:
                 self.stdin = t[7:]
             elif t == '@nodump':
                 self.dump = False
+            elif t == '@nolimit':  # no --maxframes: the run ends by its own args (--maxsimtime) or the timeout
+                self.limit = False
+            elif t.startswith('@expect='):  # the end the run must have: TIMEOUT
+                self.expect = t[8:]
             elif t.startswith('@scn='):
                 self.scn = t[5:]
             else:
@@ -632,7 +662,8 @@ def launch(a, sbx, spec, scn):
     step = a.step
     if spec.mode != 'paced':
         cmd.append('--fixedstep=%s' % step)
-    cmd.append('--maxframes=%d' % (a.frames + 5))
+    if spec.limit:
+        cmd.append('--maxframes=%d' % (a.frames + 5))
     if spec.endon:
         cmd[1] = '--scenario=' + scn
     cmd += a.arg + spec.args

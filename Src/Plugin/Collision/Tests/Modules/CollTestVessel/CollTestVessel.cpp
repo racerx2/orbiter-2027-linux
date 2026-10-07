@@ -286,7 +286,11 @@ bool CollTestVessel::Pre (const Words &w, double simt) // the actions of a vesse
 		oapiSimulateBufferedKey (OAPI_KEY_C, mod, 1);
 		return true;
 	}
-	if (a == "TESTPAUSE" || a == "TESTDELETEPOST" || a == "TESTJUMPPOST" || I (w, 1) != k) return false;
+	if (a == "TESTDELETEPOST" || a == "TESTJUMPPOST" || I (w, 1) != k) return false;
+	if (a == "TESTPAUSE") { // nothing in-process runs while paused: the runner resumes through Orbiter's stdin, "pause off" (T 4.6)
+		oapiSetPause (true);
+		return true;
+	}
 	VESSEL *v = Vi (S (w, 2));
 	if (a == "TESTPLACEREL") { // TESTPLACEREL k v ref x y z vx vy vz ax ay az: v at ref's state, offsets in ref's frame
 		VESSEL *ref = Vi (S (w, 3));

@@ -140,3 +140,13 @@ coll_scenario_test(Coll.HvC.Stock VISUAL SCN gen:hvc FRAMES 200 TIMEOUT 900 CHEC
 	RUNS "h|headless|on||||TESTRNGPROBE 50" "cf|client|on|client-first|||TESTRNGPROBE 50" "af|client|on|addon-first|||TESTRNGPROBE 50")
 coll_scenario_test(Scn.Visual.Smoke VISUAL SCN gen:pair:g0=20 FRAMES 70 TIMEOUT 600 CHECK visualsmoke
 	RUNS "a|client|off||||LUASHOT 60 smoke" "b|client|off||||LUASHOT 60 smoke")
+
+# T0.9 guards and close paths (design-C-T 2.5, 3.5; E4 7.10); the build-running skip is proven by Scn.RunnerGuard
+coll_scenario_test(Scn.Timeout SCN gen:pair:g0=1000 FRAMES 60 TIMEOUT 20 CHECK timeout RUNS "main|headless|off||@nolimit @expect=TIMEOUT||")
+coll_scenario_test(Scn.Pause SCN gen:pair:g0=1000,director=1 FRAMES 190 CHECK pause
+	RUNS "ref|headless|off||@nolimit --maxsimtime=4||" "pause|headless|off||@nolimit --maxsimtime=4 @stdin=pause.txt||TESTPAUSE 50")
+set(close "'@endon=**** Closing simulation session' @cfg:ShutdownMode=0")
+coll_scenario_test(Scn.Teardown SCN "Delta-glider/Smack!" FRAMES 60 CHECK teardown
+	RUNS "off|headless|off||${close}||" "on|headless|on||${close}||" "onfast|headless|on||||")
+coll_scenario_test(Scn.NormalClose SCN gen:pair:g0=1000,director=1,block=destroyed FRAMES 60 CHECK normalclose
+	RUNS "main|headless|on||${close}||TESTRECORD 1 1000")

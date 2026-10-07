@@ -18,7 +18,7 @@ QUIET = 'Collision summary: frames=10 contacts=0 events=0 writes=0 probes=0 vtx=
 
 class Spec:
     def __init__(self, addon='on', exit=0):
-        self.id, self.addon, self.exit, self.endon, self.dump = 'self', addon, exit, None, True
+        self.id, self.addon, self.exit, self.endon, self.dump, self.expect = 'self', addon, exit, None, True, None
 
 
 class Args:

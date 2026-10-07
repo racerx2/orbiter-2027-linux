@@ -27,6 +27,9 @@ def head(focus, desc, planet='Earth'):
             + 'BEGIN_SHIPS\n')
 
 
+BLOCKS = {'destroyed': ('\nBEGIN_Collision\nCOLLA 1\nVESSEL 0 PB-A ShuttlePB\nXDMG 1 500000 0\nEND_VESSEL\nEND\n')}  # addon blocks (E3 7.8 syntax)
+
+
 def director(planet='Earth', name='TD'):  # mesh-less, no collider, twice the planet radius (T 4.6)
     _, rad = PLANETS[planet]
     r = 2 * rad
@@ -44,7 +47,7 @@ def pair(p):  # P0 LEO pair (T 7.2): A at the P0 orbit, B 6 m + g0 ahead along z
         s += director('Earth')
     s += 'PB-A:%s\n  STATUS Orbiting Earth\n  RPOS %s 0 0\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0\nEND\n' % (ca, g(R_P0), g(v0 + va))
     s += 'PB-B:%s\n  STATUS Orbiting Earth\n  RPOS %s 0 %s\n  RVEL 0 0 %s\n  AROT 0 180 0\n  PRPLEVEL 0:0\nEND\n' % (cb, g(R_P0 + x), g(6.0 + g0), g(v0 + vb))
-    return s + 'END_SHIPS\n'
+    return s + 'END_SHIPS\n' + BLOCKS.get(p.get('block', ''), '')
 
 
 def surface(p):  # BB: DG landed on pad 1, ShuttlePB landed on pad 2 (G4)

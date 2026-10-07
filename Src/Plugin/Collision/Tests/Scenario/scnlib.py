@@ -158,6 +158,10 @@ def run_checks(ctx, r, a):  # what every run must show (T 2.5, E4 7.2, A2)
     sid = r.spec.id
     if r.status == 'TERMINATING':
         fail('run %s: >>> TERMINATING <<< in Orbiter.log' % sid)
+    if r.spec.expect:
+        if r.status != r.spec.expect:
+            fail('run %s: ended %s, %s expected' % (sid, r.status or 'by itself', r.spec.expect))
+        return
     if r.status == 'TIMEOUT':
         fail('run %s: TIMEOUT after %.0f s' % (sid, r.secs))
     if r.status != 'ENDON' and r.exit != r.spec.exit:
