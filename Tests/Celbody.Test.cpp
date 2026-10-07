@@ -237,6 +237,13 @@ static const BodyRange bodies[] = {
 	{"Proteus",   1.1641e8,  1.1888e8,  1e-5, 10.0, 1},
 	{"Nereid",    1.3286e9,  9.7833e9,  1e-5, 10.0, 1},
 	{"Vesta",     3.1784e11, 3.8918e11, 1e-5, 10.0, 1},
+	// the Pluto system, series fitted to JPL's DE441 and plu060: 0.99 x min and 1.01 x max over 1800-2200
+	{"Pluto",     29.36*AU,  49.81*AU,  1e-5, 10.0, 1},
+	{"Charon",    1.9397e7,  1.9795e7,  1e-5, 10.0, 1},
+	{"Styx",      3.9708e7,  4.5434e7,  1e-5, 10.0, 1},
+	{"Nix",       4.5989e7,  5.1576e7,  1e-5, 10.0, 1},
+	{"Kerberos",  5.4864e7,  6.0738e7,  1e-5, 10.0, 1},
+	{"Hydra",     6.1607e7,  6.7913e7,  1e-5, 10.0, 1},
 };
 
 TEST_CASE("Celbody modules load through the Orbitersdk entry point", "[celbody]")
@@ -340,6 +347,31 @@ static const HorizonsState horizons[] = {
 	{"Vesta", 234165.5, -2.743866829350e+11, 2.893082480883e+10, 2.437714596967e+11, 50000},
 	{"Hyperion", 51544.5, 1.710492869804e+08, -6.593858184561e+08, 1.274310893164e+09, 20000000},
 	{"Hyperion", 61314.5, -6.835348535917e+08, -5.744101335684e+08, 1.269662312169e+09, 20000000},
+	// the Pluto system (Horizons: plu060 and DE441) at 1800-01-03, J2000, 2026-09-27 and 2199-12-29 TDB, fetched for design G
+	{"Pluto", -21501.5, 5.435080979875e+12, -1.304323205531e+12, -2.497574147439e+12, 200},
+	{"Pluto", 51544.5, -1.477330922307e+12, 8.752154807950e+11, -4.182574867536e+12, 200},
+	{"Pluto", 61274.16411646549, 2.970620852029e+12, -3.883236091579e+11, -4.399981576212e+12, 200},
+	{"Pluto", 124589.5, -4.101437832983e+12, 8.290917317308e+11, 3.343201512513e+12, 200},
+	{"Charon", -21501.5, 1.345032463528e+07, -1.251101294146e+07, 6.817678811747e+06, 200},
+	{"Charon", 51544.5, -6.837721052183e+06, -1.129855593548e+07, -1.448059952788e+07, 200},
+	{"Charon", 61274.16411646549, -9.859235589544e+06, 1.693491856108e+07, -1.583741203505e+05, 200},
+	{"Charon", 124589.5, -1.347936762420e+07, 7.190526474074e+05, -1.420935352889e+07, 200},
+	{"Styx", -21501.5, 3.200218280279e+07, -2.507894960536e+07, 1.910848386858e+07, 200},
+	{"Styx", 51544.5, 3.020342037197e+07, -1.949651224662e+07, 2.064644414430e+07, 200},
+	{"Styx", 61274.16411646549, -2.771235335248e+07, 3.410873034870e+07, -8.900930489688e+06, 200},
+	{"Styx", 124589.5, 2.723774301087e+07, -1.119127991244e+05, 2.951349007902e+07, 200},
+	{"Nix", -21501.5, 1.705052616339e+07, 2.822685126425e+07, 3.614522789656e+07, 200},
+	{"Nix", 51544.5, -3.191637391155e+06, 4.111032607466e+07, 2.217735690132e+07, 200},
+	{"Nix", 61274.16411646549, 9.567064266264e+06, -4.275746018972e+07, -1.623589019966e+07, 200},
+	{"Nix", 124589.5, -2.770502509447e+07, 4.096143827538e+07, -4.598015269974e+06, 200},
+	{"Kerberos", -21501.5, -3.985927898079e+07, 6.986835324914e+06, -3.892154783478e+07, 200},
+	{"Kerberos", 51544.5, 5.356908875723e+06, -5.267263965912e+07, -2.752056447792e+07, 200},
+	{"Kerberos", 61274.16411646549, -1.626313966657e+07, 5.470947829610e+07, 1.710015326460e+07, 200},
+	{"Kerberos", 124589.5, 4.029201197901e+07, -9.011158963730e+06, 3.754755526255e+07, 200},
+	{"Hydra", -21501.5, 4.784450498138e+07, -3.563936735872e+07, 2.949961194646e+07, 200},
+	{"Hydra", 51544.5, 3.141035313591e+07, -5.700688499153e+07, -9.602320080273e+05, 200},
+	{"Hydra", 61274.16411646549, 1.905308989149e+07, 4.198676651587e+07, 4.666803143914e+07, 200},
+	{"Hydra", 124589.5, 1.323802668758e+07, -5.919147424379e+07, -2.301733351546e+07, 200},
 };
 
 TEST_CASE("Modules for the cfg-orbit bodies follow JPL Horizons", "[celbody]")
@@ -352,6 +384,37 @@ TEST_CASE("Modules for the cfg-orbit bodies follow JPL Horizons", "[celbody]")
 		double d = sqrt ((s[0]-h.x)*(s[0]-h.x) + (s[1]-h.y)*(s[1]-h.y) + (s[2]-h.z)*(s[2]-h.z));
 		INFO(h.name << " mjd " << h.mjd << " error " << d << " m");
 		CHECK(d < h.tol);
+	}
+}
+
+TEST_CASE("Outside its span the Pluto system is finite, continuous at the ends and near its orbit", "[celbody]")
+{
+	static const char *names[] = {"Pluto", "Charon", "Styx", "Nix", "Kerberos", "Hydra"};
+	for (const char *name : names) {
+		const BodyRange *b = std::find_if (std::begin (bodies), std::end (bodies), [&](const BodyRange &r) { return !strcmp (r.name, name); });
+		REQUIRE(b != std::end (bodies));
+		CelbodyModule m (name);
+		REQUIRE(m.body);
+		for (double mjd : {-30000.0, 130000.0, mjd0 - 1e6, mjd0 + 1e6}) {
+			double s[6];
+			m.Ephem (mjd, s);
+			double r = sqrt (s[0]*s[0] + s[1]*s[1] + s[2]*s[2]);
+			INFO(name << " mjd " << mjd << " r=" << r);
+			CHECK(std::isfinite (r));
+			CHECK(r > 0.95*b->rmin);
+			CHECK(r < 1.05*b->rmax);
+		}
+		const double e = 1e-7; // [days]
+		for (double te : {-21503.0, 124591.0}) {
+			double a[6], c[6];
+			m.Ephem (te - e, a);
+			m.Ephem (te + e, c);
+			for (int i = 0; i < 3; i++) {
+				INFO(name << " end " << te << " component " << i);
+				CHECK(fabs (c[i] - a[i] - (a[i+3] + c[i+3])*e*86400.0) < 1.0);
+				CHECK(fabs (c[i+3] - a[i+3]) < 1e-3);
+			}
+		}
 	}
 }
 
@@ -422,6 +485,19 @@ TEST_CASE("Atmosphere modules give physical densities", "[celbody]")
 		{"Earth", "EarthAtmNRLMSISE00", 400e3, 1e-13,  1e-10},
 		{"Mars",  "MarsAtm2006",        0.0,   0.005,  0.05},
 		{"Venus", "VenusAtm2006",       0.0,   40.0,   90.0},
+		// not upstream: aerobraking heights (US 1976 at 100 km, MGS/MRO near 105 km, Magellan near 140 km)
+		{"Earth", "EarthAtm2006",       100e3, 3e-7,   1e-6},
+		{"Mars",  "MarsAtm2006",        105e3, 5e-9,   5e-7},
+		{"Venus", "VenusAtm2006",       140e3, 3e-10,  3e-8},
+		// not upstream: the layered models at the surface (1 bar for the giants) and in the aerocapture band
+		{"Titan",   "TitanAtm2005",     0.0,    5.0,   5.5},
+		{"Titan",   "TitanAtm2005",     1000e3, 1e-10, 2e-9},
+		{"Jupiter", "JupiterAtm1995",   0.0,    0.15,  0.17},
+		{"Saturn",  "SaturnAtm2017",    0.0,    0.17,  0.20},
+		{"Uranus",  "UranusAtm1986",    0.0,    0.40,  0.44},
+		{"Neptune", "NeptuneAtm1989",   0.0,    0.42,  0.46},
+		{"Neptune", "NeptuneAtm1989",   200e3,  1e-5,  1e-4},
+		{"Io",      "IoAtm2007",        0.0,    5e-9,  9e-9},
 	};
 	for (const AtmCase &c : cases) {
 		INFO(c.module);
@@ -446,6 +522,97 @@ TEST_CASE("Atmosphere modules give physical densities", "[celbody]")
 		INFO("rho=" << out.rho << " T=" << out.T << " p=" << out.p);
 		CHECK(out.rho > c.rhomin);
 		CHECK(out.rho < c.rhomax);
+		destroy (atm);
+		dlclose (hAtm);
+	}
+}
+
+struct AtmProfile { const char *body; double p0, T0, R, Tmin, Tmax; std::vector<std::pair<double,double>> nodes; };
+
+// a module atmosphere (CELBODY::clbkAtmParam): surface values, pressure falling to 600 km, the temperature at each node, no jump there
+static void CheckProfile (const AtmProfile &c)
+{
+	INFO(c.body);
+	CelbodyModule m (c.body);
+	REQUIRE(m.body);
+	ATMPARAM a;
+	REQUIRE(m.body->clbkAtmParam (0.0, &a));
+	CHECK(fabs (a.p - c.p0) < 1e-9*c.p0);
+	CHECK(fabs (a.T - c.T0) < 1e-9);
+	CHECK(fabs (a.rho - c.p0/(c.R*c.T0)) < 1e-9*a.rho);
+	double plast = a.p;
+	for (double alt = 1e3; alt <= 600e3; alt += 1e3) {
+		REQUIRE(m.body->clbkAtmParam (alt, &a));
+		INFO("alt " << alt << " T=" << a.T << " p=" << a.p);
+		CHECK(a.p < plast);
+		CHECK(a.T >= c.Tmin);
+		CHECK(a.T <= c.Tmax);
+		plast = a.p;
+	}
+	for (auto &n : c.nodes) {
+		ATMPARAM lo, hi;
+		m.body->clbkAtmParam (n.first - 0.01, &lo);
+		m.body->clbkAtmParam (n.first + 0.01, &hi);
+		INFO("node " << n.first << " T=" << lo.T);
+		CHECK(fabs (lo.T - n.second) < 1e-3);
+		CHECK(fabs (hi.p - lo.p) < 1e-5*lo.p);
+		CHECK(fabs (hi.T - lo.T) < 1e-3);
+	}
+}
+
+TEST_CASE("Pluto's atmosphere follows the New Horizons profile", "[celbody]")
+{
+	CheckProfile ({"Pluto", 1.15, 38.0, 296.8, 38.0, 108.0, {{4e3, 38.0}, {14e3, 100.0}, {30e3, 108.0}, {200e3, 74.0}}});
+}
+
+TEST_CASE("Triton's atmosphere follows the Voyager profile", "[celbody]")
+{
+	CheckProfile ({"Triton", 1.45, 38.0, 297.0, 37.2, 100.0, {{8e3, 37.2}, {25e3, 50.0}, {50e3, 50.0}, {150e3, 85.0}, {400e3, 100.0}}});
+}
+
+struct LayerCase { const char *body, *module; double top, Tmin, Tmax; };
+
+TEST_CASE("Layered atmosphere modules fall smoothly to their limit", "[celbody]")
+{
+	static const LayerCase cases[] = {
+		{"Titan",   "TitanAtm2005",   1200e3, 70.4, 187.0},
+		{"Jupiter", "JupiterAtm1995", 3200e3, 110.0, 1000.0},
+		{"Saturn",  "SaturnAtm2017",  2900e3, 82.0, 420.0},
+		{"Uranus",  "UranusAtm1986",  2600e3, 53.0, 800.0},
+		{"Neptune", "NeptuneAtm1989", 1800e3, 52.0, 750.0},
+		{"Io",      "IoAtm2007",      120e3,  115.0, 115.0},
+	};
+	for (const LayerCase &c : cases) {
+		INFO(c.module);
+		CelbodyModule m (c.body);
+		REQUIRE(m.body);
+		void *hAtm = dlopen ((std::string ("Modules/Celbody/") + c.body + "/Atmosphere/" + c.module + ".so").c_str(), RTLD_NOW);
+		REQUIRE(hAtm);
+		ATMOSPHERE *(*create)(CELBODY2*) = (ATMOSPHERE*(*)(CELBODY2*))OwnProc (hAtm, "CreateAtmosphere");
+		void (*destroy)(ATMOSPHERE*) = (void(*)(ATMOSPHERE*))OwnProc (hAtm, "DeleteAtmosphere");
+		REQUIRE(create);
+		REQUIRE(destroy);
+		ATMOSPHERE *atm = create ((CELBODY2*)m.body);
+		ATMCONST ac;
+		memset (&ac, 0, sizeof(ac));
+		REQUIRE(atm->clbkConstants (&ac));
+		CHECK(ac.altlimit == c.top);
+		ATMOSPHERE::PRM_IN in;
+		memset (&in, 0, sizeof(in));
+		in.flag = ATMOSPHERE::PRM_ALT;
+		ATMOSPHERE::PRM_OUT out;
+		double plast = 2.0*ac.p0;
+		for (double alt = 0.0; alt <= c.top; alt += 1e3) {
+			in.alt = alt;
+			REQUIRE(atm->clbkParams (&in, &out));
+			INFO("alt " << alt << " T=" << out.T << " p=" << out.p);
+			CHECK(out.p < plast);
+			CHECK(out.p > 0.0);
+			CHECK(out.T >= c.Tmin - 1e-9);
+			CHECK(out.T <= c.Tmax + 1e-9);
+			CHECK(fabs (out.rho - out.p/(ac.R*out.T)) < 1e-9*out.rho);
+			plast = out.p;
+		}
 		destroy (atm);
 		dlclose (hAtm);
 	}

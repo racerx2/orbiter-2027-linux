@@ -38,6 +38,10 @@ set_target_properties(${CELBODY}
 	FOLDER Celbody/Galsat
 )
 
+add_subdirectory( # not upstream: the 2007 SO2 atmosphere model
+	Atmosphere
+)
+
 #Installation
 install(TARGETS
 	${CELBODY}

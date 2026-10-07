@@ -6,6 +6,7 @@
 // Axis     : precession axis (equatorial J2000) fitted to the same data.
 // Valid    : 1800-2200 (the fit span); the error grows outside it.
 #include "../common/ephemeris.h"
+#include "../common/layeratm.h"
 
 //                               a[km]            e               inc[deg]        node[deg]       peri[deg]       M0[deg]
 //                               n[deg/s]         nodeRate[deg/s]  periRate[deg/s]  epoch[MJD]  ndot[deg/s^2]
@@ -13,7 +14,23 @@ static const eph::Elem   ELEM = { 354759.02801489836, 0.00012653915841163993, 13
                                   0.00070898327955231971, -1.6673719871839443e-08, 1.2803957417377906e-08, 51544.5, 0 };
 static const eph::Planet PRIM = { 0.003411, 24764.0, 119.40444074210525, -43.327874006931751 };
 
-class Triton final : public MoonModule { public: Triton() : MoonModule(ELEM, PRIM) {} };
+// the N2 atmosphere from Voyager 2 and the 2017-2022 occultations (Oliva et al. 2022): geometric altitude [m], temperature [K]
+static const AtmNode ATM[] = {
+	{  0.0,  38.0}, // troposphere
+	{  8e3,  37.2}, // tropopause
+	{ 25e3,  50.0},
+	{ 50e3,  50.0},
+	{150e3,  85.0},
+	{400e3, 100.0}, // thermosphere
+};
+static const double ATM_RAD = 1.3525e6; // Size in Triton.cfg [m]
+static const LayerAtm atm (ATM, 6, 1.45, 297.0, ATM_RAD, 2.14e22*GGRAV/(ATM_RAD*ATM_RAD)); // surface pressure [Pa], N2 [J/(kg K)], Mass in Triton.cfg [kg]
+
+class Triton final : public MoonModule {
+public:
+	Triton() : MoonModule(ELEM, PRIM) {}
+	bool clbkAtmParam(double alt, ATMPARAM *prm) override { atm.Get(alt, prm->T, prm->p, prm->rho); return true; }
+};
 
 MODEXPORT void     InitModule(void *hModule)  { (void)hModule; }
 MODEXPORT void     ExitModule(void *hModule)  { (void)hModule; }

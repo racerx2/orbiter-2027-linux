@@ -45,6 +45,10 @@ set_target_properties(${CELBODY}
 	FOLDER Celbody/Vsop87
 )
 
+add_subdirectory( # not upstream: the 1986 Voyager 2 atmosphere model
+	Atmosphere
+)
+
 #Installation
 install(TARGETS
 	${CELBODY}
