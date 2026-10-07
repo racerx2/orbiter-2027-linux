@@ -154,21 +154,24 @@ void CollDmgSession::MatchAll ()
 	blk.base.clear ();
 }
 
-void CollDmgSession::Rematch (VesselDamageA &v)
+void CollDmgSession::Rematch (VesselDamageA &v, const std::set<uint32_t> &dropped)
 {
 	uint32_t ns = host.SlotCount (v.id);
+	v.nslot = ns;
 	std::vector<CollDmgSlot> sl (ns);
 	for (uint32_t i = 0; i < ns; i++) host.Slot (v.id, i, sl[i]);
 	v.match.resize (v.d.rec.size (), -1);
-	std::set<uint32_t> touched;
+	std::set<uint32_t> touched (dropped); // a dropped mirror is rebuilt if records still match it
 	for (size_t r = 0; r < v.d.rec.size (); r++) {
 		DentRecord &R = v.d.rec[r];
 		int m = -1;
 		if (R.slot < ns && SameSig (R, sl[R.slot])) m = (int)R.slot;
 		else for (uint32_t i = 0; i < ns && m < 0; i++) if (SameSig (R, sl[i])) m = (int)i;
+		if (m >= 0) R.slot = (uint32_t)m;
+		if (v.match[r] == m) continue; // only meshes whose record list changed are re-synced
 		if (v.match[r] >= 0) touched.insert ((uint32_t)v.match[r]);
+		if (m >= 0) touched.insert ((uint32_t)m);
 		v.match[r] = m;
-		if (m >= 0) { R.slot = (uint32_t)m; touched.insert ((uint32_t)m); }
 	}
 	for (uint32_t m : touched) SyncMirror (v, m);
 }
@@ -208,15 +211,19 @@ void CollDmgSession::ShapesUpdatedEv (uint32_t id, CollShape *shape, const std::
 	VesselDamageA *v = Find (id);
 	if (!v) return;
 	bool rematch = false;
+	std::set<uint32_t> dropped;
 	for (const CollDmgSlotEv &e : ev) {
-		if (e.what == CDMG_SLOT_REPLACED || e.what == CDMG_SLOT_GONE) { vis.DropSlot (id, e.mesh); rematch = true; }
+		if (e.what == CDMG_SLOT_REPLACED || e.what == CDMG_SLOT_GONE) { vis.DropSlot (id, e.mesh); dropped.insert (e.mesh); rematch = true; }
 		else if (e.what == CDMG_SLOT_REBUILT) {
 			CollDmgSlot s;
 			if (host.Slot (id, e.mesh, s)) vis.Rebuilt (id, e.mesh, s.serial, e.src == CDMG_SRC_GCCORE);
+			rematch = true;
 		}
 	}
-	if (!rematch) for (int m : v->match) if (m < 0) { rematch = true; break; } // records waiting for a slot (WantSlots polls start one frame late)
-	if (rematch) Rematch (*v);
+	uint32_t ns = host.SlotCount (id);
+	if (ns > v->nslot) rematch = true; // slots grew (WantSlots polls start one frame late)
+	v->nslot = ns;
+	if (rematch) Rematch (*v, dropped);
 	std::set<uint32_t> meshes;
 	for (int m : v->match) if (m >= 0) meshes.insert ((uint32_t)m);
 	for (auto &a : v->applied) if (!a.second.empty ()) meshes.insert (a.first);
@@ -330,7 +337,7 @@ void CollDmgSession::Commit (const std::vector<CollImpactEvent> &ev, double simt
 		double E[2], ea[2];
 		if (!DentMath::SplitEnergy (e.dKE, e.Wf, e.vn, (e.flags & COLLEV_FIRST) != 0, *mat[0], *mat[1], E, ea) && !loggedNoFirst) {
 			loggedNoFirst = true;
-			Log ("Collision damage: event energy without FIRST at t=%.17g, ignored", e.t);
+			Log ("Collision damage: event energy without FIRST at t=%.17g, counted", e.t);
 		}
 		for (int i = 0; i < 2; i++) {
 			if (!ok[i] || pb[i] || !(ea[i] > 0)) continue;
@@ -756,7 +763,7 @@ void CollDmgSession::SaveLines (std::vector<std::string> &out)
 		for (uint32_t i = 0, nv = sdk.VesselCount (); i < nv && !any; i++) any = sdk.Recording (sdk.Vessel (i));
 		if (any) { // ToggleRecorder -> SavePlaybackScn -> here
 			StartRecording ();
-			out.push_back ("RECID " + rec.id + " " + CollSide::Fmt17 (rec.t0));
+			if (!rec.failed) out.push_back ("RECID " + rec.id + " " + CollSide::Fmt17 (rec.t0)); // no side file: no link
 		}
 	}
 	auto raw = [&] (const std::vector<std::string> &sec) {
@@ -776,6 +783,7 @@ void CollDmgSession::SaveLines (std::vector<std::string> &out)
 			for (size_t r = 0; r < d.rec.size (); r++) {
 				CollDmgSlot s;
 				uint32_t m = d.rec[r].slot;
+				if (r >= v->match.size () || v->match[r] != (int)m) continue; // a waiting record keeps its loaded name
 				if (m >= d.slotName.size () && m < 4096) d.slotName.resize (m + 1);
 				if (m < d.slotName.size () && host.Slot (v->id, m, s) && s.present) d.slotName[m] = s.name;
 			}
@@ -871,6 +879,10 @@ void CollDmgSession::Playback (double simt)
 			continue;
 		}
 		if (e.kind != 'D') continue;
+		if (e.recidx > v.d.rec.size ()) { // a gap: the saved section was dormant in this session
+			if (!play.warned) { play.warned = true; Log ("Collision playback: '%s' dent %u has no earlier records, skipped", v.name.c_str (), (unsigned)e.recidx); }
+			continue;
+		}
 		CollShape *sh = host.Shape (v.id);
 		DentRecord r = e.rec;
 		CollDmgSlot s;
@@ -878,8 +890,10 @@ void CollDmgSession::Playback (double simt)
 		if (e.recidx < v.d.rec.size ()) r.key = v.d.rec[e.recidx].key, r.ngrp = v.d.rec[e.recidx].ngrp, r.nvtx = v.d.rec[e.recidx].nvtx;
 		else if (host.Slot (v.id, r.slot, s) && s.present) r.key = s.key, r.ngrp = s.ngrp, r.nvtx = s.nvtx; // the payload holds no signature: the recorded slot
 		if (r.slot < host.SlotCount (v.id) && host.Slot (v.id, r.slot, s) && SameSig (r, s)) m = (int)r.slot;
+		int old = e.recidx < v.match.size () ? v.match[e.recidx] : -1;
 		if (e.recidx >= v.d.rec.size ()) { v.d.rec.push_back (r); v.match.push_back (m); if (m >= 0) SyncCollider (v, sh, (uint32_t)m, false); }
 		else { v.d.rec[e.recidx] = r; v.match[e.recidx] = m; if (m >= 0) SyncCollider (v, sh, (uint32_t)m, true); }
+		if (old >= 0 && old != m) { SyncCollider (v, sh, (uint32_t)old, false); SyncMirror (v, (uint32_t)old); } // the old mesh loses the record
 		if (m >= 0) SyncMirror (v, (uint32_t)m);
 		NoticeA &nt = frameNote[v.id];
 		nt.id = v.id, nt.kind = CDMG_KIND_DENT, nt.flags = COLLA_DMG_PLAYBACK, nt.simt = e.t;

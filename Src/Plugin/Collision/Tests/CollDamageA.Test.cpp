@@ -151,12 +151,12 @@ class DHost final : public CollDmgHost {
 public:
 	explicit DHost (DFake &f) : f (f) {}
 	DFake &f; std::vector<CollH> ids; std::map<uint32_t, CollShape *> shape; std::map<uint32_t, std::vector<CollDmgSlot>> slots;
-	std::vector<CollDmgBaseObj> bases; int rebuilt = 0;
+	std::vector<CollDmgBaseObj> bases; int rebuilt = 0, slotReads = 0;
 	CollH Vessel (uint32_t id) override { return id < ids.size () && ids[id] && DFake::X (ids[id])->alive ? ids[id] : nullptr; }
 	uint32_t IdOf (CollH h) override { for (size_t i = 0; i < ids.size (); i++) if (ids[i] == h) return (uint32_t)i; ids.push_back (h); return (uint32_t)ids.size () - 1; }
 	CollShape *Shape (uint32_t id) override { auto it = shape.find (id); return it == shape.end () ? nullptr : it->second; }
 	uint32_t SlotCount (uint32_t id) override { return (uint32_t)slots[id].size (); }
-	bool Slot (uint32_t id, uint32_t m, CollDmgSlot &out) override { auto &s = slots[id]; if (m >= s.size ()) return false; out = s[m]; return true; }
+	bool Slot (uint32_t id, uint32_t m, CollDmgSlot &out) override { slotReads++; auto &s = slots[id]; if (m >= s.size ()) return false; out = s[m]; return true; }
 	bool SlotNow (uint32_t id, uint32_t m, uint32_t &serial) override { auto &s = slots[id]; if (m >= s.size () || !s[m].present) return false; serial = s[m].serial; return true; }
 	void ClientMeshRebuilt (uint32_t, uint32_t) override { rebuilt++; }
 	void WantSlots (uint32_t, bool) override {}
@@ -624,4 +624,113 @@ TEST_CASE ("E3-U15 session lifecycle and the command")
 	CollDmgSession s2 (r.sdk, r.host, r.cfg);
 	s2.Begin (CollStoreBlock ());
 	CHECK (s2.Damage (0) == nullptr);
+}
+
+TEST_CASE ("E3 review CA-GD: waiting records, saved names, energy without FIRST, RECID")
+{
+	std::vector<std::string> saved;
+	{
+		Rig r;
+		uint32_t a = r.Add ("PB-A"), b = r.Add ("PB-B");
+		r.Begin ();
+		r.Frame ();
+		r.Frame ({ Hit (a, -1, b, 10.0, 3.0e4, false) }); // logged once, the energy still counts
+		CHECK (r.sdk.Logged ("event energy without FIRST at t=1, counted"));
+		REQUIRE (r.s.Damage (a));
+		CHECK (r.s.Damage (a)->d.eabs > 0);
+		r.Frame ({ Hit (a, -1, b, 10.0, 3.0e4) });
+		REQUIRE (r.s.Damage (a)->d.rec.size () >= 1);
+		r.s.SaveLines (saved);
+	}
+	Rig q;
+	uint32_t qa = q.Add ("PB-A");
+	q.Add ("PB-B");
+	DFake::V *v = q.B (qa).v;
+	v->visual = 1;
+	v->dev[0] = ClientRest (*q.plate);
+	v->dev[1] = ClientRest (*q.plate);
+	q.host.slots[qa][0] = CollDmgSlot { true, DentMath::MeshKey ("other"), 1, q.plate->nvtx, q.plate, "other", 1 }; // the slot now holds another mesh
+	CollStoreBlock blk;
+	size_t pos = 0;
+	REQUIRE (CollStore::Parse ([&] (std::string &l) { if (pos >= saved.size ()) return false; l = saved[pos++]; return true; }, blk));
+	q.Begin (std::move (blk));
+	q.Frame ();
+	const VesselDamageA *d = q.s.Damage (qa);
+	REQUIRE (d);
+	REQUIRE (d->match[0] < 0);
+	int reads = q.host.slotReads;
+	for (int k = 0; k < 5; k++) q.Frame ();
+	CHECK (q.host.slotReads == reads); // a waiting record does not re-match or rebuild every pre-step
+	std::vector<std::string> out;
+	q.s.SaveLines (out);
+	bool other = false, plate = false;
+	for (auto &l : out) { other = other || l.find (" other") != std::string::npos; plate = plate || (l.find ("XDMGM") != std::string::npos && l.find (" plate") != std::string::npos); }
+	CHECK_FALSE (other);
+	CHECK (plate);
+	q.host.slots[qa].push_back (CollDmgSlot { true, DentMath::MeshKey ("plate"), 1, q.plate->nvtx, q.plate, "plate", 1 }); // the slot list grows without an event
+	q.Frame ();
+	CHECK (d->match[0] == 1);
+	REQUIRE (q.s.vis.Copy (qa, 1));
+	CHECK_FALSE (q.s.vis.Copy (qa, 1)->g[0].edit.empty ());
+	// RECID only with a writable side file
+	auto blocker = std::filesystem::temp_directory_path () / "collD_blocker";
+	std::filesystem::remove_all (blocker);
+	{ std::ofstream f (blocker); f << "x"; }
+	Rig w;
+	w.s.sideDir = (blocker / "sub").string ();
+	w.cfg.testRecId = "E3NO";
+	uint32_t wa = w.Add ("PB-A");
+	w.Begin ();
+	w.Frame ();
+	w.B (wa).v->recording = true;
+	std::vector<std::string> ps;
+	w.s.SaveLines (ps);
+	CHECK (w.sdk.Logged ("side file not writable"));
+	for (auto &l : ps) CHECK (l.rfind ("RECID", 0) != 0);
+	std::filesystem::remove_all (blocker);
+}
+
+TEST_CASE ("E3 review CA-GD: playback gaps and a replacement that moves mesh")
+{
+	DentRecord rec;
+	{
+		Rig r;
+		uint32_t a = r.Add ("PB-A"), b = r.Add ("PB-B");
+		r.Begin ();
+		r.Frame ();
+		r.Frame ({ Hit (a, -1, b, 10.0, 3.0e4) });
+		REQUIRE (r.s.Damage (a));
+		rec = r.s.Damage (a)->d.rec[0];
+	}
+	REQUIRE (rec.slot == 0);
+	std::string side = CollSide::Header ("GAP") + "\n" + CollSide::Vdef (0, 0, "PB-A", "ShuttlePB") + "\n";
+	std::vector<std::string> l;
+	CollSide::Dent (0, 0, 2, rec, l);                       // index 2 without 0 and 1: skipped
+	CollSide::Dent (0, 0, 0, rec, l);                       // appended on mesh 0
+	DentRecord moved = rec; moved.slot = 1;
+	CollSide::Dent (0, 0, 0, moved, l);                     // replaced, now on mesh 1
+	for (auto &x : l) side += x + "\n";
+	Rig p;
+	p.s.sideDir = "side";
+	p.sdk.files["side/GAP.txt"] = side;
+	uint32_t a = p.Add ("PB-A");
+	DFake::V *v = p.B (a).v;
+	v->playback = true;
+	v->visual = 1;
+	v->dev[0] = ClientRest (*p.plate);
+	v->dev[1] = ClientRest (*p.plate);
+	p.host.slots[a].push_back (CollDmgSlot { true, DentMath::MeshKey ("plate"), 1, p.plate->nvtx, p.plate, "plate", 1 });
+	CollStoreBlock blk;
+	blk.recId = "GAP";
+	p.Begin (std::move (blk));
+	p.Frame ();
+	const VesselDamageA *d = p.s.Damage (a);
+	REQUIRE (d);
+	CHECK (p.sdk.Logged ("has no earlier records, skipped"));
+	REQUIRE (d->d.rec.size () == 1);
+	CHECK (d->match[0] == 1);
+	const DentMeshCopyA *c0 = p.s.vis.Copy (a, 0), *c1 = p.s.vis.Copy (a, 1);
+	REQUIRE (c1);
+	CHECK_FALSE (c1->g[0].edit.empty ());
+	CHECK ((c0 == nullptr || c0->g[0].edit.empty ())); // the old mesh no longer shows the record
 }

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <fstream>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -31,6 +32,7 @@ struct VesselDamageA {
 	std::map<uint32_t, std::vector<size_t>> applied;          // per mesh: records on the collider since its last Replaced, in order
 	ThrustCutA cut;
 	uint32_t alias = ~0u;                                     // recorder side-file alias
+	uint32_t nslot = 0;                                       // slot count at the last rematch
 	bool loggedCap = false, playback = false;
 };
 struct BuildingDamageA { CollDmgBaseObj obj; double eabs = 0; uint32_t flags = 0; };
@@ -93,7 +95,7 @@ private:
 	VesselDamageA *Find (uint32_t id);
 	VesselDamageA &Get (uint32_t id);
 	void MatchAll ();
-	void Rematch (VesselDamageA &v);
+	void Rematch (VesselDamageA &v, const std::set<uint32_t> &dropped = {});
 	void SyncCollider (VesselDamageA &v, CollShape *sh, uint32_t mesh, bool force);
 	void SyncMirror (VesselDamageA &v, uint32_t mesh);
 	void Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, double E, const DentMaterial &mat, double t, NoticeA &note);
