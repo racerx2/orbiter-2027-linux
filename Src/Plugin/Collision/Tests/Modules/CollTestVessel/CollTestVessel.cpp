@@ -345,7 +345,7 @@ bool CollTestVessel::Pre (const Words &w, double simt) // the actions of a vesse
 		VECTOR3 north = mul (Rp, _V (-sin (lat) * cos (lng), cos (lat), -sin (lat) * sin (lng)));
 		double hd = D (w, 10) * RAD, T = oapiGetPlanetPeriod (hp);
 		VECTOR3 nose = north * cos (hd) + east * sin (hd), right = east * cos (hd) - north * sin (hd);
-		VECTOR3 vel = pv + east * (T != 0 ? PI2 * rad * cos (lat) / T : 0) - north * lv.x + up * lv.y + east * lv.z; // ground speed plus base-local velocity
+		VECTOR3 vel = pv + east * (T != 0 ? PI2 * brad * cos (lat) / T : 0) - north * lv.x + up * lv.y + east * lv.z; // ground speed at the planet radius, as Orbiter's landed update (Vessel.cpp:4753), plus base-local velocity
 		Place (v, hp, gp, vel, Columns (right, up, nose), _V (0, 0, 0));
 		Log ("placed '%s' at '%s' lng=%.17g lat=%.17g rad=%.17g", v->GetName (), bn.c_str (), lng, lat, rad);
 	} else if (a == "TESTATT") {
