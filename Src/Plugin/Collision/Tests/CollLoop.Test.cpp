@@ -17,6 +17,7 @@ const double G0 = 9.81;                                             // constant 
 const double GM_E = 3.986004418e14, R_E = 6.371e6, W_E = 7.2921159e-5; // Earth: GM [m^3/s^2], radius [m], rotation rate [rad/s]
 const double SKIN2 = 2.0*COLL_SKIN_DEFAULT;                         // skin sum of a pair [m]
 const int NFRAME = 600;                                             // frames per run (D2 U23, D3 15.2)
+const double RGAP = 0.0;                                            // start gap of the resting scenes; a positive gap closes (fix1 R4)
 
 Matrix QMat (const Quaternion &q) { Matrix R; R.Set (q); return R; }
 
@@ -446,7 +447,7 @@ Rest BayScene (Loop &L, const Geo &atl, const Geo &pay, const Vector &hp, double
 	L.body.push_back (c);
 	LBody p;
 	p.id = 2; p.m = 5000; p.pmi = BoxPmi (hp);
-	p.x = Vector (0, fl + SKIN2 + 0.005 + hp.y, 0);
+	p.x = Vector (0, fl + SKIN2 + RGAP + hp.y, 0);
 	p.parts.push_back (Part (pay.geom, VKey (2), Vector (), 1));
 	L.body.push_back (p);
 	Rest r;
@@ -463,7 +464,7 @@ Rest RoofScene (Loop &L, const Geo &roof, const Geo &ves, const Vector &hv, cons
 	L.body.push_back (s);
 	LBody b;
 	b.id = 2; b.m = 2000; b.pmi = Vector (1.2, 1.4, 1.0);
-	b.x = Vector (R_E + 20 + SKIN2 + 0.005 + hv.x, 0, 0) + cg; b.v = Xc (s.W, b.x); b.wb = s.W;
+	b.x = Vector (R_E + 20 + SKIN2 + RGAP + hv.x, 0, 0) + cg; b.v = Xc (s.W, b.x); b.wb = s.W;
 	b.parts.push_back (Part (ves.geom, VKey (2), -cg, 1));
 	L.body.push_back (b);
 	L.GM = GM_E;
@@ -484,7 +485,7 @@ TEST_CASE ("U23 G1: 2 m box resting on a plate, static and moving at 465 m/s", "
 	const Row rows[] = { { 0, 1.0/60 }, { 0, 0.1 }, { 0, 0.25 }, { 465, 1.0/60 }, { 465, 0.1 } }; // 0.25 s: the load cap (Y6', D3 4.8 row A)
 	for (const Row &w : rows) {
 		Loop L;
-		Rest r = PlateScene (L, plate, box, HBOX, 1000.0, Vector (w.V, 0, 0), 0.005);
+		Rest r = PlateScene (L, plate, box, HBOX, 1000.0, Vector (w.V, 0, 0), RGAP);
 		Tally T;
 		T.ma = DentMath::DefaultMaterial (DENTB_BLOCK);
 		LogCapture lc;
@@ -538,7 +539,7 @@ TEST_CASE ("G4 Y3' settling: box resting on a roof at h = 0.17 s; box dropped 0.
 	const double m = 1000.0, drop = 0.1;
 	{
 		Loop L;
-		Rest r = PlateScene (L, plate, box, HBOX, m, Vector (), 0.005);
+		Rest r = PlateScene (L, plate, box, HBOX, m, Vector (), RGAP);
 		Tally T;
 		T.ma = DentMath::DefaultMaterial (DENTB_BLOCK);
 		LogCapture lc;
@@ -651,6 +652,28 @@ TEST_CASE ("D4 U18 settling under Y3': DG-size box at h = 0.17 s; positive contr
 			else CHECK (e.E == 0.0);               // later band-edge re-touches (D2 3.6) stay below the gate
 		}
 		CHECK (T.splitOk);
+		CHECK (lc.AtLeast (COLLLOG_WARN) == 0);
+	}
+}
+
+TEST_CASE ("fix1 R4: a box lowered at 1 mm/s inside the touching band settles to gap <= slop under load", "[CollLoop]")
+{
+	Geo plate (Box (HPLATE)), box (Box (HBOX));
+	const double gap = 0.025;                                        // inside delta_ct: RESTING from the first frame, FIRST there only
+	for (double h : { 1.0/60, 0.1, 0.17 }) {
+		Loop L;
+		Rest r = PlateScene (L, plate, box, HBOX, 1000.0, Vector (), gap);
+		L.body[1].v = Vector (0, -0.001, 0);
+		Tally T;
+		LogCapture lc;
+		Run (L, &r, T, h, (int)std::lround (10.0/h));
+		double gapEnd = gap + r.gapEnd;
+		std::printf ("fix1 R4 lowered at 1 mm/s under g, h %.4f: final gap %.6f m, final |v| %.2e m/s, FIRST frames %s, event frames %s\n", h, gapEnd, r.vEnd, Frames (T.firstAt).c_str (), Frames (T.evAt).c_str ());
+		CHECK (gapEnd <= COLL_SLOP + 1e-9);
+		CHECK (gapEnd >= -COLL_SLOP);
+		CHECK (r.vEnd < 1e-6);
+		CHECK (T.firstAt == std::vector<int> (1, 0));
+		CHECK (T.dent == 0.0);
 		CHECK (lc.AtLeast (COLLLOG_WARN) == 0);
 	}
 }

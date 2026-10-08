@@ -1264,18 +1264,27 @@ struct CollDetect::Impl {
 					double l = ng.length ();
 					if (l > 0.0) { y.n = (baseA ? -ng : ng)/l; done = true; }
 				}
-				if (!done) {
+				if (!done) {                                       // crossing faces: minimum-penetration face normal, A pushed along it clears B (5.5, fix1)
+					Vector nf[2] = { crossp (ta[1] - ta[0], ta[2] - ta[0]), crossp (tb[1] - tb[0], tb[2] - tb[0]) };
+					double best = 1e300;
+					for (const Vector &f : nf) {
+						double l = f.length ();
+						if (!(l > 0.0)) continue;
+						for (double sg : { 1.0, -1.0 }) {
+							Vector u = f*(sg/l);
+							double amin = 1e300, bmax = -1e300;
+							for (int j = 0; j < 3; j++) { amin = std::min (amin, ta[j] & u); bmax = std::max (bmax, tb[j] & u); }
+							double dep = bmax - amin;
+							if (dep < best || (dep == best && (u & -cx.r) > (y.n & -cx.r))) { best = dep; y.n = u; done = true; }
+						}
+					}
+				}
+				if (!done) {                                       // both faces degenerate: relative velocity
 					Vector pva = va.v + Xc (va.w, p) + SurfV (cx, a, false, y.pA);
 					Vector pvb = vb.v + Xc (vb.w, p - cx.r) + SurfV (cx, b, true, y.pB);
 					Vector rv = pva - pvb;
 					double l = rv.length ();
 					if (l >= COLL_DEGEN_SPEED) { y.n = -rv/l; done = true; }
-				}
-				if (!done) {
-					Vector na = crossp (ta[1] - ta[0], ta[2] - ta[0]), nb = crossp (tb[1] - tb[0], tb[2] - tb[0]);
-					Vector nn = na.length2 () >= nb.length2 () ? na : nb;
-					double l = nn.length ();
-					if (l > 0.0) { y.n = nn/l; if ((y.n & -cx.r) < 0.0) y.n = -y.n; done = true; }
 				}
 				if (!done) {
 					double l = cx.r.length ();
