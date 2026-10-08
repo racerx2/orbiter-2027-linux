@@ -473,3 +473,76 @@ TEST_CASE ("fix1: spinning rods hit in the past check: one missed line and count
 	REQUIRE (inacc > 0);
 	g_collLog = nullptr;
 }
+
+TEST_CASE ("fix2 M2: a body turning 162 deg in the step: the island builder passes the raw n2, the solver falls back to n", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	g_log.clear ();
+	Sim S;
+	std::vector<CollSContact> con;
+	S.fr.conProbe = &con;
+	auto sph = std::make_shared<Geo> (SphereMesh (1.0, 12, 24));
+	const double h = 0.1;
+	S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (-2.3, 0, 0), Vector (5, 0, 0), 1.05);
+	S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (), Vector (), 1.05);
+	S.tb[0].o.s.omega = Vector (0, 0, 0.9*3.14159265358979323846/h);
+	const Vector P0 = S.P ();
+	for (int f = 0; f < 6; f++) S.Frame (h);
+	double n2max = 0;
+	for (const CollSContact &c : con) n2max = std::max (n2max, c.n2.length ());
+	CAPTURE (con.size (), n2max, S.events, S.tb[0].o.s.vel.x, S.tb[1].o.s.vel.x);
+	REQUIRE (!con.empty ());
+	REQUIRE (n2max < 0.5);                                   // normalised it was 1 and the fallback never ran
+	REQUIRE (S.tb[0].o.s.vel.x <= S.tb[1].o.s.vel.x + 1e-9);
+	REQUIRE ((S.P () - P0).length () <= 1e-12*S.Pscale ());
+	REQUIRE (S.fr.Stats ().checkFail == 0);
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("fix2 M3: five and six separate 3-sphere chains in one frame: every island merges, momentum exact, none held fixed", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	for (int nT : { 5, 6 }) {
+		g_log.clear ();
+		Sim S;
+		auto sph = std::make_shared<Geo> (SphereMesh (1.0, 12, 24));
+		for (int t = 0; t < nT; t++) {
+			double y = 50.0*t;
+			S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (-3.5, y, 0), Vector (30, 0, 0), 1.05);
+			S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (0, y, 0), Vector (), 1.05);
+			S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (2.6, y, 0), Vector (), 1.05);
+		}
+		const Vector P0 = S.P ();
+		double worstP = 0;
+		for (int f = 0; f < 6; f++) { S.Frame (0.1); worstP = std::max (worstP, (S.P () - P0).length ()/S.Pscale ()); }
+		CAPTURE (nT, worstP, LogCount ("held fixed"), S.fr.Stats ().rounds);
+		REQUIRE (worstP <= 1e-12);
+		REQUIRE (LogCount ("held fixed") == 0);
+		for (int t = 0; t < nT; t++) {
+			REQUIRE (S.tb[3*t].o.s.vel.x <= S.tb[3*t + 1].o.s.vel.x + 1e-9);
+			REQUIRE (S.tb[3*t + 1].o.s.vel.x <= S.tb[3*t + 2].o.s.vel.x + 1e-9);
+		}
+		REQUIRE (S.fr.Stats ().checkFail == 0);
+	}
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("fix2 M7: 25-sphere chain at h 0.1: delivery converges with the integrator level held, no check failed", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	for (double gap : { 0.3, 0.05 }) {
+		g_log.clear ();
+		Sim S;
+		auto sph = std::make_shared<Geo> (SphereMesh (1.0, 8, 12));
+		S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (-3.5, 0, 0), Vector (30, 0, 0), 1.05);
+		for (int k = 0; k < 24; k++) S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (k*(2.0 + gap), 0, 0), Vector (), 1.05);
+		const Vector P0 = S.P ();
+		double worstP = 0;
+		for (int f = 0; f < 15; f++) { S.Frame (0.1); worstP = std::max (worstP, (S.P () - P0).length ()/S.Pscale ()); }
+		CAPTURE (gap, worstP, S.fr.Stats ().checkFail, LogCount ("check failed"));
+		REQUIRE (LogCount ("check failed") == 0);
+		REQUIRE (S.fr.Stats ().checkFail == 0);
+		REQUIRE (worstP <= 1e-12);
+	}
+	g_collLog = nullptr;
+}
