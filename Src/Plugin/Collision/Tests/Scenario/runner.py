@@ -236,6 +236,9 @@ class Sandbox:
         ensure_dir(dst)
         for e in sorted(os.listdir(src)):
             s = os.path.join(src, e)
+            d = os.path.join(dst, e)
+            if e in TEXBODIES and os.path.isdir(d) and not os.path.islink(d) and not os.listdir(d):
+                os.rmdir(d)  # our empty stand-in (below) from before the body's textures were installed
             if os.path.isdir(s) and os.path.isdir(os.path.join(s, 'Archive')):
                 link_entries(s, os.path.join(dst, e), skip=('Archive',))  # planet archives never reach a test (T 2.3)
             else:
