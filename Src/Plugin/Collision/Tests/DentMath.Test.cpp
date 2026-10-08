@@ -2220,3 +2220,96 @@ TEST_CASE ("dent2 DmaxVessel: no material cap, 0.5 R, 0.25 L, 0.6 T")
 	CHECK (DentMath::DmaxVessel (1.0, 4.0, 100.0) == 0.6);
 	CHECK (DentMath::Dmax (0.5, 0.0, 4.0, 100.0) == 0.5); // buildings keep t_cap
 }
+
+// fix1 area D (design-CA-fix1)
+
+TEST_CASE ("fix1 M8 parser keeps DENT_MAX_VESSEL records and bounded group lists", "[dent]")
+{
+	std::vector<std::string> l { "XDMG 1 100 0", "XDMGM 0 0 deadbeef 7 140" };
+	for (int i = 0; i < 600; i++) l.push_back ("XDMGD 0 " + std::to_string (i) + " 0 0 0 0 1 1 0.1 0 *");
+	int sk = -1;
+	DentVesselText v = ParseVessel (l, &sk);
+	REQUIRE (v.rec.size () == DENT_MAX_VESSEL);
+	CHECK (v.rec.back ().p.c.x == DENT_MAX_VESSEL - 1); // the first ones
+	CHECK (sk == 600 - (int)DENT_MAX_VESSEL);
+	CHECK (Format (v).size () == 2 + DENT_MAX_VESSEL);
+	// a continued group list past 65535 entries is dropped whole; one at the limit is kept
+	auto lists = [] (int lines, int last) {
+		std::vector<std::string> o { "XDMG 1 0 0", "XDMGM 0 0 deadbeef 7 140" };
+		for (int i = 0; i < lines; i++) o.push_back ("XDMGD 0 1 1 1 0 0 1 1 0.1 0 1,2,3,4,5,6,7,8,9,10,");
+		std::string s = "XDMGD 0 1 1 1 0 0 1 1 0.1 0 1";
+		for (int i = 1; i < last; i++) s += ",1";
+		o.push_back (s);
+		o.push_back ("XDMGD 0 2 2 2 0 0 1 1 0.1 0 4");
+		return o;
+	};
+	DentVesselText big = ParseVessel (lists (7000, 1), &sk);
+	REQUIRE (big.rec.size () == 1);
+	CHECK (big.rec[0].grp == std::vector<uint16_t> { 4 });
+	CHECK (sk == 1);
+	DentVesselText atLim = ParseVessel (lists (6553, 5), &sk);
+	REQUIRE (atLim.rec.size () == 2);
+	CHECK (atLim.rec[0].grp.size () == DENT_MAX_GRPLIST);
+	CHECK (sk == 0);
+}
+
+TEST_CASE ("fix1 D7 vertices join the depth cap only", "[dent]")
+{
+	// a coarse plate (low-poly floor R) and an interior vertex at the centre, given as cap-only vertices
+	DentObject o;
+	AddGrid (o, Vector (-2, -2, 0), Vector (0.5, 0, 0), Vector (0, 0.5, 0), 8, 8, Vector (0, 0, 1));
+	o.nweld = DentMath::WeldMap (o.rest, DENT_WELD, o.weld);
+	DentViewData d;
+	DentMath::MakeView (o, d);
+	DentViewData x;
+	x.rest = { Vector (0.25, 0.25, -0.05) };
+	x.cur = x.rest;
+	DentMeshView xv = x.View ();
+	const DentMaterial m = Mat (0.5e6, 0.5);
+	DentInput in = { 4.0e6, &m, Vector (0.25, 0.25, 0), Vector (0, 0, 1), 0.1, 0.5, 1.0, -1.0, true };
+	DentParams p0 {}, p1 {};
+	REQUIRE (DentMath::Solve (in, d.View (), p0) == DENT_OK);
+	REQUIRE (DentMath::Solve (in, d.View (), &xv, p1) == DENT_OK);
+	double cap = DentMath::DmaxVessel (p1.T, p1.R, in.L);
+	CHECK (p0.h * DentMath::Weight (p0, x.rest[0]) > 2.0 * cap); // without it the interior goes past the cap
+	CHECK (p1.h * DentMath::Weight (p1, x.rest[0]) <= cap + 1e-12);
+	CHECK (DentMath::VolumeFactor (p1, d.View ()) == DentMath::VolumeFactor (p0, d.View ())); // S unchanged
+	// growth sees it as well
+	x.cur[0] = x.rest[0] - Vector (0, 0, 0.2);
+	xv = x.View ();
+	double dh = DentMath::CoalesceDepth (p1, 1.0, d.View (), &xv, cap);
+	CHECK (0.2 + dh * DentMath::Weight (p1, x.rest[0]) <= cap + 1e-12);
+	CHECK (DentMath::DepthCap (p1, d.View (), &xv, cap) <= DentMath::DepthCap (p1, d.View (), cap));
+}
+
+TEST_CASE ("fix1 coalescing compares keyed (collider) groups only", "[dent]")
+{
+	DentRecord a {};
+	a.p = Params (Vector (0, 0, 0), Vector (0, 0, 1), 1.0, 0.1, 0.0), a.slot = 0, a.key = 7, a.ngrp = 3, a.nvtx = 10, a.grp = { 0, 2 };
+	DentRecord b = a;
+	b.grp = { 0 };
+	std::vector<DentRecord> rec { a };
+	std::vector<uint8_t> key { 1, 1, 0 }; // group 2 has no collider
+	CHECK (DentMath::FindCoalesce (rec, b) == -1);
+	CHECK (DentMath::FindCoalesce (rec, b, &key) == 0);
+	b.grp = { 1 };
+	CHECK (DentMath::FindCoalesce (rec, b, &key) == -1);
+	b.grp = { 2 }; // only unkeyed groups: the whole list compares
+	CHECK (DentMath::FindCoalesce (rec, b, &key) == -1);
+	rec[0].grp = { 2 };
+	CHECK (DentMath::FindCoalesce (rec, b, &key) == 0);
+}
+
+TEST_CASE ("fix1 weld map within one pose class", "[dent]")
+{
+	DentObject o = Floor3 (); // groups 0 and 1 meet on x = 2, the wall (2) meets both on y = 4
+	std::vector<std::vector<uint32_t>> w;
+	std::vector<uint32_t> one { 0, 0, 0 }, two { 0, 0, 1 };
+	uint32_t n1 = DentMath::WeldMap (o.rest, DENT_WELD, w, &one);
+	CHECK (n1 == o.nweld);
+	CHECK (w == o.weld);
+	uint32_t n2 = DentMath::WeldMap (o.rest, DENT_WELD, w, &two);
+	CHECK (n2 == o.nweld + 17); // the 17 seam vertices on y = 4 get their own ids
+	CHECK (w[0][8] == w[1][0]);  // same class still welds
+	CHECK (w[2][0] != w[0][16 * 9]);
+}
