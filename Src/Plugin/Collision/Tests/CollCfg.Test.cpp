@@ -68,7 +68,7 @@ TEST_CASE ("E3-U13 defaults")
 {
 	int asked = 0;
 	CollCfgValues v = CollCfg::Read ([&] (const char *, std::string &) { asked++; return false; });
-	CHECK (asked == 20);
+	CHECK (asked == 18);
 	CHECK (v.model == 1);
 	CHECK (v.response);
 	CHECK_FALSE (v.check);
@@ -86,8 +86,6 @@ TEST_CASE ("E3-U13 defaults")
 	CHECK (v.notify == 1);
 	CHECK (v.recorder);
 	CHECK (v.testRecId.empty ());
-	CHECK (v.testKick.empty ());
-	CHECK (v.testModelAt.empty ());
 	CHECK (v.testSlotCheck == 0);
 }
 
@@ -95,8 +93,7 @@ TEST_CASE ("E3-U13 keys")
 {
 	const std::vector<std::string> want = { "CollisionModel", "CollisionResponse", "CollisionCheck", "CollisionDockZone", "CollisionAttachZone",
 		"CollisionLog", "ClientCheck", "MeshProbe", "DestroyEnergy", "BuildingDestroyEnergy", "CollisionThrustCut", "CollisionVisuals",
-		"CollisionKeyPass", "CollisionCullFix", "CollisionNotify", "CollisionRecorder", "CollisionTestRecId", "CollisionTestKick",
-		"CollisionTestModelAt", "CollisionTestSlotCheck" };
+		"CollisionKeyPass", "CollisionCullFix", "CollisionNotify", "CollisionRecorder", "CollisionTestRecId", "CollisionTestSlotCheck" };
 	std::vector<std::string> keys;
 	for (const char *k : CollCfg::Keys ()) keys.push_back (k);
 	CHECK (keys == want);
@@ -134,6 +131,12 @@ TEST_CASE ("E3-U13 template file")
 	std::vector<std::string> bad;
 	CHECK (Flat (ReadText (text, &bad)) == Flat (CollCfgValues ())); // the template holds the defaults
 	CHECK (bad.empty ());
+	std::string ver;
+	CHECK (ItemString (text, "CollisionCfgVersion", ver)); // the build's upgrade key, not a parser key
+	CHECK (ver == "2");
+	for (const char *k : CollCfg::Keys ()) CHECK_FALSE (SameNoCase (k, "CollisionCfgVersion"));
+	CHECK_FALSE (ItemString (text, "CollisionTestKick", ver)); // removed keys (review R9)
+	CHECK_FALSE (ItemString (text, "CollisionTestModelAt", ver));
 }
 
 TEST_CASE ("E3-U13 unknown keys and lookup")
@@ -148,6 +151,8 @@ TEST_CASE ("E3-U13 unknown keys and lookup")
 		"  CollisionNotify\t=\t2\n"
 		"MeshProbe = ShuttleA  DeltaGlider\tAtlantis\n"
 		"CollisionTestKick = PB-A 12.5 0 1 0 0 0 0\n"
+		"CollisionTestModelAt = 3 0\n"
+		"CollisionCfgVersion = 1\n"
 		"TestRecId = old\n"
 		"END_PARSE\n"
 		"CollisionCheck = TRUE\n";
@@ -158,12 +163,11 @@ TEST_CASE ("E3-U13 unknown keys and lookup")
 	CHECK (v.logLevel == 1);
 	CHECK (v.notify == 2);
 	CHECK (v.meshProbeOnce == std::vector<std::string> { "ShuttleA", "DeltaGlider", "Atlantis" });
-	CHECK (v.testKick == "PB-A 12.5 0 1 0 0 0 0");
 	CHECK (v.testRecId.empty ());
 	CHECK_FALSE (v.check);
 	CollCfgValues d;
-	v.model = d.model; v.notify = d.notify; v.meshProbeOnce = d.meshProbeOnce; v.testKick = d.testKick;
-	CHECK (Flat (v) == Flat (d)); // nothing else changed
+	v.model = d.model; v.notify = d.notify; v.meshProbeOnce = d.meshProbeOnce;
+	CHECK (Flat (v) == Flat (d)); // nothing else changed: the old v1 test keys and the version key are ignored silently
 }
 
 TEST_CASE ("E3-U13 values")

@@ -106,15 +106,15 @@ else ()
 	endfunction()
 	cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR} CALL coll_late_deps) # OVP, which defines the client, comes after Src
 
-	# build-tree data: the public header for test modules, the sidecars, a cfg only where none is yet
+	# build-tree data: the public header for test modules, the sidecars, the cfg copied where none is yet or an older one upgraded in place
 	set(COLL_SDK_HEADER ${ORBITER_BINARY_SDK_DIR}/include/CollisionAPI.h)
 	add_custom_command(OUTPUT ${COLL_SDK_HEADER}
 		COMMAND ${CMAKE_COMMAND} -E make_directory ${ORBITER_BINARY_SDK_DIR}/include
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/CollisionAPI.h ${COLL_SDK_HEADER}
 		DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/CollisionAPI.h)
-	set(COLL_CFG_ONCE ${CMAKE_CURRENT_BINARY_DIR}/CollisionCfgOnce.cmake)
-	file(WRITE ${COLL_CFG_ONCE} "if (NOT EXISTS [[${ORBITER_BINARY_CONFIG_DIR}/Collision.cfg]])\n\tfile(MAKE_DIRECTORY [[${ORBITER_BINARY_CONFIG_DIR}]])\n\tfile(COPY_FILE [[${CMAKE_CURRENT_SOURCE_DIR}/Config/Collision.cfg]] [[${ORBITER_BINARY_CONFIG_DIR}/Collision.cfg]])\nendif ()\n")
-	set(COLL_DATA_CMDS COMMAND ${CMAKE_COMMAND} -P ${COLL_CFG_ONCE})
+	set(COLL_CFG_ONCE ${CMAKE_COMMAND} -DCOLL_CFG_SRC=${CMAKE_CURRENT_SOURCE_DIR}/Config/Collision.cfg -DCOLL_CFG_DST=${ORBITER_BINARY_CONFIG_DIR}/Collision.cfg -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CollisionCfgOnce.cmake)
+	execute_process(COMMAND ${COLL_CFG_ONCE}) # at configure time too: the upgrade line shows in the configure output
+	set(COLL_DATA_CMDS COMMAND ${COLL_CFG_ONCE})
 	if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Meshes)
 		list(APPEND COLL_DATA_CMDS COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_CURRENT_SOURCE_DIR}/Meshes/ ${ORBITER_BINARY_MESH_DIR})
 	endif ()
@@ -123,7 +123,13 @@ else ()
 endif ()
 
 install(TARGETS Collision LIBRARY DESTINATION ${COLL_DEST_PLUGIN} COMPONENT Collision RUNTIME DESTINATION ${COLL_DEST_PLUGIN} COMPONENT Collision) # COMPONENT binds to the kind before it
-install(FILES Config/Collision.cfg DESTINATION ${COLL_DEST_ROOT}/Config COMPONENT Collision)
+install(CODE "set(COLL_CFG_SRC [[${CMAKE_CURRENT_SOURCE_DIR}/Config/Collision.cfg]])
+	set(COLL_CFG_DST \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${COLL_DEST_ROOT}/Config/Collision.cfg\")
+	if (IS_ABSOLUTE [[${COLL_DEST_ROOT}]])
+		set(COLL_CFG_DST \"\$ENV{DESTDIR}${COLL_DEST_ROOT}/Config/Collision.cfg\")
+	endif ()
+	message(STATUS \"Collision.cfg: \${COLL_CFG_DST} (copied if missing, an older one upgraded, a user's edits kept)\")
+	include([[${CMAKE_CURRENT_SOURCE_DIR}/cmake/CollisionCfgOnce.cmake]])" COMPONENT Collision)
 install(FILES CollisionAPI.h DESTINATION ${COLL_DEST_ROOT}/Orbitersdk/include COMPONENT Collision)
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Meshes)
 	install(DIRECTORY Meshes/ DESTINATION ${COLL_DEST_MESH} COMPONENT Collision FILES_MATCHING PATTERN "*.col")
@@ -200,6 +206,7 @@ if (COLL_MAKE_TESTS)
 	coll_slow_test(CollDetect.Test Fuzz fuzz)
 	coll_slow_test(DentMath.Test Fuzz fuzz)
 	coll_unit_test(CollCfg.Test 30 UNITS CollCfg)
+	coll_add_test(Collision.CfgOnce.Test TIMEOUT 60 LABELS collision COMMAND ${CMAKE_COMMAND} -DCOLL_SRC=${CMAKE_CURRENT_SOURCE_DIR} -DCOLL_WORK=${CMAKE_CURRENT_BINARY_DIR}/CfgOnceTest -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CollisionCfgOnce.Test.cmake)
 	coll_unit_test(CollisionAPI.Test 30)
 	foreach (part G F D I) # per-phase test registrations
 		include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests_${part}.cmake OPTIONAL)
