@@ -384,6 +384,7 @@ public:
 
 	bool bEchoAll;          // echo all configuration parameters (or only non-default ones)?
 	RECT rLaunchpad;        // launchpad dialog position
+	bool bPlanetTexCheck;   // not upstream: offer missing planet textures at launch (TexInstall.cpp)
 
 	// directory information
 	char *Root;             // master config file

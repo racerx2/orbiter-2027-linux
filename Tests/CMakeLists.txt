@@ -110,6 +110,11 @@ add_unit_test(Mesh.Test ${ORBITER_SOURCE_DIR}/Mesh.cpp ${ORBITER_SOURCE_DIR}/Pat
 target_compile_definitions(Mesh.Test PRIVATE NOGRAPHICS)
 target_compile_options(Mesh.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 target_link_options(Mesh.Test PRIVATE -fsanitize=address)
+# not upstream: missing planet textures: package list, check, zip installer, file:// download; built with ASan
+add_unit_test(TexPack.Test ${ORBITER_SOURCE_DIR}/TexPack.cpp ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
+target_link_libraries(TexPack.Test Qt6::Network zlib)
+target_compile_options(TexPack.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(TexPack.Test PRIVATE -fsanitize=address)
 
 if (BUILD_ORBITER_SERVER)
 
