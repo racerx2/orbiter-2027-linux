@@ -437,8 +437,6 @@ bool CollAddonFrame::Impl::KinTouch (const CollAIslandRec &I, const CollAPairRec
 	for (const CollPairResult &r : res) if (r.kind != COLL_NONE && r.npt > 0 && (!best || r.tau < best->tau)) best = &r;
 	std::vector<CollHit> hs; std::vector<std::pair<int,int>> pp; double sk;
 	Hits (ia, ib, F.dprm.deltaCt + 0.1, hs, pp, sk);
-	double gmin = 1e9;
-	for (const CollHit &x : hs) gmin = std::min (gmin, x.d);
 	if (!best) {                                         // no touch within the step: the free path decelerates before touching (du 0)
 		int kmin = -1;
 		for (size_t k = 0; k < hs.size (); k++) if (kmin < 0 || hs[k].d < hs[kmin].d) kmin = (int)k;
