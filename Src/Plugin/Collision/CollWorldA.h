@@ -51,6 +51,7 @@ public:
 	const CollAStats &Stats () const { return frame.Stats (); }
 	const std::vector<CollABody> &Bodies () const { return body; } // this frame's solver bodies (tests)
 	const std::vector<CollAWrite> &Writes () const { return wr; }  // this frame's planned writes (tests)
+	const std::vector<Vector> &GExact () const { return gx; }      // gravity per body handed to Finish by the last WriteBack (tests)
 	uint64_t Notices () const { return nNotices; }
 	double LastW () const { return lastW; }
 	CollAddonFrame frame;
@@ -66,6 +67,7 @@ private:
 	std::vector<CollABody> body;
 	std::vector<CollImpactEvent> ev;
 	std::vector<CollAWrite> wr;
+	std::vector<Vector> gx;
 	std::vector<uint32_t> queuedNew, jumped;
 	std::vector<Last> last;                        // kind and member hash of each body at the last pre-step (entry bits)
 	double simt = 0, simdt = 0, lastW = 1e100, sysPrev = -1, warpMsgSys = -1e100;

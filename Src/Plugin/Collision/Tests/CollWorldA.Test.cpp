@@ -201,3 +201,75 @@ TEST_CASE ("A13 CONTACT notice layout", "[CollWorldA]")
 	REQUIRE (offsetof (COLLA_CONTACTINFO, flags) == 12);
 	REQUIRE (offsetof (COLLA_CONTACTINFO, simt) % 8 == 0);
 }
+
+namespace {
+Vector PointG (const Vector &x, double GM) { double r = x.length (); return x*(-GM/(r*r*r)); }
+Vector LeoRef (Vector x, Vector v, double GM, double h)   // RK4 in 1000 steps
+{
+	const int n = 1000; double k = h/n;
+	for (int i = 0; i < n; i++) {
+		Vector a1 = PointG (x, GM), v1 = v;
+		Vector a2 = PointG (x + v1*(0.5*k), GM), v2 = v + a1*(0.5*k);
+		Vector a3 = PointG (x + v2*(0.5*k), GM), v3 = v + a2*(0.5*k);
+		Vector a4 = PointG (x + v3*k, GM), v4 = v + a3*k;
+		x += (v1 + v2*2.0 + v3*2.0 + v4)*(k/6.0); v += (a1 + a2*2.0 + a3*2.0 + a4)*(k/6.0);
+	}
+	return x;
+}
+}
+
+TEST_CASE ("fix1: playback and frozen bodies in LEO are predicted with gravity (h 0.1, error below 1 mm)", "[CollWorldA]")
+{
+	const double GM = 6.67259e-11*5.97e24, r = 6.771e6, h = 0.1;
+	for (int kind : { COLLB_PLAYBACK, COLLB_FROZEN }) {
+		World W;
+		W.sdk.bodies.push_back (CollFakeSdk::Body ());
+		CollFakeSdk::Body *earth = &W.sdk.bodies.back ();
+		const Vector x (r*0.6, r*0.8, 0), v (-0.8*7672.0, 0.6*7672.0, 0);
+		CollFakeSdk::Ves *a = W.Add ("A", x, v);
+		CollFakeSdk::Ves *b = W.Add ("B", x + Vector (0, 0, 500), v);
+		a->rd.gref = b->rd.gref = earth;
+		b->rd.aTot = PointG (b->rd.x, GM)*b->rd.m;
+		if (kind == COLLB_PLAYBACK) { a->rd.playback = true; a->rd.aTot = PointG (Vector (r, 0, 0), GM)*a->rd.m; } // the cache from before the playback started
+		else { a->rd.aTot = PointG (x, GM)*a->rd.m; CollPhysAsm m; m.member = { 1 }; m.root = 1; m.mixed = true; m.memberHash = 1; W.geom.asmb = { m }; }
+		W.Frame (h);
+		const CollABody *P = nullptr;
+		for (const CollABody &B : W.ps->Bodies ()) if (B.kind == kind) P = &B;
+		REQUIRE (P);
+		double err = (P->kin.c1 - LeoRef (x, v, GM, h)).length ();
+		CAPTURE (kind, err);
+		REQUIRE (err < 1e-3);
+		REQUIRE (W.sdk.misuse == 0);
+	}
+}
+
+TEST_CASE ("fix1 R2: the weight cached before a state write is turned into the written attitude (stale GetWeightVector)", "[CollWorldA]")
+{
+	const double GM = 6.67259e-11*5.97e24, r = 6.771e6;
+	World W;
+	W.sdk.applyWrites = true;
+	W.sdk.bodies.push_back (CollFakeSdk::Body ());
+	CollFakeSdk::Body *earth = &W.sdk.bodies.back ();
+	CollFakeSdk::Ves *a = W.Add ("A", Vector (r, 0, 0), Vector (0, 7672.0, 0));
+	W.Add ("B", Vector (r, 0, 1000), Vector (0, 7672.0, 0));
+	Matrix R0; R0.Set (Vector (0.3, -0.2, 1.1));
+	a->rd.R = R0; a->rd.gref = earth;
+	const Vector g = PointG (a->rd.x, GM)*(1.0 + 1e-3);     // the core's field: not the point mass alone
+	a->rd.W = tmul (R0, g)*a->rd.m;                        // cached by an earlier read this frame; the fake, like the core, does not refresh it on a write
+	W.Frame (0.1);
+	REQUIRE (!W.ps->Bodies ().empty ());
+	int ia = -1;
+	for (size_t i = 0; i < W.ps->Bodies ().size (); i++) if (W.ps->Bodies ()[i].id == 1) ia = (int)i;
+	REQUIRE (ia >= 0);
+	const CollABody &B = W.ps->Bodies ()[ia];
+	CollAWrite w {};
+	w.body = ia; w.state = w.attitude = w.weight = true;
+	w.x = B.x; w.v = B.v; w.q = B.q; CollRotate (w.q, Vector (0.1, 0.25, -0.3));
+	std::vector<CollAWrite> list { w };
+	W.ps->WriteBack (list);
+	REQUIRE ((int)W.ps->GExact ().size () > ia);
+	Vector ge = W.ps->GExact ()[ia];
+	CAPTURE (ge.x, ge.y, ge.z, g.x, g.y, g.z);
+	REQUIRE ((ge - g).length () <= 1e-12*g.length ());
+	REQUIRE (W.sdk.misuse == 0);
+}
