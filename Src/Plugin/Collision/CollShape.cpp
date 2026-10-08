@@ -367,14 +367,17 @@ bool CollScanMeshTags (const char *text, size_t len, CollMeshTags &out, std::vec
 		if (nvtx > 0 && nidx > 0) core.push_back (t); // AddGroup only for groups with geometry (Mesh.cpp:918)
 	}
 
+	// names after a failed read stay unset (empty) as in the core, so the loops stop there; counts capped by the lines left
 	std::vector<std::string> mname, tname;
 	int32_t nmtrl = 0, ntex = 0;
 	if (in.Get (line) && line.compare (0, 9, "MATERIALS") == 0 && ScanInt (line, 9, nmtrl)) {
-		for (int32_t i = 0; i < nmtrl; i++) { in.Get (line); mname.push_back (FirstToken (line, 0, 255)); }
-		for (int32_t i = 0; i < nmtrl * 5; i++) in.Get (line);
+		int64_t n = std::min<int64_t> (nmtrl, (int64_t)(in.n - in.pos));
+		for (int64_t i = 0; i < n && in.Get (line); i++) mname.push_back (FirstToken (line, 0, 255));
+		for (int64_t i = 0; i < n * 5 && in.Get (line); i++) {}
 	}
 	if (in.Get (line) && line.compare (0, 8, "TEXTURES") == 0 && ScanInt (line, 8, ntex)) {
-		for (int32_t i = 0; i < ntex; i++) { in.Get (line); tname.push_back (FirstToken (line, 0, 255)); }
+		int64_t n = std::min<int64_t> (ntex, (int64_t)(in.n - in.pos));
+		for (int64_t i = 0; i < n && in.Get (line); i++) tname.push_back (FirstToken (line, 0, 255));
 	}
 
 	// client inherit rule (OVP/VulkanClient/Mesh.cpp:542-563): group 0 inherits "default"
@@ -950,6 +953,17 @@ size_t CollShape::ApplyDent (uint32_t mesh, const uint32_t *grp, size_t ngrp, Co
 		for (auto &q : dv) W.vtx[q.first] += q.second;
 		W.Refit ();  // also the bounding radius
 		moved += dv.size();
+		CollPart &P = parts[i];
+		for (int k = 0; k < 2; k++) {  // part spheres as Update step 4
+			P.sc[k] = CollApply (P.pose[k], W.bsCentre);
+			P.sr[k] = W.bsRadius * (CollIsRigid (P.pose[k]) ? 1.0 : Frobenius (P.pose[k].A));
+		}
+		P.motion = SameAffine (P.pose[0], P.pose[1]) ? 0.0 : CollPoseMotion (W, P.pose[0], P.pose[1]);
+	}
+	if (moved) {
+		bound[0] = bound[1] = 0;
+		for (const CollPart &P : parts)
+			for (int k = 0; k < 2; k++) bound[k] = std::max (bound[k], P.sc[k].length () + P.sr[k]);
 	}
 	return moved;
 }

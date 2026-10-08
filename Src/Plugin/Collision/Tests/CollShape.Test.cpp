@@ -9,6 +9,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <sys/resource.h>
 #include "CollShape.h"
 #include "CollTestMsh.h"
 #include "CollAnimTest.h"
@@ -1277,4 +1278,56 @@ TEST_CASE("Tag scanner: a huge GEOM triangle count does not overflow (code revie
 	std::vector<std::string> w;
 	REQUIRE (CollScanMeshTags (t.data(), t.size(), tg, w));
 	CHECK (tg.label == std::vector<std::string> { "a" });  // the core reads past the end of the file: group dropped
+}
+
+TEST_CASE("Tag scanner: huge MATERIALS and TEXTURES counts stop at the end of the file (fix1)", "[collshape]")
+{
+	auto peak = [] { struct rusage u; getrusage (RUSAGE_SELF, &u); return (long)u.ru_maxrss; }; // kB
+	long p0 = peak ();
+	const std::string g = "MSHX1\nGROUPS 2\nMATERIAL 2\nGEOM 3 1\n0 0 0\n1 0 0\n0 1 0\n0 1 2\nMATERIAL 1\nTEXTURE 1\nGEOM 3 1\n0 0 0\n1 0 0\n0 1 0\n0 1 2\n";
+	CollMeshTags tg;
+	std::vector<std::string> w;
+	std::string t = g + "MATERIALS 300000000\nhull\nglass\n";
+	REQUIRE (CollScanMeshTags (t.data(), t.size(), tg, w));
+	CHECK (tg.material == std::vector<std::string> { "glass", "hull" });
+	t = g + "MATERIALS 2\nhull\nglass\nMATERIAL hull\n1 1 1 1\n1 1 1 1\n1 1 1 1\n0 0 0 1\nMATERIAL glass\n1 1 1 1\n1 1 1 1\n1 1 1 1\n0 0 0 1\nTEXTURES 300000000\nskin.dds\n";
+	REQUIRE (CollScanMeshTags (t.data(), t.size(), tg, w));
+	CHECK (tg.material == std::vector<std::string> { "glass", "hull" });
+	CHECK (tg.texture == std::vector<std::string> { "default", "skin.dds" });
+	CHECK (peak () - p0 < 50000);
+}
+
+TEST_CASE("ApplyDent: part spheres and the vessel bound follow the dent (fix1)", "[collshape]")
+{
+	auto box = std::make_shared<CollRestMesh> ();
+	box->grp.push_back (Box (Vector (0, 0, 0), Vector (1, 1, 1)));
+	box->grp.push_back (Box (Vector (4, 0, 0), Vector (1, 1, 1)));
+	TestVessel v; TestModule mod; CollAnim ca; CollShape sh; CollTemplateCache cache;
+	v.coll = &ca;
+	v.meshGrp = { 2 };
+	UINT an = v.CreateAnimation (0);
+	v.AddAnimationComponent (an, 0, 1, mod.Lin (0, mod.Grp ({1}), 1, _V(0,1,0)));
+	CollMeshInfo mi;
+	mi.present = mi.collide = true; mi.serial = 1; mi.rest = box; mi.ofs = Vector (0, 0, 2);
+	v.Step ();
+	sh.Update (&mi, 1, ca, v.anim, v.nanim, cache);
+	REQUIRE (sh.nPart () == 2);
+	int p1 = sh.PartOf (0, 1);
+	REQUIRE (p1 >= 0);
+	uint32_t g1 = 1;
+	auto field = [] (const void *, const Vector &x) { return x.x > 4.5 ? Vector (6, 0, 0) : Vector (); }; // outward dent of the far box's +x face
+	REQUIRE (sh.ApplyDent (0, &g1, 1, field, nullptr) == 4);
+	const CollPart &P = sh.Part (p1);
+	const CollGeom &G = P.Geom ();
+	for (int k = 0; k < 2; k++) {
+		Vector c; double r;
+		sh.Bound (k, c, r);
+		for (uint32_t i = 0; i < G.vtx.size(); i++) {
+			Vector x = CollApply (P.pose[k], G.Pos (i));
+			CHECK ((x - P.sc[k]).length () <= P.sr[k] + 1e-9);
+			CHECK (x.length () <= r + 1e-9);
+		}
+		CHECK (P.sc[k].x == CollApply (P.pose[k], G.bsCentre).x);
+		CHECK (P.sr[k] == G.bsRadius);
+	}
 }

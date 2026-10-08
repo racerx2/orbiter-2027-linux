@@ -218,6 +218,7 @@ bool CollParseMsh (const std::string &text, const char *name, CollRestMesh &out)
 				const char *p = line.data () + 4;
 				if (!ScanInt (p, e, nvtx) || !ScanInt (p, e, ntri)) { nvtx = ntri = 0; break; }
 				if (nvtx < 0 || ntri < 0 || nvtx > 0x7fffffff / 32 || ntri > 0x7fffffff / 6) { term = true; nvtx = 0; break; }
+				if ((size_t)nvtx > text.size () - in.pos) { term = true; nvtx = 0; break; } // one line per vertex: the reads would fail, no allocation
 				grp.vtx.assign ((size_t)nvtx, CollVtx {});
 				for (long long i = 0; i < nvtx; i++) {
 					CollVtx &v = grp.vtx[(size_t)i];
@@ -235,6 +236,7 @@ bool CollParseMsh (const std::string &text, const char *name, CollRestMesh &out)
 					}
 				}
 				if (term) break;
+				if ((size_t)ntri > text.size () - in.pos) { grp.vtx.clear (); nvtx = 0; term = true; break; } // one line per triangle
 				grp.idx.assign ((size_t)ntri * 3, 0);
 				for (long long i = 0; i < ntri; i++) {
 					if (!in.Get (line)) { grp.vtx.clear (); grp.idx.clear (); nvtx = 0; term = true; break; }

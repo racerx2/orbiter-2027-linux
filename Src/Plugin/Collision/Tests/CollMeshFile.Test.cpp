@@ -7,6 +7,7 @@
 #include <fstream>
 #include <random>
 #include <sstream>
+#include <sys/resource.h>
 #include "CollMeshFile.h"
 #include "CollTestMsh.h"
 
@@ -113,4 +114,18 @@ TEST_CASE ("E2-U2 Orbiter.cfg reader", "[CollMeshFile]")
 	REQUIRE (f.Bool ("X", b)); REQUIRE (!b);
 	REQUIRE (CollMeshPath (d, std::string (260, 'm'), ".msh").empty ());
 	REQUIRE (CollMeshPath (d, "DG/deltaglider", ".msh") == "no\\DG/deltaglider.msh");
+}
+
+TEST_CASE ("fix1: GEOM counts beyond the bytes left allocate nothing", "[CollMeshFile]")
+{
+	auto peak = [] { struct rusage u; getrusage (RUSAGE_SELF, &u); return (long)u.ru_maxrss; }; // kB
+	long p0 = peak ();
+	CollRestMesh m;
+	REQUIRE (CollParseMsh ("MSHX1\nGROUPS 1\nGEOM 60000000 0\n", "x", m));
+	CHECK (m.grp.empty ());
+	REQUIRE (CollParseMsh ("MSHX1\nGROUPS 2\n" + std::string (kGrp) + "GEOM 3 60000000\n0 0 0\n1 0 0\n0 1 0\n0 1 2\n", "x", m));
+	CHECK (m.grp.size () == 1);
+	CHECK (peak () - p0 < 50000);
+	REQUIRE (CollParseMsh ("MSHX1\nGROUPS 1\nGEOM 3 1\n\n\n\n0 1 2", "x", m)); // a line per count is enough
+	CHECK (m.grp.size () == 1);
 }
