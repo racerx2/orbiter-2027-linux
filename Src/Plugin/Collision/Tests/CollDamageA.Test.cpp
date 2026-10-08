@@ -850,3 +850,316 @@ TEST_CASE ("dent2 D7 groups without a collider get the dent")
 	for (const DentRecord &x : v->d.rec) for (uint16_t g : x.grp) has2 = has2 || g == 2;
 	CHECK (has2);
 }
+
+// fix1 area D (design-CA-fix1)
+
+namespace {
+
+// group 0 the plate, group 1 from grid (nx x ny points, origin o, steps ux, uy, normal nm); exclude: group 1 has no collider; animate: group 1 is its own pose class
+uint32_t AddTwo (Rig &r, const std::string &name, const std::string &key, Vector o, Vector ux, Vector uy, int nx, int ny, Vector nm, bool exclude, bool animate)
+{
+	uint32_t id = r.Add (name);
+	Rig::Body &b = r.body.back ();
+	auto m = std::make_shared<CollRestMesh> (*r.plate);
+	m->name = key;
+	m->grp.resize (2);
+	CollGroupData &g = m->grp[1];
+	for (int j = 0; j < ny; j++) for (int i = 0; i < nx; i++) {
+		Vector p = o + ux * i + uy * j;
+		g.vtx.push_back (CollVtx { (float)p.x, (float)p.y, (float)p.z, (float)nm.x, (float)nm.y, (float)nm.z, 0, 0 });
+	}
+	for (int j = 0; j + 1 < ny; j++) for (int i = 0; i + 1 < nx; i++) {
+		uint16_t a = (uint16_t)(j * nx + i), c1 = (uint16_t)(a + 1), c = (uint16_t)(a + nx), d = (uint16_t)(c + 1);
+		g.idx.insert (g.idx.end (), { a, c1, c, c1, d, c });
+	}
+	m->nvtx = (uint32_t)(m->grp[0].vtx.size () + g.vtx.size ());
+	if (exclude) {
+		auto sc = std::make_shared<CollSidecar> ();
+		std::vector<std::string> w;
+		const char *txt = "COLLIDER-V1\nEXCLUDE GROUP 1\n";
+		REQUIRE (CollParseSidecar (txt, std::strlen (txt), "t.col", *sc, w));
+		b.mi.side = sc;
+	}
+	b.mi.key = key, b.mi.rest = m;
+	if (animate) {
+		b.tv.reset (new TestVessel ()), b.mod.reset (new TestModule ());
+		b.tv->coll = &b.ca;
+		b.tv->meshGrp = { 2 };
+		UINT an = b.tv->CreateAnimation (0);
+		b.tv->AddAnimationComponent (an, 0, 1, b.mod->Lin (0, b.mod->Grp ({1}), 1, _V(0,0,1)));
+	}
+	r.host.slots[id] = { CollDmgSlot { true, DentMath::MeshKey (key.c_str ()), 2, m->nvtx, m, key, 1 } };
+	return id;
+}
+
+CollDmgBaseObj Block () { return CollDmgBaseObj { "Moon", "Brighton Beach", "BLOCK", 0, 0, 1, DENTB_BLOCK, Vector (10, 10, 10), -60.6, -35, 0, nullptr, (CollH)0x77 }; }
+
+// the mirror equals a fresh full build from the same records, bitwise
+bool MirrorExact (Rig &r, uint32_t id, uint32_t slot)
+{
+	const VesselDamageA *v = r.s.Damage (id);
+	const DentMeshCopyA *c = r.s.vis.Copy (id, slot);
+	if (!v || !c) return false;
+	CollVisualA fresh (r.sdk, r.host, r.cfg);
+	CollDmgSlot s;
+	if (!r.host.Slot (id, slot, s)) return false;
+	std::vector<const DentRecord *> rs;
+	for (size_t k = 0; k < v->d.rec.size (); k++) if (v->match[k] == (int)slot) rs.push_back (&v->d.rec[k]);
+	fresh.SetRecords (id, v->name, s, slot, rs);
+	const DentMeshCopyA *f = fresh.Copy (id, slot);
+	if (!f || f->cur.size () != c->cur.size ()) return false;
+	for (size_t g = 0; g < f->cur.size (); g++) {
+		if (f->cur[g].size () != c->cur[g].size () || f->g[g].edit != c->g[g].edit) return false;
+		if (std::memcmp (f->cur[g].data (), c->cur[g].data (), f->cur[g].size () * sizeof (DentVtx))) return false;
+	}
+	return true;
+}
+
+}
+
+TEST_CASE ("fix1 M8 playback D events past DENT_MAX_VESSEL are rejected")
+{
+	DentRecord rec;
+	{
+		Rig r;
+		uint32_t a = r.Add ("PB-A"), b = r.Add ("PB-B");
+		r.Begin ();
+		r.Frame ();
+		r.Frame ({ Hit (a, -1, b, 10.0, 3.0e4) });
+		REQUIRE (r.s.Damage (a));
+		rec = r.s.Damage (a)->d.rec[0];
+	}
+	std::string side = CollSide::Header ("FLOOD") + "\n" + CollSide::Vdef (0, 0, "PB-A", "ShuttlePB") + "\n";
+	std::vector<std::string> l;
+	for (uint32_t k = 0; k < 600; k++) CollSide::Dent (0, 0, k, rec, l);
+	for (auto &x : l) side += x + "\n";
+	Rig p;
+	p.s.sideDir = "side";
+	p.sdk.files["side/FLOOD.txt"] = side;
+	uint32_t a = p.Add ("PB-A");
+	p.B (a).v->playback = true;
+	CollStoreBlock blk;
+	blk.recId = "FLOOD";
+	p.Begin (std::move (blk));
+	p.Frame ();
+	REQUIRE (p.s.Damage (a));
+	CHECK (p.s.Damage (a)->d.rec.size () == DENT_MAX_VESSEL);
+	CHECK (p.sdk.Logged ("dent 512 beyond 512 records, skipped"));
+	CHECK (ColliderExact (p, a));
+}
+
+TEST_CASE ("fix1 M9 one collider replay and one mirror build per slot per frame")
+{
+	Rig r;
+	uint32_t a = r.Add ("PB-A");
+	r.host.bases.push_back (Block ()); // the other side takes energy only
+	r.Begin ();
+	r.Frame ();
+	auto at = [&] (double x, double y) { CollImpactEvent e = Hit (a, 0, 1, 10.0, 3.0e4); e.s[0].c = Vector (x, y, 0); return e; };
+	r.Frame ({ at (-2, -2) });
+	REQUIRE (r.s.Damage (a)->d.rec.size () == 1);
+	double h0 = r.s.Damage (a)->d.rec[0].p.h;
+	CollVisCounters c0 = r.s.vis.n;
+	uint64_t rp0 = r.s.n.replays;
+	r.Frame ({ at (-2, -2), at (2, 2), at (-2, -2) }); // grow, new, grow
+	REQUIRE (r.s.Damage (a)->d.rec.size () == 2);
+	CHECK (r.s.Damage (a)->d.rec[0].p.h > h0);
+	CHECK (r.s.vis.n.builds + r.s.vis.n.incr == c0.builds + c0.incr + 1);
+	CHECK (r.s.n.replays == rp0 + 1);
+	CHECK (ColliderExact (r, a));
+	CHECK (MirrorExact (r, a, 0));
+	c0 = r.s.vis.n, rp0 = r.s.n.replays;
+	r.Frame ({ at (2, -2), at (-2, 2), at (0, 3) }); // three new records: incremental
+	REQUIRE (r.s.Damage (a)->d.rec.size () == 5);
+	CHECK (r.s.vis.n.incr == c0.incr + 1);
+	CHECK (r.s.vis.n.builds == c0.builds);
+	CHECK (r.s.n.replays == rp0);
+	CHECK (ColliderExact (r, a));
+	CHECK (MirrorExact (r, a, 0));
+}
+
+TEST_CASE ("fix1 M10 a stale record no longer blocks new dents on a present slot")
+{
+	std::vector<std::string> saved;
+	{
+		Rig r;
+		uint32_t a = r.Add ("PB-A"), b = r.Add ("PB-B");
+		r.Begin ();
+		r.Frame ();
+		r.Frame ({ Hit (a, -1, b, 10.0, 3.0e4) });
+		REQUIRE (r.s.Damage (a)->d.rec.size () == 1);
+		r.s.SaveLines (saved);
+	}
+	for (bool rest : { true, false }) {
+		Rig q;
+		uint32_t qa = q.Add ("PB-A"), qb = q.Add ("PB-B");
+		q.host.slots[qa][0] = CollDmgSlot { true, DentMath::MeshKey ("other"), 1, q.plate->nvtx, rest ? q.plate : nullptr, "other", 1 };
+		CollStoreBlock blk;
+		size_t pos = 0;
+		REQUIRE (CollStore::Parse ([&] (std::string &l) { if (pos >= saved.size ()) return false; l = saved[pos++]; return true; }, blk));
+		q.Begin (std::move (blk));
+		q.Frame ();
+		q.Frame ({ Hit (qa, -1, qb, 10.0, 3.0e4) });
+		const VesselDamageA *d = q.s.Damage (qa);
+		REQUIRE (d);
+		CHECK (d->match[0] < 0);
+		if (!rest) { CHECK (d->d.rec.size () == 1); continue; } // no rest mesh yet: still waits
+		REQUIRE (d->d.rec.size () == 2);
+		CHECK (d->match[1] == 0);
+		CHECK (ColliderExact (q, qa) == false); // the stale record is not on the collider
+		std::vector<std::string> out;
+		q.s.SaveLines (out);
+		int lines = 0;
+		bool inA = false;
+		for (auto &l : out) { inA = (inA || l == "VESSEL 0 PB-A ShuttlePB") && l != "END_VESSEL"; lines += inA && l.find ("XDMGD") != std::string::npos; }
+		CHECK (lines == 2); // dormant record kept and saved
+	}
+}
+
+TEST_CASE ("fix1 groups over 65536 vertices get no visual dent")
+{
+	Rig r;
+	uint32_t a = r.Add ("PB-A");
+	auto m = std::make_shared<CollRestMesh> ();
+	m->name = "big";
+	m->grp.resize (2);
+	for (int j = 0; j < 250; j++) for (int i = 0; i < 280; i++) m->grp[0].vtx.push_back (CollVtx { 0.04f * i, 0.04f * j, 0, 0, 0, 1, 0, 0 });
+	m->grp[1] = r.plate->grp[0];
+	m->nvtx = (uint32_t)(m->grp[0].vtx.size () + m->grp[1].vtx.size ());
+	CollDmgSlot s { true, DentMath::MeshKey ("big"), 2, m->nvtx, m, "big", 1 };
+	r.host.slots[a] = { s };
+	DentRecord rec {};
+	const CollVtx &x = m->grp[0].vtx[66000];
+	rec.p.c = Vector (x.x, x.y, 0), rec.p.n = Vector (0, 0, 1), rec.p.R = 0.5, rec.p.h = 0.1, rec.p.T = 0;
+	r.s.vis.SetRecords (a, "PB-A", s, 0, { &rec });
+	const DentMeshCopyA *c = r.s.vis.Copy (a, 0);
+	REQUIRE (c);
+	CHECK (c->g[0].big);
+	CHECK (c->g[0].edit.empty ());
+	CHECK (r.sdk.Logged ("grp=0 has 70000 vertices"));
+	DFake::V *v = r.B (a).v;
+	v->visual = 1;
+	v->dev[0] = ClientRest (*m);
+	r.s.vis.Pass (CollVisualA::PASS_ALL);
+	CHECK (std::memcmp (v->dev[0][0].data (), ClientRest (*m)[0].data (), 70000 * sizeof (DentVtx)) == 0); // nothing written into a wrapped index
+}
+
+TEST_CASE ("fix1 zero rest normals: the client's NaN normal counts as rest")
+{
+	Rig r;
+	uint32_t a = r.Add ("PB-A");
+	r.host.bases.push_back (Block ());
+	auto m = std::make_shared<CollRestMesh> (*r.plate);
+	for (CollVtx &x : m->grp[0].vtx) x.nx = x.ny = x.nz = 0;
+	r.B (a).mi.rest = m, r.host.slots[a][0].rest = m;
+	DFake::V *v = r.B (a).v;
+	v->visual = 1;
+	v->dev[0] = ClientRest (*m);
+	for (DentVtx &x : v->dev[0][0]) x.nx = x.ny = x.nz = std::nanf (""); // the client's 0 * inf
+	r.Begin ();
+	r.Frame ();
+	r.Frame ({ Hit (a, 0, 1, 10.0, 3.0e4) });
+	const DentMeshCopyA *c = r.s.vis.Copy (a, 0);
+	REQUIRE (c);
+	REQUIRE_FALSE (c->g[0].edit.empty ());
+	CHECK_FALSE (c->g[0].module);
+	CHECK (r.s.vis.ModuleGroups (a) == 0);
+	uint16_t u = c->g[0].edit[0];
+	CHECK (std::memcmp (&v->dev[0][0][u], &c->cur[0][u], 12) == 0);
+}
+
+TEST_CASE ("fix1 D7 groups are in the depth cap")
+{
+	Rig r;
+	uint32_t a = AddTwo (r, "PB-A", "cabin", Vector (0.15, 0.15, -0.05), Vector (0.1, 0, 0), Vector (0, 0.1, 0), 3, 3, Vector (0, 0, 1), true, false);
+	r.B (a).v->size = 1.0;
+	r.host.bases.push_back (Block ());
+	r.Begin ();
+	r.Frame ();
+	REQUIRE (r.B (a).sh->PartOf (0, 1) < 0);
+	CollImpactEvent e = Hit (a, 0, 1, 30.0, 4.0e6);
+	e.s[0].c = Vector (0.25, 0.25, 0);
+	r.Frame ({ e });
+	r.Frame ({ e });
+	const VesselDamageA *v = r.s.Damage (a);
+	REQUIRE (v);
+	const CollRestMesh &m = *r.host.slots[a][0].rest;
+	double worst = 0, cap = 1e300;
+	bool listed = false;
+	for (const CollVtx &x : m.grp[1].vtx) {
+		Vector p (x.x, x.y, x.z);
+		double u = 0;
+		for (const DentRecord &d : v->d.rec)
+			if (std::find (d.grp.begin (), d.grp.end (), 1) != d.grp.end ()) { listed = true; u += -dotp (DentMath::Displace (d.p, p), d.p.n); cap = std::min (cap, DentMath::DmaxVessel (d.p.T, d.p.R, 1.0)); }
+		worst = std::max (worst, u);
+	}
+	REQUIRE (listed);
+	CHECK (worst > 0.0);
+	CHECK (worst <= cap + 1e-9);
+}
+
+TEST_CASE ("fix1 weld map within one pose class: the seam keeps its normals")
+{
+	Rig r;
+	uint32_t a = AddTwo (r, "PB-A", "walled", Vector (-1, 0, 0), Vector (0.5, 0, 0), Vector (0, 0, 0.5), 5, 3, Vector (0, -1, 0), false, true);
+	r.Begin ();
+	r.Frame ();
+	REQUIRE (r.B (a).sh->PartOf (0, 0) != r.B (a).sh->PartOf (0, 1));
+	CollDmgSlot s;
+	REQUIRE (r.host.Slot (a, 0, s));
+	DentRecord rec {};
+	rec.p.c = Vector (0, 0.5, 0), rec.p.n = Vector (0, 0, 1), rec.p.R = 1.0, rec.p.h = 0.2, rec.p.T = 0, rec.grp = { 0 };
+	r.s.vis.SetRecords (a, "PB-A", s, 0, { &rec });
+	const DentMeshCopyA *c = r.s.vis.Copy (a, 0);
+	REQUIRE (c);
+	CHECK_FALSE (c->g[0].edit.empty ());
+	CHECK (c->g[1].edit.empty ());
+	CHECK (std::memcmp (c->cur[1].data (), c->rp[1].data (), c->rp[1].size () * sizeof (DentVtx)) == 0);
+}
+
+TEST_CASE ("fix1 thrust cut: deleted thrusters leave the wish list")
+{
+	Rig r;
+	uint32_t a = r.Add ("GL", "DeltaGlider");
+	DFake::V *v = r.B (a).v;
+	DFake::Tk *main = r.sdk.AddTank (v, 100, 100);
+	for (int k = 0; k < 4; k++) r.sdk.AddThruster (v, main);
+	CollStoreBlock blk;
+	REQUIRE (CollStore::Parse ([lines = std::vector<std::string> { "COLLA 1", "VESSEL 0 GL DeltaGlider", "XDMG 1 600000 1", "END_VESSEL" }, i = size_t (0)] (std::string &l) mutable {
+		if (i >= lines.size ()) return false; l = lines[i++]; return true; }, blk));
+	r.Begin (std::move (blk));
+	r.Frame ();
+	REQUIRE (r.s.Damage (a)->cut.wish.size () == 4);
+	v->thList.erase (v->thList.begin () + 1); // the module deletes a thruster
+	r.Frame ();
+	CHECK (r.s.Damage (a)->cut.wish.size () == 3);
+	for (int k = 0; k < 5; k++) { r.sdk.AddThruster (v, main); v->thList.erase (v->thList.begin ()); r.Frame (); } // churn stays bounded
+	CHECK (r.s.Damage (a)->cut.wish.size () == 3);
+}
+
+TEST_CASE ("fix1 merge key: a D7 group's frame does not stop coalescing")
+{
+	Rig r;
+	uint32_t a = r.AddNosed ("DG-A", true);
+	Rig::Body &b = r.body.back ();
+	b.tv->meshGrp = { 3 };
+	UINT an2 = b.tv->CreateAnimation (0);
+	b.tv->AddAnimationComponent (an2, 0, 1, b.mod->Lin (0, b.mod->Grp ({2}), 1, _V(0,0,1))); // the cabin moves on its own
+	r.host.bases.push_back (Block ());
+	r.Begin ();
+	r.Frame ();
+	REQUIRE (r.B (a).sh->PartOf (0, 2) < 0);
+	auto hit = [&] (double dKE) { CollImpactEvent e = Hit (a, 0, 1, 30.0, dKE); e.s[0].c = Vector (2, 2, 0); return e; };
+	r.Frame ({ hit (4.0e6) });
+	const VesselDamageA *v = r.s.Damage (a);
+	REQUIRE (v);
+	size_t n1 = v->d.rec.size ();
+	REQUIRE (std::find (v->d.rec[0].grp.begin (), v->d.rec[0].grp.end (), 2) != v->d.rec[0].grp.end ()); // the cabin joins the body record at state 0
+	double h1 = v->d.rec[0].p.h;
+	b.tv->SetAnimation (an2, 1.0);
+	r.Frame ();
+	r.Frame ({ hit (1.0e6) });
+	CHECK (r.s.n.coalesced >= 1);
+	CHECK (v->d.rec[0].p.h > h1);
+	CHECK (v->d.rec.size () == n1);
+}

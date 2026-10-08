@@ -42,7 +42,7 @@ struct NoticeA {                                              // one notice of t
 	double simt = 0, energy = 0, depth = 0; Vector pos, nml;
 };
 struct RepairReq { uint32_t id = 0; bool building = false; std::string planetBase; int obj = -1; };
-struct CollE3Counters { uint64_t dents = 0, coalesced = 0, repairs = 0, relinks = 0, remakes = 0, notices = 0, playback = 0, side = 0; };
+struct CollE3Counters { uint64_t dents = 0, coalesced = 0, repairs = 0, relinks = 0, remakes = 0, notices = 0, playback = 0, side = 0, replays = 0; }; // replays: collider meshes reset and replayed
 
 struct CollRecLink  { bool active = false, failed = false; std::string id; double t0 = 0; std::ofstream file; std::vector<std::string> buf; uint32_t nalias = 0; };
 struct CollPlayLink { bool active = false, read = false, warned = false; std::string id; CollSideFile f; size_t cursor = 0; std::map<uint32_t, uint32_t> aliasId; };
@@ -98,6 +98,8 @@ private:
 	void Rematch (VesselDamageA &v, const std::set<uint32_t> &dropped = {});
 	void SyncCollider (VesselDamageA &v, CollShape *sh, uint32_t mesh, bool force);
 	void SyncMirror (VesselDamageA &v, uint32_t mesh);
+	void MarkDirty (uint32_t id, uint32_t mesh, bool replay);               // dent events: one collider sync and one mirror sync per slot at the next FlushDirty
+	void FlushDirty ();                                                      // end of Commit and Playback
 	void Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, double E, const DentMaterial &mat, double t, NoticeA &note);
 	void DestroyedTest (VesselDamageA &v, CollH h, double Ei, double t, uint32_t extraFlags);
 	void DoRepair (VesselDamageA &v, bool playback);
@@ -124,6 +126,7 @@ private:
 	std::vector<DentBaseText> dormantBase;                                   // unmatched OBJ lines and ODENT lines
 	std::vector<NoticeA> notices;
 	std::map<uint32_t, NoticeA> frameNote;                                   // DENT accumulation of this pre-step
+	std::map<uint32_t, std::map<uint32_t, bool>> dirty;                      // vessel -> mesh -> a record grew or was replaced (full collider replay)
 	std::vector<RepairReq> repairs;
 	CollRecLink rec;
 	CollPlayLink play;
