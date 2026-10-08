@@ -334,7 +334,7 @@ bool CollTestVessel::Pre (const Words &w, double simt) // the actions of a vesse
 		oapiGetBaseEquPos (hb, &blng, &blat, &brad);
 		VECTOR3 ofs = V3 (w, 4), lv = V3 (w, 7);
 		double lng = blng + ofs.z / (size * cos (blat)), lat = blat - ofs.x / size;
-		double rad = brad + oapiSurfaceElevation (hp, lng, lat) + ofs.y; // y above the local terrain, as landed vessels sit (elevation tiles installed)
+		double elev = oapiSurfaceElevation (hp, lng, lat), rad = brad + elev + ofs.y; // y above the local terrain, as landed vessels sit (elevation tiles installed)
 		VECTOR3 gp, pp, pv;
 		MATRIX3 Rp;
 		oapiEquToGlobal (hp, lng, lat, rad, &gp);
@@ -347,7 +347,7 @@ bool CollTestVessel::Pre (const Words &w, double simt) // the actions of a vesse
 		VECTOR3 nose = north * cos (hd) + east * sin (hd), right = east * cos (hd) - north * sin (hd);
 		VECTOR3 vel = pv + east * (T != 0 ? PI2 * brad * cos (lat) / T : 0) - north * lv.x + up * lv.y + east * lv.z; // ground speed at the planet radius, as Orbiter's landed update (Vessel.cpp:4753), plus base-local velocity
 		Place (v, hp, gp, vel, Columns (right, up, nose), _V (0, 0, 0));
-		Log ("placed '%s' at '%s' lng=%.17g lat=%.17g rad=%.17g", v->GetName (), bn.c_str (), lng, lat, rad);
+		Log ("placed '%s' at '%s' lng=%.17g lat=%.17g rad=%.17g base=%.17g elev=%.17g", v->GetName (), bn.c_str (), lng, lat, rad, brad, elev);
 	} else if (a == "TESTATT") {
 		if (!v) return false;
 		v->SetRotationMatrix (Arot (V3 (w, 3)));
