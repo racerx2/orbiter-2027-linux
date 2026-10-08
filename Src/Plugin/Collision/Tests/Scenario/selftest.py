@@ -1,5 +1,6 @@
 # not upstream: Scn.Selftest, the checkers of the collision addon scenario tests on synthetic dumps and logs (Design CA E4 T0.3, design-C-T T0.3)
 import argparse
+import importlib.util
 import math
 import os
 import sys
@@ -57,6 +58,44 @@ def pair_dump(frames=3, h=0.02, vA=0.5, vB=-0.5, kick=None, end=True):  # PB-A a
     if end:
         out.append('END %d' % frames)
     return '\n'.join(out) + '\n'
+
+
+class OneRun:
+    def __init__(self, run):
+        self.run = run
+
+    def first(self):
+        return self.run
+
+
+def placebase_case(elev, ignore=False, td=1.4865):  # Moon at the origin, pad 2 on +x; PB landed by the core, PL placed 3 m above the terrain
+    R, rb = 1737400.0, 1737400.0 + elev
+    rpl = (R if ignore else rb) + 3.0
+    d = ['H scn=self h=0.02 version=0 run=%s' % RUNID]
+    for k in (1, 2, 3):
+        d.append('F %d %s 51982.5 1' % (k, g((k - 1) * 0.02)))
+        d.append('B Moon p=0,0,0')
+        d.append(vline('PB', (rb + td, 0.0, 0.0), (0.0, 0.0, 4.6)))
+        d.append(vline('PL', (rpl, 0.03, 0.0), (0.0, 0.0, 4.6)))
+    d.append('END 3')
+    placed = "CollTestVessel placed 'PL' at 'Brighton Beach' lng=0 lat=0 rad=%s base=%s elev=%s" % (g(rpl), g(R), g(elev))
+    return OneRun(FakeRun('\n'.join(d) + '\n', [A1, placed]))
+
+
+def check_placebase():  # M13: the check fails when TESTPLACEBASE ignores the terrain, skips without elevation data
+    spec = importlib.util.spec_from_file_location('check_placebase', os.path.join(HERE, 'checks', 'placebase.py'))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    e = expect_pass('placebase on terrain 2.6 km below the mean radius', lambda: m.check(placebase_case(-2600.0)))
+    e += expect_fail('placebase ignoring the elevation', lambda: m.check(placebase_case(-2600.0, ignore=True)))
+    e += expect_fail('placebase 0.1 m high', lambda: m.check(placebase_case(-2600.0, td=1.3865)))
+    try:
+        m.check(placebase_case(0.0))
+        print('selftest: placebase without elevation data did not skip')
+        e += 1
+    except scnlib.Skip:
+        pass
+    return e
 
 
 def expect_fail(what, fn):
@@ -144,6 +183,8 @@ def main(argv=None):
     if not up or up[1] >= 360:
         print('selftest: camera up axis %r' % (up,))
         e += 1
+
+    e += check_placebase()
 
     # the runner's own guards (T0.1)
     if a.work:

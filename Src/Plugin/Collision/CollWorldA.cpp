@@ -181,7 +181,7 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 		if (B.parts.empty ()) continue;
 		// kinematic motion over the step (4.3)
 		if (B.kind != COLLB_DYNAMIC) {
-			Vector wg = mul (R, B.wb), a;
+			Vector wg = mul (R, B.wb), a = B.kind == COLLB_PLAYBACK && rd.gref ? B.gEst : B.aTot; // playback: FRecorder_Play leaves acc alone (Vessel.cpp:4742), gravity of gref; frozen: the cache
 			if (B.kind == COLLB_LANDED && rd.gref) {               // planet-fixed: rotation about the planet axis, the landed cache acc (Vessel.cpp:4759)
 				double T = sdk.PlanetPeriod (rd.gref);
 				Vector pr, vr; Matrix Rp;
@@ -223,13 +223,16 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 void CollPhysSession::WriteBack (std::vector<CollAWrite> &wl)
 {
 	// pass 1: position and attitude, then the weight of a single body written with SetState (6.4)
-	std::vector<Vector> gExact (body.size ());
+	std::vector<Vector> &gExact = gx;
+	gExact.assign (body.size (), Vector ());
 	for (size_t i = 0; i < body.size (); i++) gExact[i] = body[i].gEst;
 	for (const CollAWrite &w : wl) {
 		const CollABody &B = body[w.body];
 		const Snap *r = SnapOf (B.member[0]);
 		if (!r || r->rd.playback) continue;
 		Matrix R = QM (w.q);
+		CollVesselRead rw {};
+		if (w.weight) sdk.ReadVessel (r->h, rw, 0);           // before the write: the core's weight is cached until its next Update, SetState2 and SetRotationMatrix keep it (Vessel.cpp:1240-1246, 4943)
 		if (w.state) {
 			CollStateWrite s {};
 			s.rbody = r->rd.gref;
@@ -240,11 +243,7 @@ void CollPhysSession::WriteBack (std::vector<CollAWrite> &wl)
 			sdk.SetState (r->h, s);
 		}
 		if (w.attitude) sdk.SetAttitude (r->h, R);
-		if (w.weight) {
-			CollVesselRead rd;
-			sdk.ReadVessel (r->h, rd, 0);
-			if (rd.m > 0) gExact[w.body] = mul (R, rd.W)/rd.m;
-		}
+		if (w.weight && rw.m > 0) gExact[w.body] = mul (r->rd.R, rw.W)/rw.m; // the core's full weight in the frame it was cached in: R_new (R_new^T R_old W) / m
 	}
 	frame.Finish (mirror, body, wl, gExact);
 	// pass 2: spin and force; they do not touch the weight's inputs

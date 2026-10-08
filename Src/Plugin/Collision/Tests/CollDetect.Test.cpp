@@ -2079,3 +2079,31 @@ TEST_CASE("U19 held parts (disp <= delta_ct) against the true part path, 2000 ca
 	std::printf ("U19 held-part fuzz 2000 cases (%d moving held parts): TOI %d, SPECULATIVE %d, NONE %d, violations %d\n", held, toi, spec, none, viol);
 	CHECK (held > 1000);
 }
+
+TEST_CASE("fix1 5.5: crossing triangles of a sliding sunk box take the plate's normal, not the slide direction", "[colldetect][U16]")
+{
+	const double h = 1.0/60.0, sink = 0.01;
+	const CollGeom *plate = Geom (BoxM (Vector (5, 5, 0.5), Vector (0, 0, -0.5))), *box = Geom (BoxM (Vector (1, 1, 1)));
+	for (const Vector &v : { Vector (3, 0, 0), Vector (-2, 1.5, 0), Vector (0, 0, 0) }) {
+		std::vector<CollBody> bs;
+		bs.push_back (Still (1, Vector (), h)); AddPart (bs.back (), plate, VKey (1));
+		bs.push_back (Lin (2, Vector (0, 0, 1 - sink), v, h)); AddPart (bs.back (), box, VKey (2));
+		g_log.clear (); g_collLog = LogSink;
+		CollDetect d;
+		std::vector<CollPairResult> res;
+		Frame (d, CollParams (), h, bs, res);
+		g_collLog = nullptr;
+		int deg = 0, up = 0;
+		for (const CollPairResult &r : res)
+			for (int i = 0; i < r.npt; i++) {
+				const CollContact &c = r.pt[i];
+				if (!(c.flags & COLLP_DEGENERATE)) continue;
+				deg++;
+				Vector out = bs[r.bodyA].m.c0 - bs[r.bodyB].m.c0;          // n points from B to A
+				if (std::fabs (c.n.z) > 1.0 - 1e-9 && (c.n & out) > 0.0) up++;
+			}
+		std::printf ("fix1 5.5: sunk box sliding at (%g %g %g) m/s: %d degenerate points, %d along the plate normal\n", v.x, v.y, v.z, deg, up);
+		CHECK (deg > 0);
+		CHECK (up == deg);
+	}
+}

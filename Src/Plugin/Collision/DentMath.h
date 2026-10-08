@@ -32,6 +32,7 @@ constexpr double   DENT_COALESCE_R     = 0.5;     // coalesce when |c - c_r| < t
 constexpr double   DENT_COALESCE_ANGLE = 30.0;    // and n . n_r > cos(this) [deg]
 constexpr uint32_t DENT_MAX_VESSEL     = 512;     // records per vessel after coalescing
 constexpr uint32_t DENT_MAX_OBJECT     = 64;      // records per base object
+constexpr uint32_t DENT_MAX_GRPLIST    = 65535;   // group list entries per record (mesh group limit)
 constexpr double   DENT_REFINE_EDGE    = 0.25;    // refinement target: longest rest edge <= this * R (4.9)
 constexpr uint32_t DENT_REFINE_NEW     = 4096;    // new triangles per dent
 constexpr uint32_t DENT_REFINE_MAX     = 65536;   // triangles per object
@@ -123,15 +124,20 @@ namespace DentMath {
 	double Dmax (double tcap, double T, double R, double L);      // min(t_cap, T > 0 ? 0.6 T : 0.5 R, 0.25 L)
 	double DmaxVessel (double T, double R, double L);             // min(T > 0 ? 0.6 T : inf, 0.5 R, 0.25 L): vessel crush, no t_cap
 	double DepthCap (const DentParams &p, const DentMeshView &m, double Dmax); // cumulative cap: min over q > 0.05 (none there: q > 0) of (Dmax - u) / q
+	double DepthCap (const DentParams &p, const DentMeshView &m, const DentMeshView *extra, double Dmax); // extra: more vertices for the cap only (no triangles needed)
 	int    Solve (const DentInput &in, const DentMeshView &m, DentParams &out); // 4.2-4.5 in order; vessel floor wins over Rmax; DENT_*
+	int    Solve (const DentInput &in, const DentMeshView &m, const DentMeshView *cap, DentParams &out); // cap: extra vertices for DepthCap only
 	int    FindCoalesce (const std::vector<DentRecord> &rec, const DentRecord &r); // record of the same target and partition to grow (4.5), -1 if none
+	int    FindCoalesce (const std::vector<DentRecord> &rec, const DentRecord &r, const std::vector<uint8_t> *key); // key[g]: group g counts in the partition compare (null: all)
 	double CoalesceDepth (const DentParams &old, double V, const DentMeshView &m, double Dmax); // depth added on old's kernel for volume V, capped (old.h + it <= DENT_LIM_H)
+	double CoalesceDepth (const DentParams &old, double V, const DentMeshView &m, const DentMeshView *cap, double Dmax); // cap: extra vertices for DepthCap only
 	void   Quantise (DentParams &p);                              // through %.9g, as saved (6)
 	// geometry on plain arrays (4.8, 4.9, 13.3, 13.4)
 	void   MakeView (const DentObject &o, DentViewData &d);       // flattens all groups (vertices not welded)
 	size_t Apply (const DentParams &p, const std::vector<std::vector<DentVtx>> &rest, std::vector<std::vector<DentVtx>> &cur,
 		const uint16_t *grp, size_t ngrp, std::vector<std::vector<uint8_t>> *dirty); // cur += Displace(rest) on listed groups (all if ngrp 0); vertices moved
 	uint32_t WeldMap (const std::vector<std::vector<DentVtx>> &v, double tol, std::vector<std::vector<uint32_t>> &weld); // grid over all groups; returns the id count
+	uint32_t WeldMap (const std::vector<std::vector<DentVtx>> &v, double tol, std::vector<std::vector<uint32_t>> &weld, const std::vector<uint32_t> *cls); // cls[g]: only groups of one class weld
 	void   FaceNormalSums (const std::vector<std::vector<DentVtx>> &v, const std::vector<std::vector<uint16_t>> &idx,
 		const std::vector<std::vector<uint32_t>> &weld, uint32_t nweld, std::vector<Vector> &sum); // per weld id, area weighted, guarded
 	void   Normals (const std::vector<std::vector<DentVtx>> &rest, const std::vector<Vector> &restSum, const std::vector<std::vector<uint16_t>> &idx,
@@ -169,6 +175,7 @@ public:
 	bool Line (const char *line);        // true: an XDMG, XDMGM or XDMGD line (consumed); whole keyword, case-insensitive
 	void Finish (DentVesselText &out);   // resolves keys at the end of the block; unknown-version sections: lines kept verbatim
 	int  Skipped () const;               // bad lines skipped (Damage logs one line per vessel)
+	bool Capped () const;                // records past DENT_MAX_VESSEL or a group list past DENT_MAX_GRPLIST were dropped
 private:
 	void V1 (const std::string &line);   // one XDMGM or XDMGD line of the version-1 section
 	void Close ();                       // a group list left open (trailing ','): its record is dropped
@@ -185,6 +192,8 @@ private:
 	int m_long = 0;                                       // unknown-version lines dropped (over 200 characters)
 	int m_result = -1;                                    // final count after Finish
 	bool m_open = false;                                  // the last version-1 record's group list ended in ',' (continued on the next XDMGD)
+	bool m_over = false;                                  // the open record's group list passed DENT_MAX_GRPLIST: dropped when it ends
+	bool m_capped = false;                                // Capped ()
 };
 // tolerant parser of the BEGIN_XDMG_BASES section, fed the lines after its BEGIN line (9.4)
 class DentBasesParser {

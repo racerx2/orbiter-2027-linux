@@ -169,9 +169,20 @@ class Sandbox:
     def path(self, *p):
         return os.path.join(self.dir, *p)
 
+    def guard(self):  # before any write: the run folder and its test folder are real folders inside the work folder (review M11)
+        t = os.path.dirname(self.dir)
+        for p in (t, self.dir):
+            if os.path.islink(p):
+                raise TestError('runner: sandbox refused %s symlink (move it away by hand)' % p)
+            if os.path.lexists(p) and not os.path.isdir(p):
+                raise TestError('runner: sandbox refused %s not a folder' % p)
+        os.makedirs(self.dir, exist_ok=True)
+        if os.path.realpath(self.dir) != self.dir or os.path.dirname(t) != self.work:
+            raise TestError('runner: sandbox refused %s resolves to %s' % (self.dir, os.path.realpath(self.dir)))
+
     def mirror(self, client):
         r, d = self.root, self.dir
-        os.makedirs(d, exist_ok=True)
+        self.guard()
         for e in sorted(os.listdir(r)):
             if e in NOMIRROR or e in SPECIAL or e.endswith('.ninja') or e.startswith('.ninja'):
                 continue
@@ -302,6 +313,41 @@ def guard_and_clear(work, test, run):
     return n
 
 
+def selftest_sandbox(work, base):  # M11: a run folder that is a symlink is refused through main before the mirror writes anything
+    root = os.path.join(base, 'mroot')
+    ensure_dir(os.path.join(root, 'Config'))
+    write_if_changed(os.path.join(root, 'Config', 'Collision.cfg'), 'CollisionModel = 1\n')
+    ensure_dir(os.path.join(root, 'Textures', 'Moon'))
+    victim = os.path.join(base, 'victim')
+    ensure_dir(os.path.join(victim, 'Config'))
+    ensure_dir(os.path.join(victim, 'Textures', 'Earth'))
+    vcfg = os.path.join(victim, 'Config', 'Collision.cfg')
+    write_if_changed(vcfg, 'victim; must survive\n')
+    os.chmod(victim, 0o755)
+    before = sorted(os.path.relpath(os.path.join(b, f), victim) for b, ds, fs in os.walk(victim) for f in fs + ds)
+    errors = 0
+    global compilers_running
+    real = compilers_running
+    compilers_running = lambda: []  # the refusal is under test, not the build scan
+    try:
+        for run, target in (('linked', victim), ('deep', None)):
+            if target:
+                ensure_link(os.path.join(base, run), target)  # the run folder itself
+            else:
+                ensure_link(os.path.join(work, 'Scn.RunnerGuardDeep'), victim)  # the test folder above the run folder
+            name = 'Scn.RunnerGuard' if target else 'Scn.RunnerGuardDeep'
+            rc = main(['--name', name, '--work', work, '--root', root, '--exe', '/bin/false', '--scn', 'gen:pair', '--run', run + '|headless|off||||'])
+            after = sorted(os.path.relpath(os.path.join(b, f), victim) for b, ds, fs in os.walk(victim) for f in fs + ds)
+            with open(vcfg) as f:
+                same = f.read() == 'victim; must survive\n'
+            if rc != 1 or 'sandbox refused' not in LAST[0] or after != before or not same or os.stat(victim).st_mode & 0o777 != 0o755:
+                log('selftest sandbox %s through main: exit %s, %s, victim %s' % (run, rc, LAST[0], 'unchanged' if after == before and same else 'written'))
+                errors += 1
+    finally:
+        compilers_running = real
+    return errors
+
+
 def selftest_skipscan(base):  # T0.9: a process named like a compiler makes the real scan report a build
     fake = os.path.join(base, 'ninja')
     sleep = shutil.which('sleep')
@@ -362,6 +408,7 @@ def selftest_guards(work):  # T0.1: planted unsafe Flights folders give the step
     if rc != 1 or not os.path.isfile(keep) or 'clear refused' not in LAST[0]:
         log('selftest symlinked through main: exit %s, planted file %s' % (rc, 'kept' if os.path.isfile(keep) else 'deleted'))
         errors += 1
+    errors += selftest_sandbox(work, base)
     r = os.path.join(base, 'ok')  # a safe folder is cleared: files, real folders, symlinks (not followed)
     for d in ('Flights', os.path.join('Flights', 'rec'), os.path.join('Scenarios', 'Playback')):
         ensure_dir(os.path.join(r, d))

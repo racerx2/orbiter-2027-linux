@@ -192,6 +192,11 @@ void CollStore::ParseBody (const std::vector<std::string> &lines, CollStoreBlock
 			if (v.raw.size () < 2 || !Kw (First (v.raw.back ()), "END_VESSEL")) v.raw.push_back ("END_VESSEL");
 			p.Finish (v.d);
 			v.skipped += p.Skipped ();
+			if (p.Capped ()) { // a dormant write-back keeps the capped text, not every line read
+				v.raw.resize (1);
+				DentMath::FormatVessel (v.d, "", v.raw);
+				v.raw.push_back ("END_VESSEL");
+			}
 			if (ok) out.vessel.push_back (std::move (v));
 			else out.skipped++;
 			continue;
@@ -306,7 +311,7 @@ bool CollSide::Parse (const std::string &text, CollSideFile &out)
 {
 	out = CollSideFile ();
 	size_t pos = 0;
-	bool head = false, open = false;
+	bool head = false, open = false, over = false; // over: the open D event's group list passed DENT_MAX_GRPLIST, dropped at its end
 	while (pos < text.size ()) {
 		size_t e = text.find ('\n', pos);
 		if (e == std::string::npos) { out.skipped++; break; } // truncated last line
@@ -334,9 +339,18 @@ bool CollSide::Parse (const std::string &text, CollSideFile &out)
 			bool more = false;
 			ok = DentMath::ParseDentEvent (l.c_str () + TokStart (l, 4), ev.rec, more);
 			if (ok && open && !out.ev.empty () && out.ev.back ().kind == 'D' && out.ev.back ().alias == ev.alias && out.ev.back ().recidx == ev.recidx) {
-				out.ev.back ().rec.grp.insert (out.ev.back ().rec.grp.end (), ev.rec.grp.begin (), ev.rec.grp.end ());
+				std::vector<uint16_t> &g = out.ev.back ().rec.grp;
+				if (g.size () + ev.rec.grp.size () > DENT_MAX_GRPLIST) over = true;
+				else if (!over) g.insert (g.end (), ev.rec.grp.begin (), ev.rec.grp.end ());
 				open = more;
+				if (!open && over) { out.ev.pop_back (); out.skipped++; over = false; }
 				continue;
+			}
+			if (open && over) { out.ev.pop_back (); out.skipped++; } // the dropped list never ended
+			over = false;
+			if (ok && ev.rec.grp.size () > DENT_MAX_GRPLIST) {
+				if (more) ev.rec.grp.clear (), over = true;
+				else ok = false;
 			}
 			open = more;
 		} else if (ev.kind == 'S' && t.size () >= 5) {
@@ -346,9 +360,13 @@ bool CollSide::Parse (const std::string &text, CollSideFile &out)
 		} else if (ev.kind == 'B' && t.size () >= 7 && Num (t[3], ev.obj)) {
 			ok = DentMath::ParseStateEvent ((t[4] + " " + t[5]).c_str (), ev.eabs, ev.flags) && CollKey::Unescape (t[6], ev.base);
 		}
-		if (ev.kind != 'D') open = false;
+		if (ev.kind != 'D') {
+			if (open && over) { out.ev.pop_back (); out.skipped++; }
+			open = over = false;
+		}
 		if (ok) out.ev.push_back (ev);
 		else out.skipped++;
 	}
+	if (open && over && !out.ev.empty ()) { out.ev.pop_back (); out.skipped++; } // the dropped list never ended (file ends)
 	return head;
 }

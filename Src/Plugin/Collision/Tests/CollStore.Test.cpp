@@ -188,3 +188,58 @@ TEST_CASE ("E3-U6 side file round trip")
 	CHECK (f.ev[3].t == 40.016666666666666);
 	CHECK (f.skipped == 1);
 }
+
+TEST_CASE ("fix1 M8 hostile block and side file are bounded")
+{
+	// the review's 200,001-record block (rev-dmg/hostile.cpp)
+	std::vector<std::string> L { "VESSEL 0 PB-A ShuttlePB", "XDMG 1 100 0", "XDMGM 0 0 deadbeef 7 140" };
+	for (int i = 0; i < 200000; i++) L.push_back ("XDMGD 0 0 0 3 0 0 1 1 0.1 0 *");
+	for (int i = 0; i < 20000; i++) L.push_back ("XDMGD 0 1 1 1 0 0 1 1 0.1 0 1,2,3,4,5,6,7,8,9,10,");
+	L.push_back ("XDMGD 0 1 1 1 0 0 1 1 0.1 0 11");
+	L.push_back ("END_VESSEL");
+	CollStoreBlock b;
+	CollStore::ParseBody (L, b);
+	REQUIRE (b.vessel.size () == 1);
+	CHECK (b.vessel[0].d.rec.size () == DENT_MAX_VESSEL);
+	for (const DentRecord &r : b.vessel[0].d.rec) CHECK (r.grp.size () <= DENT_MAX_GRPLIST);
+	CHECK (b.vessel[0].skipped >= 200000 - (int)DENT_MAX_VESSEL);
+	CHECK (b.vessel[0].raw.size () == 4 + DENT_MAX_VESSEL); // dormant write-back: VESSEL, XDMG, XDMGM, records, END_VESSEL
+	CHECK (b.vessel[0].raw.front () == "VESSEL 0 PB-A ShuttlePB");
+	CHECK (b.vessel[0].raw.back () == "END_VESSEL");
+	std::vector<std::string> out;
+	DentMath::FormatVessel (b.vessel[0].d, "  ", out);
+	CHECK (out.size () <= 2 + DENT_MAX_VESSEL);
+	// side file: a D event whose continued list passes the limit is dropped, the next one kept
+	DentRecord r {};
+	r.p.c = Vector (1, 2, 3), r.p.n = Vector (0, 0, 1), r.p.R = 1, r.p.h = 0.1, r.slot = 0;
+	for (int i = 0; i < 70000; i++) r.grp.push_back ((uint16_t)(i % 60000));
+	std::vector<std::string> l;
+	CollSide::Dent (1, 0, 0, r, l);
+	REQUIRE (l.size () > 1);
+	r.grp = { 3 };
+	CollSide::Dent (2, 0, 1, r, l);
+	std::string text = CollSide::Header ("X") + "\n" + CollSide::Vdef (0, 0, "PB-A", "ShuttlePB") + "\n";
+	for (auto &x : l) text += x + "\n";
+	CollSideFile f;
+	REQUIRE (CollSide::Parse (text, f));
+	REQUIRE (f.ev.size () == 1);
+	CHECK (f.ev[0].recidx == 1);
+	CHECK (f.ev[0].rec.grp == std::vector<uint16_t> { 3 });
+	CHECK (f.skipped == 1);
+}
+
+TEST_CASE ("fix1 review: an over-long D event cut off by the end of the side file is dropped")
+{
+	DentRecord r {};
+	r.p.c = Vector (1, 2, 3), r.p.n = Vector (0, 0, 1), r.p.R = 1, r.p.h = 0.1, r.slot = 0;
+	for (int i = 0; i < 70000; i++) r.grp.push_back ((uint16_t)(i % 60000));
+	std::vector<std::string> l;
+	CollSide::Dent (1, 0, 0, r, l);
+	REQUIRE (l.size () > 2);
+	l.pop_back (); // the list's last line never written (crash while recording)
+	std::string text = CollSide::Header ("X") + "\n" + CollSide::Vdef (0, 0, "PB-A", "ShuttlePB") + "\n";
+	for (auto &x : l) text += x + "\n";
+	CollSideFile f;
+	REQUIRE (CollSide::Parse (text, f));
+	CHECK (f.ev.empty ()); // not kept with an empty list (= all groups)
+}

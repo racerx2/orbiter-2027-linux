@@ -357,3 +357,119 @@ TEST_CASE ("Quaternion from a matrix near a half turn with rounding noise: unit 
 		REQUIRE (d <= 1e-9);
 	}
 }
+
+namespace {
+int LogCount (const char *s) { int n = 0; for (const std::string &l : g_log) if (l.find (s) != std::string::npos) n++; return n; }
+}
+
+TEST_CASE ("fix1 M2: two spheres 0.13 m apart closing at 30 m/s: no false overshoot, no rollback, no missed", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	for (double x0 : { -2.13, -2.3 }) {
+		g_log.clear ();
+		Sim S;
+		auto sph = std::make_shared<Geo> (SphereMesh (1.0, 12, 24));
+		S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (x0, 0, 0), Vector (30, 0, 0), 1.05);
+		S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (), Vector (), 1.05);
+		const Vector P0 = S.P ();
+		S.Frame (0.02);
+		double g1 = S.tb[1].o.s.pos.x - S.tb[0].o.s.pos.x - 2.0;   // pole to pole: the spheres' x poles face each other
+		for (int f = 0; f < 10; f++) S.Frame (0.02);
+		CAPTURE (x0, g1, S.events, S.fr.Stats ().freePath, S.fr.Stats ().past, S.fr.Stats ().missed, LogCount ("rollback"));
+		REQUIRE (g1 <= 2*COLL_SKIN_DEFAULT + 0.01);              // the whole speculative gap closed in the first step
+		REQUIRE (g1 >= 2*COLL_SKIN_DEFAULT - 0.01);
+		REQUIRE (S.fr.Stats ().freePath == 0);
+		REQUIRE (S.fr.Stats ().past == 0);
+		REQUIRE (S.fr.Stats ().missed == 0);
+		REQUIRE (LogCount ("rollback") + LogCount ("missed") == 0);
+		REQUIRE (S.events == 1);
+		REQUIRE (std::fabs (S.evs[0].vn - 30.0) <= 0.6);
+		REQUIRE (S.tb[0].o.s.vel.x < S.tb[1].o.s.vel.x);
+		REQUIRE ((S.P () - P0).length () <= 1e-12*S.Pscale ());
+		REQUIRE (S.fr.Stats ().checkFail == 0);
+	}
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("fix1 M3: three spheres in a row at 30 m/s, h 0.1: the outside body joins the island, no penetration", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	for (double h : { 0.1, 1.0/30.0 }) {
+		g_log.clear ();
+		Sim S;
+		auto sph = std::make_shared<Geo> (SphereMesh (1.0, 12, 24));
+		S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (-3.5, 0, 0), Vector (30, 0, 0), 1.05);
+		S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (), Vector (), 1.05);
+		S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (2.6, 0, 0), Vector (), 1.05);
+		const Vector P0 = S.P ();
+		double pen = 0;
+		for (int f = 0; f*h < 0.6; f++) {
+			S.Frame (h);
+			for (int k = 0; k < 2; k++) pen = std::min (pen, S.tb[k + 1].o.s.pos.x - S.tb[k].o.s.pos.x - 2.0);
+			REQUIRE ((S.P () - P0).length () <= 1e-12*S.Pscale ());
+		}
+		CAPTURE (h, pen, S.events, S.fr.Stats ().past, S.fr.Stats ().missed, S.tb[0].o.s.vel.x, S.tb[1].o.s.vel.x, S.tb[2].o.s.vel.x);
+		REQUIRE (pen >= -COLLA_DEV_TOL);
+		REQUIRE (S.fr.Stats ().missed == 0);
+		REQUIRE (S.tb[0].o.s.vel.x <= S.tb[1].o.s.vel.x + 1e-9);
+		REQUIRE (S.tb[1].o.s.vel.x <= S.tb[2].o.s.vel.x + 1e-9);
+		REQUIRE (S.fr.Stats ().checkFail == 0);
+	}
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("fix1 M3: past the round limit the outside body is a kinematic partner: the plan stops at contact", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	Sim S;
+	S.fr.rounds = 0;                                     // no merge allowed: every outside hit is capped
+	auto sph = std::make_shared<Geo> (SphereMesh (1.0, 12, 24));
+	S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (-3.5, 0, 0), Vector (30, 0, 0), 1.05);
+	S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (), Vector (), 1.05);
+	S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (2.6, 0, 0), Vector (), 1.05);
+	double pen = 0;
+	for (int f = 0; f < 6; f++) {
+		S.Frame (0.1);
+		for (int k = 0; k < 2; k++) pen = std::min (pen, S.tb[k + 1].o.s.pos.x - S.tb[k].o.s.pos.x - 2.0);
+	}
+	CAPTURE (pen, S.events, S.fr.Stats ().missed, S.tb[0].o.s.vel.x, S.tb[1].o.s.vel.x, S.tb[2].o.s.vel.x);
+	REQUIRE (pen >= -COLLA_DEV_TOL);
+	REQUIRE (S.tb[0].o.s.vel.x <= S.tb[1].o.s.vel.x + 1e-9);
+	REQUIRE (S.tb[1].o.s.vel.x <= S.tb[2].o.s.vel.x + 1e-9);
+	REQUIRE (S.fr.Stats ().checkFail == 0);
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("fix1: spinning rods hit in the past check: one missed line and count per pair per frame, INACCURATE event not left approaching", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	int inacc = 0;
+	for (double h : { 0.1, 0.2 })
+		for (Vector p : { Vector (4.4, 2.5, 0), Vector (6, 4, 0), Vector (8, 2, 0) }) {
+			Sim S;
+			auto rod = std::make_shared<Geo> (BoxMesh (Vector (4, 0.3, 0.6)));
+			Vector pmi ((0.09 + 0.36)/3, (16 + 0.36)/3, (16 + 0.09)/3);
+			S.Add (rod, 500, pmi, Vector (), Vector (p.y*0.5, 0, 0), 5);
+			S.Add (rod, 500, pmi, Vector (9, 0, 0), Vector (-p.y*0.5, 0, 0), 5);
+			S.tb[0].o.s.omega = Vector (0, 0, p.x); S.tb[1].o.s.omega = Vector (0, 0, -p.x);   // tumbling at 0.4-1.6 rad per step: INACCURATE
+			int lines = 0, worst = 0;
+			for (int f = 0; f*h < 3.0; f++) {
+				g_log.clear ();
+				S.Frame (h);
+				lines += LogCount ("Collision missed: t=");
+				worst = std::max (worst, LogCount ("Collision missed: t="));
+			}
+			CAPTURE (h, p.x, p.y, lines, worst, S.fr.Stats ().missed, S.events);
+			REQUIRE (worst <= 1);                            // one body pair
+			REQUIRE (lines == S.fr.Stats ().missed);
+			REQUIRE (S.fr.Stats ().past == S.fr.Stats ().missed);
+			for (const CollImpactEvent &e : S.evs) {
+				CAPTURE (e.t, e.vn, e.vn_post, e.flags);
+				if (e.flags & COLLEV_INACCURATE) inacc++;
+				REQUIRE (e.vn_post >= 0.0);
+			}
+			REQUIRE (S.fr.Stats ().checkFail == 0);
+		}
+	REQUIRE (inacc > 0);
+	g_collLog = nullptr;
+}

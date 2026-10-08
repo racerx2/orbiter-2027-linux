@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include "CollShape.h"
 #include "CollVisualA.h"
 
 namespace {
@@ -11,10 +12,60 @@ enum { ST_NONE, ST_HOLDS, ST_REST, ST_FRESH, ST_FOREIGN };
 
 bool Same (const DentVtx &a, const DentVtx &b) { return std::memcmp (&a, &b, 24) == 0; } // six floats bitwise; tu, tv are never written
 
+bool NoNormal (const DentVtx &v) { return v.nx == 0.0f && v.ny == 0.0f && v.nz == 0.0f; }
+
+bool NaNNormal (const DentVtx &v) { return std::isnan (v.nx) && std::isnan (v.ny) && std::isnan (v.nz); } // the client's renormalisation of a zero normal
+
+bool Holds (const DentVtx &c, const DentVtx &w) { return Same (c, w) || (std::memcmp (&c, &w, 12) == 0 && NoNormal (w) && NaNNormal (c)); } // client value c is what we hold as w
+
 bool IsRest (const DentVtx &c, const DentVtx &r)
 {
-	return std::memcmp (&c, &r, 12) == 0 && std::fabs (c.nx - r.nx) <= 1e-6f && std::fabs (c.ny - r.ny) <= 1e-6f && std::fabs (c.nz - r.nz) <= 1e-6f;
+	if (std::memcmp (&c, &r, 12)) return false;
+	if (NoNormal (r) && NaNNormal (c)) return true;
+	return std::fabs (c.nx - r.nx) <= 1e-6f && std::fabs (c.ny - r.ny) <= 1e-6f && std::fabs (c.nz - r.nz) <= 1e-6f;
 }
+
+bool SameAffine (const CollAffine &X, const CollAffine &Y)
+{
+	const double a[12] = { X.A.m11 - Y.A.m11, X.A.m12 - Y.A.m12, X.A.m13 - Y.A.m13, X.A.m21 - Y.A.m21, X.A.m22 - Y.A.m22, X.A.m23 - Y.A.m23,
+		X.A.m31 - Y.A.m31, X.A.m32 - Y.A.m32, X.A.m33 - Y.A.m33, X.t.x - Y.t.x, X.t.y - Y.t.y, X.t.z - Y.t.z };
+	for (double d : a) if (!(std::fabs (d) < 1e-9)) return false;
+	return true;
+}
+
+// pose class per group from the collider's getters: its part, else the part or earlier group with the same animation transform (dent2 D7)
+std::vector<uint32_t> PoseClasses (const CollShape *sh, uint32_t mesh, size_t ng)
+{
+	std::vector<uint32_t> cls (ng, 0);
+	if (!sh) return cls;
+	bool cm = sh->CollMesh (mesh);
+	uint32_t np = sh->nPart ();
+	std::vector<std::pair<uint32_t, CollAffine>> partF, looseF; // class id, transform
+	std::vector<CollAffine> F (ng);
+	std::vector<int> part (ng, -1);
+	for (size_t g = 0; g < ng; g++) {
+		sh->GroupPose (mesh, (uint32_t)g, F[g]);
+		part[g] = cm ? -1 : sh->PartOf (mesh, (uint32_t)g);
+		if (part[g] < 0) continue;
+		cls[g] = (uint32_t)part[g];
+		bool seen = false;
+		for (auto &x : partF) seen = seen || x.first == cls[g];
+		if (!seen) partF.push_back ({ cls[g], F[g] });
+	}
+	for (size_t g = 0; g < ng; g++) {
+		if (part[g] >= 0) continue;
+		size_t k = 0;
+		while (k < partF.size () && !SameAffine (partF[k].second, F[g])) k++;
+		if (k < partF.size ()) { cls[g] = partF[k].first; continue; }
+		k = 0;
+		while (k < looseF.size () && !SameAffine (looseF[k].second, F[g])) k++;
+		if (k == looseF.size ()) looseF.push_back ({ np + (uint32_t)k, F[g] });
+		cls[g] = looseF[k].first;
+	}
+	return cls;
+}
+
+bool SameRecord (const DentRecord &a, const DentRecord &b) { return std::memcmp (&a.p, &b.p, sizeof (DentParams)) == 0 && a.grp == b.grp; }
 
 void NormF (float &x, float &y, float &z) // the client's float renormalisation (OVP/VulkanClient/Mesh.cpp:722-726)
 {
@@ -48,13 +99,14 @@ void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDm
 	if (rec.empty () && (vi == ves.end () || !vi->second.copy.count (slot))) return;
 	Ves &v = ves[id];
 	v.name = name;
+	size_t ng = s.rest->grp.size ();
+	std::vector<uint32_t> cls = PoseClasses (host.Shape (id), slot, ng);
 	auto it = v.copy.find (slot);
 	if (it != v.copy.end () && (it->second.serial != s.serial || it->second.rest != s.rest)) { v.copy.erase (it); it = v.copy.end (); }
 	if (it == v.copy.end ()) {
 		if (rec.empty ()) return;
 		DentMeshCopyA c;
 		c.rest = s.rest, c.serial = s.serial, c.slot = slot, c.key = s.key, c.ngrp = s.ngrp, c.nvtx = s.nvtx;
-		size_t ng = s.rest->grp.size ();
 		c.rp.resize (ng), c.idx.resize (ng), c.g.resize (ng);
 		for (size_t g = 0; g < ng; g++) {
 			const CollGroupData &gd = s.rest->grp[g];
@@ -66,14 +118,50 @@ void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDm
 			}
 			c.idx[g] = gd.idx;
 			c.g[g].pushed = c.rp[g];
+			c.g[g].big = gd.vtx.size () > 65536;
+			if (c.g[g].big && !loggedBig) {
+				loggedBig = true;
+				char b[256];
+				std::snprintf (b, sizeof b, "Collision visual: '%s' mesh=%u grp=%zu has %zu vertices (over 65536), dent not shown", name.c_str (), slot, g, gd.vtx.size ());
+				sdk.Log (1, b);
+			}
 		}
-		c.nweld = DentMath::WeldMap (c.rp, DENT_WELD, c.weld);
-		DentMath::FaceNormalSums (c.rp, c.idx, c.weld, c.nweld, c.restSum);
 		it = v.copy.emplace (slot, std::move (c)).first;
 	}
 	DentMeshCopyA &c = it->second;
-	c.cur = c.rp;
-	for (const DentRecord *r : rec) DentMath::Apply (r->p, c.rp, c.cur, r->grp.data (), r->grp.size (), nullptr);
+	if (c.cls != cls || c.weld.size () != ng) { // new copy or new pose classes: weld map and rest sums again, cur from rest
+		c.cls = cls;
+		c.nweld = DentMath::WeldMap (c.rp, DENT_WELD, c.weld, &c.cls);
+		DentMath::FaceNormalSums (c.rp, c.idx, c.weld, c.nweld, c.restSum);
+		c.done.clear ();
+	}
+	size_t k = c.done.size ();
+	bool inc = k > 0 && k <= rec.size ();
+	for (size_t i = 0; inc && i < k; i++) inc = SameRecord (c.done[i], *rec[i]);
+	if (inc && k == rec.size ()) { v.pending = true; return; } // nothing new
+	if (inc) { // only new records: positions as a full build gives them (same order), normals from rest again
+		for (size_t g = 0; g < ng; g++)
+			for (size_t i = 0; i < c.cur[g].size (); i++) c.cur[g][i].nx = c.rp[g][i].nx, c.cur[g][i].ny = c.rp[g][i].ny, c.cur[g][i].nz = c.rp[g][i].nz;
+		n.incr++;
+	} else {
+		c.cur = c.rp;
+		c.done.clear ();
+		k = 0;
+		n.builds++;
+	}
+	bool anyBig = false;
+	for (const auto &G : c.g) anyBig = anyBig || G.big;
+	for (size_t r = k; r < rec.size (); r++) {
+		const DentRecord &R = *rec[r];
+		if (!anyBig) DentMath::Apply (R.p, c.rp, c.cur, R.grp.data (), R.grp.size (), nullptr);
+		else { // big groups left out
+			std::vector<uint16_t> gl;
+			if (R.grp.empty ()) { for (size_t g = 0; g < ng; g++) if (!c.g[g].big) gl.push_back ((uint16_t)g); }
+			else for (uint16_t g : R.grp) if (g < ng && !c.g[g].big) gl.push_back (g);
+			if (!gl.empty ()) DentMath::Apply (R.p, c.rp, c.cur, gl.data (), gl.size (), nullptr);
+		}
+		c.done.push_back (R);
+	}
 	std::vector<uint8_t> touched (c.nweld, 0);
 	for (size_t g = 0; g < c.cur.size (); g++)
 		for (size_t i = 0; i < c.cur[g].size (); i++)
@@ -81,6 +169,7 @@ void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDm
 	DentMath::Normals (c.rp, c.restSum, c.idx, c.weld, c.nweld, touched, c.cur);
 	for (size_t g = 0; g < c.cur.size (); g++) {
 		c.g[g].edit.clear ();
+		if (c.g[g].big) { c.cur[g] = c.rp[g]; continue; } // a welded neighbour may have turned its normals
 		for (size_t i = 0; i < c.cur[g].size (); i++) {
 			DentVtx &d = c.cur[g][i];
 			if (!Same (d, c.rp[g][i])) {
@@ -151,7 +240,7 @@ void CollVisualA::Pass (int which)
 			if (!SyncCopy (kv.first, h, vis, v, c)) return;
 			bool sent = false, dirty = false;
 			for (size_t g = 0; g < c.g.size (); g++) {
-				if (c.g[g].module) continue;
+				if (c.g[g].module || c.g[g].big) continue;
 				for (size_t i = 0; i < c.rp[g].size () && !(sent && dirty); i++) {
 					sent = sent || !Same (c.g[g].pushed[i], c.rp[g][i]);
 					dirty = dirty || !Same (c.cur[g][i], c.g[g].pushed[i]);
@@ -196,7 +285,7 @@ bool CollVisualA::SyncCopy (uint32_t id, CollH h, CollH vis, Ves &v, DentMeshCop
 	if (mode == MODE_FULL) {
 		for (size_t g = 0; g < ng; g++) {
 			DentMeshCopyA::Grp &G = c.g[g];
-			if (G.module) continue;
+			if (G.module || G.big) continue;
 			std::vector<uint16_t> sent, dirty, all;
 			for (size_t i = 0; i < c.rp[g].size (); i++) {
 				bool s = !Same (G.pushed[i], c.rp[g][i]), d = !Same (c.cur[g][i], G.pushed[i]);
@@ -214,7 +303,7 @@ bool CollVisualA::SyncCopy (uint32_t id, CollH h, CollH vis, Ves &v, DentMeshCop
 			if (r == -1) return false;
 			if (r == -2) { mode = MODE_ABSOLUTE; sdk.Log (1, "Collision visual: client cannot read mesh groups, absolute mode"); break; }
 			bool holds = true;
-			for (size_t k = 0; k < rd.size (); k++) holds = holds && Same (buf[k], G.pushed[rd[k]]);
+			for (size_t k = 0; k < rd.size (); k++) holds = holds && Holds (buf[k], G.pushed[rd[k]]);
 			if (dirty.empty () && !holds && rd.size () < all.size ()) { // a sentinel moved: read every sent vertex
 				rd = all;
 				buf.assign (rd.size (), DentVtx ());
@@ -226,7 +315,7 @@ bool CollVisualA::SyncCopy (uint32_t id, CollH h, CollH vis, Ves &v, DentMeshCop
 			bool allHolds = true, sentRest = true, otherOk = true, holdOrRest = true;
 			for (size_t k = 0; k < rd.size (); k++) {
 				uint16_t u = rd[k];
-				bool H = Same (buf[k], G.pushed[u]), R = IsRest (buf[k], c.rp[g][u]);
+				bool H = Holds (buf[k], G.pushed[u]), R = IsRest (buf[k], c.rp[g][u]);
 				bool inSent = !Same (G.pushed[u], c.rp[g][u]);
 				allHolds = allHolds && H;
 				holdOrRest = holdOrRest && (H || R);
@@ -257,7 +346,7 @@ bool CollVisualA::SyncCopy (uint32_t id, CollH h, CollH vis, Ves &v, DentMeshCop
 	c.skips = 0;
 	for (size_t g = 0; g < ng; g++) {
 		DentMeshCopyA::Grp &G = c.g[g];
-		if (G.module) continue;
+		if (G.module || G.big) continue;
 		std::vector<uint16_t> dirty;
 		std::vector<DentVtx> val;
 		for (size_t i = 0; i < c.rp[g].size (); i++) if (!Same (c.cur[g][i], G.pushed[i])) { dirty.push_back ((uint16_t)i); val.push_back (c.cur[g][i]); }

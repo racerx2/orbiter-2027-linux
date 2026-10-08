@@ -520,14 +520,14 @@ std::vector<Vector> BoxCorners (double hx, double hy, double hz, const Vector &o
 	return c;
 }
 
-// 2 m box resting 5 mm above a plate (gate case A), plate moving at V along x
+// 2 m box resting on a plate at gap 0 (gate case A; a positive gap now closes, fix1 R4), plate moving at V along x
 TScene RoofScene (double V)
 {
 	TScene s;
 	s.kin.vo = Vector (V, 0, 0);
 	s.pn = Vector (0, 1, 0); s.pu = Vector (1, 0, 0);
 	s.box.m = 1000; s.box.pmi = Vector (0.667, 0.667, 0.667);
-	s.box.x = Vector (0, 1 + RS + 0.005, 0); s.box.v = Vector (V, 0, 0);
+	s.box.x = Vector (0, 1 + RS, 0); s.box.v = Vector (V, 0, 0);
 	s.corner = BoxCorners (1, 1, 1);
 	s.acc = [] (const Vector &) { return Vector (0, -9.81, 0); };
 	return s;
@@ -543,7 +543,7 @@ TScene PlanetScene ()
 	Matrix Rb (0, 1, 0, -1, 0, 0, 0, 0, 1);                          // box y -> world radial
 	s.box.m = 2000; s.box.pmi = Vector (1.2, 1.4, 1.0);
 	s.box.q.Set (Rb);
-	s.box.x = s.kin.x0 + Vector (1 + RS + 0.005, 0, 0);
+	s.box.x = s.kin.x0 + Vector (1 + RS, 0, 0);
 	s.box.v = Xc (s.kin.W, s.box.x); s.box.wb = tmul (Rb, s.kin.W);
 	s.corner = BoxCorners (1.5, 1, 1, Vector (0.4, 0, -0.3));
 	s.acc = [GM] (const Vector &x) { return x*(-GM/std::pow (x.length (), 3)); };
@@ -640,7 +640,7 @@ TEST_CASE ("U8 box on a moving plane; vessel on an Earth-rotating roof; carried-
 	off.carry = false;
 	RestResult r = RunRest (off, 1.0/60.0, 600);
 	PrintRest ("U8: roof, carried point off", 1.0/60.0, r);
-	REQUIRE (r.vnLate > 1e-5);
+	REQUIRE (r.supDrift > 1e-6);                                         // fix1 R4: a positive gap now closes again, so the error shows as drift, not as a late normal speed
 }
 
 TEST_CASE ("U9 mass ratio 2000 and 1e5, 4-point manifold", "[CollSolve]")
@@ -1052,5 +1052,190 @@ TEST_CASE ("A15 addon phase-2 flags: SPECTRAP closes the gap, BALLISTIC gives ze
 		REQUIRE (a.body[0].dP2.y == b.body[0].dP2.y);
 		CollIsland c = island (0.5, 0.0, COLL_RESTING, COLLP_SPECTRAP), d = island (0.5, 0.0, COLL_RESTING, 0);
 		REQUIRE (c.body[0].dP2.y == d.body[0].dP2.y);
+	}
+}
+
+namespace {
+
+// rotational energy 0.5 Ib w^2 over the free axes (pmi > 0); locked axes carry none
+double RotKE (const Vector &Ib, const Vector &w)
+{
+	return 0.5*((Ib.x > 0.0 ? Ib.x*w.x*w.x : 0.0) + (Ib.y > 0.0 ? Ib.y*w.y*w.y : 0.0) + (Ib.z > 0.0 ? Ib.z*w.z*w.z : 0.0));
+}
+
+// kinetic energy of the dynamic bodies at t1 before (e0) and after (e1) the write-back deltas
+void KE1 (const CollIsland &isl, double &e0, double &e1)
+{
+	e0 = e1 = 0.0;
+	for (size_t i = 0; i < isl.body.size (); i++) {
+		const CollSBody &b = isl.body[i];
+		if (!b.dyn) continue;
+		Vector Ib = b.pmi*b.m, wb = b.wb1;
+		CollDelta d;
+		isl.Delta ((int)i, d);
+		Vector v2 = b.v1 + d.dv, Lb = tmul (b.R1, mul (b.R1, Ib*wb) + d.dLw);
+		Vector w2 (Ib.x > 0.0 ? Lb.x/Ib.x : wb.x, Ib.y > 0.0 ? Lb.y/Ib.y : wb.y, Ib.z > 0.0 ? Lb.z/Ib.z : wb.z);
+		e0 += 0.5*b.m*b.v1.length2 () + RotKE (Ib, wb);
+		e1 += 0.5*b.m*v2.length2 () + RotKE (Ib, w2);
+	}
+}
+
+// energy scale of a solve: KE0 plus sum |J| times the largest relative speed
+double KEScale (const CollIsland &isl, double e0)
+{
+	double u = 0.0, j = 0.0;
+	for (size_t i = 0; i < isl.con.size (); i++) {
+		u = std::max (u, std::max (isl.UPre ()[i].length (), isl.UPost ()[i].length ()));
+		j += isl.con[i].J1.length () + isl.con[i].J2.length ();
+	}
+	return e0 + j*u;
+}
+
+// the adversarial review's random island (rev-physics fuzz3): 2-3 bodies, 1-6 TOI points, mu up to 1.5, 10 % locked x axes
+CollIsland FuzzIsland (Rng &r)
+{
+	CollIsland isl;
+	isl.h = r.U (0.005, 0.2); isl.tau = r.U (0.0, 0.999);
+	double tr = (1.0 - isl.tau)*isl.h;
+	int nb = 2 + (int)(r.U ()*2.0);
+	bool kin0 = r.U () < 0.5;
+	for (int i = 0; i < nb; i++) {
+		CollSBody b {};
+		Matrix R = RotOf (r.Q ());
+		b.dyn = !(i == 0 && kin0); b.m = std::pow (10.0, r.U (-1, 6));
+		b.pmi = Vector (std::pow (10.0, r.U (-2, 2)), std::pow (10.0, r.U (-2, 2)), std::pow (10.0, r.U (-2, 2)));
+		if (r.U () < 0.1) b.pmi.x = 0.0;
+		b.Rt = R; b.R1 = R; b.xt = r.V (3.0); b.vt = r.V (10.0);
+		Vector wb = r.V (2.0);
+		b.wt = mul (R, wb); b.x1 = b.xt + b.vt*tr; b.v1 = b.vt; b.wb1 = wb;
+		if (!b.dyn) { b.vt = b.v1 = b.wt = b.wb1 = Vector (); b.x1 = b.xt; }
+		isl.body.push_back (b);
+	}
+	int nc = 1 + (int)(r.U ()*6.0);
+	for (int k = 0; k < nc; k++) {
+		CollSContact c {};
+		c.a = std::min (nb - 1, 1 + (int)(r.U ()*(nb - 1))); c.b = (int)(r.U ()*c.a);
+		c.p = r.V (3.0); c.n = r.Unit (); c.n2 = c.n; c.kind = COLL_TOI; c.mu = r.U (0, 1.5); c.e0 = r.U (0, 1); c.vy = r.U (0, 5); c.gap = r.U (-0.01, 0.0);
+		if (r.U () < 0.2) c.flags |= COLLP_BALLISTIC;
+		isl.con.push_back (c);
+	}
+	return isl;
+}
+
+// n random islands: KE at t1 never rises above 1e-9 of the solve's energy scale; a locked spinning axis drives like a kinematic body, not checked
+void FuzzKE (uint64_t seed, int n)
+{
+	Rng r (seed);
+	LogCapture lc;
+	int nup = 0, nlock = 0;
+	double worst = 0.0;
+	for (int t = 0; t < n; t++) {
+		CollIsland isl = FuzzIsland (r);
+		REQUIRE (isl.Solve (CollSolveParams ()));
+		bool locked = false;
+		for (const CollSBody &b : isl.body) locked = locked || (b.dyn && b.pmi.x <= 0.0);
+		if (locked) { nlock++; continue; }
+		double e0, e1;
+		KE1 (isl, e0, e1);
+		double rel = (e1 - e0)/KEScale (isl, e0);
+		worst = std::max (worst, rel);
+		if (rel > 1e-9) nup++;
+	}
+	std::printf ("M1 fuzz: %d islands (%d with a locked axis skipped), KE rises above 1e-9 of the scale: %d, worst %.2e, friction-off redos %d\n", n, nlock, nup, worst, lc.Count ("without friction"));
+	REQUIRE (nup == 0);
+}
+
+} // namespace
+
+TEST_CASE ("fix1 M1: the review's friction island (m 4.76, mu 1.4) gains no energy", "[CollSolve]")
+{
+	CollIsland isl;
+	isl.tau = 0.10950558710705913; isl.h = 0.029404334323358046;
+	double tr = (1.0 - isl.tau)*isl.h;
+	CollSBody k {};
+	k.dyn = false; k.m = 38.153063382301703; k.pmi = Vector (0.26363447041296645, 96.396363576321889, 16.356919880178534);
+	k.Rt = k.R1 = Matrix (0.72739315210483702, 0.52538401384136757, -0.44144177449684474, -0.19614303376380268, 0.77563669908703348, 0.59992968032537142, 0.65759190428176739, -0.34979901233323152, 0.6672432378029578);
+	k.xt = k.x1 = Vector (-0.71113439505884024, -1.9030780795664179, 0.79169391070079254);
+	Matrix R (-0.57693730157697232, 0.069444200311721271, -0.8138309732936857, -0.79577037077890722, -0.27236861162325787, 0.54089264775260149, -0.18410015491433668, 0.95968372000648472, 0.21240124885469147);
+	isl.body.push_back (k);
+	isl.body.push_back (Dyn (4.7588391748044643, Vector (0.05575862629004788, 34.779875720080909, 11.863879570946724), Vector (2.3374917114052698, 0.21325311410343417, 2.7613864400160333),
+		Vector (2.5422266852979813, 3.8126142034966843, 7.4667647161943798), R, Vector (1.5158406267988491, 1.0475115473985084, -1.1725405106008981), tr));
+	CollSContact c0 = Con (1, 0, Vector (-0.56275867377557942, -2.0089993616626227, -0.59548780807527368), Vector (0.057592928067841741, 0.77134160213461245, -0.63381005628893394), COLL_TOI, 1.3792217248703071, 0.75202446201012174, 1.0823120335891283);
+	CollSContact c1 = Con (1, 0, Vector (-2.4460502210812223, 0.2094171780676497, 2.123835456578016), Vector (0.8914312593177578, -0.45295801523839208, -0.013392025330512579), COLL_TOI, 1.398822664286405, 0.62236430103574858, 3.331055056612005);
+	c0.gap = -0.0072546641577673678; c1.gap = -0.0063904733137790503;
+	isl.con = { c0, c1 };
+	LogCapture lc;
+	REQUIRE (isl.Solve (CollSolveParams ()));
+	double e0, e1;
+	KE1 (isl, e0, e1);
+	std::printf ("M1 island: KE %.3f J -> %.3f J, point work %.3f J\n", e0, e1, Work1 (isl));
+	REQUIRE (e1 <= e0 + 1e-9*KEScale (isl, e0));
+}
+
+TEST_CASE ("fix1 M1: 20000 random friction islands never gain kinetic energy", "[CollSolve]")
+{
+	FuzzKE (12345, 20000);
+}
+
+TEST_CASE ("fix1 M1: 200000 random friction islands never gain kinetic energy", "[.fuzz][CollSolve]")
+{
+	FuzzKE (777, 200000);
+}
+
+TEST_CASE ("fix1 locked axis: spin about a locked axis is no work; a slide it drives trips the guard", "[CollSolve]")
+{
+	struct Row { double mu; bool off; };
+	for (const Row &w : { Row { 0.2, false }, Row { 1.4, true } }) {
+		double h = 1.0/60.0, tau = 0.5, tr = (1 - tau)*h, m = 1000.0;
+		CollIsland isl; isl.tau = tau; isl.h = h;
+		isl.body.push_back (Dyn (m, Vector (0, 1, 1), Vector (0, 1, 0), Vector (0, -1, 0), IMatrix (), Vector (5, 0, 0), tr)); // x locked, spun at 5 rad/s: the point slips at 5 m/s
+		isl.body.push_back (Kin (Vector (0, -1, 0)));
+		Vector xs = isl.body[0].x1 - isl.body[0].v1*tr;
+		isl.con.push_back (Con (0, 1, xs + Vector (0, -1, 0), Vector (0, 1, 0), COLL_TOI, w.mu));
+		LogCapture lc;
+		REQUIRE (isl.Solve (CollSolveParams ()));
+		double e0, e1;
+		KE1 (isl, e0, e1);
+		std::printf ("Locked axis, mu %.1f: KE %.3f J -> %.3f J, point work %.3f J, friction-off redos %d\n", w.mu, e0, e1, Work1 (isl), lc.Count ("without friction"));
+		REQUIRE (isl.body[0].dP2.length () == 0.0);
+		REQUIRE (std::fabs (Work1 (isl) - (e0 - e1)) <= 1e-9*e0);     // point work is the change of the free axes' energy
+		REQUIRE (e1 <= e0);
+		REQUIRE (lc.Count ("without friction") == (w.off ? 1 : 0));
+		REQUIRE ((std::fabs (isl.body[0].dP1.z) > 0.0) == !w.off);
+	}
+}
+
+TEST_CASE ("fix1 R4: TOI and RESTING points more than slop apart may close at (gap - slop)/tr; tr = 0 and impacts unchanged", "[CollSolve]")
+{
+	struct Row { uint8_t kind; double tau, gap, u, vafter; uint8_t flags = 0; };
+	const double h = 1.0/60.0, m = 1000.0;
+	const double eImp = CollRestitution (3.0, COLL_E0, COLL_VY, CollSolveParams ());
+	const Row rows[] = {
+		{ COLL_RESTING, 0.0, 0.02, 0.001, -0.001 },              // lowered at 1 mm/s inside the band: no impulse
+		{ COLL_TOI, 0.5, 0.004, 0.05, -0.05 },                   // slow approach that does not close the gap this frame
+		{ COLL_TOI, 0.5, COLL_SLOP + 1e-4, 0.05, -1e-4/(0.5*h) }, // closes faster than allowed: held at (gap - slop)/tr
+		{ COLL_TOI, 0.5, 0.5*COLL_SLOP, 0.05, 0.0 },             // within slop: touching as before
+		{ COLL_RESTING, 1.0, 0.02, 0.001, 0.0 },                 // tr = 0: touching as before
+		{ COLL_TOI, 0.5, 0.004, 3.0, 3.0*eImp },                 // impact with restitution: unchanged
+		{ COLL_RESTING, 0.0, -0.001, 0.001, 0.0 },               // negative gap: unchanged
+		{ COLL_RESTING, 0.0, 0.02, 0.001, 0.0, COLLP_FIRST }     // a FIRST point touches: its event and Y3' energy stay at the first touch
+	};
+	for (const Row &w : rows) {
+		double tr = (1 - w.tau)*h;
+		CollIsland isl; isl.tau = w.tau; isl.h = h;
+		isl.body.push_back (Dyn (m, Vector (0.667, 0.667, 0.667), Vector (0, 1, 0), Vector (0, -w.u, 0), IMatrix (), Vector (), tr));
+		isl.body.push_back (Kin (Vector (0, -1, 0)));
+		Vector xs = isl.body[0].x1 - isl.body[0].v1*tr;
+		for (double dx : { -1.0, 1.0 }) {
+			CollSContact c = Con (0, 1, xs + Vector (dx, -1, 0), Vector (0, 1, 0), w.kind);
+			c.gap = w.gap; c.flags = w.flags;
+			isl.con.push_back (c);
+		}
+		REQUIRE (isl.Solve (CollSolveParams ()));
+		CollDelta d;
+		isl.Delta (0, d);
+		double v = isl.body[0].v1.y + d.dv.y;
+		std::printf ("R4: kind %d tau %.1f gap %.4f approach %.3f: velocity after %.6f m/s (expected %.6f)\n", w.kind, w.tau, w.gap, w.u, v, w.vafter);
+		REQUIRE (std::fabs (v - w.vafter) < 1e-7);
 	}
 }

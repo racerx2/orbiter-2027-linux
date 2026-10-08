@@ -19,17 +19,20 @@ struct DentMeshCopyA {
 		std::vector<DentVtx> pushed;                    // what the client holds
 		std::vector<uint16_t> edit;                     // vertices where cur differs from rp
 		bool module = false;                            // a write the addon did not make was seen: no visual dent
+		bool big = false;                               // over 65536 vertices: WORD indices cannot reach all, no visual dent
 		uint32_t skips = 0;                             // passes skipped with return 1
 	};
 	std::vector<Grp> g;
 	std::vector<std::vector<uint16_t>> idx;
 	std::vector<std::vector<uint32_t>> weld; uint32_t nweld = 0; std::vector<Vector> restSum;
+	std::vector<uint32_t> cls;                          // pose class per group; the weld map stays within one class
+	std::vector<DentRecord> done;                       // records in cur, in order: a list that only grows is applied incrementally
 	bool norec = false;                                 // no record left (repair): freed once nothing is sent
 	uint32_t nullWait = 0; bool loggedNull = false;     // DevMesh NULL: retry every 64 passes
 	uint32_t skips = 0;                                 // consecutive passes the slot was skipped with return 1
 };
 
-struct CollVisCounters { uint64_t reads = 0, writes = 0, rebuilds = 0, module = 0, refresh = 0, pushes = 0; };
+struct CollVisCounters { uint64_t reads = 0, writes = 0, rebuilds = 0, module = 0, refresh = 0, pushes = 0, builds = 0, incr = 0; }; // builds: cur from rest, incr: new records only
 
 class CollVisualA {
 public:
@@ -54,6 +57,6 @@ private:
 	const CollCfgValues &cfg;
 	std::map<uint32_t, Ves> ves;
 	int mode = MODE_FULL;
-	bool warned = false;
+	bool warned = false, loggedBig = false;
 };
 #endif

@@ -74,7 +74,7 @@ struct CollSBody {
 };
 struct CollSContact {
 	int    a, b;                // body indices, n points from b to a
-	Vector p, n, n2;            // point and normal at tau; phase-2 normal rotated to t1
+	Vector p, n, n2;            // point and normal at tau; phase-2 normal rotated to t1 (|n2| <= 0.5: n is used)
 	double gap;                 // signed gap at tau; SPECULATIVE: specGap; positive-gap INACCURATE: the point's gap (3.2)
 	uint8_t kind, flags;        // TOI, RESTING, SPECULATIVE (solve kind after the INACCURATE rule); D2's COLLP_* point flags (BYTE)
 	double mu, e0, vy;          // combined material
@@ -88,6 +88,7 @@ enum : uint8_t {                 // addon point flags of CollSContact::flags, ne
 	COLLP_SPECTRAP  = 16,        // SPECULATIVE: phase-2 trapezoid closure tr (u1 + u2)/2 <= gap
 	COLLP_BALLISTIC = 32         // TOI/RESTING: a point separating at s1 after phase 1 may approach at up to s1 by t1
 };
+inline bool CollGapOpen (const CollSContact &c, double tr, double slop) { return c.kind != COLL_SPECULATIVE && !(c.flags & COLLP_FIRST) && c.gap > slop && tr > 0.0; } // fix1 R4: TOI/RESTING point that may still close to slop; a FIRST point touches (its event and Y3' energy)
 struct CollSolveParams { int iters = COLL_ITERATIONS; double vrest = COLL_V_REST, vp = COLL_VP, vd = COLL_VD, slop = COLL_SLOP, beta = COLL_BETA, dxmax = COLL_DX_MAX, vsmax = COLL_V_PART_MAX; }; // vsmax = D2 CollParams::vPartMax (one value)
 struct CollDelta { Vector dv, dx, dLw, dth; }; // world dv, dx, spin-momentum change; body-frame rotation vector (6.1)
 
@@ -113,6 +114,7 @@ private:
 	friend class CollFrameSolver;                // events, wake share and checks read the last solve
 	friend class CollAddonFrame;
 	bool guard = false;                          // last Solve: phase 1 redone without restitution (4.2 step 5)
+	bool nofric = false;                         // last Solve: a phase redone without friction (energy guard, fix1 R3)
 	int nonconv = 0;                             // last Solve: contacts still approaching after phase 2 (4.5)
 	double W1 = 0, W2 = 0, S1 = 0, S2 = 0;       // last Solve: work of each phase and its scale sum |ln| (|un| + 1e-3) (9)
 	std::vector<Vector> xs, xm;                  // last Solve: lever origins per body, phase 1 and 2

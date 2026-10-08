@@ -485,7 +485,8 @@ TEST_CASE ("U19 Y3' energy: FIRST door points and a payload resting on the floor
 	};
 	for (const Case &cs : cases) {
 		double tau = cs.kind == COLL_RESTING ? 0.0 : 0.4, tr = (1 - tau)*h;
-		Vector at (0, 1.1 + 2*COLL_SKIN_DEFAULT + 0.005, 0), vb;
+		const double fg = 0.0, dg = 0.0;                                  // floor and door gaps: touching (a positive gap may close, fix1 R4)
+		Vector at (0, 1.1 + 2*COLL_SKIN_DEFAULT + fg, 0), vb;
 		Scene s (h, vb, at + vb*tr, true);
 		// carrier A: floor part 0 below payload, door part 1 closing on its side at vdoor (surface v)
 		CollPairResult r {};
@@ -494,13 +495,13 @@ TEST_CASE ("U19 Y3' energy: FIRST door points and a payload resting on the floor
 		for (double x : { -1.0, 1.0 })
 			for (double z : { -1.0, 1.0 }) {
 				CollContact &c = r.pt[r.npt++];
-				c.n = Vector (0, 1, 0)*-1.0; c.pB = Vector (x, 0.1 + 2*COLL_SKIN_DEFAULT + 0.005, z); c.pA = c.pB + c.n*(0.005 + 2*COLL_SKIN_DEFAULT);
-				c.gap = 0.005; c.partA = 0; c.partB = 0; c.flags = 0;
+				c.n = Vector (0, 1, 0)*-1.0; c.pB = Vector (x, 0.1 + 2*COLL_SKIN_DEFAULT + fg, z); c.pA = c.pB + c.n*(fg + 2*COLL_SKIN_DEFAULT);
+				c.gap = fg; c.partA = 0; c.partB = 0; c.flags = 0;
 			}
 		for (double y : { -0.5, 0.5 }) {
 			CollContact &c = r.pt[r.npt++];
-			c.n = Vector (1, 0, 0); c.pB = Vector (1, at.y + y, 0); c.pA = c.pB + c.n*(0.01 + 2*COLL_SKIN_DEFAULT);
-			c.gap = 0.01; c.partA = 1; c.partB = 0; c.flags = cs.first ? COLLP_FIRST : 0;
+			c.n = Vector (1, 0, 0); c.pB = Vector (1, at.y + y, 0); c.pA = c.pB + c.n*(dg + 2*COLL_SKIN_DEFAULT);
+			c.gap = dg; c.partA = 1; c.partB = 0; c.flags = cs.first ? COLLP_FIRST : 0;
 			c.vsA = Vector (-cs.vdoor, 0, 0);                              // door surface moving onto the payload
 		}
 		std::vector<CollPairResult> res { r }, one { r };
@@ -618,7 +619,7 @@ TEST_CASE ("LANDED wake by the kinematic impulse share (6.6)", "[CollSolveFrame]
 		CollDetect det;
 		det.Begin (CollParams (), h);
 		CollBody A = MakeBody (Vector (), Vector (), h, 1, COLLB_LANDED, { MakePart (&hull.geom, 1, 1) });
-		CollBody B = MakeBody (Vector (u > 1.0 ? 2.12 : 2.06, 0, 0), Vector (-u, 0, 0), h, 2, COLLB_DYNAMIC, { MakePart (&hull.geom, 2, 1) });
+		CollBody B = MakeBody (Vector (u > 1.0 ? 2.12 : 2.04, 0, 0), Vector (-u, 0, 0), h, 2, COLLB_DYNAMIC, { MakePart (&hull.geom, 2, 1) }); // slow one touching (fix1 R4)
 		REQUIRE (det.AddBody (A) == 0);
 		REQUIRE (det.AddBody (B) == 1);
 		std::vector<CollPairResult> res;
@@ -909,4 +910,30 @@ TEST_CASE ("D2 U24 through the driver: a result replaced by a re-sweep marks not
 	REQUIRE (!wallSolved);
 	REQUIRE (!marked);
 	REQUIRE (ev.size () == 1);
+}
+
+TEST_CASE ("fix1 n2: a near half turn between tau and t1 keeps the contact normal (|n2| < 0.5 falls back to n)", "[CollSolveFrame]")
+{
+	const double h = 0.1;
+	Vector at (0, 1.1 + 2*COLL_SKIN_DEFAULT, 0);
+	for (double deg : { 30.0, 170.0 }) {
+		Scene s (h, Vector (), at);
+		Quaternion q1;
+		CollRotate (q1, Vector (0, 0, deg*3.14159265358979323846/180.0));    // box turned about z by t1, n = -y lies across the axis
+		s.fb[1].q1.Set (q1); s.fb[1].v1 = Vector (0, -1, 0);
+		std::vector<Vector> pts;
+		for (double x : { -1.0, 1.0 })
+			for (double z : { -1.0, 1.0 }) pts.push_back (Vector (x, 0.1 + 2*COLL_SKIN_DEFAULT, z));
+		std::vector<CollPairResult> res { BoxResult (COLL_RESTING, 0.0, at, Vector (), pts, { 0, 0, 0, 0 }, { 0, 0, 0, 0 }) };
+		CollFrameSolver fs;
+		std::vector<CollBodyDelta> delta;
+		std::vector<CollImpactEvent> ev;
+		fs.Run (s.det, res, s.fb, h, 0.0, CollSolveParams (), COLL_TOI_ROUNDS, s.host, delta, ev);
+		Fin f (s.fb, delta);
+		std::printf ("fix1 n2: box turned %.0f deg by t1, pressing at 1 m/s: velocity after (%.3e %.3e %.3e) m/s\n", deg, f.v[1].x, f.v[1].y, f.v[1].z);
+		if (deg > 150.0) {
+			REQUIRE (std::fabs (f.v[1].x) < 1e-6);                            // pushed along the plate normal, not sideways
+			REQUIRE (std::fabs (f.v[1].y) < 1e-6);
+		} else REQUIRE (std::fabs (f.v[1].y) < 0.5);                          // a moderate turn keeps the rotated mean normal
+	}
 }

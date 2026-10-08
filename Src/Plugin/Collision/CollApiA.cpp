@@ -14,24 +14,20 @@ DLLCLBK int collaVersion () { return 1; }
 
 DLLCLBK int collaRepairVessel (OBJHANDLE hVessel)
 {
-	CollDmgSession *s = Cur ();
-	return s ? s->RepairVessel ((CollH)hVessel) : 0;
+	return CollGuard ("collaRepairVessel", 0, [&] { CollDmgSession *s = Cur (); return s ? s->RepairVessel ((CollH)hVessel) : 0; });
 }
 
 DLLCLBK int collaRepairBuilding (const char *planetBase, int obj)
 {
-	CollDmgSession *s = Cur ();
-	return s ? s->RepairBuilding (planetBase, obj) : 0;
+	return CollGuard ("collaRepairBuilding", 0, [&] { CollDmgSession *s = Cur (); return s ? s->RepairBuilding (planetBase, obj) : 0; });
 }
 
 DLLCLBK int collaGetVesselDamage (OBJHANDLE hVessel, COLLA_DAMAGEINFO *info)
 {
-	CollDmgSession *s = Cur ();
-	return s ? s->GetVesselDamage ((CollH)hVessel, info) : 0;
+	return CollGuard ("collaGetVesselDamage", 0, [&] { CollDmgSession *s = Cur (); return s ? s->GetVesselDamage ((CollH)hVessel, info) : 0; });
 }
 
 DLLCLBK int collaGetBuildingDamage (const char *planetBase, int obj, double *eabs, uint32_t *flags)
 {
-	CollDmgSession *s = Cur ();
-	return s ? s->GetBuildingDamage (planetBase, obj, eabs, flags) : 0;
+	return CollGuard ("collaGetBuildingDamage", 0, [&] { CollDmgSession *s = Cur (); return s ? s->GetBuildingDamage (planetBase, obj, eabs, flags) : 0; });
 }

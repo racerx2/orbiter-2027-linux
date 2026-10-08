@@ -23,12 +23,10 @@ struct CollCfgValues {
 	int notify = 1;                         // CollisionNotify (E3): 0 none, 1 destroyed, 2 also first damage
 	bool recorder = true;                   // CollisionRecorder (E3)
 	std::string testRecId;                  // CollisionTestRecId (E3, tests): fixed side-file id
-	std::string testKick;                   // CollisionTestKick (E1, tests): <vessel> <simt> <dvx dvy dvz> <dLx dLy dLz>
-	std::string testModelAt;                // CollisionTestModelAt (E1, tests): <frame> <model>
 	int testSlotCheck = 0;                  // CollisionTestSlotCheck (E2, tests): slot check in post-step stage PO3
 };
 
-// every key in file order, with its field; Read, Keys and the template test walk this one list
+// every key in file order, with its field; Read, Keys and the template test walk this one list; CollisionCfgVersion is the build's (cmake/CollisionCfgOnce.cmake)
 template <class V, class F> void CollCfgFields (V &v, F &&f)
 {
 	f ("CollisionModel", v.model);
@@ -48,8 +46,6 @@ template <class V, class F> void CollCfgFields (V &v, F &&f)
 	f ("CollisionNotify", v.notify);
 	f ("CollisionRecorder", v.recorder);
 	f ("CollisionTestRecId", v.testRecId);
-	f ("CollisionTestKick", v.testKick);
-	f ("CollisionTestModelAt", v.testModelAt);
 	f ("CollisionTestSlotCheck", v.testSlotCheck);
 }
 

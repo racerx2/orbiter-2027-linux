@@ -218,6 +218,7 @@ bool CollParseMsh (const std::string &text, const char *name, CollRestMesh &out)
 				const char *p = line.data () + 4;
 				if (!ScanInt (p, e, nvtx) || !ScanInt (p, e, ntri)) { nvtx = ntri = 0; break; }
 				if (nvtx < 0 || ntri < 0 || nvtx > 0x7fffffff / 32 || ntri > 0x7fffffff / 6) { term = true; nvtx = 0; break; }
+				if ((size_t)nvtx > text.size () - in.pos) { term = true; nvtx = 0; break; } // one line per vertex: the reads would fail, no allocation
 				grp.vtx.assign ((size_t)nvtx, CollVtx {});
 				for (long long i = 0; i < nvtx; i++) {
 					CollVtx &v = grp.vtx[(size_t)i];
@@ -235,6 +236,7 @@ bool CollParseMsh (const std::string &text, const char *name, CollRestMesh &out)
 					}
 				}
 				if (term) break;
+				if ((size_t)ntri > text.size () - in.pos) { grp.vtx.clear (); nvtx = 0; term = true; break; } // one line per triangle
 				grp.idx.assign ((size_t)ntri * 3, 0);
 				for (long long i = 0; i < ntri; i++) {
 					if (!in.Get (line)) { grp.vtx.clear (); grp.idx.clear (); nvtx = 0; term = true; break; }
@@ -504,8 +506,11 @@ std::shared_ptr<const CollSidecar> CollMeshCache::Sidecar (CollSdk &sdk, const C
 	if (sc->needNames) {
 		std::string mtext;
 		CollMeshTags tags;
-		bool ok = sdk.ReadText (sdk.Resolve (CollMeshPath (d, name, ".msh")), mtext) && CollScanMeshTags (mtext.data (), mtext.size (), tags, warn);
-		CollResolveNames (*sc, ok ? &tags : nullptr, ngrp, warn);
+		uint32_t n = ngrp;
+		if (!sc->mesh.empty ()) { auto cm = ByName (sdk, d, sc->mesh); n = cm.rest ? (uint32_t)cm.rest->grp.size () : 0; } // MESH replacement: selectors pick its groups
+		const std::string &tagMesh = sc->mesh.empty () ? name : sc->mesh;
+		bool ok = sdk.ReadText (sdk.Resolve (CollMeshPath (d, tagMesh, ".msh")), mtext) && CollScanMeshTags (mtext.data (), mtext.size (), tags, warn);
+		CollResolveNames (*sc, ok ? &tags : nullptr, n, warn);
 	}
 	for (auto &w : warn) sdk.Log (1, ("Collision sidecar: " + w).c_str ());
 	side[key] = sc;

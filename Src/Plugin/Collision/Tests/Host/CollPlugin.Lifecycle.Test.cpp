@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #if __has_include(<sanitizer/asan_interface.h>)
@@ -29,6 +30,7 @@ struct Host {
 	int inits = 0, regs = 0, unregs = 0, dlgGone = 0, opens = 0, cfgOpens = 0, cfgCloses = 0, worldBad = 0, bugs = 0;
 	oapi::Module *module = nullptr;
 	bool dlgMgr = false, noWorld = false, unloading = false; // noWorld: a callback where E4 11.2 allows no world call
+	bool throwPos = false, throwIsVessel = false;            // a host call throws: the module must catch it
 	std::vector<ImGuiDialog *> dlgList;
 	ImGuiDialog *loadDialog = nullptr;  // the one dialog object of the current load
 	std::vector<Cmd> cmds;
@@ -167,7 +169,7 @@ VECTOR3 Z () { return _V (0, 0, 0); }
 }
 double oapiGetMass (OBJHANDLE) { WorldCall (); return 1000; }
 double oapiGetSize (OBJHANDLE h) { WorldCall (); return Live (h) ? ((const FakeVessel *)h)->size : 0; }
-bool oapiIsVessel (OBJHANDLE h) { WorldCall (); return Live (h); }
+bool oapiIsVessel (OBJHANDLE h) { WorldCall (); if (H.throwIsVessel) throw std::runtime_error ("host IsVessel"); return Live (h); }
 double oapiGetSimMJD () { return 51544.5; }
 double oapiGetSimTime () { return 0; }
 double oapiGetSysTime () { return 0; }
@@ -204,7 +206,7 @@ DEVMESHHANDLE VESSEL::GetDevMesh (VISHANDLE, UINT) const { WorldCall (); return 
 const char *VESSEL::GetMeshName (UINT) const { WorldCall (); return nullptr; }
 char *VESSEL::GetClassName () const { WorldCall (); static char c[] = "FakeVessel"; return c; }
 double VESSEL::GetEmptyMass () const { WorldCall (); return 1000; }
-void VESSEL::GetGlobalPos (VECTOR3 &pos) const { WorldCall (); pos = _V (Fv (this)->size * 1000, 0, 0); }
+void VESSEL::GetGlobalPos (VECTOR3 &pos) const { WorldCall (); if (H.throwPos) throw std::runtime_error ("host GetGlobalPos"); pos = _V (Fv (this)->size * 1000, 0, 0); }
 void VESSEL::GetGlobalVel (VECTOR3 &vel) const { WorldCall (); vel = Z (); }
 UINT VESSEL::GetMeshCount () const { WorldCall (); return 0; }
 void VESSEL::DefSetStateEx (const void *) const { WorldCall (); Bug ("state write in a mesh-less world"); }
@@ -534,4 +536,68 @@ TEST_CASE ("CollPlugin lifecycle: sessions, close paths, unload and re-load")
 	CHECK (sums[0].rfind ("Collision summary: frames=3 contacts=0 ", 0) == 0);
 	CHECK (sums[1].rfind ("Collision summary: frames=4 contacts=0 ", 0) == 0);
 	CHECK (Lines ("Collision perf: ").size () == 5);
+}
+
+TEST_CASE ("CollPlugin lifecycle: an exception in a callback or an export turns the session off, the next session runs")
+{
+	void *h = Load ();
+	H.cfgMissing = false;
+	H.cfg = "CollisionModel = 1\nCollisionLog = 1\n";
+	size_t log0 = H.log.size ();
+	int bugs = H.bugs, bad = H.worldBad, opens = H.opens;
+	auto since = [&] (const char *prefix) { std::vector<std::string> out; for (size_t i = log0; i < H.log.size (); i++) if (!H.log[i].compare (0, strlen (prefix), prefix)) out.push_back (H.log[i]); return out; };
+	int (*repair) (OBJHANDLE) = (int (*) (OBJHANDLE))OwnProc (h, "collaRepairVessel");
+	REQUIRE (repair);
+
+	// F1: a throw inside the pre-step; later callbacks, the command and the export make no world call
+	Make (0, "E1", 1);
+	H.dlgMgr = true;
+	H.module->clbkSimulationStart (oapi::Module::RENDER_NONE);
+	Frames (1);
+	H.throwPos = true;
+	Frames (1);
+	H.throwPos = false;
+	CHECK (since ("Collision: error in ") == std::vector<std::string> { "Collision: error in clbkPreStep: host GetGlobalPos; collisions off until the session ends" });
+	char kstate[256] = {};
+	H.noWorld = true;
+	Frames (3);
+	H.module->clbkTimeAccChanged (10.0, 1.0);
+	H.module->clbkPause (true);
+	CHECK_FALSE (H.module->clbkProcessKeyboardImmediate (kstate, true));
+	H.cmds[0].fn (H.cmds[0].ctx);
+	CHECK (repair (H.world[0]) == 0);
+	H.noWorld = false;
+	H.module->clbkNewVessel (Make (1, "E2", 1)); // the id map only
+	CHECK (SaveState (h).front () == "COLLA 1");
+	NormalClose ();
+	CHECK (H.opens == opens);
+	CHECK (since ("Collision summary: ").empty ()); // an off session has no summary
+	CHECK (since ("Collision: session ").size () == 2);
+
+	// F2: the next session runs; a throw inside an export turns it off once
+	Make (0, "E3", 1);
+	H.module->clbkSimulationStart (oapi::Module::RENDER_NONE);
+	Frames (2);
+	H.throwIsVessel = true;
+	CHECK (repair (H.world[0]) == 0);
+	CHECK (repair (H.world[0]) == 0);
+	H.throwIsVessel = false;
+	H.noWorld = true;
+	Frames (2);
+	H.noWorld = false;
+	NormalClose ();
+	CHECK (since ("Collision: error in ") == std::vector<std::string> { "Collision: error in clbkPreStep: host GetGlobalPos; collisions off until the session ends",
+		"Collision: error in collaRepairVessel: host IsVessel; collisions off until the session ends" });
+
+	// F3: a clean session after both
+	Make (0, "E4", 1);
+	H.module->clbkSimulationStart (oapi::Module::RENDER_NONE);
+	Frames (2);
+	NormalClose ();
+	std::vector<std::string> sums = since ("Collision summary: ");
+	REQUIRE (sums.size () == 1);
+	CHECK (sums[0].rfind ("Collision summary: frames=2 ", 0) == 0);
+	Unload (h);
+	CHECK (H.worldBad == bad);
+	CHECK (H.bugs == bugs);
 }

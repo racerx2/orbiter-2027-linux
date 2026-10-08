@@ -197,9 +197,7 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 					CollSContact c {};
 					c.a = map[r.bodyA]; c.b = map[r.bodyB];
 					c.p = off + mid; c.n = pt.n;
-					Vector n2 = mul (RA, pt.n) + mul (RB, pt.n);
-					double l = n2.length ();
-					c.n2 = l > 0.0 ? n2/l : pt.n;
+					c.n2 = mul (RA, pt.n) + mul (RB, pt.n);         // unnormalised: CollSolve takes pt.n when the two turns cancel (|n2| < 0.5)
 					if (r.kind == COLL_SPECULATIVE) { c.kind = COLL_SPECULATIVE; c.gap = r.specGap; }
 					else if ((r.flags & COLLF_INACCURATE) && pt.gap > 0.0) { c.kind = COLL_SPECULATIVE; c.gap = pt.gap; }
 					else { c.kind = r.kind; c.gap = pt.gap; }

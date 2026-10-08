@@ -2,6 +2,7 @@
 #ifndef __COLLSDK_H
 #define __COLLSDK_H
 #include <cstdint>
+#include <exception>
 #include <string>
 #include <vector>
 #include "Vecmat.h"                          // collvm copy (E4 3.2)
@@ -33,6 +34,24 @@ struct CollStateWrite { CollH rbody; Vector rpos, rvel, vrot, arot; }; // DefSet
 struct CollTplGroup { const CollVtx *vtx; const uint16_t *idx; uint32_t nvtx, nidx, usrflag; }; // MESHGROUPEX view, no copy
 struct CollPortInfo { Vector pos, dir, rot; CollH mate; };          // vessel frame
 struct CollAttInfo  { Vector pos, dir, rot; CollH mate; char id[9]; };
+
+typedef void (*CollFailFn) (const char *where, const char *what);
+inline CollFailFn g_collFail = nullptr;      // E4: logs once and turns the session off; NULL: the error is dropped
+
+template <class R, class F> R CollGuard (const char *where, R onFail, F &&f) noexcept // no exception leaves a module callback or a colla* export
+{
+	try { return f (); }
+	catch (const std::exception &e) { if (g_collFail) g_collFail (where, e.what ()); }
+	catch (...) { if (g_collFail) g_collFail (where, "unknown exception"); }
+	return onFail;
+}
+
+template <class F> void CollGuard (const char *where, F &&f) noexcept
+{
+	try { f (); }
+	catch (const std::exception &e) { if (g_collFail) g_collFail (where, e.what ()); }
+	catch (...) { if (g_collFail) g_collFail (where, "unknown exception"); }
+}
 
 class CollSdk {
 public:

@@ -562,20 +562,33 @@ double DentMath::DmaxVessel (double T, double R, double L)
 
 double DentMath::DepthCap (const DentParams &p, const DentMeshView &m, double Dmax)
 {
-	const Vector *cur = m.cur ? m.cur : m.rest;
+	return DepthCap (p, m, nullptr, Dmax);
+}
+
+double DentMath::DepthCap (const DentParams &p, const DentMeshView &m, const DentMeshView *extra, double Dmax)
+{
 	double hi = HUGE_VAL, all = HUGE_VAL;
 	bool any = false;
-	for (size_t v = 0; v < m.nv; v++) {
-		double q = Weight (p, m.rest[v]);
-		if (!(q > 0.0)) continue;
-		double c = (Dmax - Dot (m.rest[v] - cur[v], p.n)) / q;
-		all = std::min (all, c);
-		if (q > DENT_CAP_Q) hi = std::min (hi, c), any = true;
+	for (const DentMeshView *x : { &m, extra }) {
+		if (!x || !x->rest) continue;
+		const Vector *cur = x->cur ? x->cur : x->rest;
+		for (size_t v = 0; v < x->nv; v++) {
+			double q = Weight (p, x->rest[v]);
+			if (!(q > 0.0)) continue;
+			double c = (Dmax - Dot (x->rest[v] - cur[v], p.n)) / q;
+			all = std::min (all, c);
+			if (q > DENT_CAP_Q) hi = std::min (hi, c), any = true;
+		}
 	}
 	return any ? hi : all; // no vertex above 0.05: every weighted vertex caps
 }
 
 int DentMath::Solve (const DentInput &in, const DentMeshView &m, DentParams &out)
+{
+	return Solve (in, m, nullptr, out);
+}
+
+int DentMath::Solve (const DentInput &in, const DentMeshView &m, const DentMeshView *capView, DentParams &out)
 {
 	const DentMaterial &mat = in.mat ? *in.mat : DefaultMaterial (-1);
 	double ln = Len (in.n);
@@ -591,7 +604,7 @@ int DentMath::Solve (const DentInput &in, const DentMeshView &m, DentParams &out
 	double S = VolumeFactor (out, m);
 	if (!(S > 0.0)) return DENT_NOSURFACE;
 	double h = V / S;
-	double cap = DepthCap (out, m, in.vessel ? DmaxVessel (out.T, R, in.L) : Dmax (mat.t_cap, out.T, R, in.L));
+	double cap = DepthCap (out, m, capView, in.vessel ? DmaxVessel (out.T, R, in.L) : Dmax (mat.t_cap, out.T, R, in.L));
 	if (h > cap) h = cap;
 	if (h > DENT_LIM_H) h = DENT_LIM_H;
 	if (!(h > 0.0)) h = 0.0;
@@ -603,12 +616,26 @@ int DentMath::Solve (const DentInput &in, const DentMeshView &m, DentParams &out
 
 int DentMath::FindCoalesce (const std::vector<DentRecord> &rec, const DentRecord &r)
 {
+	return FindCoalesce (rec, r, nullptr);
+}
+
+int DentMath::FindCoalesce (const std::vector<DentRecord> &rec, const DentRecord &r, const std::vector<uint8_t> *key)
+{
 	const double cmin = std::cos (DENT_COALESCE_ANGLE * Pi / 180.0);
+	auto keyed = [key] (const std::vector<uint16_t> &g) {
+		std::vector<uint16_t> o;
+		for (uint16_t x : g) if (x < key->size () && (*key)[x]) o.push_back (x);
+		return o;
+	};
+	std::vector<uint16_t> rk;
+	if (key) rk = keyed (r.grp);
+	bool exact = !key || r.grp.empty () || rk.empty (); // all groups, or only unkeyed groups: the whole list compares
 	int best = -1;
 	double bd = 0.0;
 	for (size_t i = 0; i < rec.size (); i++) {
 		const DentRecord &o = rec[i];
-		if (o.slot != r.slot || o.key != r.key || o.ngrp != r.ngrp || o.nvtx != r.nvtx || o.grp != r.grp) continue;
+		if (o.slot != r.slot || o.key != r.key || o.ngrp != r.ngrp || o.nvtx != r.nvtx) continue;
+		if (exact ? o.grp != r.grp : (o.grp.empty () || keyed (o.grp) != rk)) continue;
 		double d = Len (r.p.c - o.p.c);
 		if (!(d < DENT_COALESCE_R * o.p.R) || !(Dot (r.p.n, o.p.n) > cmin)) continue;
 		if (best < 0 || d < bd) best = (int)i, bd = d; // nearest centre, earliest on ties
@@ -618,10 +645,15 @@ int DentMath::FindCoalesce (const std::vector<DentRecord> &rec, const DentRecord
 
 double DentMath::CoalesceDepth (const DentParams &old, double V, const DentMeshView &m, double Dmax)
 {
+	return CoalesceDepth (old, V, m, nullptr, Dmax);
+}
+
+double DentMath::CoalesceDepth (const DentParams &old, double V, const DentMeshView &m, const DentMeshView *cap, double Dmax)
+{
 	if (!(V > 0.0)) return 0.0;
 	double S = VolumeFactor (old, m);
 	if (!(S > 0.0)) return 0.0;
-	double dh = std::min (V / S, DepthCap (old, m, Dmax));
+	double dh = std::min (V / S, DepthCap (old, m, cap, Dmax));
 	dh = std::min (dh, DENT_LIM_H - old.h); // the grown record stays within the text limits
 	return dh > 0.0 ? dh : 0.0;
 }
@@ -683,18 +715,25 @@ size_t DentMath::Apply (const DentParams &p, const std::vector<std::vector<DentV
 
 uint32_t DentMath::WeldMap (const std::vector<std::vector<DentVtx>> &v, double tol, std::vector<std::vector<uint32_t>> &weld)
 {
+	return WeldMap (v, tol, weld, nullptr);
+}
+
+uint32_t DentMath::WeldMap (const std::vector<std::vector<DentVtx>> &v, double tol, std::vector<std::vector<uint32_t>> &weld, const std::vector<uint32_t> *cls)
+{
 	if (!(tol > 0.0)) tol = DENT_WELD;
 	else if (tol < 1e-9) tol = 1e-9; // grid cells of positions within 1e9 m stay inside int64
 	std::unordered_map<Cell, std::vector<uint32_t>, CellHash> cells;
 	std::vector<Vector> rep;
+	std::vector<uint32_t> repCls;
 	weld.assign (v.size (), std::vector<uint32_t> ());
 	uint32_t n = 0;
 	for (size_t g = 0; g < v.size (); g++) {
 		weld[g].resize (v[g].size ());
+		uint32_t k = cls && g < cls->size () ? (*cls)[g] : 0;
 		for (size_t i = 0; i < v[g].size (); i++) {
 			Vector p = Pos (v[g][i]);
 			if (!Within (p, 1e9)) { // own id, never welded (also non-finite)
-				weld[g][i] = n++; rep.push_back (p);
+				weld[g][i] = n++; rep.push_back (p); repCls.push_back (k);
 				continue;
 			}
 			Cell c = { (int64_t)std::floor (p.x / tol), (int64_t)std::floor (p.y / tol), (int64_t)std::floor (p.z / tol) };
@@ -702,11 +741,12 @@ uint32_t DentMath::WeldMap (const std::vector<std::vector<DentVtx>> &v, double t
 			for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) {
 				auto f = cells.find ({ c.x + dx, c.y + dy, c.z + dz });
 				if (f == cells.end ()) continue;
-				for (uint32_t id : f->second) if (id < best && Len2 (rep[id] - p) <= tol * tol) best = id; // first representative within tol
+				for (uint32_t id : f->second) if (id < best && repCls[id] == k && Len2 (rep[id] - p) <= tol * tol) best = id; // first representative of this class within tol
 			}
 			if (best == UINT32_MAX) {
 				best = n++;
 				rep.push_back (p);
+				repCls.push_back (k);
 				cells[c].push_back (best);
 			}
 			weld[g][i] = best;
@@ -1198,7 +1238,7 @@ void DentVesselParser::Close ()
 	if (!m_open) return;
 	m_dent.pop_back ();
 	m_skipped++;
-	m_open = false;
+	m_open = m_over = false;
 }
 
 void DentVesselParser::Keep (const std::string &line)
@@ -1231,11 +1271,18 @@ void DentVesselParser::V1 (const std::string &line)
 	if (m_open) { // the previous line's list ended in ',': this line continues it, or the record dangles
 		DentRecord &p = m_dent.back ().second;
 		if (m_dent.back ().first == k && SameParams (p.p, r.p) && !r.grp.empty ()) {
-			p.grp.insert (p.grp.end (), r.grp.begin (), r.grp.end ());
+			if (p.grp.size () + r.grp.size () > DENT_MAX_GRPLIST) m_over = m_capped = true; // no more groups stored; the record is dropped at its end
+			else if (!m_over) p.grp.insert (p.grp.end (), r.grp.begin (), r.grp.end ());
 			m_open = more;
+			if (!m_open && m_over) { m_dent.pop_back (); m_skipped++; m_over = false; }
 			return;
 		}
 		Close ();
+	}
+	if (r.grp.size () > DENT_MAX_GRPLIST) {
+		m_capped = true;
+		if (!more) { m_skipped++; return; }
+		r.grp.clear (), m_over = true; // its continuation lines are read and dropped with it
 	}
 	m_dent.push_back ({ k, r });
 	m_open = more;
@@ -1257,6 +1304,7 @@ void DentVesselParser::Finish (DentVesselText &out)
 		const DentRecord *m = nullptr;
 		for (const auto &x : m_mesh) if (x.first == d.first) { m = &x.second; break; }
 		if (!m) { skipped++; continue; } // unknown key
+		if (out.rec.size () >= DENT_MAX_VESSEL) { skipped++, m_capped = true; continue; } // the live cap (R7); the rest counts as skipped
 		DentRecord r = d.second;
 		r.slot = m->slot, r.key = m->key, r.ngrp = m->ngrp, r.nvtx = m->nvtx;
 		out.rec.push_back (r);
@@ -1273,6 +1321,8 @@ int DentVesselParser::Skipped () const
 {
 	return m_result >= 0 ? m_result : m_skipped + m_long;
 }
+
+bool DentVesselParser::Capped () const { return m_capped; }
 
 // DentBasesParser (9.4)
 

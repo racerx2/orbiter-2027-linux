@@ -138,6 +138,188 @@ public:
 	DWORD specs;
 };
 
+struct FVEC3 { float x = 0, y = 0, z = 0; }; // oapi::FVECTOR3 fields as the per-type Read fills them
+
+// Lpad01/02/02a::ParseLine (Baseobj.cpp:1625-1637, :1724-1736, :1842-1854): TEX, NAV
+class Lpad: public OtherObject {
+public:
+	Lpad (const Base *b, const char *n): OtherObject (b, OBJSPEC_EXPORTVERTEX | OBJSPEC_LPAD), nm (n) {}
+	int ParseLine (const char *label, const char *value) {
+		int res = 0;
+		if (!strcasecmp (label, "TEX")) {
+			texid = NameToId (value);
+		} else if (!strcasecmp (label, "NAV")) {
+			if (sscanf (value, "%f", &ILSfreq) != 1) {
+				ParseError ((std::string (nm) + ": NAV: expected scalar value").c_str ());
+				res = 2;
+			}
+		}
+		return res;
+	}
+	const char *nm; LONGLONG texid = 0; float ILSfreq = 0;
+};
+
+// Runway::Read (Baseobj.cpp:1964-2020); the segment table is not kept
+class Runway: public OtherObject {
+public:
+	Runway (const Base *b): OtherObject (b, OBJSPEC_EXPORTVERTEX | OBJSPEC_RWY) {}
+	int Read (istream &is) {
+		char cbuf[256], *cp, label[256] = "";
+		int i;
+		do {
+			if (!is.getline (cbuf, 256)) return 1;
+			cp = trim_string (cbuf);
+			sscanf (cp, "%s", label);
+			if (!strcasecmp (label, "END1"))
+				sscanf (cp+4, "%f%f%f", &end1.x, &end1.y, &end1.z);
+			else if (!strcasecmp (label, "END2"))
+				sscanf (cp+4, "%f%f%f", &end2.x, &end2.y, &end2.z);
+			else if (!strcasecmp (label, "WIDTH")) {
+				sscanf (cp+5, "%f", &width);
+				width *= 0.5f;
+			} else if (!strncasecmp (label, "ILS", 3)) {
+				float freq;
+				if (sscanf (cp+3, "%d%f", &i, &freq) == 2 && i >= 1 && i <= 2)
+					ILSfreq[i-1] = freq;
+			} else if (!strcasecmp (label, "NRWSEG")) {
+				sscanf (cp+6, "%d", &nrwseg);
+			} else if (!strncasecmp (label, "RWSEG", 5)) {
+				float seglen, tu0, tu1, tv0, tv1;
+				int subseg;
+				sscanf (cp+5, "%d%d%f%f%f%f%f", &i, &subseg, &seglen, &tu0, &tu1, &tv0, &tv1);
+			} else if (!strcasecmp (label, "RWTEX")) {
+				sscanf (cp+5, "%s", label);
+				texid = NameToId (label);
+			}
+		} while (strcasecmp (label, "END"));
+		return 0;
+	}
+	FVEC3 end1, end2; float ILSfreq[2] = { 0, 0 }, width = 0; int nrwseg = 0; LONGLONG texid = 0;
+};
+
+// RunwayLights::Read (Baseobj.cpp:2121-2156)
+class RunwayLights: public OtherObject {
+public:
+	RunwayLights (const Base *b): OtherObject (b, 0) {}
+	int Read (istream &is) {
+		char cbuf[256], *cp, label[256] = "";
+		do {
+			if (!is.getline (cbuf, 256)) return 1;
+			cp = trim_string (cbuf);
+			sscanf (cp, "%s", label);
+			if (!strcasecmp (label, "END1"))
+				sscanf (cp+4, "%f%f%f", &end1.x, &end1.y, &end1.z);
+			else if (!strcasecmp (label, "END2"))
+				sscanf (cp+4, "%f%f%f", &end2.x, &end2.y, &end2.z);
+			else if (!strcasecmp (label, "COUNT1"))
+				sscanf (cp+6, "%d", &count1);
+			else if (!strcasecmp (label, "WIDTH")) {
+				sscanf (cp+5, "%f", &width);
+				width *= 0.5f;
+			} else if (!strcasecmp (label, "PAPI")) {
+				float p[3];
+				sscanf (cp+4, "%f%f%f", p, p+1, p+2);
+			} else if (!strcasecmp (label, "VASI")) {
+				float v[3];
+				sscanf (cp+4, "%f%f%f", v, v+1, v+2);
+			}
+		} while (strcasecmp (label, "END"));
+		return 0;
+	}
+	FVEC3 end1, end2; int count1 = 0; float width = 0;
+};
+
+// BeaconArray::Read (Baseobj.cpp:2452-2471)
+class BeaconArray: public OtherObject {
+public:
+	BeaconArray (const Base *b): OtherObject (b, 0) {}
+	int Read (istream &is) {
+		char cbuf[256], *cp, label[256] = "";
+		do {
+			if (!is.getline (cbuf, 256)) return 1;
+			cp = trim_string (cbuf);
+			sscanf (cp, "%s", label);
+			if (!strcasecmp (label, "END1"))
+				sscanf (cp+4, "%f%f%f", &end1.x, &end1.y, &end1.z);
+			else if (!strcasecmp (label, "END2"))
+				sscanf (cp+4, "%f%f%f", &end2.x, &end2.y, &end2.z);
+			else if (!strcasecmp (label, "COUNT"))
+				sscanf (cp+5, "%d", &count);
+			else if (!strcasecmp (label, "SIZE"))
+				sscanf (cp+4, "%lf", &size);
+			else if (!strcasecmp (label, "COL"))
+				sscanf (cp+3, "%f%f%f", &col_r, &col_g, &col_b);
+		} while (strcasecmp (label, "END"));
+		return 0;
+	}
+	FVEC3 end1, end2; int count = 0; double size = 0; float col_r = 0, col_g = 0, col_b = 0;
+};
+
+// Train1::Read and Train2::Read (Baseobj.cpp:2714-2738, :2989-3015); Init left out (no geometry)
+class Train: public OtherObject {
+public:
+	Train (const Base *b, bool t2): OtherObject (b, OBJSPEC_EXPORTVERTEX | OBJSPEC_UPDATEVERTEX), two (t2) {}
+	int Read (istream &is) {
+		char cbuf[256], *cp, label[256] = "";
+		do {
+			if (!is.getline (cbuf, 256)) return 1;
+			cp = trim_string (cbuf);
+			sscanf (cp, "%s", label);
+			if (!strcasecmp (label, "END1"))
+				sscanf (cp+4, "%f%f%f", &end1.x, &end1.y, &end1.z);
+			else if (!strcasecmp (label, "END2"))
+				sscanf (cp+4, "%f%f%f", &end2.x, &end2.y, &end2.z);
+			else if (two && !strcasecmp (label, "HEIGHT"))
+				sscanf (cp+6, "%f", &height);
+			else if (!strcasecmp (label, "MAXSPEED"))
+				sscanf (cp+8, "%f", &maxspeed);
+			else if (!strcasecmp (label, "SLOWZONE"))
+				sscanf (cp+8, "%f", &slowzone);
+			else if (!strcasecmp (label, "TEX")) {
+				sscanf (cp+3, "%s%f", label, &tuscale_track);
+				texid = NameToId (label);
+			}
+		} while (strcasecmp (label, "END"));
+		return 0;
+	}
+	bool two; FVEC3 end1, end2; float height = 0, maxspeed = 0, slowzone = 0, tuscale_track = 0; LONGLONG texid = 0;
+};
+
+// SolarPlant::Read (Baseobj.cpp:3279-3313)
+class SolarPlant: public OtherObject {
+public:
+	SolarPlant (const Base *b): OtherObject (b, 0) {}
+	int Read (istream &is) {
+		char cbuf[256], *cp, label[256] = "";
+		do {
+			if (!is.getline (cbuf, 256)) return 1;
+			cp = trim_string (cbuf);
+			sscanf (cp, "%s", label);
+			if (!strcasecmp (label, "POS"))
+				sscanf (cp+3, "%f%f%f", &pos.x, &pos.y, &pos.z);
+			else if (!strcasecmp (label, "SCALE"))
+				sscanf (cp+5, "%f", &fscale);
+			else if (!strcasecmp (label, "SPACING"))
+				sscanf (cp+7, "%f%f", &sepx, &sepz);
+			else if (!strcasecmp (label, "GRID")) {
+				int nr, nc;
+				if (sscanf (cp+4, "%d%d", &nr, &nc) == 2 && nr >= 1 && nc >= 1 && (long long)nr*nc*21 <= INT32_MAX)
+					nrow = nr, ncol = nc;
+			}
+			else if (!strcasecmp (label, "ROT")) {
+				sscanf (cp+3, "%f", &frot);
+				frot *= (float)RAD;
+			} else if (!strcasecmp (label, "TEX")) {
+				float su, sv;
+				sscanf (cp+3, "%s%f%f", label, &su, &sv);
+				texid = NameToId (label);
+			}
+		} while (strcasecmp (label, "END"));
+		return 0;
+	}
+	FVEC3 pos; float fscale = 1, sepx = 0, sepz = 0, frot = 0; int nrow = 2, ncol = 2; LONGLONG texid = 0;
+};
+
 class Block: public BaseObject {
 public:
 	Block (const Base *_base);
@@ -189,6 +371,7 @@ public:
 	void ExportGroup (int grp, NTVERTEX *vtx, WORD *idx, DWORD &idx_ofs);
 	void Activate ();
 	void Deactivate ();
+	float RoofH () const { return roofh; } void SetRoofH (float h) { roofh = h; } // not upstream: CollBaseObjDef keeps ROOFH
 
 private:
 	float  roofh;      // roof height from base to ridge
@@ -229,6 +412,7 @@ public:
 	void ExportGroup (int grp, NTVERTEX *vtx, WORD *idx, DWORD &idx_ofs);
 	void Activate ();
 	void Deactivate ();
+	DWORD NStep () const { return nstep; } void SetNStep (DWORD n) { nstep = n; } // not upstream: CollBaseObjDef keeps NSTEP
 
 private:
 	LONGLONG  texid[2];   // texture ids
@@ -930,11 +1114,11 @@ int Tank::ParseLine (const char *label, const char *value)
 {
 	int res = 0;
 	if (!strcasecmp (label, "NSTEP")) {
-		if (sscanf (value, "%d", &nstep) != 1) {
+		int n; // not upstream: read as int, clamped to 3..16383 (WORD indices and loops)
+		if (sscanf (value, "%d", &n) != 1) {
 			ParseError("Tank: NSTEP: Expected integer value");
 			res = 2;
-		}
-		if (nstep < 3) nstep = 3;
+		} else nstep = (DWORD)(n < 3 ? 3 : n > 16383 ? 16383 : n); // not upstream: the clamp
 	} else if (!strncasecmp (label, "TEX", 3)) {
 		float su, sv;
 		int i;
@@ -1076,10 +1260,15 @@ static BaseObject *Create (istream &is, std::string &type, std::vector<std::stri
 		else if (!strcasecmp (tok, "HANGAR2")) bo = new Hangar2 (_base);
 		else if (!strcasecmp (tok, "HANGAR3")) bo = new Hangar3 (_base);
 		else if (!strcasecmp (tok, "TANK")) bo = new Tank (_base);
-		else if (!strcasecmp (tok, "LPAD1") || !strcasecmp (tok, "LPAD2") || !strcasecmp (tok, "LPAD2A")) bo = new OtherObject (_base, OBJSPEC_EXPORTVERTEX | OBJSPEC_LPAD);
-		else if (!strcasecmp (tok, "RUNWAY")) bo = new OtherObject (_base, OBJSPEC_EXPORTVERTEX | OBJSPEC_RWY);
-		else if (!strcasecmp (tok, "RUNWAYLIGHTS") || !strcasecmp (tok, "BEACONARRAY") || !strcasecmp (tok, "SOLARPLANT")) bo = new OtherObject (_base, 0);
-		else if (!strcasecmp (tok, "TRAIN1") || !strcasecmp (tok, "TRAIN2")) bo = new OtherObject (_base, OBJSPEC_EXPORTVERTEX | OBJSPEC_UPDATEVERTEX);
+		else if (!strcasecmp (tok, "LPAD1")) bo = new Lpad (_base, "Lpad1");
+		else if (!strcasecmp (tok, "LPAD2")) bo = new Lpad (_base, "Lpad2");
+		else if (!strcasecmp (tok, "LPAD2A")) bo = new Lpad (_base, "Lpad2a");
+		else if (!strcasecmp (tok, "RUNWAY")) bo = new Runway (_base);
+		else if (!strcasecmp (tok, "RUNWAYLIGHTS")) bo = new RunwayLights (_base);
+		else if (!strcasecmp (tok, "BEACONARRAY")) bo = new BeaconArray (_base);
+		else if (!strcasecmp (tok, "TRAIN1")) bo = new Train (_base, false);
+		else if (!strcasecmp (tok, "TRAIN2")) bo = new Train (_base, true);
+		else if (!strcasecmp (tok, "SOLARPLANT")) bo = new SolarPlant (_base);
 		else { err.push_back ("BaseObject: Parse error"); return nullptr; }
 		bo->err = &err;
 		if (bo->Read (is) == 0) return bo;
@@ -1137,6 +1326,8 @@ bool CollParseBaseFile (const std::string &text, CollBaseFile &out, std::vector<
 		d.specs = bo->GetSpecs ();
 		d.noCollide = bo->noCollide; d.collide = bo->collide; d.collMat = bo->collMat;
 		if (auto *mo = dynamic_cast<MeshObject *> (bo)) d.meshFile = mo->fname;
+		if (auto *tk = dynamic_cast<Tank *> (bo)) d.nstep = tk->NStep ();
+		if (auto *h2 = dynamic_cast<Hangar2 *> (bo)) d.roofh = h2->RoofH ();
 		delete bo;
 		out.obj.push_back (std::move (d));
 	}
@@ -1144,10 +1335,11 @@ bool CollParseBaseFile (const std::string &text, CollBaseFile &out, std::vector<
 }
 
 // geometry in the base frame: primitives by the copied ExportGroup, MESH by Scale, Rotate Y, Translate (Baseobj.cpp:340-365)
-bool CollBaseObjGeometry (CollBaseObjDef &o, CollSdk &sdk, const CollDirs &dirs, double rPlanet, bool mapToSphere, std::vector<std::string> &warn)
+bool CollBaseObjGeometry (CollBaseObjDef &o, CollSdk &sdk, const CollDirs &dirs, double rPlanet, bool mapToSphere, std::vector<std::string> &warn, const CollBaseElev *elev)
 {
 	o.grp.clear ();
 	double yofs = 0;
+	if (elev && elev->at) yofs = elev->at (elev->lng + o.pos.z/(rPlanet*cos(elev->lat)), elev->lat - o.pos.x/rPlanet) - elev->elev; // Rel_EquPos (Base.cpp:556-560)
 	if (mapToSphere) yofs += (float)(rPlanet - std::sqrt (rPlanet*rPlanet + (float)o.pos.x*(float)o.pos.x + (float)o.pos.z*(float)o.pos.z));
 	Vector rel (o.pos.x, o.pos.y + yofs, o.pos.z);
 	if (!strcasecmp (o.type.c_str (), "MESH")) {
@@ -1178,6 +1370,8 @@ bool CollBaseObjGeometry (CollBaseObjDef &o, CollSdk &sdk, const CollDirs &dirs,
 	else if (!strcasecmp (o.type.c_str (), "TANK")) bo = new Tank (&b0);
 	if (!bo) return false;
 	bo->relpos = rel; bo->scale = o.scale; bo->rot = o.rot; bo->yofs = yofs;
+	if (auto *tk = dynamic_cast<Tank *> (bo)) tk->SetNStep (o.nstep < 3 ? 3 : o.nstep > 16383 ? 16383 : o.nstep);
+	if (auto *h2 = dynamic_cast<Hangar2 *> (bo)) h2->SetRoofH (o.roofh);
 	bo->Activate ();
 	for (int g = 0; g < bo->nGroup (); g++) {
 		DWORD nv = 0, ni = 0; LONGLONG tex = 0; bool us = false, gs = false;

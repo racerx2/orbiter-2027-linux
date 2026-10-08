@@ -75,3 +75,65 @@ TEST_CASE ("E2-U9 stock bases, flat elevation", "[CollBaseA]")
 	REQUIRE (nb >= 30);
 	REQUIRE (ni > 500);
 }
+
+namespace {
+std::vector<CollVtx> FixVtx (const CollBaseObjDef &o) { std::vector<CollVtx> r; for (auto &g : o.grp) r.insert (r.end (), g.vtx.begin (), g.vtx.end ()); return r; }
+}
+
+TEST_CASE ("fix1 M4: object collider at its own terrain height (Baseobj.cpp Setup)", "[CollBaseA]")
+{
+	CollBaseFile f; std::vector<std::string> w;
+	REQUIRE (CollParseBaseFile ("BASE-V2.0\nBEGIN_OBJECTLIST\nBLOCK\n POS 100 0 50\n SCALE 10 10 10\nEND\nEND_OBJECTLIST\n", f, w));
+	CollFakeSdk s; CollDirs d;
+	const double R = 6.371e6, l0 = 0.1, b0 = 0.2;
+	CollBaseElev el;
+	el.lng = l0; el.lat = b0; el.elev = 5;
+	el.at = [&] (double l, double b) { return 5 + (l - l0) * R * cos (b0) * 0.01 - (b - b0) * R * 0.02; }; // 0.01 z + 0.02 x above the base
+	REQUIRE (CollBaseObjGeometry (f.obj[0], s, d, R, false, w, &el));
+	float ymin = 1e9f;
+	for (auto &v : FixVtx (f.obj[0])) ymin = std::min (ymin, v.y);
+	CHECK (std::fabs (ymin - 2.5f) < 1e-3f);
+	REQUIRE (CollBaseObjGeometry (f.obj[0], s, d, R, false, w));
+	ymin = 1e9f;
+	for (auto &v : FixVtx (f.obj[0])) ymin = std::min (ymin, v.y);
+	CHECK (ymin == 0.0f);
+}
+
+TEST_CASE ("fix1 M5: TANK NSTEP and HANGAR2 ROOFH shape the collider", "[CollBaseA]")
+{
+	CollFakeSdk s; CollDirs d;
+	auto geom = [&] (const std::string &obj) {
+		CollBaseFile f; std::vector<std::string> w;
+		CollParseBaseFile ("BASE-V2.0\nBEGIN_OBJECTLIST\n" + obj + "END_OBJECTLIST\n", f, w);
+		REQUIRE (f.obj.size () == 1);
+		REQUIRE (CollBaseObjGeometry (f.obj[0], s, d, 6.371e6, false, w));
+		return FixVtx (f.obj[0]);
+	};
+	CHECK (geom ("TANK\n NSTEP 4\n SCALE 5 10 5\nEND\n").size () == 14);
+	CHECK (geom ("TANK\n SCALE 5 10 5\nEND\n").size () == 38);
+	CHECK (geom ("TANK\n NSTEP -1\n SCALE 5 10 5\nEND\n").size () == 11);
+	CHECK (geom ("TANK\n NSTEP 70000\n SCALE 5 10 5\nEND\n").size () == 49151);
+	auto hasY = [] (const std::vector<CollVtx> &v, float y) { for (auto &x : v) if (std::fabs (x.y - y) < 1e-4f) return true; return false; };
+	auto h1 = geom ("HANGAR2\n SCALE 10 10 10\n ROOFH 1\nEND\n"), h0 = geom ("HANGAR2\n SCALE 10 10 10\nEND\n");
+	CHECK (hasY (h1, 9)); CHECK (!hasY (h1, 5));
+	CHECK (hasY (h0, 5)); CHECK (!hasY (h0, 9));
+}
+
+TEST_CASE ("fix1: per-type Read ends the object list where the core's ends", "[CollBaseA]")
+{
+	auto count = [] (const std::string &objs) {
+		CollBaseFile f; std::vector<std::string> w;
+		CollParseBaseFile ("BASE-V2.0\nBEGIN_OBJECTLIST\n" + objs + "END_OBJECTLIST\n", f, w);
+		return f.obj.size ();
+	};
+	const std::string blk = "BLOCK\n SCALE 10 10 10\nEND\n";
+	CHECK (count ("LPAD2\n POS 0 0 0\n NAV abc\nEND\n" + blk) == 0);     // Lpad02::ParseLine: parse error 2
+	CHECK (count ("LPAD1\n NAV 112.5\nEND\n" + blk) == 2);
+	CHECK (count ("RUNWAY\n END1 0 0 0\n END2 100 0 0\n POS 1 2\nEND\n" + blk) == 2); // Runway::Read has no POS
+	CHECK (count ("RUNWAYLIGHTS\n END1 0 0 0\n SCALE a\nEND\n" + blk) == 2);
+	CHECK (count ("BEACONARRAY\n ROT x\nEND\n" + blk) == 2);
+	CHECK (count ("TRAIN2\n END1 0 0 0\n POS 1\nEND\n" + blk) == 2);
+	CHECK (count ("SOLARPLANT\n POS 1 2\n SCALE 3\nEND\n" + blk) == 2);
+	CHECK (count ("RUNWAY\n RWTEX end\nEND\n" + blk) == 1);           // RWTEX overwrites the label: the stray END ends the list
+	CHECK (count ("TRAIN1\n TEX end 2\n" + blk) == 2);
+}
