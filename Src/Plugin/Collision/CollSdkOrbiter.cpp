@@ -7,6 +7,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -277,8 +279,18 @@ protected:
 		std::string b (text);
 		oapiAnnotationSetText (note, b.data ());
 	}
-	int DoRegisterCmd (const char *label, const char *desc, CollCmdFn fn, void *ctx) override { return (int)oapiRegisterCustomCmd (label, desc, (CustomFunc)fn, ctx); }
-	void DoUnregisterCmd (int id) override { oapiUnregisterCustomCmd (id); }
+	std::map<int, std::unique_ptr<char[]>> cmdDesc; // writable desc copies by command id: 2024 takes char* and keeps desc, copies the label
+	int DoRegisterCmd (const char *label, const char *desc, CollCmdFn fn, void *ctx) override
+	{
+		std::string l (label ? label : "");
+		size_t n = strlen (desc ? desc : "") + 1;
+		std::unique_ptr<char[]> d (new char[n]);
+		memcpy (d.get (), desc ? desc : "", n);
+		int id = (int)oapiRegisterCustomCmd (l.data (), d.get (), (CustomFunc)fn, ctx);
+		if (id) cmdDesc[id] = std::move (d);
+		return id;
+	}
+	void DoUnregisterCmd (int id) override { oapiUnregisterCustomCmd (id); cmdDesc.erase (id); }
 	bool DoOpenDialog (void *d) override
 	{
 #if COLL_HAVE_IMGUI

@@ -220,15 +220,15 @@ if (COLL_MAKE_TESTS)
 		coll_add_test(Collision.Symbols.Test TIMEOUT 60 SKIP 77 LABELS collision COMMAND ${Python3_EXECUTABLE} ${tdir}/Collision.Symbols.Test.py
 			--so $<TARGET_FILE:Collision> --api ${CMAKE_CURRENT_SOURCE_DIR}/CollisionAPI.h --exe ${COLL_EXE} --sdk ${COLL_SDK_INCLUDE} --cxx ${CMAKE_CXX_COMPILER})
 		coll_add_test(Collision.Strings.Test TIMEOUT 30 LABELS collision COMMAND ${Python3_EXECUTABLE} ${tdir}/Collision.Strings.Test.py --so $<TARGET_FILE:Collision>)
-		set(COLLISION_WIN2024_HEADERS "" CACHE PATH "Orbiter 2024 Orbitersdk/include for the optional Windows header check (ctest -L windows)")
-		if (COLLISION_WIN2024_HEADERS)
+		include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/win2024.cmake)
+		if (COLL_W2024_INCLUDE) # in the default list (label collision) whenever the headers are found; skipped (77) without clang or mingw-w64
 			if (COLL_STANDALONE)
 				set(imgui ${COLL_IMGUI_INCLUDE})
 			else ()
 				set(imgui $<TARGET_PROPERTY:imgui,INTERFACE_INCLUDE_DIRECTORIES>)
 			endif ()
-			coll_add_test(Collision.Win2024.Compile TIMEOUT 600 SKIP 77 LABELS windows COMMAND ${Python3_EXECUTABLE} ${tdir}/Collision.Win2024.Compile.py
-				--headers ${COLLISION_WIN2024_HEADERS} --src ${CMAKE_CURRENT_SOURCE_DIR} --imgui ${imgui})
+			coll_add_test(Collision.Win2024.Compile TIMEOUT 600 SKIP 77 LABELS collision windows COMMAND ${Python3_EXECUTABLE} ${tdir}/Collision.Win2024.Compile.py
+				--headers ${COLL_W2024_INCLUDE} --src ${CMAKE_CURRENT_SOURCE_DIR} --imgui ${imgui})
 		endif ()
 		include(Tests/Scenario/ScenarioTests.cmake) # scenario tests: the runner, the test modules, the catalog of E4 7.9
 	endif ()

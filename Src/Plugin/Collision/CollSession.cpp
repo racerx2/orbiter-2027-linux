@@ -80,9 +80,9 @@ public:
 			sdk.GlobalState (r.hPlanet, pp, pv, pR);
 			Vector ap = PlanetAcc (r.hPlanet, pv, h);
 			Vector xg = pp + mul (pR, r.rposP);
-			bool near = false;
-			for (const Vector &x : pos) near = near || (x - xg).length () < sh.rmax + 5000.0;
-			if (!near) continue;
+			bool inRange = false; // not "near": windows.h defines it as an empty macro
+			for (const Vector &x : pos) inRange = inRange || (x - xg).length () < sh.rmax + 5000.0;
+			if (!inRange) continue;
 			Matrix Rg = pR * r.rrotP;
 			double T = sdk.PlanetPeriod (r.hPlanet);
 			Vector w = std::fabs (T) > 0 ? mul (pR, Vector (0, 1, 0)) * (2.0 * 3.14159265358979323846 / T) : Vector ();
