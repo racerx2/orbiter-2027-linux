@@ -123,7 +123,10 @@ void CollBaseA::Build (CollSdk &sdk, const CollDirs &d, bool geometry)
 				v.hPlanet = hp; v.hBase = hb;
 				if (geometry) {
 					std::vector<std::string> warn;
-					if (CollBaseObjGeometry (o, sdk, d, R, m->f.mapToSphere, warn)) {
+					CollBaseElev el;
+					el.lng = lng; el.lat = lat; el.elev = r->elev;
+					el.at = [&sdk, hp] (double l, double b) { return sdk.Elevation (hp, l, b); };
+					if (CollBaseObjGeometry (o, sdk, d, R, m->f.mapToSphere, warn, &el)) {
 						if (!strcasecmp (o.type.c_str (), "MESH")) v.size = o.restBox;
 						r->shape.SetObject (slotI, o.index, o.grp.data (), o.grp.size (), v.mat, true);
 						r->shape.Follow (slotI, 1, 1);

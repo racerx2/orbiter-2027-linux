@@ -2,6 +2,7 @@
 #ifndef __COLLBASEA_H
 #define __COLLBASEA_H
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -29,6 +30,14 @@ struct CollBaseObjDef {
 	std::vector<CollGroupData> grp;    // base frame geometry after Setup
 	Vector restBox;                    // MESH: rest box after the object scale
 	std::string meshFile;              // MESH: FILE value
+	uint32_t nstep = 12;               // TANK: NSTEP, 3..16383
+	float roofh = -1.0f;               // HANGAR2: ROOFH, < 0 = default
+};
+
+// object terrain height as BaseObject::Setup (Baseobj.cpp:135-144): planet elevation at the object minus the base's
+struct CollBaseElev {
+	double lng = 0, lat = 0, elev = 0; // base position [rad] and base elevation [m]
+	std::function<double (double lng, double lat)> at; // planet elevation [m]
 };
 
 // a parsed base cfg (BASE-V2.0)
@@ -54,7 +63,7 @@ struct CollBaseRec {
 
 // MIT base-object code (CollBaseObjA.cpp): parse the object list, build the geometry in the base frame
 bool CollParseBaseFile (const std::string &text, CollBaseFile &out, std::vector<std::string> &warn);
-bool CollBaseObjGeometry (CollBaseObjDef &o, CollSdk &sdk, const CollDirs &d, double rPlanet, bool mapToSphere, std::vector<std::string> &warn);
+bool CollBaseObjGeometry (CollBaseObjDef &o, CollSdk &sdk, const CollDirs &d, double rPlanet, bool mapToSphere, std::vector<std::string> &warn, const CollBaseElev *elev = nullptr); // null elev: flat
 bool CollBaseObjIncluded (const CollBaseObjDef &o);
 int  CollBaseObjClass (const std::string &type);   // DENTB_*, -1 for non-colliding types
 
