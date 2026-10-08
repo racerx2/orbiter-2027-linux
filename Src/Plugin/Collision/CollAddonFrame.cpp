@@ -90,11 +90,14 @@ struct CollAddonFrame::Impl {
 	std::vector<Wk> w;
 	std::vector<int> fwdOf, verOf;                       // detector index -> body index
 	CollScratch scr;
+	std::vector<char> frz;                               // dynamic bodies taken as kinematic partners of another island this round (M3 cap)
 
 	Impl (CollAddonFrame &f, CollDetect &fd, CollDetect &vd, const CollOrbMirror &m, std::vector<CollABody> &bb, CollSolveHost &hs, double hh, double t0)
 		: F (f), fwd (fd), ver (vd), mir (m), b (bb), host (hs), h (hh), simt0 (t0) {}
 
 	Vector Ib (int i) const { return b[i].pmi*b[i].m; }
+	bool Dyn (int i) const { return w[i].dyn && !frz[i]; }
+	const CollMotion &KinM (int i) const { return frz[i] ? fwd.Body (w[i].det).m : b[i].kin; }
 	Vector Pos (int i) const { return w[i].dyn ? w[i].X : b[i].kin.c0; }
 	Quaternion Rot (int i) const { return w[i].dyn ? w[i].Q : b[i].kin.q0; }
 	Vector SpinL (int i, const Quaternion &q, const Vector &wb) const { return mul (QM (q), Mulc (Ib (i), wb)); }
@@ -182,6 +185,30 @@ struct CollAddonFrame::Impl {
 		return m;
 	}
 
+	double FeatGap (int i, int j, const Feat &f, Vector *p = nullptr)   // t0 skin gap of one triangle pair (Hits keeps at most 256 pairs)
+	{
+		if (f.pa >= b[i].parts.size () || f.pb >= b[j].parts.size ()) return 1e9;
+		const CollPartRef &A = b[i].parts[f.pa], &B = b[j].parts[f.pb];
+		if (!A.geom || !B.geom || f.ta >= A.geom->tri.size () || f.tb >= B.geom->tri.size ()) return 1e9;
+		CollAffine XA = CollCompose (CollAffine { QM (Rot (i)), Vector () }, A.P0), XB = CollCompose (CollAffine { QM (Rot (j)), Pos (j) - Pos (i) }, B.P0);
+		Vector va[3], vb[3], pa, pb;
+		for (int k = 0; k < 3; k++) { va[k] = CollApply (XA, A.geom->Pos (A.geom->tri[f.ta].v[k])); vb[k] = CollApply (XB, B.geom->Pos (B.geom->tri[f.tb].v[k])); }
+		double d = CollTriTriDistance (va, vb, pa, pb);
+		if (p) *p = Pos (i) + (pa + pb)*0.5;
+		return d - A.skin - B.skin;
+	}
+	double MinDist (int i, int j, double cap)            // exact smallest t0 skin gap, capped
+	{
+		double m = cap;
+		CollAffine BA { QM (Rot (i)), Vector () }, BB { QM (Rot (j)), Pos (j) - Pos (i) };
+		for (const CollPartRef &A : b[i].parts) for (const CollPartRef &B : b[j].parts) {
+			if (!A.geom || !B.geom) continue;
+			double sk = A.skin + B.skin;
+			m = std::min (m, CollDistance (*A.geom, CollCompose (BA, A.P0), *B.geom, CollCompose (BB, B.P0), cap + sk, nullptr, scr, A.mask, B.mask) - sk);
+		}
+		return m;
+	}
+
 	void Run (std::vector<CollAWrite> &out, std::vector<CollImpactEvent> &ev, const std::vector<CollZone> &zones);
 	bool InitDyn (int i, bool woken);
 	void Wake (int i);
@@ -195,6 +222,7 @@ struct CollAddonFrame::Impl {
 	void Decide (std::vector<RapItem> &rap);
 	void Reconcile ();
 	void PastCheck (std::vector<CollImpactEvent> &ev);
+	void Resolve0 (const CollPairResult &r, std::vector<CollImpactEvent> &pev);
 	bool KinTouch (const CollAIslandRec &I, const CollAPairRec &pr, int ia, int ib, RapItem &it);
 	void Reapply (const std::vector<RapItem> &rap, const std::vector<APt> &pts);
 	void Convert (const std::vector<CollPairResult> &res, std::vector<APt> &pts);
@@ -432,9 +460,8 @@ bool CollAddonFrame::Impl::KinTouch (const CollAIslandRec &I, const CollAPairRec
 	Vector va = best->a.v + Xc (best->a.w, mid - best->a.c) + c.vsA, vb = best->b.v + Xc (best->b.w, mid - best->b.c) + c.vsB;
 	Vector n = swap ? -c.n : c.n;
 	it.nt = n; it.ut = -dotp (swap ? vb - va : va - vb, n); it.tauT = best->tau;
-	for (size_t k = 0; k < hs.size (); k++)               // feature test: that feature's t0 gap within slop of the smallest
-		if (pp[k].first == it.f.pa && pp[k].second == it.f.pb && hs[k].ta == it.f.ta && hs[k].tb == it.f.tb) return hs[k].d <= gmin + F.prm.slop;
-	return false;
+	double fd = FeatGap (ia, ib, it.f);                    // feature test: that feature's t0 gap within slop of the smallest
+	return fd < 1e9 && fd <= MinDist (ia, ib, fd + 1.0) + F.prm.slop;
 }
 
 // 7.5: last frame's resting rows against the mirror prediction; unseen part taken out; position share
@@ -580,19 +607,79 @@ void CollAddonFrame::Impl::PastCheck (std::vector<CollImpactEvent> &ev)
 			CollApplyDeltaState (w[i].X, w[i].V, w[i].Q, w[i].W, Ib (i), d.d);
 			w[i].posChanged = true;
 		}
-		for (CollImpactEvent &e : pev) if (e.flags & COLLEV_FIRST) { e.dKE = std::max (0.0, e.dKE); e.vn = std::max (0.0, e.vn); ev.push_back (e); }
-		for (const CollPairResult &r : keep) {               // forward touch states of the solved owner pairs
+		std::vector<std::pair<int,int>> seen;                // keep holds every round's result: one solve, line and count per body pair
+		for (size_t q = 0; q < keep.size (); q++) {          // forward touch states of the solved owner pairs
+			const CollPairResult &r = keep[q];
 			for (int k = 0; k < r.npt; k++) {
 				CollOwnerKey oa = ver.Owner (r, k, 0), ob = ver.Owner (r, k, 1);
 				const CollPairEntry *e = ver.Pairs ().Find (oa, ob);
 				if (e) fwd.Pairs ().Get (oa, ob).touch = e->touch;
 			}
+			if (std::find (seen.begin (), seen.end (), std::make_pair (r.bodyA, r.bodyB)) != seen.end ()) continue;
+			seen.push_back ({ r.bodyA, r.bodyB });
+			size_t last = q;
+			for (size_t z = q + 1; z < keep.size (); z++) if (keep[z].bodyA == r.bodyA && keep[z].bodyB == r.bodyB) last = z;
+			Resolve0 (keep[last], pev);
 			F.st.past++; F.st.missed++;
 			CollLog (COLLLOG_WARN, "Collision missed: t=%.17g '%u' '%u' dev=%.4f", simt0 - hp + r.tau*hp, b[verOf[r.bodyA]].id, b[verOf[r.bodyB]].id,
 				std::max (b[verOf[r.bodyA]].dev, b[verOf[r.bodyB]].dev));
 		}
+		for (CollImpactEvent &e : pev) if (e.flags & COLLEV_FIRST) { e.dKE = std::max (0.0, e.dKE); e.vn = std::max (0.0, e.vn); ev.push_back (e); }
 	}
 	ver.Pairs ().Clear ();
+}
+
+// 3.3: a past pair with a separation below zero in its event (INACCURATE: solved like SPECULATIVE): touching and approaching at t0 after the delta, one solve there; else the separation measured at t0
+void CollAddonFrame::Impl::Resolve0 (const CollPairResult &r, std::vector<CollImpactEvent> &pev)
+{
+	const int a = verOf[r.bodyA], c = verOf[r.bodyB];
+	CollOwnerRef oa = CollOwnerRefOf (ver.Owner (r, 0, 0)), ob = CollOwnerRefOf (ver.Owner (r, 0, 1));
+	auto eq = [] (const CollOwnerRef &x, const CollOwnerRef &y) { return x.vesselId == y.vesselId && x.planet == y.planet && x.base == y.base && x.obj == y.obj && x.part == y.part; };
+	std::vector<CollImpactEvent *> evp;
+	for (CollImpactEvent &e : pev)
+		if ((e.flags & COLLEV_FIRST) && e.vn_post < 0 && ((eq (e.s[0].owner, oa) && eq (e.s[1].owner, ob)) || (eq (e.s[0].owner, ob) && eq (e.s[1].owner, oa)))) evp.push_back (&e);
+	if (evp.empty () || (!w[a].dyn && !w[c].dyn)) return;
+	std::vector<APt> pts;
+	std::vector<int> pidx;
+	Matrix RA0 = QM (Rot (a)), RB0 = QM (Rot (c)), RAt = QM (r.a.q), RBt = QM (r.b.q);
+	double umax = -1e100, usum = 0;
+	for (int k = 0; k < r.npt; k++) {
+		const CollContact &pt = r.pt[k];
+		APt q {};
+		q.a = a; q.b = c; q.res = 0; q.pt = k; q.org = r.origin; q.real = true; q.t = -1;
+		q.triA = pt.triA; q.triB = pt.triB; q.partA = pt.partA; q.partB = pt.partB; q.flags = pt.flags;
+		q.pa = (Pos (a) - r.origin) + mul (RA0, tmul (RAt, pt.pA - r.a.c));
+		q.pb = (Pos (c) - r.origin) + mul (RB0, tmul (RBt, pt.pB - r.b.c));
+		q.n = mul (RB0, tmul (RBt, pt.n));
+		q.gap = pt.gap + dotp ((q.pa - q.pb) - (pt.pA - pt.pB), q.n);
+		Vector p = q.org + (q.pa + q.pb)*0.5;
+		double u = -dotp (PointVel (a, p - Pos (a)) - PointVel (c, p - Pos (c)), q.n);
+		usum += u;
+		if (q.gap > F.dprm.deltaCt) continue;                // apart at t0: the forward pass sees it
+		umax = std::max (umax, u);
+		pidx.push_back ((int)pts.size ());
+		pts.push_back (q);
+	}
+	if (!(umax > COLL_APPROACH_TOL)) {
+		if (r.npt > 0) for (CollImpactEvent *e : evp) e->vn_post = -usum/r.npt;
+		return;
+	}
+	std::vector<int> memb { w[a].dyn ? a : c, w[a].dyn ? c : a }, map;
+	for (int i : memb) if (w[i].dyn) Predict (i);
+	std::vector<CollPairResult> one (1, r);
+	CollIsland is;
+	Build (is, false, map, memb, pidx, pts, one, Pos (memb[0]));
+	if (is.con.empty () || !is.Solve (F.prm)) return;
+	for (size_t j = 0; j < memb.size (); j++) {
+		int i = memb[j];
+		if (!w[i].dyn) continue;
+		w[i].V += is.body[j].dP1/b[i].m;
+		w[i].W = OmegaOf (i, w[i].Q, SpinL (i, w[i].Q, w[i].W) + is.body[j].dL1);
+	}
+	double sl = 0, vp = 0, W = 0;
+	for (size_t k = 0; k < is.con.size (); k++) { const CollSContact &cc = is.con[k]; sl += cc.ln1; vp += cc.ln1*dotp (is.UPost ()[k], cc.n); W += cc.Wn + cc.Wt; }
+	CollLog (COLLLOG_INFO, "Collision missed: '%u' '%u' still approaching at %.3f m/s at t0, solved there", b[a].id, b[c].id, umax);
+	if (sl > 0) for (CollImpactEvent *e : evp) { e->vn_post = vp/sl; e->Jn += sl; e->dKE -= W; }
 }
 
 // 2.3: one re-apply solve over all re-applied pairs and their reachable real neighbours
@@ -618,6 +705,7 @@ void CollAddonFrame::Impl::Reapply (const std::vector<RapItem> &rap, const std::
 		Vector p = Pos (it.a) + mul (QM (Rot (it.a)), it.p.ra);
 		for (size_t q = 0; q < hs.size (); q++)
 			if (pp[q].first == it.f.pa && pp[q].second == it.f.pb && hs[q].ta == it.f.ta && hs[q].tb == it.f.tb) { p = Pos (it.a) + (hs[q].pa + hs[q].pb)*0.5; hasFp[k] = 1; }
+		if (!hasFp[k] && FeatGap (it.a, it.b, it.f, &p) < 1e9) hasFp[k] = 1;   // the feature beyond the 256 listed pairs
 		fp[k] = p;
 		double u1 = app (it.a, it.b, p, it.nt);
 		du[k] = u1 - std::max (0.0, it.ut);
@@ -917,13 +1005,14 @@ void CollAddonFrame::Impl::Build (CollIsland &is, bool withSpec, std::vector<int
 	is.tau = 0.0; is.h = h;
 	for (int i : memb) {
 		CollSBody sb {};
-		if (w[i].dyn) {
+		if (Dyn (i)) {
 			sb.dyn = true; sb.m = b[i].m; sb.pmi = b[i].pmi;
 			sb.Rt = QM (w[i].Q); sb.R1 = QM (w[i].q1);
 			sb.xt = w[i].X - O; sb.vt = w[i].V; sb.wt = mul (sb.Rt, w[i].W);
 			sb.v1 = w[i].v1; sb.x1 = sb.xt + sb.v1*h; sb.wb1 = w[i].w1;
 		} else {
-			sb.dyn = false; sb.Rt = QM (b[i].kin.q0); sb.R1 = QM (b[i].kin.q1); sb.xt = b[i].kin.c0 - O; sb.x1 = sb.xt;
+			const CollMotion &km = KinM (i);
+			sb.dyn = false; sb.Rt = QM (km.q0); sb.R1 = QM (km.q1); sb.xt = km.c0 - O; sb.x1 = sb.xt;
 		}
 		is.body.push_back (sb);
 	}
@@ -934,7 +1023,7 @@ void CollAddonFrame::Impl::Build (CollIsland &is, bool withSpec, std::vector<int
 		c.a = idx (q.a); c.b = idx (q.b);
 		Vector mid = q.org + (q.pa + q.pb)*0.5;
 		c.p = mid - O; c.n = q.n;
-		Matrix RA = QM (w[q.a].dyn ? w[q.a].q1 : b[q.a].kin.q1)*transp (QM (Rot (q.a))), RBm = QM (w[q.b].dyn ? w[q.b].q1 : b[q.b].kin.q1)*transp (QM (Rot (q.b)));
+		Matrix RA = QM (Dyn (q.a) ? w[q.a].q1 : KinM (q.a).q1)*transp (QM (Rot (q.a))), RBm = QM (Dyn (q.b) ? w[q.b].q1 : KinM (q.b).q1)*transp (QM (Rot (q.b)));
 		Vector n2 = mul (RA, q.n) + mul (RBm, q.n);
 		c.n2 = n2.length () > 0 ? n2/n2.length () : q.n;
 		c.gap = q.gap;
@@ -945,8 +1034,8 @@ void CollAddonFrame::Impl::Build (CollIsland &is, bool withSpec, std::vector<int
 		for (int s = 0; s < 2; s++) {
 			int bi = s ? q.b : q.a;
 			Vector &vt = s ? c.vkb_t : c.vka_t, &v1 = s ? c.vkb_1 : c.vka_1;
-			if (w[bi].dyn) continue;
-			const CollMotion &km = b[bi].kin;
+			if (Dyn (bi)) continue;
+			const CollMotion &km = KinM (bi);
 			Matrix Rk = QM (km.q1)*transp (QM (km.q0));
 			vt = km.v0 + Xc (km.w0g, mid - km.c0);
 			v1 = km.v1 + Xc (km.w1g, mul (Rk, mid - km.c0));
@@ -959,6 +1048,7 @@ void CollAddonFrame::Impl::Build (CollIsland &is, bool withSpec, std::vector<int
 void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollImpactEvent> &ev, const std::vector<CollZone> &zones)
 {
 	const int nb = (int)b.size ();
+	frz.assign (nb, 0);
 	Snapshot ();
 	hp = 0;
 	for (const Wk &k : w) if (k.dyn) { const CollAMem &m = F.mem[k.key]; if (m.hasP) hp = std::max (hp, m.hPrev); }
@@ -1013,200 +1103,222 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 	}
 	// 8b: LANDED wake on real contacts (6.6), before the islands so a woken body joins them dynamic
 	WakePass (pts, res);
-	// 9: islands over dynamic bodies
+	// 9: islands over dynamic bodies; a plan reaching a dynamic body outside its island merges the two and starts over (M3)
 	std::vector<int> u (nb);
-	std::iota (u.begin (), u.end (), 0);
-	for (const APt &q : pts) if (w[q.a].dyn && w[q.b].dyn) { int x = Root (u, q.a), y = Root (u, q.b); if (x != y) u[std::max (x, y)] = std::min (x, y); }
-	std::vector<Plan> plan (nb);
-	std::vector<char> inIsl (nb, 0);
+	std::vector<Plan> plan;
+	std::vector<char> inIsl;
 	struct SpecB { Vector dP1, dL1, dP2, dL2; bool on = false; };
-	std::vector<SpecB> spec (nb);
+	std::vector<SpecB> spec;
 	std::vector<CollAIslandRec> newIsl;
 	std::vector<CollPairResult> solvedReal;
 	std::vector<CollEventRec> erec;
 	std::map<int, int> realIdx;                                // forward result -> solvedReal index
-	std::vector<char> solvedRes (res.size (), 0);
+	std::vector<char> solvedRes;
 	bool anySpecFrame = false, anyRealFrame = false;
-	std::vector<char> done (nb, 0);
-	for (int root = 0; root < nb; root++) {
-		if (!w[root].dyn || Root (u, root) != root) continue;
-		std::vector<int> pidx;
-		for (size_t k = 0; k < pts.size (); k++) {
-			int d = w[pts[k].a].dyn ? pts[k].a : pts[k].b;
-			if (Root (u, d) == root) pidx.push_back ((int)k);
-		}
-		if (pidx.empty ()) continue;
-		std::vector<int> memb;                                // dynamic members, then kinematic partners
-		for (int i = 0; i < nb; i++) if (w[i].dyn && Root (u, i) == root) memb.push_back (i);
-		for (int k : pidx) for (int s : { pts[k].a, pts[k].b }) if (!w[s].dyn && std::find (memb.begin (), memb.end (), s) == memb.end ()) memb.push_back (s);
-		bool anySpec = false, anyReal = false;
-		const Vector O = w[memb[0]].X;
-		auto idx = [&] (int i) { return (int)(std::find (memb.begin (), memb.end (), i) - memb.begin ()); };
-		auto build = [&] (CollIsland &is, bool withSpec, std::vector<int> &map) { Build (is, withSpec, map, memb, pidx, pts, res, O); };
-		for (int k : pidx) (pts[k].real ? anyReal : anySpec) = true;
-		CollIsland all, ro;
-		std::vector<int> mapAll, mapRo;
-		build (all, true, mapAll);
-		all.Solve (F.prm);
-		// 10: rounds on the planned rigid motion (5.4)
-		for (int pass = 0; anySpec && pass < 3; pass++) {
-			bool redo = false;
-			for (size_t j = 0; j < memb.size (); j++) {
-				int i = memb[j];
-				if (!w[i].dyn) continue;
-				CollDelta d;
-				all.Delta ((int)j, d);
-				Vector x1 = w[i].x1, v1 = w[i].v1, w1 = w[i].w1;
-				Quaternion q1 = w[i].q1;
-				CollApplyDeltaState (x1, v1, q1, w1, Ib (i), d);
-				Vector v0 = w[i].V + all.body[j].dP1/b[i].m;
-				Vector w0g = mul (QM (w[i].Q), OmegaOf (i, w[i].Q, SpinL (i, w[i].Q, w[i].W) + all.body[j].dL1));
-				const CollMotion &m = fwd.Body (w[i].det).m;
-				CollRestart r { v0 - m.Vel (0.0), w0g - m.Omega (0.0), x1, v1, mul (QM (q1), w1), q1 };
-				std::vector<CollPairResult> o2;
-				fwd.Resweep (w[i].det, 0.0, r, o2);
-				F.st.rounds++;
-				for (const CollPairResult &x : o2) {
-					if (x.kind == COLL_NONE || x.npt <= 0 || !(x.tau > 0.0)) continue;
-					int a = fwdOf[x.bodyA], c = fwdOf[x.bodyB];
-					if (idx (a) >= (int)memb.size () || idx (c) >= (int)memb.size ()) continue;
-					bool held = false;
-					for (int k : pidx) if (!pts[k].real && ((pts[k].a == a && pts[k].b == c) || (pts[k].a == c && pts[k].b == a))) held = true;
-					if (held) {                                // the plan still overshoots: shorten by the remaining overshoot
-						double over = 0;
-						for (int q = 0; q < x.npt; q++) {
-							const CollContact &c = x.pt[q];
-							Vector va = x.a.v + Xc (x.a.w, c.pA - x.a.c) + c.vsA, vb = x.b.v + Xc (x.b.w, c.pB - x.b.c) + c.vsB;
-							over = std::max (over, -dotp (va - vb, c.n)*(1.0 - x.tau)*h);
-						}
-						if (!(over > F.prm.slop)) continue;
-						for (int k : pidx) if (!pts[k].real && ((pts[k].a == a && pts[k].b == c) || (pts[k].a == c && pts[k].b == a)) && pts[k].gap > 0) {
-							pts[k].gap = std::max (0.0, pts[k].gap - over); redo = true;
-						}
-						continue;
-					}
-					std::vector<CollPairResult> one (1, x);
-					std::vector<APt> add;
-					Convert (one, add);
-					for (APt &q : add) {
-						if (q.real) continue;
-						q.res = (int)res.size ();
-						pidx.push_back ((int)pts.size ()); pts.push_back (q); redo = true;
-					}
-					res.push_back (x);
-					solvedRes.push_back (0);
-				}
+	bool merged = true;
+	for (int merges = 0; merged; merges++) {
+		merged = false;
+		std::iota (u.begin (), u.end (), 0);
+		for (const APt &q : pts) if (w[q.a].dyn && w[q.b].dyn) { int x = Root (u, q.a), y = Root (u, q.b); if (x != y) u[std::max (x, y)] = std::min (x, y); }
+		plan.assign (nb, Plan ()); inIsl.assign (nb, 0); spec.assign (nb, SpecB ());
+		newIsl.clear (); solvedReal.clear (); erec.clear (); realIdx.clear (); F.sup.clear ();
+		solvedRes.assign (res.size (), 0);
+		anySpecFrame = anyRealFrame = false;
+		for (int i = 0; i < nb; i++) b[i].loaded = false;
+		for (int root = 0; root < nb && !merged; root++) {
+			if (!w[root].dyn || Root (u, root) != root) continue;
+			std::fill (frz.begin (), frz.end (), 0);
+			std::vector<int> pidx;
+			for (size_t k = 0; k < pts.size (); k++) {
+				const APt &q = pts[k];
+				if ((!w[q.a].dyn || Root (u, q.a) == root) && (!w[q.b].dyn || Root (u, q.b) == root)) pidx.push_back ((int)k);
 			}
-			if (!redo) break;
+			if (pidx.empty ()) continue;
+			std::vector<int> memb;                                // dynamic members, then kinematic partners
+			for (int i = 0; i < nb; i++) if (w[i].dyn && Root (u, i) == root) memb.push_back (i);
+			for (int k : pidx) for (int s : { pts[k].a, pts[k].b }) if (!w[s].dyn && std::find (memb.begin (), memb.end (), s) == memb.end ()) memb.push_back (s);
+			bool anySpec = false, anyReal = false;
+			const Vector O = w[memb[0]].X;
+			auto idx = [&] (int i) { return (int)(std::find (memb.begin (), memb.end (), i) - memb.begin ()); };
+			auto build = [&] (CollIsland &is, bool withSpec, std::vector<int> &map) { Build (is, withSpec, map, memb, pidx, pts, res, O); };
+			for (int k : pidx) (pts[k].real ? anyReal : anySpec) = true;
+			CollIsland all, ro;
+			std::vector<int> mapAll, mapRo;
 			build (all, true, mapAll);
 			all.Solve (F.prm);
-		}
-		if (anySpec) { build (ro, false, mapRo); if (!ro.con.empty ()) ro.Solve (F.prm); }
-		anySpecFrame = anySpecFrame || anySpec; anyRealFrame = anyRealFrame || anyReal;
-		if (F.check) {                                        // island momentum of the impulsive parts (12)
-			bool allDyn = true;
-			Vector sP; double sJ = 0;
-			for (size_t j = 0; j < memb.size (); j++) { allDyn = allDyn && w[memb[j]].dyn; sP += all.body[j].dP1 + all.body[j].dP2; }
-			for (const CollSContact &c : all.con) sJ += c.J1.length () + c.J2.length ();
-			if (allDyn && sP.length () > 1e-12*(sJ + 1.0)) Fail ("island P", sP.length (), sJ);
-		}
-		for (size_t j = 0; j < memb.size (); j++) {
-			int i = memb[j];
-			if (!w[i].dyn) continue;
-			SpecB sp;
-			if (anySpec) {
-				sp.on = true;
-				sp.dP1 = all.body[j].dP1; sp.dL1 = all.body[j].dL1; sp.dP2 = all.body[j].dP2; sp.dL2 = all.body[j].dL2;
-				if (!ro.con.empty ()) { sp.dP1 -= ro.body[j].dP1; sp.dL1 -= ro.body[j].dL1; sp.dP2 -= ro.body[j].dP2; sp.dL2 -= ro.body[j].dL2; }
+			// 10: rounds on the planned rigid motion (5.4); a pair is tested once both planned motions are in the detector (M2)
+			for (int pass = 0; anySpec && pass < 3 && !merged; pass++) {
+				bool redo = false;
+				std::vector<char> moved (nb, 0);
+				for (size_t j = 0; j < memb.size (); j++) {
+					int i = memb[j];
+					if (!Dyn (i)) continue;
+					CollDelta d;
+					all.Delta ((int)j, d);
+					Vector x1 = w[i].x1, v1 = w[i].v1, w1 = w[i].w1;
+					Quaternion q1 = w[i].q1;
+					CollApplyDeltaState (x1, v1, q1, w1, Ib (i), d);
+					Vector v0 = w[i].V + all.body[j].dP1/b[i].m;
+					Vector w0g = mul (QM (w[i].Q), OmegaOf (i, w[i].Q, SpinL (i, w[i].Q, w[i].W) + all.body[j].dL1));
+					const CollMotion &m = fwd.Body (w[i].det).m;
+					CollRestart r { v0 - m.Vel (0.0), w0g - m.Omega (0.0), x1, v1, mul (QM (q1), w1), q1 };
+					std::vector<CollPairResult> o2;
+					fwd.Resweep (w[i].det, 0.0, r, o2);
+					F.st.rounds++;
+					moved[i] = 1;
+					for (const CollPairResult &x : o2) {
+						if (x.kind == COLL_NONE || x.npt <= 0 || !(x.tau > 0.0)) continue;
+						int a = fwdOf[x.bodyA], c = fwdOf[x.bodyB], o = a == i ? c : a;
+						if (Dyn (o) && !moved[o] && idx (o) < (int)memb.size ()) continue;   // tested when o's plan is in
+						bool outside = idx (o) >= (int)memb.size ();
+						if (outside && w[o].dyn && merges < F.rounds) merged = true;   // o's island joins this one: start over
+						else if (outside) { if (w[o].dyn) frz[o] = 1; memb.push_back (o); } // past the limit: o is a kinematic partner, the plan stops at contact
+						bool held = false;
+						for (int k : pidx) if (!pts[k].real && ((pts[k].a == a && pts[k].b == c) || (pts[k].a == c && pts[k].b == a))) held = true;
+						if (held) {                                // the plan still overshoots: shorten by the remaining overshoot
+							double over = 0;
+							for (int q = 0; q < x.npt; q++) {
+								const CollContact &c = x.pt[q];
+								Vector va = x.a.v + Xc (x.a.w, c.pA - x.a.c) + c.vsA, vb = x.b.v + Xc (x.b.w, c.pB - x.b.c) + c.vsB;
+								over = std::max (over, -dotp (va - vb, c.n)*(1.0 - x.tau)*h);
+							}
+							if (!(over > F.prm.slop)) continue;
+							for (int k : pidx) if (!pts[k].real && ((pts[k].a == a && pts[k].b == c) || (pts[k].a == c && pts[k].b == a)) && pts[k].gap > 0) {
+								pts[k].gap = std::max (0.0, pts[k].gap - over); redo = true;
+							}
+							continue;
+						}
+						std::vector<CollPairResult> one (1, x);
+						std::vector<APt> add;
+						Convert (one, add);
+						for (APt &q : add) {
+							if (q.real) continue;
+							q.res = (int)res.size ();
+							pidx.push_back ((int)pts.size ()); pts.push_back (q); redo = true;
+						}
+						res.push_back (x);
+						solvedRes.push_back (0);
+					}
+				}
+				if (!redo || merged) break;
+				build (all, true, mapAll);
+				all.Solve (F.prm);
 			}
-			spec[i] = sp;
-			Plan &pl = plan[i];
-			inIsl[i] = 1; pl.any = true;
-			pl.vNew = w[i].V + all.body[j].dP1/b[i].m;
-			pl.wNew = OmegaOf (i, w[i].Q, SpinL (i, w[i].Q, w[i].W) + all.body[j].dL1);
-			pl.F = all.body[j].dP2/h; pl.M = all.body[j].dL2/h;
-			// load flag (7.4): slow contacts pressed at a_load
-			bool slow = true;
-			for (const CollSContact &c : all.con) if (((int)j == c.a || (int)j == c.b) && c.vapp >= F.prm.vrest) slow = false;
-			if (slow && all.body[j].dP2.length ()/(b[i].m*h) >= COLL_A_LOAD) b[i].loaded = true;
-		}
-		// 12: position correction of pressed non-FIRST real points below -2 slop (5.4)
-		{
-			CollIsland pc;
-			pc.tau = 0; pc.h = h;
-			for (const CollSBody &sb0 : all.body) { CollSBody sb = sb0; sb.R1 = sb.Rt; sb.x1 = sb.xt; pc.body.push_back (sb); }
+			if (merged) break;
+			if (anySpec) { build (ro, false, mapRo); if (!ro.con.empty ()) ro.Solve (F.prm); }
+			anySpecFrame = anySpecFrame || anySpec; anyRealFrame = anyRealFrame || anyReal;
+			if (F.check) {                                        // island momentum of the impulsive parts (12)
+				bool allDyn = true;
+				Vector sP; double sJ = 0;
+				for (size_t j = 0; j < memb.size (); j++) { allDyn = allDyn && Dyn (memb[j]); sP += all.body[j].dP1 + all.body[j].dP2; }
+				for (const CollSContact &c : all.con) sJ += c.J1.length () + c.J2.length ();
+				if (allDyn && sP.length () > 1e-12*(sJ + 1.0)) Fail ("island P", sP.length (), sJ);
+			}
+			for (size_t j = 0; j < memb.size (); j++) {
+				int i = memb[j];
+				if (!Dyn (i)) continue;
+				SpecB sp;
+				if (anySpec) {
+					sp.on = true;
+					sp.dP1 = all.body[j].dP1; sp.dL1 = all.body[j].dL1; sp.dP2 = all.body[j].dP2; sp.dL2 = all.body[j].dL2;
+					if (!ro.con.empty ()) { sp.dP1 -= ro.body[j].dP1; sp.dL1 -= ro.body[j].dL1; sp.dP2 -= ro.body[j].dP2; sp.dL2 -= ro.body[j].dL2; }
+				}
+				spec[i] = sp;
+				Plan &pl = plan[i];
+				inIsl[i] = 1; pl.any = true;
+				pl.vNew = w[i].V + all.body[j].dP1/b[i].m;
+				pl.wNew = OmegaOf (i, w[i].Q, SpinL (i, w[i].Q, w[i].W) + all.body[j].dL1);
+				pl.F = all.body[j].dP2/h; pl.M = all.body[j].dL2/h;
+				// load flag (7.4): slow contacts pressed at a_load
+				bool slow = true;
+				for (const CollSContact &c : all.con) if (((int)j == c.a || (int)j == c.b) && c.vapp >= F.prm.vrest) slow = false;
+				if (slow && all.body[j].dP2.length ()/(b[i].m*h) >= COLL_A_LOAD) b[i].loaded = true;
+			}
+			// 12: position correction of pressed non-FIRST real points below -2 slop (5.4)
+			{
+				CollIsland pc;
+				pc.tau = 0; pc.h = h;
+				for (const CollSBody &sb0 : all.body) { CollSBody sb = sb0; sb.R1 = sb.Rt; sb.x1 = sb.xt; pc.body.push_back (sb); }
+				for (size_t m = 0; m < pidx.size (); m++) {
+					const APt &q = pts[pidx[m]];
+					if (!q.real || mapAll[m] < 0) continue;
+					const CollSContact &c = all.con[mapAll[m]];
+					if ((c.flags & COLLP_FIRST) || !(dotp (c.J2, c.n) > 0) || !(c.gap < -2.0*F.prm.slop)) continue;
+					pc.con.push_back (c);
+				}
+				if (!pc.con.empty ()) {
+					std::vector<CollDelta> d;
+					if (pc.Correct (F.prm, d)) for (size_t j = 0; j < memb.size (); j++) if (Dyn (memb[j])) { plan[memb[j]].dxc = d[j].dx; plan[memb[j]].dthc = d[j].dth; }
+				}
+			}
+			// 11, 13: real results solved; event records of real points
 			for (size_t m = 0; m < pidx.size (); m++) {
 				const APt &q = pts[pidx[m]];
 				if (!q.real || mapAll[m] < 0) continue;
 				const CollSContact &c = all.con[mapAll[m]];
-				if ((c.flags & COLLP_FIRST) || !(dotp (c.J2, c.n) > 0) || !(c.gap < -2.0*F.prm.slop)) continue;
-				pc.con.push_back (c);
-			}
-			if (!pc.con.empty ()) {
-				std::vector<CollDelta> d;
-				if (pc.Correct (F.prm, d)) for (size_t j = 0; j < memb.size (); j++) if (w[memb[j]].dyn) { plan[memb[j]].dxc = d[j].dx; plan[memb[j]].dthc = d[j].dth; }
-			}
-		}
-		// 11, 13: real results solved; event records of real points
-		for (size_t m = 0; m < pidx.size (); m++) {
-			const APt &q = pts[pidx[m]];
-			if (!q.real || mapAll[m] < 0) continue;
-			const CollSContact &c = all.con[mapAll[m]];
-			if (!solvedRes[q.res]) { solvedRes[q.res] = 1; fwd.Solved (res[q.res]); }
-			CollEventRec e {};
-			e.t = q.t; e.pt = q.pt; e.con = mapAll[m];
-			auto ri = realIdx.find (q.res);
-			if (ri == realIdx.end ()) { ri = realIdx.emplace (q.res, (int)solvedReal.size ()).first; solvedReal.push_back (res[q.res]); }
-			e.res = ri->second;
-			e.oa = fwd.Owner (res[q.res], q.pt, 0); e.ob = fwd.Owner (res[q.res], q.pt, 1);
-			e.kind = c.kind; e.gap = c.gap;
-			e.vapp = c.vapp; e.ln1 = c.ln1; e.Wn = c.Wn; e.Wt = c.Wt;
-			e.vpost = dotp (all.UPost ()[mapAll[m]], c.n);
-			e.slip = (all.UPre ()[mapAll[m]] - c.n*dotp (all.UPre ()[mapAll[m]], c.n)).length ();
-			e.Jt = (c.J1 - c.n*c.ln1).length ();
-			e.jsum = c.J1.length () + c.J2.length ();
-			e.meff = all.MeffAt (c.p, c.n, c.a, c.b);
-			e.corrected = false; e.surf = false; e.woke = w[q.a].woke || w[q.b].woke;
-			erec.push_back (e);
-			// 14: resting row for next frame (7.5)
-			CollASupRow s {};
-			s.ka = w[q.a].key; s.kb = w[q.b].key;
-			Vector p = q.org + (q.pa + q.pb)*0.5;
-			s.ra = tmul (QM (Rot (q.a)), p - Pos (q.a)); s.rb = tmul (QM (Rot (q.b)), p - Pos (q.b)); s.nb = tmul (QM (Rot (q.b)), q.n);
-			s.J2n = std::max (0.0, dotp (c.J2, c.n));
-			F.sup.push_back (s);
-		}
-		// 14: records of a speculative island (2.1)
-		if (anySpec) {
-			CollAIslandRec R;
-			R.h = h;
-			for (size_t m = 0; m < pidx.size (); m++) {
-				const APt &q = pts[pidx[m]];
-				if (mapAll[m] < 0) continue;
-				const CollSContact &ca = all.con[mapAll[m]];
-				Vector J = ca.J1 + ca.J2;
-				if (q.real && !ro.con.empty () && mapRo[m] >= 0) { const CollSContact &cr = ro.con[mapRo[m]]; J -= cr.J1 + cr.J2; }
-				if (J.length () == 0.0) continue;
+				if (!solvedRes[q.res]) { solvedRes[q.res] = 1; fwd.Solved (res[q.res]); }
+				CollEventRec e {};
+				e.t = q.t; e.pt = q.pt; e.con = mapAll[m];
+				auto ri = realIdx.find (q.res);
+				if (ri == realIdx.end ()) { ri = realIdx.emplace (q.res, (int)solvedReal.size ()).first; solvedReal.push_back (res[q.res]); }
+				e.res = ri->second;
+				e.oa = fwd.Owner (res[q.res], q.pt, 0); e.ob = fwd.Owner (res[q.res], q.pt, 1);
+				e.kind = c.kind; e.gap = c.gap;
+				e.vapp = c.vapp; e.ln1 = c.ln1; e.Wn = c.Wn; e.Wt = c.Wt;
+				e.vpost = dotp (all.UPost ()[mapAll[m]], c.n);
+				e.slip = (all.UPre ()[mapAll[m]] - c.n*dotp (all.UPre ()[mapAll[m]], c.n)).length ();
+				e.Jt = (c.J1 - c.n*c.ln1).length ();
+				e.jsum = c.J1.length () + c.J2.length ();
+				e.meff = all.MeffAt (c.p, c.n, c.a, c.b);
+				e.corrected = false; e.surf = false; e.woke = w[q.a].woke || w[q.b].woke;
+				erec.push_back (e);
+				// 14: resting row for next frame (7.5)
+				CollASupRow s {};
+				s.ka = w[q.a].key; s.kb = w[q.b].key;
 				Vector p = q.org + (q.pa + q.pb)*0.5;
-				R.c.push_back (CollAContactRec { w[q.a].key, w[q.b].key, tmul (QM (Rot (q.a)), p - Pos (q.a)), tmul (QM (Rot (q.b)), p - Pos (q.b)), J });
+				s.ra = tmul (QM (Rot (q.a)), p - Pos (q.a)); s.rb = tmul (QM (Rot (q.b)), p - Pos (q.b)); s.nb = tmul (QM (Rot (q.b)), q.n);
+				s.J2n = std::max (0.0, dotp (c.J2, c.n));
+				F.sup.push_back (s);
 			}
-			for (size_t m = 0; m < pidx.size (); m++) {
-				const APt &q = pts[pidx[m]];
-				if (q.real) continue;
-				CollAPairRec *pp = nullptr;
-				for (CollAPairRec &x : R.p) if (x.ka == w[q.a].key && x.kb == w[q.b].key) pp = &x;
-				if (pp && pp->g0 <= q.gap) continue;
-				if (!pp) { R.p.push_back (CollAPairRec {}); pp = &R.p.back (); }
-				pp->ka = w[q.a].key; pp->kb = w[q.b].key; pp->n = q.n; pp->g0 = q.gap;
-				pp->ra = tmul (QM (Rot (q.a)), q.org + q.pa - Pos (q.a));
-				pp->rb = tmul (QM (Rot (q.b)), q.org + q.pb - Pos (q.b));
-				Vector s = q.org + (q.pa + q.pb)*0.5;
-				pp->u0 = -dotp (PointVel (q.a, s - Pos (q.a)) - PointVel (q.b, s - Pos (q.b)), q.n);
+			// 14: records of a speculative island (2.1)
+			if (anySpec) {
+				CollAIslandRec R;
+				R.h = h;
+				for (size_t m = 0; m < pidx.size (); m++) {
+					const APt &q = pts[pidx[m]];
+					if (mapAll[m] < 0) continue;
+					const CollSContact &ca = all.con[mapAll[m]];
+					Vector J = ca.J1 + ca.J2;
+					if (q.real && !ro.con.empty () && mapRo[m] >= 0) { const CollSContact &cr = ro.con[mapRo[m]]; J -= cr.J1 + cr.J2; }
+					if (J.length () == 0.0) continue;
+					Vector p = q.org + (q.pa + q.pb)*0.5;
+					CollAContactRec c { w[q.a].key, w[q.b].key, tmul (QM (Rot (q.a)), p - Pos (q.a)), tmul (QM (Rot (q.b)), p - Pos (q.b)), J };
+					if (frz[q.a]) c = CollAContactRec { w[q.b].key, ~0ull, c.rb, c.rb, -J };   // a capped partner took no impulse: undo on the dynamic side only
+					else if (frz[q.b]) c.kb = ~0ull;
+					R.c.push_back (c);
+				}
+				std::vector<std::pair<int,int>> act;               // pairs whose speculative points carried an impulse; idle ones take no part in the touch test
+				for (size_t m = 0; m < pidx.size (); m++) {
+					const APt &q = pts[pidx[m]];
+					if (!q.real && mapAll[m] >= 0 && (all.con[mapAll[m]].J1 + all.con[mapAll[m]].J2).length () > 0.0) act.push_back ({ q.a, q.b });
+				}
+				for (size_t m = 0; m < pidx.size (); m++) {
+					const APt &q = pts[pidx[m]];
+					if (q.real || frz[q.a] || frz[q.b] || std::find (act.begin (), act.end (), std::make_pair (q.a, q.b)) == act.end ()) continue;
+					CollAPairRec *pp = nullptr;
+					for (CollAPairRec &x : R.p) if (x.ka == w[q.a].key && x.kb == w[q.b].key) pp = &x;
+					if (pp && pp->g0 <= q.gap) continue;
+					if (!pp) { R.p.push_back (CollAPairRec {}); pp = &R.p.back (); }
+					pp->ka = w[q.a].key; pp->kb = w[q.b].key; pp->n = q.n; pp->g0 = q.gap;
+					pp->ra = tmul (QM (Rot (q.a)), q.org + q.pa - Pos (q.a));
+					pp->rb = tmul (QM (Rot (q.b)), q.org + q.pb - Pos (q.b));
+					Vector s = q.org + (q.pa + q.pb)*0.5;
+					pp->u0 = -dotp (PointVel (q.a, s - Pos (q.a)) - PointVel (q.b, s - Pos (q.b)), q.n);
+				}
+				for (int i : memb) if (Dyn (i)) { CollABodyRec br {}; br.key = w[i].key; br.memberHash = b[i].memberHash; R.b.push_back (br); }
+				if (!R.p.empty ()) newIsl.push_back (R);
 			}
-			for (int i : memb) if (w[i].dyn) { CollABodyRec br {}; br.key = w[i].key; br.memberHash = b[i].memberHash; R.b.push_back (br); }
-			if (!R.p.empty ()) newIsl.push_back (R);
 		}
-		for (int i : memb) done[i] = 1;
 	}
 	// events of the touch frames (5.6): FIRST real points, dKE and vn never negative
 	if (!erec.empty ()) {
