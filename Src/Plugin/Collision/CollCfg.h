@@ -6,7 +6,7 @@
 #include <vector>
 
 struct CollCfgValues {
-	int model = 0;                          // CollisionModel (E1): 0 no contacts and no new damage; the release step makes the default 1
+	int model = 1;                          // CollisionModel (E1): 0 no contacts and no new damage; default on (release step)
 	bool response = true;                   // CollisionResponse (E1): false detects and logs only
 	bool check = false;                     // CollisionCheck (E1): momentum checks fail hard (tests pin TRUE)
 	bool dockZone = true;                   // CollisionDockZone (E1)
