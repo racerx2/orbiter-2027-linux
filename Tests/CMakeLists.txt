@@ -84,7 +84,7 @@ add_unit_test(Input.Test ${ORBITER_SOURCE_DIR}/Di7frame.cpp ${ORBITER_SOURCE_DIR
 add_unit_test(Celbody.Test ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
 set_target_properties(Celbody.Test PROPERTIES ENABLE_EXPORTS ON)
 add_dependencies(Celbody.Test Sol Sun Mercury Venus Earth Mars Jupiter Saturn Uranus Neptune Moon Io Europa Ganymede Callisto
-	Mimas Enceladus Tethys Dione Rhea Titan Hyperion Iapetus Phobos Deimos Miranda Ariel Umbriel Titania Oberon Triton Proteus Nereid Vesta Pluto Charon Styx Nix Kerberos Hydra EarthAtm2006 EarthAtmJ71G EarthAtmNRLMSISE00 MarsAtm2006 VenusAtm2006)
+	Mimas Enceladus Tethys Dione Rhea Titan Hyperion Iapetus Phobos Deimos Miranda Ariel Umbriel Titania Oberon Triton Proteus Nereid Vesta Pluto Charon Styx Nix Kerberos Hydra EarthAtm2006 EarthAtmJ71G EarthAtmNRLMSISE00 MarsAtm2006 VenusAtm2006 TitanAtm2005 JupiterAtm1995 SaturnAtm2017 UranusAtm1986 NeptuneAtm1989 IoAtm2007)
 # not upstream: dialog builder on Orbiter.rc, rendered offscreen
 add_unit_test(ResDialog.Test ${ORBITER_SOURCE_DIR}/ResDialog.cpp ${ORBITER_SOURCE_DIR}/ResDialog.h)
 set_target_properties(ResDialog.Test PROPERTIES AUTOMOC ON)
@@ -105,6 +105,11 @@ add_test(NAME RcCond.Test COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_D
 # not upstream: folder listings in NTFS order, MakePath under a long working directory
 add_unit_test(Util.Test ${ORBITER_SOURCE_DIR}/Util.cpp ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
 target_link_libraries(Util.Test Qt6::Widgets)
+# not upstream: the .msh reader on malformed files, built with ASan
+add_unit_test(Mesh.Test ${ORBITER_SOURCE_DIR}/Mesh.cpp ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
+target_compile_definitions(Mesh.Test PRIVATE NOGRAPHICS)
+target_compile_options(Mesh.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(Mesh.Test PRIVATE -fsanitize=address)
 # custom: launcher skins; the parsers, and the classic-control hider and reset key on IDD_MAIN offscreen
 add_unit_test(LauncherFacts.Test ${ORBITER_SOURCE_DIR}/Custom/LauncherFacts.cpp)
 target_compile_definitions(LauncherFacts.Test PRIVATE SCN_DIR="${CMAKE_SOURCE_DIR}/Scenarios")

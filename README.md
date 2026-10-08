@@ -1,6 +1,6 @@
 ![Orbiter logo](./Src/Orbiter/Bitmaps/banner.png)
 
-# Orbiter Space Flight Simulator — native Linux port
+# Orbiter 2027 Space Flight Simulator — native Linux port+
 
 Orbiter is a spaceflight simulator based on Newtonian mechanics. Its playground
 is our solar system with many of its major bodies – the sun, planets and moons.
