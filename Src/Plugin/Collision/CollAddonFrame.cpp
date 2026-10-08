@@ -1114,8 +1114,29 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 	std::vector<char> solvedRes;
 	bool anySpecFrame = false, anyRealFrame = false;
 	bool merged = true;
+	const std::vector<APt> pts0 = pts;                         // a merge starts over from these: the aborted pass is undone
+	const std::vector<CollPairResult> res0 = res;
+	std::vector<CollPairResult> links;                         // plan hits that merged two islands, kept over restarts
+	std::vector<char> swept (nb, 0);                           // detector motion replaced by a plan in this attempt
 	for (int merges = 0; merged; merges++) {
 		merged = false;
+		if (merges > 0) {
+			pts = pts0, res = res0;
+			for (int i = 0; i < nb; i++) if (swept[i]) {        // back to the predicted motion
+				const CollMotion &m = fwd.Body (w[i].det).m;
+				CollRestart r { w[i].V - m.Vel (0.0), mul (QM (w[i].Q), w[i].W) - m.Omega (0.0), w[i].x1, w[i].v1, mul (QM (w[i].q1), w[i].w1), w[i].q1 };
+				std::vector<CollPairResult> o2;
+				fwd.Resweep (w[i].det, 0.0, r, o2);
+				swept[i] = 0;
+			}
+			for (const CollPairResult &x : links) {
+				std::vector<CollPairResult> one (1, x);
+				std::vector<APt> add;
+				Convert (one, add);
+				for (APt &q : add) if (!q.real) { q.res = (int)res.size (); pts.push_back (q); }
+				res.push_back (x);
+			}
+		}
 		std::iota (u.begin (), u.end (), 0);
 		for (const APt &q : pts) if (w[q.a].dyn && w[q.b].dyn) { int x = Root (u, q.a), y = Root (u, q.b); if (x != y) u[std::max (x, y)] = std::min (x, y); }
 		plan.assign (nb, Plan ()); inIsl.assign (nb, 0); spec.assign (nb, SpecB ());
@@ -1163,14 +1184,20 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 					std::vector<CollPairResult> o2;
 					fwd.Resweep (w[i].det, 0.0, r, o2);
 					F.st.rounds++;
-					moved[i] = 1;
+					moved[i] = 1, swept[i] = 1;
 					for (const CollPairResult &x : o2) {
 						if (x.kind == COLL_NONE || x.npt <= 0 || !(x.tau > 0.0)) continue;
 						int a = fwdOf[x.bodyA], c = fwdOf[x.bodyB], o = a == i ? c : a;
 						if (Dyn (o) && !moved[o] && idx (o) < (int)memb.size ()) continue;   // tested when o's plan is in
 						bool outside = idx (o) >= (int)memb.size ();
-						if (outside && w[o].dyn && merges < F.rounds) merged = true;   // o's island joins this one: start over
-						else if (outside) { if (w[o].dyn) frz[o] = 1; memb.push_back (o); } // past the limit: o is a kinematic partner, the plan stops at contact
+						if (outside && w[o].dyn && merges < F.rounds) merged = true, links.push_back (x);   // o's island joins this one: start over
+						else if (outside) {                    // past the limit: o is a kinematic partner, the plan stops at contact
+							if (w[o].dyn) {
+								frz[o] = 1;
+								CollLog (COLLLOG_WARN, "Collision: island merge limit (%d) reached, '%u' held fixed against '%u' this step", F.rounds, b[o].id, b[i].id);
+							}
+							memb.push_back (o);
+						}
 						bool held = false;
 						for (int k : pidx) if (!pts[k].real && ((pts[k].a == a && pts[k].b == c) || (pts[k].a == c && pts[k].b == a))) held = true;
 						if (held) {                                // the plan still overshoots: shorten by the remaining overshoot

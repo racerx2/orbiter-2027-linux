@@ -227,3 +227,19 @@ TEST_CASE ("fix1 M8 hostile block and side file are bounded")
 	CHECK (f.ev[0].rec.grp == std::vector<uint16_t> { 3 });
 	CHECK (f.skipped == 1);
 }
+
+TEST_CASE ("fix1 review: an over-long D event cut off by the end of the side file is dropped")
+{
+	DentRecord r {};
+	r.p.c = Vector (1, 2, 3), r.p.n = Vector (0, 0, 1), r.p.R = 1, r.p.h = 0.1, r.slot = 0;
+	for (int i = 0; i < 70000; i++) r.grp.push_back ((uint16_t)(i % 60000));
+	std::vector<std::string> l;
+	CollSide::Dent (1, 0, 0, r, l);
+	REQUIRE (l.size () > 2);
+	l.pop_back (); // the list's last line never written (crash while recording)
+	std::string text = CollSide::Header ("X") + "\n" + CollSide::Vdef (0, 0, "PB-A", "ShuttlePB") + "\n";
+	for (auto &x : l) text += x + "\n";
+	CollSideFile f;
+	REQUIRE (CollSide::Parse (text, f));
+	CHECK (f.ev.empty ()); // not kept with an empty list (= all groups)
+}

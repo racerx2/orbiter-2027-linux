@@ -367,5 +367,6 @@ bool CollSide::Parse (const std::string &text, CollSideFile &out)
 		if (ok) out.ev.push_back (ev);
 		else out.skipped++;
 	}
+	if (open && over && !out.ev.empty ()) { out.ev.pop_back (); out.skipped++; } // the dropped list never ended (file ends)
 	return head;
 }

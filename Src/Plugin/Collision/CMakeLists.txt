@@ -113,7 +113,10 @@ else ()
 		COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/CollisionAPI.h ${COLL_SDK_HEADER}
 		DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/CollisionAPI.h)
 	set(COLL_CFG_ONCE ${CMAKE_COMMAND} -DCOLL_CFG_SRC=${CMAKE_CURRENT_SOURCE_DIR}/Config/Collision.cfg -DCOLL_CFG_DST=${ORBITER_BINARY_CONFIG_DIR}/Collision.cfg -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CollisionCfgOnce.cmake)
-	execute_process(COMMAND ${COLL_CFG_ONCE}) # at configure time too: the upgrade line shows in the configure output
+	execute_process(COMMAND ${COLL_CFG_ONCE} RESULT_VARIABLE coll_cfg_rc) # at configure time too: the upgrade line shows in the configure output
+	if (NOT coll_cfg_rc EQUAL 0)
+		message(FATAL_ERROR "Collision: Collision.cfg copy or upgrade failed (${coll_cfg_rc})")
+	endif ()
 	set(COLL_DATA_CMDS COMMAND ${COLL_CFG_ONCE})
 	if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Meshes)
 		list(APPEND COLL_DATA_CMDS COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_CURRENT_SOURCE_DIR}/Meshes/ ${ORBITER_BINARY_MESH_DIR})
