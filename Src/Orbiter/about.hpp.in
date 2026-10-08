@@ -14,7 +14,7 @@
 
 #define SIG1AB "Martin Schweiger"
 
-#define SIG2 "openorbiter.space"
+#define SIG2 "https://github.com/racerx2/orbiter-2027-linux" // not upstream: was "openorbiter.space"
 
 #ifdef ISBETA
 #define SIG4 "Build @DATE@ [v.@VERSION@ BETA]"
@@ -27,5 +27,7 @@
 #define SIG7 "v.@VERSION@"
 
 #define SIG6 "www.youtube.com/user/orbitersim"
+
+#define SIG8 "Linux port: racerx2 & Claude" // not upstream: port credit
 
 #endif // CRYPTSTRING_H

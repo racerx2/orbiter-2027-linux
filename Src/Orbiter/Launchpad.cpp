@@ -142,7 +142,7 @@ bool orbiter::LaunchpadDialog::Create (bool startvideotab)
 			hDlg->move (x, y);
 			hDlg->resize (w - frame.width(), h - frame.height());
 		}
-		oapiResDlgItem (hDlg, IDC_BLACKBOX)->setProperty ("text", SIG4 "  \n" SIG2 "  \n" SIG1AA "  \n" SIG1AB "  ");
+		oapiResDlgItem (hDlg, IDC_BLACKBOX)->setProperty ("text", SIG4 "  \n" SIG2 "  \n" SIG1A "  \n" SIG8 "  "); // not upstream: was SIG1AA, SIG1AB
 		oapiResDlgItem (hDlg, IDC_VERSION)->setProperty ("text", SIG7);
 		Show();
 		if (startvideotab) {
