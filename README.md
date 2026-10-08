@@ -20,6 +20,58 @@ This tree is the Linux-only code of a line-by-line port of [orbitersim/orbiter](
 windows and dialogs on Qt 6, sound on PipeWire. It holds no Windows code; Orbiter for
 Windows is [orbitersim/orbiter](https://github.com/orbitersim/orbiter).
 
+## What's new since the Windows version
+
+### Planets and moons
+
+![Pluto and Charon](./.github/readme/planets.jpg)
+
+*Pluto, with its thin nitrogen atmosphere and blue haze, and Charon.*
+
+- **The Pluto system**: Pluto, Charon, Nix, Hydra, Kerberos and Styx, which Orbiter never had.
+- **New ephemeris modules** for Phobos, Deimos, Miranda, Ariel, Umbriel, Titania, Oberon and Triton (Windows has
+  them only as 32-bit binaries), and better orbits for Hyperion, Proteus, Nereid and Vesta.
+- **Spin axes and prime meridians** from the IAU rotation model.
+- **Every planet and moon on the tile renderer**, with new maps for Mercury, Saturn, Uranus, Triton, Pluto and
+  Charon. The textures are a separate download
+  ([Orbiter-linux-orbital-bodies-textures](https://github.com/racerx2/Orbiter-linux-orbital-bodies-textures));
+  the Launchpad offers to download and install the missing ones.
+- **Measured atmospheres** for every body that has one, so drag and aerobraking use real densities.
+
+### Launchpad skins
+
+![The Horizon skin](./.github/readme/skin-horizon.jpg)
+
+Change how the Launchpad looks without changing what it does. Pick a skin under **Extra > Launchpad skin**:
+
+- **Dark**: a dark style sheet for the classic Launchpad.
+- **Horizon** (above) and **Planetary Defense**: complete new launchers, made as Qt Designer forms.
+- **Your own**: copy a skin, or make a new layout of the stock Launchpad, and edit it in Qt Designer.
+  See [Skins/README.md](./Skins/README.md).
+
+Ctrl+Shift+L always brings back the classic Launchpad.
+
+### Collisions and damage
+
+![A Delta Glider before and after a 70 m/s head-on crash](./.github/readme/collisions.jpg)
+
+*A Delta Glider before (left) and after (right) a 70 m/s head-on crash.*
+
+An add-on that makes ships collide with each other and with base buildings:
+
+- Colliders follow each ship's real mesh, so cargo bays stay open.
+- Docked and attached stacks respond as one body, and every impact conserves momentum.
+- Dents form where the ships hit, sized by the crash energy. A ship that absorbs more than 1 kJ per kg is
+  destroyed (it loses thrust when the Damage model option is on).
+
+Turn it on in the Launchpad's **Modules** tab (Collision). Settings are in `Config/Collision.cfg`.
+
+### Multiplayer
+
+![Multiplayer](./.github/readme/multiplayer.png)
+
+**Under construction – stay tuned.**
+
 ## License
 
 Orbiter is now published as an Open Source project under the MIT License (see
