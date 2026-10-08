@@ -352,3 +352,31 @@ TEST_CASE ("fix1 M6: a static MESH sidecar part is predicted static while a visu
 	CHECK (anim);
 	CHECK (s.misuse == 0);
 }
+
+TEST_CASE ("fix2: a sidecar whose MESH file is missing drops its GROUP and FOLLOW rules, logged once", "[CollSourceA]")
+{
+	CollFakeSdk s;
+	s.File (".\\Meshes\\vis.msh", BoxesMsh ({ { "", 0 }, { "", 4 } }));
+	s.File (".\\Meshes\\vis.col", "COLLIDER-V1\nMESH hull\nEXCLUDE GROUP 0\nFOLLOW 0 1\n");
+	for (int i = 0; i < 2; i++) {
+		auto *v = s.AddVessel (i ? "V2" : "V1");
+		v->slot.resize (1); v->slot[0].kind = CollFakeSdk::NAME; v->slot[0].name = "vis";
+	}
+	CollGeomSession g (s, Cfg ());
+	g.SimulationStart (0, false);
+	g.BeginFrame (0, 0.1);
+	for (uint32_t i = 0; i < 2; i++) {
+		const CollShape *sh = g.Geom (i)->shape;
+		REQUIRE (sh);
+		CHECK (!sh->CollMesh (0));
+		CHECK (sh->PartOf (0, 0) >= 0);
+		CHECK (sh->PartOf (0, 1) >= 0);
+	}
+	CHECK (s.LogCount ("1 GROUP and 1 FOLLOW rules dropped") == 1);
+	CollMeshCache c; CollDirs d;
+	auto sc = c.Sidecar (s, d, "vis", 2);
+	REQUIRE (sc);
+	CHECK (sc->rule.empty ());
+	CHECK (sc->follow.empty ());
+	CHECK (s.misuse == 0);
+}
