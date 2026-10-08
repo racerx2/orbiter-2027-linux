@@ -1,5 +1,9 @@
 // not upstream: collision addon, unit tests of the counted CollSdk calls on the fake (design E2-U13)
 #include <catch2/catch_test_macros.hpp>
+#include <new>
+#include <stdexcept>
+#include <string>
+#include <vector>
 #include "CollFakeSdk.h"
 
 TEST_CASE ("E2-U13 counted calls count and log", "[CollSdk]")
@@ -56,4 +60,23 @@ TEST_CASE ("E2-U13 command balance", "[CollSdk]")
 	s.UnregisterCmd (a); s.UnregisterCmd (b);
 	REQUIRE (s.Count ().cmds == 0);
 	REQUIRE (s.Count ().Writes () == 0);
+}
+
+TEST_CASE ("fix1 E: CollGuard stops every exception and reports it to the hook", "[CollSdk]")
+{
+	static std::vector<std::string> got;
+	got.clear ();
+	g_collFail = [] (const char *where, const char *what) { got.push_back (std::string (where) + ": " + what); };
+	CHECK (CollGuard ("a", -1, [] () -> int { throw std::runtime_error ("boom"); }) == -1);
+	CHECK (CollGuard ("b", -1, [] () -> int { throw 7; }) == -1);
+	CHECK (CollGuard ("c", -1, [] { return 3; }) == 3);
+	bool after = false;
+	CollGuard ("d", [&] { throw std::bad_alloc (); after = true; });
+	CHECK_FALSE (after);
+	CollGuard ("e", [&] { after = true; });
+	CHECK (after);
+	CHECK (got == std::vector<std::string> { "a: boom", "b: unknown exception", "d: std::bad_alloc" });
+	g_collFail = nullptr;
+	CHECK (CollGuard ("f", 0, [] () -> int { throw std::logic_error ("x"); }) == 0); // no hook: dropped
+	CHECK (got.size () == 3);
 }

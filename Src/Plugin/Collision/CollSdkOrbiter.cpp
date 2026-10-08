@@ -169,7 +169,11 @@ public:
 	{
 		std::vector<std::string> r;
 		std::error_code ec;
-		for (auto &e : std::filesystem::directory_iterator (dir, ec)) r.push_back (e.path ().filename ().string ());
+		std::filesystem::directory_iterator it (std::filesystem::path (dir), ec), end; // no throwing overloads: an error ends the listing
+		for (; !ec && it != end; it.increment (ec)) {
+			std::u8string n = it->path ().filename ().u8string (); // string () throws on Windows for names outside the code page
+			r.emplace_back (n.begin (), n.end ());
+		}
 		std::sort (r.begin (), r.end ()); // NTFS order
 		return r;
 	}
