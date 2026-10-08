@@ -58,11 +58,22 @@ CollPlugin::CollPlugin (CollHModule h) : oapi::Module (h)
 {
 	proc = CollSdkOrbiterCreate (true);
 	snprintf (g_cmdDesc, sizeof g_cmdDesc, "%s", CollUiA::Description ());
-	cmd = proc->RegisterCmd (CollUiA::Label (), g_cmdDesc, OnCustomCmd, this); // once per process, as Framerate
+	try {
 #if COLL_HAVE_IMGUI
-	dlg = new CollDialogA (CurDmg); // no SDK call: the constructor stores the name
+		dlg = new CollDialogA (CurDmg); // no SDK call: the constructor stores the name
 #endif
-	CollApiA::SetSession (CurDmg);
+		CollApiA::SetSession (CurDmg);
+		cmd = proc->RegisterCmd (CollUiA::Label (), g_cmdDesc, OnCustomCmd, this); // last: once per process, as Framerate
+	} catch (...) { // the core must not keep a command whose context is gone
+		if (cmd) proc->UnregisterCmd (cmd);
+		cmd = 0;
+		CollApiA::SetSession (nullptr);
+#if COLL_HAVE_IMGUI
+		delete dlg;
+#endif
+		dlg = nullptr;
+		throw;
+	}
 }
 
 CollPlugin::~CollPlugin () = default;
@@ -106,16 +117,20 @@ void CollPlugin::End (const char *why) // no world access: on the normal close p
 	bool failed = g_failed;
 	if (s) {
 		uint32_t n = s->Serial ();
-		if (!failed) CollGuard ("session end", [&] { s->Close (); }); // an off session has no summary
+		if (!failed) CollGuard ("session end", [&] { s->Close (); });
+		else CollGuard ("session end", [&] { s->Abort (); }); // an off session has no summary; its side file is still flushed
 		s.reset ();
 		g_collLog = nullptr;
 		CollLogF ("Collision: session %u ended (%s)", n, why);
 	}
 	g_failed = false;
+	loaded = false;
 }
 
 void CollPlugin::LoadState (FILEHANDLE scn)
 {
+	if (g_failed && loaded) End ("stale"); // a previous load threw and no clbkSimulationEnd came
+	loaded = true;
 	CollGuard ("opcLoadState", [&] { if (CollSession *x = Want (true, "load")) x->Load (scn); });
 }
 

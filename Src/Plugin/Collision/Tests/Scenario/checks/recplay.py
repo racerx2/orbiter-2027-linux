@@ -41,12 +41,16 @@ def check(ctx):  # the core labels each sample, the state at SimT0, with SimT1 (
     worst = 0.0
     for v in ('PB-A', 'PB-B'):
         tend = samples(rec, s, v)[-2]  # the last interval ends at a sample taken at the stop (worse, see the commit)
+        n = 0
         for k in sorted(play.dump.frames):
             if k < 2 or play.dump.frames[k]['simt'] > tend:
                 continue
+            n += 1
             res = norm3(sub(rel(play.dump, k, v), rel(rec.dump, k, v)))
             bound = w_earth * norm3(rel(rec.dump, k, v)) * h + 0.01
             if res > bound:
                 fail('%s frame %d: playback %.4f m off the recording, bound %.4f m' % (v, k, res, bound))
             worst = max(worst, res - bound + 0.01)
+        if 2 * n < len(play.dump.frames):  # at least half the frames compared
+            fail('%s: only %d of %d playback frames compared' % (v, n, len(play.dump.frames)))
     print('recplay: playback within %.4g m of the recording beyond one frame of Earth rotation' % worst)

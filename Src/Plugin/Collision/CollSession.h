@@ -55,6 +55,7 @@ public:
 	void FrameBegin ();                     // pre-step timer
 	void FrameEnd ();
 	void Close ();                          // session end: E3 End, A3 from counters, no world access
+	void Abort ();                          // end of a session turned off by an error: E3 End and the annotation only
 	CollDmgSession *Dmg () const { return started ? dmg.get () : nullptr; }
 	CollSdk &Sdk () { return *sdk; }
 	CollCounters n;

@@ -143,6 +143,7 @@ def main(argv=None):
     for k, bad in (('model', 'model=0'), ('response', 'response=0'), ('check', 'check=0'), ('log', 'log=1')):
         e += expect_fail('an A1 %s off its pin' % k, lambda bad=bad, k=k: scnlib.run_checks(None, FakeRun(pair_dump(), [A1.replace(k + '=' + A1.split(k + '=')[1].split()[0], bad)]), Args))
     e += expect_fail('Collision lines in an off run', lambda: scnlib.run_checks(None, FakeRun(pair_dump(), [A1], addon='off'), Args))
+    e += expect_fail('a Collision: error in line', lambda: scnlib.run_checks(None, FakeRun(pair_dump(), [A1, 'Collision: error in clbkPreStep: x; collisions off until the session ends']), Args))
     e += expect_fail('a harness error', lambda: scnlib.run_checks(None, FakeRun(pair_dump(), [A1, 'CollTestHarness error: x']), Args))
 
     # quiet scenes (G5): writes=0, notices=0, no contact line

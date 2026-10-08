@@ -210,6 +210,7 @@ if (COLL_MAKE_TESTS)
 	coll_slow_test(DentMath.Test Fuzz fuzz)
 	coll_unit_test(CollCfg.Test 30 UNITS CollCfg)
 	coll_add_test(Collision.CfgOnce.Test TIMEOUT 60 LABELS collision COMMAND ${CMAKE_COMMAND} -DCOLL_SRC=${CMAKE_CURRENT_SOURCE_DIR} -DCOLL_WORK=${CMAKE_CURRENT_BINARY_DIR}/CfgOnceTest -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CollisionCfgOnce.Test.cmake)
+	coll_add_test(Collision.InstallCfg.Test TIMEOUT 120 LABELS collision COMMAND ${CMAKE_COMMAND} -DCOLL_SRC=${CMAKE_CURRENT_SOURCE_DIR} -DCOLL_BUILD=${CMAKE_BINARY_DIR} -DCOLL_WORK=${CMAKE_CURRENT_BINARY_DIR}/InstallCfgTest -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CollisionInstallCfg.Test.cmake)
 	coll_unit_test(CollisionAPI.Test 30)
 	foreach (part G F D I) # per-phase test registrations
 		include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests_${part}.cmake OPTIONAL)

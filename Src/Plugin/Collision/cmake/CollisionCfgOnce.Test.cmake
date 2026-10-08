@@ -66,3 +66,12 @@ expect("newer file untouched" "${COLL_WORK}/f.cfg" "CollisionCfgVersion = 3\nCol
 file(WRITE "${COLL_WORK}/g.cfg" "${head}CollisionCfgVersion = x\nCollisionModel = 0\n")
 run("${COLL_WORK}/g.cfg")
 expect("bad version replaced" "${COLL_WORK}/g.cfg" "${head}CollisionCfgVersion = 2\nCollisionModel = 1\n")
+
+# a v1 file with a UTF-8 BOM: upgraded as without it, the BOM kept
+string(ASCII 239 187 191 bom)
+file(WRITE "${COLL_WORK}/h.cfg" "${bom}${head}CollisionModel = 0\n")
+run("${COLL_WORK}/h.cfg")
+expect("v1 with a BOM" "${COLL_WORK}/h.cfg" "${bom}${head}${ver}CollisionModel = 1\n")
+file(WRITE "${COLL_WORK}/i.cfg" "${bom}CollisionModel = 0\n")
+run("${COLL_WORK}/i.cfg")
+expect("v1 with a BOM on the key line" "${COLL_WORK}/i.cfg" "${bom}${ver}CollisionModel = 1\n")
