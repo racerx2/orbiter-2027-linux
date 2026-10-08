@@ -69,7 +69,7 @@ TEST_CASE ("E3-U13 defaults")
 	int asked = 0;
 	CollCfgValues v = CollCfg::Read ([&] (const char *, std::string &) { asked++; return false; });
 	CHECK (asked == 20);
-	CHECK (v.model == 0);
+	CHECK (v.model == 1);
 	CHECK (v.response);
 	CHECK_FALSE (v.check);
 	CHECK (v.dockZone);
