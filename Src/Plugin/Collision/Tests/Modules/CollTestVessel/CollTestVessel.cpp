@@ -333,7 +333,8 @@ bool CollTestVessel::Pre (const Words &w, double simt) // the actions of a vesse
 		double blng, blat, brad, size = oapiGetSize (hp);
 		oapiGetBaseEquPos (hb, &blng, &blat, &brad);
 		VECTOR3 ofs = V3 (w, 4), lv = V3 (w, 7);
-		double lng = blng + ofs.z / (size * cos (blat)), lat = blat - ofs.x / size, rad = brad + ofs.y;
+		double lng = blng + ofs.z / (size * cos (blat)), lat = blat - ofs.x / size;
+		double rad = brad + oapiSurfaceElevation (hp, lng, lat) + ofs.y; // y above the local terrain, as landed vessels sit (elevation tiles installed)
 		VECTOR3 gp, pp, pv;
 		MATRIX3 Rp;
 		oapiEquToGlobal (hp, lng, lat, rad, &gp);
