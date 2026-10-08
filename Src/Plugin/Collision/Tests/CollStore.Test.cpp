@@ -1,0 +1,190 @@
+// not upstream: E3-U1 to E3-U6: keys, block text, prefix scan, matching, side file (Design CA E3 12.1)
+#include <catch2/catch_test_macros.hpp>
+#include <cstdint>
+#include <memory>
+#include <random>
+#include <string>
+#include <vector>
+#include "CollStore.h"
+
+namespace {
+
+std::string TrimLikeCore (const std::string &s) // trim_string replica: cut at ';', trim spaces, tabs, CR
+{
+	std::string t = s.substr (0, s.find (';'));
+	size_t b = t.find_first_not_of (" \t"), e = t.find_last_not_of (" \t\r");
+	return b == std::string::npos ? std::string () : t.substr (b, e - b + 1);
+}
+
+CollStore::LineIn Reader (const std::vector<std::string> &l)
+{
+	auto pos = std::make_shared<size_t> (0);
+	return [l, pos] (std::string &out) {
+		while (*pos < l.size ()) {
+			std::string s = TrimLikeCore (l[(*pos)++]);
+			if (CollKey::IEqual (s, "END")) return false;
+			out = s;
+			return true;
+		}
+		return false;
+	};
+}
+
+DentRecord Rec (uint32_t slot, double cx)
+{
+	DentRecord r {};
+	r.p.c = Vector (cx, 0.2, 9.1), r.p.n = Vector (0, 0, 1), r.p.R = 0.81, r.p.h = 0.12, r.p.T = 2.4;
+	r.slot = slot, r.key = 0x3c1f0a27, r.ngrp = 122, r.nvtx = 14516, r.grp = { 13, 14, 15 };
+	return r;
+}
+
+}
+
+TEST_CASE ("E3-U1 vessel key lines")
+{
+	std::mt19937 rng (7);
+	for (int k = 0; k < 20000; k++) {
+		std::string name, cls;
+		int ln = rng () % 300, lc = rng () % 40;
+		for (int i = 0; i < ln; i++) name += (char)(rng () % 256);
+		for (int i = 0; i < lc; i++) cls += (char)(rng () % 256);
+		uint32_t occ = rng () % 5;
+		std::string l = CollKey::VesselLine ("VESSEL", occ, name, cls, 0);
+		REQUIRE (l.size () <= (size_t)DENT_LINE_MAX);
+		REQUIRE (l.find (';') == std::string::npos);
+		REQUIRE (TrimLikeCore (l) == l);
+		uint32_t o; std::string n2, c2; bool hashed; uint32_t hn, hc;
+		REQUIRE (CollKey::ParseVesselLine (l, "VESSEL", o, n2, c2, hashed, hn, hc));
+		REQUIRE (o == occ);
+		if (!hashed) { REQUIRE (n2 == name); REQUIRE (c2 == cls); }
+		else { REQUIRE (hn == DentMath::Fnv1a (name.data (), name.size ())); REQUIRE (hc == DentMath::Fnv1a (cls.data (), cls.size ())); }
+	}
+	CHECK (CollKey::Escape ("") == "%-");
+	CHECK (CollKey::Escape ("a b;%") == "a%20b%3B%25");
+}
+
+TEST_CASE ("E3-U2 block write and read")
+{
+	DentVesselText v;
+	v.eabs = 132104.5, v.flags = 1;
+	v.rec = { Rec (0, -0.3), Rec (0, 1.5) };
+	v.slotName = { "deltaglider" };
+	std::vector<std::string> body = { "COLLA 1", "RECID 20261007-153012-1 1234.5", "VESSEL 0 GL-01 DeltaGlider" };
+	std::vector<std::string> vl;
+	DentMath::FormatVessel (v, "  ", vl);
+	body.insert (body.end (), vl.begin (), vl.end ());
+	body.push_back ("END_VESSEL");
+	body.push_back ("VESSELH 1 0badf00d 12345678");
+	body.push_back ("  XDMG 1 5 0");
+	body.push_back ("END_VESSEL");
+	body.push_back ("BEGIN_XDMG_BASES");
+	body.push_back ("BASE Moon:Brighton Beach");
+	body.push_back ("OBJ 1 BLOCK -60.6 -35 293900 0");
+	body.push_back ("END_BASE");
+	body.push_back ("END_XDMG_BASES");
+	body.push_back ("SOMEKEY from another version");
+	body.push_back ("TESTREPAIR 12.5 0 GL-01");
+	body.push_back ("END");
+	for (const std::string &l : body) CHECK (TrimLikeCore (l).size () <= (size_t)DENT_LINE_MAX);
+	CollStoreBlock b;
+	REQUIRE (CollStore::Parse (Reader (body), b));
+	CHECK (b.version == 1);
+	CHECK (b.recId == "20261007-153012-1");
+	CHECK (b.recT0 == 1234.5);
+	REQUIRE (b.vessel.size () == 2);
+	CHECK (b.vessel[0].name == "GL-01");
+	CHECK (b.vessel[0].cls == "DeltaGlider");
+	CHECK (b.vessel[0].d.eabs == 132104.5);
+	CHECK (b.vessel[0].d.flags == 1);
+	REQUIRE (b.vessel[0].d.rec.size () == 2);
+	CHECK (b.vessel[0].d.rec[1].p.c.x == 1.5);
+	CHECK (b.vessel[0].d.rec[0].grp == std::vector<uint16_t> ({ 13, 14, 15 }));
+	CHECK (b.vessel[1].hashed);
+	CHECK (b.vessel[1].hName == 0x0badf00d);
+	CHECK (b.vessel[1].raw.size () == 3);
+	REQUIRE (b.base.size () == 1);
+	CHECK (b.base[0].name == "Brighton Beach");
+	CHECK (b.base[0].obj[0].eabs == 293900);
+	REQUIRE (b.unknown.size () == 1);
+	CHECK (b.unknown[0] == "SOMEKEY from another version");
+	REQUIRE (b.testRepair.size () == 1);
+	CHECK (b.testRepair[0].simt == 12.5);
+	// format (parse (x)) equals x
+	std::vector<std::string> again;
+	DentMath::FormatVessel (b.vessel[0].d, "  ", again);
+	CHECK (again == vl);
+}
+
+TEST_CASE ("E3-U3 prefix scan")
+{
+	std::vector<std::string> f = { "SOMETHING 1", "END", "BEGIN_Collision", "COLLA 1", "VESSEL 0 A B", "XDMG 1 7 0", "END_VESSEL", "END" };
+	CollStoreBlock b;
+	REQUIRE (CollStore::Parse (Reader (f), b));
+	REQUIRE (b.vessel.size () == 1);
+	CHECK (b.vessel[0].d.eabs == 7);
+	std::vector<std::string> g = { "SOMETHING 1", "END", "OTHER", "END" };
+	CHECK_FALSE (CollStore::Parse (Reader (g), b));
+}
+
+TEST_CASE ("E3-U4 vessel matching")
+{
+	std::vector<CollStoreVessel> s (5);
+	s[0].occ = 1, s[0].name = "PB", s[0].cls = "ShuttlePB";
+	s[1].occ = 0, s[1].name = "pb", s[1].cls = "shuttlepb";
+	s[2].occ = 0, s[2].name = "gone", s[2].cls = "X";
+	s[3].occ = 0, s[3].name = "GL", s[3].cls = "Other";
+	s[4].occ = 0, s[4].hashed = true, s[4].hName = CollKey::Hash ("GL"), s[4].hClass = CollKey::Hash ("DeltaGlider");
+	std::vector<CollLiveVessel> live = { { "PB", "ShuttlePB" }, { "PB", "ShuttlePB" }, { "GL", "DeltaGlider" } };
+	std::vector<int> m = CollStore::MatchVessels (s, live);
+	CHECK (m[0] == 1);
+	CHECK (m[1] == 0); // case-only difference, rank 0
+	CHECK (m[2] == -1);
+	CHECK (m[3] == -1); // class changed: dormant
+	CHECK (m[4] == 2);
+}
+
+TEST_CASE ("E3-U5 base matching")
+{
+	std::vector<CollLiveObj> objs = { { "Moon", "BB", "BLOCK", 0, 10, 10 }, { "Moon", "BB", "BLOCK", 1, -60.6, -35 }, { "Moon", "BB", "TANK", 2, 5, 5 } };
+	std::vector<uint8_t> taken (3, 0);
+	DentBaseObjText o { 1, "BLOCK", -60.6, -35, 1, 0 };
+	CHECK (CollStore::MatchObj (o, objs, taken) == 1);
+	o.index = 7;
+	CHECK (CollStore::MatchObj (o, objs, taken) == 1); // by TYPE and position
+	o.x = 100;
+	CHECK (CollStore::MatchObj (o, objs, taken) == -1);
+	DentBaseText b;
+	b.planet = "Moon", b.name = "Brighton Beach";
+	CHECK (CollStore::SameBase (b, "moon", "brighton beach"));
+	b.name.clear (), b.nameHash = CollKey::Hash ("Brighton Beach");
+	CHECK (CollStore::SameBase (b, "Moon", "Brighton Beach"));
+}
+
+TEST_CASE ("E3-U6 side file round trip")
+{
+	std::vector<std::string> l = { CollSide::Header ("X1"), CollSide::Vdef (0, 0, "GL-01", "DeltaGlider") };
+	DentRecord r = Rec (0, -0.3);
+	for (uint16_t g = 0; g < 100; g++) r.grp.push_back (g); // continued payloads
+	CollSide::Dent (12.483333333333333, 0, 0, r, l);
+	l.push_back (CollSide::State (12.483333333333333, 0, 132104.5, 0));
+	l.push_back (CollSide::Building (12.483333333333333, 0, 1, 293900, 0, "Moon:Brighton Beach"));
+	l.push_back (CollSide::Repair (40.016666666666666, 0));
+	std::string text;
+	for (const std::string &s : l) { CHECK (s.size () < 256); text += s + "\n"; }
+	CollSideFile f;
+	REQUIRE (CollSide::Parse (text + "41 S 0 12", f)); // truncated last line skipped
+	CHECK (f.id == "X1");
+	REQUIRE (f.alias.size () == 1);
+	CHECK (f.alias[0].name == "GL-01");
+	REQUIRE (f.ev.size () == 4);
+	CHECK (f.ev[0].kind == 'D');
+	CHECK (f.ev[0].t == 12.483333333333333);
+	CHECK (f.ev[0].rec.grp == r.grp);
+	CHECK (f.ev[0].rec.p.c.x == r.p.c.x);
+	CHECK (f.ev[1].kind == 'S');
+	CHECK (f.ev[1].eabs == 132104.5);
+	CHECK (f.ev[2].base == "Moon:Brighton Beach");
+	CHECK (f.ev[3].kind == 'R');
+	CHECK (f.ev[3].t == 40.016666666666666);
+	CHECK (f.skipped == 1);
+}

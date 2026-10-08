@@ -1,0 +1,3 @@
+; not upstream: collision addon sidecar for ShuttleA_chmain.msh (design D1 4.6): cloth canopy, no collider
+COLLIDER-V1
+EXCLUDE ALL
