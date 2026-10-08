@@ -526,7 +526,7 @@ TEST_CASE ("CollPlugin lifecycle: sessions, close paths, unload and re-load")
 	for (const std::string &l : H.log) if (!l.compare (0, 19, "Collision: session ") || !l.compare (0, 20, "Collision: unloaded ")) got.push_back (l);
 	CHECK (got == lifecycle);
 	CHECK (Lines ("Collision: loaded (addon ").size () == 2);
-	CHECK (Lines ("Collision: active ") == std::vector<std::string> { A1 (1, 1, 1, 1, 2), A1 (2, 0, 0, 0, 1), A1 (3, 0, 0, 1, 3), A1 (4, 0, 0, 1, 4), A1 (1, 0, 0, 1, 4) });
+	CHECK (Lines ("Collision: active ") == std::vector<std::string> { A1 (1, 1, 1, 1, 2), A1 (2, 1, 0, 0, 1), A1 (3, 1, 0, 1, 3), A1 (4, 1, 0, 1, 4), A1 (1, 1, 0, 1, 4) });
 	CHECK (Lines ("Collision damage block: ") == std::vector<std::string> { "Collision damage block: vessels=1 bases=0 unknown=0 skipped=0", "Collision damage block: vessels=0 bases=0 unknown=2 skipped=0", "Collision damage block: vessels=0 bases=0 unknown=0 skipped=0" });
 	CHECK (Lines ("Collision: Config/Collision.cfg not found").size () == 1);
 	std::vector<std::string> sums = Lines ("Collision summary: ");
