@@ -40,7 +40,6 @@
 #include "VkTexFile.h"
 #include "OrbiterResource.h"
 #include <filesystem>
-#include <QMessageBox>
 
 using namespace oapi;
 
@@ -538,15 +537,9 @@ vPlanet::vPlanet (OBJHANDLE _hObj, const Scene *scene) :
 	auto y = filesystem::status(oapiResolvePath(path));
 	bHasTextures |= filesystem::exists(y);
 	
-	if (!bHasTextures) {
-		VESSEL* vss = oapiGetFocusInterface();
+	if (!bHasTextures) { // not upstream: log only, the Launchpad offers the download (TexInstall.cpp) instead of a popup at the focus body
 		snprintf(msg, sizeof(msg), "[WARNING] Surface textures are missing for %s", GetName());
-		if (vss && (vss->GetGravityRef() == hObj)) {
-			oapiWriteLog(msg);
-			QMessageBox box(QMessageBox::NoIcon, "Warning", msg, QMessageBox::Ok);
-			oapiExecOwned(&box, GetClient()->GetWindow()); // MessageBox (render window, MB_OK)
-		}
-		else oapiWriteLog(msg);
+		oapiWriteLog(msg);
 	}
 }
 

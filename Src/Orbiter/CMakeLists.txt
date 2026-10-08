@@ -41,6 +41,8 @@ set(common_src
 	TabOptions.cpp
 	TabScenario.cpp
 	TabVideo.cpp
+	TexInstall.cpp # not upstream: missing planet texture download
+	TexPack.cpp # not upstream
 # Dialogs
 	CustomControls.cpp
 	DialogWin.cpp
@@ -139,6 +141,7 @@ set(Orbiter_common_libs
 	DlgCtrl
 	Qt6::Widgets
 	Qt6::DBus
+	Qt6::Network # not upstream: TexPack.cpp downloads
 	${CMAKE_DL_LIBS}
 )
 set(Orbiter_libs

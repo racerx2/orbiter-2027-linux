@@ -95,7 +95,7 @@ set(ldoc ${CMAKE_COMMAND} -E env "LUA_PATH='${ORBITER_BINARY_ROOT_DIR}/?.lua$<SE
 find_package(LATEX)
 
 # Qt6 replaces the Qt5_x64 lookup and also carries the Launchpad and dialogs
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets DBus) # not upstream: 6.5 for QNativeInterface::QWaylandApplication
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets DBus Network) # not upstream: 6.5 for QNativeInterface::QWaylandApplication; Network for the texture download
 
 # /we4311 left out: g++ already rejects pointer-to-smaller-int casts; NOMINMAX has no counterpart
 add_compile_options(-Wformat) # not upstream: printf format checks (GCC turns them on by default only on some distributions)

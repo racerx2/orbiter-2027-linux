@@ -21,6 +21,7 @@
 #include "Help.h"
 #include "Memstat.h"
 #include "ResDialog.h"
+#include "TexInstall.h" // not upstream
 #include "Custom/LauncherSkin.h" // custom: launcher skins
 #include "Custom/LayoutSkin.h" // custom: launcher layouts
 #include <QApplication>
@@ -379,6 +380,7 @@ void orbiter::LaunchpadDialog::OnCommand (int id)
 	case IDLAUNCH:
 		if (((ScenarioTab*)TabList[0])->GetSelScenario (cbuf, 256) == 1) {
 			UpdateConfig ();
+			if (!pCfg->CfgDemoPrm.bDemo && !TexInstallCheck (hDlg, pCfg)) return; // not upstream: offer missing planet textures
 			pApp->Launch (cbuf);
 		}
 		return;

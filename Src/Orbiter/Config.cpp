@@ -774,6 +774,7 @@ bool Config::Load(const char *fname)
 		sscanf (cbuf, "%d%d%d%d", &rLaunchpad.left, &rLaunchpad.top,
 			&rLaunchpad.right, &rLaunchpad.bottom);
 	}
+	GetBool (ifs, "PlanetTexCheck", bPlanetTexCheck); // not upstream
 
 	if (GetString (ifs, "DlgMapPos", cbuf))
 		sscanf (cbuf, "%d%d%d%d", &CfgWindowPos.DlgMap.left, &CfgWindowPos.DlgMap.top,
@@ -838,6 +839,7 @@ void Config::SetDefaults ()
 
 	bEchoAll = bEchoAll_default;
 	memset (&rLaunchpad, 0, sizeof(RECT));
+	bPlanetTexCheck = true; // not upstream
 
 	if (QScreen *scr = QGuiApplication::primaryScreen()) { // no screen before the QGuiApplication exists: keep 800x600
 		QRect r = scr->geometry();
@@ -968,6 +970,8 @@ BOOL Config::Write (const char *fname) const
 	if (rLaunchpad.right > rLaunchpad.left)
 		ofs << "LPadRect = " << rLaunchpad.left << ' ' << rLaunchpad.top
 			<< ' ' << rLaunchpad.right << ' ' << rLaunchpad.bottom << '\n';
+	if (!bPlanetTexCheck || bEchoAll) // not upstream
+		ofs << "PlanetTexCheck = " << BoolStr (bPlanetTexCheck) << '\n';
 
 	if (strcmp (CfgDirPrm.ConfigDir, CfgDirPrm_default.ConfigDir) || 
 		strcmp (CfgDirPrm.MeshDir, CfgDirPrm_default.MeshDir) ||
