@@ -283,3 +283,72 @@ TEST_CASE ("E2-U5 rewind returns the replica to defstate", "[CollSourceA]")
 	for (int e = 0; e < 9; e++) REQUIRE (std::fabs (F1.A.data[e] - F2.A.data[e]) < 1e-12);
 	REQUIRE ((F1.t - F2.t).length () < 1e-12);
 }
+
+namespace {
+std::string BoxesMsh (const std::vector<std::pair<std::string, float>> &g) // one unit box per group at x = offset, LABEL if named
+{
+	std::string s = "MSHX1\nGROUPS " + std::to_string (g.size ()) + "\n";
+	float c[8][3] = { {-1,-1,-1},{1,-1,-1},{1,1,-1},{-1,1,-1},{-1,-1,1},{1,-1,1},{1,1,1},{-1,1,1} };
+	char b[128];
+	for (auto &q : g) {
+		if (!q.first.empty ()) s += "LABEL " + q.first + "\n";
+		s += "GEOM 8 12\n";
+		for (auto &p : c) { snprintf (b, sizeof b, "%g %g %g 0 0 1 0 0\n", p[0] + q.second, p[1], p[2]); s += b; }
+		s += "0 1 2\n0 2 3\n4 6 5\n4 7 6\n0 4 5\n0 5 1\n3 2 6\n3 6 7\n0 3 7\n0 7 4\n1 5 6\n1 6 2\n";
+	}
+	return s;
+}
+}
+
+TEST_CASE ("fix1 M7: name selectors of a MESH sidecar pick the collision mesh's groups", "[CollSourceA]")
+{
+	CollFakeSdk s;
+	s.File (".\\Meshes\\vis.msh", BoxesMsh ({ { "lid", 0 }, { "body", 4 } }));
+	s.File (".\\Meshes\\hull.msh", BoxesMsh ({ { "body", 0 }, { "lid", 4 }, { "", 8 } }));
+	s.File (".\\Meshes\\vis.col", "COLLIDER-V1\nMESH hull\nEXCLUDE LABEL lid\n");
+	auto *v = s.AddVessel ("V1");
+	v->slot.resize (1); v->slot[0].kind = CollFakeSdk::NAME; v->slot[0].name = "vis";
+	CollGeomSession g (s, Cfg ());
+	g.SimulationStart (0, false);
+	g.BeginFrame (0, 0.1);
+	const CollShape *sh = g.Geom (0)->shape;
+	REQUIRE (sh);
+	REQUIRE (sh->CollMesh (0));
+	CHECK (sh->PartOf (0, 0) >= 0);
+	CHECK (sh->PartOf (0, 1) == -1);
+	CHECK (sh->PartOf (0, 2) >= 0);
+	CHECK (s.LogCount ("name selectors ignored") == 0);
+	CHECK (s.misuse == 0);
+}
+
+TEST_CASE ("fix1 M6: a static MESH sidecar part is predicted static while a visual group animates", "[CollSourceA]")
+{
+	CollFakeSdk s;
+	s.File (".\\Meshes\\vis.msh", BoxesMsh ({ { "", 0 }, { "", 4 } }));
+	s.File (".\\Meshes\\hull.msh", BoxesMsh ({ { "", 0 } }));
+	s.File (".\\Meshes\\vis.col", "COLLIDER-V1\nMESH hull\n");
+	auto *v = s.AddVessel ("V1");
+	v->slot.resize (1); v->slot[0].kind = CollFakeSdk::NAME; v->slot[0].name = "vis"; v->slot[0].ofs = Vector (0, 0, 3);
+	TestModule mod;
+	UINT an = v->anim.CreateAnimation (0);
+	v->anim.AddAnimationComponent (an, 0, 1, mod.Rot (0, mod.Grp ({ 0 }), 1, _V (0, 0, 0), _V (0, 1, 0), (float)1.0)); // the visual door is group 0
+	CollGeomSession g (s, Cfg ());
+	g.SimulationStart (0, false);
+	g.BeginFrame (0, 0.1);
+	double st = 0;
+	bool anim = false;
+	for (int f = 0; f < 4; f++) {
+		st += 0.1; v->anim.SetAnimation (an, st);
+		g.BeginFrame (0, 0.1);
+		const CollVesselGeom *G = g.Geom (0);
+		REQUIRE (G->shape);
+		REQUIRE (G->shape->nPart () == 1);
+		anim = anim || G->animating;
+		const CollAffine &a = G->next[0], &b = G->shape->Part (0).pose[1];
+		for (int e = 0; e < 9; e++) CHECK (a.A.data[e] == b.A.data[e]);
+		CHECK ((a.t - b.t).length () == 0);
+		CHECK (G->motionNext[0] == 0);
+	}
+	CHECK (anim);
+	CHECK (s.misuse == 0);
+}

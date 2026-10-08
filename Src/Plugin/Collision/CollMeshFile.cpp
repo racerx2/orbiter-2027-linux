@@ -506,8 +506,11 @@ std::shared_ptr<const CollSidecar> CollMeshCache::Sidecar (CollSdk &sdk, const C
 	if (sc->needNames) {
 		std::string mtext;
 		CollMeshTags tags;
-		bool ok = sdk.ReadText (sdk.Resolve (CollMeshPath (d, name, ".msh")), mtext) && CollScanMeshTags (mtext.data (), mtext.size (), tags, warn);
-		CollResolveNames (*sc, ok ? &tags : nullptr, ngrp, warn);
+		uint32_t n = ngrp;
+		if (!sc->mesh.empty ()) { auto cm = ByName (sdk, d, sc->mesh); n = cm.rest ? (uint32_t)cm.rest->grp.size () : 0; } // MESH replacement: selectors pick its groups
+		const std::string &tagMesh = sc->mesh.empty () ? name : sc->mesh;
+		bool ok = sdk.ReadText (sdk.Resolve (CollMeshPath (d, tagMesh, ".msh")), mtext) && CollScanMeshTags (mtext.data (), mtext.size (), tags, warn);
+		CollResolveNames (*sc, ok ? &tags : nullptr, n, warn);
 	}
 	for (auto &w : warn) sdk.Log (1, ("Collision sidecar: " + w).c_str ());
 	side[key] = sc;

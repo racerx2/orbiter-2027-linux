@@ -358,7 +358,7 @@ void CollGeomSession::Predict (CollVesselSrc &r, const CollAnim &src)
 		const CollPart &p = sh->Part (k);
 		if (g.animating) {
 			CollAffine F;
-			pa->GroupTransform (p.mesh, p.rep, F);
+			pa->GroupTransform (p.mesh, sh->PoseGroup (k), F); // the part's pose class, not its collision group index
 			g.next[k] = CollCompose (CollTranslate (r.slot[p.mesh].ofs), F);
 			g.motionNext[k] = CollPoseMotion (p.Geom (), p.pose[1], g.next[k]);
 		} else g.next[k] = p.pose[1];

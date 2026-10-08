@@ -878,6 +878,14 @@ bool CollShape::GroupPose (uint32_t mesh, uint32_t grp, CollAffine &F) const
 	return true;
 }
 
+uint32_t CollShape::PoseGroup (uint32_t i) const
+{
+	if (i >= parts.size()) return COLL_STATIC_REP;
+	const CollPart &P = parts[i];
+	const MeshEntry &e = slots[P.mesh];
+	return e.clsRep[e.partCls[e.tpl->map.part[P.rep]]];
+}
+
 bool CollShape::CollMesh (uint32_t mesh) const
 {
 	return mesh < slots.size() && slots[mesh].coll != nullptr;
