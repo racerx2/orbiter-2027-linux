@@ -119,8 +119,11 @@ public:
 protected:
 	void DoSetState (CollH, const CollStateWrite &) override {}
 	void DoSetAttitude (CollH, const Matrix &) override {}
-	void DoSetSpin (CollH, const Vector &) override {}
-	void DoAddForce (CollH, const Vector &, const Vector &) override {}
+	void DoSetSpin (CollH h, const Vector &w) override { spins[X (h)] = w; }
+	void DoAddForce (CollH h, const Vector &F, const Vector &r) override { forces.push_back ({ X (h), { F, r } }); }
+public:
+	std::map<const V *, Vector> spins; std::vector<std::pair<const V *, std::pair<Vector, Vector>>> forces; // blast: SetSpin and AddForce calls
+protected:
 	void DoSetTank (CollH, CollH, CollH) override {}
 	CollH DoCreateTank (CollH, double, double) override { return nullptr; }
 	void DoDelTank (CollH, CollH) override {}
@@ -193,7 +196,7 @@ struct Rig {
 	BFake sdk; BHost host; CollCfgValues cfg; std::unique_ptr<CollDmgSession> s;
 	struct Body { BFake::V *v; uint32_t id; std::unique_ptr<CollShape> sh; CollAnim ca; CollMeshInfo mi; };
 	std::deque<Body> body; CollTemplateCache cache;
-	Rig () { sdk.mesh.push_back (Ship ()); sdk.files["Meshes/ship.col"] = "COLLIDER-V1\nMAT glass GROUP 2\nEXCLUDE GROUP 3\n"; sdk.onCreate = [this] (CollH h) { host.IdOf (h); }; }
+	Rig () { cfg.blast = false; sdk.mesh.push_back (Ship ()); sdk.files["Meshes/ship.col"] = "COLLIDER-V1\nMAT glass GROUP 2\nEXCLUDE GROUP 3\n"; sdk.onCreate = [this] (CollH h) { host.IdOf (h); }; }
 	CollDmgSession &S () { if (!s) s.reset (new CollDmgSession (sdk, host, cfg)); return *s; }
 	CollBreakA &B () { return *(CollBreakA *)S ().brk.get (); }
 	uint32_t Add (const std::string &name)
@@ -640,4 +643,182 @@ TEST_CASE ("tear 13: playback rebuilds the section debris from T + cut, no TearG
 	BFake::V *dv = BFake::X (r.B ().Debris ()[0].h);
 	CHECK ((r.sdk.created[dv].rvel - Vector (0, 1.5, 0)).length () < 1e-9);
 	CHECK (r.sdk.caps[dv].mass == 777);
+}
+
+// blast (design-CA-blast 4, 7): a 4 m box hull, one group per face, 6 x 6 quads each (432 triangles)
+namespace {
+MeshT BoxMesh ()
+{
+	MeshT m; m.name = "ship"; m.grp.resize (6);
+	const double L = 4; const int n = 6;
+	int k = 0;
+	for (int ax = 0; ax < 3; ax++) for (int sg = -1; sg <= 1; sg += 2, k++) {
+		CollGroupData &g = m.grp[k];
+		auto P = [&] (double u, double v) { double c[3]; c[ax] = sg * L / 2; c[(ax + 1) % 3] = u; c[(ax + 2) % 3] = v; double nn[3] = { 0, 0, 0 }; nn[ax] = sg; return CollVtx { (float)c[0], (float)c[1], (float)c[2], (float)nn[0], (float)nn[1], (float)nn[2], 0, 0 }; };
+		for (int j = 0; j <= n; j++) for (int i = 0; i <= n; i++) g.vtx.push_back (P (-L / 2 + L * i / n, -L / 2 + L * j / n));
+		for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) {
+			uint16_t a = (uint16_t)(j * (n + 1) + i), b = (uint16_t)(a + 1), c = (uint16_t)(a + n + 1), d = (uint16_t)(c + 1);
+			g.idx.insert (g.idx.end (), { a, b, d, a, d, c });
+		}
+	}
+	return m;
+}
+struct BlastRig : Rig {
+	uint32_t a = 0;
+	BlastRig () { sdk.mesh.front () = BoxMesh (); sdk.files["Meshes/ship.col"] = "COLLIDER-V1\n"; cfg.blast = true; }
+	uint32_t Ship (const std::string &name) { a = Add (name); body.back ().v->size = 10; body.back ().v->empty = 5000; body.back ().v->rd.m = 5000; return a; }
+	CollDamageHit K (double vn, double R = 1.5)
+	{
+		CollDamageHit h;
+		h.id = a; h.h = host.Vessel (a); h.mesh = 0; h.grp = 5; h.rec = -1; h.c = Vector (0.3, 0.2, 2); h.n = Vector (0, 0, 1); h.tdir = Vector (1, 0, 0); h.R = R;
+		h.vn = vn; h.eSpec = 0.5 * vn * vn; h.E = h.eSpec * 5000; h.Jn = 2500 * vn; h.dt = 0.02; h.mat = &kMat; h.simt = sdk.simt;
+		return h;
+	}
+};
+}
+
+TEST_CASE ("blast P1: a 70 m/s hit separates cells; SpawnCells makes one debris per break with KEEP VCUT copies; momentum conserved", "[dmg3P][blast]")
+{
+	BlastRig r; uint32_t a = r.Ship ("A");
+	r.B ().Hit (r.K (70));
+	REQUIRE (r.B ().Blast (a, 0));
+	CHECK (r.B ().Blast (a, 0)->site.size () == 64);
+	const DentSites *ds = r.S ().Sites (a, 0);
+	REQUIRE (ds); CHECK (ds->s.size () == 64); CHECK (ds->key == DentMath::MeshKey ("ship"));
+	REQUIRE (r.B ().blastBreaks >= 1);
+	CHECK (r.B ().Pending () >= 1);
+	const std::vector<uint32_t> *kb = r.S ().BrokenBonds (a, 0);
+	REQUIRE (kb); CHECK (!kb->empty ());
+	CHECK (*kb == r.B ().Blast (a, 0)->Broken ());
+	CHECK (r.sdk.Logged ("Collision blast break 'A' slot=0 cells="));
+	r.sdk.simt = 0.02;
+	r.B ().Post (0.02, 0.02);
+	REQUIRE (!r.B ().Debris ().empty ());
+	CHECK (r.sdk.Calls ("VesselCreate") == (int)r.B ().Debris ().size ());
+	Vector Pm, Hm; double scale = 0;
+	for (auto &d : r.B ().Debris ()) {
+		CHECK (d.parent == a);
+		size_t keep = 0;
+		for (auto &rc : d.row.rec) if (rc.p.mode == DENTM_VCUT) {
+			CHECK ((rc.p.bits & DENTC_KEEP) != 0);
+			uint32_t c = (uint32_t)rc.p.P;
+			CHECK (rc.p.P == (double)c); REQUIRE (c < 64); CHECK (rc.p.seed == 64);
+			CHECK (rc.p.c.x == ds->s[c].x); CHECK (rc.p.c.y == ds->s[c].y); CHECK (rc.p.c.z == ds->s[c].z);
+			CHECK (rc.grp == std::vector<uint16_t> { 0, 1, 2, 3, 4, 5 });
+			keep++;
+		}
+		CHECK (keep >= 1);
+		CHECK (d.row.mass > 2);
+		REQUIRE (d.row.pose.size () == 1);
+		CHECK (d.row.pose[0].grp == std::vector<uint16_t> { 0, 1, 2, 3, 4, 5 });
+		const BFake::V *dv = (const BFake::V *)d.h;
+		REQUIRE (r.sdk.created.count (dv)); REQUIRE (r.sdk.caps.count (dv)); REQUIRE (r.sdk.spins.count (dv));
+		const CollStateWrite &st = r.sdk.created[dv];
+		const CollSdk::DebrisCaps &cp = r.sdk.caps[dv];
+		double m = cp.mass;
+		CHECK (m == d.row.mass);
+		Vector v = st.rvel, cv = st.rpos, w = r.sdk.spins[dv];      // parent at rest at the origin: relative kick, centroid, spin
+		CHECK (std::fabs (v.length () - 0.1 * 70) < 1e-9);
+		CHECK (cv.z > 1.0);
+		Pm += v * m; Hm += crossp (v, cv) * m + Vector (cp.pmi.x * w.x, cp.pmi.y * w.y, cp.pmi.z * w.z) * m;
+		scale = std::max (scale, m * v.length () * (1 + cv.length ()));
+	}
+	REQUIRE (!r.B ().kicks.empty ());
+	size_t nf = 0;
+	for (auto &f : r.sdk.forces) {
+		REQUIRE (f.first == r.body.front ().v);                    // parent only
+		Pm += f.second.first * 0.02; Hm += crossp (f.second.first, f.second.second) * 0.02; nf++;
+	}
+	CHECK (nf == r.B ().kicks.size ());
+	CHECK (Pm.length () <= 1e-9 * std::max (1.0, scale));
+	CHECK (Hm.length () <= 1e-9 * std::max (1.0, scale));
+	printf ("blast P1: %zu debris, %llu breaks, parent+debris |P| %.3g |H| %.3g (scale %.3g)\n", r.B ().Debris ().size (), (unsigned long long)r.B ().blastBreaks, Pm.length (), Hm.length (), scale);
+	for (auto &d : r.B ().Debris ()) for (auto &pr : r.B ().Pairs ()) if (pr.debris == d.id) CHECK ((pr.a == a || pr.b == a));
+	CHECK (!r.B ().Pairs ().empty ());                              // pair filter parent-debris
+}
+
+TEST_CASE ("blast P2: a small hit breaks nothing; Blast runs only within 2 s of a hit", "[dmg3P][blast]")
+{
+	BlastRig r; uint32_t a = r.Ship ("A");
+	r.B ().Hit (r.K (1, 0.5));
+	REQUIRE (r.B ().Blast (a, 0));
+	CHECK (r.B ().blastBreaks == 0);
+	CHECK (r.B ().Pending () == 0);
+	const std::vector<uint32_t> *kb = r.S ().BrokenBonds (a, 0);
+	CHECK ((!kb || kb->empty ()));
+	uint64_t n0 = r.B ().blastSteps;
+	r.body.front ().v->rd.w = Vector (0.2, 0.1, 0);
+	r.sdk.simt = 1.0; r.B ().Post (1.0, 0.02);
+	CHECK (r.B ().blastSteps == n0 + 1);
+	r.sdk.simt = 1.9; r.B ().Post (1.9, 0.02);
+	CHECK (r.B ().blastSteps == n0 + 2);
+	r.sdk.simt = 2.5; r.B ().Post (2.5, 0.02);
+	CHECK (r.B ().blastSteps == n0 + 2);                            // idle slots cost nothing
+	CHECK (r.B ().blastBreaks == 0);
+	CHECK (r.sdk.Calls ("VesselCreate") == 0);
+}
+
+TEST_CASE ("blast P3: load rebuilds the asset from sites, K bonds and VCUT cells: same actor partition, no new break", "[dmg3P][blast]")
+{
+	BlastRig r; uint32_t a = r.Ship ("A");
+	r.B ().Hit (r.K (70));
+	CollBlastA *x = r.B ().Blast (a, 0);
+	REQUIRE (x);
+	REQUIRE (r.B ().blastBreaks >= 1);
+	auto part = x->Partition ();
+	auto mainCh = x->MainChunks ();
+	std::vector<uint32_t> cells;
+	for (size_t c = 0; c < x->chunk.size (); c++) if (x->gone[c] && x->chunk[c].cell >= 0) cells.push_back ((uint32_t)x->chunk[c].cell);
+	REQUIRE (!cells.empty ());
+	DentSites ds = *r.S ().Sites (a, 0);
+	std::vector<uint32_t> kb = *r.S ().BrokenBonds (a, 0);
+	for (int variant = 0; variant < 2; variant++) {                 // 0: S + K + VCUT rows; 1: S + VCUT rows only
+		INFO ("variant " << variant);
+		BlastRig q; uint32_t b = q.Ship ("A");
+		q.S ().SetSites (b, ds);
+		if (variant == 0) q.S ().AddBrokenBonds (b, 0, kb);
+		for (uint32_t c : cells) {
+			DentRecord rc {};
+			rc.slot = 0; rc.key = ds.key; rc.ngrp = 6; rc.nvtx = 6 * 49; rc.grp = { 0, 1, 2, 3, 4, 5 };
+			rc.p.mode = DENTM_VCUT; rc.p.P = c; rc.p.seed = 64; rc.p.c = ds.s[c]; rc.p.n = Vector (0, 0, 1); rc.p.t = Vector (1, 0, 0);
+			REQUIRE (q.S ().AddCut (b, rc, true));
+		}
+		q.B ().Hit (q.K (1, 0.5));                                   // first live hit builds and restores
+		CollBlastA *y = q.B ().Blast (b, 0);
+		REQUIRE (y);
+		if (variant == 0) CHECK (y->Partition () == part);          // VCUT rows alone cannot tell how the removed cells were grouped
+		CHECK (y->MainChunks () == mainCh);
+		CHECK (q.B ().blastBreaks == 0);
+		CHECK (q.B ().Pending () == 0);
+		CHECK (q.sdk.Logged ("restored="));
+	}
+}
+
+TEST_CASE ("blast P4: cfg.blast off keeps the part, tear and tip gates; on, parts and sections wait for Blast, glass stays", "[dmg3P][blast]")
+{
+	{
+		Rig r; uint32_t a = r.Add ("A");                            // off (Rig default)
+		r.B ().Hit (r.H (a, 1, 30, 0.65));
+		CHECK (r.B ().Hidden (a, 0, 1));
+		CHECK (r.B ().Blast (a, 0) == nullptr);
+	}
+	{
+		Rig r; r.cfg.blast = true; uint32_t a = r.Add ("A");
+		r.B ().Hit (r.H (a, 1, 30, 0.65));
+		CHECK (!r.B ().Hidden (a, 0, 1));                           // part gate off
+		CHECK (r.B ().Blast (a, 0) != nullptr);
+		r.B ().Hit (r.H (a, 2, 5, 0, 0.03));
+		CHECK (r.B ().Hidden (a, 0, 2));                            // glass stays
+	}
+	{
+		TearRig r; r.Seed ("A", 0.6, 0.5);
+		r.B ().Hit (r.T (555, 70));
+		CHECK (r.Cut () != nullptr);                                // off: the tear gate cuts
+	}
+	{
+		TearRig r; r.cfg.blast = true; r.Seed ("A", 0.6, 0.5);
+		r.B ().Hit (r.T (555, 70));
+		CHECK (r.Cut () == nullptr);                                // on: no section cut
+		CHECK (r.B ().tears == 0);
+	}
 }

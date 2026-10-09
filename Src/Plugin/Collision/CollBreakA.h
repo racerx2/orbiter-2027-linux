@@ -3,10 +3,12 @@
 #define COLLBREAKA_H
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
+#include "CollBlastA.h"
 #include "CollCfg.h"
 #include "CollDmgTypes.h"
 #include "CollGeom.h"
@@ -48,10 +50,16 @@ struct CollSlotA {                                        // rest geometry of on
 	uint32_t staticCls = 0;                               // dmg3 tear: pose class of the hull (largest piece)
 };
 struct CollDebrisA { uint32_t id = ~0u, parent = 0, other = 0, event = 0; CollH h = nullptr, mesh = nullptr; double birth = 0; DentDebris row; uint32_t fnv = 0; };
-struct CollSpawnA { uint32_t parent = 0, other = 0, event = 0; std::string mesh; DentDebris row; Vector cv, dv, dw; double mass = 0; CollSdk::DebrisCaps caps; };
+struct CollSpawnA { uint32_t parent = 0, other = 0, event = 0; std::string mesh; DentDebris row; Vector cv, dv, dw; double mass = 0; CollSdk::DebrisCaps caps; bool blast = false; }; // blast: the parent takes the opposite impulse
 struct CollCutPlan { bool ok = false; DentRecord rec; std::vector<uint16_t> front, straddle; double d = 0, f = 0, area = 0; const char *why = ""; }; // dmg3 tear: planned cut
 struct CollFreeA { CollH mesh = nullptr, h = nullptr; bool dropped = false; };
 struct CollPairA { uint32_t a = 0, b = 0; double t = 0; uint32_t debris = 0; };
+struct CollBlastSlotA {                                   // blast: one vessel slot (design-CA-blast 2)
+	std::unique_ptr<CollBlastA> b; uint32_t key = 0; double lastHit = -1e300; CollDamageHit hit; bool haveHit = false;
+	std::vector<uint16_t> groups;                         // static-class groups in the cells
+	std::vector<uint32_t> recorded;                       // broken bonds already stored
+};
+struct CollKickA { uint32_t parent = 0; Vector F, r; double dt = 0; }; // blast: parent force of one debris kick (tests)
 
 class CollBreakA : public CollDmgSink {
 public:
@@ -76,6 +84,9 @@ public:
 	static bool TipGate (const CollDamageHit &h, const DentParams &hinge);         // dmg3 tear: wing/fin tip gate
 	CollCutPlan PlanCut (uint32_t id, const CollSlotA &sl, const CollDamageHit &h, const DentParams &src, double L, bool tip, uint32_t event); // dmg3 tear: cut plane, groups, record
 	uint64_t tears = 0;
+	void SpawnCells (const CollBlastBreak &b);            // blast: cell cuts, torn rows, one debris with KEEP VCUT copies, parent impulse
+	CollBlastA *Blast (uint32_t id, uint32_t mesh) { auto it = blast.find ({ id, mesh }); return it == blast.end () ? nullptr : it->second.b.get (); }
+	uint64_t blastBreaks = 0, blastSteps = 0; double blastMs = 0; std::vector<CollKickA> kicks;
 	static std::vector<DentVtx> PieceVertices (const std::vector<DentVtx> &rest, uint16_t g, const DentDebrisPose &p, const std::vector<DentRecord> &rec); // A(q) (rest + records) + p
 private:
 	struct VesB { std::vector<DentTorn> rows; size_t adopted = 0; CollShape *sh = nullptr; bool seen = false; CollDamageHit last; bool haveLast = false; };
@@ -99,12 +110,18 @@ private:
 	std::string NewName (const std::string &parent);
 	uint32_t FindId (CollH h);
 	void Log (const char *fmt, ...);
+	CollBlastSlotA *BlastSlot (uint32_t id, uint32_t mesh, CollH vh, const CollSlotA &sl); // blast: lazy build, restore from the session
+	void BlastHit (const CollDamageHit &h, CollH vh, const CollSlotA &sl);
+	void BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, CollH vh);
+	bool MakeCellSpawn (const CollBlastBreak &bk, const CollSlotA &sl, CollH vh, const std::vector<Vector> &site, const std::vector<uint16_t> &stat, uint32_t event, CollSpawnA &sp);
 	CollSdk &sdk; CollDmgSession &s; const CollCfgValues &cfg;
 	std::map<uint32_t, VesB> ves;
 	std::map<std::pair<uint32_t, uint32_t>, CollSlotA> slots;
 	std::vector<CollDebrisA> live;
 	std::vector<CollSpawnA> spawn;
 	std::vector<CollPairA> pairs;
+	std::map<std::pair<uint32_t, uint32_t>, CollBlastSlotA> blast; // blast: (vessel, slot)
+	double postDt = 0;                                    // blast: last post-step frame [s]
 	std::vector<CollFreeA> freeMesh;                      // meshes of deleted debris, freed at the Post after OnDeleteVessel, or at End
 	uint32_t maxId = 0, events = 0, debrisSeq = 0;
 	int cfgOk = -1;                                       // CollDebris.cfg probe: -1 not yet

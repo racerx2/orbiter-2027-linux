@@ -1,9 +1,11 @@
 // not upstream: collision addon, dmg3 area P: parts tear off, glass breaks, interiors hidden, debris vessels (design-CA-dmg3-P)
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include "CollBreakA.h"
 #include "CollDamageA.h"
@@ -265,9 +267,10 @@ void CollBreakA::Hit (const CollDamageHit &h)
 	if (!vh || CollKey::IEqual (sdk.ClassName (vh), BRK_CLASS)) return;
 	const CollSlotA *sl = Slot (h.id, h.mesh);
 	if (!sl || !sl->ok) return;
+	if (cfg.blast) BlastHit (h, vh, *sl);
 	CollShape *sh = b.sh;
 	Vector ofs = sdk.MeshOffset (vh, h.mesh);
-	if (h.rec >= 0) if (const VesselDamageA *vd = s.Damage (h.id)) if ((size_t)h.rec < vd->d.rec.size ()) { // dmg3 tear: section or tip first
+	if (!cfg.blast && h.rec >= 0) if (const VesselDamageA *vd = s.Damage (h.id)) if ((size_t)h.rec < vd->d.rec.size ()) { // dmg3 tear: section or tip first; blast decides when on
 		const DentParams &src = vd->d.rec[h.rec].p;
 		double L = sdk.Size (vh);
 		bool tip = TipGate (h, src), sec = !tip && TearGate (h, src, L);
@@ -287,6 +290,7 @@ void CollBreakA::Hit (const CollDamageHit &h)
 	for (size_t k = 0; k < sl->piece.size (); k++) {
 		const CollPieceA &p = sl->piece[k];
 		if (p.fixed || p.tier == CBRK_RESTHIDDEN || ((p.functional & CBRK_FN_DOCK) && h.eSpec < BRK_TEAR_E)) continue; // dmg3 tear: dock pin released above the tear threshold
+		if (cfg.blast && p.tier == CBRK_PART) continue;                       // blast: parts break by bond stress; glass and interior stay
 		bool any = false;
 		for (uint16_t g : p.grp) if (!sl->keep.count (g) && !Hidden (h.id, h.mesh, g)) any = true;
 		if (!any) continue;
@@ -776,6 +780,19 @@ void CollBreakA::Spawn (CollSpawnA &sp, double simt)
 	sdk.DebrisSetup (h, mesh, caps);
 	sdk.SetAttitude (h, rd.R);
 	sdk.SetSpin (h, rd.w + sp.dw);
+	if (sp.blast) { // blast: the parent takes -m dv at the centroid and the couple of the debris spin over one step
+		double dt = postDt > 0 ? postDt : 0.02;
+		auto push = [&] (const Vector &F, const Vector &r) { sdk.AddForce (vh, F, r); if (kicks.size () < 256) kicks.push_back ({ sp.parent, F, r, dt }); };
+		push (sp.dv * (-caps.mass / dt), sp.cv);
+		Vector L (caps.pmi.x * sp.dw.x, caps.pmi.y * sp.dw.y, caps.pmi.z * sp.dw.z);
+		Vector tau = L * (-caps.mass / dt);
+		double tl = tau.length ();
+		if (tl > 0) {
+			Vector a = Unit (crossp (tau, std::fabs (tau.x) < 0.9 * tl ? Vector (1, 0, 0) : Vector (0, 1, 0)));
+			Vector G = crossp (a, tau) * 0.5;
+			push (G, sp.cv + a); push (G * -1.0, sp.cv - a);
+		}
+	}
 	CollDebrisA d;
 	d.h = h; d.mesh = mesh; d.parent = sp.parent; d.other = sp.other; d.event = sp.event; d.birth = simt; d.row = sp.row; d.fnv = fnv;
 	d.id = FindId (h);
@@ -945,6 +962,7 @@ void CollBreakA::Repair (uint32_t id)
 	}
 	b.rows.clear ();
 	if (const VesselDamageA *vd = s.Damage (id)) b.adopted = vd->d.torn.size ();
+	for (auto bi = blast.begin (); bi != blast.end ();) { if (bi->first.first == id) bi = blast.erase (bi); else ++bi; }
 }
 
 void CollBreakA::Pass ()
@@ -973,6 +991,7 @@ void CollBreakA::DropVessel (uint32_t id, CollH h)
 	for (size_t k = pairs.size (); k-- > 0;) if (pairs[k].a == id || pairs[k].b == id) { s.noPair.erase ({ pairs[k].a, pairs[k].b }); pairs.erase (pairs.begin () + (long)k); }
 	ves.erase (id);
 	for (auto it = slots.begin (); it != slots.end ();) { if (it->first.first == id) it = slots.erase (it); else ++it; }
+	for (auto bi = blast.begin (); bi != blast.end ();) { if (bi->first.first == id) bi = blast.erase (bi); else ++bi; }
 }
 
 void CollBreakA::PairCheck (double simt)
@@ -1040,11 +1059,19 @@ void CollBreakA::Rebuild (double simt)
 	}
 }
 
-void CollBreakA::Post (double simt, double)
+void CollBreakA::Post (double simt, double simdt)
 {
 	if (quiet) return;
+	postDt = simdt;
 	if (!rebuilt) { rebuilt = true; Rebuild (simt); }
 	Adopt ();
+	if (cfg.blast) for (auto &kv : blast) { // blast: spin loads only for slots hit within BLAST_LIVE
+		CollBlastSlotA &bs = kv.second;
+		if (!bs.b || !(simt - bs.lastHit <= BLAST_LIVE) || simt <= bs.lastHit) continue;
+		CollH vh = s.VesselHandle (kv.first.first);
+		if (!vh || sdk.Playback (vh)) continue;
+		BlastStep (kv.first.first, kv.first.second, bs, vh);
+	}
 	for (size_t i = freeMesh.size (); i-- > 0;) if (freeMesh[i].dropped) { if (freeMesh[i].mesh) sdk.MeshFree (freeMesh[i].mesh); freeMesh.erase (freeMesh.begin () + (long)i); }
 	for (auto &kv : ves) Assert (kv.first, kv.second);
 	std::vector<CollSpawnA> sp;
@@ -1061,8 +1088,218 @@ void CollBreakA::End ()
 		for (auto &d : live) if (d.mesh) sdk.MeshFree (d.mesh);
 		for (auto &f : freeMesh) if (f.mesh) sdk.MeshFree (f.mesh);
 	}
-	live.clear (); freeMesh.clear (); spawn.clear (); pairs.clear (); ves.clear (); slots.clear ();
+	live.clear (); freeMesh.clear (); spawn.clear (); pairs.clear (); ves.clear (); slots.clear (); blast.clear ();
 	rebuilt = false; cfgOk = -1; loggedNoCfg = false;
+}
+
+// blast: cells, stress and debris from cells (design-CA-blast 2, 4, 5)
+
+CollBlastSlotA *CollBreakA::BlastSlot (uint32_t id, uint32_t mesh, CollH vh, const CollSlotA &sl)
+{
+	auto key = std::make_pair (id, mesh);
+	auto it = blast.find (key);
+	if (it != blast.end () && it->second.b && it->second.key == sl.key) return &it->second;
+	CollBlastSlotA &bs = blast[key];
+	bs = CollBlastSlotA ();
+	bs.key = sl.key;
+	size_t ng = sl.v.size ();
+	std::vector<CollAffine> F = Poses (id, mesh, ng);
+	CollAffine Fsi = CollInverse (StaticPose (sl, F));
+	std::vector<std::vector<uint32_t>> weld;
+	DentMath::WeldMap (sl.v, DENT_WELD, weld);
+	CollBlastInput in;
+	in.size = sdk.Size (vh); in.mass = sdk.EmptyMass (vh); in.maxCells = cfg.blastCells;
+	for (size_t g = 0; g < ng && g < sl.cls.size () && g < sl.tier.size () && g < weld.size (); g++) {
+		if (sl.idx[g].size () < 3 || sl.keep.count ((uint16_t)g) || (sl.usr[g] & 0x2)) continue;
+		int pc = g < sl.pieceOf.size () ? sl.pieceOf[g] : -1;
+		int piece;
+		if (sl.cls[g] == sl.staticCls && (sl.tier[g] == CBRK_PART || sl.tier[g] == CBRK_GLASS)) { piece = -1; bs.groups.push_back ((uint16_t)g); }
+		else if (pc >= 0 && sl.tier[g] == CBRK_PART && !sl.piece[pc].fixed) piece = pc;
+		else continue;
+		for (size_t t = 0; t + 2 < sl.idx[g].size (); t += 3) {
+			size_t a = sl.idx[g][t], b = sl.idx[g][t + 1], c = sl.idx[g][t + 2];
+			if (a >= sl.v[g].size () || b >= sl.v[g].size () || c >= sl.v[g].size ()) continue;
+			for (size_t k : { a, b, c }) { in.v.push_back (P (sl.v[g][k])); in.w.push_back (weld[g][k]); }
+			in.piece.push_back (piece);
+		}
+	}
+	const DentSites *ds = s.Sites (id, mesh);
+	bool given = ds && ds->key == sl.key && !ds->s.empty ();
+	bs.b.reset (new CollBlastA ());
+	if (!bs.b->Build (in, given ? &ds->s : nullptr, CollApply (Fsi, Vector () - sdk.MeshOffset (vh, mesh)))) { blast.erase (key); return nullptr; }
+	if (!given) { DentSites x; x.slot = mesh; x.key = sl.key; x.s = bs.b->site; s.SetSites (id, x); }
+	std::vector<uint32_t> removed, bonds;
+	if (const VesselDamageA *vd = s.Damage (id)) for (auto &r : vd->d.rec) // cells cut away by VCUT records
+		if (r.slot == mesh && r.key == sl.key && r.p.mode == DENTM_VCUT && !(r.p.bits & DENTC_KEEP) && r.p.P >= 0) { int c = bs.b->ChunkOfCell ((uint32_t)r.p.P); if (c >= 0) removed.push_back ((uint32_t)c); }
+	for (size_t c = 0; c < bs.b->chunk.size (); c++) { // animated pieces torn off
+		int pc = bs.b->chunk[c].piece;
+		if (pc < 0) continue;
+		bool all = true;
+		for (uint16_t g : sl.piece[pc].grp) if (!sl.keep.count (g) && !(sl.usr[g] & 0x2) && !Hidden (id, mesh, g)) all = false;
+		if (all) removed.push_back ((uint32_t)c);
+	}
+	if (const std::vector<uint32_t> *kb = s.BrokenBonds (id, mesh)) bonds = *kb;
+	if (!removed.empty () || !bonds.empty ()) bs.b->Restore (bonds, removed);
+	bs.recorded = bs.b->Broken ();
+	Log ("Collision blast '%s' slot=%u cells=%zu chunks=%zu bonds=%zu t=%.4g restored=%zu/%zu", sdk.Name (vh).c_str (), mesh, bs.b->site.size (), bs.b->chunk.size (), bs.b->bond.size (), bs.b->t, removed.size (), bonds.size ());
+	return &bs;
+}
+
+void CollBreakA::BlastHit (const CollDamageHit &h, CollH vh, const CollSlotA &sl)
+{
+	CollBlastSlotA *bs = BlastSlot (h.id, h.mesh, vh, sl);
+	if (!bs) return;
+	std::vector<CollAffine> F = Poses (h.id, h.mesh, sl.v.size ());
+	CollAffine Fsi = CollInverse (StaticPose (sl, F));
+	Vector ofs = sdk.MeshOffset (vh, h.mesh);
+	Vector cr = CollApply (Fsi, h.c - ofs);
+	if (h.Jn > 0 && h.dt > 0) bs->b->Force (cr, CollApplyDir (Fsi, Unit (h.n) * (-h.Jn / h.dt))); // contact force on this side: inward
+	if (h.mat && h.mat->sigma_c > 0) { double k = std::max (0.1, std::min (10.0, h.mat->sigma_c / BLAST_SIGMA_C)); bs->b->Material (BLAST_SIGMA_Y * k, BLAST_SIGMA_U * k); }
+	double dmg = cfg.blastESpec > 0 ? std::max (0.0, std::min (1.0, h.eSpec / cfg.blastESpec)) : 0.0;
+	if (dmg > 0 && h.R > 0) bs->b->Impact (cr, h.R, dmg);
+	bs->hit = h; bs->haveHit = true; bs->lastHit = h.simt;
+	BlastStep (h.id, h.mesh, *bs, vh);
+}
+
+void CollBreakA::BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, CollH vh)
+{
+	const CollSlotA *sl = Slot (id, mesh);
+	if (!sl || !sl->ok || !bs.b || !bs.b->Ok ()) return;
+	auto t0 = std::chrono::steady_clock::now ();
+	std::vector<CollAffine> Fp = Poses (id, mesh, sl->v.size ());
+	CollAffine Fs = StaticPose (*sl, Fp), Fsi = CollInverse (Fs);
+	Vector ofs = sdk.MeshOffset (vh, mesh);
+	CollVesselRead rd {};
+	sdk.ReadVessel (vh, rd, CVR_NOWEIGHT);
+	bs.b->Spin (CollApply (Fsi, Vector () - ofs), CollApplyDir (Fsi, rd.w));
+	std::vector<CollBlastSplit> sp = bs.b->Step ();
+	std::vector<uint32_t> br = bs.b->Broken (), nb;
+	std::set_difference (br.begin (), br.end (), bs.recorded.begin (), bs.recorded.end (), std::back_inserter (nb));
+	if (!nb.empty ()) { s.AddBrokenBonds (id, mesh, nb); bs.recorded = br; }
+	blastSteps++;
+	blastMs += std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now () - t0).count ();
+	const CollDamageHit &h = bs.hit;
+	for (auto &x : sp) {
+		CollBlastBreak bk;
+		bk.id = id; bk.slot = mesh; bk.other = h.other; bk.simt = sdk.SimTime ();
+		double r = 0;
+		for (uint32_t c : x.chunks) {
+			const CollBlastChunk &ch = bs.b->chunk[c];
+			if (ch.cell >= 0) bk.cells.push_back ((uint32_t)ch.cell); else bk.pieces.push_back ((uint32_t)ch.piece);
+			r = std::max (r, (ch.c - x.c).length ());
+		}
+		std::sort (bk.cells.begin (), bk.cells.end ()); std::sort (bk.pieces.begin (), bk.pieces.end ());
+		bk.mass = x.mass;
+		bk.centroid = CollApply (Fs, x.c) + ofs;
+		bk.dv = Unit (CollApplyDir (Fs, x.n)) * (BLAST_KICK * std::max (h.vn, 0.0));
+		r += 0.5 * std::sqrt (bs.b->Acell);
+		Vector dw = bs.haveHit ? crossp (bk.dv, h.c - bk.centroid) / (r * r + 0.01) : Vector ();
+		double wl = dw.length ();
+		if (wl > 2 * 3.14159265358979) dw *= 2 * 3.14159265358979 / wl;
+		bk.dw = dw;
+		SpawnCells (bk);
+	}
+}
+
+bool CollBreakA::MakeCellSpawn (const CollBlastBreak &bk, const CollSlotA &sl, CollH vh, const std::vector<Vector> &site, const std::vector<uint16_t> &stat, uint32_t event, CollSpawnA &sp)
+{
+	Vector ofs = sdk.MeshOffset (vh, bk.slot);
+	std::vector<CollAffine> F = Poses (bk.id, bk.slot, sl.v.size ());
+	CollAffine Fs = StaticPose (sl, F);
+	Vector cd = bk.centroid - ofs;
+	DentDebris &d = sp.row;
+	d.id = ++debrisSeq; d.slot = bk.slot; d.key = sl.key; d.ngrp = sl.ngrp; d.nvtx = sl.nvtx; d.simt = bk.simt;
+	auto pose = [&] (const CollAffine &X, std::vector<uint16_t> grp) {
+		DentDebrisPose ps;
+		MatQ (X.A, ps.q);
+		ps.p = X.t - cd;
+		ps.p = Vector (Q9 (ps.p.x), Q9 (ps.p.y), Q9 (ps.p.z));
+		for (double &x : ps.q) x = Q9 (x);
+		std::sort (grp.begin (), grp.end ());
+		ps.grp = grp;
+		if (!ps.grp.empty ()) d.pose.push_back (ps);
+	};
+	std::vector<uint16_t> sg;
+	if (!bk.cells.empty ()) for (uint16_t g : stat) if (!Hidden (bk.id, bk.slot, g)) sg.push_back (g);
+	pose (Fs, sg);
+	for (uint32_t k : bk.pieces) {
+		if (k >= sl.piece.size ()) continue;
+		const CollPieceA &p = sl.piece[k];
+		std::vector<uint16_t> pg;
+		for (uint16_t g : p.grp) if (!sl.keep.count (g) && !(sl.usr[g] & 0x2) && !Hidden (bk.id, bk.slot, g)) pg.push_back (g);
+		if (pg.empty ()) continue;
+		pose (F[pg[0]], pg);
+	}
+	if (d.pose.empty ()) return false;
+	if (const VesselDamageA *vd = s.Damage (bk.id)) for (auto &r : vd->d.rec) { // the parent's other records
+		if (r.slot != bk.slot || r.key != sl.key || r.p.mode == DENTM_VCUT) continue;
+		bool any = false;
+		for (auto &ps : d.pose) for (uint16_t g : ps.grp) if (Lists (r, g)) any = true;
+		if (any) d.rec.push_back (r);
+	}
+	for (uint32_t c : bk.cells) { // KEEP VCUT: only the break's cells stay
+		if (c >= site.size ()) continue;
+		DentRecord r {};
+		r.slot = bk.slot; r.key = sl.key; r.ngrp = sl.ngrp; r.nvtx = sl.nvtx; r.grp = stat;
+		r.p.mode = DENTM_VCUT; r.p.bits = DENTC_KEEP; r.p.P = (double)c; r.p.seed = (uint32_t)site.size (); r.p.c = site[c];
+		r.p.n = Vector (0, 0, 1); r.p.t = Vector (1, 0, 0); r.p.R = 0; r.p.h = 0; r.p.T = 0;
+		DentMath::Quantise (r.p);
+		d.rec.push_back (r);
+	}
+	d.mass = Q9 (std::max (1.0, bk.mass));
+	if (d.mass < BRK_MIN_MASS) return false;
+	sp.parent = bk.id; sp.other = bk.other; sp.event = event; sp.mesh = sl.name;
+	sp.cv = bk.centroid; sp.dv = bk.dv; sp.dw = bk.dw; sp.mass = d.mass; sp.blast = true;
+	return true;
+}
+
+void CollBreakA::SpawnCells (const CollBlastBreak &bk)
+{
+	if (quiet) return;
+	CollH vh = s.VesselHandle (bk.id);
+	if (!vh) return;
+	const CollSlotA *sl = Slot (bk.id, bk.slot);
+	if (!sl || !sl->ok) return;
+	VesB &b = ves[bk.id];
+	uint32_t event = ++events;
+	std::vector<Vector> site;
+	std::vector<uint16_t> stat;
+	auto bi = blast.find ({ bk.id, bk.slot });
+	if (bi != blast.end () && bi->second.b) site = bi->second.b->site, stat = bi->second.groups;
+	else if (const DentSites *ds = s.Sites (bk.id, bk.slot)) site = ds->s;
+	if (stat.empty ()) for (size_t g = 0; g < sl->v.size () && g < sl->cls.size () && g < sl->tier.size (); g++)
+		if (sl->idx[g].size () >= 3 && !sl->keep.count ((uint16_t)g) && !(sl->usr[g] & 0x2) && sl->cls[g] == sl->staticCls && (sl->tier[g] == CBRK_PART || sl->tier[g] == CBRK_GLASS)) stat.push_back ((uint16_t)g);
+	bool canDebris = cfg.visuals && s.vis.Mode () != CollVisualA::MODE_OFF;
+	if (canDebris && cfgOk < 0) cfgOk = sdk.DebrisClassExists () ? 1 : 0;
+	if (canDebris && !cfgOk) { if (!loggedNoCfg) Log ("Collision: Config/Vessels/CollDebris.cfg missing: parts are hidden without debris"); loggedNoCfg = true; canDebris = false; }
+	size_t queued = 0;
+	for (auto &x : spawn) if (x.blast && x.parent == bk.id) queued++;
+	std::string name = "-";
+	CollSpawnA sp;
+	if (canDebris && queued < (size_t)BRK_PER_EVENT && MakeCellSpawn (bk, *sl, vh, site, stat, event, sp)) {
+		sp.row.name = name = NewName (sdk.Name (vh));
+		spawn.push_back (sp);
+	}
+	if (!bk.cells.empty ()) s.AddCellCuts (bk.id, bk.slot, bk.cells);
+	for (uint32_t k : bk.pieces) { // animated pieces: torn rows, existing hide path
+		if (k >= sl->piece.size ()) continue;
+		DentTorn t;
+		t.kind = (uint8_t)CBRK_PART; t.slot = bk.slot; t.key = sl->key; t.ngrp = sl->ngrp; t.nvtx = sl->nvtx; t.simt = bk.simt; t.debris = name;
+		for (uint16_t g : sl->piece[k].grp) if (!sl->keep.count (g) && !(sl->usr[g] & 0x2) && !Hidden (bk.id, bk.slot, g)) t.grp.push_back (g);
+		if (t.grp.empty ()) continue;
+		std::sort (t.grp.begin (), t.grp.end ());
+		if (name != "-") t.kin = true, t.dv = bk.dv, t.dw = bk.dw, t.mass = sp.mass;
+		b.rows.push_back (t);
+		s.AddTorn (bk.id, t); b.adopted++;
+		if (b.sh) for (uint16_t g : t.grp) b.sh->SetGroupHidden (bk.slot, g, true);
+	}
+	blastBreaks++; breaks++;
+	std::string cl;
+	for (uint32_t c : bk.cells) cl += (cl.empty () ? "" : ",") + std::to_string (c);
+	Log ("Collision blast break '%s' slot=%u cells=%s pieces=%zu mass=%.4g debris=%s", sdk.Name (vh).c_str (), bk.slot, cl.empty () ? "-" : cl.c_str (), bk.pieces.size (), bk.mass, name.c_str ());
+	CollBreakEvent ev;
+	ev.id = bk.id; ev.kind = CBRK_SECTION; ev.c = bk.centroid; ev.n = Unit (bk.dv); ev.r = bi != blast.end () && bi->second.b ? std::sqrt (bi->second.b->Acell) : 0.5; ev.playback = false;
+	if (s.fx) s.fx->Break (ev);
 }
 
 std::unique_ptr<CollDmgSink> CollMakeBreak (CollSdk &sdk, CollDmgSession &s, const CollCfgValues &cfg)
