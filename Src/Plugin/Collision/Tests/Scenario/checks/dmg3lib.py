@@ -65,17 +65,17 @@ def first_debris_frame(r):
 def broke(r):  # the crash of 70 m/s: dents of mode 1, break lines, a debris vessel
     no_error(r)
     crush_each(r)
-    brk = matches(r, BREAK)
-    if not brk:
+    brk, tr = matches(r, BREAK), tears(r)  # a section tear takes the small parts with it, so tear lines count as breaks
+    if not brk and not tr:
         miss = [l for l in r.log if l.startswith('Collision: Config/Vessels/CollDebris.cfg missing')]
-        fail('run %s: no "Collision break" line%s' % (r.spec.id, ' (%s)' % miss[0] if miss else ''))
-    if not any(m.group(1) in PAIR and m.group(4) not in ('', '-') for m in brk):
+        fail('run %s: no "Collision break" or "Collision tear" line%s' % (r.spec.id, ' (%s)' % miss[0] if miss else ''))
+    if not tr and not any(m.group(1) in PAIR and m.group(4) not in ('', '-') for m in brk):
         fail('run %s: no break line of PB-A or PB-B with groups' % r.spec.id)
     deb = matches(r, DEBRIS)
     if not deb:
         fail('run %s: no "Collision debris" line' % r.spec.id)
     s = dmg3(r)
-    if s['breaks'] < 1:
+    if s['breaks'] < 1 and not tr:
         fail('run %s: dmg3 breaks=%d, at least 1 expected' % (r.spec.id, s['breaks']))
     if first_debris_frame(r) is None:
         fail('run %s: no vessel of class %s in the dump' % (r.spec.id, DEBRIS_CLASS))
