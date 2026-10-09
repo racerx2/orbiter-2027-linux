@@ -70,7 +70,7 @@ struct Sim {
 	CollDetect fwd, ver;
 	Host host;
 	Vector g;
-	struct TB { CollOrbState o; std::shared_ptr<Geo> geo; uint32_t id; double rmax; Vector push; bool landed = false, woke = false; };
+	struct TB { CollOrbState o; std::shared_ptr<Geo> geo; uint32_t id; double rmax; Vector push; bool landed = false, woke = false; Vector split; };
 	std::vector<TB> tb;
 	std::shared_ptr<Geo> baseGeo; Vector basePos;
 	int events = 0, writes = 0, lastWrites = 0;
@@ -117,6 +117,10 @@ struct Sim {
 			}
 			CollPartRef p {};
 			p.geom = &b.geo->geom; p.skin = COLL_SKIN_DEFAULT; p.owner = CollOwnerKey { COLLO_VESSEL, b.id, -1, -1, -1, -1 }; p.partKey = 0; p.version = 0;
+			if (b.split.length () > 0) {                     // two components at -split and +split, the second owned by id + 100
+				p.P0.t = p.P1.t = -b.split; k.parts.push_back (p);
+				p.P0.t = p.P1.t = b.split; p.owner.id = b.id + 100; p.partKey = 1;
+			}
 			k.parts.push_back (p);
 			bodies.push_back (k);
 		}
@@ -544,5 +548,33 @@ TEST_CASE ("fix2 M7: 25-sphere chain at h 0.1: delivery converges with the integ
 		REQUIRE (S.fr.Stats ().checkFail == 0);
 		REQUIRE (worstP <= 1e-12);
 	}
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("fix2 Resolve0: past-check pairs spanning two components: every owner pair's event is resolved, none left approaching", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	int multi = 0, missed = 0;
+	for (double h : { 0.1, 0.2 })
+		for (Vector p : { Vector (4.4, 2.5, 0), Vector (6, 4, 0), Vector (8, 2, 0) }) {
+			Sim S;
+			auto half = std::make_shared<Geo> (BoxMesh (Vector (4, 0.3, 0.3)));   // upper and lower slab of each rod: a tip hit spans both
+			Vector pmi ((0.09 + 0.36)/3, (16 + 0.36)/3, (16 + 0.09)/3);
+			S.Add (half, 500, pmi, Vector (), Vector (p.y*0.5, 0, 0), 5);
+			S.Add (half, 500, pmi, Vector (9, 0, 0), Vector (-p.y*0.5, 0, 0), 5);
+			for (auto &b : S.tb) b.split = Vector (0, 0, 0.3);
+			S.tb[0].o.s.omega = Vector (0, 0, p.x); S.tb[1].o.s.omega = Vector (0, 0, -p.x);
+			for (int f = 0; f*h < 3.0; f++) S.Frame (h);
+			missed += S.fr.Stats ().missed;
+			for (const CollImpactEvent &e : S.evs) {
+				CAPTURE (h, p.x, e.t, e.vn, e.vn_post, e.flags, e.s[0].owner.vesselId, e.s[1].owner.vesselId);
+				if (e.s[0].owner.vesselId > 100 || e.s[1].owner.vesselId > 100) multi++;
+				REQUIRE (e.vn_post >= 0.0);
+			}
+			REQUIRE (S.fr.Stats ().checkFail == 0);
+		}
+	CAPTURE (multi, missed);
+	REQUIRE (multi > 0);
+	REQUIRE (missed > 0);
 	g_collLog = nullptr;
 }

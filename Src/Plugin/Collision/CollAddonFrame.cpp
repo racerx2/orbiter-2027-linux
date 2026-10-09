@@ -631,16 +631,21 @@ void CollAddonFrame::Impl::PastCheck (std::vector<CollImpactEvent> &ev)
 void CollAddonFrame::Impl::Resolve0 (const CollPairResult &r, std::vector<CollImpactEvent> &pev)
 {
 	const int a = verOf[r.bodyA], c = verOf[r.bodyB];
-	CollOwnerRef oa = CollOwnerRefOf (ver.Owner (r, 0, 0)), ob = CollOwnerRefOf (ver.Owner (r, 0, 1));
 	auto eq = [] (const CollOwnerRef &x, const CollOwnerRef &y) { return x.vesselId == y.vesselId && x.planet == y.planet && x.base == y.base && x.obj == y.obj && x.part == y.part; };
 	std::vector<CollImpactEvent *> evp;
-	for (CollImpactEvent &e : pev)
-		if ((e.flags & COLLEV_FIRST) && e.vn_post < 0 && ((eq (e.s[0].owner, oa) && eq (e.s[1].owner, ob)) || (eq (e.s[0].owner, ob) && eq (e.s[1].owner, oa)))) evp.push_back (&e);
+	for (CollImpactEvent &e : pev) {
+		if (!(e.flags & COLLEV_FIRST) || !(e.vn_post < 0)) continue;
+		for (int k = 0; k < r.npt; k++) {                    // owners matched per contact point: a pair may span several parts
+			CollOwnerRef oa = CollOwnerRefOf (ver.Owner (r, k, 0)), ob = CollOwnerRefOf (ver.Owner (r, k, 1));
+			if ((eq (e.s[0].owner, oa) && eq (e.s[1].owner, ob)) || (eq (e.s[0].owner, ob) && eq (e.s[1].owner, oa))) { evp.push_back (&e); break; }
+		}
+	}
 	if (evp.empty () || (!w[a].dyn && !w[c].dyn)) return;
 	std::vector<APt> pts;
 	std::vector<int> pidx;
 	Matrix RA0 = QM (Rot (a)), RB0 = QM (Rot (c)), RAt = QM (r.a.q), RBt = QM (r.b.q);
-	double umax = -1e100, usum = 0;
+	double umax = -1e100, usum = 0, uall = 0;
+	int nkept = 0;
 	for (int k = 0; k < r.npt; k++) {
 		const CollContact &pt = r.pt[k];
 		APt q {};
@@ -652,14 +657,16 @@ void CollAddonFrame::Impl::Resolve0 (const CollPairResult &r, std::vector<CollIm
 		q.gap = pt.gap + dotp ((q.pa - q.pb) - (pt.pA - pt.pB), q.n);
 		Vector p = q.org + (q.pa + q.pb)*0.5;
 		double u = -dotp (PointVel (a, p - Pos (a)) - PointVel (c, p - Pos (c)), q.n);
-		usum += u;
+		uall += u;
 		if (q.gap > F.dprm.deltaCt) continue;                // apart at t0: the forward pass sees it
+		usum += u; nkept++;
 		umax = std::max (umax, u);
 		pidx.push_back ((int)pts.size ());
 		pts.push_back (q);
 	}
 	if (!(umax > COLL_APPROACH_TOL)) {
-		if (r.npt > 0) for (CollImpactEvent *e : evp) e->vn_post = -usum/r.npt;
+		if (nkept > 0) for (CollImpactEvent *e : evp) e->vn_post = -usum/nkept;   // over the kept points only
+		else if (r.npt > 0) for (CollImpactEvent *e : evp) e->vn_post = -uall/r.npt;
 		return;
 	}
 	std::vector<int> memb { w[a].dyn ? a : c, w[a].dyn ? c : a }, map;
