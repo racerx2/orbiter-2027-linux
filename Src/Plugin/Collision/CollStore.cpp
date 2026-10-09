@@ -304,9 +304,9 @@ std::string CollSide::State (double t, uint32_t alias, double eabs, uint32_t fla
 
 std::string CollSide::Repair (double t, uint32_t alias) { return Fmt17 (t) + " R " + std::to_string (alias); }
 
-std::string CollSide::Ext (double t, uint32_t alias, uint32_t recidx, const DentParams &p, double E, double vn, double vt)
+std::string CollSide::Ext (double t, uint32_t alias, uint32_t recidx, const DentParams &p, double E, double vn, double vt, int hit, uint32_t evflags)
 {
-	return Fmt17 (t) + " X " + std::to_string (alias) + " " + DentMath::FormatExtEvent (recidx, p, E, vn, vt);
+	return Fmt17 (t) + " X " + std::to_string (alias) + " " + DentMath::FormatExtEvent (recidx, p, E, vn, vt, hit, evflags);
 }
 
 void CollSide::Torn (double t, uint32_t alias, const DentTorn &tr, std::vector<std::string> &lines)
@@ -374,7 +374,7 @@ bool CollSide::Parse (const std::string &text, CollSideFile &out)
 			ok = true;
 		} else if (ev.kind == 'X') { // dmg3: extension of the D event just before it
 			uint32_t k = 0;
-			ok = DentMath::ParseExtEvent (l.c_str () + TokStart (l, 3), k, ev.h8, ev.rec.p, ev.E, ev.vn, ev.vt);
+			ok = DentMath::ParseExtEvent (l.c_str () + TokStart (l, 3), k, ev.h8, ev.rec.p, ev.E, ev.vn, ev.vt, &ev.xhit, &ev.evflags);
 			ev.recidx = k;
 			ok = ok && !out.ev.empty () && out.ev.back ().kind == 'D' && out.ev.back ().alias == ev.alias && out.ev.back ().recidx == k && !open;
 		} else if (ev.kind == 'T') { // dmg3: torn groups

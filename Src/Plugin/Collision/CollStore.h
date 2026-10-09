@@ -61,6 +61,7 @@ struct CollSideEvent {
 	double eabs = 0; uint32_t flags = 0;     // S, B
 	uint32_t obj = 0; std::string base;      // B: object index, planet:base
 	uint32_t h8 = 0; double E = 0, vn = 0, vt = 0; // dmg3 X: record hash, event energy and speeds (rec.p holds the extension)
+	int xhit = -1; uint32_t evflags = 0;          // dmg3 X: 1 the event's hit record, 0 not, -1 old line
 	DentTorn torn;                           // dmg3 T
 };
 struct CollSideFile { std::string id; std::vector<CollSideAlias> alias; std::vector<CollSideEvent> ev; int skipped = 0; };
@@ -71,7 +72,7 @@ namespace CollSide {
 	void Dent (double t, uint32_t alias, uint32_t recidx, const DentRecord &r, std::vector<std::string> &lines);
 	std::string State (double t, uint32_t alias, double eabs, uint32_t flags);
 	std::string Repair (double t, uint32_t alias);
-	std::string Ext (double t, uint32_t alias, uint32_t recidx, const DentParams &p, double E, double vn, double vt); // dmg3 X, after the record's D lines
+	std::string Ext (double t, uint32_t alias, uint32_t recidx, const DentParams &p, double E, double vn, double vt, int hit = -1, uint32_t evflags = 0); // dmg3 X, after the record's D lines
 	void Torn (double t, uint32_t alias, const DentTorn &tr, std::vector<std::string> &lines); // dmg3 T, groups continued like D
 	std::string Building (double t, uint32_t alias, uint32_t obj, double eabs, uint32_t flags, const std::string &planetBase);
 	bool Parse (const std::string &text, CollSideFile &out);            // a truncated last line is skipped

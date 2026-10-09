@@ -305,7 +305,14 @@ protected:
 #endif
 	}
 public: // dmg3 area P
-	CollH MeshLoad (const char *name) override { std::string n (name ? name : ""); return n.empty () ? nullptr : (CollH)oapiLoadMesh (n.data ()); }
+	CollH MeshLoad (const char *name) override
+	{
+		std::string n (name ? name : "");
+		if (n.empty ()) return nullptr;
+		MESHHANDLE m = oapiLoadMesh (n.data ());
+		if (m && !oapiMeshGroupCount (m)) { oapiDeleteMesh (m); m = nullptr; } // a missing file loads as an empty mesh
+		return (CollH)m;
+	}
 	bool MeshEdit (CollH mesh, uint32_t g, uint32_t addFlag, const DentVtx *vtx, uint32_t n) override
 	{
 		if (!mesh) return false;

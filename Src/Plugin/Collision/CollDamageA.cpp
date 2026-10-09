@@ -597,7 +597,9 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, 
 	}
 	DentParams p;
 	int res = DentMath::Solve (in, view.View (), capv.rest.empty () ? nullptr : &cv, p);
-	if (res != DENT_OK) { // dmg3: energy only; the units still see the hit
+	bool hingeOnly = res == DENT_SMALL && sx.hinge && hingeK >= 0; // dmg3 M1: a repeat hit on a fold grows the hinge only
+	if (hingeOnly) sx.Esurplus = E, sx.hp.P = 0.0; // all energy to the hinge
+	if (res != DENT_OK && !hingeOnly) { // dmg3: energy only; the units still see the hit
 		CollDamageHit eh;
 		double em = sdk.EmptyMass (h);
 		eh.id = v.id, eh.other = other, eh.h = h, eh.mesh = mesh, eh.grp = s.grp, eh.tri = s.tri, eh.rec = -1;
@@ -657,11 +659,22 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, 
 	unsigned ncopy = 0; // copies stored or grown besides the hit part's record
 	double placed = 0, depth = 0; // dmg3: volume placed by this event [m^3], max displacement added
 	int hitRec = -1;
-	auto sideExt = [&] (uint32_t k, const DentRecord &o) { // dmg3: X right after the record's own D lines
-		if (rec.active && !DentMath::Legacy (o.p)) Side (CollSide::Ext (frameT - rec.t0, Alias (v, h), k, o.p, E, ev ? ev->vn : 0.0, ev ? ev->vt : 0.0));
+	auto sideExt = [&] (uint32_t k, const DentRecord &o, bool hk) { // dmg3: X right after the record's own D lines; hk marks the event's hit record (M3)
+		if (rec.active && !DentMath::Legacy (o.p)) Side (CollSide::Ext (frameT - rec.t0, Alias (v, h), k, o.p, E, ev ? ev->vn : 0.0, ev ? ev->vt : 0.0, hk ? 1 : 0, ev ? ev->flags : 0u));
 	};
-	int k0 = DentMath::FindCoalesce (v.d.rec, nr[0], key); // decided once on the hit part (dent2 B1, B2)
+	int k0 = hingeOnly ? -1 : DentMath::FindCoalesce (v.d.rec, nr[0], key); // decided once on the hit part (dent2 B1, B2)
 	if (k0 >= 0 && (v.match[k0] != (int)mesh || nr[0].p.R > v.d.rec[k0].p.R)) k0 = -1;
+	double hingeMp = 0, hingeDP = 0; // dmg3 M3: the fold is decided before any X line so the hit's X carries the flag
+	size_t hingeK1 = 0;
+	auto sameRun = [&] (size_t k, const DentParams &o) { const DentRecord &x = v.d.rec[k]; return x.p.mode == DENTM_HINGE && x.p.R == o.R && x.p.hd == o.hd && x.p.hz == o.hz && x.p.P == o.P && v.match[k] == (int)mesh; };
+	if (sx.hinge && hingeK >= 0) {
+		const DentParams &o = v.d.rec[hingeK].p;
+		hingeMp = DentMath::HingeMp (o, mat);
+		hingeDP = hingeMp > 0 ? std::min (o.P + (sx.Esurplus + 2.0 * sx.Mp * sx.hp.P) / (2.0 * hingeMp), DENT_HINGE_TMAX) - o.P : 0.0;
+		hingeK1 = (size_t)hingeK;
+		while (hingeK1 > 0 && sameRun (hingeK1 - 1, o)) hingeK1--; // dmg3 m1: the run starts at its first copy
+	}
+	bool hingeGo = sx.hinge && (hingeK >= 0 ? hingeDP > 0 : (k0 >= 0 || hingeOnly ? v.d.rec.size () : std::min<size_t> (DENT_MAX_VESSEL, v.d.rec.size () + nr.size ())) < DENT_MAX_VESSEL);
 	if (k0 >= 0) {
 		const DentParams o0 = v.d.rec[k0].p;
 		DentViewData ov, ox;
@@ -695,13 +708,13 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, 
 			n.coalesced++;
 			if (grown) ncopy++;
 			grown = true;
-			if (rec.active) { std::vector<std::string> l; CollSide::Dent (frameT - rec.t0, Alias (v, h), (uint32_t)k, o, l); for (auto &s2 : l) Side (s2); sideExt ((uint32_t)k, o); }
+			if (rec.active) { std::vector<std::string> l; CollSide::Dent (frameT - rec.t0, Alias (v, h), (uint32_t)k, o, l); for (auto &s2 : l) Side (s2); sideExt ((uint32_t)k, o, !hingeGo && k == k0); }
 		}
 		if (grown) hitRec = k0;
 		if (grown) MarkDirty (v.id, mesh, true); // grown records replay the mesh from rest once, at the end of the commit
 		p = v.d.rec[k0].p; // the grown record for the note and the log; dh <= 0 (at its cap): energy only, as before
 		cw = CollApply (P.pose[1], p.c), nw = Unit (CollApplyDir (P.pose[1], p.n));
-	} else {
+	} else if (!hingeOnly) {
 		for (DentRecord &x : nr) {
 			if (v.d.rec.size () >= DENT_MAX_VESSEL) {
 				if (!v.loggedCap) { v.loggedCap = true; Log ("Collision dent: '%s' holds %u records, energy only", v.name.c_str (), DENT_MAX_VESSEL); }
@@ -714,57 +727,60 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, 
 			if (&x != &nr[0]) ncopy++;
 			else hitRec = (int)v.d.rec.size () - 1, placed = p.h * placedS, depth = DentMath::MaxDisplace (p, view.View ());
 			n.dents++;
-			if (rec.active) { std::vector<std::string> l; CollSide::Dent (frameT - rec.t0, Alias (v, h), (uint32_t)(v.d.rec.size () - 1), x, l); for (auto &s2 : l) Side (s2); sideExt ((uint32_t)(v.d.rec.size () - 1), x); }
+			if (rec.active) { std::vector<std::string> l; CollSide::Dent (frameT - rec.t0, Alias (v, h), (uint32_t)(v.d.rec.size () - 1), x, l); for (auto &s2 : l) Side (s2); sideExt ((uint32_t)(v.d.rec.size () - 1), x, !hingeGo && &x == &nr[0]); }
 		}
 	}
 	double hingeE = 0; // dmg3: energy the fold took
 	if (sx.hinge) { // dmg3 S4: plate bowl overflow folds the plate along a line
-		double Eh = sx.Esurplus + 2.0 * sx.Mp * sx.hp.P;
 		if (hingeK >= 0) { // grows the hinge in range and its copies (stored right after it)
 			DentParams o = v.d.rec[hingeK].p;
-			double Mp = DentMath::HingeMp (o, mat);
-			double Pn = Mp > 0 ? std::min (o.P + Eh / (2.0 * Mp), DENT_HINGE_TMAX) : o.P, dP = Pn - o.P;
-			if (dP > 0) {
-				for (size_t k = (size_t)hingeK; k < v.d.rec.size (); k++) {
+			double Mp = hingeMp, dP = hingeDP;
+			if (hingeGo) {
+				for (size_t k = hingeK1; k < v.d.rec.size () && sameRun (k, o); k++) {
 					DentRecord &x = v.d.rec[k];
-					if (x.p.mode != DENTM_HINGE || x.p.R != o.R || x.p.hd != o.hd || x.p.hz != o.hz || x.p.P != o.P || v.match[k] != (int)mesh) break;
 					x.p.P = std::min (x.p.P + dP, DENT_HINGE_TMAX);
 					DentParams u = x.p;
 					u.h = 1.0;
-					x.p.h = std::min (DentMath::MaxDisplace (u, view.View ()), x.p.hz);
+					int qj = x.grp.empty () ? -1 : sh->PartOf (mesh, x.grp[0]);
+					DentViewData xvd; // dmg3 m1: h on the copy's own part
+					if (qj >= 0 && qj != part) { const CollPart &Q = sh->Part ((uint32_t)qj); ViewNear (sh, mesh, (uint32_t)qj, CollInverse (Q.pose[1]), CollApply (Q.pose[1], x.p.c), Rmax, xvd, hid); }
+					x.p.h = std::min (DentMath::MaxDisplace (u, qj >= 0 && qj != part ? xvd.View () : view.View ()), x.p.hz);
 					DentMath::Quantise (x.p);
 					n.coalesced++;
-					if (rec.active) { std::vector<std::string> l; CollSide::Dent (frameT - rec.t0, Alias (v, h), (uint32_t)k, x, l); for (auto &s2 : l) Side (s2); sideExt ((uint32_t)k, x); }
+					if (rec.active) { std::vector<std::string> l; CollSide::Dent (frameT - rec.t0, Alias (v, h), (uint32_t)k, x, l); for (auto &s2 : l) Side (s2); sideExt ((uint32_t)k, x, k == hingeK1); }
 				}
-				hingeE = 2.0 * Mp * dP, hitRec = hingeK;
-				depth = std::max (depth, DentMath::MaxDisplace (v.d.rec[hingeK].p, view.View ()));
+				hingeE = 2.0 * Mp * dP, hitRec = (int)hingeK1;
+				depth = std::max (depth, DentMath::MaxDisplace (v.d.rec[hingeK1].p, view.View ()));
 				MarkDirty (v.id, mesh, true);
 			}
-		} else if (v.d.rec.size () < DENT_MAX_VESSEL) {
+		} else if (hingeGo) {
 			DentParams hp = sx.hp;
 			DentMath::Quantise (hp);
 			Vector h0w = CollApply (P.pose[1], hp.c - hp.t * hp.hd - hp.n * hp.hz), aw = Unit (CollApplyDir (P.pose[1], hp.t)), nhw = Unit (CollApplyDir (P.pose[1], hp.n));
 			Vector ew = crossp (nhw, aw), chw = CollApply (P.pose[1], hp.c);
-			for (size_t i = 0; i < nr.size () && v.d.rec.size () < DENT_MAX_VESSEL; i++) { // the hit part and every part the flap reaches (ailerons)
-				DentRecord x = nr[i];
-				int qj = -1;
-				for (uint32_t j = 0; j < sh->nPart (); j++) if (sh->Part (j).mesh == mesh && SameAffine (sh->Part (j).anim[1], nrF[i])) { qj = (int)j; break; }
-				if (i > 0) {
-					if (qj < 0) continue;
-					const CollPart &Q = sh->Part ((uint32_t)qj);
-					Vector d = Q.sc[1] - h0w;
-					if (!(dotp (d, aw) > -Q.sr[1]) || !(std::fabs (dotp (d, ew)) < 2.0 * hp.R + Q.sr[1])) continue;
-					CollAffine Qi = CollInverse (Q.pose[1]);
-					x.p = hp;
-					x.p.c = CollApply (Qi, chw), x.p.n = Unit (CollApplyDir (Qi, nhw)), x.p.t = MapT (Qi, aw, x.p.n);
-					DentMath::Quantise (x.p);
-				} else x.p = hp;
+			auto push = [&] (DentRecord &x, bool hk) {
 				v.d.rec.push_back (x);
 				v.match.push_back ((int)mesh);
 				n.dents++;
-				if (i == 0) hitRec = (int)v.d.rec.size () - 1, depth = std::max (depth, DentMath::MaxDisplace (hp, view.View ()));
-				else ncopy++;
-				if (rec.active) { std::vector<std::string> l; CollSide::Dent (frameT - rec.t0, Alias (v, h), (uint32_t)(v.d.rec.size () - 1), x, l); for (auto &s2 : l) Side (s2); sideExt ((uint32_t)(v.d.rec.size () - 1), x); }
+				if (rec.active) { std::vector<std::string> l; CollSide::Dent (frameT - rec.t0, Alias (v, h), (uint32_t)(v.d.rec.size () - 1), x, l); for (auto &s2 : l) Side (s2); sideExt ((uint32_t)(v.d.rec.size () - 1), x, hk); }
+			};
+			DentRecord x0 = nr[0];
+			x0.p = hp;
+			push (x0, true);
+			hitRec = (int)v.d.rec.size () - 1, depth = std::max (depth, DentMath::MaxDisplace (hp, view.View ()));
+			for (uint32_t j = 0; j < sh->nPart () && v.d.rec.size () < DENT_MAX_VESSEL; j++) { // dmg3 M2: every part of the mesh the flap slab reaches (ailerons)
+				const CollPart &Q = sh->Part (j);
+				if ((int)j == part || Q.mesh != mesh || !RigidPose (Q.pose[1])) continue;
+				Vector d = Q.sc[1] - h0w;
+				if (!(dotp (d, aw) > -Q.sr[1]) || !(std::fabs (dotp (d, ew)) < 2.0 * hp.R + Q.sr[1])) continue;
+				CollAffine Qi = CollInverse (Q.pose[1]);
+				DentRecord x = r;
+				x.p = hp;
+				x.p.c = CollApply (Qi, chw), x.p.n = Unit (CollApplyDir (Qi, nhw)), x.p.t = MapT (Qi, aw, x.p.n);
+				DentMath::Quantise (x.p);
+				x.grp = partGroups (Q.Geom ());
+				push (x, false);
+				ncopy++;
 			}
 			hingeE = 2.0 * sx.Mp * hp.P;
 			MarkDirty (v.id, mesh, true);
@@ -781,7 +797,7 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, 
 	dh3.c = cw, dh3.n = nw, dh3.tdir = Unit (CollApplyDir (P.pose[1], s.tdir));
 	dh3.E = E, dh3.eSpec = m > 0 ? E / m : 0.0;
 	dh3.Esurplus = hitRec < 0 ? E : std::min (E, std::max (0.0, E - mat.sigma_c * std::max (0.0, placed) - hingeE));
-	dh3.R = p.R, dh3.depth = std::max (0.0, depth), dh3.mode = p.mode;
+	dh3.R = p.R, dh3.depth = std::max (0.0, depth), dh3.mode = hitRec >= 0 && (size_t)hitRec < v.d.rec.size () ? v.d.rec[hitRec].p.mode : p.mode;
 	if (ev) dh3.vn = ev->vn, dh3.vt = ev->vt, dh3.evflags = ev->flags;
 	dh3.simt = t, dh3.playback = false, dh3.mat = &mat;
 	EmitHit (dh3);
@@ -1215,6 +1231,8 @@ void CollDmgSession::Playback (double simt)
 			continue;
 		}
 		if (e.kind == 'X') { // dmg3: extension of the record its D event just stored
+			bool firstX = !(play.xT == e.t && play.xA == e.alias); // dmg3 M3: old lines without the flag: the first X of the event is the hit
+			play.xT = e.t, play.xA = e.alias;
 			if (e.recidx >= v.d.rec.size () || DentMath::ParamsHash (v.d.rec[e.recidx].p) != e.h8) continue;
 			DentRecord &r = v.d.rec[e.recidx];
 			DentMath::ApplyExt (r.p, e.rec.p);
@@ -1230,8 +1248,8 @@ void CollDmgSession::Playback (double simt)
 			double placedP = r.p.mode == DENTM_HINGE ? 2.0 * DentMath::HingeMp (r.p, pm) * r.p.P : pm.sigma_c * r.p.h * Pi * r.p.R * r.p.R / 3.0; // stored geometry, disk area
 			hit.E = e.E, hit.eSpec = em > 0 ? e.E / em : 0.0, hit.R = r.p.R, hit.depth = r.p.h, hit.mode = r.p.mode, hit.vn = e.vn, hit.vt = e.vt;
 			hit.Esurplus = std::min (e.E, std::max (0.0, e.E - placedP));
-			hit.simt = e.t, hit.playback = true;
-			EmitHit (hit);
+			hit.simt = e.t, hit.playback = true, hit.mat = &pm, hit.evflags = e.evflags;
+			if (e.xhit == 1 || (e.xhit < 0 && firstX)) EmitHit (hit);
 			continue;
 		}
 		if (e.kind != 'D') continue;

@@ -47,7 +47,7 @@ struct RepairReq { uint32_t id = 0; bool building = false; std::string planetBas
 struct CollE3Counters { uint64_t dents = 0, coalesced = 0, repairs = 0, relinks = 0, remakes = 0, notices = 0, playback = 0, side = 0, replays = 0; }; // replays: collider meshes reset and replayed
 
 struct CollRecLink  { bool active = false, failed = false; std::string id; double t0 = 0; std::ofstream file; std::vector<std::string> buf; uint32_t nalias = 0; };
-struct CollPlayLink { bool active = false, read = false, warned = false; std::string id; CollSideFile f; size_t cursor = 0; std::map<uint32_t, uint32_t> aliasId; };
+struct CollPlayLink { bool active = false, read = false, warned = false; std::string id; CollSideFile f; size_t cursor = 0; std::map<uint32_t, uint32_t> aliasId; double xT = -1; uint32_t xA = UINT32_MAX; }; // xT, xA: last X event (dmg3 M3)
 
 class CollDmgSession {
 public:

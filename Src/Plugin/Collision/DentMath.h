@@ -219,8 +219,8 @@ namespace DentMath {
 	std::string FormatBaseDentEvent (int planet, int base, int obj, const DentParams &p, uint32_t flags); // with DentRecord::flags (written if nonzero)
 	bool   ParseBaseDentEvent (const char *payload, int &planet, int &base, int &obj, DentParams &p);
 	bool   ParseBaseDentEvent (const char *payload, int &planet, int &base, int &obj, DentParams &p, uint32_t &flags);
-	std::string FormatExtEvent (uint32_t recidx, const DentParams &p, double E, double vn, double vt); // dmg3: recorder X payload
-	bool   ParseExtEvent (const char *payload, uint32_t &recidx, uint32_t &h8, DentParams &ext, double &E, double &vn, double &vt);
+	std::string FormatExtEvent (uint32_t recidx, const DentParams &p, double E, double vn, double vt, int hit = -1, uint32_t evflags = 0); // dmg3: recorder X payload
+	bool   ParseExtEvent (const char *payload, uint32_t &recidx, uint32_t &h8, DentParams &ext, double &E, double &vn, double &vt, int *hit = nullptr, uint32_t *evflags = nullptr); // hit: -1 when the line has no flag token
 	void   FormatTornEvent (const DentTorn &t, std::vector<std::string> &payload); // dmg3: recorder T payloads, groups split like D
 	bool   ParseTornEvent (const char *payload, DentTorn &t, bool &more);
 	void   FormatDebris (const DentDebris &d, const std::string &ind, std::vector<std::string> &lines); // dmg3: XDMGM B, XDMGM Q, XDMGD B rows

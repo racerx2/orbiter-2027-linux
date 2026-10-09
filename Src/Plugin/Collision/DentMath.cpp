@@ -580,15 +580,8 @@ void PutExtFields (std::string &s, const DentParams &p)
 	PutNumArg (s, p.hd); PutNumArg (s, p.hz);
 }
 
-// torn debris id as one token: blanks and control characters become '_', empty is '-'
-std::string DebrisTok (const std::string &d)
-{
-	if (d.empty ()) return "-";
-	std::string o = Clean (d, false);
-	for (char &c : o) if (c == ' ' || c == '\t') c = '_';
-	CutUtf8 (o, 64);
-	return o;
-}
+std::string NameTok (const std::string &n);
+std::string NameUntok (const Tok &t);
 
 // "<kind> <slot> <key8> <ngrp> <nvtx> <simt> <debris>"
 std::string TornHead (const DentTorn &t)
@@ -600,7 +593,7 @@ std::string TornHead (const DentTorn &t)
 	s += ' '; PutInt (s, (unsigned)t.ngrp);
 	s += ' '; PutInt (s, t.nvtx);
 	s += ' '; Put17 (s, t.simt);
-	s += ' '; s += DebrisTok (t.debris);
+	s += ' '; s += NameTok (Clean (t.debris, false)); // dmg3 m4: %-escaped, round-trips blanks
 	return s;
 }
 
@@ -612,7 +605,7 @@ bool ParseTornTok (const std::vector<Tok> &t, size_t i, DentTorn &o, bool &more)
 	if (!ParseInt (t[i], kind) || kind > 255 || !ParseInt (t[i+1], r.slot) || t[i+2].n > 8 || !ParseInt (t[i+2], r.key, 16) || !ParseInt (t[i+3], ngrp) || ngrp > 65535
 		|| !ParseInt (t[i+4], r.nvtx) || !ParseD (t[i+5], r.simt) || !ParseGroups (t[i+7], r.grp, more)) return false;
 	r.kind = (uint8_t)kind, r.ngrp = (uint16_t)ngrp;
-	if (!(t[i+6].n == 1 && t[i+6].p[0] == '-')) r.debris.assign (t[i+6].p, t[i+6].n);
+	r.debris = NameUntok (t[i+6]);
 	o = r;
 	return true;
 }
@@ -1011,14 +1004,14 @@ void DentMath::MapToRest (const std::vector<const DentParams *> &rec, Vector &c,
 	Vector x = c;
 	for (int it = 0; it < 6; it++) {
 		Vector d;
-		for (const DentParams *p : r) d += Displace (*p, x);
+		for (const DentParams *p : r) d += DisplaceLow (*p, x); // dmg3 m3: the collider's field
 		x = c - d;
 	}
 	const DentParams *hb = nullptr;
 	double best = 0.0;
 	for (const DentParams *p : r) {
 		if (p->mode != DENTM_HINGE) continue;
-		double l = Len (Displace (*p, x));
+		double l = Len (DisplaceLow (*p, x));
 		if (l > best) best = l, hb = p;
 	}
 	if (hb) { // n by the inverse Cayley rotation (-tau) at x
@@ -1176,7 +1169,7 @@ bool DentMath::CoalesceCrush (const DentParams &old, double V, const DentMeshVie
 {
 	P = old.P, h = old.h;
 	if (!(V > 0.0) || old.mode != DENTM_CRUSH) return false;
-	double target = old.h * VolumeFactor (old, m) + V, Pcap = DmaxCrush (L);
+	double target = CrushW (old, m) + V, Pcap = DmaxCrush (L); // dmg3 m2: same measure as the bisection
 	if (!(Pcap > old.P)) return false;
 	auto at = [&] (double x) { DentParams q = old; q.P = x; return q; };
 	double Pn = Pcap;
@@ -1197,7 +1190,7 @@ bool DentMath::CoalesceCrush (const DentParams &old, double V, const DentMeshVie
 	hn = std::min (hn, old.h + std::max (0.0, dc));
 	hn = std::min (hn, DENT_LIM_H);
 	if (hn < old.h) hn = old.h;
-	if (!(Pn > old.P) && !(hn > old.h)) return false;
+	if (!(Pn - old.P > 1e-9 * Pcap)) return false; // dmg3 m2: no P growth, no record growth
 	P = Pn, h = hn;
 	return true;
 }
@@ -1222,17 +1215,18 @@ void DentMath::ApplyExt (DentParams &p, const DentParams &e)
 	p.mode = e.mode, p.seed = e.seed, p.t = e.t, p.P = e.P, p.hd = e.hd, p.hz = e.hz, p.bits = e.bits;
 }
 
-std::string DentMath::FormatExtEvent (uint32_t recidx, const DentParams &p, double E, double vn, double vt)
+std::string DentMath::FormatExtEvent (uint32_t recidx, const DentParams &p, double E, double vn, double vt, int hit, uint32_t evflags)
 {
 	std::string s;
 	PutInt (s, recidx);
 	PutHexArg (s, ParamsHash (p));
 	PutExtFields (s, p);
 	PutNumArg (s, Clamp (E, 0.0, DENT_LIM_E)); PutNumArg (s, Clamp (vn, -1e9, 1e9)); PutNumArg (s, Clamp (vt, -1e9, 1e9));
+	if (hit >= 0) { s += ' '; PutInt (s, (uint32_t)(hit ? 1 : 0)); PutHexArg (s, evflags); } // dmg3 M3
 	return s;
 }
 
-bool DentMath::ParseExtEvent (const char *payload, uint32_t &recidx, uint32_t &h8, DentParams &ext, double &E, double &vn, double &vt)
+bool DentMath::ParseExtEvent (const char *payload, uint32_t &recidx, uint32_t &h8, DentParams &ext, double &E, double &vn, double &vt, int *hit, uint32_t *evflags)
 {
 	std::vector<Tok> t;
 	Split (payload, t);
@@ -1240,7 +1234,11 @@ bool DentMath::ParseExtEvent (const char *payload, uint32_t &recidx, uint32_t &h
 	uint32_t k, h;
 	double a, b, c;
 	if (t.size () < 14 || !ParseInt (t[0], k) || t[1].n > 8 || !ParseInt (t[1], h, 16) || !ParseExtFields (t, 2, e) || !ParseD (t[11], a) || !ParseD (t[12], b) || !ParseD (t[13], c)) return false;
+	uint32_t hk = 0, ef = 0;
+	bool flag = t.size () >= 16 && ParseInt (t[14], hk) && hk <= 1 && t[15].n <= 8 && ParseInt (t[15], ef, 16); // dmg3 M3: optional hit flag and event flags
 	recidx = k, h8 = h, ext = e, E = a, vn = b, vt = c;
+	if (hit) *hit = flag ? (int)hk : -1;
+	if (evflags) *evflags = flag ? ef : 0u;
 	return true;
 }
 
@@ -1726,12 +1724,13 @@ void DentMath::FormatDebris (const DentDebris &d, const std::string &ind, std::v
 		PutInt (h, d.id);
 		GroupLines (h + PoseHead (q), q.grp, lim, lines);
 	}
-	for (size_t j = 0; j < d.rec.size (); j++) {
-		const DentRecord &r = d.rec[j];
+	uint32_t j = 0; // dmg3 m4: ordinal among written rows
+	for (size_t jr = 0; jr < d.rec.size (); jr++) {
+		const DentRecord &r = d.rec[jr];
 		if (!ParamsOk (r.p)) continue;
 		std::string h = ind + "XDMGD B ";
 		PutInt (h, d.id); h += ' ';
-		PutInt (h, j);
+		PutInt (h, j++);
 		std::string x = h;
 		PutParams (h, r.p);
 		GroupLines (h, r.grp, lim, lines);

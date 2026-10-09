@@ -2560,7 +2560,7 @@ TEST_CASE("dmg3 XDMG 2 extension and torn rows: round trip, binding, legacy save
 	CHECK (std::memcmp (&w.rec[1].p, &c.p, sizeof c.p) == 0);
 	REQUIRE (w.torn.size () == 1);
 	CHECK (w.torn[0].grp == t.grp);
-	CHECK (w.torn[0].debris == "PB_debris_1");
+	CHECK (w.torn[0].debris == "PB debris 1");
 	CHECK (w.torn[0].simt == t.simt);
 	CHECK (w.verbatim.empty ());
 	CHECK (Format (w) == l); // a reload of the reload is the same text
@@ -3008,4 +3008,31 @@ uint64_t GoldenOldSave ()
 TEST_CASE("dmg3 old-save golden: an XDMG 1 block gives the pre-dmg3 (25fc21e) visual and collider bits", "[dent][dmg3]")
 {
 	CHECK (GoldenOldSave () == 0x44810fa010740741ull); // built from 25fc21e DentMath.cpp with the same function
+}
+
+TEST_CASE ("dmg3 cr3 M3 m4: X hit flag token, torn name and debris ordinals")
+{
+	DentParams p {};
+	p.c = Vector (1, 2, 3), p.n = Vector (0, 0, 1), p.R = 1.5, p.h = 0.1, p.mode = DENTM_CRUSH, p.P = 0.2, p.seed = 7, p.t = Vector (1, 0, 0);
+	DentMath::Quantise (p);
+	uint32_t k, h8, ef = 9; DentParams e; double E, vn, vt; int hit = 5;
+	std::string x = DentMath::FormatExtEvent (3, p, 1e6, -30, 2, 1, 0x21u);
+	REQUIRE (DentMath::ParseExtEvent (x.c_str (), k, h8, e, E, vn, vt, &hit, &ef));
+	CHECK (hit == 1);
+	CHECK (ef == 0x21u);
+	std::string o = DentMath::FormatExtEvent (3, p, 1e6, -30, 2);
+	REQUIRE (DentMath::ParseExtEvent (o.c_str (), k, h8, e, E, vn, vt, &hit, &ef));
+	CHECK (hit == -1);
+	CHECK (DentMath::FormatExtEvent (511, p, 1.23456789e29, -1.23456789e-05, -1.23456789e-05, 1, 0xffffffffu).size () <= (size_t)DENT_EVENT_MAX);
+	DentVesselText v;
+	DentDebris d; d.id = 4; d.slot = 1; d.key = 1; d.ngrp = 3; d.nvtx = 9; d.simt = 1.5; d.name = "deb";
+	DentRecord bad {}; bad.p = p; bad.p.R = -1;
+	DentRecord ok {}; ok.p = p; ok.grp = { 1 };
+	d.rec = { bad, ok };
+	v.debris.push_back (d);
+	std::vector<std::string> lines;
+	DentMath::FormatVessel (v, "", lines);
+	bool j0 = false;
+	for (auto &l : lines) { if (l.rfind ("XDMGD B 4 0 ", 0) == 0) j0 = true; CHECK (l.rfind ("XDMGD B 4 1 ", 0) != 0); }
+	CHECK (j0);
 }

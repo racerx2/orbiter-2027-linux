@@ -1563,3 +1563,61 @@ TEST_CASE ("dmg3 hinge copy to the aileron: the flap reaches a second part, both
 	for (const CollVtx &x : m->grp[1].vtx) moved |= DentMath::Displace (hg[1]->p, Vector (x.x, x.y, x.z)).length () > 0.05;
 	CHECK (moved);
 }
+
+// dmg3 cr3: wing plate with a separate aileron part from x0 to x1 (animated group 1)
+static std::shared_ptr<CollRestMesh> Cr3Wing (Rig &r, uint32_t a, float x0, float x1)
+{
+	Rig::Body &w = r.body[0];
+	auto sheet = [] (CollGroupData &g, float xa, float xb, float y0, float y1, float z, float nz, int nx, int ny) {
+		uint16_t base = (uint16_t)g.vtx.size ();
+		for (int j = 0; j <= ny; j++) for (int i = 0; i <= nx; i++) g.vtx.push_back (CollVtx { xa + (xb - xa) * i / nx, y0 + (y1 - y0) * j / ny, z, 0, 0, nz, 0, 0 });
+		for (int j = 0; j < ny; j++) for (int i = 0; i < nx; i++) {
+			uint16_t p = (uint16_t)(base + j * (nx + 1) + i), q = (uint16_t)(p + 1), s = (uint16_t)(p + nx + 1), t = (uint16_t)(s + 1);
+			if (nz > 0) g.idx.insert (g.idx.end (), { p, q, s, q, t, s });
+			else g.idx.insert (g.idx.end (), { p, s, q, q, s, t });
+		}
+	};
+	auto m = std::make_shared<CollRestMesh> ();
+	m->name = "wing";
+	m->grp.resize (2);
+	sheet (m->grp[0], -8, 2, -6, 6, 0, 1, 5, 6), sheet (m->grp[0], -8, 2, -6, 6, -0.64f, -1, 5, 6);
+	sheet (m->grp[1], x0, x1, -0.5f, 0.5f, 0, 1, 1, 1), sheet (m->grp[1], x0, x1, -0.5f, 0.5f, -0.64f, -1, 1, 1);
+	m->nvtx = (uint32_t)(m->grp[0].vtx.size () + m->grp[1].vtx.size ());
+	w.mi.key = "wing", w.mi.rest = m;
+	w.tv.reset (new TestVessel ()), w.mod.reset (new TestModule ());
+	w.tv->coll = &w.ca;
+	w.tv->meshGrp = { 2 };
+	UINT an = w.tv->CreateAnimation (0);
+	w.tv->AddAnimationComponent (an, 0, 1, w.mod->Lin (0, w.mod->Grp ({1}), 1, _V(0,0,1)));
+	r.host.slots[a] = { CollDmgSlot { true, DentMath::MeshKey ("wing"), 2, m->nvtx, m, "wing", 1 } };
+	return m;
+}
+
+static std::vector<const DentRecord *> Cr3Hinges (Rig &r, uint32_t a)
+{
+	std::vector<const DentRecord *> hg;
+	for (const DentRecord &x : r.s.Damage (a)->d.rec) if (x.p.mode == DENTM_HINGE) hg.push_back (&x);
+	return hg;
+}
+
+TEST_CASE ("dmg3 cr3 M2: the hinge reaches an aileron beyond the bowl radius")
+{
+	Rig r;
+	r.cfg.dentModes = true;
+	uint32_t a = r.Add ("PB-A"), b = r.Add ("PB-B");
+	auto m = Cr3Wing (r, a, 6.5f, 7.5f);
+	r.Begin ();
+	r.Frame ();
+	CollImpactEvent e = Hit (a, -1, b, 30.0, 2.46e6);
+	e.s[0].c = Vector (1.9, 0, 0), e.s[0].a = 0.3;
+	r.Frame ({ e });
+	REQUIRE (r.s.Damage (a));
+	std::vector<const DentRecord *> hg = Cr3Hinges (r, a);
+	REQUIRE (!hg.empty ());
+	INFO ("R " << hg[0]->p.R << " hinges " << hg.size ());
+	REQUIRE (hg[0]->p.R + 0.8 < 7.0 - 1.9); // the aileron lies outside the bowl reach
+	REQUIRE (hg.size () == 2);
+	CHECK (hg[0]->grp != hg[1]->grp);
+	for (const CollVtx &x : m->grp[1].vtx) CHECK ((DentMath::Displace (hg[0]->p, Vector (x.x, x.y, x.z)) - DentMath::Displace (hg[1]->p, Vector (x.x, x.y, x.z))).length () < 1e-6);
+}
+

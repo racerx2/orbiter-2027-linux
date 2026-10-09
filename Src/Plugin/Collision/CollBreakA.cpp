@@ -695,6 +695,7 @@ void CollBreakA::DropVessel (uint32_t id, CollH h)
 
 void CollBreakA::PairCheck (double simt)
 {
+	std::vector<uint32_t> stuck;
 	for (size_t k = pairs.size (); k-- > 0;) {
 		CollPairA p = pairs[k];
 		CollH ha = s.VesselHandle (p.a), hb = s.VesselHandle (p.b);
@@ -704,8 +705,9 @@ void CollBreakA::PairCheck (double simt)
 		auto rad = [&] (uint32_t id, CollH h) { auto it = ves.find (id); Vector c; double r = 0; if (it != ves.end () && it->second.sh) { it->second.sh->Bound (1, c, r); if (r > 0) return r; } return sdk.Size (h); };
 		double gap = (pa - pb).length () - rad (p.a, ha) - rad (p.b, hb);
 		if (gap > BRK_SEP) { s.noPair.erase ({ p.a, p.b }); pairs.erase (pairs.begin () + (long)k); continue; }
-		if (simt - p.t > BRK_STUCK) for (size_t i = 0; i < live.size (); i++) if (live[i].id == p.debris) { Kill (i, "still overlapping"); break; }
+		if (simt - p.t > BRK_STUCK && std::find (stuck.begin (), stuck.end (), p.debris) == stuck.end ()) stuck.push_back (p.debris);
 	}
+	for (uint32_t id : stuck) for (size_t i = 0; i < live.size (); i++) if (live[i].id == id) { Kill (i, "still overlapping"); break; } // Kill erases pairs: never inside the pair loop
 }
 
 void CollBreakA::Rebuild (double simt)
@@ -739,7 +741,7 @@ void CollBreakA::Rebuild (double simt)
 			CollSdk::DebrisCaps caps = Caps (geo, Mass (pid, *sl, pk), &fnv);
 			sdk.DebrisSetup (h, mesh, caps);
 			CollDebrisA d;
-			d.h = h; d.mesh = mesh; d.parent = pid; d.birth = row.simt; d.row = row; d.fnv = fnv; d.id = FindId (h);
+			d.h = h; d.mesh = mesh; d.parent = pid; d.birth = std::min (row.simt, simt); d.row = row; d.fnv = fnv; d.id = FindId (h); // birth: sim time restarts on load
 			live.push_back (d);
 			Log ("Collision break restored '%s' fnv=%08x", row.name.c_str (), fnv);
 		}
