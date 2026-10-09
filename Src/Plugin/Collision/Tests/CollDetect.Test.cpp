@@ -2082,8 +2082,9 @@ TEST_CASE("U19 held parts (disp <= delta_ct) against the true part path, 2000 ca
 
 TEST_CASE("fix1 5.5: crossing triangles of a sliding sunk box take the plate's normal, not the slide direction", "[colldetect][U16]")
 {
-	const double h = 1.0/60.0, sink = 0.01;
-	const CollGeom *plate = Geom (BoxM (Vector (5, 5, 0.5), Vector (0, 0, -0.5))), *box = Geom (BoxM (Vector (1, 1, 1)));
+	const double h = 1.0/60.0;
+	const CollGeom *plate = Geom (BoxM (Vector (5, 5, 2), Vector (0, 0, -2))), *box = Geom (BoxM (Vector (1, 1, 1)));
+	for (double sink : { 0.01 })                                          // fix2 M1 deeper-than-half case (1.1) open: outward-only normals break CollAddonFrame A17
 	for (const Vector &v : { Vector (3, 0, 0), Vector (-2, 1.5, 0), Vector (0, 0, 0) }) {
 		std::vector<CollBody> bs;
 		bs.push_back (Still (1, Vector (), h)); AddPart (bs.back (), plate, VKey (1));
@@ -2099,11 +2100,113 @@ TEST_CASE("fix1 5.5: crossing triangles of a sliding sunk box take the plate's n
 				const CollContact &c = r.pt[i];
 				if (!(c.flags & COLLP_DEGENERATE)) continue;
 				deg++;
-				Vector out = bs[r.bodyA].m.c0 - bs[r.bodyB].m.c0;          // n points from B to A
+				Vector out = bs[r.bodyA].id == 1 ? Vector (0, 0, -1) : Vector (0, 0, 1);   // plate surface normal, n points from B to A
 				if (std::fabs (c.n.z) > 1.0 - 1e-9 && (c.n & out) > 0.0) up++;
 			}
-		std::printf ("fix1 5.5: sunk box sliding at (%g %g %g) m/s: %d degenerate points, %d along the plate normal\n", v.x, v.y, v.z, deg, up);
+		std::printf ("fix1 5.5: box sunk %g sliding at (%g %g %g) m/s: %d degenerate points, %d along the plate normal\n", sink, v.x, v.y, v.z, deg, up);
 		CHECK (deg > 0);
 		CHECK (up == deg);
 	}
+}
+
+TEST_CASE("fix2: ToPartFrame of a pose interpolated through a mirroring scale (det 0) stays finite", "[colldetect][fix2]")
+{
+	const double h = 1.0;
+	const CollGeom *box = Geom (BoxM (Vector (0.3, 0.3, 0.3)));
+	CollBody A = Still (1, Vector (), h);
+	AddPart (A, box, VKey (1));
+	Matrix M (-1, 0, 0, 0, 1, 0, 0, 0, 1);
+	A.parts[0].P1 = CollAffine { M, Vector () };
+	CollBody B = Still (2, Vector (0, 0.3 + 0.3 + 0.02, 0), h);
+	AddPart (B, box, VKey (2));
+	CollParams prm;
+	prm.vPartMax = 1e9;
+	CollDetect d;
+	std::vector<CollBody> bs { A, B };
+	std::vector<CollPairResult> res;
+	Frame (d, prm, h, bs, res);
+	REQUIRE (d.Body (0).parts[0].interp);
+	REQUIRE (!res.empty ());
+	CollPairResult r = res[0];
+	r.kind = COLL_TOI; r.tau = 0.5;                          // P(0.5) = diag (0, 1, 1)
+	for (int i = 0; i < r.npt; i++) {
+		Vector p = r.pt[i].pA, n = r.pt[i].n;
+		d.ToPartFrame (r, i, 0, p, n);
+		CHECK ((std::isfinite (p.x) && std::isfinite (p.y) && std::isfinite (p.z)));
+		CHECK ((std::isfinite (n.x) && std::isfinite (n.y) && std::isfinite (n.z)));
+		Vector v = d.SurfaceVel (r, i, 0, 0.5);
+		CHECK ((std::isfinite (v.x) && std::isfinite (v.y) && std::isfinite (v.z)));
+	}
+}
+
+TEST_CASE("fix2 S6: a scoped leaf pair bigger than the release cap keeps its GRACE scope", "[colldetect][fix2]")
+{
+	const double h = 1.0/60.0;
+	Mesh a;                                                  // one leaf: 16 tiny triangles and one big one, all with centroid 0
+	for (int k = 1; k <= 16; k++) {
+		double s = k/256.0;
+		int b = (int)a.v.size ();
+		a.v.push_back (Vector (-s, -s, 0)); a.v.push_back (Vector (2*s, -s, 0)); a.v.push_back (Vector (-s, 2*s, 0));
+		Tri (a, b, b + 1, b + 2);
+	}
+	int b0 = (int)a.v.size ();
+	a.v.push_back (Vector (-3, -1, 0)); a.v.push_back (Vector (3, -1, 0)); a.v.push_back (Vector (0, 2, 0));
+	Tri (a, b0, b0 + 1, b0 + 2);
+	Mesh m;                                                  // crosses the big triangle near x 2.5
+	m.v = { Vector (2.5, -0.8, -1), Vector (2.5, -0.7, 1), Vector (2.5, -0.9, 1) };
+	Tri (m, 0, 1, 2);
+	CollGeom big = *Geom (a);                                // one root leaf of 17 (a depth-capped leaf), the big triangle checked last
+	big.node.resize (1);
+	big.node[0].first = 0; big.node[0].count = 17;
+	for (uint32_t i = 0; i < 17; i++) big.perm[i] = i;
+	const CollGeom *ga = &big, *gb = Geom (m);
+	std::vector<CollBody> bs;
+	bs.push_back (Still (1, Vector (), h)); AddPart (bs.back (), ga, VKey (1));
+	bs.push_back (Still (2, Vector (), h)); AddPart (bs.back (), gb, VKey (2));
+	bs.back ().entry = COLLE_NEW;
+	CollDetect d;
+	std::vector<CollPairResult> res;
+	Frame (d, CollParams (), h, bs, res);
+	const CollPairEntry *e = d.Pairs ().Find (VKey (1), VKey (2));
+	REQUIRE (e);
+	REQUIRE (e->grace.size () == 1);
+	bs.back ().entry = 0;
+	for (int f = 0; f < 3; f++) Frame (d, CollParams (), h, bs, res);
+	e = d.Pairs ().Find (VKey (1), VKey (2));
+	REQUIRE (e);
+	CHECK (e->grace.size () == 1);
+}
+
+TEST_CASE("fix2: entry check keeps at most 4096 raw intersections per part pair", "[colldetect][fix2]")
+{
+	const double h = 1.0/60.0;
+	auto grid = [] (int n, double off) {                     // n x n quads in z 0, two triangles each
+		Mesh m;
+		for (int j = 0; j <= n; j++) for (int i = 0; i <= n; i++) m.v.push_back (Vector (i*0.1 + off, j*0.1 + off, 0));
+		for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) { int v = j*(n + 1) + i; Tri (m, v, v + 1, v + n + 2); Tri (m, v, v + n + 2, v + n + 1); }
+		return m;
+	};
+	const CollGeom *ga = Geom (grid (48, 0.0)), *gb = Geom (grid (48, 0.03));
+	long long want = 0;                                      // coplanar overlapping grids: brute force count of crossing triangle pairs
+	for (const CollTri &ta : ga->tri) {
+		Vector va[3] = { ga->vtx[ta.v[0]], ga->vtx[ta.v[1]], ga->vtx[ta.v[2]] };
+		for (const CollTri &tb : gb->tri) {
+			Vector vb[3] = { gb->vtx[tb.v[0]], gb->vtx[tb.v[1]], gb->vtx[tb.v[2]] }, p, q;
+			if (std::fabs (va[0].x - vb[0].x) > 0.3 || std::fabs (va[0].y - vb[0].y) > 0.3) continue;
+			if (CollTriTriDistance (va, vb, p, q) <= 0.0) want++;
+		}
+	}
+	REQUIRE (want > 4*(long long)COLL_ENTRY_RAW_MAX);
+	std::vector<CollBody> bs;
+	bs.push_back (Still (1, Vector (), h)); AddPart (bs.back (), ga, VKey (1));
+	bs.push_back (Still (2, Vector (), h)); AddPart (bs.back (), gb, VKey (2));
+	bs.back ().jump1 = true;                                 // entry check only, its triangle pairs reported
+	CollDetect d;
+	std::vector<CollPairResult> res;
+	CollFrameStats st = Frame (d, CollParams (), h, bs, res);
+	const CollPairEntry *e = d.Pairs ().Find (VKey (1), VKey (2));
+	REQUIRE (e);
+	CHECK (!e->grace.empty ());
+	std::printf ("fix2 entry cap: %lld crossing pairs, %d triangle pairs tested, %zu scoped leaf pairs\n", want, st.triPairs, e->grace.size ());
+	CHECK (st.triPairs < want);
 }

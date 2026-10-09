@@ -27,6 +27,20 @@ bool CollOwnerKey::operator== (const CollOwnerKey &o) const
 
 // rotation helpers in Orbiter's conventions (Quaternion::Rotate, Matrix::Set (Quaternion), D3 2.4)
 
+static double Det3 (const Matrix &M)
+{
+	return M.m11*(M.m22*M.m33 - M.m23*M.m32) - M.m12*(M.m21*M.m33 - M.m23*M.m31) + M.m13*(M.m21*M.m32 - M.m22*M.m31);
+}
+
+// X.A invertible: finite determinant not negligible against its largest entry cubed
+static bool Invertible (const Matrix &M)
+{
+	double s = 0.0;
+	for (int i = 0; i < 9; i++) s = std::max (s, std::fabs (M.data[i]));
+	double d = Det3 (M);
+	return std::isfinite (d) && std::isfinite (s) && std::fabs (d) > 1e-12*s*s*s;
+}
+
 static Quaternion QInv (const Quaternion &q)
 {
 	double n = q.norm2 ();
@@ -1492,10 +1506,11 @@ struct CollDetect::Impl {
 		if (k != COLL_SPECULATIVE) return;
 		SetPose (cx, POSE_MODEL, cx.tau);
 		double ext = spec + p.deltaCt, lim = cx.Dstep*(1.0 - cx.tau) + p.deltaCt;
-		for (;;) {
+		if (!std::isfinite (lim)) lim = ext;                     // NaN or inf step bound: no widening (fix2)
+		for (int it = 0; it < 64; it++) {
 			raws.clear ();
 			Collect (cx, ext, false, raws);
-			if (!raws.empty () || ext >= lim) break;
+			if (!raws.empty () || !(ext < lim)) break;
 			ext = std::min (2.0*ext + p.deltaCt, lim);
 		}
 		if (raws.empty ()) return;
@@ -1691,7 +1706,7 @@ struct CollDetect::Impl {
 		SetPose (cx, mode, mode == POSE_T1 ? 1.0 : 0.0);
 		std::vector<Raw> raws;
 		for (size_t k = 0; k < cx.pp.size (); k++)
-			if (!cx.pp[k].culled && !cx.pp[k].support) Cutoff (cx, k, 0.0, Q_RAWX, raws, (size_t)1 << 20, nullptr);
+			if (!cx.pp[k].culled && !cx.pp[k].support) Cutoff (cx, k, 0.0, Q_RAWX, raws, raws.size () + COLL_ENTRY_RAW_MAX, nullptr);
 		if (raws.empty ()) return;
 		std::vector<std::pair<OwnerPair, CollLeafPair>> lp;
 		for (const Raw &w : raws) lp.push_back ({ cx.pp[w.k].key, LeafKey (cx, cx.pp[w.k], w.la, w.lb) });
@@ -1754,9 +1769,10 @@ struct CollDetect::Impl {
 			const CollTri &ta = ra.geom->tri[ra.geom->perm[x]];
 			if (ra.mask && ra.mask[ta.src]) continue;
 			Vector va[3] = { CollApply (XA, ra.geom->vtx[ta.v[0]]), CollApply (XA, ra.geom->vtx[ta.v[1]]), CollApply (XA, ra.geom->vtx[ta.v[2]]) };
-			for (uint32_t y = nb.first; y < nb.first + nb.count && n < COLL_GRACE_RELEASE_TRI; y++) {
+			for (uint32_t y = nb.first; y < nb.first + nb.count; y++) {
 				const CollTri &tb = rb.geom->tri[rb.geom->perm[y]];
 				if (rb.mask && rb.mask[tb.src]) continue;
+				if (n >= COLL_GRACE_RELEASE_TRI) return false;          // leaf pair too big to judge: keep the scope, re-checked next frame (fix2 S6)
 				Vector vb[3] = { CollApply (XB, rb.geom->vtx[tb.v[0]]), CollApply (XB, rb.geom->vtx[tb.v[1]]), CollApply (XB, rb.geom->vtx[tb.v[2]]) };
 				Vector pa2, pb2;
 				dmin = std::min (dmin, CollTriTriDistance (va, vb, pa2, pb2));
@@ -2054,6 +2070,7 @@ void CollDetect::ToPartFrame (const CollPairResult &r, int i, int side, Vector &
 	const CollPartRef &pr = B.parts[side ? c.partB : c.partA];
 	const CollBodyAt &s = side ? r.b : r.a;
 	CollAffine P = ResultPose (r, pr);
+	if (!Invertible (P.A)) P = pr.P0;                       // pose interpolated through a singular scale: rest pose (fix2)
 	Matrix R = QMat (s.q);
 	Vector xb = tmul (R, p - s.c);
 	p = mul (inv (P.A), xb - P.t);
