@@ -2425,3 +2425,513 @@ TEST_CASE ("fix3 parse-time cap counts only records with a known mesh key; orpha
 	CHECK (v.rec.size () == 10);
 	CHECK (sk == 600);
 }
+
+// dmg3 area S: crush mode, extension section, recorder X and T payloads
+
+// closed cone, apex (0, 0, 1), base radius 1 at z = -1, outward winding
+DentViewData Cone ()
+{
+	DentViewData d;
+	const int N = 48, K = 40;
+	d.rest.push_back (Vector (0, 0, 1));
+	for (int k = 1; k <= K; k++) for (int i = 0; i < N; i++) {
+		double a = 2.0 * Pi * i / N, r = (double)k / K;
+		d.rest.push_back (Vector (r * std::cos (a), r * std::sin (a), 1.0 - 2.0 * r));
+	}
+	d.rest.push_back (Vector (0, 0, -1));
+	auto id = [&] (int k, int i) { return (uint32_t)(1 + (k - 1) * N + ((i % N + N) % N)); };
+	auto tri = [&] (uint32_t a, uint32_t b, uint32_t c, const Vector &out) {
+		Vector A = crossp (d.rest[b] - d.rest[a], d.rest[c] - d.rest[a]);
+		if (dotp (A, out) < 0) std::swap (b, c);
+		d.tri.insert (d.tri.end (), { a, b, c });
+	};
+	for (int i = 0; i < N; i++) tri (0, id (1, i), id (1, i + 1), d.rest[id (1, i)] + Vector (0, 0, 0.5));
+	for (int k = 1; k < K; k++) for (int i = 0; i < N; i++) {
+		Vector o = d.rest[id (k, i)] + Vector (0, 0, 0.5);
+		tri (id (k, i), id (k + 1, i), id (k + 1, i + 1), o);
+		tri (id (k, i), id (k + 1, i + 1), id (k, i + 1), o);
+	}
+	uint32_t bc = (uint32_t)d.rest.size () - 1;
+	for (int i = 0; i < N; i++) tri (bc, id (K, i), id (K, i + 1), Vector (0, 0, -1));
+	d.cur = d.rest;
+	return d;
+}
+
+TEST_CASE("dmg3 crush on a cone: mode, energy, flat face, contact share", "[dent][dmg3]")
+{
+	DentViewData d = Cone ();
+	DentMeshView m = d.View ();
+	DentMaterial al = DentMath::DefaultMaterial (-1);
+	const double E = 0.25e6, V = E / al.sigma_c;
+	DentInput in = { E, &al, Vector (0.1, 0, 0.8), Vector (0, 0, 1), 0.05, 5.0, 10.0, -1.0, true };
+	DentParams b;
+	REQUIRE (DentMath::Solve (in, m, b) == DENT_OK);
+	CHECK (b.mode == DENTM_BOWL); // modes off: today's bowl
+	CHECK (DentMath::Legacy (b));
+	in.modes = DENTI_CRUSH;
+	DentParams p;
+	REQUIRE (DentMath::Coverage (Params (in.c, in.n, b.R, 0, 0), m) < DENT_CRUSH_RHO);
+	REQUIRE (DentMath::Solve (in, m, p) == DENT_OK);
+	REQUIRE (p.mode == DENTM_CRUSH);
+	CHECK (p.P > 0.8);
+	CHECK (p.P < 1.6);
+	CHECK (std::fabs (DentMath::CrushW (p, m) - V) < 1e-6 * V); // P from W(P) = V
+	CHECK (p.h <= p.P);
+	CHECK (p.h > 0.999 * p.P);
+	CHECK (DentMath::Weight (p, in.c) >= 0.5 - 1e-12); // the contact moves at least half the depth
+	CHECK (p.c.z > in.c.z);                           // the plane starts at the protruding pole
+	CHECK (p.c.z <= in.c.z + 0.25 * p.R + 1e-12);
+	int flat = 0;
+	for (size_t i = 0; i < m.nv; i++) {
+		double s = dotp (p.c - m.rest[i], p.n);
+		double r2 = (m.rest[i] - p.c).length () * (m.rest[i] - p.c).length () - s * s;
+		Vector x = m.rest[i] + DentMath::Displace (p, m.rest[i]);
+		double s2 = dotp (p.c - x, p.n);
+		if (s < p.P) CHECK (s2 <= p.P + 1e-9);        // nothing in front passes the plane
+		if (s >= 0 && s < p.P && r2 < 0.36 * p.R * p.R) { CHECK (std::fabs (s2 - p.h) < 1e-9); flat++; }
+	}
+	CHECK (flat > 20);
+	// deterministic: the same input gives the same bits
+	DentParams p2;
+	REQUIRE (DentMath::Solve (in, m, p2) == DENT_OK);
+	CHECK (std::memcmp (&p, &p2, sizeof p) == 0);
+	// a forced bowl stays a bowl
+	in.force = DENTM_BOWL;
+	DentParams p3;
+	REQUIRE (DentMath::Solve (in, m, p3) == DENT_OK);
+	CHECK (p3.mode == DENTM_BOWL);
+	// growth: more energy deepens P and h
+	DentMath::Quantise (p);
+	double Pn, hn;
+	REQUIRE (DentMath::CoalesceCrush (p, 0.5 * V, m, nullptr, 10.0, Pn, hn));
+	CHECK (Pn > p.P);
+	CHECK (hn > p.h);
+	CHECK (std::fabs (DentMath::CrushW ([&] { DentParams q = p; q.P = Pn; return q; } (), m) - (p.h * DentMath::VolumeFactor (p, m) + 0.5 * V)) < 1e-5 * V);
+}
+
+TEST_CASE("dmg3 coalescing never across modes; Quantise keeps legacy bits", "[dent][dmg3]")
+{
+	DentRecord a {};
+	a.slot = 0, a.key = 1, a.ngrp = 1, a.nvtx = 4;
+	a.p = Params (Vector (0, 0, 0), Vector (0, 0, 1), 1.0, 0.1, 0.0);
+	DentRecord b = a;
+	b.p.mode = DENTM_CRUSH, b.p.P = 0.2;
+	std::vector<DentRecord> rec = { a };
+	CHECK (DentMath::FindCoalesce (rec, b) == -1);
+	CHECK (DentMath::FindCoalesce (rec, b, nullptr, true) == 0);
+	CHECK (DentMath::FindCoalesce (rec, a) == 0);
+	DentParams q = a.p, q0 = a.p;
+	DentMath::Quantise (q);
+	DentMath::Quantise (q0);
+	CHECK (std::memcmp (&q, &q0, sizeof q) == 0);
+	CHECK (sizeof (DentParams) == 136);
+}
+
+TEST_CASE("dmg3 XDMG 2 extension and torn rows: round trip, binding, legacy saves unchanged", "[dent][dmg3]")
+{
+	DentVesselText v;
+	DentRecord r {};
+	r.slot = 0, r.key = 5, r.ngrp = 3, r.nvtx = 40;
+	r.p = Params (Vector (1, 2, 3), Vector (0, 1, 0), 1.5, 0.3, 0.0);
+	v.rec.push_back (r);
+	v.eabs = 1234.5, v.flags = 1;
+	std::vector<std::string> legacy = Format (v);
+	for (const std::string &l : legacy) CHECK (l.find ("XDMG 2") == std::string::npos); // legacy records: no extension section
+	DentRecord c = r;
+	c.p = Params (Vector (4, 5, 6), Vector (0, 0, 1), 2.0, 0.7, 0.0);
+	c.p.mode = DENTM_CRUSH, c.p.P = 0.9, c.p.seed = 0xabcdef12, c.p.t = Vector (1, 0, 0);
+	DentMath::Quantise (c.p);
+	c.grp = { 1, 2 };
+	v.rec.push_back (c);
+	DentTorn t;
+	t.kind = 1, t.slot = 0, t.key = 5, t.ngrp = 3, t.nvtx = 40, t.simt = 12.0625, t.debris = "PB debris 1";
+	for (int g = 0; g < 120; g++) t.grp.push_back ((uint16_t)(g * 7));
+	v.torn.push_back (t);
+	std::vector<std::string> l = Format (v);
+	for (const std::string &x : l) CHECK (x.size () <= (size_t)DENT_LINE_MAX);
+	int sk = -1;
+	DentVesselText w = ParseVessel (l, &sk);
+	CHECK (sk == 0);
+	REQUIRE (w.rec.size () == 2);
+	CHECK (DentMath::Legacy (w.rec[0].p));
+	CHECK (w.rec[1].p.mode == DENTM_CRUSH);
+	CHECK (w.rec[1].p.P == c.p.P);
+	CHECK (w.rec[1].p.seed == c.p.seed);
+	CHECK (std::memcmp (&w.rec[1].p, &c.p, sizeof c.p) == 0);
+	REQUIRE (w.torn.size () == 1);
+	CHECK (w.torn[0].grp == t.grp);
+	CHECK (w.torn[0].debris == "PB_debris_1");
+	CHECK (w.torn[0].simt == t.simt);
+	CHECK (w.verbatim.empty ());
+	CHECK (Format (w) == l); // a reload of the reload is the same text
+	// an old build keeps the section verbatim and writes it first; the new build still binds it
+	std::vector<std::string> v1, v2;
+	bool sec2 = false;
+	for (const std::string &x : l) {
+		if (x.find ("XDMG 2") != std::string::npos) sec2 = true;
+		(sec2 ? v2 : v1).push_back (x);
+	}
+	std::vector<std::string> old = v2;
+	old.insert (old.end (), v1.begin (), v1.end ());
+	w = ParseVessel (old, &sk);
+	CHECK (sk == 0);
+	REQUIRE (w.rec.size () == 2);
+	CHECK (w.rec[1].p.mode == DENTM_CRUSH);
+	CHECK (w.torn.size () == 1);
+	// old build grew h: the hash over c, n, R still binds
+	DentVesselText g = ParseVessel (l, &sk);
+	g.rec[1].p.h = 1.1;
+	DentVesselText g1 = g;
+	g1.torn.clear ();
+	for (auto &x : g1.rec) x.p.mode = 0, x.p.seed = 0, x.p.P = 0, x.p.t = Vector ();
+	std::vector<std::string> mixed = v2;
+	std::vector<std::string> body = Format (g1);
+	mixed.insert (mixed.end (), body.begin (), body.end ());
+	w = ParseVessel (mixed, &sk);
+	REQUIRE (w.rec.size () == 2);
+	CHECK (w.rec[1].p.mode == DENTM_CRUSH);
+	CHECK (w.rec[1].p.h == 1.1);
+	// old build repaired: records gone, torn rows and extensions dropped
+	DentVesselText rep;
+	rep.eabs = 0;
+	mixed = v2;
+	w = ParseVessel (mixed, &sk);
+	CHECK (w.rec.empty ());
+	CHECK (w.torn.empty ());
+	// another record at the same ordinal: hash mismatch, the record stays a bowl
+	DentVesselText o = g1;
+	o.rec[1].p.c = Vector (4, 5, 7);
+	mixed = v2;
+	body = Format (o);
+	mixed.insert (mixed.end (), body.begin (), body.end ());
+	w = ParseVessel (mixed, &sk);
+	REQUIRE (w.rec.size () == 2);
+	CHECK (w.rec[1].p.mode == DENTM_BOWL);
+	CHECK (w.torn.empty ());
+}
+
+TEST_CASE("dmg3 recorder X and T payloads", "[dent][dmg3]")
+{
+	DentParams p = Params (Vector (1, 2, 3), Vector (0, 1, 0), 1.5, 0.3, 0.0);
+	p.mode = DENTM_CRUSH, p.P = 0.75, p.seed = 7, p.t = Vector (0, 0, 1);
+	std::string x = DentMath::FormatExtEvent (12, p, 1.25e6, -30.5, 2.25);
+	CHECK (x.size () <= (size_t)DENT_EVENT_MAX);
+	uint32_t k, h8;
+	DentParams e {};
+	double E, vn, vt;
+	REQUIRE (DentMath::ParseExtEvent (x.c_str (), k, h8, e, E, vn, vt));
+	CHECK ((k == 12 && h8 == DentMath::ParamsHash (p) && e.mode == DENTM_CRUSH && e.P == 0.75 && e.seed == 7 && E == 1.25e6 && vn == -30.5 && vt == 2.25));
+	DentParams w = Params (Vector (-1e6, -1e6, -1e6), Vector (-0.123456789, 0.98765432, -0.0123456789), 9876.54321, 999.123456, 0.0);
+	w.mode = DENTM_HINGE, w.P = 999.123456, w.seed = 0xffffffff, w.t = Vector (-0.123456789, -0.98765432, -1.23456789e-05), w.bits = 1, w.hd = -1234.56789, w.hz = -9876.54321;
+	CHECK (DentMath::FormatExtEvent (511, w, 1.23456789e29, -1.23456789e-05, -1.23456789e-05).size () <= (size_t)DENT_EVENT_MAX);
+	DentTorn t;
+	t.kind = 2, t.slot = 3, t.key = 0xdeadbeef, t.ngrp = 200, t.nvtx = 9000, t.simt = 1e5 + 1.0 / 3.0;
+	for (int g = 0; g < 200; g++) t.grp.push_back ((uint16_t)(g + 60000));
+	std::vector<std::string> pay;
+	DentMath::FormatTornEvent (t, pay);
+	REQUIRE (pay.size () > 1);
+	DentTorn a, b;
+	bool more = false;
+	std::vector<uint16_t> all;
+	for (size_t i = 0; i < pay.size (); i++) {
+		CHECK (pay[i].size () <= (size_t)DENT_EVENT_MAX);
+		REQUIRE (DentMath::ParseTornEvent (pay[i].c_str (), b, more));
+		CHECK (more == (i + 1 < pay.size ()));
+		all.insert (all.end (), b.grp.begin (), b.grp.end ());
+		if (!i) a = b;
+	}
+	CHECK ((a.kind == 2 && a.slot == 3 && a.key == 0xdeadbeef && a.ngrp == 200 && a.nvtx == 9000 && a.simt == t.simt && a.debris.empty () && all == t.grp));
+}
+
+namespace {
+// one-sided grid on z = z0 from (x0, y0) to (x1, y1), faces along +z or -z
+void Sheet (DentViewData &d, double x0, double y0, double x1, double y1, double z0, int nx, int ny, bool down)
+{
+	uint32_t b = (uint32_t)d.rest.size ();
+	for (int j = 0; j <= ny; j++) for (int i = 0; i <= nx; i++) d.rest.push_back (Vector (x0 + (x1 - x0) * i / nx, y0 + (y1 - y0) * j / ny, z0));
+	for (int j = 0; j < ny; j++) for (int i = 0; i < nx; i++) {
+		uint32_t a = b + j * (nx + 1) + i, c = a + 1, e = a + nx + 1, f = e + 1;
+		if (!down) d.tri.insert (d.tri.end (), { a, c, f, a, f, e });
+		else d.tri.insert (d.tri.end (), { a, f, c, a, e, f });
+	}
+	d.cur = d.rest;
+}
+}
+
+TEST_CASE("dmg3 noise: bounded, continuous, seed 0 and mode 0 records keep today's field bitwise", "[dent][dmg3]")
+{
+	double lo = 1, hi = -1;
+	for (int i = 0; i < 4000; i++) {
+		double u = -50.0 + 0.0271 * i, w = 13.0 - 0.0173 * i;
+		double n = DentMath::Noise (12345, u, w);
+		lo = std::min (lo, n), hi = std::max (hi, n);
+		CHECK (std::fabs (DentMath::Noise (12345, u + 1e-9, w) - n) < 1e-6);
+	}
+	CHECK (lo >= -1.0);
+	CHECK (hi <= 1.0);
+	CHECK (hi - lo > 1.0);
+	CHECK (std::fabs (DentMath::Noise (7, 3e12, -3e12)) <= 1.0); // lattice clamp
+	DentParams p = Params (Vector (0.1, 0.2, 0.3), Vector (0, 0, 1), 1.3, 0.2, 0.5);
+	for (int i = 0; i < 200; i++) {
+		Vector x (0.01 * i - 1, 0.3 - 0.004 * i, 0.3 - 0.003 * i);
+		Vector a = DentMath::Displace (p, x), b = p.n * (-(p.h * DentMath::Weight (p, x)));
+		CHECK (std::memcmp (&a, &b, sizeof a) == 0);
+		DentRecord r {};
+		r.p = p;
+		Vector f = DentMath::Field (&r, x), g = DentMath::FieldLow (&r, x);
+		CHECK (std::memcmp (&f, &g, sizeof f) == 0);
+	}
+	DentParams q = p;
+	q.seed = 99, q.t = Vector (1, 0, 0);
+	bool differs = false;
+	for (int i = 0; i < 50; i++) {
+		Vector x (0.02 * i - 0.4, 0.1, 0.3);
+		double wq = DentMath::Weight (q, x), wp = DentMath::Weight (p, x);
+		CHECK (wq <= 1.25 * wp + 1e-15);
+		CHECK (wq >= 0.75 * wp - 1e-15);
+		differs = differs || wq != wp;
+		DentRecord r {};
+		r.p = q;
+		Vector g = DentMath::FieldLow (&r, x), b = p.n * (-(p.h * wp));
+		CHECK (std::memcmp (&g, &b, sizeof g) == 0); // the collider field has no noise
+	}
+	CHECK (differs);
+}
+
+TEST_CASE("dmg3 crush face: flat within delta with noise, 1e-9 without; contact >= 0.5 h", "[dent][dmg3]")
+{
+	DentViewData d;
+	Sheet (d, -2, -2, 2, 2, 0.0, 40, 40, false);
+	DentParams p = Params (Vector (0, 0, 0), Vector (0, 0, 1), 1.0, 0.4, 0.0);
+	p.mode = DENTM_CRUSH, p.P = 0.4, p.t = Vector (1, 0, 0);
+	for (uint32_t seed : { 0u, 77u }) {
+		p.seed = seed;
+		double delta = seed ? std::min (std::min (0.05 * p.R, 0.1 * p.P), DENT_CRUSH_NOISE) : 1e-9;
+		int n = 0;
+		for (const Vector &x : d.rest) {
+			Vector y = x + DentMath::Displace (p, x);
+			double r = std::hypot (x.x, x.y);
+			if (r < 0.6 * p.R) { CHECK (std::fabs (-y.z - p.P) <= delta + 1e-12); n++; }
+		}
+		CHECK (n > 50);
+		CHECK (DentMath::Weight (p, p.c) >= 0.5);
+	}
+}
+
+TEST_CASE("dmg3 Classify: plate edge hinge, thick box bowl, open shell crush", "[dent][dmg3]")
+{
+	DentViewData plate;
+	Sheet (plate, -2, -2, 2, 2, 0.0, 40, 40, false);
+	Sheet (plate, -2, -2, 2, 2, -0.1, 40, 40, true);
+	DentParams p = Params (Vector (2.0, 0, 0), Vector (0, 0, 1), 1.0, 0, 0);
+	double H;
+	Vector a;
+	CHECK (DentMath::Classify (p, plate.View (), H, a) == DENTM_HINGE);
+	CHECK (std::fabs (H - 0.1) < 1e-9);
+	CHECK (a.x > 0.99); // outboard
+	DentViewData box; // 4 m thick: no plate
+	Sheet (box, -2, -2, 2, 2, 0.0, 20, 20, false);
+	Sheet (box, -2, -2, 2, 2, -4.0, 20, 20, true);
+	p.c = Vector (0, 0, 0);
+	CHECK (DentMath::Classify (p, box.View (), H, a) == DENTM_BOWL);
+	DentViewData liner; // a liner 2 cm under the skin is no plate (thickness from 5 cm)
+	Sheet (liner, -2, -2, 2, 2, 0.0, 20, 20, false);
+	Sheet (liner, -2, -2, 2, 2, -0.02, 20, 20, true);
+	CHECK (DentMath::PlateThickness (liner.View (), Vector (0, 0, 0), Vector (0, 0, 1), 1.0) == 0.0);
+	DentViewData spike; // a thin spike tip: low coverage
+	Sheet (spike, -0.1, -0.1, 0.1, 0.1, 0.0, 2, 2, false);
+	CHECK (DentMath::Classify (p, spike.View (), H, a) == DENTM_CRUSH);
+}
+
+TEST_CASE("dmg3 hinge: rigid flap, continuous at the line, Cayley exact, energy and Mp", "[dent][dmg3]")
+{
+	DentParams p = Params (Vector (0, 0, 0), Vector (0, 0, 1), 1.0, 1.0, 0.0);
+	p.mode = DENTM_HINGE, p.t = Vector (1, 0, 0), p.hd = 0.5, p.hz = 0.05, p.P = DENT_HINGE_TMAX;
+	Vector h0 = p.c - p.t * p.hd - p.n * p.hz;
+	Vector x1 (1.0, 0.1, 0.05), x2 (1.6, -0.3, -0.05);
+	Vector y1 = x1 + DentMath::Displace (p, x1), y2 = x2 + DentMath::Displace (p, x2);
+	CHECK (std::fabs ((y1 - y2).length () - (x1 - x2).length ()) < 1e-12);
+	CHECK (std::fabs ((y1 - h0).length () - (x1 - h0).length ()) < 1e-12);
+	CHECK (y1.z < x1.z - 0.5); // folds inward
+	double tau = p.P, c = (1 - tau * tau) / (1 + tau * tau), s = 2 * tau / (1 + tau * tau);
+	CHECK (std::fabs (c * c + s * s - 1.0) <= 4 * 2.220446049250313e-16);
+	CHECK (std::fabs (2.0 * std::atan (tau) * 180.0 / Pi - 35.5) < 0.1);
+	Vector z0 (-0.5 + 1e-7, 0.0, 0.05);
+	CHECK (DentMath::Displace (p, z0).length () < 1e-9);
+	CHECK (DentMath::Displace (p, Vector (-1.0, 0.0, 0.05)).length () == 0.0);
+	CHECK (DentMath::Displace (p, Vector (1.0, 2.5, 0.05)).length () == 0.0); // beyond 2R along the line
+	DentMaterial al = DentMath::DefaultMaterial (-1);
+	CHECK (DentMath::HingeMp (p, al) == DENT_HINGE_K * al.sigma_c * 2.0 * 0.1 * 0.1 / 4.0);
+	DentViewData plate; // solve on a plate edge: bowl capped at 0.25 H, overflow folds
+	Sheet (plate, -2, -2, 2, 2, 0.0, 40, 40, false);
+	Sheet (plate, -2, -2, 2, 2, -0.1, 40, 40, true);
+	DentSolveX sx;
+	DentInput in = { 2.0e5, &al, Vector (2.0, 0, 0), Vector (0, 0, 1), 0.05, 5.0, 10.0, -1.0, true };
+	in.modes = DENTI_CRUSH | DENTI_HINGE, in.x = &sx;
+	DentParams b;
+	REQUIRE (DentMath::Solve (in, plate.View (), b) == DENT_OK);
+	CHECK (b.mode == DENTM_BOWL);
+	CHECK (sx.cls == DENTM_HINGE);
+	CHECK (b.h * 1.0 <= DENT_HINGE_D * 0.1 * 1.0001 / 0.05);
+	REQUIRE (sx.hinge);
+	CHECK (sx.hp.mode == DENTM_HINGE);
+	CHECK (sx.hp.P > 0);
+	CHECK (sx.hp.P <= DENT_HINGE_TMAX);
+	CHECK (sx.hp.h <= sx.hp.hz);
+	CHECK (sx.Esurplus >= 0);
+	CHECK (sx.Esurplus <= in.E);
+}
+
+TEST_CASE("dmg3 MapToRest: deformed points map to a preimage; hinge normal turned back", "[dent][dmg3]")
+{
+	DentParams p = Params (Vector (0, 0, 0), Vector (0, 0, 1), 1.0, 1.0, 0.0);
+	p.mode = DENTM_HINGE, p.t = Vector (1, 0, 0), p.hd = 0.5, p.hz = 0.05, p.P = 0.1;
+	DentParams b = Params (Vector (5, 5, 0), Vector (0, 0, 1), 1.0, 0.2, 0.0); // a bowl elsewhere: ignored
+	Vector x (1.2, 0.1, 0.05);
+	Vector y = x + DentMath::Displace (p, x), n = Vector (0, 0, 1);
+	double tau = p.P, c = (1 - tau * tau) / (1 + tau * tau), s = 2 * tau / (1 + tau * tau);
+	Vector nd (s * 1.0, 0, c); // n turned by the flap: (a cos... ) as Displace turns positions
+	nd = Vector (-(-s), 0, c);
+	Vector m = y, mn = Vector (s, 0, c);
+	DentMath::MapToRest ({ &p, &b }, m, mn);
+	CHECK ((m - x).length () < 1e-3 * DentMath::Displace (p, x).length () + 1e-9);
+	CHECK ((m + DentMath::Displace (p, m) - y).length () < 1e-4);
+	CHECK (std::fabs (mn.length () - 1.0) < 1e-12);
+	DentParams q = Params (Vector (0, 0, 0), Vector (0, 0, 1), 1.0, 0.3, 0.0);
+	q.mode = DENTM_CRUSH, q.P = 0.3, q.t = Vector (1, 0, 0);
+	Vector xr (0.1, 0.0, 0.0), yr = xr + DentMath::Displace (q, xr), nr = Vector (0, 0, 1);
+	Vector mr = yr;
+	DentMath::MapToRest ({ &q }, mr, nr);
+	CHECK ((mr + DentMath::Displace (q, mr) - yr).length () < 1e-9);
+	Vector keep (3, 3, 3), kn (0, 1, 0);
+	DentMath::MapToRest ({ &b }, keep, kn); // mode-0 records are ignored, as today
+	CHECK (keep.x == 3.0);
+	CHECK (kn.y == 1.0);
+	(void)nd;
+}
+
+TEST_CASE("dmg3 lobe gate: area-weighted median edge", "[dent][dmg3]")
+{
+	DentViewData fine, coarse;
+	Sheet (fine, -2, -2, 2, 2, 0.0, 40, 40, false);
+	Sheet (coarse, -6, -6, 6, 6, 0.0, 3, 3, false);
+	DentParams p = Params (Vector (0, 0, 0), Vector (0, 0, 1), 3.0, 0, 0);
+	CHECK (DentMath::LobeGate (p, fine.View ()));
+	CHECK_FALSE (DentMath::LobeGate (p, coarse.View ()));
+	p.seed = 5, p.bits = DENTB_LOBES, p.t = Vector (1, 0, 0), p.h = 0.1;
+	Vector a = DentMath::Displace (p, Vector (2.4, 0, 0)), b = DentMath::Displace (p, Vector (0, 2.4, 0));
+	CHECK (a.length () != b.length ()); // m = 3 + 5 % 5 = 3 lobes: the rim is not round
+	CHECK (DentMath::Tangent (Vector (0, 0, 1), Vector (0, 1, 0), 2.0).y == 1.0);
+	CHECK (DentMath::Tangent (Vector (0, 0, 1), Vector (1, 0, 0), 2.0).x == 1.0);
+	CHECK (DentMath::Tangent (Vector (0, 0, 1), Vector (1, 0, 0), 0.2).x == 0.0); // slow slip: n x least aligned axis
+}
+
+TEST_CASE("dmg3 debris rows: header, poses, parent record copies with extension; lines <= 200; repair drops them", "[dent][dmg3]")
+{
+	DentVesselText v;
+	DentRecord r {};
+	r.slot = 0, r.key = 5, r.ngrp = 300, r.nvtx = 4000;
+	r.p = Params (Vector (1, 2, 3), Vector (0, 1, 0), 1.5, 0.3, 0.0);
+	v.rec.push_back (r);
+	v.eabs = 5e5;
+	DentDebris d;
+	d.id = 3, d.slot = 0, d.key = 5, d.ngrp = 300, d.nvtx = 4000, d.simt = 101.125, d.name = "GL-01 nose cone";
+	DentDebrisPose q;
+	q.p = Vector (0.5, -1.25, 7.0), q.q[0] = 0.1, q.q[1] = 0.2, q.q[2] = 0.3, q.q[3] = 0.927;
+	for (int g = 0; g < 150; g++) q.grp.push_back ((uint16_t)(g + 100));
+	d.pose.push_back (q);
+	DentRecord c = r;
+	c.p.mode = DENTM_CRUSH, c.p.P = 0.4, c.p.seed = 0x1234, c.p.t = Vector (0, 0, 1);
+	DentMath::Quantise (c.p);
+	for (int g = 0; g < 120; g++) c.grp.push_back ((uint16_t)(g + 100));
+	d.rec.push_back (r), d.rec.push_back (c);
+	v.debris.push_back (d);
+	std::vector<std::string> l = Format (v);
+	for (const std::string &x : l) CHECK (x.size () <= (size_t)DENT_LINE_MAX);
+	int sk = -1;
+	DentVesselText w = ParseVessel (l, &sk);
+	CHECK (sk == 0);
+	REQUIRE (w.debris.size () == 1);
+	const DentDebris &e = w.debris[0];
+	CHECK (e.id == 3);
+	CHECK (e.name == d.name);
+	CHECK (e.simt == d.simt);
+	REQUIRE (e.pose.size () == 1);
+	CHECK (e.pose[0].grp == q.grp);
+	CHECK (e.pose[0].q[3] == 0.927);
+	REQUIRE (e.rec.size () == 2);
+	CHECK (DentMath::Legacy (e.rec[0].p));
+	CHECK (std::memcmp (&e.rec[1].p, &c.p, sizeof c.p) == 0);
+	CHECK (e.rec[1].grp == c.grp);
+	CHECK (Format (w) == l);
+	// after a repair with new damage the rows no longer bind
+	std::vector<std::string> l2;
+	for (const std::string &x : l) {
+		std::string y = x;
+		size_t at = y.find ("XDMGD 0 1 2 3 ");
+		if (at != std::string::npos) y.replace (at + 12, 1, "4"); // a repair, then new damage elsewhere
+		l2.push_back (y);
+	}
+	w = ParseVessel (l2, &sk);
+	CHECK (w.rec.size () == 1);
+	CHECK (w.debris.empty ());
+}
+
+TEST_CASE("dmg3 crease normals: faceted ids take the most-turned face, null facet stays bitwise", "[dent][dmg3]")
+{
+	std::vector<std::vector<DentVtx>> rest (1);
+	auto V = [] (float x, float y, float z) { DentVtx v {}; v.x = x, v.y = y, v.z = z, v.nz = 1; return v; };
+	rest[0] = { V (0, 0, 0), V (1, 0, 0), V (0, 1, 0), V (1, 1, 0), V (2, 0, 0), V (2, 1, 0) };
+	std::vector<std::vector<uint16_t>> idx { { 0, 1, 2, 1, 3, 2, 1, 4, 3, 4, 5, 3 } };
+	std::vector<std::vector<uint32_t>> weld;
+	uint32_t nw = DentMath::WeldMap (rest, DENT_WELD, weld);
+	std::vector<Vector> rs;
+	DentMath::FaceNormalSums (rest, idx, weld, nw, rs);
+	auto cur = rest;
+	cur[0][4].x = 1, cur[0][4].z = -1, cur[0][5].x = 1, cur[0][5].z = -1; // the right strip folded down 90 deg about x = 1
+	std::vector<uint8_t> touched (nw, 1), facet (nw, 1);
+	auto a = cur, b = cur, c = cur;
+	DentMath::Normals (rest, rs, idx, weld, nw, touched, a);
+	DentMath::Normals (rest, rs, idx, weld, nw, touched, b, nullptr);
+	DentMath::Normals (rest, rs, idx, weld, nw, touched, c, &facet);
+	CHECK (SameVtx (a, b));
+	uint32_t w1 = weld[0][1];
+	(void)w1;
+	CHECK (std::fabs (c[0][1].nx - 1.0f) < 1e-6); // on the crease: the turned face's normal (+x)
+	CHECK (std::fabs (a[0][1].nx - 1.0f) > 0.1);  // the smooth rule averages
+	CHECK (c[0][0].nz == a[0][0].nz);             // off the crease: as today
+}
+
+TEST_CASE("dmg3 legacy golden: XDMG 1 records apply with today's expression bitwise (visual and collider)", "[dent][dmg3]")
+{
+	DentObject o = Brighton ();
+	std::vector<DentParams> rec;
+	for (int i = 0; i < 12; i++) {
+		DentParams p = Params (Vector (-3.0 + 0.7 * i, 0.4 * i - 2.0, 0.1 * (i % 3)), Vector (0.1 * (i % 4), 0.2, 1.0), 0.8 + 0.15 * i, 0.03 * (1 + i % 5), (i % 2) ? 0.6 : 0.0);
+		double l = p.n.length ();
+		p.n = p.n / l;
+		DentMath::Quantise (p);
+		rec.push_back (p);
+	}
+	auto mine = o.rest, old = o.rest;
+	for (const DentParams &p : rec) {
+		DentMath::Apply (p, o.rest, mine, nullptr, 0, nullptr);
+		for (size_t g = 0; g < old.size (); g++)
+			for (size_t i = 0; i < old[g].size (); i++) { // today's AddField
+				Vector rp (o.rest[g][i].x, o.rest[g][i].y, o.rest[g][i].z);
+				double q = DentMath::Weight (p, rp);
+				if (q == 0.0) continue;
+				Vector d = p.n * (-(p.h * q));
+				DentVtx &c = old[g][i];
+				c.x = (float)((double)c.x + d.x), c.y = (float)((double)c.y + d.y), c.z = (float)((double)c.z + d.z);
+			}
+		DentRecord r {};
+		r.p = p;
+		for (size_t g = 0; g < o.rest.size (); g++)
+			for (const DentVtx &v : o.rest[g]) {
+				Vector x (v.x, v.y, v.z), a = DentMath::Field (&r, x), b = DentMath::FieldLow (&r, x);
+				REQUIRE (std::memcmp (&a, &b, sizeof a) == 0);
+			}
+	}
+	CHECK (SameVtx (mine, old));
+}

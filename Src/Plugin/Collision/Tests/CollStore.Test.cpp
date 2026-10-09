@@ -275,3 +275,39 @@ TEST_CASE ("fix2 M5 a capped dormant vessel keeps every line through a save")
 	CHECK (name.compare (0, d.slotName[0].size (), d.slotName[0]) == 0); // cut to fit the indented line, never dropped
 	CHECK (d.slotName[0].size () == 200 - 27);
 }
+
+TEST_CASE ("dmg3 side file: X after its D event, T with continuation, unknown kinds skipped")
+{
+	DentRecord r {};
+	r.p.c = Vector (1, 2, 3), r.p.n = Vector (0, 0, 1), r.p.R = 1, r.p.h = 0.1, r.slot = 0, r.grp = { 2, 4 };
+	DentParams x = r.p;
+	x.mode = DENTM_CRUSH, x.P = 0.25, x.seed = 0xdeadbeef, x.t = Vector (1, 0, 0), x.bits = 0;
+	std::string text = CollSide::Header ("X") + "\n" + CollSide::Vdef (0, 0, "PB-A", "ShuttlePB") + "\n";
+	std::vector<std::string> l;
+	CollSide::Dent (1.5, 0, 0, r, l);
+	l.push_back (CollSide::Ext (1.5, 0, 0, x, 12345.5, 30.25, 1.75));
+	l.push_back (CollSide::Ext (1.5, 0, 7, x, 1, 1, 1)); // no D event of record 7 before it: skipped
+	DentTorn t;
+	t.kind = 2, t.slot = 0, t.key = 0x1234, t.ngrp = 3, t.nvtx = 99, t.simt = 1.5, t.debris = "Deb-1";
+	for (int g = 0; g < 200; g++) t.grp.push_back ((uint16_t)(g * 11));
+	CollSide::Torn (1.6, 0, t, l);
+	CHECK (l.size () > 4); // the T list continues over lines
+	l.push_back ("1.7 Z 0 future kind");
+	for (auto &s : l) { CHECK (s.size () < 256); text += s + "\n"; }
+	CollSideFile f;
+	REQUIRE (CollSide::Parse (text, f));
+	REQUIRE (f.ev.size () == 3);
+	CHECK (f.ev[0].kind == 'D');
+	CHECK (f.ev[1].kind == 'X');
+	CHECK (f.ev[1].recidx == 0);
+	CHECK (f.ev[1].h8 == DentMath::ParamsHash (r.p));
+	CHECK (f.ev[1].rec.p.mode == DENTM_CRUSH);
+	CHECK (f.ev[1].rec.p.seed == 0xdeadbeef);
+	CHECK (f.ev[1].E == 12345.5);
+	CHECK (f.ev[1].vn == 30.25);
+	CHECK (f.ev[1].vt == 1.75);
+	CHECK (f.ev[2].kind == 'T');
+	CHECK (f.ev[2].torn.grp == t.grp);
+	CHECK (f.ev[2].torn.debris == "Deb-1");
+	CHECK (f.skipped == 2);
+}

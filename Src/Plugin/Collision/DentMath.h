@@ -47,6 +47,22 @@ constexpr double   DENT_LIM_R          = 1e4;     // R limit [m]; Solve gives no
 constexpr double   DENT_LIM_H          = 1e3;     // h limit [m]; Solve and CoalesceDepth cap h at it
 constexpr double   DENT_LIM_T          = 1e6;     // T limit [m]; a slab ray hit beyond it counts as no hit
 constexpr double   DENT_LIM_E          = 1e30;    // eabs limit [J]; writers clamp to it
+constexpr double   DENT_CRUSH_RHO      = 0.30;    // dmg3: crush when the band coverage of the kernel disk is below this
+constexpr double   DENT_CRUSH_BAND     = 0.15;    // dmg3: band |s| < this * R for the coverage
+constexpr double   DENT_CRUSH_L        = 0.3;     // dmg3: crush plane depth P <= this * L
+constexpr double   DENT_CRUSH_CORE     = 0.6;     // dmg3: flat core r_perp < this * R (k_flat = 1)
+constexpr double   DENT_CRUSH_MOVE     = 0.25;    // dmg3: contact move along n <= this * R and <= P / 2
+constexpr int      DENT_CRUSH_STEPS    = 48;      // dmg3: bisection steps for P
+constexpr int      DENT_VERSION_X      = 2;       // dmg3: extension section version
+enum : uint32_t { DENTM_BOWL = 0, DENTM_CRUSH = 1, DENTM_HINGE = 2 }; // DentParams::mode
+enum : uint32_t { DENTI_CRUSH = 1, DENTI_HINGE = 2, DENTI_NOISE = 4 }; // DentInput::modes bits
+enum : uint32_t { DENTB_LOBES = 1 };              // DentParams::bits
+constexpr double   DENT_CRUSH_NOISE    = 0.15;    // dmg3: crush face noise amplitude limit [m]
+constexpr double   DENT_HINGE_D        = 0.25;    // dmg3: plate bowl depth cap before a hinge, times the plate thickness
+constexpr double   DENT_HINGE_TMAX     = 0.32;    // dmg3: hinge tan(theta/2) cap (35.5 deg)
+constexpr double   DENT_HINGE_K        = 8.0;     // dmg3: thin-walled box factor on the solid-section plastic moment
+constexpr double   DENT_LOBE_EDGE      = 1.5;     // dmg3: lobes only where the area-weighted median rest edge is below this [m]
+constexpr double   DENT_NOISE_J        = 0.25;    // dmg3: bowl depth noise amplitude
 constexpr uint32_t DENTR_NOREFINE      = 1;       // DentRecord::flags: the live refinement hit a cap, replay skips Refine (4.9 item 5)
 
 // one dent in the rest frame of its target (4.1)
@@ -56,6 +72,10 @@ struct DentParams {
 	double R;   // kernel radius [m]
 	double h;   // depth scale [m]
 	double T;   // slab thickness [m]; 0 = plate mode
+	uint32_t mode = 0, seed = 0; // dmg3: DENTM_*; noise seed (0: none); mode 0 with seed 0 is the legacy field
+	Vector t;                    // dmg3: unit tangent perpendicular to n
+	double P = 0, hd = 0, hz = 0; // dmg3: crush plane depth [m]; hinge offsets (reserved)
+	uint32_t bits = 0, pad = 0;  // dmg3: flags (reserved); pad keeps memcmp exact
 };
 // one dent record (vessel mesh or base object), quantised through %.9g as saved; fixed-width ints
 struct DentRecord {
@@ -91,7 +111,14 @@ struct DentInput {
 	double L;                  // Size (vessels) or rb (buildings) for the 0.25 L cap
 	double rayT;               // slab ray hit distance along -n from c, < 0 = no hit (4.3)
 	bool vessel;               // the low-poly floor applies (4.2 step 3); depth cap DmaxVessel (no t_cap)
+	uint32_t modes = 0;        // dmg3: DENTI_* allowed (vessels); 0 = bowl only, as before
+	int force = -1;            // dmg3: mode inherited from a coalesce partner, -1 none
+	Vector tdir;               // dmg3: slip direction (unit, rest frame) or zero
+	double vt = 0;             // dmg3: slip speed [m/s]
+	uint32_t salt = 0;         // dmg3: record count, xored into the noise seed
+	struct DentSolveX *x = nullptr; // dmg3 out: hinge record and surplus energy
 };
+struct DentSolveX { bool hinge = false; DentParams hp {}; double Esurplus = 0, H = 0, S = 0, Mp = 0; uint32_t cls = 0; }; // dmg3 Solve outputs
 enum { DENT_OK = 0, DENT_SMALL = 1, DENT_NOSURFACE = 2, DENT_FLOOR_CAP = 3 }; // Solve: record, below 2 mm, S = 0 or beyond DENT_LIM_*; FLOOR_CAP: Damage's building cap only
 
 // one vessel's damage as the text format sees it (9.2)
@@ -137,6 +164,24 @@ namespace DentMath {
 	int    Solve (const DentInput &in, const DentMeshView &m, const DentMeshView *cap, DentParams &out); // cap: extra vertices for DepthCap only
 	int    FindCoalesce (const std::vector<DentRecord> &rec, const DentRecord &r); // record of the same target and partition to grow (4.5), -1 if none
 	int    FindCoalesce (const std::vector<DentRecord> &rec, const DentRecord &r, const std::vector<uint8_t> *key); // key[g]: group g counts in the partition compare (null: all)
+	int    FindCoalesce (const std::vector<DentRecord> &rec, const DentRecord &r, const std::vector<uint8_t> *key, bool anyMode); // dmg3: anyMode: partner of any mode (mode reuse)
+	double Coverage (const DentParams &p, const DentMeshView &m); // dmg3: band coverage of the kernel disk on rest front faces
+	double CrushW (const DentParams &p, const DentMeshView &m);   // dmg3: P * VolumeFactor at h = P
+	int    SolveCrush (const DentInput &in, const DentMeshView &m, const DentMeshView *cap, DentParams &out); // dmg3: crush from out's c, n, R
+	bool   CoalesceCrush (const DentParams &old, double V, const DentMeshView &m, const DentMeshView *cap, double L, double &P, double &h); // dmg3: grown P and h
+	double DmaxCrush (double L);                                  // dmg3: DENT_CRUSH_L * L
+	double MaxDisplace (const DentParams &p, const DentMeshView &m); // dmg3: max |D| over the view's rest vertices
+	Vector DisplaceLow (const DentParams &p, const Vector &rest); // dmg3: Displace without noise and lobes (collider)
+	Vector FieldLow (const void *ctx, const Vector &rest);       // dmg3: CollDisplaceFn of DisplaceLow
+	double Noise (uint32_t seed, double u, double w);            // dmg3: smooth lattice noise in [-1, 1]
+	uint32_t Classify (const DentParams &p, const DentMeshView &m, double &H, Vector &a); // dmg3: DENTM_* for the rest view at c, n, R; H plate thickness, a hinge axis
+	double PlateThickness (const DentMeshView &m, const Vector &c, const Vector &n, double R); // dmg3: first back-facing hit along -n, 0 none
+	double HingeMp (const DentParams &p, const DentMaterial &mat); // dmg3: K sigma_c b H^2 / 4 with b = 2R, H = 2 hz
+	bool   LobeGate (const DentParams &p, const DentMeshView &m);  // dmg3: area-weighted median edge within R below DENT_LOBE_EDGE
+	void   MapToRest (const std::vector<const DentParams *> &rec, Vector &c, Vector &n); // dmg3: hit on deformed parts back to rest (mode >= 1 records)
+	Vector Tangent (const Vector &n, const Vector &tdir, double vt); // dmg3: tdir across n when vt > 0.5, else n x least aligned axis
+	uint32_t ParamsHash (const DentParams &p);                    // dmg3: Fnv1a of the %.9g text of c, n, R
+	bool   Legacy (const DentParams &p);                          // dmg3: mode 0 and seed 0
 	double CoalesceDepth (const DentParams &old, double V, const DentMeshView &m, double Dmax); // depth added on old's kernel for volume V, capped (old.h + it <= DENT_LIM_H)
 	double CoalesceDepth (const DentParams &old, double V, const DentMeshView &m, const DentMeshView *cap, double Dmax); // cap: extra vertices for DepthCap only
 	void   Quantise (DentParams &p);                              // through %.9g, as saved (6)
@@ -149,7 +194,8 @@ namespace DentMath {
 	void   FaceNormalSums (const std::vector<std::vector<DentVtx>> &v, const std::vector<std::vector<uint16_t>> &idx,
 		const std::vector<std::vector<uint32_t>> &weld, uint32_t nweld, std::vector<Vector> &sum); // per weld id, area weighted, guarded
 	void   Normals (const std::vector<std::vector<DentVtx>> &rest, const std::vector<Vector> &restSum, const std::vector<std::vector<uint16_t>> &idx,
-		const std::vector<std::vector<uint32_t>> &weld, uint32_t nweld, const std::vector<uint8_t> &touched, std::vector<std::vector<DentVtx>> &cur); // Rodrigues per touched weld id
+		const std::vector<std::vector<uint32_t>> &weld, uint32_t nweld, const std::vector<uint8_t> &touched, std::vector<std::vector<DentVtx>> &cur,
+		const std::vector<uint8_t> *facet = nullptr); // Rodrigues per touched weld id; dmg3 facet[w]: crease rule for ids moved by a crush or hinge
 	int    Refine (DentObject &o, const Vector &c, double R, const DentParams *prior, size_t nprior, const uint32_t *vtxRoom); // LEPP to edge <= R/4 in the Quantise'd ball; new cur = rest + prior; tris added, -1 = cap hit
 	int    Refine (DentObject &o, const Vector &c, double R, const DentParams *prior, size_t nprior, const uint32_t *vtxRoom,
 		const uint32_t *roomOf, std::vector<uint8_t> *split); // roomOf[g]: vtxRoom slot of group g (null: g); split: per weld id, 1 on a split triangle
@@ -173,6 +219,12 @@ namespace DentMath {
 	std::string FormatBaseDentEvent (int planet, int base, int obj, const DentParams &p, uint32_t flags); // with DentRecord::flags (written if nonzero)
 	bool   ParseBaseDentEvent (const char *payload, int &planet, int &base, int &obj, DentParams &p);
 	bool   ParseBaseDentEvent (const char *payload, int &planet, int &base, int &obj, DentParams &p, uint32_t &flags);
+	std::string FormatExtEvent (uint32_t recidx, const DentParams &p, double E, double vn, double vt); // dmg3: recorder X payload
+	bool   ParseExtEvent (const char *payload, uint32_t &recidx, uint32_t &h8, DentParams &ext, double &E, double &vn, double &vt);
+	void   FormatTornEvent (const DentTorn &t, std::vector<std::string> &payload); // dmg3: recorder T payloads, groups split like D
+	bool   ParseTornEvent (const char *payload, DentTorn &t, bool &more);
+	void   FormatDebris (const DentDebris &d, const std::string &ind, std::vector<std::string> &lines); // dmg3: XDMGM B, XDMGM Q, XDMGD B rows
+	void   ApplyExt (DentParams &p, const DentParams &ext);       // dmg3: copies mode, seed, t, P, hd, hz, bits
 	std::string FormatStateEvent (double eabs, uint32_t flags);   // DMGSTATE payload; BDMG = "<planet>:<base>:<obj> " + this
 	bool   ParseStateEvent (const char *payload, double &eabs, uint32_t &flags);
 }
@@ -201,6 +253,16 @@ private:
 	int m_skipped = 0;                                    // bad lines (version 1 rules)
 	int m_long = 0;                                       // unknown-version lines dropped (over 200 characters)
 	int m_result = -1;                                    // final count after Finish
+	void V2 (const std::string &line);                    // dmg3: one line of the extension section
+	struct Ext { uint32_t j, h8; DentParams p; };
+	std::vector<Ext> m_ext;                               // dmg3: XDMGD rows of section 2
+	std::vector<DentTorn> m_torn;                         // dmg3: XDMGM T rows
+	std::vector<DentDebris> m_debris;                     // dmg3: XDMGM B, Q and XDMGD B rows
+	int m_qOpen = 0;                                      // dmg3: 1 the last Q row continues, 2 the last XDMGD B row continues
+	bool m_tornOpen = false;                              // dmg3: the last torn row's group list continues
+	bool m_x2 = false; uint32_t m_xn = 0, m_xh = 0; double m_xe = 0; // dmg3: XDMG 2 header
+	std::vector<uint32_t> m_ord;                          // dmg3: written ordinal of each m_dent entry
+	uint32_t m_nord = 0;                                  // dmg3: record starts seen in section 1
 	bool m_open = false;                                  // the last version-1 record's group list ended in ',' (continued on the next XDMGD)
 	bool m_over = false;                                  // the open record's group list passed DENT_MAX_GRPLIST: dropped when it ends
 	bool m_capped = false;                                // Capped ()

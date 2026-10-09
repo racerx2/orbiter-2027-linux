@@ -171,7 +171,22 @@ void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDm
 	for (size_t g = 0; g < c.cur.size (); g++)
 		for (size_t i = 0; i < c.cur[g].size (); i++)
 			if (std::memcmp (&c.cur[g][i], &c.rp[g][i], 12) && c.weld[g][i] < c.nweld) touched[c.weld[g][i]] = 1;
-	DentMath::Normals (c.rp, c.restSum, c.idx, c.weld, c.nweld, touched, c.cur);
+	std::vector<uint8_t> facet; // dmg3: weld ids moved by a crush or hinge record get the crease rule
+	if (cfg.dentFacetNormals)
+		for (size_t r = 0; r < rec.size (); r++) {
+			const DentRecord &R = *rec[r];
+			if (R.p.mode < DENTM_CRUSH) continue;
+			if (facet.empty ()) facet.assign (c.nweld, 0);
+			for (size_t g = 0; g < ng && g < c.rp.size (); g++) {
+				if (!R.grp.empty () && !std::binary_search (R.grp.begin (), R.grp.end (), (uint16_t)g)) continue;
+				for (size_t i = 0; i < c.rp[g].size () && i < c.weld[g].size (); i++) {
+					if (c.weld[g][i] >= c.nweld) continue;
+					Vector d = DentMath::Displace (R.p, Vector (c.rp[g][i].x, c.rp[g][i].y, c.rp[g][i].z));
+					if (d.x != 0.0 || d.y != 0.0 || d.z != 0.0) facet[c.weld[g][i]] = 1;
+				}
+			}
+		}
+	DentMath::Normals (c.rp, c.restSum, c.idx, c.weld, c.nweld, touched, c.cur, facet.empty () ? nullptr : &facet);
 	for (size_t g = 0; g < c.cur.size (); g++) {
 		c.g[g].edit.clear ();
 		if (c.g[g].big) { c.cur[g] = c.rp[g]; continue; } // a welded neighbour may have turned its normals

@@ -190,7 +190,7 @@ struct Rig {
 	std::shared_ptr<CollRestMesh> plate = Plate ();
 	struct Body { DFake::V *v; uint32_t id; std::unique_ptr<CollShape> sh; CollAnim ca; CollMeshInfo mi; std::unique_ptr<TestVessel> tv; std::unique_ptr<TestModule> mod; };
 	std::deque<Body> body; CollTemplateCache cache;
-	Rig () { cfg.logLevel = 1; }
+	Rig () { cfg.logLevel = 1; cfg.dentModes = cfg.dentNoise = cfg.dentFacetNormals = false; } // dmg3: existing tests run the bowl path
 	uint32_t Add (const std::string &name, const std::string &cls = "ShuttlePB")
 	{
 		body.emplace_back ();
@@ -1254,4 +1254,198 @@ TEST_CASE ("fix2 a hit after a growth in the same commit reads the grown collide
 	std::vector<DentRecord> one = run (false), two = run (true);
 	REQUIRE (one.size () == two.size ());
 	for (size_t i = 0; i < one.size (); i++) CHECK (std::memcmp (&one[i].p, &two[i].p, sizeof (DentParams)) == 0);
+}
+
+namespace {
+struct SinkLog : CollDmgSink {
+	std::string tag; std::vector<std::string> *log; std::vector<CollDamageHit> hits; std::vector<DentTorn> torn; int post = 0, pass = 0, repair = 0, drop = 0, end = 0, destroyed = 0, shapes = 0; double lastDt = -1;
+	SinkLog (const char *t, std::vector<std::string> *l) : tag (t), log (l) {}
+	void Hit (const CollDamageHit &h) override { hits.push_back (h); log->push_back (tag + " hit"); }
+	void Post (double, double dt) override { post++, lastDt = dt; }
+	void Pass () override { pass++; }
+	void Torn (uint32_t, const DentTorn &t) override { torn.push_back (t); }
+	void Repair (uint32_t) override { repair++; }
+	void DropVessel (uint32_t, CollH) override { drop++; }
+	void Destroyed (uint32_t) override { destroyed++; }
+	void Shapes (uint32_t, CollShape *) override { shapes++; }
+	void End () override { end++; }
+};
+
+bool ColliderExactLow (Rig &r, uint32_t id)
+{
+	auto &b = r.B (id);
+	CollShape fresh;
+	CollMeshInfo mi = b.mi;
+	CollAnim ca;
+	CollTemplateCache cache;
+	fresh.Update (&mi, 1, ca, nullptr, 0, cache);
+	const VesselDamageA *v = r.s.Damage (id);
+	if (v) for (const DentRecord &x : v->d.rec) { std::vector<uint32_t> g (x.grp.begin (), x.grp.end ()); fresh.ApplyDent (0, g.data (), g.size (), DentMath::FieldLow, &x); }
+	for (uint32_t p = 0; p < fresh.nPart (); p++) {
+		const CollGeom &A = fresh.Part (p).Geom (), &B = b.sh->Part (p).Geom ();
+		if (A.vtx.size () != B.vtx.size ()) return false;
+		for (size_t i = 0; i < A.vtx.size (); i++) if (std::memcmp (&A.vtx[i], &B.vtx[i], sizeof (Vector))) return false;
+	}
+	return true;
+}
+}
+
+TEST_CASE ("dmg3 hooks: hit to parts then effects, rec and Esurplus, X and T recorded and played back")
+{
+	auto dir = std::filesystem::temp_directory_path () / "collD_dmg3";
+	std::filesystem::remove_all (dir);
+	std::vector<std::string> playScn, order;
+	std::vector<DentRecord> recorded;
+	DentTorn tr;
+	tr.kind = 0, tr.slot = 0, tr.key = DentMath::MeshKey ("plate"), tr.ngrp = 1, tr.nvtx = 441, tr.simt = 1.5, tr.grp = { 0 };
+	{
+		Rig r;
+		r.cfg.dentModes = r.cfg.dentNoise = r.cfg.dentFacetNormals = true;
+		r.s.sideDir = dir.string ();
+		r.cfg.testRecId = "DMG3X";
+		auto *bk = new SinkLog ("brk", &order), *fx = new SinkLog ("fx", &order);
+		r.s.brk.reset (bk), r.s.fx.reset (fx);
+		uint32_t a = r.Add ("PB-A"), b = r.Add ("PB-B");
+		r.Begin ();
+		r.Frame ();
+		r.B (a).v->recording = r.B (b).v->recording = true;
+		r.s.SaveLines (playScn);
+		CollImpactEvent e = Hit (a, -1, b, 10.0, 3.0e4);
+		e.vt = 2.5;
+		r.Frame ({ e });
+		REQUIRE (bk->hits.size () == 2);
+		REQUIRE (fx->hits.size () == 2);
+		REQUIRE (order.size () >= 2);
+		CHECK (order[0] == "brk hit");
+		CHECK (order[1] == "fx hit");
+		const CollDamageHit &h = bk->hits[0];
+		CHECK (h.id == a);
+		CHECK (h.other == b);
+		CHECK (h.rec == 0);
+		CHECK (h.vn == 10.0);
+		CHECK (h.vt == 2.5);
+		CHECK (h.E > 0);
+		CHECK (h.Esurplus >= 0);
+		CHECK (h.Esurplus <= h.E);
+		CHECK (h.depth > 0);
+		CHECK (h.eSpec == h.E / 500.0);
+		CHECK (h.mat);
+		CHECK_FALSE (h.playback);
+		CHECK (bk->post >= 2);
+		CHECK (fx->post >= 2);
+		CHECK (bk->shapes >= 2);
+		recorded = r.s.Damage (a)->d.rec;
+		REQUIRE (recorded.size () >= 1);
+		CHECK (recorded[0].p.seed != 0); // new build: noise seed
+		CHECK_FALSE (DentMath::Legacy (recorded[0].p));
+		CHECK (ColliderExactLow (r, a));
+		r.s.AddTorn (a, tr);
+		CHECK (r.s.Damage (a)->d.torn.size () == 1);
+		std::vector<std::string> q;
+		r.s.SaveLines (q);
+		bool x2 = false, tt = false;
+		for (auto &l : q) { x2 = x2 || l.find ("XDMG 2 ") != std::string::npos; tt = tt || l.find ("XDMGM T ") != std::string::npos; CHECK (l.size () <= 200); }
+		CHECK (x2);
+		CHECK (tt);
+		r.s.End ();
+		CHECK (bk->end == 1);
+		CHECK (fx->end == 1);
+	}
+	REQUIRE (std::filesystem::exists (dir / "DMG3X.txt"));
+	{
+		std::ifstream f (dir / "DMG3X.txt");
+		std::stringstream ss;
+		ss << f.rdbuf ();
+		std::string txt = ss.str ();
+		size_t d = txt.find (" D "), x = txt.find (" X "), t = txt.find (" T ");
+		CHECK (d != std::string::npos);
+		CHECK (x != std::string::npos);
+		CHECK (x > d); // X right after the record's D lines
+		CHECK (t != std::string::npos);
+	}
+	Rig p;
+	p.cfg.dentModes = p.cfg.dentNoise = p.cfg.dentFacetNormals = true;
+	std::vector<std::string> order2;
+	auto *bk = new SinkLog ("brk", &order2);
+	p.s.brk.reset (bk);
+	p.s.sideDir = dir.string ();
+	uint32_t a = p.Add ("PB-A"), b = p.Add ("PB-B");
+	p.B (a).v->playback = p.B (b).v->playback = true;
+	CollStoreBlock blk;
+	size_t pos = 0;
+	REQUIRE (CollStore::Parse ([&] (std::string &l) { if (pos >= playScn.size ()) return false; l = playScn[pos++]; return true; }, blk));
+	p.Begin (std::move (blk));
+	for (int k = 0; k < 6; k++) p.Frame ();
+	REQUIRE (p.s.Damage (a));
+	REQUIRE (p.s.Damage (a)->d.rec.size () == recorded.size ());
+	for (size_t i = 0; i < recorded.size (); i++) CHECK (std::memcmp (&p.s.Damage (a)->d.rec[i].p, &recorded[i].p, sizeof (DentParams)) == 0);
+	CHECK (ColliderExactLow (p, a));
+	bool pb = false;
+	for (const CollDamageHit &h : bk->hits) if (h.playback && h.id == a) { pb = true; CHECK (h.vn == 10.0); CHECK (h.vt == 2.5); CHECK (h.E > 0); CHECK (h.Esurplus <= h.E); }
+	CHECK (pb);
+	REQUIRE (bk->torn.size () == 1);
+	CHECK (bk->torn[0].grp == tr.grp);
+	CHECK (p.s.Damage (a)->d.torn.size () == 1);
+	std::filesystem::remove_all (dir);
+}
+
+TEST_CASE ("dmg3 CollDebris vessels take energy only; legacy rig writes no extension")
+{
+	Rig r;
+	r.cfg.dentModes = r.cfg.dentNoise = true;
+	std::vector<std::string> order;
+	auto *bk = new SinkLog ("brk", &order);
+	r.s.brk.reset (bk);
+	uint32_t a = r.Add ("Deb-1", "colldebris"), b = r.Add ("PB-B");
+	r.Begin ();
+	r.Frame ();
+	r.Frame ({ Hit (a, -1, b, 10.0, 3.0e4) });
+	REQUIRE (r.s.Damage (a));
+	CHECK (r.s.Damage (a)->d.eabs > 0);
+	CHECK (r.s.Damage (a)->d.rec.empty ());
+	for (const CollDamageHit &h : bk->hits) CHECK (h.id != a);
+	Rig o; // modes off: records stay legacy, the save has no version-2 lines
+	uint32_t c = o.Add ("PB-C"), d = o.Add ("PB-D");
+	o.Begin ();
+	o.Frame ();
+	o.Frame ({ Hit (c, -1, d, 10.0, 3.0e4) });
+	REQUIRE (o.s.Damage (c));
+	REQUIRE (!o.s.Damage (c)->d.rec.empty ());
+	CHECK (DentMath::Legacy (o.s.Damage (c)->d.rec[0].p));
+	std::vector<std::string> q;
+	o.s.SaveLines (q);
+	for (auto &l : q) CHECK (l.find ("XDMG 2") == std::string::npos);
+}
+
+TEST_CASE ("dmg3 corner crush: mode 1, the next hit inherits it and grows P; Esurplus in [0, E]")
+{
+	Rig r;
+	r.cfg.dentModes = r.cfg.dentNoise = r.cfg.dentFacetNormals = true;
+	std::vector<std::string> order;
+	auto *bk = new SinkLog ("brk", &order);
+	r.s.brk.reset (bk);
+	uint32_t a = r.Add ("PB-A"), b = r.Add ("PB-B");
+	r.Begin ();
+	r.Frame ();
+	CollImpactEvent e = Hit (a, -1, b, 20.0, 2.0e5);
+	e.s[0].c = Vector (4.95, 4.95, 0);
+	r.Frame ({ e });
+	REQUIRE (r.s.Damage (a));
+	const std::vector<DentRecord> &rec = r.s.Damage (a)->d.rec;
+	REQUIRE (!rec.empty ());
+	CHECK (rec[0].p.mode == DENTM_CRUSH);
+	CHECK (rec[0].p.P > 0);
+	CHECK (rec[0].p.h <= rec[0].p.P);
+	size_t n0 = rec.size ();
+	double P0 = rec[0].p.P;
+	REQUIRE (!bk->hits.empty ());
+	CHECK (bk->hits[0].mode == DENTM_CRUSH);
+	CHECK (bk->hits[0].Esurplus >= 0);
+	CHECK (bk->hits[0].Esurplus <= bk->hits[0].E);
+	e.s[0].c = Vector (4.9, 4.9, -rec[0].p.h); // on the crushed face: mapped back to rest
+	r.Frame ({ e });
+	CHECK (r.s.Damage (a)->d.rec.size () <= n0 + 1);
+	for (const DentRecord &x : r.s.Damage (a)->d.rec) CHECK (x.p.mode == DENTM_CRUSH); // the partner's mode is inherited
+	CHECK (r.s.Damage (a)->d.rec[0].p.P >= P0);
+	CHECK (ColliderExactLow (r, a));
 }

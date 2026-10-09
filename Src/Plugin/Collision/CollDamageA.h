@@ -107,7 +107,9 @@ private:
 	void SyncMirror (VesselDamageA &v, uint32_t mesh);
 	void MarkDirty (uint32_t id, uint32_t mesh, bool replay);               // dent events: one collider sync and one mirror sync per slot at the next FlushDirty
 	void FlushDirty ();                                                      // end of Commit and Playback
-	void Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, double E, const DentMaterial &mat, double t, NoticeA &note);
+	void Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, double E, const DentMaterial &mat, double t, NoticeA &note, const CollImpactEvent *ev = nullptr, uint32_t other = 0);
+	void EmitHit (const CollDamageHit &hit);                                // dmg3: parts and effects units
+	bool IsDebris (CollH h);                                                 // dmg3: class CollDebris (L6)
 	void DestroyedTest (VesselDamageA &v, CollH h, double Ei, double t, uint32_t extraFlags);
 	void DoRepair (VesselDamageA &v, bool playback);
 	double Threshold (uint32_t id) const;
@@ -138,6 +140,7 @@ private:
 	CollRecLink rec;
 	CollPlayLink play;
 	double frameT = 0;                                                       // pre-step time of Commit's frame
+	double lastPostT = -1;                                                   // dmg3: sim time of the last PostStep (simdt for the units)
 	bool begun = false, matched = false, loggedNoFirst = false;
 };
 
