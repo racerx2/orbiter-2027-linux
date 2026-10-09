@@ -5,6 +5,8 @@ from scnlib import fail
 DENT = re.compile(r"^Collision dent t=(\S+) '([^']*)' mesh=(\d+) grp=(\d+) .* mode=(\d+) ")
 BREAK = re.compile(r"^Collision break '([^']*)' kind=(-?\d+) slot=(\d+) groups=(\S*) debris=(\S*) vn=(\S+)")
 DEBRIS = re.compile(r"^Collision debris '([^']*)' from '([^']*)' slot=(\d+) mass=(\S+) fnv=([0-9a-f]{8})")
+BLAST = re.compile(r"^Collision blast break '([^']*)' slot=(\d+) cells=(\S+) pieces=(\d+) mass=(\S+) debris=(\S+)")
+BMASS = re.compile(r"^Collision blast '([^']*)' empty mass (\S+) -> (\S+) kg")
 RESTORED = re.compile(r"^Collision break restored '([^']*)' fnv=([0-9a-f]{8})")
 TEAR = re.compile(r"^Collision tear '([^']*)' slot=(\d+) d=(\S+) f=(\S+) R=(\S+) groups=(\S+) debris=(\S+) eSpec=(\S+) vn=(\S+)")
 DMG3 = re.compile(r"^Collision dmg3: fx=(\d+) streams=(\d+) breaks=(\d+) reasserts=(\d+)")
@@ -65,10 +67,10 @@ def first_debris_frame(r):
 def broke(r):  # the crash of 70 m/s: dents of mode 1, break lines, a debris vessel
     no_error(r)
     crush_each(r)
-    brk, tr = matches(r, BREAK), tears(r)  # a section tear takes the small parts with it, so tear lines count as breaks
+    brk, tr = matches(r, BREAK), tears(r) + blasts(r)  # a section tear or a Blast break takes the small parts with it, so they count as breaks
     if not brk and not tr:
         miss = [l for l in r.log if l.startswith('Collision: Config/Vessels/CollDebris.cfg missing')]
-        fail('run %s: no "Collision break" or "Collision tear" line%s' % (r.spec.id, ' (%s)' % miss[0] if miss else ''))
+        fail('run %s: no "Collision break", "Collision tear" or "Collision blast break" line%s' % (r.spec.id, ' (%s)' % miss[0] if miss else ''))
     if not tr and not any(m.group(1) in PAIR and m.group(4) not in ('', '-') for m in brk):
         fail('run %s: no break line of PB-A or PB-B with groups' % r.spec.id)
     deb = matches(r, DEBRIS)
@@ -84,6 +86,26 @@ def broke(r):  # the crash of 70 m/s: dents of mode 1, break lines, a debris ves
 
 def tears(r):  # section tear lines of the pair
     return [m for m in matches(r, TEAR) if m.group(1) in PAIR]
+
+
+def blasts(r):  # Blast break lines of the pair
+    return [m for m in matches(r, BLAST) if m.group(1) in PAIR]
+
+
+def blast70(r):  # the 70 m/s crash with Blast: cells of the pair separate as debris vessels and the parent loses their mass
+    b = blasts(r)
+    if not b:
+        fail('run %s: no "Collision blast break" line of PB-A or PB-B' % r.spec.id)
+    deb = [m for m in b if m.group(6) != '-']
+    if not deb:
+        fail('run %s: no Blast break with a debris vessel' % r.spec.id)
+    names = set(m.group(1) for m in matches(r, DEBRIS))
+    if not any(m.group(6) in names for m in deb):
+        fail('run %s: Blast debris %s without a "Collision debris" line' % (r.spec.id, ','.join(m.group(6) for m in deb)))
+    cut = [m for m in matches(r, BMASS) if m.group(1) in PAIR and float(m.group(3)) < float(m.group(2))]
+    if not cut:
+        fail('run %s: no "Collision blast ... empty mass" drop of PB-A or PB-B' % r.spec.id)
+    return deb
 
 
 def tear70(r):  # the 70 m/s crash tears a section: d in [5, 8] m, its debris at least 1000 kg
