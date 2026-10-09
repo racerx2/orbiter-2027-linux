@@ -92,3 +92,35 @@ TEST_CASE ("A state write clears the ground contact: the next step uses the norm
 	REQUIRE (o.nsub == 1);
 	REQUIRE ((g.lv != o.lv || g.nsub != o.nsub));
 }
+
+TEST_CASE ("fix2: substeps computed in double, targets <= 0 ignored, clamped to [1, subMax] (PropStage 0 0, NaN H)", "[CollOrbMirror]")
+{
+	int lv = -1, ns = -1;
+	{
+		CollOrbMirror mir;
+		std::map<std::string, std::string> cfg { { "PropStage0", "0 0 0" } };
+		mir.ReadCfg ([&] (const char *k, std::string &v) { auto it = cfg.find (k); if (it == cfg.end ()) return false; v = it->second; return true; });
+		mir.Choose (0.05, 10.0, false, lv, ns);
+		CAPTURE (lv, ns);
+		REQUIRE (ns >= 1); REQUIRE (ns <= mir.subMax);
+	}
+	CollOrbMirror mir;
+	mir.subMax = 10; mir.alim[0] = 10.0; mir.atgt[0] = 0.1;
+	mir.ttgt[0] = 0.0;                                       // ignored: the angle target alone gives ceil (0.5/0.1)
+	mir.Choose (0.05, 10.0, false, lv, ns);
+	CAPTURE (lv, ns);
+	REQUIRE (lv == 0); REQUIRE (ns == 5);
+	mir.ttgt[0] = -1.0;
+	mir.Choose (0.05, 10.0, false, lv, ns);
+	REQUIRE (ns == 5);
+	mir.ttgt[0] = 1e-300;                                    // H/ttgt is inf: subMax
+	mir.Choose (0.05, 10.0, false, lv, ns);
+	REQUIRE (ns == 10);
+	mir.ttgt[0] = 0.1;
+	mir.Choose (std::nan (""), 10.0, false, lv, ns);
+	REQUIRE (ns >= 1); REQUIRE (ns <= 10);
+	mir.Choose (0.05, std::nan (""), false, lv, ns);
+	REQUIRE (ns >= 1); REQUIRE (ns <= 10);
+	mir.Choose (0.05, HUGE_VAL, false, lv, ns);
+	REQUIRE (ns == 10);
+}

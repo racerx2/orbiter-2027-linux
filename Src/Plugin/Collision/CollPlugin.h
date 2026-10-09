@@ -39,6 +39,7 @@ private:
 	Phase phase = Phase::None;
 	uint32_t serial = 0;
 	bool inStep = false;
+	bool loaded = false;                   // opcLoadState ran since the last End
 	Jump jump;
 	int cmd = 0;                           // per process (W1); 0 = none
 	CollDialogA *dlg = nullptr;            // per process, holds no session data

@@ -1,5 +1,6 @@
 // not upstream: unit tests of E1's SDK-facing session part on CollFakeSdk (quiet scene, contact frame, zero step, notices, warp)
 #include <catch2/catch_test_macros.hpp>
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <memory>
@@ -95,9 +96,18 @@ TEST_CASE ("E1 session: an approaching pair is written, a zero step writes nothi
 	W.Add ("B", Vector (1.15, 0, 0), Vector (-2, 0, 0));
 	W.Frame (0.0);
 	REQUIRE (W.sdk.Count ().Writes () == 0);
+	W.sdk.applyWrites = true;
+	const double g0 = W.v[1]->rd.x.x - W.v[0]->rd.x.x - 2.0;
 	W.Frame (0.1);
-	CAPTURE (W.ps->Stats ().spec, W.ps->Stats ().writes);
+	const double u1 = W.v[1]->rd.v.x - W.v[0]->rd.v.x, g1 = W.v[1]->rd.x.x - W.v[0]->rd.x.x - 2.0; // speculative: approach cut to the gap
+	W.Frame (0.1);
+	const double u2 = W.v[1]->rd.v.x - W.v[0]->rd.v.x, g2 = W.v[1]->rd.x.x - W.v[0]->rd.x.x - 2.0; // touch: the write separates the pair
+	CAPTURE (W.ps->Stats ().spec, W.ps->Stats ().writes, g0, u1, g1, u2, g2);
 	REQUIRE (W.sdk.Count ().Writes () > 0);
+	REQUIRE (u1 > -4.0 + 1e-3);
+	REQUIRE (g1 >= -COLLA_DEV_TOL);
+	REQUIRE (u2 >= -1e-9);
+	REQUIRE (g2 > g1);
 	REQUIRE (W.sdk.misuse == 0);
 	REQUIRE (W.ps->Stats ().checkFail == 0);
 }
@@ -271,5 +281,67 @@ TEST_CASE ("fix1 R2: the weight cached before a state write is turned into the w
 	Vector ge = W.ps->GExact ()[ia];
 	CAPTURE (ge.x, ge.y, ge.z, g.x, g.y, g.z);
 	REQUIRE ((ge - g).length () <= 1e-12*g.length ());
+	REQUIRE (W.sdk.misuse == 0);
+}
+
+TEST_CASE ("fix2: a state write below the terrain is kept and logged once per vessel", "[CollWorldA]")
+{
+	for (double elev : { 0.0, 300.0 }) {
+		World W;
+		W.sdk.bodies.push_back (CollFakeSdk::Body ());
+		CollFakeSdk::Body *earth = &W.sdk.bodies.back ();
+		earth->elev = elev;
+		const double R0 = earth->size + 100.0;
+		CollFakeSdk::Ves *a = W.Add ("A", Vector (R0, -1.15, 0), Vector (0, 2, 0));
+		CollFakeSdk::Ves *b = W.Add ("B", Vector (R0, 1.15, 0), Vector (0, -2, 0));
+		a->rd.gref = b->rd.gref = earth;
+		for (int f = 0; f < 4; f++) W.Frame (0.1);
+		std::vector<CollH> st;
+		for (const CollFakeSdk::Wr &x : W.sdk.wr) if (x.op == 'S' && std::find (st.begin (), st.end (), x.h) == st.end ()) st.push_back (x.h);
+		int states = 0;
+		for (const CollFakeSdk::Wr &x : W.sdk.wr) if (x.op == 'S') states++;
+		CAPTURE (elev, st.size (), states, W.sdk.LogCount ("below the terrain"));
+		REQUIRE (!st.empty ());
+		REQUIRE (W.sdk.LogCount ("below the terrain") == (elev > 0 ? (int)st.size () : 0));
+		REQUIRE (W.sdk.misuse == 0);
+	}
+}
+
+TEST_CASE ("fix3: state writes 30 km above the planet radius query no terrain elevation", "[CollWorldA]")
+{
+	World W;
+	W.sdk.bodies.push_back (CollFakeSdk::Body ());
+	CollFakeSdk::Body *earth = &W.sdk.bodies.back ();
+	const double R0 = earth->size + 30e3;
+	CollFakeSdk::Ves *a = W.Add ("A", Vector (R0, -1.15, 0), Vector (0, 2, 0));
+	CollFakeSdk::Ves *b = W.Add ("B", Vector (R0, 1.15, 0), Vector (0, -2, 0));
+	a->rd.gref = b->rd.gref = earth;
+	for (int f = 0; f < 4; f++) W.Frame (0.1);
+	int states = 0;
+	for (const CollFakeSdk::Wr &x : W.sdk.wr) if (x.op == 'S') states++;
+	CAPTURE (states, W.sdk.elevCalls);
+	REQUIRE (states > 0);
+	CHECK (W.sdk.elevCalls == 0);
+	REQUIRE (W.sdk.misuse == 0);
+}
+
+TEST_CASE ("fix2: a landed playback vessel moves with its cache, not with predicted gravity", "[CollWorldA]")
+{
+	const double r = 6.371e6;
+	World W;
+	W.sdk.bodies.push_back (CollFakeSdk::Body ());
+	CollFakeSdk::Body *earth = &W.sdk.bodies.back ();
+	CollFakeSdk::Ves *a = W.Add ("A", Vector (r, 0, 0), Vector ());
+	CollFakeSdk::Ves *b = W.Add ("B", Vector (r, 0, 500), Vector ());
+	a->rd.gref = b->rd.gref = earth;
+	a->rd.playback = true; a->rd.status = 1; a->rd.aTot = Vector (0, 0, 0);
+	W.Frame (0.1);
+	const CollABody *P = nullptr;
+	for (const CollABody &B : W.ps->Bodies ()) if (B.kind == COLLB_PLAYBACK) P = &B;
+	REQUIRE (P);
+	CAPTURE (P->kin.a0.x, P->kin.a0.y, P->kin.a0.z, P->gEst.length ());
+	REQUIRE (P->gEst.length () > 9.0);
+	REQUIRE (P->kin.a0.length () < 1e-9);
+	REQUIRE ((P->kin.c1 - P->x).length () < 1e-9);
 	REQUIRE (W.sdk.misuse == 0);
 }

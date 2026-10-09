@@ -1093,6 +1093,7 @@ TEST_CASE("Budget: build time and memory", "[collgeom][budget][stock][.slow]")
 		if (p == MSH_ISS) issMs = ms;
 	}
 	if (issMs >= 200.0) WARN ("ISS build " << issMs << " ms (soft budget 200 ms)");
+	CHECK (issMs < 4.0*200.0);                                // fix2: the budget with a 4x margin for slow or shared machines
 
 	// 9 x ISS in one geometry, add-on size (D1 1.2: <= 0.5 s for 220k triangles)
 	CollRestMesh iss;
@@ -1111,6 +1112,7 @@ TEST_CASE("Budget: build time and memory", "[collgeom][budget][stock][.slow]")
 		st.ntriIn, st.ntri, st.nrender, st.nweld, st.nnode, st.msWeld, st.msTree, bytesPerTri (N));
 	CHECK (bytesPerTri (N) <= 110.0);
 	if (st.msWeld + st.msTree >= 500.0) WARN ("9 x ISS build " << st.msWeld + st.msTree << " ms (soft budget 500 ms)");
+	CHECK (st.msWeld + st.msTree < 4.0*500.0);
 	auto t0 = std::chrono::steady_clock::now();
 	N.Refit ();
 	std::printf ("9 x ISS refit %.2f ms\n", std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now() - t0).count());

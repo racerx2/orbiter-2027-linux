@@ -53,6 +53,15 @@ TEST_CASE ("E2-U10 matching and pose check", "[CollBaseA]")
 	B.pos = B.pos + Vector (0.01, 0, 0);
 	b.Poll (s, 100);
 	REQUIRE (!b.rec[0]->checkedOk);
+	// rotated base at the recorded position must fail too
+	B.pos = E.pos + b.rec[0]->rposP;
+	b.rec[0]->checkedOk = true;
+	b.Poll (s, 200);
+	REQUIRE (b.rec[0]->checkedOk);
+	double c = cos (1e-6), sn = sin (1e-6);
+	B.R = b.rec[0]->rrotP * Matrix (c, 0, -sn, 0, 1, 0, sn, 0, c);
+	b.Poll (s, 300);
+	REQUIRE (!b.rec[0]->checkedOk);
 }
 
 TEST_CASE ("E2-U9 stock bases, flat elevation", "[CollBaseA]")
@@ -136,4 +145,50 @@ TEST_CASE ("fix1: per-type Read ends the object list where the core's ends", "[C
 	CHECK (count ("SOLARPLANT\n POS 1 2\n SCALE 3\nEND\n" + blk) == 2);
 	CHECK (count ("RUNWAY\n RWTEX end\nEND\n" + blk) == 1);           // RWTEX overwrites the label: the stray END ends the list
 	CHECK (count ("TRAIN1\n TEX end 2\n" + blk) == 2);
+}
+
+TEST_CASE ("fix2 M12: BEGIN_OBJECTLIST found as the core's FindLine", "[CollBaseA]")
+{
+	auto count = [] (const std::string &t) { CollBaseFile f; std::vector<std::string> w; CollParseBaseFile (t, f, w); return f.obj.size (); };
+	const std::string blk = "BLOCK\n SCALE 10 10 10\nEND\nEND_OBJECTLIST\n";
+	CHECK (count ("BASE-V2.0\n; " + std::string (300, 'x') + "\nBEGIN_OBJECTLIST\n" + blk) == 1); // long line before the list
+	CHECK (count ("BASE-V2.0\n; " + std::string (3000, 'x') + "\nBEGIN_OBJECTLIST\n" + blk) == 1);
+	CHECK (count ("BASE-V2.0\n  BEGIN_OBJECTLIST\n" + blk) == 0);                                      // indented: not at column 0
+	CHECK (count ("BASE-V2.0\nBEGIN_OBJECTLIST ;c\n" + blk) == 1);                                    // prefix match
+	CHECK (count ("BASE-V2.0\nbegin_objectlist\n" + blk) == 1);
+	CHECK (count ("BASE-V2.0\n" + std::string (1023, 'x') + "BEGIN_OBJECTLIST\n" + blk) == 1);       // the rest of a long line is read as a line
+}
+
+TEST_CASE ("fix2: MESH with a bare FILE line keeps the object (strdup of the empty value)", "[CollBaseA]")
+{
+	CollBaseFile f; std::vector<std::string> w;
+	REQUIRE (CollParseBaseFile ("BASE-V2.0\nBEGIN_OBJECTLIST\nMESH\n FILE\nEND\nBLOCK\n SCALE 10\nEND\nEND_OBJECTLIST\n", f, w));
+	REQUIRE (f.obj.size () == 2);
+	CHECK (f.obj[0].type == "MESH");
+	CHECK (f.obj[0].meshFile.empty ());
+	CHECK (f.obj[1].index == 1);
+	CollFakeSdk s; CollDirs d;
+	CHECK (!CollBaseObjGeometry (f.obj[0], s, d, 6.371e6, false, w));
+}
+
+TEST_CASE ("fix2: COLLIDE on a WRAPTOSURFACE mesh follows the terrain per vertex (MapToAltitude)", "[CollBaseA]")
+{
+	CollFakeSdk s; CollDirs d;
+	std::string m = "MSHX1\nGROUPS 1\nGEOM 4 2\n-10 0 -10 0 1 0 0 0\n10 0 -10 0 1 0 0 0\n10 0 10 0 1 0 0 0\n-10 0 10 0 1 0 0 0\n0 2 1\n0 3 2\n";
+	s.File (".\\Meshes\\pad.msh", m);
+	const double R = 6.371e6, l0 = 0.1, b0 = 0.2;
+	CollBaseElev el;
+	el.lng = l0; el.lat = b0; el.elev = 5;
+	el.at = [&] (double l, double b) { return 5 + (l - l0) * R * cos (b0) * 0.01 - (b - b0) * R * 0.02; }; // 0.01 z + 0.02 x above the base
+	auto ys = [&] (const char *extra) {
+		CollBaseFile f; std::vector<std::string> w;
+		REQUIRE (CollParseBaseFile (std::string ("BASE-V2.0\nBEGIN_OBJECTLIST\nMESH\n FILE pad\n POS 100 0 50\n COLLIDE\n") + extra + "END\nEND_OBJECTLIST\n", f, w));
+		REQUIRE (CollBaseObjIncluded (f.obj[0]));
+		REQUIRE (CollBaseObjGeometry (f.obj[0], s, d, R, false, w, &el));
+		std::vector<CollVtx> v;
+		for (auto &g : f.obj[0].grp) v.insert (v.end (), g.vtx.begin (), g.vtx.end ());
+		return v;
+	};
+	for (auto &v : ys (" WRAPTOSURFACE\n")) CHECK (std::fabs (v.y - (0.02f * v.x + 0.01f * v.z)) < 1e-3f);
+	for (auto &v : ys ("")) CHECK (std::fabs (v.y - 2.5f) < 1e-3f);
 }

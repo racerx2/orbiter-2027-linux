@@ -291,7 +291,7 @@ protected:
 		std::unique_ptr<char[]> d (new char[n]);
 		memcpy (d.get (), desc ? desc : "", n);
 		int id = (int)oapiRegisterCustomCmd (l.data (), d.get (), (CustomFunc)fn, ctx);
-		if (id) cmdDesc[id] = std::move (d);
+		if (id) try { cmdDesc[id] = std::move (d); } catch (...) { oapiUnregisterCustomCmd (id); throw; } // no command left behind
 		return id;
 	}
 	void DoUnregisterCmd (int id) override { oapiUnregisterCustomCmd (id); cmdDesc.erase (id); }

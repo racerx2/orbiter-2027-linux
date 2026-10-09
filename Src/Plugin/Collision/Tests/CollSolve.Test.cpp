@@ -1239,3 +1239,55 @@ TEST_CASE ("fix1 R4: TOI and RESTING points more than slop apart may close at (g
 		REQUIRE (std::fabs (v - w.vafter) < 1e-7);
 	}
 }
+
+TEST_CASE ("fix2 tol: an open point's bias at tau 1 - 1e-12 does not stop the sweep; the 4-corner box settles", "[CollSolve]")
+{
+	for (double e : { 1e-3, 1e-12 }) {
+		CollIsland isl; isl.h = 0.02; isl.tau = 1.0 - e;
+		double tr = (1.0 - isl.tau)*isl.h;
+		CollSBody g {}; g.dyn = false; g.m = 0; g.Rt = g.R1 = IMatrix (); isl.body.push_back (g);
+		CollSBody b {}; b.dyn = true; b.m = 1e4; b.pmi = Vector (1, 1, 1); b.Rt = b.R1 = IMatrix (); b.xt = Vector (0, 1, 0); b.vt = Vector (0.3, -1, 0.1); b.wt = Vector (0.2, 0, 0.4);
+		b.x1 = b.xt + b.vt*tr; b.v1 = b.vt; b.wb1 = b.wt; isl.body.push_back (b);
+		for (double sx : { -1.0, 1.0 }) for (double sz : { -1.0, 1.0 }) {
+			CollSContact c {}; c.a = 1; c.b = 0; c.p = Vector (sx, 0, sz*0.7); c.n = c.n2 = Vector (0, 1, 0); c.kind = COLL_RESTING; c.mu = 0.5; c.gap = -0.001;
+			isl.con.push_back (c);
+		}
+		CollSContact o {}; o.a = 1; o.b = 0; o.p = Vector (0, 0.95, 3); o.n = o.n2 = Vector (0, 0, -1); o.kind = COLL_RESTING; o.mu = 0.5; o.gap = 0.05;   // open point far away
+		isl.con.push_back (o);
+		LogCapture lc;
+		REQUIRE (isl.Solve (CollSolveParams ()));
+		CollDelta d;
+		isl.Delta (1, d);
+		Vector v = b.v1 + d.dv;
+		std::printf ("fix2 tol: tau 1 - %g: v after (%g %g %g), still approaching %d\n", e, v.x, v.y, v.z, lc.Count ("still approaching"));
+		CHECK (v.length () <= 1e-3);                        // unfixed at 1 - 1e-12: 0.15 m/s left
+		CHECK (lc.Count ("still approaching") == 0);
+	}
+}
+
+TEST_CASE ("fix2 R3: phase 2 after a phase-1 friction-off redo runs without friction; the phase-2 redo branch is reached", "[CollSolve]")
+{
+	Rng r (4242);
+	int off1 = 0, off1Act = 0, off2 = 0, bad = 0;
+	for (int t = 0; t < 20000; t++) {
+		CollIsland isl = FuzzIsland (r);
+		for (CollSContact &c : isl.con) { c.n2 = c.n + r.V (0.5); c.n2 = c.n2/c.n2.length (); }   // phase 2 sees its own approach
+		LogCapture lc;
+		REQUIRE (isl.Solve (CollSolveParams ()));
+		bool p1 = lc.Count ("phase-1 work") > 0 && lc.Count ("without friction") > 0 && lc.Count ("phase-2 work") == 0;
+		off2 += lc.Count ("phase-2 work");
+		if (!p1) continue;
+		off1++;
+		bool act = false;
+		for (const CollSContact &c : isl.con) {
+			double jn = dotp (c.J2, c.n2), jt = (c.J2 - c.n2*jn).length ();
+			act = act || std::fabs (jn) > 0.0;
+			if (jt > 1e-12*(std::fabs (jn) + 1e-300)) bad++;
+		}
+		off1Act += act;
+	}
+	std::printf ("fix2 R3: %d phase-1 friction-off islands (%d with phase-2 impulses), %d phase-2 friction-off, tangential phase-2 impulses %d\n", off1, off1Act, off2, bad);
+	CHECK (off1Act > 0);
+	CHECK (off2 > 0);
+	CHECK (bad == 0);
+}

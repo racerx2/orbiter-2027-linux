@@ -465,4 +465,11 @@ void CollSession::Close ()
 		t.prestep / f, t.prestepMax, t.e2 / f, t.e1 / f, t.e3 / f, t.post / p, t.build * 1e-3, t.firstFrame * 1e-3);
 	phys->End ();
 	geom->EndSession ();
+	sdk->Annotation ("", 0);
+}
+
+void CollSession::Abort ()
+{
+	CollGuard ("session end", [&] { dmg->End (); });
+	sdk->Annotation ("", 0);
 }

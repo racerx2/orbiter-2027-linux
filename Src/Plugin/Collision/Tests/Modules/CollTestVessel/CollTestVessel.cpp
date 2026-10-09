@@ -89,6 +89,7 @@ void Place (VESSEL *v, OBJHANDLE gref, const VECTOR3 &gpos, const VECTOR3 &gvel,
 class CollTestVessel : public VESSEL4 {
 public:
 	CollTestVessel (OBJHANDLE h, int fm) : VESSEL4 (h, fm) {}
+	~CollTestVessel () { if (k) Log ("mxcsr last k=%d ctl=0x%04x", k, ctlLast); } // M10: the last post-step's control bits
 	void clbkSetClassCaps (FILEHANDLE cfg) override;
 	void clbkLoadStateEx (FILEHANDLE scn, void *status) override;
 	void clbkPostCreation () override;
@@ -110,6 +111,7 @@ private:
 
 	bool director = false;
 	int k = 0;                               // frames: own pre-step count, frame k's post-step uses the same k
+	unsigned ctlLast = 0;                    // MXCSR control bits at the last post-step
 	std::vector<Words> acts;                 // TEST* lines of this vessel's scenario block
 	std::vector<Slot> slots;                 // this module's own mesh slot table (TESTMESHLOG)
 	std::map<std::string, double> massKeep;  // TESTMASS: empty mass to restore
@@ -230,6 +232,8 @@ void CollTestVessel::clbkPreStep (double simt, double, double)
 
 void CollTestVessel::clbkPostStep (double simt, double, double)
 {
+	ctlLast = _mm_getcsr () & 0xffc0; // after the addon's pre-step of this frame
+	if (k == 1 || k == 5) Log ("mxcsr post k=%d ctl=0x%04x", k, ctlLast);
 	for (const Words &w : acts)
 		if (Post (w, simt)) Act (w, simt);
 	if (meshLog) MeshLog ();

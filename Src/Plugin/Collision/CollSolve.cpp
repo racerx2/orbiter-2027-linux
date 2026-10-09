@@ -115,7 +115,7 @@ void RunPhase (Work &k, std::vector<CollSContact> &con, std::vector<Geo> &geo, i
 	for (size_t i = 0; i < con.size (); i++) {
 		const CollSContact &c = con[i];
 		Vector u = RelVel (k, c.a, c.b, geo[i]);
-		scale = std::max (scale, c.kn*(u.length () + std::fabs (c.bias)));
+		scale = std::max (scale, c.kn*u.length ());           // no bias: an open-gap bias near tau 1 must not stop the sweep (fix2)
 	}
 	double tol = 1e-12*scale;
 	for (int it = 0; it < nit; it++) {
@@ -332,8 +332,8 @@ bool CollIsland::Solve (const CollSolveParams &p)
 			S2 += std::fabs (con[i].ln)*(un2[i] + 1e-3);
 		}
 	};
-	phase2 (true);
-	if (W2 > 1e-9*S2) {
+	phase2 (!nofric);                                      // phase 1 went friction-off: phase 2 without friction too (fix2)
+	if (!nofric && W2 > 1e-9*S2) {
 		fricOff (2, W2);
 		phase2 (false);
 	}

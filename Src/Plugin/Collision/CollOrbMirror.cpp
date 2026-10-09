@@ -258,8 +258,13 @@ void CollOrbMirror::Choose (double H, double wlen, bool ground, int &lv, int &ns
 	for (lv = 0; lv < nLevel - 1; lv++) if (H < tlim[lv]) break;
 	double astep = wlen*H;
 	for (; lv < nLevel - 1; lv++) if (astep < alim[lv]) break;
-	ns = std::min (subMax, (int)std::ceil (std::max (H/ttgt[lv], astep/atgt[lv])));
-	if (ns < 1) ns = 1;
+	double d = 1.0;                                       // in double: targets <= 0 ignored, NaN and inf clamped to [1, subMax] before the int cast
+	if (ttgt[lv] > 0.0) d = std::max (d, H/ttgt[lv]);
+	if (atgt[lv] > 0.0) d = std::max (d, astep/atgt[lv]);
+	d = std::ceil (d);
+	if (!(d >= 1.0)) d = 1.0;
+	if (d > (double)subMax) d = (double)subMax;
+	ns = d >= 1.0 ? (int)d : 1;
 }
 
 void CollOrbMirror::Step (CollOrbState &o, double H, int forceLv, int forceN) const

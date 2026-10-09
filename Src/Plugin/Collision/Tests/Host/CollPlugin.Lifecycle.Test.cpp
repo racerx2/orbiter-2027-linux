@@ -31,6 +31,7 @@ struct Host {
 	oapi::Module *module = nullptr;
 	bool dlgMgr = false, noWorld = false, unloading = false; // noWorld: a callback where E4 11.2 allows no world call
 	bool throwPos = false, throwIsVessel = false;            // a host call throws: the module must catch it
+	bool throwReg = false, throwRead = false;                // fix2 area E: command registration, scenario read
 	std::vector<ImGuiDialog *> dlgList;
 	ImGuiDialog *loadDialog = nullptr;  // the one dialog object of the current load
 	std::vector<Cmd> cmds;
@@ -93,6 +94,7 @@ void oapiWriteLogV (const char *fmt, ...)
 
 DWORD oapiRegisterCustomCmd (const char *, const char *desc, CustomFunc f, void *ctx)
 {
+	if (H.throwReg) throw std::runtime_error ("host RegisterCustomCmd");
 	H.regs++;
 	H.cmds.push_back ({ H.nextCmd, f, ctx, desc });
 	return H.nextCmd++;
@@ -137,6 +139,7 @@ bool oapiReadItem_string (FILEHANDLE f, char *item, char *val) // "key = value" 
 
 bool oapiReadScenario_nextline (FILEHANDLE, char *&line)
 {
+	if (H.throwRead) throw std::runtime_error ("host nextline");
 	if (H.scnPos >= H.scnIn.size ()) return false;
 	H.lineBuf = H.scnIn[H.scnPos++];
 	line = H.lineBuf.data ();
@@ -599,5 +602,50 @@ TEST_CASE ("CollPlugin lifecycle: an exception in a callback or an export turns 
 	CHECK (sums[0].rfind ("Collision summary: frames=2 ", 0) == 0);
 	Unload (h);
 	CHECK (H.worldBad == bad);
+	CHECK (H.bugs == bugs);
+}
+
+TEST_CASE ("CollPlugin lifecycle: a throwing InitModule leaves no command or dialog; a load that threw ends as stale at the next load")
+{
+	size_t log0 = H.log.size ();
+	int bugs = H.bugs, regs = H.regs, gone = H.dlgGone;
+	auto since = [&] (const char *prefix) { std::vector<std::string> out; for (size_t i = log0; i < H.log.size (); i++) if (!H.log[i].compare (0, strlen (prefix), prefix)) out.push_back (H.log[i]); return out; };
+
+	// T1: registration throws, the command is registered last, the dialog object goes with the module object
+	H.throwReg = H.unloading = true;
+	H.module = nullptr;
+	void *h = dlopen (SoPath (), RTLD_NOW);
+	H.throwReg = H.unloading = false;
+	REQUIRE (h);
+	CHECK (H.module == nullptr);
+	CHECK (H.cmds.empty ());
+	CHECK (H.regs == regs);
+	CHECK (H.dlgGone == gone + 1);
+	CHECK (since ("Collision: error in ") == std::vector<std::string> { "Collision: error in InitModule: host RegisterCustomCmd; collisions off until the session ends" });
+	void (*d) () = (void (*) ())OwnProc (h, "ModuleDetach");
+	REQUIRE (d);
+	d ();
+	dlclose (h);
+
+	// T2: opcLoadState throws and no clbkSimulationEnd follows; the next load ends that session as stale and runs
+	h = Load ();
+	H.cfgMissing = false;
+	H.cfg = "CollisionModel = 1\nCollisionLog = 1\n";
+	Make (0, "L1", 1);
+	H.throwRead = true;
+	LoadState (h, { "COLLA 1" });
+	H.throwRead = false;
+	LoadState (h, { "COLLA 1" });
+	H.module->clbkSimulationStart (oapi::Module::RENDER_NONE);
+	Frames (2);
+	NormalClose ();
+	Unload (h);
+	CHECK (since ("Collision: error in ") == std::vector<std::string> { "Collision: error in InitModule: host RegisterCustomCmd; collisions off until the session ends",
+		"Collision: error in opcLoadState: host nextline; collisions off until the session ends" });
+	CHECK (since ("Collision: session ") == std::vector<std::string> { "Collision: session 1 created (load)", "Collision: session 1 ended (stale)",
+		"Collision: session 2 created (load)", "Collision: session 2 ended (end)" });
+	std::vector<std::string> sums = since ("Collision summary: ");
+	REQUIRE (sums.size () == 1);
+	CHECK (sums[0].rfind ("Collision summary: frames=2 ", 0) == 0);
 	CHECK (H.bugs == bugs);
 }

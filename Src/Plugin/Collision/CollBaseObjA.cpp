@@ -109,7 +109,7 @@ class MeshObject: public BaseObject {
 public:
 	MeshObject (const Base *b): BaseObject (b) {}
 	int ParseLine (const char *label, const char *value) {
-		if (!strcasecmp (label, "FILE")) fname = value;
+		if (!strcasecmp (label, "FILE")) { fname = value; haveFile = true; } // strdup (value): a bare FILE keeps the object
 		else if (!strcasecmp (label, "WRAPTOSURFACE")) specs |= OBJSPEC_WRAPTOSURFACE;
 		else if (!strcasecmp (label, "SHADOW")) specs |= OBJSPEC_RENDERSHADOW;
 		else if (!strcasecmp (label, "OWNSHADOW")) specs |= OBJSPEC_OWNSHADOW;
@@ -119,15 +119,15 @@ public:
 		return 0;
 	}
 	int Read (istream &is) {
-		fname.clear (); specs = 0; ownmat = undersh = false;
+		fname.clear (); haveFile = false; specs = 0; ownmat = undersh = false;
 		BaseObject::Read (is);
-		if (fname.empty ()) return 2;
+		if (!haveFile) return 2;
 		specs |= ownmat ? OBJSPEC_EXPORTMESH : OBJSPEC_EXPORTVERTEX;
 		if (undersh) specs |= OBJSPEC_UNDERSHADOW;
 		return 0;
 	}
 	DWORD GetSpecs () const { return specs; }
-	DWORD specs = 0; std::string fname; bool ownmat = false, undersh = false;
+	DWORD specs = 0; std::string fname; bool haveFile = false, ownmat = false, undersh = false;
 };
 
 // objects with their own Read or no export: read to END, fixed specs
@@ -1309,11 +1309,14 @@ bool CollParseBaseFile (const std::string &text, CollBaseFile &out, std::vector<
 	CollItemReal (text, "OBJECTSIZE", out.objSize);
 	CollItemBool (text, "MAPOBJECTSTOSPHERE", out.mapToSphere);
 	std::istringstream is (text);
-	char cbuf[256];
+	char cbuf[1024];
 	bool list = false;
-	while (is.getline (cbuf, 256)) {
-		char *cp = trim_string (cbuf);
-		if (!strcasecmp (cp, "BEGIN_OBJECTLIST")) { list = true; break; }
+	for (;;) { // FindLine (Config.cpp:425-447): 1024 buffer, heal after a long line, prefix match at column 0
+		if (!is.getline (cbuf, 1024)) {
+			if (is.eof ()) break;
+			else is.clear ();
+		}
+		if (!strncasecmp (cbuf, "BEGIN_OBJECTLIST", 16)) { list = true; break; }
 	}
 	if (!list) return true;
 	for (uint32_t idx = 0;; idx++) {
@@ -1338,8 +1341,8 @@ bool CollParseBaseFile (const std::string &text, CollBaseFile &out, std::vector<
 bool CollBaseObjGeometry (CollBaseObjDef &o, CollSdk &sdk, const CollDirs &dirs, double rPlanet, bool mapToSphere, std::vector<std::string> &warn, const CollBaseElev *elev)
 {
 	o.grp.clear ();
-	double yofs = 0;
-	if (elev && elev->at) yofs = elev->at (elev->lng + o.pos.z/(rPlanet*cos(elev->lat)), elev->lat - o.pos.x/rPlanet) - elev->elev; // Rel_EquPos (Base.cpp:556-560)
+	double yofs = 0, objElev = 0;
+	if (elev && elev->at) { objElev = elev->at (elev->lng + o.pos.z/(rPlanet*cos(elev->lat)), elev->lat - o.pos.x/rPlanet); yofs = objElev - elev->elev; } // Rel_EquPos (Base.cpp:556-560)
 	if (mapToSphere) yofs += (float)(rPlanet - std::sqrt (rPlanet*rPlanet + (float)o.pos.x*(float)o.pos.x + (float)o.pos.z*(float)o.pos.z));
 	Vector rel (o.pos.x, o.pos.y + yofs, o.pos.z);
 	if (!strcasecmp (o.type.c_str (), "MESH")) {
@@ -1355,6 +1358,8 @@ bool CollBaseObjGeometry (CollBaseObjDef &o, CollSdk &sdk, const CollDirs &dirs,
 				mx.x = std::max (mx.x, (double)v.x); mx.y = std::max (mx.y, (double)v.y); mx.z = std::max (mx.z, (double)v.z);
 				if (o.rot) { float x = v.x, z = v.z; v.x = cosa*x - sina*z; v.z = sina*x + cosa*z; }
 				v.x += (float)rel.x; v.y += (float)rel.y; v.z += (float)rel.z;
+				if ((o.specs & OBJSPEC_WRAPTOSURFACE) && elev && elev->at) // MapToAltitude (Baseobj.cpp:167-175)
+					v.y += (float)elev->at (elev->lng + v.z/(rPlanet*cos(elev->lat)), elev->lat - v.x/rPlanet) - objElev;
 			}
 			o.grp.push_back (std::move (g));
 		}

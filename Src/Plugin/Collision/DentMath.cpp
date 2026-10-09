@@ -124,7 +124,7 @@ std::string RestOf (const Tok &t)
 bool ParseD (const Tok &t, double &v)
 {
 	const char *b = t.p, *e = t.p + t.n;
-	if (b < e && *b == '+') b++;
+	if (b < e && *b == '+' && ++b < e && *b == '-') return false; // "+-" is not a number
 	if (b == e) return false;
 	double x = 0.0;
 	auto r = std::from_chars (b, e, x, std::chars_format::general);
@@ -135,7 +135,7 @@ bool ParseD (const Tok &t, double &v)
 
 template<class T> bool ParseInt (const char *b, const char *e, T &v, int base = 10)
 {
-	if (b < e && *b == '+') b++;
+	if (b < e && *b == '+' && ++b < e && *b == '-') return false; // "+-" is not a number
 	if (b == e) return false;
 	T x = 0;
 	auto r = std::from_chars (b, e, x, base);
@@ -305,7 +305,7 @@ struct RTri { uint32_t g, v[3]; };
 struct Refiner {
 	DentObject o;                                                   // working copy, committed only on success
 	std::vector<RTri> T;
-	std::vector<uint8_t> live, fixd;                                // fixd: invalid, degenerate or out of range, never split
+	std::vector<uint8_t> live, fixd;                                // fixd: invalid, degenerate or out of range, never chooses a split (degenerate ones follow their edges)
 	std::unordered_map<uint64_t, std::vector<uint32_t>, KeyHash> edges; // welded edge -> live triangles
 	std::unordered_map<uint64_t, uint32_t, KeyHash> wmid;           // welded edge -> weld id of its midpoint
 	std::vector<std::unordered_map<uint64_t, uint32_t, KeyHash>> mid; // per group: local vertex pair -> midpoint vertex, so hard edges and UV seams keep their sides
@@ -325,7 +325,10 @@ struct Refiner {
 	void Link (uint32_t t)
 	{
 		const RTri &r = T[t];
-		for (int e = 0; e < 3; e++) edges[EKey (o.weld[r.g][r.v[e]], o.weld[r.g][r.v[(e+1)%3]])].push_back (t);
+		for (int e = 0; e < 3; e++) {
+			std::vector<uint32_t> &l = edges[EKey (o.weld[r.g][r.v[e]], o.weld[r.g][r.v[(e+1)%3]])];
+			if (std::find (l.begin (), l.end (), t) == l.end ()) l.push_back (t); // a degenerate triangle has one welded edge twice
+		}
 	}
 	void Unlink (uint32_t t)
 	{
@@ -388,13 +391,20 @@ struct Refiner {
 		mid[g][key] = i;
 		return i;
 	}
-	void Bisect (uint64_t e, const std::vector<uint32_t> &ts)
+	bool HasEdge (uint32_t t, uint64_t e) const
+	{
+		const RTri &r = T[t];
+		for (int k = 0; k < 3; k++) if (EKey (o.weld[r.g][r.v[k]], o.weld[r.g][r.v[(k+1)%3]]) == e) return true;
+		return false;
+	}
+	void Bisect (uint64_t e, std::vector<uint32_t> ts)
 	{
 		uint32_t wm;
 		auto f = wmid.find (e);
 		if (f != wmid.end ()) wm = f->second;
 		else wmid[e] = wm = o.nweld++;
-		for (uint32_t t : ts) {
+		for (size_t i = 0; i < ts.size (); i++) {
+			uint32_t t = ts[i];
 			RTri r = T[t];
 			int k = 0;
 			while (k < 3 && EKey (o.weld[r.g][r.v[k]], o.weld[r.g][r.v[(k+1)%3]]) != e) k++;
@@ -404,9 +414,11 @@ struct Refiner {
 			Mark (o.weld[r.g][x]), Mark (o.weld[r.g][y]), Mark (o.weld[r.g][z]), Mark (wm);
 			Unlink (t);
 			live[t] = 0;
-			T.push_back ({ r.g, { x, m, z } }); live.push_back (1); fixd.push_back (0); Link ((uint32_t)T.size () - 1);
-			T.push_back ({ r.g, { m, y, z } }); live.push_back (1); fixd.push_back (0); Link ((uint32_t)T.size () - 1);
+			uint8_t fx = fixd[t]; // children of a degenerate triangle follow splits only
+			T.push_back ({ r.g, { x, m, z } }); live.push_back (1); fixd.push_back (fx); Link ((uint32_t)T.size () - 1);
+			T.push_back ({ r.g, { m, y, z } }); live.push_back (1); fixd.push_back (fx); Link ((uint32_t)T.size () - 1);
 			nlive++, ntot++;
+			for (uint32_t c = (uint32_t)T.size () - 2; fx && c < T.size (); c++) if (HasEdge (c, e)) ts.push_back (c); // its second copy of e
 		}
 	}
 	// LEPP: split longer neighbours until e is longest in all its triangles, then split them together
@@ -420,7 +432,9 @@ struct Refiner {
 			std::vector<uint32_t> ts = it->second;
 			std::sort (ts.begin (), ts.end ());
 			bool pushed = false;
+			ts.erase (std::unique (ts.begin (), ts.end ()), ts.end ());
 			for (uint32_t t : ts) {
+				if (fixd[t]) continue; // degenerate triangles never choose the edge
 				double l2;
 				uint64_t k = Longest (t, l2);
 				if (k != e) { st.push_back (k); pushed = true; break; }
@@ -876,13 +890,14 @@ int DentMath::Refine (DentObject &o, const Vector &c0, double R0, const DentPara
 			RTri r = { g, { I[j], I[j+1], I[j+2] } };
 			bool bad = r.v[0] >= w.rest[g].size () || r.v[1] >= w.rest[g].size () || r.v[2] >= w.rest[g].size ();
 			for (int k = 0; !bad && k < 3; k++) bad = !inRange (Pos (w.rest[g][r.v[k]])) || !inRange (f.P[w.weld[g][r.v[k]]]);
+			bool deg = false;
 			if (!bad) {
 				uint32_t a = w.weld[g][r.v[0]], b = w.weld[g][r.v[1]], cc = w.weld[g][r.v[2]];
-				bad = a == b || b == cc || cc == a;
+				deg = a == b || b == cc || cc == a;
 			}
-			f.T.push_back (r), f.live.push_back (1), f.fixd.push_back (bad ? 1 : 0);
+			f.T.push_back (r), f.live.push_back (1), f.fixd.push_back (bad || deg ? 1 : 0);
 			f.ntot++;
-			if (!bad) f.Link ((uint32_t)f.T.size () - 1), f.nlive++;
+			if (!bad) f.Link ((uint32_t)f.T.size () - 1), f.nlive++; // degenerate triangles are split with their edges (no T-junction)
 		}
 	}
 	const size_t nlive0 = f.nlive;
@@ -1236,6 +1251,7 @@ bool DentVesselParser::Line (const char *line)
 void DentVesselParser::Close ()
 {
 	if (!m_open) return;
+	if (m_meshIdx.count (m_dent.back ().first)) m_nKnown--;
 	m_dent.pop_back ();
 	m_skipped++;
 	m_open = m_over = false;
@@ -1259,7 +1275,7 @@ void DentVesselParser::V1 (const std::string &line)
 		if (t.size () < 6 || !ParseInt (t[1], k) || !ParseInt (t[2], r.slot) || t[3].n > 8 || !ParseInt (t[3], r.key, 16)
 			|| !ParseInt (t[4], ngrp) || ngrp > 65535 || !ParseInt (t[5], r.nvtx)) { m_skipped++; return; }
 		r.ngrp = (uint16_t)ngrp;
-		for (const auto &m : m_mesh) if (m.first == k) { m_skipped++; return; } // a key is defined once
+		if (!m_meshIdx.emplace (k, m_mesh.size ()).second) { m_skipped++; return; } // a key is defined once
 		m_mesh.push_back ({ k, r });
 		if (t.size () > 6) m_names.push_back ({ r.slot, RestOf (t[5]) });
 		return;
@@ -1274,17 +1290,19 @@ void DentVesselParser::V1 (const std::string &line)
 			if (p.grp.size () + r.grp.size () > DENT_MAX_GRPLIST) m_over = m_capped = true; // no more groups stored; the record is dropped at its end
 			else if (!m_over) p.grp.insert (p.grp.end (), r.grp.begin (), r.grp.end ());
 			m_open = more;
-			if (!m_open && m_over) { m_dent.pop_back (); m_skipped++; m_over = false; }
+			if (!m_open && m_over) { if (m_meshIdx.count (k)) m_nKnown--; m_dent.pop_back (); m_skipped++; m_over = false; }
 			return;
 		}
 		Close ();
 	}
-	if (r.grp.size () > DENT_MAX_GRPLIST) {
+	bool known = m_meshIdx.count (k) != 0;                // orphans do not count toward the cap; Finish skips them
+	if ((known && m_nKnown >= DENT_MAX_VESSEL) || r.grp.size () > DENT_MAX_GRPLIST) { // past the live cap (R7) or the group limit: not stored
 		m_capped = true;
 		if (!more) { m_skipped++; return; }
 		r.grp.clear (), m_over = true; // its continuation lines are read and dropped with it
 	}
 	m_dent.push_back ({ k, r });
+	if (known) m_nKnown++;
 	m_open = more;
 }
 
@@ -1301,9 +1319,9 @@ void DentVesselParser::Finish (DentVesselText &out)
 	out.verbatim = m_lines;
 	out.eabs = m_eabs, out.flags = m_flags;
 	for (const auto &d : m_dent) {
-		const DentRecord *m = nullptr;
-		for (const auto &x : m_mesh) if (x.first == d.first) { m = &x.second; break; }
-		if (!m) { skipped++; continue; } // unknown key
+		auto mi = m_meshIdx.find (d.first);
+		if (mi == m_meshIdx.end ()) { skipped++; continue; } // unknown key
+		const DentRecord *m = &m_mesh[mi->second].second;
 		if (out.rec.size () >= DENT_MAX_VESSEL) { skipped++, m_capped = true; continue; } // the live cap (R7); the rest counts as skipped
 		DentRecord r = d.second;
 		r.slot = m->slot, r.key = m->key, r.ngrp = m->ngrp, r.nvtx = m->nvtx;
@@ -1342,6 +1360,7 @@ bool DentBasesParser::Line (const char *line)
 		DentBaseText b {};
 		b.planet = s.substr (0, c), b.name = s.substr (c + 1);
 		m_base.push_back (b);
+		m_nrec.clear ();
 		m_inBase = true;
 	} else if (kw ("BASEH")) { // BASEH <hash8> <planet, rest of the line>
 		m_inBase = false;
@@ -1349,6 +1368,7 @@ bool DentBasesParser::Line (const char *line)
 		if (t.size () < 3 || t[1].n > 8 || !ParseInt (t[1], b.nameHash, 16)) { m_skipped++; return true; }
 		b.planet = RestOf (t[1]);
 		m_base.push_back (b);
+		m_nrec.clear ();
 		m_inBase = true;
 	} else if (kw ("OBJ")) {
 		DentBaseObjText o {};
@@ -1360,6 +1380,7 @@ bool DentBasesParser::Line (const char *line)
 	} else if (kw ("ODENT")) { // ODENT <index> <c> <n> <R> <h> <T> [<flags>]
 		DentRecord r {};
 		if (!m_inBase || t.size () < 11 || !ParseInt (t[1], r.slot) || !ParseParams (t, 2, r.p) || (t.size () > 11 && !ParseInt (t[11], r.flags))) { m_skipped++; return true; }
+		if (++m_nrec[r.slot] > DENT_MAX_OBJECT) { m_skipped++; return true; } // records per object (R7)
 		r.key = 0, r.ngrp = 0, r.nvtx = 0;
 		m_base.back ().rec.push_back (r);
 	} else if (kw ("END_BASE")) {

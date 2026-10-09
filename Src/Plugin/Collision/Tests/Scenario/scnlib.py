@@ -158,6 +158,9 @@ def run_checks(ctx, r, a):  # what every run must show (T 2.5, E4 7.2, A2)
     sid = r.spec.id
     if r.status == 'TERMINATING':
         fail('run %s: >>> TERMINATING <<< in Orbiter.log' % sid)
+    for l in r.log:  # M6: the addon turned itself off after an exception
+        if l.startswith('Collision: error in'):
+            fail('run %s: %s' % (sid, l))
     if r.spec.expect:
         if r.status != r.spec.expect:
             fail('run %s: ended %s, %s expected' % (sid, r.status or 'by itself', r.spec.expect))

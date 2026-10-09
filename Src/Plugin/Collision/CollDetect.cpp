@@ -27,6 +27,20 @@ bool CollOwnerKey::operator== (const CollOwnerKey &o) const
 
 // rotation helpers in Orbiter's conventions (Quaternion::Rotate, Matrix::Set (Quaternion), D3 2.4)
 
+static double Det3 (const Matrix &M)
+{
+	return M.m11*(M.m22*M.m33 - M.m23*M.m32) - M.m12*(M.m21*M.m33 - M.m23*M.m31) + M.m13*(M.m21*M.m32 - M.m22*M.m31);
+}
+
+// X.A invertible: finite determinant not negligible against its largest entry cubed
+static bool Invertible (const Matrix &M)
+{
+	double s = 0.0;
+	for (int i = 0; i < 9; i++) s = std::max (s, std::fabs (M.data[i]));
+	double d = Det3 (M);
+	return std::isfinite (d) && std::isfinite (s) && std::fabs (d) > 1e-12*s*s*s;
+}
+
 static Quaternion QInv (const Quaternion &q)
 {
 	double n = q.norm2 ();
@@ -1264,19 +1278,18 @@ struct CollDetect::Impl {
 					double l = ng.length ();
 					if (l > 0.0) { y.n = (baseA ? -ng : ng)/l; done = true; }
 				}
-				if (!done) {                                       // crossing faces: minimum-penetration face normal, A pushed along it clears B (5.5, fix1)
-					Vector nf[2] = { crossp (ta[1] - ta[0], ta[2] - ta[0]), crossp (tb[1] - tb[0], tb[2] - tb[0]) };
+				if (!done) {                                       // crossing faces: minimum-penetration outward face direction, -nA or +nB (5.5, fix2 M1)
+					double sa = Det3 (a.X.A) < 0.0 ? -1.0 : 1.0, sb = Det3 (b.X.A) < 0.0 ? -1.0 : 1.0;   // a mirroring placement flips the winding
+					Vector nf[2] = { crossp (ta[1] - ta[0], ta[2] - ta[0])*(-sa), crossp (tb[1] - tb[0], tb[2] - tb[0])*sb };
 					double best = 1e300;
 					for (const Vector &f : nf) {
 						double l = f.length ();
 						if (!(l > 0.0)) continue;
-						for (double sg : { 1.0, -1.0 }) {
-							Vector u = f*(sg/l);
-							double amin = 1e300, bmax = -1e300;
-							for (int j = 0; j < 3; j++) { amin = std::min (amin, ta[j] & u); bmax = std::max (bmax, tb[j] & u); }
-							double dep = bmax - amin;
-							if (dep < best || (dep == best && (u & -cx.r) > (y.n & -cx.r))) { best = dep; y.n = u; done = true; }
-						}
+						Vector u = f/l;
+						double amin = 1e300, bmax = -1e300;
+						for (int j = 0; j < 3; j++) { amin = std::min (amin, ta[j] & u); bmax = std::max (bmax, tb[j] & u); }
+						double dep = bmax - amin;
+						if (dep < best || (dep == best && (u & -cx.r) > (y.n & -cx.r))) { best = dep; y.n = u; done = true; }
 					}
 				}
 				if (!done) {                                       // both faces degenerate: relative velocity
@@ -1492,10 +1505,11 @@ struct CollDetect::Impl {
 		if (k != COLL_SPECULATIVE) return;
 		SetPose (cx, POSE_MODEL, cx.tau);
 		double ext = spec + p.deltaCt, lim = cx.Dstep*(1.0 - cx.tau) + p.deltaCt;
-		for (;;) {
+		if (!std::isfinite (lim)) lim = ext;                     // NaN or inf step bound: no widening (fix2)
+		for (int it = 0; it < 64; it++) {
 			raws.clear ();
 			Collect (cx, ext, false, raws);
-			if (!raws.empty () || ext >= lim) break;
+			if (!raws.empty () || !(ext < lim)) break;
 			ext = std::min (2.0*ext + p.deltaCt, lim);
 		}
 		if (raws.empty ()) return;
@@ -1691,7 +1705,7 @@ struct CollDetect::Impl {
 		SetPose (cx, mode, mode == POSE_T1 ? 1.0 : 0.0);
 		std::vector<Raw> raws;
 		for (size_t k = 0; k < cx.pp.size (); k++)
-			if (!cx.pp[k].culled && !cx.pp[k].support) Cutoff (cx, k, 0.0, Q_RAWX, raws, (size_t)1 << 20, nullptr);
+			if (!cx.pp[k].culled && !cx.pp[k].support) Cutoff (cx, k, 0.0, Q_RAWX, raws, raws.size () + COLL_ENTRY_RAW_MAX, nullptr);
 		if (raws.empty ()) return;
 		std::vector<std::pair<OwnerPair, CollLeafPair>> lp;
 		for (const Raw &w : raws) lp.push_back ({ cx.pp[w.k].key, LeafKey (cx, cx.pp[w.k], w.la, w.lb) });
@@ -1733,6 +1747,22 @@ struct CollDetect::Impl {
 		}
 	}
 
+	// conservative leaf separation: bounding spheres of the two leaf AABBs, radii scaled by the Frobenius norm of the affine part
+	static bool LeafSpheresApart (const CollDetect &d, const CollAffine &XA, const CollAffine &XB, const CollNode &na, const CollNode &nb, double skin)
+	{
+		auto sphere = [] (const CollAffine &X, const CollNode &nd, double &r) {
+			Vector c ((nd.mn[0] + nd.mx[0])*0.5, (nd.mn[1] + nd.mx[1])*0.5, (nd.mn[2] + nd.mx[2])*0.5);
+			Vector hd ((nd.mx[0] - nd.mn[0])*0.5, (nd.mx[1] - nd.mn[1])*0.5, (nd.mx[2] - nd.mn[2])*0.5);
+			double f = 0.0;
+			for (int i = 0; i < 9; i++) f += X.A.data[i]*X.A.data[i];
+			r = std::sqrt (f)*hd.length ();
+			return CollApply (X, c);
+		};
+		double rA, rB;
+		Vector cA = sphere (XA, na, rA), cB = sphere (XB, nb, rB);
+		return (cA - cB).length () - rA - rB - skin >= d.m_prm.sRel;
+	}
+
 	static bool Released (const CollDetect &d, const CollPairEntry &e, const CollLeafPair &l)
 	{
 		bool sa, sb;
@@ -1754,9 +1784,10 @@ struct CollDetect::Impl {
 			const CollTri &ta = ra.geom->tri[ra.geom->perm[x]];
 			if (ra.mask && ra.mask[ta.src]) continue;
 			Vector va[3] = { CollApply (XA, ra.geom->vtx[ta.v[0]]), CollApply (XA, ra.geom->vtx[ta.v[1]]), CollApply (XA, ra.geom->vtx[ta.v[2]]) };
-			for (uint32_t y = nb.first; y < nb.first + nb.count && n < COLL_GRACE_RELEASE_TRI; y++) {
+			for (uint32_t y = nb.first; y < nb.first + nb.count; y++) {
 				const CollTri &tb = rb.geom->tri[rb.geom->perm[y]];
 				if (rb.mask && rb.mask[tb.src]) continue;
+				if (n >= COLL_GRACE_RELEASE_TRI) return LeafSpheresApart (d, XA, XB, na, nb, ra.skin + rb.skin);  // too big to judge per triangle: release only on bounding sphere separation
 				Vector vb[3] = { CollApply (XB, rb.geom->vtx[tb.v[0]]), CollApply (XB, rb.geom->vtx[tb.v[1]]), CollApply (XB, rb.geom->vtx[tb.v[2]]) };
 				Vector pa2, pb2;
 				dmin = std::min (dmin, CollTriTriDistance (va, vb, pa2, pb2));
@@ -2054,6 +2085,7 @@ void CollDetect::ToPartFrame (const CollPairResult &r, int i, int side, Vector &
 	const CollPartRef &pr = B.parts[side ? c.partB : c.partA];
 	const CollBodyAt &s = side ? r.b : r.a;
 	CollAffine P = ResultPose (r, pr);
+	if (!Invertible (P.A)) P = pr.P0;                       // pose interpolated through a singular scale: rest pose (fix2)
 	Matrix R = QMat (s.q);
 	Vector xb = tmul (R, p - s.c);
 	p = mul (inv (P.A), xb - P.t);

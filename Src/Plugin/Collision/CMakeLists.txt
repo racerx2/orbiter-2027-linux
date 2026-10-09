@@ -210,6 +210,7 @@ if (COLL_MAKE_TESTS)
 	coll_slow_test(DentMath.Test Fuzz fuzz)
 	coll_unit_test(CollCfg.Test 30 UNITS CollCfg)
 	coll_add_test(Collision.CfgOnce.Test TIMEOUT 60 LABELS collision COMMAND ${CMAKE_COMMAND} -DCOLL_SRC=${CMAKE_CURRENT_SOURCE_DIR} -DCOLL_WORK=${CMAKE_CURRENT_BINARY_DIR}/CfgOnceTest -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CollisionCfgOnce.Test.cmake)
+	coll_add_test(Collision.InstallCfg.Test TIMEOUT 120 LABELS collision COMMAND ${CMAKE_COMMAND} -DCOLL_SRC=${CMAKE_CURRENT_SOURCE_DIR} -DCOLL_BUILD=${CMAKE_BINARY_DIR} -DCOLL_WORK=${CMAKE_CURRENT_BINARY_DIR}/InstallCfgTest -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CollisionInstallCfg.Test.cmake)
 	coll_unit_test(CollisionAPI.Test 30)
 	foreach (part G F D I) # per-phase test registrations
 		include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests_${part}.cmake OPTIONAL)
@@ -230,6 +231,7 @@ if (COLL_MAKE_TESTS)
 		coll_add_test(Collision.Symbols.Test TIMEOUT 60 SKIP 77 LABELS collision COMMAND ${Python3_EXECUTABLE} ${tdir}/Collision.Symbols.Test.py
 			--so $<TARGET_FILE:Collision> --api ${CMAKE_CURRENT_SOURCE_DIR}/CollisionAPI.h --exe ${COLL_EXE} --sdk ${COLL_SDK_INCLUDE} --cxx ${CMAKE_CXX_COMPILER})
 		coll_add_test(Collision.Strings.Test TIMEOUT 30 LABELS collision COMMAND ${Python3_EXECUTABLE} ${tdir}/Collision.Strings.Test.py --so $<TARGET_FILE:Collision>)
+		coll_add_test(Collision.Strings.Selftest TIMEOUT 30 LABELS collision COMMAND ${Python3_EXECUTABLE} ${tdir}/Collision.Strings.Test.py --selftest)
 		include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/win2024.cmake)
 		if (COLL_W2024_INCLUDE) # in the default list (label collision) whenever the headers are found; skipped (77) without clang or mingw-w64
 			if (COLL_STANDALONE)

@@ -143,6 +143,7 @@ def main(argv=None):
     for k, bad in (('model', 'model=0'), ('response', 'response=0'), ('check', 'check=0'), ('log', 'log=1')):
         e += expect_fail('an A1 %s off its pin' % k, lambda bad=bad, k=k: scnlib.run_checks(None, FakeRun(pair_dump(), [A1.replace(k + '=' + A1.split(k + '=')[1].split()[0], bad)]), Args))
     e += expect_fail('Collision lines in an off run', lambda: scnlib.run_checks(None, FakeRun(pair_dump(), [A1], addon='off'), Args))
+    e += expect_fail('a Collision: error in line', lambda: scnlib.run_checks(None, FakeRun(pair_dump(), [A1, 'Collision: error in clbkPreStep: x; collisions off until the session ends']), Args))
     e += expect_fail('a harness error', lambda: scnlib.run_checks(None, FakeRun(pair_dump(), [A1, 'CollTestHarness error: x']), Args))
 
     # quiet scenes (G5): writes=0, notices=0, no contact line
@@ -185,6 +186,19 @@ def main(argv=None):
         e += 1
 
     e += check_placebase()
+
+    # gen_scn: TEST* actions skip a CollTestAnim block listed first
+    scn = 'BEGIN_SHIPS\nAN:CollTestAnim\nEND\nPB:CollTestVessel\nEND\nEND_SHIPS\n'
+    got = runner.gen_scn.insert_actions(scn, ['TESTDV 1 PB 0 0 1']).splitlines()
+    if got.index('  TESTDV 1 PB 0 0 1') != got.index('PB:CollTestVessel') + 1:
+        print('selftest: TEST* action not in the CollTestVessel block: %r' % got)
+        e += 1
+
+    # LUACALL numbers: only finite decimals go to run.lua unquoted
+    for x, want in (('1', True), ('-2.5e3', True), ('.5', True), ('e', False), ('-', False), ('.', False), ('inf', False), ('1_0', False)):
+        if runner.is_num(x) != want:
+            print('selftest: is_num(%r) != %s' % (x, want))
+            e += 1
 
     # the runner's own guards (T0.1)
     if a.work:

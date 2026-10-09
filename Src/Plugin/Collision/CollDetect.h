@@ -30,6 +30,7 @@ constexpr double COLL_SPIN_PATH     = 0.5;    // spin path when a body turns mor
 constexpr double COLL_JUMP_MIN      = 1e-3;   // geometry jump threshold [m] (1.7)
 constexpr double COLL_GRACE_LOG_AGE = 60.0;   // a GRACE scope older than this gets one log line [s]
 constexpr int    COLL_GRACE_RELEASE_TRI = 16; // triangle pairs checked per scoped leaf pair at release
+constexpr size_t COLL_ENTRY_RAW_MAX = 4096; // raw intersections kept per part pair at an entry check
 constexpr double COLL_DEGEN_DIST    = 1e-6;   // fallback normal when d_tri is at most this [m] (5.5)
 constexpr double COLL_DEGEN_SPEED   = 1e-6;   // relative-velocity fallback needs this speed [m/s] (5.5)
 constexpr double COLL_MERGE_DIST    = 0.01;   // manifold duplicate merge distance [m]

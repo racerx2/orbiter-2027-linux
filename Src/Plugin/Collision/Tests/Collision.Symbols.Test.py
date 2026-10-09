@@ -8,7 +8,8 @@ import sys
 
 ENTRY = {'InitModule', 'ExitModule', 'ModuleDate', 'ModuleDetach', 'oapiModuleResources', 'opcLoadState', 'opcSaveState'}
 WEAK = {'GetModuleVersion'}
-FORBIDDEN = {'rand', 'srand', 'setlocale', 'fesetenv', 'fesetround'}
+FORBIDDEN = {'rand', 'srand', 'setlocale', 'fesetenv', 'fesetround', 'feholdexcept', 'feupdateenv', 'fesetexceptflag', 'feenableexcept', 'uselocale',
+             '_ZNSt6locale6globalERKS_'}  # the last: std::locale::global
 RUNTIME = ('GLIBC_', 'GLIBCXX_', 'CXXABI_', 'GCC_')
 CRT_WEAK = {'_ITM_deregisterTMCloneTable', '_ITM_registerTMCloneTable', '__gmon_start__'}
 STD = re.compile(r'^_Z(?:T[ISV]|GV)?Z?N?K?(?:St|9__gnu_cxx)')  # std:: or __gnu_cxx:: entities, their typeinfo, vtables, guards, local statics
@@ -130,7 +131,7 @@ def main():
         elif exe:
             if base not in exe:
                 errors.append('import %s is not exported by %s' % (base, a.exe))
-        elif not all(w in sdk for w in demangled_words(base) if w not in ('for', 'typeinfo', 'vtable', 'const', 'oapi')):
+        elif not all(w in sdk for w in demangled_words(base) if w not in ('for', 'typeinfo', 'vtable', 'const', 'oapi', 'abi', 'cxx11')):
             errors.append('import %s is not declared in the SDK headers' % base)
 
     for e in errors:

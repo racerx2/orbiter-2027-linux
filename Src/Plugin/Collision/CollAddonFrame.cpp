@@ -631,16 +631,21 @@ void CollAddonFrame::Impl::PastCheck (std::vector<CollImpactEvent> &ev)
 void CollAddonFrame::Impl::Resolve0 (const CollPairResult &r, std::vector<CollImpactEvent> &pev)
 {
 	const int a = verOf[r.bodyA], c = verOf[r.bodyB];
-	CollOwnerRef oa = CollOwnerRefOf (ver.Owner (r, 0, 0)), ob = CollOwnerRefOf (ver.Owner (r, 0, 1));
 	auto eq = [] (const CollOwnerRef &x, const CollOwnerRef &y) { return x.vesselId == y.vesselId && x.planet == y.planet && x.base == y.base && x.obj == y.obj && x.part == y.part; };
 	std::vector<CollImpactEvent *> evp;
-	for (CollImpactEvent &e : pev)
-		if ((e.flags & COLLEV_FIRST) && e.vn_post < 0 && ((eq (e.s[0].owner, oa) && eq (e.s[1].owner, ob)) || (eq (e.s[0].owner, ob) && eq (e.s[1].owner, oa)))) evp.push_back (&e);
+	for (CollImpactEvent &e : pev) {
+		if (!(e.flags & COLLEV_FIRST) || !(e.vn_post < 0)) continue;
+		for (int k = 0; k < r.npt; k++) {                    // owners matched per contact point: a pair may span several parts
+			CollOwnerRef oa = CollOwnerRefOf (ver.Owner (r, k, 0)), ob = CollOwnerRefOf (ver.Owner (r, k, 1));
+			if ((eq (e.s[0].owner, oa) && eq (e.s[1].owner, ob)) || (eq (e.s[0].owner, ob) && eq (e.s[1].owner, oa))) { evp.push_back (&e); break; }
+		}
+	}
 	if (evp.empty () || (!w[a].dyn && !w[c].dyn)) return;
 	std::vector<APt> pts;
 	std::vector<int> pidx;
 	Matrix RA0 = QM (Rot (a)), RB0 = QM (Rot (c)), RAt = QM (r.a.q), RBt = QM (r.b.q);
-	double umax = -1e100, usum = 0;
+	double umax = -1e100, usum = 0, uall = 0;
+	int nkept = 0;
 	for (int k = 0; k < r.npt; k++) {
 		const CollContact &pt = r.pt[k];
 		APt q {};
@@ -652,14 +657,16 @@ void CollAddonFrame::Impl::Resolve0 (const CollPairResult &r, std::vector<CollIm
 		q.gap = pt.gap + dotp ((q.pa - q.pb) - (pt.pA - pt.pB), q.n);
 		Vector p = q.org + (q.pa + q.pb)*0.5;
 		double u = -dotp (PointVel (a, p - Pos (a)) - PointVel (c, p - Pos (c)), q.n);
-		usum += u;
+		uall += u;
 		if (q.gap > F.dprm.deltaCt) continue;                // apart at t0: the forward pass sees it
+		usum += u; nkept++;
 		umax = std::max (umax, u);
 		pidx.push_back ((int)pts.size ());
 		pts.push_back (q);
 	}
 	if (!(umax > COLL_APPROACH_TOL)) {
-		if (r.npt > 0) for (CollImpactEvent *e : evp) e->vn_post = -usum/r.npt;
+		if (nkept > 0) for (CollImpactEvent *e : evp) e->vn_post = -usum/nkept;   // over the kept points only
+		else if (r.npt > 0) for (CollImpactEvent *e : evp) e->vn_post = -uall/r.npt;
 		return;
 	}
 	std::vector<int> memb { w[a].dyn ? a : c, w[a].dyn ? c : a }, map;
@@ -867,35 +874,45 @@ CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vecto
 	};
 	Matrix Js = Ml;
 	double eLast = 0, eFloor = 0;
-	for (int it = 0; it < 8; it++) {
-		CollOrbState c = configure (write, xW, vWr, qa, wWr, wr.Fb, wr.Mb); mir.Step (c, h);
-		CollOrbState cs = cf; mir.Step (cs, h, c.lv, c.nsub);
-		Vector eP = tgtP - (c.s.vel - cs.s.vel)*m;
-		Vector eL = tgtL - (c.SpinL () - cs.SpinL ());
-		eLast = eP.length ()/(tgtP.length () + m*1e-3);
-		eFloor = 4096.0*DBL_EPSILON*m*c.s.vel.length ()/(tgtP.length () + m*1e-3); // rounding floor of heliocentric velocities (30 km/s)
-		if (eP.length () <= 1e-14*(tgtP.length () + m*1e-3) && eL.length () <= 1e-14*(tgtL.length () + 1e-3)) break;
-		if (write) vWr += eP/m;
-		else {
-			CollOrbState c0 = configure (false, xW, vWr, qa, wWr, wr.Fb, wr.Mb), c0s = c0; mir.Step (c0s, h);
-			for (int cc = 0; cc < 3; cc++) {
-				Vector e; e.data[cc] = 1.0;
-				CollOrbState c1 = c0; c1.AddForce (e, Vector ()); mir.Step (c1, h);
-				Vector dv = (c1.s.vel - c0s.s.vel)*m;
-				Js(0,cc) = dv.x; Js(1,cc) = dv.y; Js(2,cc) = dv.z;
+	int lvF = -1, nF = 0;                                    // integrator level and substeps of the first configured step, held for the loop (M7)
+	for (int pass = 0; pass < 2; pass++) {                  // second pass only when Orbiter's own Choose on the final state picks another level (M7)
+		for (int it = 0; it < 8; it++) {
+			CollOrbState c = configure (write, xW, vWr, qa, wWr, wr.Fb, wr.Mb); mir.Step (c, h, lvF, nF);
+			if (lvF < 0) lvF = c.lv, nF = c.nsub;
+			CollOrbState cs = cf; mir.Step (cs, h, lvF, nF);
+			Vector eP = tgtP - (c.s.vel - cs.s.vel)*m;
+			Vector eL = tgtL - (c.SpinL () - cs.SpinL ());
+			eLast = eP.length ()/(tgtP.length () + m*1e-3);
+			eFloor = 4096.0*DBL_EPSILON*m*c.s.vel.length ()/(tgtP.length () + m*1e-3); // rounding floor of heliocentric velocities (30 km/s)
+			if (eP.length () <= 1e-14*(tgtP.length () + m*1e-3) && eL.length () <= 1e-14*(tgtL.length () + 1e-3)) break;
+			if (write) vWr += eP/m;
+			else {
+				CollOrbState c0 = configure (false, xW, vWr, qa, wWr, wr.Fb, wr.Mb), c0s = c0; mir.Step (c0s, h, lvF, nF);
+				for (int cc = 0; cc < 3; cc++) {
+					Vector e; e.data[cc] = 1.0;
+					CollOrbState c1 = c0; c1.AddForce (e, Vector ()); mir.Step (c1, h, lvF, nF);
+					Vector dv = (c1.s.vel - c0s.s.vel)*m;
+					Js(0,cc) = dv.x; Js(1,cc) = dv.y; Js(2,cc) = dv.z;
+				}
+				wr.Fb += mul (InvM (Js), eP);
 			}
-			wr.Fb += mul (InvM (Js), eP);
+			Matrix Jw;
+			Vector L0 = c.SpinL ();
+			for (int k2 = 0; k2 < 3; k2++) {
+				Vector e; e.data[k2] = 1e-6*(1.0 + wWr.length ());
+				CollOrbState c2 = configure (write, xW, vWr, qa, wWr + e, wr.Fb, wr.Mb); mir.Step (c2, h, lvF, nF);
+				Vector d = (c2.SpinL () - L0)/e.data[k2];
+				Jw(0,k2) = d.x; Jw(1,k2) = d.y; Jw(2,k2) = d.z;
+			}
+			wWr += mul (InvM (Jw), eL);
+			if (count) F.st.deliveryIt++;
 		}
-		Matrix Jw;
-		Vector L0 = c.SpinL ();
-		for (int k2 = 0; k2 < 3; k2++) {
-			Vector e; e.data[k2] = 1e-6*(1.0 + wWr.length ());
-			CollOrbState c2 = configure (write, xW, vWr, qa, wWr + e, wr.Fb, wr.Mb); mir.Step (c2, h, c.lv, c.nsub);
-			Vector d = (c2.SpinL () - L0)/e.data[k2];
-			Jw(0,k2) = d.x; Jw(1,k2) = d.y; Jw(2,k2) = d.z;
-		}
-		wWr += mul (InvM (Jw), eL);
-		if (count) F.st.deliveryIt++;
+		CollOrbState cfin = configure (write, xW, vWr, qa, wWr, wr.Fb, wr.Mb);
+		int lvO, nO;
+		mir.Choose (h, cfin.s.omega.length (), cfin.ground, lvO, nO);
+		if ((lvO == lvF && nO == nF) || pass == 1) break;
+		lvF = lvO; nF = nO;
+		if (count) F.st.deliveryRelevel++;
 	}
 	if (F.check && eLast > std::max (1e-12, eFloor)) Fail ("delivery", eLast, 1.0);
 	wr.cdv = vWr - vW; wr.cdw = wWr - wW;
@@ -1023,7 +1040,7 @@ void CollAddonFrame::Impl::Build (CollIsland &is, bool withSpec, std::vector<int
 		c.p = mid - O; c.n = q.n;
 		Matrix RA = QM (Dyn (q.a) ? w[q.a].q1 : KinM (q.a).q1)*transp (QM (Rot (q.a))), RBm = QM (Dyn (q.b) ? w[q.b].q1 : KinM (q.b).q1)*transp (QM (Rot (q.b)));
 		Vector n2 = mul (RA, q.n) + mul (RBm, q.n);
-		c.n2 = n2.length () > 0 ? n2/n2.length () : q.n;
+		c.n2 = n2;                                         // unnormalised: CollSolve falls back to n when |n2| < 0.5 (M2)
 		c.gap = q.gap;
 		c.kind = q.real ? COLL_RESTING : COLL_SPECULATIVE;
 		c.flags = (uint8_t)(q.flags | (q.real ? COLLP_BALLISTIC : COLLP_SPECTRAP));
@@ -1040,6 +1057,7 @@ void CollAddonFrame::Impl::Build (CollIsland &is, bool withSpec, std::vector<int
 		}
 		map.push_back ((int)is.con.size ());
 		is.con.push_back (c);
+		if (F.conProbe) F.conProbe->push_back (c);
 	}
 }
 
@@ -1118,8 +1136,10 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 	const std::vector<CollPairResult> res0 = res;
 	std::vector<CollPairResult> links;                         // plan hits that merged two islands, kept over restarts
 	std::vector<char> swept (nb, 0);                           // detector motion replaced by a plan in this attempt
+	std::vector<int> mcnt (nb, 0), mnext (nb, 0);              // merges behind each body's island (budget per island)
 	for (int merges = 0; merged; merges++) {
 		merged = false;
+		mcnt = mnext;
 		if (merges > 0) {
 			pts = pts0, res = res0;
 			for (int i = 0; i < nb; i++) if (swept[i]) {        // back to the predicted motion
@@ -1144,8 +1164,9 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 		solvedRes.assign (res.size (), 0);
 		anySpecFrame = anyRealFrame = false;
 		for (int i = 0; i < nb; i++) b[i].loaded = false;
-		for (int root = 0; root < nb && !merged; root++) {
+		for (int root = 0; root < nb; root++) {               // every island runs: one restart collects all their links (M3)
 			if (!w[root].dyn || Root (u, root) != root) continue;
+			bool mergedI = false;
 			std::fill (frz.begin (), frz.end (), 0);
 			std::vector<int> pidx;
 			for (size_t k = 0; k < pts.size (); k++) {
@@ -1157,6 +1178,8 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 			for (int i = 0; i < nb; i++) if (w[i].dyn && Root (u, i) == root) memb.push_back (i);
 			for (int k : pidx) for (int s : { pts[k].a, pts[k].b }) if (!w[s].dyn && std::find (memb.begin (), memb.end (), s) == memb.end ()) memb.push_back (s);
 			bool anySpec = false, anyReal = false;
+			int ib = 0;
+			for (int i : memb) if (w[i].dyn) ib = std::max (ib, mcnt[i]);
 			const Vector O = w[memb[0]].X;
 			auto idx = [&] (int i) { return (int)(std::find (memb.begin (), memb.end (), i) - memb.begin ()); };
 			auto build = [&] (CollIsland &is, bool withSpec, std::vector<int> &map) { Build (is, withSpec, map, memb, pidx, pts, res, O); };
@@ -1166,7 +1189,7 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 			build (all, true, mapAll);
 			all.Solve (F.prm);
 			// 10: rounds on the planned rigid motion (5.4); a pair is tested once both planned motions are in the detector (M2)
-			for (int pass = 0; anySpec && pass < 3 && !merged; pass++) {
+			for (int pass = 0; anySpec && pass < 3 && !mergedI; pass++) {
 				bool redo = false;
 				std::vector<char> moved (nb, 0);
 				for (size_t j = 0; j < memb.size (); j++) {
@@ -1190,7 +1213,12 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 						int a = fwdOf[x.bodyA], c = fwdOf[x.bodyB], o = a == i ? c : a;
 						if (Dyn (o) && !moved[o] && idx (o) < (int)memb.size ()) continue;   // tested when o's plan is in
 						bool outside = idx (o) >= (int)memb.size ();
-						if (outside && w[o].dyn && merges < F.rounds) merged = true, links.push_back (x);   // o's island joins this one: start over
+						if (outside && w[o].dyn && ib < F.rounds) {   // o's island joins this one: start over
+							mergedI = true; links.push_back (x);
+							int ro = Root (u, o), nc = ib;
+							for (int k2 = 0; k2 < nb; k2++) if (w[k2].dyn && Root (u, k2) == ro) nc = std::max (nc, mcnt[k2]);
+							for (int k2 = 0; k2 < nb; k2++) if (w[k2].dyn && (Root (u, k2) == ro || Root (u, k2) == root)) mnext[k2] = std::max (mnext[k2], nc + 1);
+						}
 						else if (outside) {                    // past the limit: o is a kinematic partner, the plan stops at contact
 							if (w[o].dyn) {
 								frz[o] = 1;
@@ -1225,11 +1253,11 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 						solvedRes.push_back (0);
 					}
 				}
-				if (!redo || merged) break;
+				if (!redo || mergedI) break;
 				build (all, true, mapAll);
 				all.Solve (F.prm);
 			}
-			if (merged) break;
+			if (mergedI) { merged = true; continue; }
 			if (anySpec) { build (ro, false, mapRo); if (!ro.con.empty ()) ro.Solve (F.prm); }
 			anySpecFrame = anySpecFrame || anySpec; anyRealFrame = anyRealFrame || anyReal;
 			if (F.check) {                                        // island momentum of the impulsive parts (12)
@@ -1281,7 +1309,7 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 				const APt &q = pts[pidx[m]];
 				if (!q.real || mapAll[m] < 0) continue;
 				const CollSContact &c = all.con[mapAll[m]];
-				if (!solvedRes[q.res]) { solvedRes[q.res] = 1; fwd.Solved (res[q.res]); }
+				solvedRes[q.res] = 1;                                   // fwd.Solved deferred until the restarts settle (M3)
 				CollEventRec e {};
 				e.t = q.t; e.pt = q.pt; e.con = mapAll[m];
 				auto ri = realIdx.find (q.res);
@@ -1345,6 +1373,7 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 			}
 		}
 	}
+	for (size_t r = 0; r < solvedRes.size (); r++) if (solvedRes[r]) fwd.Solved (res[r]);  // the settled attempt only (M3)
 	// events of the touch frames (5.6): FIRST real points, dKE and vn never negative
 	if (!erec.empty ()) {
 		std::vector<CollImpactEvent> e2;

@@ -27,6 +27,13 @@ if (NOT EXISTS "${COLL_CFG_DST}")
 endif ()
 
 file(READ "${COLL_CFG_DST}" text) # text mode: CRLF files come back with LF
+string(ASCII 239 187 191 bom)
+string(SUBSTRING "${text}" 0 3 lead3)
+if (lead3 STREQUAL bom) # a UTF-8 BOM: matched without it, written back with it
+	string(SUBSTRING "${text}" 3 -1 text)
+else ()
+	set(bom "")
+endif ()
 coll_cfg_value("${text}" CollisionCfgVersion have)
 if (NOT have MATCHES "^[0-9]+$")
 	set(have 1) # v1 files had no version key
@@ -77,5 +84,5 @@ else ()
 		set(text "${ins}${text}")
 	endif ()
 endif ()
-file(WRITE "${COLL_CFG_DST}" "${text}")
+file(WRITE "${COLL_CFG_DST}" "${bom}${text}")
 message(STATUS "Collision: ${COLL_CFG_DST} upgraded from version ${have} to ${want}")

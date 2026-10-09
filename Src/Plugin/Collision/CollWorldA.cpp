@@ -9,6 +9,7 @@
 
 namespace {
 constexpr double G_GRAV = 6.67259e-11;                    // GGRAV (OrbiterAPI.h:60)
+constexpr int OBJTP_PLANET_W = 4;                         // OBJTP_PLANET (OrbiterAPI.h:1773)
 Matrix QM (const Quaternion &q) { Matrix R; R.Set (q); return R; }
 Vector EulerOf (const Matrix &R)                          // inverse of Vessel::SetGlobalOrientation (Vessel.cpp:887-893)
 {
@@ -181,7 +182,7 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 		if (B.parts.empty ()) continue;
 		// kinematic motion over the step (4.3)
 		if (B.kind != COLLB_DYNAMIC) {
-			Vector wg = mul (R, B.wb), a = B.kind == COLLB_PLAYBACK && rd.gref ? B.gEst : B.aTot; // playback: FRecorder_Play leaves acc alone (Vessel.cpp:4742), gravity of gref; frozen: the cache
+			Vector wg = mul (R, B.wb), a = B.kind == COLLB_PLAYBACK && rd.gref && !(rd.status & 1) ? B.gEst : B.aTot; // playback in flight: FRecorder_Play leaves acc alone (Vessel.cpp:4742), gravity of gref; landed playback and frozen: the cache
 			if (B.kind == COLLB_LANDED && rd.gref) {               // planet-fixed: rotation about the planet axis, the landed cache acc (Vessel.cpp:4759)
 				double T = sdk.PlanetPeriod (rd.gref);
 				Vector pr, vr; Matrix Rp;
@@ -240,6 +241,18 @@ void CollPhysSession::WriteBack (std::vector<CollAWrite> &wl)
 			if (s.rbody) sdk.GlobalState (s.rbody, xr, vr, Rr);
 			Vector xc = B.stack ? w.x - mul (r->rd.R, r->rd.svcg) : w.x; // RPlace takes the CG with the stack's current rotation (SuperVessel.cpp:309-317), SetAttitude turns about it
 			s.rpos = xc - xr; s.rvel = w.v - vr; s.vrot = w.wb; s.arot = EulerOf (R);
+			if (s.rbody && sdk.ObjType (s.rbody) == OBJTP_PLANET_W) {   // below the terrain the core lifts the vessel (DefSetStateEx): log once per vessel, keep the write
+				Vector loc = tmul (Rr, s.rpos);
+				double rl = loc.length ();
+				double lng = std::atan2 (loc.z, loc.x), lat = rl > 0 ? std::asin (std::max (-1.0, std::min (1.0, loc.y/rl))) : 0.0;
+				double rp = sdk.Size (s.rbody);
+				bool near = rl < rp + 25e3 && std::find (belowLogged.begin (), belowLogged.end (), B.member[0]) == belowLogged.end ();  // elevation queried only within 25 km of the radius
+				double rt = near ? rp + sdk.Elevation (s.rbody, lng, lat) : rp;
+				if (near && rl < rt) {
+					belowLogged.push_back (B.member[0]);
+					Log (1, "Collision: state write of '%s' %.3f m below the terrain; Orbiter lifts it to the surface", sdk.Name (r->h).c_str (), rt - rl);
+				}
+			}
 			sdk.SetState (r->h, s);
 		}
 		if (w.attitude) sdk.SetAttitude (r->h, R);
@@ -327,7 +340,7 @@ void CollPhysSession::PS6Warp ()
 
 void CollPhysSession::End ()
 {
-	snap.clear (); body.clear (); ev.clear (); wr.clear (); last.clear (); queuedNew.clear (); jumped.clear ();
+	snap.clear (); body.clear (); ev.clear (); wr.clear (); last.clear (); queuedNew.clear (); jumped.clear (); belowLogged.clear ();
 	frame.Reset (); fwd.Reset (); ver.Reset ();
 	started = false;
 }

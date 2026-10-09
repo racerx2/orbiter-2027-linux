@@ -965,7 +965,7 @@ TEST_CASE ("fix1 M9 one collider replay and one mirror build per slot per frame"
 	REQUIRE (r.s.Damage (a)->d.rec.size () == 2);
 	CHECK (r.s.Damage (a)->d.rec[0].p.h > h0);
 	CHECK (r.s.vis.n.builds + r.s.vis.n.incr == c0.builds + c0.incr + 1);
-	CHECK (r.s.n.replays == rp0 + 1);
+	CHECK (r.s.n.replays == rp0 + 2); // fix2: the new hit replays the grown slot before it reads the collider
 	CHECK (ColliderExact (r, a));
 	CHECK (MirrorExact (r, a, 0));
 	c0 = r.s.vis.n, rp0 = r.s.n.replays;
@@ -1162,4 +1162,96 @@ TEST_CASE ("fix1 merge key: a D7 group's frame does not stop coalescing")
 	CHECK (r.s.n.coalesced >= 1);
 	CHECK (v->d.rec[0].p.h > h1);
 	CHECK (v->d.rec.size () == n1);
+}
+
+TEST_CASE ("fix2 M8 the playback flag follows the vessel, not an earlier playback")
+{
+	DentRecord rec;
+	{
+		Rig r;
+		uint32_t a = r.Add ("PB-A"), b = r.Add ("PB-B");
+		r.Begin ();
+		r.Frame ();
+		r.Frame ({ Hit (a, -1, b, 10.0, 3.0e4) });
+		REQUIRE (r.s.Damage (a));
+		rec = r.s.Damage (a)->d.rec[0];
+	}
+	std::string side = CollSide::Header ("TAKE") + "\n" + CollSide::Vdef (0, 0, "PB-A", "ShuttlePB") + "\n";
+	std::vector<std::string> l;
+	CollSide::Dent (0, 0, 0, rec, l);
+	for (auto &x : l) side += x + "\n";
+	Rig p;
+	p.s.sideDir = "side";
+	p.sdk.files["side/TAKE.txt"] = side;
+	uint32_t a = p.Add ("PB-A"), b = p.Add ("PB-B");
+	p.B (a).v->playback = true;
+	CollStoreBlock blk;
+	blk.recId = "TAKE";
+	p.Begin (std::move (blk));
+	p.Frame ();
+	REQUIRE (p.s.Damage (a));
+	REQUIRE (p.s.Damage (a)->d.rec.size () == 1);
+	COLLA_DAMAGEINFO info;
+	std::memset (&info, 0, sizeof info);
+	info.hdr.size = sizeof info;
+	REQUIRE (p.s.GetVesselDamage (p.B (a).v, &info) == 1);
+	CHECK ((info.flags & COLLA_DMG_PLAYBACK));
+	p.B (a).v->playback = false; // the user takes over
+	int dents = 0;
+	uint32_t fl = 0;
+	p.sdk.reply = [&] (CollH h, int prm, void *x) { if (h == p.B (a).v && prm == COLLA_KIND_DENT) dents++, fl |= ((COLLA_DAMAGEINFO *)x)->flags; return 0; };
+	auto hit = Hit (a, -1, b, 10.0, 3.0e4);
+	hit.s[0].c = Vector (-3, -3, 0);
+	p.Frame ({ hit });
+	REQUIRE (dents >= 1);
+	CHECK (!(fl & COLLA_DMG_PLAYBACK));
+	std::memset (&info, 0, sizeof info);
+	info.hdr.size = sizeof info;
+	REQUIRE (p.s.GetVesselDamage (p.B (a).v, &info) == 1);
+	CHECK (!(info.flags & COLLA_DMG_PLAYBACK));
+}
+
+TEST_CASE ("fix2 a version change before the rebuilt event keeps what the client holds")
+{
+	Rig r;
+	uint32_t a = r.Add ("PB-A"), b = r.Add ("PB-B");
+	DFake::V *v = r.B (a).v;
+	v->visual = 1;
+	v->dev[0] = ClientRest (*r.plate);
+	r.Begin ();
+	r.Frame ();
+	r.Frame ({ Hit (a, -1, b, 10.0, 3.0e4) });
+	REQUIRE (r.s.vis.Copy (a, 0));
+	r.host.slots[a][0].serial = 2; // E2 sees a new version; its rebuilt event comes later
+	auto hit = Hit (a, -1, b, 10.0, 3.0e4);
+	hit.s[0].c = Vector (-3, -3, 0);
+	r.Frame ({ hit });
+	const DentMeshCopyA *c = r.s.vis.Copy (a, 0);
+	REQUIRE (c);
+	CHECK (c->serial == 2);
+	CHECK (!c->g[0].module);
+	CHECK (r.s.vis.ModuleGroups (a) == 0);
+	bool holds = true;
+	for (size_t i = 0; i < c->cur[0].size (); i++) holds = holds && !std::memcmp (&v->dev[0][0][i], &c->cur[0][i], 24);
+	CHECK (holds);
+}
+
+TEST_CASE ("fix2 a hit after a growth in the same commit reads the grown collider")
+{
+	auto at = [] (uint32_t a, double x, double y, double dKE) { CollImpactEvent e = Hit (a, 0, 1, 10.0, dKE); e.s[0].c = Vector (x, y, 0); return e; };
+	auto run = [&] (bool split) {
+		Rig r;
+		uint32_t a = r.Add ("PB-A");
+		r.host.bases.push_back (Block ());
+		r.Begin ();
+		r.Frame ();
+		r.Frame ({ at (a, -2, -2, 3.0e5) });
+		if (split) for (int k = 0; k < 3; k++) r.Frame ({ at (a, -2, -2, 1.0e5) }); // grow up to the depth cap
+		else r.Frame ({ at (a, -2, -2, 1.0e5), at (a, -2, -2, 1.0e5), at (a, -2, -2, 1.0e5) });
+		CHECK (ColliderExact (r, a));
+		return r.s.Damage (a)->d.rec;
+	};
+	std::vector<DentRecord> one = run (false), two = run (true);
+	REQUIRE (one.size () == two.size ());
+	for (size_t i = 0; i < one.size (); i++) CHECK (std::memcmp (&one[i].p, &two[i].p, sizeof (DentParams)) == 0);
 }

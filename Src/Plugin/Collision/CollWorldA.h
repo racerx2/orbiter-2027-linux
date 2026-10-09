@@ -69,6 +69,7 @@ private:
 	std::vector<CollAWrite> wr;
 	std::vector<Vector> gx;
 	std::vector<uint32_t> queuedNew, jumped;
+	std::vector<uint32_t> belowLogged;             // vessels whose state write went below the terrain (logged once)
 	std::vector<Last> last;                        // kind and member hash of each body at the last pre-step (entry bits)
 	double simt = 0, simdt = 0, lastW = 1e100, sysPrev = -1, warpMsgSys = -1e100;
 	std::vector<std::pair<double, double>> frameDt;// system time, real frame time: the longest of the last 2 s (9.2)

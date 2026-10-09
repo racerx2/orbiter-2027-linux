@@ -102,7 +102,12 @@ void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDm
 	size_t ng = s.rest->grp.size ();
 	std::vector<uint32_t> cls = PoseClasses (host.Shape (id), slot, ng);
 	auto it = v.copy.find (slot);
-	if (it != v.copy.end () && (it->second.serial != s.serial || it->second.rest != s.rest)) { v.copy.erase (it); it = v.copy.end (); }
+	std::vector<std::vector<DentVtx>> keep; // what the client holds when only the version changed (same rest, same visual)
+	if (it != v.copy.end () && (it->second.serial != s.serial || it->second.rest != s.rest)) {
+		if (it->second.rest == s.rest) for (auto &G : it->second.g) keep.push_back (std::move (G.pushed));
+		v.copy.erase (it);
+		it = v.copy.end ();
+	}
 	if (it == v.copy.end ()) {
 		if (rec.empty ()) return;
 		DentMeshCopyA c;
@@ -117,7 +122,7 @@ void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDm
 				NormF (d.nx, d.ny, d.nz);
 			}
 			c.idx[g] = gd.idx;
-			c.g[g].pushed = c.rp[g];
+			c.g[g].pushed = g < keep.size () && keep[g].size () == c.rp[g].size () ? std::move (keep[g]) : c.rp[g];
 			c.g[g].big = gd.vtx.size () > 65536;
 			if (c.g[g].big && !loggedBig) {
 				loggedBig = true;

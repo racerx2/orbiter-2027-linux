@@ -8,6 +8,7 @@ PLANETS = {'Earth': (5.973698968e+24, 6.37101e6), 'Moon': (7.347673176382784e+22
 MJD = 51982.5
 R_P0 = 6778137.0
 TESTCLASSES = ('CollTestVessel', 'CollTestDirector', 'CollTestAnim', 'CollTestAnimVC')
+ACTCLASSES = ('CollTestVessel', 'CollTestDirector')  # the classes that run TEST* actions; CollTestAnim blocks drop them
 
 
 def g(x):
@@ -150,7 +151,15 @@ def wake(p):  # Coll.Landed.Wake: LP landed on Brighton Beach pad 2 (heading 90)
     return s + 'END_SHIPS\n'
 
 
-GENERATORS = {'pair': pair, 'surface': surface, 'ascent': ascent, 'synthplay': synthplay, 'hvc': hvc, 'ksc': ksc, 'stack': stack, 'attached': attached,
+def hangar(p):  # Coll.Base.Hangar: a CollTestVessel placed in frame 1 where Coll.Base.KSC's PE rests, sliding west into the HANGAR's east wall at u m/s
+    s = head('HB', 'Cape Canaveral hangar impact')
+    y, u = float(p.get('y', 1.55)), float(p.get('u', 8.0))
+    s += 'HB:CollTestVessel\n  STATUS Landed Earth\n  BASE Cape Canaveral:3\n  HEADING 0.00\n  PRPLEVEL 0:0\n'
+    s += '  TESTPLACEBASE 1 HB Cape_Canaveral 7180 %s -2160 0 0 %s 0\nEND\n' % (g(y), g(-u))
+    return s + 'END_SHIPS\n'
+
+
+GENERATORS = {'pair': pair, 'surface': surface, 'ascent': ascent, 'synthplay': synthplay, 'hvc': hvc, 'ksc': ksc, 'hangar': hangar, 'stack': stack, 'attached': attached,
               'wake': wake}
 
 
@@ -215,8 +224,8 @@ def insert_actions(text, actions):  # into the first test-module block, else a d
         elif inships and inblock is None and s and s.upper() != 'END':
             name, inblock = (s.split(':', 1)[0].strip(), s.split(':', 1)[1].strip()) if ':' in s else (s, s)
         elif inships and inblock is not None and s.upper() == 'END':
-            out += ['  ' + a for a in own.pop(name, [])]
-            if inblock in TESTCLASSES and not done:
+            out += ['  ' + a for a in own.pop(name, [])]  # by name: a CollTestAnim reads its own keys (TESTANIMCYCLE)
+            if inblock in ACTCLASSES and not done:
                 out += ['  ' + a for a in actions]
                 done = True
             inblock = None

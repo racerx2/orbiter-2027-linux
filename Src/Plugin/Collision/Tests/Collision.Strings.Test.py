@@ -19,22 +19,45 @@ def strtab(path):
     return None
 
 
+def entries(blob):  # as LoadModuleString (ResDialog.cpp): the first entry of an id wins, a truncated entry ends the table
+    strings = {}
+    p = 8
+    while p + 8 <= len(blob):
+        sid, n = struct.unpack_from('<II', blob, p)
+        p += 8
+        if p + n > len(blob):
+            print('note: truncated entry %d at %d' % (sid, p - 8))
+            break
+        strings.setdefault(sid, blob[p:p + n])
+        p += n
+    return strings
+
+
+def selftest():
+    e = lambda sid, b: struct.pack('<II', sid, len(b)) + b
+    got = entries(b'OAPISTR1' + e(1000, b'first') + e(1000, b'second') + e(1001, b'Physics'))
+    ok = got == {1000: b'first', 1001: b'Physics'}
+    got = entries(b'OAPISTR1' + e(1000, b'a') + struct.pack('<II', 1001, 99) + b'short' + e(1002, b'x'))
+    ok = ok and got == {1000: b'a'}
+    print('selftest: %s' % ('ok' if ok else 'FAIL'))
+    return 0 if ok else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--so', required=True)
+    ap.add_argument('--so')
     ap.add_argument('--category', default='Physics')
+    ap.add_argument('--selftest', action='store_true')
     a = ap.parse_args()
+    if a.selftest or not a.so:
+        return selftest()
     blob = strtab(a.so)
     errors = []
     strings = {}
     if blob is None or blob[:8] != b'OAPISTR1':
         errors.append('no .oapi_strtab section')
     else:
-        p = 8
-        while p + 8 <= len(blob):
-            sid, n = struct.unpack_from('<II', blob, p)
-            strings[sid] = blob[p + 8:p + 8 + n]
-            p += 8 + n
+        strings = entries(blob)
     info, cat = strings.get(1000), strings.get(1001)
     for sid, s in ((1000, info), (1001, cat)):
         if s is None:

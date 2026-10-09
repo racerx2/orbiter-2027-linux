@@ -1,4 +1,5 @@
 // not upstream: collision addon, the own .msh parser, cfg readers, mesh paths and the mesh cache (design E2 4, 5)
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstring>
@@ -502,6 +503,12 @@ std::shared_ptr<const CollSidecar> CollMeshCache::Sidecar (CollSdk &sdk, const C
 		for (auto &w : warn) sdk.Log (1, ("Collision sidecar: " + w).c_str ());
 		noSide.insert (key);
 		return nullptr;
+	}
+	if (!sc->mesh.empty () && !ByName (sdk, d, sc->mesh).rest) { // GROUP and FOLLOW index the missing collision mesh: dropped, the visual mesh keeps the other rules
+		size_t n0 = sc->rule.size ();
+		sc->rule.erase (std::remove_if (sc->rule.begin (), sc->rule.end (), [] (const CollSideRule &r) { return r.sel.kind == CollSelector::GROUP; }), sc->rule.end ());
+		warn.push_back (path + ": MESH " + sc->mesh + " not loaded: " + std::to_string (n0 - sc->rule.size ()) + " GROUP and " + std::to_string (sc->follow.size ()) + " FOLLOW rules dropped");
+		sc->follow.clear ();
 	}
 	if (sc->needNames) {
 		std::string mtext;
