@@ -89,6 +89,13 @@ void CollBreakA::Log (const char *fmt, ...)
 	sdk.Log (1, b);
 }
 
+static double Q9 (double v) // round trip through the saved %.9g text
+{
+	char b[40];
+	snprintf (b, sizeof b, "%.9g", v);
+	return strtod (b, nullptr);
+}
+
 std::vector<DentVtx> CollBreakA::PieceVertices (const std::vector<DentVtx> &rest, uint16_t g, const DentDebrisPose &p, const std::vector<DentRecord> &rec)
 {
 	std::vector<const DentRecord *> rp;
@@ -312,6 +319,8 @@ bool CollBreakA::MakeSpawn (uint32_t id, CollH vh, const CollDamageHit &hit, con
 		DentDebrisPose ps;
 		MatQ (F[i].A, ps.q);
 		ps.p = F[i].t - cd;
+		ps.p = Vector (Q9 (ps.p.x), Q9 (ps.p.y), Q9 (ps.p.z)); // as saved (%.9g), so a reload rebuilds the same bits
+		for (double &x : ps.q) x = Q9 (x);
 		for (uint16_t g : p.grp) if (!sl.keep.count (g)) ps.grp.push_back (g);
 		if (ps.grp.empty ()) continue;
 		rmax = std::max (rmax, (mul (F[i].A, p.c) + F[i].t - cd).length () + p.r);
