@@ -12,9 +12,13 @@ WRAPPERS = ('CollOpenDialog', 'imgui.h')  # CollPlatform.h wrappers and the head
 CONSEQUENCES = ("only virtual member functions can be marked 'override'",)
 
 
+BLAST_INCLUDE = ('include', 'include/shared/NvFoundation', 'include/lowlevel', 'include/globals', 'include/extensions/shaders', 'include/extensions/stress')
+
+
 def clang_cmd(clang, a, extra, nominmax=True):
+    blast = ['-DNDEBUG'] + ['-isystem' + os.path.join(a.blast, d) for d in BLAST_INCLUDE] if a.blast else []  # headers only: the Blast sources are not compiled here
     return [clang, '--target=x86_64-w64-mingw32', '-fms-extensions', '-std=c++20', '-fsyntax-only', '-ferror-limit=0',
-            '-DCOLL_ADDON_VERSION="0.0.0"', '-I' + a.src, '-I' + a.headers] + (['-DNOMINMAX'] if nominmax else []) + extra
+            '-DCOLL_ADDON_VERSION="0.0.0"', '-I' + a.src, '-I' + a.headers] + blast + (['-DNOMINMAX'] if nominmax else []) + extra
 
 
 def errors(out):
@@ -34,6 +38,7 @@ def main():
     ap.add_argument('--headers', required=True)  # tag-2024 Orbitersdk/include; on a case-sensitive disk lua/ must resolve (a link to Lua/)
     ap.add_argument('--src', required=True)
     ap.add_argument('--imgui', default='')  # a folder with imgui.h for the negative case
+    ap.add_argument('--blast', default='')  # Extern/Blast, for CollBlastA.cpp
     ap.add_argument('--clang', default='clang++')
     a = ap.parse_args()
     if not shutil.which(a.clang):

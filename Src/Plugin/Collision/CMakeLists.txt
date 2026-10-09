@@ -68,9 +68,11 @@ set(COLL_UNITS Vecmat CollGeom CollAnim CollShape CollDetect CollSolve CollSolve
 foreach (part G F D I) # per-phase unit lists, each appends to COLL_UNITS
 	include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/units_${part}.cmake OPTIONAL)
 endforeach ()
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/blast.cmake) # CollBlastLib, and the CollBlastA unit once its source exists
 foreach (u ${COLL_UNITS})
 	add_library(Coll_${u} OBJECT ${u}.cpp)
 	target_include_directories(Coll_${u} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${COLL_SDK_INCLUDE})
+	target_link_libraries(Coll_${u} PRIVATE CollBlastLib) # the Blast include dirs
 	set_target_properties(Coll_${u} PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON FOLDER Modules/Collision)
 endforeach ()
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -83,7 +85,10 @@ foreach (u ${COLL_UNITS})
 endforeach ()
 target_include_directories(Collision PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${COLL_SDK_INCLUDE})
 target_compile_definitions(Collision PRIVATE COLL_ADDON_VERSION="${COLL_VERSION}") # no feature macro here: COLL_HAVE_IMGUI comes from CollPlatform.h
-target_link_libraries(Collision ${COLL_ORBITER_LIB} ${COLL_SDK_LIB})
+target_link_libraries(Collision ${COLL_ORBITER_LIB} ${COLL_SDK_LIB} CollBlastLib)
+if (NOT WIN32 AND NOT APPLE)
+	target_link_options(Collision PRIVATE LINKER:--exclude-libs,$<TARGET_FILE_NAME:CollBlastLib>) # Blast's NV_C_API symbols stay out of the module's exports
+endif ()
 set_target_properties(Collision PROPERTIES PREFIX "" CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON FOLDER Modules)
 if (WIN32)
 	target_sources(Collision PRIVATE Collision.rc)
@@ -136,6 +141,7 @@ install(CODE "set(COLL_CFG_SRC [[${CMAKE_CURRENT_SOURCE_DIR}/Config/Collision.cf
 	include([[${CMAKE_CURRENT_SOURCE_DIR}/cmake/CollisionCfgOnce.cmake]])" COMPONENT Collision)
 install(FILES Config/Vessels/CollDebris.cfg DESTINATION ${COLL_DEST_ROOT}/Config/Vessels COMPONENT Collision) # dmg3 P debris class
 install(FILES CollisionAPI.h DESTINATION ${COLL_DEST_ROOT}/Orbitersdk/include COMPONENT Collision)
+install(FILES ${COLL_BLAST_DIR}/LICENSE.md DESTINATION ${COLL_DEST_DOC}/Licenses RENAME NVIDIA-Blast.txt COMPONENT Collision) # BSD-3: the licence goes with the binary
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Meshes)
 	install(DIRECTORY Meshes/ DESTINATION ${COLL_DEST_MESH} COMPONENT Collision FILES_MATCHING PATTERN "*.col")
 endif ()
@@ -188,7 +194,7 @@ if (COLL_MAKE_TESTS)
 		endforeach ()
 		target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/Tests ${COLL_SDK_INCLUDE})
 		target_compile_definitions(${name} PRIVATE COLL_TEST_SRC="${COLL_TEST_DATA}" COLL_ADDON_SRC="${CMAKE_CURRENT_SOURCE_DIR}")
-		target_link_libraries(${name} Catch2::Catch2WithMain)
+		target_link_libraries(${name} Catch2::Catch2WithMain CollBlastLib)
 		set_target_properties(${name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${COLL_TEST_BIN} FOLDER Tests/Collision)
 		coll_add_test(${name} TIMEOUT ${timeout} COMMAND $<TARGET_FILE:${name}> LABELS collision)
 	endfunction()
@@ -217,6 +223,7 @@ if (COLL_MAKE_TESTS)
 	foreach (part G F D I) # per-phase test registrations
 		include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests_${part}.cmake OPTIONAL)
 	endforeach ()
+	include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests_blast.cmake)
 	target_sources(CollisionAPI.Test PRIVATE Tests/CollisionAPI.Check.cpp) # the public header alone in a TU
 	target_link_libraries(CollisionAPI.Test ${CMAKE_DL_LIBS})
 	if (NOT WIN32)
@@ -242,7 +249,7 @@ if (COLL_MAKE_TESTS)
 				set(imgui $<TARGET_PROPERTY:imgui,INTERFACE_INCLUDE_DIRECTORIES>)
 			endif ()
 			coll_add_test(Collision.Win2024.Compile TIMEOUT 600 SKIP 77 LABELS collision windows COMMAND ${Python3_EXECUTABLE} ${tdir}/Collision.Win2024.Compile.py
-				--headers ${COLL_W2024_INCLUDE} --src ${CMAKE_CURRENT_SOURCE_DIR} --imgui ${imgui})
+				--headers ${COLL_W2024_INCLUDE} --src ${CMAKE_CURRENT_SOURCE_DIR} --imgui ${imgui} --blast ${COLL_BLAST_DIR})
 		endif ()
 		include(Tests/Scenario/ScenarioTests.cmake) # scenario tests: the runner, the test modules, the catalog of E4 7.9
 	endif ()
