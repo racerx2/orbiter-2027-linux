@@ -161,7 +161,24 @@ def hangar(p):  # Coll.Base.Hangar: a CollTestVessel placed in frame 1 where Col
     return s + 'END_SHIPS\n'
 
 
-GENERATORS = {'pair': pair, 'surface': surface, 'ascent': ascent, 'synthplay': synthplay, 'hvc': hvc, 'ksc': ksc, 'hangar': hangar, 'stack': stack, 'attached': attached,
+def crash(p):  # blast ground/base crash: a DeltaGlider placed in frame 1 by TD; kind=base: west at u m/s into the KSC hangar's east wall; kind=ground: u m/s pitched 30 deg down into open ground east of it
+    kind, u = p.get('kind', 'base'), float(p.get('u', 70))
+    s = head('DG', 'DG %s crash at %s m/s' % (kind, u))
+    if p.get('cam') == 'side':  # blast GIF: fixed side view of the DG
+        s = s.replace('POS 4.00 20.00 10.00\n  TRACKMODE TargetRelative', 'POS 5.00 0.00 15.00\n  TRACKMODE GlobalFrame')
+    if kind == 'ground':
+        pt = -30.0
+        act = 'TESTPLACEBASE 1 DG Cape_Canaveral 7180 25 -1900 0 %s %s 270 %s' % (g(-u * math.sin(math.radians(30))), g(-u * math.cos(math.radians(30))), g(pt))
+    else:
+        act = 'TESTPLACEBASE 1 DG Cape_Canaveral 7180 4 -2125 0 2 %s 270' % g(-u)  # nose 32 m east of the wall, 2 m/s up against the drop
+    _, rad = PLANETS['Earth']
+    r = 2 * rad
+    s += 'TD:CollTestDirector\n  STATUS Orbiting Earth\n  RPOS %s 0 0\n  RVEL 0 0 %s\n  AROT 0 0 0\n  %s\nEND\n' % (g(r), g(v_circ('Earth', r)), act)
+    s += 'DG:DeltaGlider\n  STATUS Landed Earth\n  BASE Cape Canaveral:3\n  HEADING 270.00\n  PRPLEVEL 0:0.6\nEND\n'
+    return s + 'END_SHIPS\n'
+
+
+GENERATORS = {'pair': pair, 'surface': surface, 'ascent': ascent, 'synthplay': synthplay, 'hvc': hvc, 'ksc': ksc, 'hangar': hangar, 'crash': crash, 'stack': stack, 'attached': attached,
               'wake': wake}
 
 

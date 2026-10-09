@@ -325,7 +325,7 @@ bool CollTestVessel::Pre (const Words &w, double simt) // the actions of a vesse
 		MATRIX3 Rv = mul (Columns (ad, gr, crossp (ad, gr)), transp (Columns (vd, vr, crossp (vd, vr)))); // v's dir against t's, rot along t's
 		VECTOR3 port = p + mul (Rt, tp) + gd * D (w, 6);
 		Place (v, t->GetGravityRef (), port - mul (Rv, vp), vel + ad * D (w, 7), Rv, _V (0, 0, 0));
-	} else if (a == "TESTPLACEBASE") { // TESTPLACEBASE k v base x y z vx vy vz heading: base-local metres, +z east, +x south, +y up (Base.cpp:556-560)
+	} else if (a == "TESTPLACEBASE") { // TESTPLACEBASE k v base x y z vx vy vz heading [pitch]: base-local metres, +z east, +x south, +y up (Base.cpp:556-560); pitch nose up [deg]
 		OBJHANDLE hb = nullptr, hp = nullptr;
 		std::string bn = S (w, 3);
 		for (char &c : bn) if (c == '_') c = ' '; // base names with blanks are written with '_'
@@ -349,8 +349,12 @@ bool CollTestVessel::Pre (const Words &w, double simt) // the actions of a vesse
 		VECTOR3 north = mul (Rp, _V (-sin (lat) * cos (lng), cos (lat), -sin (lat) * sin (lng)));
 		double hd = D (w, 10) * RAD, T = oapiGetPlanetPeriod (hp);
 		VECTOR3 nose = north * cos (hd) + east * sin (hd), right = east * cos (hd) - north * sin (hd);
+		double pt = D (w, 11) * RAD; // blast ground crash: optional pitch, nose up
+		VECTOR3 nose0 = nose;
+		nose = nose0 * cos (pt) + up * sin (pt);
+		VECTOR3 upv = up * cos (pt) - nose0 * sin (pt);
 		VECTOR3 vel = pv + east * (T != 0 ? PI2 * brad * cos (lat) / T : 0) - north * lv.x + up * lv.y + east * lv.z; // ground speed at the planet radius, as Orbiter's landed update (Vessel.cpp:4753), plus base-local velocity
-		Place (v, hp, gp, vel, Columns (right, up, nose), _V (0, 0, 0));
+		Place (v, hp, gp, vel, Columns (right, upv, nose), _V (0, 0, 0));
 		Log ("placed '%s' at '%s' lng=%.17g lat=%.17g rad=%.17g base=%.17g elev=%.17g", v->GetName (), bn.c_str (), lng, lat, rad, brad, elev);
 	} else if (a == "TESTATT") {
 		if (!v) return false;

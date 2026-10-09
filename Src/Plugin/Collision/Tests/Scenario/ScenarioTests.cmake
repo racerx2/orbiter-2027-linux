@@ -176,5 +176,7 @@ coll_scenario_test(Coll.Dmg3.SaveLoad SCN ${dg70} FRAMES 200 TIMEOUT 300 CHECK d
 coll_scenario_test(Coll.Dmg3.RecPlay SCN ${dg70} FRAMES 300 TIMEOUT 300 CHECK dmg3recplay LABELS slow
 	RUNS "rec|headless|on||||TESTRECORD 1 300" "play|headless|on||@scn=Playback/{stem}|rec|")
 coll_scenario_test(Coll.Dmg3.Fx SCN ${dg70} FRAMES 150 TIMEOUT 300 CHECK dmg3fx LABELS slow RUNS "main|headless|on||||")
+coll_scenario_test(Coll.Base.Crash70 SCN gen:crash:kind=base,u=70 FRAMES 150 TIMEOUT 300 CHECK groundcrash LABELS slow RUNS "main|headless|on||||") # blast: a DG into the KSC hangar breaks and throws debris
+coll_scenario_test(Coll.Ground.Crash70 SCN gen:crash:kind=ground,u=70 FRAMES 150 TIMEOUT 300 CHECK groundcrash LABELS slow RUNS "main|headless|on||||") # blast: a DG into open ground breaks and throws debris
 coll_scenario_test(Coll.Dmg3.Crash70.Client VISUAL SCN ${dg70} FRAMES 300 TIMEOUT 900 CHECK dmg3crash RUNS "main|client|on||||") # the same crash in VulkanClient
 coll_scenario_test(Coll.Dmg3.Tear.Client VISUAL SCN "${dg70},cam=side" FRAMES 300 TIMEOUT 900 CHECK dmg3crash RUNS "main|client|on||||") # dmg3 tear: side view of the torn section
