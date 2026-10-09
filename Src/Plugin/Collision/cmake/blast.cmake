@@ -8,8 +8,8 @@ set(COLL_BLAST_INCLUDE include include/shared/NvFoundation include/lowlevel incl
 list(TRANSFORM COLL_BLAST_INCLUDE PREPEND ${COLL_BLAST_DIR}/)
 
 if (NOT TARGET CollBlastLib)
-	set(simd source/shared/stress_solver/stress.cpp source/sdk/extensions/stress/NvBlastExtStressSolver.cpp) # the solver picks SIMD or scalar at run time
-	set(srcs ${simd}
+	set(simd source/shared/stress_solver/stress_simd.cpp) # the only AVX/FMA code; stress.cpp calls it when the CPU has AVX and FMA3
+	set(srcs ${simd} source/shared/stress_solver/stress.cpp source/sdk/extensions/stress/NvBlastExtStressSolver.cpp
 		source/sdk/common/NvBlastAssert.cpp source/sdk/common/NvBlastAtomic.cpp source/sdk/common/NvBlastTime.cpp source/sdk/common/NvBlastTimers.cpp
 		source/sdk/globals/NvBlastGlobals.cpp source/sdk/globals/NvBlastInternalProfiler.cpp
 		source/sdk/lowlevel/NvBlastActor.cpp source/sdk/lowlevel/NvBlastActorSerializationBlock.cpp source/sdk/lowlevel/NvBlastAsset.cpp
@@ -30,7 +30,7 @@ if (NOT TARGET CollBlastLib)
 	else ()
 		target_compile_options(CollBlastLib PRIVATE -w "SHELL:-include limits" "SHELL:-include cstdio" "SHELL:-include cstdint" "SHELL:-include cstring") # upstream relies on MSVC's transitive includes
 		if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
-			set_source_files_properties(${simd} PROPERTIES COMPILE_OPTIONS "-mavx;-mfma") # stress.cpp checks AVX and FMA3 at run time, not AVX2
+			set_source_files_properties(${simd} PROPERTIES COMPILE_OPTIONS "-mavx;-mfma") # stress_simd.cpp only, so the rest runs on any x86-64
 		endif ()
 	endif ()
 endif ()

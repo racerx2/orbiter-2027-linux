@@ -117,3 +117,8 @@ protected:
 
     static const bool       s_use_simd;
 };
+
+
+// not upstream: the CGNR_SIMD solver, compiled with AVX/FMA in stress_simd.cpp only
+size_t  StressSimdCacheSize(uint32_t N_nodes, uint32_t N_bonds);
+int     StressSimdSolve(AngLin6* impulses, const BondMatrixS& B, const AngLin6* b, uint32_t N_nodes, uint32_t N_bonds, void* cache, AngLin6ErrorSq* error_sq, float tolerance, uint32_t maxIter, unsigned warmth);

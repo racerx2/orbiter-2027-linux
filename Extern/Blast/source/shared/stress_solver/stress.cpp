@@ -35,7 +35,7 @@
 
 
 typedef CGNR<AngLin6, AngLin6Ops<Float_Scalar>, BondMatrixS, BondMatrixOpsS<Float_Scalar>, Float_Scalar, AngLin6ErrorSq>    CGNR_SISD;
-typedef CGNR<AngLin6, AngLin6Ops<SIMD_Scalar>, BondMatrixS, BondMatrixOpsS<SIMD_Scalar>, SIMD_Scalar, AngLin6ErrorSq>       CGNR_SIMD;
+// not upstream: CGNR_SIMD lives in stress_simd.cpp, the only file built with AVX/FMA
 
 
 /**
@@ -63,7 +63,8 @@ StressProcessor::prepare(const SolverNodeS* nodes, uint32_t N_nodes, const Solve
     m_couplings.resize(N_bonds);
     m_rhs.resize(N_nodes);
     m_B_scratch.resize(N_nodes);
-    m_solver_cache.resize(s_use_simd ? CGNR_SIMD().required_cache_size(N_nodes, N_bonds) : CGNR_SISD().required_cache_size(N_nodes, N_bonds));
+    m_solver_cache.resize(s_use_simd ? StressSimdCacheSize(N_nodes, N_bonds) : // not upstream: was CGNR_SIMD().required_cache_size
+                          CGNR_SISD().required_cache_size(N_nodes, N_bonds));
     m_can_resume = false;
 
     // Calculate bond offsets and length scale
@@ -228,7 +229,7 @@ StressProcessor::solve(AngLin6* impulses, const AngLin6* velocities, const Solve
 
     // Choose solver based on parameters
     const int result = s_use_simd ?
-        CGNR_SIMD().solve(impulses, m_B, b, N_nodes, N_bonds, cache, error_sq, params.tolerance, maxIter, warmth) :
+        StressSimdSolve(impulses, m_B, b, N_nodes, N_bonds, cache, error_sq, params.tolerance, maxIter, warmth) : // not upstream: was CGNR_SIMD().solve
         CGNR_SISD().solve(impulses, m_B, b, N_nodes, N_bonds, cache, error_sq, params.tolerance, maxIter, warmth);
 
     // Undo length and mass scaling
