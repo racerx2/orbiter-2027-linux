@@ -31,10 +31,10 @@ double CollGroundMeff (double m, const Vector &pmi, const Vector &r, const Vecto
 class CollGroundA {
 public:
 	CollGroundA (CollSdk &sdk, const CollCfgValues &cfg);
-	void Frame (double simt, double simdt, const std::vector<CollGroundVessel> &v, std::vector<CollImpactEvent> &ev, std::vector<CollFxContact> &fx); // appends; reads only
+	void Frame (double simt, double simdt, const std::vector<CollGroundVessel> &v, std::vector<CollImpactEvent> &ev, std::vector<CollFxContact> &fx); // appends; writes each event's impulse to its vessel
 	void TimeJump () { locks.clear (); }
 	void Drop (uint32_t id) { locks.erase (id); } // vessel deleted
-	uint64_t events = 0;                          // ground events made
+	uint64_t events = 0, kicks = 0;               // ground events made, impulses written
 	uint32_t tested = 0;                          // vertices tested for the last vessel that reached the vertex pass
 	uint32_t pass = 0;                            // frames run: the stride start turns with it
 private:
@@ -42,6 +42,7 @@ private:
 	struct Cand { uint32_t part, vtx; Vector p, g, vr; double vn, hp; }; // vertex: vessel frame, global, relative velocity, approach and predicted height on the plane
 	int Vessel (const CollGroundVessel &x, double simt, double simdt, CollImpactEvent &e, CollFxContact &c); // 0 no candidate, 1 none fired, 2 event
 	static bool Locked (const std::vector<Lock> &l, const Cand &c, double rb);
+	void Kick (CollH h, const CollVesselRead &rd, const Vector &p, const Vector &J, double simdt); // impulse J (vessel frame) at p: velocity, spin
 	CollSdk &sdk;
 	const CollCfgValues &cfg;
 	std::map<uint32_t, std::vector<Lock>> locks;  // per vessel: regions of the events of the last COLL_GROUND_GAP

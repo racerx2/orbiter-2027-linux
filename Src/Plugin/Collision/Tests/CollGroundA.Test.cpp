@@ -512,3 +512,31 @@ TEST_CASE ("ground review 8: each part's lowest vertex is always tested, the str
 		CHECK (Near (r.ev[0].s[0].c, t, 1e-6));
 	}
 }
+
+TEST_CASE ("ground: the event's impulse goes to the vessel, the hit point leaves at 0.2 of its approach, no second event", "[ground]")
+{
+	Rig r;
+	r.sdk.applyWrites = true;
+	Matrix R = Tilt ();
+	r.Place (R, 0.1, Vector (-20, 3, 1));
+	r.sdk.simT = 1;
+	Vector v0 = r.v->rd.v, w0 = r.v->rd.w;
+	REQUIRE (r.Frame () == 1);
+	const CollImpactEvent &e = r.ev[0];
+	CHECK (r.g.kicks == 1);
+	Vector p = e.s[0].c, up (1, 0, 0);                              // box: part frame = vessel frame; terrain up is global +x
+	CHECK (std::fabs (((r.v->rd.v - v0) & up) * r.v->rd.m - e.Jn) <= 1e-9 * e.Jn); // momentum along the normal: Jn
+	CHECK ((r.v->rd.v - v0 - up * ((r.v->rd.v - v0) & up)).length () <= 1e-5);        // along the local normal: up to the curvature over the box
+	Vector vp0 = v0 + mul (R, crossp (p, w0)), vp1 = r.v->rd.v + mul (R, crossp (p, r.v->rd.w));
+	CHECK (std::fabs ((vp0 & up) + e.vn) < 1e-5);                    // approached at vn
+	CHECK (std::fabs ((vp1 & up) - COLL_GROUND_E * e.vn) < 1e-5);    // leaves at e vn
+	r.Place (R, 0.1, r.v->rd.v - crossp (r.v->rd.x, r.Wp ()), r.v->rd.w - tmul (R, r.Wp ()));
+	CHECK (r.Frame () == 0);                                          // the point now leaves the ground
+	r.v->sv = r.v;                                                    // a docked stack takes it as a force over one step
+	r.Place (R, 0.1, Vector (-20, 0, 0));
+	r.sdk.simT += 1;
+	auto nF = [&] () { size_t n = 0; for (auto &w : r.sdk.wr) if (w.op == 'F') n++; return n; };
+	size_t nf = nF ();
+	REQUIRE (r.Frame () == 1);
+	CHECK (nF () == nf + 1);
+}

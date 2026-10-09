@@ -60,6 +60,24 @@ bool CollGroundA::Locked (const std::vector<Lock> &l, const Cand &c, double rb)
 	return false;
 }
 
+void CollGroundA::Kick (CollH h, const CollVesselRead &rd, const Vector &p, const Vector &J, double simdt)
+{
+	if (!(rd.m > 0)) return;                                // the hit point leaves the ground at COLL_GROUND_E of its approach: the event's impulse goes to the vessel
+	Vector dH = crossp (J, p);                              // Orbiter convention: H = m crossp (v, r) + m pmi w
+	Vector dw (rd.pmi.x > 0 ? dH.x / (rd.m * rd.pmi.x) : 0, rd.pmi.y > 0 ? dH.y / (rd.m * rd.pmi.y) : 0, rd.pmi.z > 0 ? dH.z / (rd.m * rd.pmi.z) : 0);
+	kicks++;
+	if (rd.sv) { sdk.AddForce (h, J * (1.0 / (simdt > 0 ? simdt : 0.02)), p); return; } // docked stack: the stack takes it over one step
+	CollStateWrite st {};
+	st.rbody = rd.gref;
+	Vector xr, vr; Matrix Rr;
+	if (st.rbody) sdk.GlobalState (st.rbody, xr, vr, Rr);
+	st.rpos = rd.x - xr; st.rvel = rd.v + mul (rd.R, J) * (1.0 / rd.m) - vr; st.vrot = rd.w + dw;
+	st.arot = Vector (std::atan2 (rd.R (1, 2), rd.R (2, 2)), -std::asin (std::max (-1.0, std::min (1.0, rd.R (0, 2)))), std::atan2 (rd.R (0, 1), rd.R (0, 0))); // inverse of Vessel::SetGlobalOrientation
+	sdk.SetState (h, st);
+	sdk.SetAttitude (h, rd.R);
+	sdk.SetSpin (h, rd.w + dw);
+}
+
 int CollGroundA::Vessel (const CollGroundVessel &x, double simt, double simdt, CollImpactEvent &e, CollFxContact &c)
 {
 	if (!x.h || !x.shape || !x.shape->nPart ()) return 0;
@@ -197,6 +215,7 @@ int CollGroundA::Vessel (const CollGroundVessel &x, double simt, double simdt, C
 		c.nOther = Vector (dotp (nL, east), dotp (nL, uv), dotp (nL, north));
 		c.matOther = &DentMath::DefaultMaterial (DENTB_BLOCK);
 		lk.push_back (Lock { q.part, q.p, simt, vn });
+		Kick (x.h, rd, q.p, tmul (R, nL) * e.Jn, simdt);
 		return 2;
 	}
 	return 1;
