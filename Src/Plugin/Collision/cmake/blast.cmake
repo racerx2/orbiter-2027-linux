@@ -26,12 +26,11 @@ if (NOT TARGET CollBlastLib)
 	set_target_properties(CollBlastLib PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_STANDARD 14 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF
 		CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON FOLDER Extern)
 	if (MSVC)
-		target_compile_options(CollBlastLib PRIVATE /w)
-		set_source_files_properties(${simd} PROPERTIES COMPILE_OPTIONS /arch:AVX2)
+		target_compile_options(CollBlastLib PRIVATE /w) # no /arch: MSVC compiles the AVX/FMA intrinsics without it
 	else ()
 		target_compile_options(CollBlastLib PRIVATE -w "SHELL:-include limits" "SHELL:-include cstdio" "SHELL:-include cstdint" "SHELL:-include cstring") # upstream relies on MSVC's transitive includes
 		if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
-			set_source_files_properties(${simd} PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma")
+			set_source_files_properties(${simd} PROPERTIES COMPILE_OPTIONS "-mavx;-mfma") # stress.cpp checks AVX and FMA3 at run time, not AVX2
 		endif ()
 	endif ()
 endif ()

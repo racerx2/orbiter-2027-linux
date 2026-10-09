@@ -2,7 +2,7 @@
 coll_unit_test(Blast.Smoke.Test 30)
 if (TARGET Coll_CollBlastA)
 	if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Tests/CollBlastA.Test.cpp)
-		coll_unit_test(CollBlastA.Test 120 UNITS CollBlastA CollBreakA CollDamageA CollFxA CollVisualA CollStore CollApiA CollSdk CollShape CollAnim CollGeom DentMath CollCfg Vecmat)
+		coll_unit_test(CollBlastA.Test 120 UNITS CollBlastA Vecmat)
 	endif ()
 	foreach (t CollDamageA.Test CollBreakA.Test) # their units reach CollBlastA
 		if (TARGET ${t})
