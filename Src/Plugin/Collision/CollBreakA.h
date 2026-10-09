@@ -62,7 +62,9 @@ struct CollBlastSlotA {                                   // blast: one vessel s
 	std::vector<uint32_t> cut;                            // chunks gone at build (load)
 	bool full = false;                                    // record limit reached, logged
 	std::vector<uint32_t> weak;                           // weakened bonds already stored (W rows)
+	bool rebuild = false;                                 // a held piece split off: rebuild from the stored state after the pass
 };
+bool CollPieceHeld (const CollPieceA &p, const CollDamageHit &h); // blast: dmg3 part gates for an actor of animated pieces only (approach speed, dock pin)
 struct CollKickA { uint32_t parent = 0; Vector dv, dw; double M = 0; }; // blast: parent velocity and spin change of one debris kick, parent mass (tests)
 
 class CollBreakA : public CollDmgSink {
@@ -133,6 +135,7 @@ private:
 	void CutMass (uint32_t id, CollH vh, double m, const Vector &icut); // blast: lower the parent's empty mass and PMI
 	void LoadMass ();                                     // blast: after load, cut mass from the saved cells
 	double BlastMass (uint32_t id, uint32_t mesh, CollH vh); // blast: the slot's share of the empty mass before cuts
+	void BlastRebuild ();                                 // blast: slots whose held pieces split off, rebuilt from records, K and W rows
 	std::vector<CollFreeA> freeMesh;                      // meshes of deleted debris, freed at the Post after OnDeleteVessel, or at End
 	uint32_t maxId = 0, events = 0, debrisSeq = 0;
 	int cfgOk = -1;                                       // CollDebris.cfg probe: -1 not yet

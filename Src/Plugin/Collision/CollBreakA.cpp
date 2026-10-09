@@ -1093,6 +1093,7 @@ void CollBreakA::Post (double simt, double simdt)
 		if (!vh || sdk.Playback (vh)) continue;
 		BlastStep (kv.first.first, kv.first.second, bs, vh);
 	}
+	BlastRebuild ();
 	for (size_t i = freeMesh.size (); i-- > 0;) if (freeMesh[i].dropped) { if (freeMesh[i].mesh) sdk.MeshFree (freeMesh[i].mesh); freeMesh.erase (freeMesh.begin () + (long)i); }
 	for (auto &kv : ves) Assert (kv.first, kv.second);
 	std::vector<CollSpawnA> sp;
@@ -1262,6 +1263,30 @@ void CollBreakA::BlastHit (const CollDamageHit &h, CollH vh, const CollSlotA &sl
 	if (dmg > 0 && h.R > 0) bs->b->Impact (cr, h.R, dmg);
 	bs->hit = h; bs->haveHit = true; bs->lastHit = h.simt;
 	BlastStep (h.id, h.mesh, *bs, vh);
+	BlastRebuild ();
+}
+
+bool CollPieceHeld (const CollPieceA &p, const CollDamageHit &h)
+{
+	if (h.vn < BRK_VN_PART) return true;                            // parts need the approach speed of the dmg3 part gate
+	return (p.functional & CBRK_FN_DOCK) && h.eSpec < BRK_TEAR_E;   // the dock pin holds below the tear threshold
+}
+
+void CollBreakA::BlastRebuild ()
+{
+	std::vector<std::pair<uint32_t, uint32_t>> keys;
+	for (auto &kv : blast) if (kv.second.rebuild) keys.push_back (kv.first);
+	for (auto &k : keys) {
+		CollBlastSlotA &old = blast[k];
+		CollDamageHit hit = old.hit;
+		bool haveHit = old.haveHit;
+		double lastHit = old.lastHit;
+		blast.erase (k);
+		CollH vh = s.VesselHandle (k.first);
+		const CollSlotA *sl = vh ? Slot (k.first, k.second) : nullptr;
+		if (!sl || !sl->ok) continue;
+		if (CollBlastSlotA *bs = BlastSlot (k.first, k.second, vh, *sl)) bs->hit = hit, bs->haveHit = haveHit, bs->lastHit = lastHit;
+	}
 }
 
 void CollBreakA::BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, CollH vh)
@@ -1281,7 +1306,21 @@ void CollBreakA::BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, Coll
 		return;
 	}
 	std::vector<CollBlastSplit> sp = bs.b->Step ();
+	std::vector<uint8_t> held (sp.size (), 0);
+	std::set<uint32_t> hk; // chunk keys of held actors
+	for (size_t i = 0; i < sp.size (); i++) {
+		bool cells = false, hold = false;
+		for (uint32_t c : sp[i].chunks) { const CollBlastChunk &ch = bs.b->chunk[c]; if (ch.cell >= 0) cells = true; else if (bs.haveHit && ch.piece >= 0 && (size_t)ch.piece < sl->piece.size () && CollPieceHeld (sl->piece[ch.piece], bs.hit)) hold = true; }
+		if (cells || !hold) continue;
+		held[i] = 1;
+		for (uint32_t c : sp[i].chunks) hk.insert (bs.b->ChunkKey (c));
+	}
 	std::vector<uint32_t> br = bs.b->BrokenPairs (), nb;
+	if (!hk.empty ()) { // held pieces stay: their bonds are not stored and the slot is rebuilt from the stored state
+		br.erase (std::remove_if (br.begin (), br.end (), [&] (uint32_t p) { return hk.count (p / 65536u) || hk.count (p % 65536u); }), br.end ());
+		bs.rebuild = true;
+		Log ("Collision blast '%s' slot=%u: %zu piece chunks held (vn=%.4g eSpec=%.4g)", sdk.Name (vh).c_str (), mesh, hk.size (), bs.hit.vn, bs.hit.eSpec);
+	}
 	std::set_difference (br.begin (), br.end (), bs.recorded.begin (), bs.recorded.end (), std::back_inserter (nb));
 	if (!nb.empty ()) { s.AddBrokenBonds (id, mesh, nb); bs.recorded = br; }
 	std::vector<uint32_t> wk = bs.b->WeakPairs ();
@@ -1289,7 +1328,9 @@ void CollBreakA::BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, Coll
 	blastSteps++;
 	blastMs += std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now () - t0).count ();
 	const CollDamageHit &h = bs.hit;
-	for (auto &x : sp) {
+	for (size_t i = 0; i < sp.size (); i++) {
+		if (held[i]) continue;
+		const CollBlastSplit &x = sp[i];
 		CollBlastBreak bk;
 		bk.id = id; bk.slot = mesh; bk.other = h.other; bk.simt = sdk.SimTime ();
 		double r = 0;
@@ -1395,7 +1436,7 @@ void CollBreakA::SpawnCells (const CollBlastBreak &bk)
 	for (auto &x : spawn) if (x.blast && x.parent == bk.id) queued++;
 	std::string name = "-";
 	CollSpawnA sp;
-	if (canDebris && queued < (size_t)BRK_PER_EVENT && MakeCellSpawn (bk, *sl, vh, site, stat, event, sp)) {
+	if (canDebris && queued < (size_t)std::max (BRK_PER_EVENT, cfg.debrisMax) && MakeCellSpawn (bk, *sl, vh, site, stat, event, sp)) { // every Blast break of debris mass flies
 		sp.row.name = name = NewName (sdk.Name (vh));
 		spawn.push_back (sp);
 	}

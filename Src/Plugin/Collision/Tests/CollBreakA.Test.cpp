@@ -954,3 +954,13 @@ TEST_CASE ("blast P7: bonds weakened without breaking are saved as W rows and a 
 		CHECK (q.B ().blastBreaks == 0);
 	}
 }
+
+TEST_CASE ("blast P8: pieces split off by Blast keep the dmg3 part gates: approach speed 20 m/s, dock pin below 300 J/kg", "[dmg3P][blast]")
+{
+	CollPieceA p; CollDamageHit h;
+	h.vn = 15; h.eSpec = 26;  CHECK (CollPieceHeld (p, h));          // DG-DG 15 m/s: parts stay
+	h.vn = 30; h.eSpec = 120; CHECK (!CollPieceHeld (p, h));
+	p.functional = CBRK_FN_DOCK;
+	CHECK (CollPieceHeld (p, h));                                     // the dock pin holds
+	h.vn = 70; h.eSpec = 550; CHECK (!CollPieceHeld (p, h));          // and lets go above the tear threshold
+}
