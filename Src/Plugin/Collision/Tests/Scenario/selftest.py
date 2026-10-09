@@ -187,6 +187,19 @@ def main(argv=None):
 
     e += check_placebase()
 
+    # gen_scn: TEST* actions skip a CollTestAnim block listed first
+    scn = 'BEGIN_SHIPS\nAN:CollTestAnim\nEND\nPB:CollTestVessel\nEND\nEND_SHIPS\n'
+    got = runner.gen_scn.insert_actions(scn, ['TESTDV 1 PB 0 0 1']).splitlines()
+    if got.index('  TESTDV 1 PB 0 0 1') != got.index('PB:CollTestVessel') + 1:
+        print('selftest: TEST* action not in the CollTestVessel block: %r' % got)
+        e += 1
+
+    # LUACALL numbers: only finite decimals go to run.lua unquoted
+    for x, want in (('1', True), ('-2.5e3', True), ('.5', True), ('e', False), ('-', False), ('.', False), ('inf', False), ('1_0', False)):
+        if runner.is_num(x) != want:
+            print('selftest: is_num(%r) != %s' % (x, want))
+            e += 1
+
     # the runner's own guards (T0.1)
     if a.work:
         e += runner.selftest_guards(a.work)

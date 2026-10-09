@@ -8,6 +8,7 @@ PLANETS = {'Earth': (5.973698968e+24, 6.37101e6), 'Moon': (7.347673176382784e+22
 MJD = 51982.5
 R_P0 = 6778137.0
 TESTCLASSES = ('CollTestVessel', 'CollTestDirector', 'CollTestAnim', 'CollTestAnimVC')
+ACTCLASSES = ('CollTestVessel', 'CollTestDirector')  # the classes that run TEST* actions; CollTestAnim blocks drop them
 
 
 def g(x):
@@ -215,8 +216,8 @@ def insert_actions(text, actions):  # into the first test-module block, else a d
         elif inships and inblock is None and s and s.upper() != 'END':
             name, inblock = (s.split(':', 1)[0].strip(), s.split(':', 1)[1].strip()) if ':' in s else (s, s)
         elif inships and inblock is not None and s.upper() == 'END':
-            out += ['  ' + a for a in own.pop(name, [])]
-            if inblock in TESTCLASSES and not done:
+            out += ['  ' + a for a in own.pop(name, [])]  # by name: a CollTestAnim reads its own keys (TESTANIMCYCLE)
+            if inblock in ACTCLASSES and not done:
                 out += ['  ' + a for a in actions]
                 done = True
             inblock = None

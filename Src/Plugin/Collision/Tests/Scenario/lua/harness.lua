@@ -49,12 +49,30 @@ function H.dump(f, k) -- frame k: the committed state at SimT0 of frame k (T 1.6
 	end
 end
 
+local function by_name(n) -- by name only: get_interface reads a numeric string such as "1" as an index
+	for i = 0, vessel.get_count() - 1 do
+		local v = vessel.get_interface(i)
+		if v:get_name() == n then return v end
+	end
+	return nil
+end
+
 local function act(k, a) -- harness actions run in the frame hook of frame k, after the addon's post-step (E4 7.4)
-	local v = a.v ~= '' and vessel.get_interface(a.v) or nil
+	if a.v:find('..', 1, true) then -- LUASAVE and LUASHOT build paths from it
+		oapi.write_log('CollTestHarness error: act k=' .. k .. ' ' .. a.kind .. ' bad name ' .. a.v)
+		return
+	end
+	local v = a.v ~= '' and by_name(a.v) or nil
 	if a.kind == 'LUASAVE' then
-		oapi.savescenario('Tests/Coll/Saved/' .. a.v, 'collision test save')
+		if not oapi.savescenario('Tests/Coll/Saved/' .. a.v, 'collision test save') then
+			oapi.write_log('CollTestHarness error: act k=' .. k .. ' LUASAVE ' .. a.v .. ' failed')
+			return
+		end
 	elseif a.kind == 'LUASHOT' then -- the back buffer as PNG: the frame rendered at the end of frame k-1 (T 5.2)
-		oapi.save_surface('Images/' .. a.v, nil, IMAGEFORMAT.PNG)
+		if not oapi.save_surface('Images/' .. a.v, nil, IMAGEFORMAT.PNG) then
+			oapi.write_log('CollTestHarness error: act k=' .. k .. ' LUASHOT ' .. a.v .. ' failed')
+			return
+		end
 	elseif v == nil then
 		oapi.write_log('CollTestHarness act k=' .. k .. ' ' .. a.kind .. ' ' .. a.v .. ' failed: no such vessel')
 		return

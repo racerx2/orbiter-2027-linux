@@ -36,9 +36,9 @@ else ()
 endif ()
 target_link_libraries(CollTestVessel ${CMAKE_DL_LIBS}) # collaFind
 
-# coll_scenario_test(<name> SCN <stock path | gen:<setup>> FRAMES <n> [STEP h] [TIMEOUT s] [EVERY n] [CHECK x] [LUA x] RUNS "id|mode|addon|order|args|inherit|actions" .. [CFG ..] [ACFG ..] [ARGS ..] [MODULES ..] [LABELS ..] [VISUAL])
+# coll_scenario_test(<name> SCN <stock path | gen:<setup>> FRAMES <n> [STEP h] [TIMEOUT s] [EVERY n] [CHECK x] [LUA x] RUNS "id|mode|addon|order|args|inherit|actions" .. [CFG ..] [ACFG ..] [ARGS ..] [MODULES ..] [LABELS ..] [VISUAL] [TIMING])
 function(coll_scenario_test name)
-	cmake_parse_arguments(PARSE_ARGV 1 S "VISUAL" "SCN;STEP;FRAMES;TIMEOUT;CHECK;EVERY;LUA" "RUNS;CFG;ACFG;ARGS;LABELS;MODULES")
+	cmake_parse_arguments(PARSE_ARGV 1 S "VISUAL;TIMING" "SCN;STEP;FRAMES;TIMEOUT;CHECK;EVERY;LUA" "RUNS;CFG;ACFG;ARGS;LABELS;MODULES")
 	if (NOT COLLISION_SCENARIO_TESTS OR (S_VISUAL AND NOT COLLISION_VISUAL_TESTS))
 		return ()
 	endif ()
@@ -59,6 +59,9 @@ function(coll_scenario_test name)
 	endif ()
 	if (S_LUA)
 		list(APPEND cmd --lua ${S_LUA})
+	endif ()
+	if (S_TIMING) # wall-clock checks: skipped (77) while a build runs, every other test runs
+		list(APPEND cmd --timing)
 	endif ()
 	foreach (k RUNS:run CFG:cfg ACFG:acfg ARGS:arg MODULES:module)
 		string(REPLACE ":" ";" k ${k})
@@ -113,7 +116,7 @@ coll_scenario_test(Scn.PlaceBase SCN gen:surface FRAMES 10 CHECK placebase
 	RUNS "main|headless|off||||TESTCREATE 1 PL CollTestVessel PB 0 30 0 0 0 0,TESTPLACEBASE 3 PL Brighton_Beach 100 3 -173.21 0 0 0 90")
 coll_scenario_test(Scn.LuaCall SCN gen:surface:rcover=1 FRAMES 500 CHECK luacall RUNS "ref|headless|off||||" "call|headless|off||||LUACALL 5 GL Retro 0")
 coll_scenario_test(Coll.MXCSR SCN gen:pair:g0=1000,director=1 FRAMES 10 CHECK mxcsr RUNS "off|headless|off||||" "on|headless|on||||")
-coll_scenario_test(Scn.Jitter SCN gen:pair:g0=1000,director=1 FRAMES 60 CHECK jitter LABELS paced RUNS "main|paced|off||||TESTPACE 16.7,TESTSLEEP 30 100")
+coll_scenario_test(Scn.Jitter TIMING SCN gen:pair:g0=1000,director=1 FRAMES 60 CHECK jitter LABELS paced RUNS "main|paced|off||||TESTPACE 16.7,TESTSLEEP 30 100")
 coll_scenario_test(G5.Warp SCN gen:pair:g0=1000,director=1 FRAMES 500 EVERY 5 CHECK g5pair LABELS golden
 	RUNS "off|headless|off||||TESTWARP 100 10,TESTWARP 200 100,TESTWARP 300 1000,TESTWARP 400 1" "on|headless|on||||TESTWARP 100 10,TESTWARP 200 100,TESTWARP 300 1000,TESTWARP 400 1")
 # G5.Land: the DG dropped 2 m on the flat Moon 2 km from Brighton Beach touches down in frame 80 (probe run); TESTMASS from 2 frames before to 2 after
@@ -142,8 +145,8 @@ coll_scenario_test(Scn.Visual.Smoke VISUAL SCN gen:pair:g0=20 FRAMES 70 TIMEOUT 
 	RUNS "a|client|off||||LUASHOT 60 smoke" "b|client|off||||LUASHOT 60 smoke")
 
 # T0.9 guards and close paths (design-C-T 2.5, 3.5; E4 7.10); the build-running skip is proven by Scn.RunnerGuard
-coll_scenario_test(Scn.Timeout SCN gen:pair:g0=1000 FRAMES 60 TIMEOUT 20 CHECK timeout RUNS "main|headless|off||@nolimit @expect=TIMEOUT||")
-coll_scenario_test(Scn.Pause SCN gen:pair:g0=1000,director=1 FRAMES 190 CHECK pause
+coll_scenario_test(Scn.Timeout TIMING SCN gen:pair:g0=1000 FRAMES 60 TIMEOUT 20 CHECK timeout RUNS "main|headless|off||@nolimit @expect=TIMEOUT||")
+coll_scenario_test(Scn.Pause TIMING SCN gen:pair:g0=1000,director=1 FRAMES 190 CHECK pause
 	RUNS "ref|headless|off||@nolimit --maxsimtime=4||" "pause|headless|off||@nolimit --maxsimtime=4 @stdin=pause.txt||TESTPAUSE 50")
 set(close "'@endon=**** Closing simulation session' @cfg:ShutdownMode=0")
 coll_scenario_test(Scn.Teardown SCN "Delta-glider/Smack!" FRAMES 60 CHECK teardown
