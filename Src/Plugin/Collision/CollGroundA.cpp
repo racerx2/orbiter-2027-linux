@@ -69,9 +69,9 @@ void CollGroundA::Kick (CollH h, const CollVesselRead &rd, const Vector &p, cons
 	if (rd.sv) { sdk.AddForce (h, J * (1.0 / (simdt > 0 ? simdt : 0.02)), p); return; } // docked stack: the stack takes it over one step
 	CollStateWrite st {};
 	st.rbody = rd.gref;
-	Vector xr, vr; Matrix Rr;
-	if (st.rbody) sdk.GlobalState (st.rbody, xr, vr, Rr);
-	st.rpos = rd.x - xr; st.rvel = rd.v + mul (rd.R, J) * (1.0 / rd.m) - vr; st.vrot = rd.w + dw;
+	Vector rp, rv;
+	sdk.RelState (h, st.rbody, rp, rv);
+	st.rpos = rp; st.rvel = rv + mul (rd.R, J) * (1.0 / rd.m); st.vrot = rd.w + dw;
 	st.arot = Vector (std::atan2 (rd.R (1, 2), rd.R (2, 2)), -std::asin (std::max (-1.0, std::min (1.0, rd.R (0, 2)))), std::atan2 (rd.R (0, 1), rd.R (0, 0))); // inverse of Vessel::SetGlobalOrientation
 	sdk.SetState (h, st);
 	sdk.SetAttitude (h, rd.R);

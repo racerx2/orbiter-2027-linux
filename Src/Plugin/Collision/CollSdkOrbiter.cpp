@@ -48,6 +48,13 @@ public:
 	}
 	std::string ClassName (CollH v) override { VESSEL *x = Ves (v); const char *c = x ? x->GetClassName () : nullptr; return c ? c : ""; }
 	double Size (CollH h) override { return oapiGetSize (H (h)); }
+	void RelState (CollH v, CollH ref, Vector &rpos, Vector &rvel) override
+	{
+		if (!ref) { CollSdk::RelState (v, ref, rpos, rvel); return; }
+		VECTOR3 a, b;
+		Ves (v)->GetRelativePos (H (ref), a); Ves (v)->GetRelativeVel (H (ref), b);
+		rpos = V (a); rvel = V (b);
+	}
 	void GlobalState (CollH h, Vector &pos, Vector &vel, Matrix &R) override
 	{
 		VECTOR3 p, v; MATRIX3 r;

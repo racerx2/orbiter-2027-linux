@@ -66,6 +66,14 @@ public:
 	virtual std::string ClassName (CollH v) = 0;               // "" if NULL
 	virtual double   Size (CollH h) = 0;
 	virtual void     GlobalState (CollH h, Vector &pos, Vector &vel, Matrix &R) = 0;
+	virtual void     RelState (CollH v, CollH ref, Vector &rpos, Vector &rvel) // vessel state relative to ref as the core keeps it (GetRelativePos/Vel): a write in the post-step lands where it was read
+	{
+		CollVesselRead rd {};
+		ReadVessel (v, rd, CVR_NOWEIGHT);
+		Vector x, w; Matrix R;
+		if (ref) GlobalState (ref, x, w, R);
+		rpos = rd.x - x; rvel = rd.v - w;
+	}
 	virtual uint32_t GbodyCount () = 0;
 	virtual CollH    Gbody (uint32_t i) = 0;
 	virtual uint32_t BaseCount (CollH planet) = 0;

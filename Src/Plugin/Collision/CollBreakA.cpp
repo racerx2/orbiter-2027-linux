@@ -769,12 +769,12 @@ void CollBreakA::Spawn (CollSpawnA &sp, double simt)
 	CollSdk::DebrisCaps caps = Caps (geo, sp.mass, &fnv);
 	CollVesselRead rd {};
 	sdk.ReadVessel (vh, rd, CVR_NOWEIGHT);
-	Vector gp, gv; Matrix gR;
-	if (rd.gref) sdk.GlobalState (rd.gref, gp, gv, gR);
 	CollStateWrite st;
 	st.rbody = rd.gref;
-	st.rpos = rd.x + mul (rd.R, sp.cv) - gp;
-	st.rvel = rd.v + mul (rd.R, crossp (sp.cv, rd.w) + sp.dv) - gv;
+	Vector rp, rv;
+	sdk.RelState (vh, rd.gref, rp, rv); // the core's own relative state: the planet and the vessel at one time in the post-step
+	st.rpos = rp + mul (rd.R, sp.cv);
+	st.rvel = rv + mul (rd.R, crossp (sp.cv, rd.w) + sp.dv);
 	st.vrot = rd.w + sp.dw; st.arot = Vector ();
 	CollH h = sdk.VesselCreate (sp.row.name.c_str (), BRK_CLASS, st);
 	if (!h) { sdk.MeshFree (mesh); Log ("Collision: debris vessel '%s' not created", sp.row.name.c_str ()); return; }
@@ -791,9 +791,9 @@ void CollBreakA::Spawn (CollSpawnA &sp, double simt)
 		Vector dwp (pr.pmi.x > 0 && M > 0 ? -H.x / (M * pr.pmi.x) : 0, pr.pmi.y > 0 && M > 0 ? -H.y / (M * pr.pmi.y) : 0, pr.pmi.z > 0 && M > 0 ? -H.z / (M * pr.pmi.z) : 0);
 		CollStateWrite ps {};
 		ps.rbody = pr.gref;
-		Vector xr, vr; Matrix Rr;
-		if (ps.rbody) sdk.GlobalState (ps.rbody, xr, vr, Rr);
-		ps.rpos = pr.x - xr; ps.rvel = pr.v + mul (pr.R, dvp) - vr; ps.vrot = pr.w + dwp;
+		Vector prp, prv;
+		sdk.RelState (vh, ps.rbody, prp, prv);
+		ps.rpos = prp; ps.rvel = prv + mul (pr.R, dvp); ps.vrot = pr.w + dwp;
 		ps.arot = Vector (std::atan2 (pr.R (1, 2), pr.R (2, 2)), -std::asin (std::max (-1.0, std::min (1.0, pr.R (0, 2)))), std::atan2 (pr.R (0, 1), pr.R (0, 0))); // inverse of Vessel::SetGlobalOrientation
 		if (pr.sv) sdk.AddForce (vh, J * (-1.0 / (postDt > 0 ? postDt : 1.0 / 60)), sp.cv); // docked stack: the stack takes the impulse over one step
 		else { sdk.SetState (vh, ps); sdk.SetAttitude (vh, pr.R); sdk.SetSpin (vh, pr.w + dwp); }
