@@ -238,6 +238,7 @@ public:
 	int  nBody () const;                                                 // bodies added since Begin (chosen here)
 	const CollBody &Body (int i) const;                                  // as stored by AddBody, motion included (chosen here; D3 phase 2 kinematic fields)
 	bool Embedded (const CollEmbedQuery &q);                             // 3.4 step 3 (chosen here)
+	void SetNoPair (const std::vector<std::pair<uint32_t, uint32_t>> &p); // dmg3 L5: non-base body id pairs (low, high) the broadphase skips; kept until set again
 private:
 	struct Impl;                                                         // query machinery (CollDetect.cpp)
 	struct PartIdx { CollOwnerKey owner; uint32_t partKey; int body, part; }; // owner part -> body part, sorted
@@ -258,6 +259,7 @@ private:
 	std::vector<OwnerPair> m_resPrev, m_resCur;                          // owner pairs with results in the previous and this frame (NEWPAIR), sorted
 	std::vector<OwnerPair> m_warnPrev, m_warnCur;                        // owner pairs warned for raw intersection (rate limit), sorted
 	std::vector<FrontPose> m_front;                                      // sorted by (a, b)
+	std::vector<std::pair<uint32_t, uint32_t>> m_noPair;                 // dmg3 L5: sorted, unique
 	std::vector<std::pair<uint32_t, double>> m_supDist;                  // assembly id -> smallest raw support distance of this frame
 	std::vector<Vector> m_vx; std::vector<uint32_t> m_vs; uint32_t m_stamp = 0; // transformed-vertex cache of the current query pose
 	double m_simt = 0;                                                   // sum of frame steps (log rate limits)

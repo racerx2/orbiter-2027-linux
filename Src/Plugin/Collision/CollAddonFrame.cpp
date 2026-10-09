@@ -593,6 +593,7 @@ void CollAddonFrame::Impl::PastCheck (std::vector<CollImpactEvent> &ev)
 		}
 		CollFrameSolver fs2;
 		fs2.check = F.check;
+		fs2.contacts = &F.contacts;
 		std::vector<CollBodyDelta> delta;
 		std::vector<CollImpactEvent> pev;
 		F.featDet = &ver;
@@ -1319,9 +1320,11 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 				e.kind = c.kind; e.gap = c.gap;
 				e.vapp = c.vapp; e.ln1 = c.ln1; e.Wn = c.Wn; e.Wt = c.Wt;
 				e.vpost = dotp (all.UPost ()[mapAll[m]], c.n);
-				e.slip = (all.UPre ()[mapAll[m]] - c.n*dotp (all.UPre ()[mapAll[m]], c.n)).length ();
+				e.slipv = all.UPre ()[mapAll[m]] - c.n*dotp (all.UPre ()[mapAll[m]], c.n);
+				e.slip = e.slipv.length ();
 				e.Jt = (c.J1 - c.n*c.ln1).length ();
 				e.jsum = c.J1.length () + c.J2.length ();
+				e.JnT = std::max (0.0, dotp (c.J1 + c.J2, c.n)); e.JtT = ((c.J1 + c.J2) - c.n*dotp (c.J1 + c.J2, c.n)).length ();
 				e.meff = all.MeffAt (c.p, c.n, c.a, c.b);
 				e.corrected = false; e.surf = false; e.woke = w[q.a].woke || w[q.b].woke;
 				erec.push_back (e);
@@ -1378,7 +1381,7 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 	if (!erec.empty ()) {
 		std::vector<CollImpactEvent> e2;
 		F.featDet = &fwd;
-		CollFillEvents (fwd, solvedReal, erec, h, simt0, F.prm, host, e2, nullptr, nullptr);
+		CollFillEvents (fwd, solvedReal, erec, h, simt0, F.prm, host, e2, nullptr, nullptr, &F.contacts);
 		F.featDet = nullptr;
 		for (CollImpactEvent &e : e2) {
 			if (!(e.flags & COLLEV_FIRST)) continue;
@@ -1458,7 +1461,7 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 void CollAddonFrame::Run (CollDetect &fwd, CollDetect &ver, const CollOrbMirror &mir, std::vector<CollABody> &b, const std::vector<CollZone> &zones,
 	double h, double simt0, CollSolveHost &host, std::vector<CollAWrite> &out, std::vector<CollImpactEvent> &ev)
 {
-	out.clear (); ev.clear (); pend.clear ();
+	out.clear (); ev.clear (); pend.clear (); contacts.clear ();
 	if (!(h > 0.0)) return;                                    // simdt == 0: no physics, records kept (1.2)
 	Impl im (*this, fwd, ver, mir, b, host, h, simt0);
 	im.Run (out, ev, zones);

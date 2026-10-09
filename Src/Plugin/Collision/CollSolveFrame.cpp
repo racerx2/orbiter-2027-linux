@@ -330,9 +330,11 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 				e.kind = c.kind; e.gap = c.gap;
 				e.vapp = c.vapp; e.ln1 = c.ln1; e.Wn = c.Wn; e.Wt = c.Wt;
 				e.vpost = dotp (isl.upost[ci], c.n);
-				e.slip = (isl.upre[ci] - c.n*dotp (isl.upre[ci], c.n)).length ();
+				e.slipv = isl.upre[ci] - c.n*dotp (isl.upre[ci], c.n);
+				e.slip = e.slipv.length ();
 				e.Jt = (c.J1 - c.n*c.ln1).length ();
 				e.jsum = c.J1.length () + c.J2.length ();
+				e.JnT = std::max (0.0, dotp (c.J1 + c.J2, c.n)); e.JtT = ((c.J1 + c.J2) - c.n*dotp (c.J1 + c.J2, c.n)).length ();
 				e.surf = vsMax[ci] > COLL_SURFVEL_EV;
 				e.woke = wokeHere[r.bodyA] || wokeHere[r.bodyB];
 				rec.push_back (e);
@@ -567,13 +569,14 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 		}
 	}
 
-	CollFillEvents (det, solved, rec, h, simt0, p, host, ev, &body, &inacc);
+	CollFillEvents (det, solved, rec, h, simt0, p, host, ev, &body, &inacc, contacts);
 	res.swap (solved);
 }
 
 // events per owner pair and supports per dynamic body from the solved points (8.1, 8.2, 7.5); shared by Run and the addon driver
 void CollFillEvents (const CollDetect &det, const std::vector<CollPairResult> &solved, const std::vector<CollEventRec> &rec, double h, double simt0,
-	const CollSolveParams &p, CollSolveHost &host, std::vector<CollImpactEvent> &ev, std::vector<CollFrameBody> *body, std::vector<CollInaccLog> *inacc)
+	const CollSolveParams &p, CollSolveHost &host, std::vector<CollImpactEvent> &ev, std::vector<CollFrameBody> *body, std::vector<CollInaccLog> *inacc,
+	std::vector<CollContactRec> *con)
 {
 	// impact events, one per owner pair (8.1, 8.2); queued if FIRST or not SLOW, only with an impulse
 	std::vector<int> order (rec.size ());
@@ -632,15 +635,15 @@ void CollFillEvents (const CollDetect &det, const std::vector<CollPairResult> &s
 		e.Jn = sumLn;
 		e.meff = rec[best].meff;
 		e.t = tEv >= 0.0 ? tEv : simt0 + tauMin*h;
-		const CollPairResult &rb = solved[rec[best].res];
-		for (int side = 0; side < 2; side++) {
-			CollImpactSide &s = e.s[side];
-			s.owner = CollOwnerRefOf (side ? rec[best].ob : rec[best].oa);
+		// one side's feature, centroid, normal and slip direction over the best point's part; tot: total-impulse weights (L4)
+		auto sideOf = [&] (int bst, int side, bool tot, CollImpactSide &s) {
+			const CollPairResult &rb = solved[rec[bst].res];
+			s.owner = CollOwnerRefOf (side ? rec[bst].ob : rec[bst].oa);
 			s.mesh = s.grp = s.tri = -1;
-			host.Feature (rb, rec[best].pt, side, s);
+			host.Feature (rb, rec[bst].pt, side, s);
 			int fb = side ? rb.bodyB : rb.bodyA;
-			uint16_t part = side ? rb.pt[rec[best].pt].partB : rb.pt[rec[best].pt].partA;
-			std::vector<Vector> pp, nn;
+			uint16_t part = side ? rb.pt[rec[bst].pt].partB : rb.pt[rec[bst].pt].partA;
+			std::vector<Vector> pp, nn, tt;
 			std::vector<double> w;
 			double ws = 0.0;
 			for (size_t k = g0; k < g1; k++) {
@@ -649,18 +652,42 @@ void CollFillEvents (const CollDetect &det, const std::vector<CollPairResult> &s
 				const CollContact &pt = r.pt[q.pt];
 				if ((side ? r.bodyB : r.bodyA) != fb || (side ? pt.partB : pt.partA) != part) continue;
 				Vector x = (pt.pA + pt.pB)*0.5, n = pt.n;
+				double sl = q.slipv.length ();
+				Vector xt = x, t = sl > 0.0 ? q.slipv/sl : Vector ();
 				det.ToPartFrame (r, q.pt, side, x, n);
-				pp.push_back (x); nn.push_back (side ? n : -n); w.push_back (q.ln1); ws += q.ln1;
+				if (sl > 0.0) det.ToPartFrame (r, q.pt, side, xt, t);
+				double wq = tot ? q.jsum : q.ln1;
+				pp.push_back (x); nn.push_back (side ? n : -n); tt.push_back (side ? -t*sl : t*sl); w.push_back (wq); ws += wq;
 			}
-			Vector c, n;
+			Vector c, n, tv;
 			for (size_t k = 0; k < pp.size (); k++) {
 				double wk = ws > 0.0 ? w[k]/ws : 1.0/pp.size ();
-				c += pp[k]*wk; n += nn[k]*wk;
+				c += pp[k]*wk; n += nn[k]*wk; tv += tt[k]*wk;
 			}
 			double l = n.length ();
 			s.c = c; s.n = l > 0.0 ? n/l : n;
 			s.a = 0.0;
 			for (const Vector &x : pp) s.a = std::max (s.a, (x - c).length ());
+			tv -= s.n*dotp (tv, s.n);                                // L1: this side's surface relative to the other, a - b for side 0
+			double lt = tv.length ();
+			s.tdir = lt >= 1e-6 ? tv/lt : Vector ();
+		};
+		for (int side = 0; side < 2; side++) sideOf (best, side, false, e.s[side]);
+		if (con) {                                                   // L4: every pair that exchanged impulse, before the queue rule
+			CollContactRec cr {};
+			double js = 0.0;
+			int bt = order[g0];
+			for (size_t k = g0; k < g1; k++) {
+				const Rec &q = rec[order[k]];
+				if (q.jsum > rec[bt].jsum) bt = order[k];
+				js += q.jsum; cr.Jn += q.JnT; cr.Jt += q.JtT;
+				cr.vn += q.jsum*q.vapp; cr.vt += q.jsum*q.slip;
+			}
+			if (js > 0.0) {
+				cr.vn /= js; cr.vt /= js; cr.dt = h; cr.flags = e.flags;
+				for (int side = 0; side < 2; side++) sideOf (bt, side, true, cr.s[side]);
+				con->push_back (cr);
+			}
 		}
 		if ((first || !slow) && jsum > 0.0) ev.push_back (e);       // queue rule of 8.1; a pair that exchanged no impulse made no impact
 		g0 = g1;

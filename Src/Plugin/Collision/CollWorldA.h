@@ -7,6 +7,7 @@
 #include <vector>
 #include "CollAddonFrame.h"
 #include "CollCfg.h"
+#include "CollDmgTypes.h"
 #include "CollSdk.h"
 
 struct CollPhysAsm { std::vector<uint32_t> member; uint32_t root = 0; bool stack = false, mixed = false; uint64_t memberHash = 0; }; // E2 CollAssembly
@@ -44,6 +45,8 @@ public:
 	void PS1Snapshot (double simt, double simdt, const std::vector<CollPhysVessel> &v); // reads only
 	void PS3Physics (CollSolveHost &host);         // classification, frame driver, every write
 	const std::vector<CollImpactEvent> &Events () const { return ev; } // PS4: E3 Commit
+	const std::vector<CollFxContact> &Contacts () const { return fxc; } // PS4: dmg3 L4 contacts of the frame, vessel sides, vessel frame
+	void SetNoPair (const std::vector<std::pair<uint32_t, uint32_t>> &v) { noPairV = v; } // dmg3 L5: vessel id pairs skipped by both detectors from the next PS3
 	void PS5Notices ();                            // CONTACT notices (11)
 	void PS6Warp ();                               // warp guard (9.2)
 	void End ();                                   // memory only
@@ -66,6 +69,8 @@ private:
 	std::vector<Snap> snap;
 	std::vector<CollABody> body;
 	std::vector<CollImpactEvent> ev;
+	std::vector<CollFxContact> fxc;
+	std::vector<std::pair<uint32_t, uint32_t>> noPairV;
 	std::vector<CollAWrite> wr;
 	std::vector<Vector> gx;
 	std::vector<uint32_t> queuedNew, jumped;

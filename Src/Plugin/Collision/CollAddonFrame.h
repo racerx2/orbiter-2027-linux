@@ -83,6 +83,7 @@ public:
 	double hRest = 0.1;                            // 7.4 load cap for bodies with engines engaged, from the mirror
 	const CollDetect *FeatDet () const { return featDet; } // the detector whose results the host is asked about now, else NULL
 	std::vector<CollSContact> *conProbe = nullptr; // tests: every contact the island builder made
+	std::vector<CollContactRec> contacts;          // dmg3 L4: owner pairs that exchanged impulse in the last Run, slides included
 	static uint64_t Key (uint8_t kind, uint32_t id) { return ((uint64_t)(kind == COLLB_BASE ? 1 : 0) << 32) | id; }
 private:
 	std::vector<CollAIslandRec> isl;               // last frame's speculative islands (2.1)

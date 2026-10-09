@@ -289,6 +289,10 @@ void CollSession::DeleteVessel (OBJHANDLE h, bool inStep)
 	auto it = idOf.find (h);
 	if (it == idOf.end ()) return;
 	uint32_t id = it->second;
+	if (started && !quiet) {                // dmg3: parts and effects drop the vessel while it is alive
+		if (dmg->fx) dmg->fx->DropVessel (id, (CollH)h);
+		if (dmg->brk) dmg->brk->DropVessel (id, (CollH)h);
+	}
 	vessel[id] = nullptr;
 	idOf.erase (it);
 	if (inStep) queued.push_back (Op { true, id, h });
@@ -370,7 +374,10 @@ void CollSession::PreStep (double simt, double simdt)
 	Clock::time_point d = Clock::now ();
 	dmg->PrePhysics ();
 	Clock::time_point e = Clock::now ();
-	// PS3 physics and every state write
+	// PS3 physics and every state write; dmg3 L5 pair filter first
+	std::vector<std::pair<uint32_t, uint32_t>> np;
+	for (const auto &kv : dmg->noPair) np.push_back (kv.first);
+	phys->SetNoPair (np);
 	phys->PS3Physics (*shost);
 	Clock::time_point f = Clock::now ();
 	// PS4 damage
@@ -380,7 +387,7 @@ void CollSession::PreStep (double simt, double simdt)
 		CollLogF ("Collision impact t=%.6f '%s' '%s' vn=%.4f m/s vsep=%.4f m/s E=%.6g J J=%.6g N s", x.t, Who (x.s[0].owner).c_str (), Who (x.s[1].owner).c_str (),
 			x.vn, x.vn_post, x.dKE, x.Jn);
 	}
-	dmg->Commit (ev, simt);
+	dmg->Commit (ev, simt, &phys->Contacts ());
 	Clock::time_point g = Clock::now ();
 	// PS5 notices: E1 CONTACT, then E3
 	phys->PS5Notices ();
@@ -403,6 +410,16 @@ void CollSession::TimeJump ()
 	static_cast<PhysGeomA &> (*pgeom).pvel.clear ();
 	phys->OnTimeJump ();
 	geom->TimeJump ();
+	if (started) {                          // dmg3: effects and parts
+		if (dmg->fx) dmg->fx->TimeJump ();
+		if (dmg->brk) dmg->brk->TimeJump ();
+	}
+}
+
+void CollSession::Quiet ()
+{
+	quiet = true;
+	if (started && dmg && dmg->fx) dmg->fx->Quiet ();
 }
 
 void CollSession::VesselJump (OBJHANDLE h)

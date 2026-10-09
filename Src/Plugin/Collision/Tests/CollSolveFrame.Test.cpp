@@ -937,3 +937,50 @@ TEST_CASE ("fix1 n2: a near half turn between tau and t1 keeps the contact norma
 		} else REQUIRE (std::fabs (f.v[1].y) < 0.5);                          // a moderate turn keeps the rotated mean normal
 	}
 }
+
+TEST_CASE ("dmg3 L1/L4 through the driver: glancing spheres give the slip direction per side and one contact with the total impulse", "[CollSolveFrame]")
+{
+	Geo sph (SphereMesh (1.0, 12, 16));
+	const double h = 1.0/64.0, d0 = 1.0390625;
+	for (double vy : { 0.0, 1.0 }) {
+		CollDetect det;
+		det.Begin (CollParams (), h);
+		CollBody A = MakeBody (Vector (-d0, 0, 0), Vector (2, vy, 0), h, 1, COLLB_DYNAMIC, { MakePart (&sph.geom, 1, 1) });
+		CollBody B = MakeBody (Vector (d0, 0, 0), Vector (-2, 0, 0), h, 2, COLLB_DYNAMIC, { MakePart (&sph.geom, 2, 1) });
+		REQUIRE (det.AddBody (A) == 0);
+		REQUIRE (det.AddBody (B) == 1);
+		std::vector<CollPairResult> res;
+		CollFrameStats st {};
+		det.Detect (res, st);
+		REQUIRE (res.size () == 1);
+		std::vector<CollFrameBody> fb { MakeFB (A, true, 500, Vector (2.28, 2.31, 0.79)), MakeFB (B, true, 500, Vector (2.28, 2.31, 0.79)) };
+		Host host; host.det = &det;
+		CollFrameSolver fs;
+		std::vector<CollContactRec> con;
+		fs.contacts = &con;
+		std::vector<CollBodyDelta> delta;
+		std::vector<CollImpactEvent> ev;
+		fs.Run (det, res, fb, h, 100.0, CollSolveParams (), COLL_TOI_ROUNDS, host, delta, ev);
+		REQUIRE (ev.size () == 1);
+		REQUIRE (con.size () == 1);
+		const CollContactRec &c = con[0];
+		CAPTURE (vy, ev[0].Jn, ev[0].vt, c.Jn, c.Jt, c.vt, c.vn, ev[0].s[0].tdir.y, c.s[0].tdir.y);
+		REQUIRE (c.dt == h);
+		REQUIRE (c.Jn >= ev[0].Jn*(1.0 - 1e-9));
+		REQUIRE (std::fabs (c.vn - ev[0].vn) <= 0.01*ev[0].vn);
+		REQUIRE (c.s[0].owner.vesselId == ev[0].s[0].owner.vesselId);
+		REQUIRE ((c.s[0].c - ev[0].s[0].c).length () <= 1e-6);
+		if (vy == 0.0) {
+			for (int s = 0; s < 2; s++) { REQUIRE (ev[0].s[s].tdir.length () == 0.0); REQUIRE (c.s[s].tdir.length () == 0.0); }
+			continue;
+		}
+		REQUIRE (std::fabs (c.vt - ev[0].vt) <= 1e-9);                 // facetted sphere: the normal tilts, slip above vy
+		REQUIRE (c.vt > 0.5*vy);
+		REQUIRE (c.Jt > 0.0);
+		REQUIRE (ev[0].s[0].tdir.y > 0.95);                           // A slides +y over B
+		REQUIRE (ev[0].s[1].tdir.y < -0.95);
+		REQUIRE (c.s[0].tdir.y > 0.95);
+		REQUIRE (c.s[1].tdir.y < -0.95);
+		REQUIRE (std::fabs (dotp (ev[0].s[0].tdir, ev[0].s[0].n)) <= 1e-9);
+	}
+}

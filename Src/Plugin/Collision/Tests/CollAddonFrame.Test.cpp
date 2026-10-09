@@ -581,3 +581,80 @@ TEST_CASE ("fix2 Resolve0: past-check pairs spanning two components: every owner
 	REQUIRE (missed > 0);
 	g_collLog = nullptr;
 }
+
+TEST_CASE ("dmg3 L4/L1: a box sliding on a roof gives one contact per frame, vt the sliding speed, Jn m g h, tdir along the slide", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	for (double h : { 1.0/60.0, 0.05 }) {
+		Sim S;
+		S.g = Vector (0, -9.81, 0);
+		S.baseGeo = std::make_shared<Geo> (BoxMesh (Vector (200, 1, 200)));
+		S.basePos = Vector (0, -1, 0);
+		auto box = std::make_shared<Geo> (BoxMesh (Vector (1, 0.5, 1)));
+		const double m = 1000;
+		S.Add (box, m, Vector ((0.25 + 1)/3, 2.0/3, (1 + 0.25)/3), Vector (0, 0.5 + 0.04 + 0.02, 0), Vector (15, 0, 0), 1.6);
+		int frames = 0;
+		for (int f = 0; f*h < 2.0; f++) {
+			double vx = S.tb[0].o.s.vel.x;
+			S.Frame (h);
+			if (f*h < 0.5) continue;
+			frames++;
+			CAPTURE (h, f, vx, S.fr.contacts.size ());
+			REQUIRE (S.fr.contacts.size () == 1);
+			const CollContactRec &c = S.fr.contacts[0];
+			int sv = c.s[0].owner.vesselId == 1 ? 0 : 1;
+			CAPTURE (c.vt, c.Jn, c.Jt, c.dt, c.s[sv].tdir.x, c.s[sv].tdir.y, c.s[sv].tdir.z, c.s[sv].n.y);
+			REQUIRE (c.s[sv].owner.vesselId == 1);
+			REQUIRE (c.s[1 - sv].owner.vesselId == 0);
+			REQUIRE (c.dt == h);
+			REQUIRE (std::fabs (c.vt - vx) <= 0.05*vx + 0.05);
+			REQUIRE (std::fabs (c.Jn - m*9.81*h) <= 0.1*m*9.81*h);
+			REQUIRE (std::fabs (c.Jt - COLL_MU*c.Jn) <= 0.1*c.Jn);
+			REQUIRE (c.s[sv].tdir.x > 0.99);                   // the box's surface moves +x relative to the roof
+			REQUIRE (c.s[1 - sv].tdir.x < -0.99);
+			REQUIRE (std::fabs (dotp (c.s[sv].tdir, c.s[sv].n)) <= 1e-9);
+		}
+		CAPTURE (h, S.events);
+		REQUIRE (frames > 0);
+		REQUIRE (S.events <= 1);                               // the slide is a contact, not an event
+		REQUIRE (S.fr.Stats ().checkFail == 0);
+	}
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("dmg3 L1: event slip direction of a glancing hit, zero for a head-on one", "[CollAddonFrame]")
+{
+	for (double vy : { 0.0, 3.0 }) {
+		Sim S;
+		auto sph = std::make_shared<Geo> (SphereMesh (1.0, 12, 24));
+		S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (-2.5, 0, 0), Vector (5, vy, 0), 1.05);
+		S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (2.5, 0, 0), Vector (-5, 0, 0), 1.05);
+		for (int f = 0; f < 60 && S.evs.empty (); f++) S.Frame (1.0/60.0);
+		REQUIRE (S.evs.size () == 1);
+		const CollImpactEvent &e = S.evs[0];
+		int s1 = e.s[0].owner.vesselId == 1 ? 0 : 1;
+		CAPTURE (vy, e.vt, e.s[s1].tdir.x, e.s[s1].tdir.y, e.s[1 - s1].tdir.y);
+		if (vy == 0.0) { REQUIRE (e.s[0].tdir.length () == 0.0); REQUIRE (e.s[1].tdir.length () == 0.0); continue; }
+		REQUIRE (e.s[s1].tdir.y > 0.9);                        // body 1 slides +y over body 2
+		REQUIRE (e.s[1 - s1].tdir.y < -0.9);
+		REQUIRE (std::fabs (e.s[s1].tdir.length () - 1.0) <= 1e-9);
+	}
+}
+
+TEST_CASE ("dmg3 L5: a filtered body pair passes through without contacts or events, another pair still collides", "[CollAddonFrame]")
+{
+	for (int filt : { 1, 0 }) {
+		Sim S;
+		auto sph = std::make_shared<Geo> (SphereMesh (1.0, 12, 24));
+		S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (-2.5, 0, 0), Vector (5, 0, 0), 1.05);
+		S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (2.5, 0, 0), Vector (-5, 0, 0), 1.05);
+		S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (0, 8, 0), Vector (), 1.05);
+		std::vector<std::pair<uint32_t, uint32_t>> np { filt ? std::make_pair (2u, 1u) : std::make_pair (1u, 3u) };
+		S.fwd.SetNoPair (np); S.ver.SetNoPair (np);
+		int con = 0;
+		for (int f = 0; f < 60; f++) { S.Frame (1.0/60.0); con += (int)S.fr.contacts.size (); }
+		CAPTURE (filt, con, S.events, S.tb[0].o.s.pos.x);
+		if (filt) { REQUIRE (con == 0); REQUIRE (S.events == 0); REQUIRE (S.tb[0].o.s.pos.x > 2.0); }
+		else { REQUIRE (con > 0); REQUIRE (S.events == 1); REQUIRE (S.tb[0].o.s.pos.x < 0.0); }
+	}
+}
