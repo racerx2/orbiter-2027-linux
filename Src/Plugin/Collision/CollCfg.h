@@ -24,6 +24,19 @@ struct CollCfgValues {
 	bool recorder = true;                   // CollisionRecorder (E3)
 	std::string testRecId;                  // CollisionTestRecId (E3, tests): fixed side-file id
 	int testSlotCheck = 0;                  // CollisionTestSlotCheck (E2, tests): slot check in post-step stage PO3
+	bool dentModes = true;                  // CollisionDentModes (dmg3 S): crush and hinge dents; false bowl only
+	bool dentNoise = true;                  // CollisionDentNoise (dmg3 S)
+	bool dentFacetNormals = true;           // CollisionDentFacetNormals (dmg3 S)
+	bool brk = true;                        // CollisionBreak (dmg3 P): parts, glass and interior break
+	int debrisMax = 8;                      // CollisionDebrisMax (dmg3 P): live debris vessels
+	double debrisLife = 1800;               // CollisionDebrisLife (dmg3 P) [s]
+	bool fx = true;                         // CollisionFx (dmg3 F)
+	int fxMask = 15;                        // CollisionFxMask (dmg3 F): 1 flakes, 2 vent, 4 sparks, 8 dust
+	double fxIntensity = 1;                 // CollisionFxIntensity (dmg3 F): 0..2
+	bool fxPlayback = true;                 // CollisionFxPlayback (dmg3 F)
+	double fxVentSpec = 150;                // CollisionFxVentSpec (dmg3 F) [J/kg]
+	int fxMaxStreams = 24;                  // CollisionFxMaxStreams (dmg3 F): at most 32
+	bool fxRollDust = false;                // CollisionFxRollDust (dmg3 F)
 };
 
 // every key in file order, with its field; Read, Keys and the template test walk this one list; CollisionCfgVersion is the build's (cmake/CollisionCfgOnce.cmake)
@@ -47,6 +60,19 @@ template <class V, class F> void CollCfgFields (V &v, F &&f)
 	f ("CollisionRecorder", v.recorder);
 	f ("CollisionTestRecId", v.testRecId);
 	f ("CollisionTestSlotCheck", v.testSlotCheck);
+	f ("CollisionDentModes", v.dentModes);
+	f ("CollisionDentNoise", v.dentNoise);
+	f ("CollisionDentFacetNormals", v.dentFacetNormals);
+	f ("CollisionBreak", v.brk);
+	f ("CollisionDebrisMax", v.debrisMax);
+	f ("CollisionDebrisLife", v.debrisLife);
+	f ("CollisionFx", v.fx);
+	f ("CollisionFxMask", v.fxMask);
+	f ("CollisionFxIntensity", v.fxIntensity);
+	f ("CollisionFxPlayback", v.fxPlayback);
+	f ("CollisionFxVentSpec", v.fxVentSpec);
+	f ("CollisionFxMaxStreams", v.fxMaxStreams);
+	f ("CollisionFxRollDust", v.fxRollDust);
 }
 
 namespace CollCfg {

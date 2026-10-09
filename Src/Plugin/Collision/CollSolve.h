@@ -43,6 +43,7 @@ struct CollImpactSide {
 	int mesh, grp, tri;      // hit render feature, original triangle index, -1 if unknown
 	Vector c, n;             // contact centroid and outward normal in the hit part's rest frame (base frame for buildings)
 	double a;                // contact patch radius [m]
+	Vector tdir;             // dmg3 L1: unit slip direction of this side's surface relative to the other, hit part rest frame; zero below 1e-6 m/s
 };
 struct CollImpactEvent {
 	CollImpactSide s[2];

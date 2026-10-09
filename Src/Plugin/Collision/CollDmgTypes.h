@@ -1,0 +1,58 @@
+// not upstream: collision addon, dmg3 interfaces between damage (area S), parts (area P) and effects (area F) (design-CA-dmg3)
+#ifndef COLLDMGTYPES_H
+#define COLLDMGTYPES_H
+#include <cstdint>
+#include <memory>
+#include "CollSdk.h"
+#include "DentMath.h"
+#include "Vecmat.h"
+
+class CollShape;
+class CollDmgSession;
+struct CollCfgValues;
+
+struct CollDamageHit {                                   // one vessel side of a dent event, vessel frame (L2)
+	uint32_t id = 0, other = 0; CollH h = nullptr;       // vessel; other vessel id, 0 building
+	uint32_t mesh = 0; int grp = -1, tri = -1, rec = -1; // hit render feature; record index in the vessel's list
+	Vector c, n, tdir;                                   // contact centre, outward normal, slip direction of this side
+	double E = 0, eSpec = 0, Esurplus = 0;               // J, J/kg of empty mass, J the capped solve could not place
+	double R = 0, depth = 0;                             // dent radius, max displacement of this event [m]
+	uint32_t mode = 0;                                   // DentParams mode
+	double vn = 0, vt = 0;                               // approach and slip speed [m/s]
+	uint32_t evflags = 0;                                // COLLEV_*
+	double simt = 0; bool playback = false;
+	const DentMaterial *mat = nullptr;
+};
+enum : int { CBRK_PART = 0, CBRK_GLASS = 1, CBRK_INTERIOR = 2 };
+struct CollBreakEvent { uint32_t id = 0; int kind = 0; Vector c, n; double r = 0; bool playback = false; }; // vessel frame (L3)
+struct CollFxContact {                                   // one vessel side of a contact pair this frame, slides included (L4)
+	uint32_t id = 0; CollH h = nullptr;
+	Vector c, n, tdir;                                   // vessel frame
+	double vn = 0, vt = 0, Jn = 0, Jt = 0, dt = 0;       // speeds [m/s]; total normal and tangent impulse of the frame [N s]; frame step [s]
+	uint32_t flags = 0; bool building = false, playback = false;
+	Vector nOther;                                       // building frame normal (buildings)
+	const DentMaterial *mat = nullptr, *matOther = nullptr;
+};
+
+// hooks of the parts (P) and effects (F) units; CollDmgSession calls them, defaults do nothing
+class CollDmgSink {
+public:
+	virtual ~CollDmgSink () {}
+	virtual void Hit (const CollDamageHit &) {}
+	virtual void Break (const CollBreakEvent &) {}
+	virtual void Contact (const CollFxContact &) {}
+	virtual void Destroyed (uint32_t) {}
+	virtual void Shapes (uint32_t, CollShape *) {}       // PS2: shapes updated (collider hide re-apply)
+	virtual void Post (double, double) {}                // post-step after the visual pass: simt, simdt
+	virtual void Pass () {}                              // key and pause passes
+	virtual void Torn (uint32_t, const DentTorn &) {}    // playback or load: one torn row to apply
+	virtual void Repair (uint32_t) {}
+	virtual void DropVessel (uint32_t, CollH) {}         // vessel about to be deleted, still alive
+	virtual void TimeJump () {}
+	virtual void End () {}                               // clbkSimulationEnd: no client call except mesh frees allowed by the unit
+	virtual void Quiet () {}                             // failure path: stop emitting, no SDK call
+	virtual bool Hidden (uint32_t, uint32_t, uint32_t) const { return false; } // id, mesh, group hidden by parts
+};
+std::unique_ptr<CollDmgSink> CollMakeBreak (CollSdk &sdk, CollDmgSession &s, const CollCfgValues &cfg); // CollBreakA.cpp
+std::unique_ptr<CollDmgSink> CollMakeFx (CollSdk &sdk, CollDmgSession &s, const CollCfgValues &cfg);    // CollFxA.cpp
+#endif

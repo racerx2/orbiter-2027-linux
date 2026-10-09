@@ -304,6 +304,8 @@ protected:
 		(void)d; return false;
 #endif
 	}
+public: // dmg3 area P
+public: // dmg3 area F
 };
 } // namespace
 

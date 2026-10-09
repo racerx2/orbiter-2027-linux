@@ -4,5 +4,5 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/CollSdk.cpp) # the counted SDK calls of E
 	if (NOT CollSdk IN_LIST COLL_UNITS)
 		list(APPEND COLL_UNITS CollSdk)
 	endif ()
-	list(APPEND COLL_UNITS CollVisualA CollDamageA CollApiA)
+	list(APPEND COLL_UNITS CollVisualA CollBreakA CollFxA CollDamageA CollApiA)
 endif ()

@@ -95,11 +95,14 @@ struct DentInput {
 enum { DENT_OK = 0, DENT_SMALL = 1, DENT_NOSURFACE = 2, DENT_FLOOR_CAP = 3 }; // Solve: record, below 2 mm, S = 0 or beyond DENT_LIM_*; FLOOR_CAP: Damage's building cap only
 
 // one vessel's damage as the text format sees it (9.2)
+// one torn-off, broken or hidden group set of a vessel slot (dmg3 area P rows, area S line format)
+struct DentTorn { uint8_t kind = 0; uint32_t slot = 0, key = 0; uint16_t ngrp = 0; uint32_t nvtx = 0; double simt = 0; std::string debris; std::vector<uint16_t> grp; };
 struct DentVesselText {
 	double eabs = 0; uint32_t flags = 0;          // XDMG: 1 destroyed, 2 module handles effects, 4 catastrophic seen
 	std::vector<DentRecord> rec;                  // application order
 	std::vector<std::string> slotName;            // mesh name per slot for XDMGM (readers only); may be shorter than the slot count
 	std::vector<std::string> verbatim;            // XDMG* lines of unknown-version sections, <= 200 characters, written before the version-1 lines
+	std::vector<DentTorn> torn;                   // dmg3: parts gone (area P decides, area S saves)
 };
 // building damage section (9.4)
 struct DentBaseObjText { uint32_t index; std::string type; double x, z, eabs; uint32_t flags; }; // OBJ line

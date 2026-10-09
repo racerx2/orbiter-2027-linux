@@ -42,7 +42,16 @@ uint32_t NoticeFlags (uint32_t xf, bool cut)
 
 }
 
-CollDmgSession::CollDmgSession (CollSdk &s, CollDmgHost &h, const CollCfgValues &c) : vis (s, h, c), sdk (s), host (h), cfg (c) {}
+CollDmgSession::CollDmgSession (CollSdk &s, CollDmgHost &h, const CollCfgValues &c) : vis (s, h, c), sdk (s), host (h), cfg (c)
+{
+	if (c.brk) brk = CollMakeBreak (s, *this, c);
+	if (c.fx) fx = CollMakeFx (s, *this, c);
+}
+
+void CollDmgSession::AddTorn (uint32_t id, const DentTorn &t)
+{
+	Get (id).d.torn.push_back (t);
+}
 
 void CollDmgSession::Log (const char *fmt, ...)
 {
@@ -335,7 +344,7 @@ double CollDmgSession::Threshold (uint32_t id) const
 	return e >= 0 ? e : cfg.destroyEnergy;
 }
 
-void CollDmgSession::Commit (const std::vector<CollImpactEvent> &ev, double simt)
+void CollDmgSession::Commit (const std::vector<CollImpactEvent> &ev, double simt, const std::vector<CollFxContact> *contacts)
 {
 	if (!begun) return;
 	if (!matched) MatchAll ();

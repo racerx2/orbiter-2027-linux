@@ -8,8 +8,10 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <memory>
 #include "CollCfg.h"
 #include "CollDmgHost.h"
+#include "CollDmgTypes.h"
 #include "CollSdk.h"
 #include "CollShape.h"
 #include "CollSolve.h"
@@ -66,7 +68,7 @@ public:
 	}
 	void ShapesUpdatedEv (uint32_t id, CollShape *shape, const std::vector<CollDmgSlotEv> &ev);
 	void PrePhysics ();                                                      // PS2b: repairs, playback, recording link check
-	void Commit (const std::vector<CollImpactEvent> &ev, double simt);       // PS4
+	void Commit (const std::vector<CollImpactEvent> &ev, double simt, const std::vector<CollFxContact> *contacts = nullptr); // PS4; contacts: dmg3 L4
 	void SendNotices ();                                                     // PS5, after E1's CONTACT notices
 	void EndFrame ();                                                        // PS7: thrust cut, last
 	// other callbacks
@@ -91,6 +93,10 @@ public:
 	std::string sideDir = "Flights/_Collision";                             // recorder side files (8.3)
 	CollE3Counters n;
 	CollVisualA vis;
+	// dmg3: parts (P) and effects (F) units, null when off; pair filter written by P, read by the session (L5)
+	std::unique_ptr<CollDmgSink> brk, fx;
+	std::map<std::pair<uint32_t, uint32_t>, double> noPair;                  // vessel ids (low, high) -> simt the filter was set
+	void AddTorn (uint32_t id, const DentTorn &t);                           // P: record a torn row (saved, recorder T event)
 private:
 	VesselDamageA *Find (uint32_t id);
 	VesselDamageA &Get (uint32_t id);

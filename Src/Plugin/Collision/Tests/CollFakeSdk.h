@@ -199,5 +199,7 @@ public: // fix2 area E
 	std::map<const Ves *, Vector> velE;        // GlobalState velocity per vessel; absent: zero, as before
 	int damageModelE = 0;                      // DamageModel for every vessel
 	bool TankDead (CollH tk) { auto *t = (const struct Tank *)tk; if (t && t->alive) return false; Bad ("deleted tank"); return true; } // a deleted tank's handle is dead
+public: // dmg3 area P
+public: // dmg3 area F
 };
 #endif

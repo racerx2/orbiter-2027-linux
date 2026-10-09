@@ -166,6 +166,8 @@ protected:
 	virtual int   DoRegisterCmd (const char *label, const char *desc, CollCmdFn fn, void *ctx) = 0;
 	virtual void  DoUnregisterCmd (int id) = 0;
 	virtual bool  DoOpenDialog (void *imguiDialog) = 0;         // only called with imgui
+public: // dmg3 area P
+public: // dmg3 area F
 private:
 	CollSdkCount cnt;
 	double noteUntil = -1;                                      // system time the annotation expires, -1 none
