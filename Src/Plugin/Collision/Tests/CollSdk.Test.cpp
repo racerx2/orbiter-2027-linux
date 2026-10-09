@@ -80,3 +80,32 @@ TEST_CASE ("fix1 E: CollGuard stops every exception and reports it to the hook",
 	CHECK (CollGuard ("f", 0, [] () -> int { throw std::logic_error ("x"); }) == 0); // no hook: dropped
 	CHECK (got.size () == 3);
 }
+
+TEST_CASE ("fix2 E: the fake's deleted tanks are dead; empty mass, velocity and damage model default as before", "[CollSdk]")
+{
+	CollFakeSdk s;
+	auto *v = s.AddVessel ("GL-01");
+	v->rd.m = 1000;
+	CollH tk = s.CreateTank (v, 10, 5);
+	REQUIRE (s.TankMass (v, tk) == 5);
+	s.DelTank (v, tk);
+	REQUIRE (s.misuse == 0);
+	REQUIRE (s.TankCount (v) == 0);
+	REQUIRE (s.TankMass (v, tk) == 0);
+	s.SetTankMass (v, tk, 1);
+	s.DelTank (v, tk);
+	REQUIRE (s.misuse == 3);
+	REQUIRE (s.EmptyMass (v) == 1000);
+	s.emptyMassE[v] = 600;
+	REQUIRE (s.EmptyMass (v) == 600);
+	Vector x, u;
+	Matrix R;
+	s.GlobalState (v, x, u, R);
+	REQUIRE (u.x == 0);
+	s.velE[v] = Vector (1, 2, 3);
+	s.GlobalState (v, x, u, R);
+	REQUIRE ((u.x == 1 && u.y == 2 && u.z == 3));
+	REQUIRE (s.DamageModel (v) == 0);
+	s.damageModelE = 1;
+	REQUIRE (s.DamageModel (v) == 1);
+}

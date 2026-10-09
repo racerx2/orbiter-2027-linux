@@ -72,7 +72,7 @@ public:
 	{
 		vel = Vector ();
 		for (auto &b : bodies) if (&b == h) { pos = b.pos; R = b.R; return; }
-		if (Ves *v = V (h)) { pos = v->rd.x; R = v->rd.R; }
+		if (Ves *v = V (h)) { pos = v->rd.x; R = v->rd.R; auto it = velE.find (v); if (it != velE.end ()) vel = it->second; }
 	}
 	uint32_t GbodyCount () override { return (uint32_t)gbody.size (); }
 	CollH Gbody (uint32_t i) override { return i < gbody.size () ? gbody[i] : nullptr; }
@@ -88,10 +88,10 @@ public:
 	double Warp () override { return warp; }
 	// vessel reads
 	void ReadVessel (CollH v, CollVesselRead &out, uint32_t) override { if (Ves *x = V (v)) { out = x->rd; out.sv = x->sv; } }
-	double EmptyMass (CollH v) override { Ves *x = V (v); return x ? x->rd.m : 0; }
+	double EmptyMass (CollH v) override { Ves *x = V (v); if (!x) return 0; auto it = emptyMassE.find (x); return it != emptyMassE.end () ? it->second : x->rd.m; }
 	bool Recording (CollH) override { return false; }
 	bool Playback (CollH) override { return false; }
-	int DamageModel (CollH) override { return 0; }
+	int DamageModel (CollH) override { return damageModelE; }
 	// meshes and animations
 	uint32_t MeshCount (CollH v) override { Ves *x = V (v); calls.push_back ("MeshCount"); return x ? (uint32_t)x->slot.size () : 0; }
 	CollH MeshTemplate (CollH v, uint32_t i) override { Ves *x = V (v); return (x && i < x->slot.size () && x->slot[i].kind == TPL) ? x->slot[i].tpl : nullptr; }
@@ -126,8 +126,8 @@ public:
 	CollH ThrusterTank (CollH, CollH) override { return nullptr; }
 	uint32_t TankCount (CollH v) override { Ves *x = V (v); return x ? (uint32_t)x->tankList.size () : 0; }
 	CollH Tank (CollH v, uint32_t i) override { Ves *x = V (v); return (x && i < x->tankList.size ()) ? x->tankList[i] : nullptr; }
-	double TankMass (CollH, CollH tk) override { return ((const struct Tank *)tk)->mass; }
-	double TankMaxMass (CollH, CollH tk) override { return ((const struct Tank *)tk)->max; }
+	double TankMass (CollH, CollH tk) override { return TankDead (tk) ? 0 : ((const struct Tank *)tk)->mass; }
+	double TankMaxMass (CollH, CollH tk) override { return TankDead (tk) ? 0 : ((const struct Tank *)tk)->max; }
 	// visuals and the client
 	CollH Visual (CollH v) override { Ves *x = V (v); return x ? x->visual : nullptr; }
 	CollH DevMesh (CollH, CollH vis, uint32_t) override { if (!vis) Bad ("DevMesh NULL visual"); return nullptr; }
@@ -173,10 +173,10 @@ protected:
 		if (x && applyWrites) x->rd.w = w;
 	}
 	void DoAddForce (CollH v, const Vector &F, const Vector &r) override { wr.push_back ({ 'F', v, F, r, Matrix (), CollStateWrite {} }); }
-	void DoSetTank (CollH, CollH, CollH) override {}
+	void DoSetTank (CollH, CollH, CollH tank) override { if (tank) TankDead (tank); }
 	CollH DoCreateTank (CollH v, double maxMass, double mass) override { Ves *x = V (v); if (!x) return nullptr; x->tank.push_back ({ maxMass, mass, true }); x->tankList.push_back (&x->tank.back ()); return &x->tank.back (); }
-	void DoDelTank (CollH v, CollH tank) override { Ves *x = V (v); if (!x) return; for (size_t i = 0; i < x->tankList.size (); i++) if (x->tankList[i] == tank) { x->tankList.erase (x->tankList.begin () + i); break; } }
-	void DoSetTankMass (CollH, CollH tank, double m) override { ((struct Tank *)tank)->mass = m; }
+	void DoDelTank (CollH v, CollH tank) override { Ves *x = V (v); if (!x || TankDead (tank)) return; for (size_t i = 0; i < x->tankList.size (); i++) if (x->tankList[i] == tank) { x->tankList.erase (x->tankList.begin () + i); break; } ((struct Tank *)tank)->alive = false; }
+	void DoSetTankMass (CollH, CollH tank, double m) override { if (!TankDead (tank)) ((struct Tank *)tank)->mass = m; }
 	void DoSetWarp (double w) override { warp = w; }
 	int DoWriteVtx (CollH, uint32_t, const uint16_t *, uint32_t, const DentVtx *) override { return -1; }
 	int DoSetClientMatrix (int, CollH, uint32_t, uint32_t, const float *) override { return -1; }
@@ -193,5 +193,10 @@ protected:
 	int DoRegisterCmd (const char *, const char *, CollCmdFn, void *) override { return cmdNext++; }
 	void DoUnregisterCmd (int) override {}
 	bool DoOpenDialog (void *) override { dialogs++; return true; }
+public: // fix2 area E
+	std::map<const Ves *, double> emptyMassE;  // EmptyMass per vessel; absent: rd.m, as before
+	std::map<const Ves *, Vector> velE;        // GlobalState velocity per vessel; absent: zero, as before
+	int damageModelE = 0;                      // DamageModel for every vessel
+	bool TankDead (CollH tk) { auto *t = (const struct Tank *)tk; if (t && t->alive) return false; Bad ("deleted tank"); return true; } // a deleted tank's handle is dead
 };
 #endif
