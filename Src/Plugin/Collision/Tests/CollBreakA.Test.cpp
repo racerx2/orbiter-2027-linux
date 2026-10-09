@@ -964,3 +964,32 @@ TEST_CASE ("blast P8: pieces split off by Blast keep the dmg3 part gates: approa
 	CHECK (CollPieceHeld (p, h));                                     // the dock pin holds
 	h.vn = 70; h.eSpec = 550; CHECK (!CollPieceHeld (p, h));          // and lets go above the tear threshold
 }
+
+TEST_CASE ("blast P9: skin crushed beyond the part ratio tears off as fragments at 70 m/s, not at 15 m/s; fragments keep no crush record", "[dmg3P][blast]")
+{
+	size_t brk[2] = { 0, 0 }, crushedDebris = 0;
+	for (int k = 0; k < 2; k++) {
+		double vn = k ? 70 : 15;
+		INFO ("vn " << vn);
+		BlastRig r; uint32_t a = r.Ship ("A");
+		DentRecord rc {};
+		rc.slot = 0; rc.key = DentMath::MeshKey ("ship"); rc.ngrp = 6; rc.nvtx = 6 * 49; rc.grp = { 0, 1, 2, 3, 4, 5 };
+		rc.p.mode = DENTM_CRUSH; rc.p.c = Vector (0.3, 0.2, 2); rc.p.n = Vector (0, 0, 1); rc.p.t = Vector (1, 0, 0); rc.p.R = 2.5; rc.p.P = 1.5; rc.p.h = 1.5;
+		REQUIRE (r.S ().AddCut (a, rc, true));
+		CollDamageHit h = r.K (vn, 0.01);                            // tiny impact radius: the crush decides
+		h.rec = (int)r.S ().Damage (a)->d.rec.size () - 1;
+		r.B ().Hit (h);
+		r.sdk.simt = 0.02;
+		r.B ().Post (0.02, 0.02);
+		brk[k] = r.B ().blastBreaks;
+		for (auto &d : r.B ().Debris ()) {
+			bool crush = false;
+			for (auto &x : d.row.rec) if (x.p.mode == DENTM_CRUSH) crush = true;
+			if (!crush) crushedDebris++;
+			CHECK (d.row.mass >= BRK_MIN_MASS);
+		}
+	}
+	CHECK (brk[0] == 0);                                             // 15 m/s: below the part speed, the crush only dents
+	CHECK (brk[1] >= 3);                                             // 70 m/s: the crushed face tears into fragments
+	CHECK (crushedDebris >= 3);
+}

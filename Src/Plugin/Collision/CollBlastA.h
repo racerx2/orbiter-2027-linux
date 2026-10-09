@@ -37,9 +37,9 @@ struct CollBlastInput {                      // triangles of one slot, rest fram
 	double size = 10, mass = 1000;           // Size [m], EmptyMass [kg]
 	int maxCells = 64;                       // cfg.blastCells
 };
-struct CollBlastChunk { int cell = -1, piece = -1; Vector c; double area = 0, mass = 0; };
+struct CollBlastChunk { int cell = -1, piece = -1; Vector c; double area = 0, mass = 0; std::vector<Vector> pts; }; // pts: triangle corners (rest frame)
 struct CollBlastBond { uint32_t a = 0, b = 0; double area = 0, len = 0; Vector c, n; uint32_t asset = 0; bool prox = false; }; // chunks a < b; asset: Blast bond index; prox: joins an unwelded island
-struct CollBlastSplit { std::vector<uint32_t> chunks; double mass = 0; Vector c, n; }; // one actor separated from the main one: chunks, mass, centroid, unit kick direction (rest frame)
+struct CollBlastSplit { std::vector<uint32_t> chunks; double mass = 0; Vector c, n; bool crushed = false; }; // one actor separated from the main one: chunks, mass, centroid, unit kick direction (rest frame)
 
 class CollBlastA {
 public:
@@ -54,6 +54,8 @@ public:
 	void Force (const Vector &c, const Vector &F);          // contact force [N] at c, applied at the next Step
 	void Spin (const Vector &com, const Vector &w);         // centrifugal load of the vessel spin [rad/s] about com
 	void Impact (const Vector &c, double R, double damage); // impact spread damage 0..1 within R of c
+	void Crush (const Vector &c, const Vector &n, double P, double R, double ratio); // crush plane P behind c (outward n) within R: chunks with >= ratio of their depth in front of it fracture off
+	std::vector<uint32_t> Crushed (const Vector &c, const Vector &n, double P, double R, double ratio) const; // main-actor chunks the crush takes
 	std::vector<CollBlastSplit> Step ();                    // impact, stress update, fracture, split: actors that left the main one
 	void Restore (const std::vector<uint32_t> &bonds, const std::vector<uint32_t> &removed, const std::vector<uint32_t> &weak = {}); // load: broken bonds, removed chunks, weakened bonds (W rows), split, no reports
 	std::vector<uint32_t> WeakPairs () const;               // W rows: chunk key pair, remaining health x 1e6 (1..999999), sorted by pair
@@ -89,6 +91,7 @@ private:
 	std::vector<std::pair<Vector, Vector>> force;
 	Vector com, w; bool spin = false;
 	Vector impC; double impR = 0, impD = 0;
+	Vector crC, crN; double crP = 0, crR = 0, crRatio = 1;
 	Vector cg;
 };
 #endif

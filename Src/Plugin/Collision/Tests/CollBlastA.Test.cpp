@@ -1,5 +1,6 @@
 // not upstream: blast unit tests: deterministic sites and bonds, small hit, 70 m/s-class hit, per-frame budget, load restores the actors (design-CA-blast 2, 7)
 #include <catch2/catch_test_macros.hpp>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -168,4 +169,38 @@ TEST_CASE ("blast 5: bond health is the bond area; unwelded islands join the nea
 	b.Spin (Vector (3, 0, 0), Vector (0, 0.2, 0));
 	CHECK (b.Step ().empty ());                                       // the first solve does not throw the island off
 	CHECK (b.Partition ().size () == 1);
+}
+
+TEST_CASE ("blast 6: a crush plane tears off the chunks with >= 0.6 of their depth in front of it, as fragments sprayed sideways", "[blast]")
+{
+	CollBlastInput in = Box (4, 6, 5000, 10);
+	CollBlastA a;
+	REQUIRE (a.Build (in));
+	Vector c (0, 0, 2), n (0, 0, 1);                                 // contact on the +z face, outward normal
+	std::vector<uint32_t> none = a.Crushed (c, n, 0.2, 10, 0.6);     // a shallow crush takes only cells of the face itself
+	for (uint32_t k : none) { double zmin = 1e300; for (auto &p : a.chunk[k].pts) zmin = std::min (zmin, p.z); CHECK (zmin >= 2 - 0.2 / 0.6 - 1e-9); }
+	std::vector<uint32_t> cc = a.Crushed (c, n, 1.5, 10, 0.6);
+	REQUIRE (!cc.empty ());
+	for (uint32_t k = 0; k < a.chunk.size (); k++) {
+		double zmin = 1e300, zmax = -1e300;
+		for (auto &p : a.chunk[k].pts) zmin = std::min (zmin, p.z), zmax = std::max (zmax, p.z);
+		double f = zmax - zmin > 1e-9 ? (zmax - (2 - 1.5)) / (zmax - zmin) : (zmax >= 0.5 ? 1.0 : 0.0);
+		bool in = std::find (cc.begin (), cc.end (), k) != cc.end ();
+		CHECK (in == (f >= 0.6));                                    // exactly the chunks crushed over 60 % of their depth
+	}
+	CHECK (a.Crushed (c, n, 1.5, 0.5, 0.6).size () < cc.size ());   // the radius bounds it
+	a.Crush (c, n, 1.5, 10, 0.6);
+	std::vector<CollBlastSplit> sp = a.Step ();
+	REQUIRE (!sp.empty ());
+	size_t taken = 0;
+	for (auto &x : sp) {
+		CHECK (x.crushed);
+		taken += x.chunks.size ();
+		for (uint32_t k : x.chunks) CHECK (std::find (cc.begin (), cc.end (), k) != cc.end ());
+		Vector d = x.c - c, lat = d - n * (d & n);
+		if (lat.length () > 0.1) CHECK ((x.n & (lat / lat.length ())) > 0.5);    // sideways, away from the crush axis
+	}
+	CHECK (taken == cc.size ());
+	CHECK (a.Crushed (c, n, 1.5, 10, 0.6).empty ());                 // nothing left to crush
+	CHECK (a.Step ().empty ());                                       // the crush is one-shot
 }

@@ -130,6 +130,7 @@ bool CollBlastA::Build (const CollBlastInput &in, const std::vector<Vector> *giv
 		CollBlastChunk &c = chunk[chOf[i]];
 		c.c += (Corner (in, i, 0) + Corner (in, i, 1) + Corner (in, i, 2)) * (ar[i] / 3.0);
 		c.area += ar[i];
+		for (int k = 0; k < 3; k++) c.pts.push_back (Corner (in, i, k));
 	}
 	for (auto &c : chunk) {
 		if (c.area > 0) c.c /= c.area;
@@ -269,6 +270,27 @@ void CollBlastA::Spin (const Vector &c, const Vector &w_) { com = c; w = w_; spi
 
 void CollBlastA::Impact (const Vector &c, double R, double d) { impC = c; impR = R; impD = std::max (impD, std::min (1.0, d)); }
 
+void CollBlastA::Crush (const Vector &c, const Vector &n, double P, double R, double ratio) { crC = c; crN = Unit (n); crP = P; crR = R; crRatio = ratio; }
+
+std::vector<uint32_t> CollBlastA::Crushed (const Vector &c, const Vector &nIn, double P, double R, double ratio) const
+{
+	std::vector<uint32_t> r;
+	Vector n = Unit (nIn);
+	if (!main || !(P > 0) || !(R > 0) || !(n.length () > 0)) return r;
+	for (uint32_t k = 0; k < chunk.size (); k++) {
+		const CollBlastChunk &ch = chunk[k];
+		if ((k < gone.size () && gone[k]) || ch.pts.empty ()) continue;
+		Vector d = ch.c - c;
+		double sc = -(d & n), lat2 = (d & d) - sc * sc;
+		if (!(lat2 < R * R)) continue;                              // centroid inside the crush radius
+		double smin = 1e300, smax = -1e300;
+		for (const Vector &p : ch.pts) { double s = (c - p) & n; smin = std::min (smin, s); smax = std::max (smax, s); }
+		double f = smax - smin > 1e-9 ? (P - smin) / (smax - smin) : (P >= smin ? 1.0 : 0.0); // share of the chunk's depth in front of the crush plane
+		if (f >= ratio) r.push_back (k);
+	}
+	return r;
+}
+
 std::vector<uint32_t> CollBlastA::Chunks (const NvBlastActor *a) const
 {
 	std::vector<uint32_t> v (NvBlastActorGetVisibleChunkCount (a, BlastLog));
@@ -329,8 +351,31 @@ void CollBlastA::Split (std::vector<CollBlastSplit> *out)
 std::vector<CollBlastSplit> CollBlastA::Step ()
 {
 	std::vector<CollBlastSplit> out;
-	if (!main) { force.clear (); spin = false; impD = 0; return out; }
+	if (!main) { force.clear (); spin = false; impD = 0; crP = 0; return out; }
 	uint32_t nb = NvBlastAssetGetBondCount (asset, BlastLog), nc = NvBlastAssetGetChunkCount (asset, BlastLog);
+	if (crP > 0) { // crushed chunks lose every bond: the crushed skin tears into fragments
+		std::vector<uint32_t> cc = Crushed (crC, crN, crP, crR, crRatio);
+		std::vector<uint8_t> in (chunk.size (), 0);
+		for (uint32_t c : cc) in[c] = 1;
+		std::vector<NvBlastBondFractureData> bf;
+		for (size_t i = 0; i < bond.size (); i++) if ((in[bond[i].a] || in[bond[i].b]) && bond[i].asset != UINT32_MAX) {
+			NvBlastBondFractureData f;
+			f.userdata = (uint32_t)i; f.nodeIndex0 = nodeOf[bond[i].a]; f.nodeIndex1 = nodeOf[bond[i].b]; f.health = 1e9f;
+			bf.push_back (f);
+		}
+		if (!bf.empty ()) {
+			NvBlastFractureBuffers fb { (uint32_t)bf.size (), 0, bf.data (), nullptr };
+			NvBlastActorApplyFracture (nullptr, main, &fb, BlastLog, nullptr);
+			size_t k0 = out.size ();
+			Split (&out);
+			for (size_t k = k0; k < out.size (); k++) { // fragments spray out sideways from the crush axis
+				out[k].crushed = true;
+				Vector d = out[k].c - crC, lat = d - crN * (d & crN);
+				if (lat.length () > 1e-6) out[k].n = Unit (lat * 2.0 + out[k].n);
+			}
+		}
+		crP = 0;
+	}
 	if (impD > 0 && impR > 0 && accel && nb) {
 		NvBlastExtImpactSpreadDamageDesc d;
 		d.damage = (float)(impD * maxArea); d.position[0] = (float)impC.x; d.position[1] = (float)impC.y; d.position[2] = (float)impC.z; // health is area: 1 breaks the strongest bond
@@ -359,7 +404,7 @@ std::vector<CollBlastSplit> CollBlastA::Step ()
 			Split (&out);
 		}
 	}
-	force.clear (); spin = false; impD = 0;
+	force.clear (); spin = false; impD = 0; crP = 0;
 	return out;
 }
 

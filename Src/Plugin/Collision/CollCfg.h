@@ -28,7 +28,7 @@ struct CollCfgValues {
 	bool dentNoise = true;                  // CollisionDentNoise (dmg3 S)
 	bool dentFacetNormals = true;           // CollisionDentFacetNormals (dmg3 S)
 	bool brk = true;                        // CollisionBreak (dmg3 P): parts, glass and interior break
-	int debrisMax = 8;                      // CollisionDebrisMax (dmg3 P): live debris vessels
+	int debrisMax = 48;                     // CollisionDebrisMax (dmg3 P): live debris vessels
 	double debrisLife = 1800;               // CollisionDebrisLife (dmg3 P) [s]
 	bool debrisPlayback = true;             // CollisionDebrisPlayback (dmg3 P): playback spawns debris as live vessels
 	bool fx = true;                         // CollisionFx (dmg3 F)

@@ -1261,6 +1261,10 @@ void CollBreakA::BlastHit (const CollDamageHit &h, CollH vh, const CollSlotA &sl
 	if (h.mat && h.mat->sigma_c > 0) { double k = std::max (0.1, std::min (10.0, h.mat->sigma_c / BLAST_SIGMA_C)); bs->b->Material (BLAST_SIGMA_Y * k, BLAST_SIGMA_U * k); }
 	double dmg = cfg.blastESpec > 0 ? std::max (0.0, std::min (1.0, h.eSpec / cfg.blastESpec)) : 0.0;
 	if (dmg > 0 && h.R > 0) bs->b->Impact (cr, h.R, dmg);
+	if (h.rec >= 0 && h.vn >= BRK_VN_PART && h.grp >= 0 && (size_t)h.grp < F.size ()) if (const VesselDamageA *vd = s.Damage (h.id)) if ((size_t)h.rec < vd->d.rec.size ()) {
+		const DentParams &p = vd->d.rec[h.rec].p; // the crush record of this event: skin crushed beyond the part ratio tears off
+		if (p.mode == DENTM_CRUSH && p.P > 0 && p.R > 0) bs->b->Crush (CollApply (Fsi, mul (F[h.grp].A, p.c) + F[h.grp].t), CollApplyDir (Fsi, mul (F[h.grp].A, p.n)), p.P, p.R, BRK_RATIO_PART);
+	}
 	bs->hit = h; bs->haveHit = true; bs->lastHit = h.simt;
 	BlastStep (h.id, h.mesh, *bs, vh);
 	BlastRebuild ();
@@ -1341,7 +1345,7 @@ void CollBreakA::BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, Coll
 			r = std::max (r, (ch.c - x.c).length ());
 		}
 		std::sort (bk.cells.begin (), bk.cells.end ()); std::sort (bk.pieces.begin (), bk.pieces.end ());
-		bk.mass = x.mass;
+		bk.mass = x.mass; bk.crushed = x.crushed;
 		bk.centroid = CollApply (Fs, x.c) + ofs;
 		bk.dv = Unit (CollApplyDir (Fs, x.n)) * (BLAST_KICK * std::max (h.vn, 0.0));
 		r += 0.5 * std::sqrt (bs.b->Acell);
@@ -1384,7 +1388,7 @@ bool CollBreakA::MakeCellSpawn (const CollBlastBreak &bk, const CollSlotA &sl, C
 	}
 	if (d.pose.empty ()) return false;
 	if (const VesselDamageA *vd = s.Damage (bk.id)) for (auto &r : vd->d.rec) { // the parent's other records
-		if (r.slot != bk.slot || r.key != sl.key || r.p.mode == DENTM_VCUT) continue;
+		if (r.slot != bk.slot || r.key != sl.key || r.p.mode == DENTM_VCUT || (bk.crushed && r.p.mode == DENTM_CRUSH)) continue; // a crushed fragment tore off before the crush flattened it
 		bool any = false;
 		for (auto &ps : d.pose) for (uint16_t g : ps.grp) if (Lists (r, g)) any = true;
 		if (any) d.rec.push_back (r);
