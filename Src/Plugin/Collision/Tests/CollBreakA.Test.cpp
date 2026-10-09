@@ -552,7 +552,9 @@ TEST_CASE ("tear 10: belly hit does not cut; snap moves the plane to a group's r
 	TearRig q; q.Seed ("B", 1.45, 0.5);
 	CollCutPlan pl = q.B ().PlanCut (q.a, *q.B ().Slot (q.a, 0), q.T (300, 70), q.S ().Damage (q.a)->d.rec[0].p, 10, false, 1);
 	REQUIRE (pl.ok);
-	CHECK (std::fabs (pl.d - 2.0) < 1e-9);                                        // 1.95 snapped back to the rear of group 8 (x = 3)
+	CHECK (std::fabs (pl.d - 2.0) < 1e-9);
+	const CollSlotA *qs = q.B ().Slot (q.a, 0);
+	CHECK (qs->staticCls == qs->cls[qs->piece[qs->pieceOf[0]].grp[0]]);   // M2: the hull's pose class, not the hit group's                                        // 1.95 snapped back to the rear of group 8 (x = 3)
 	CHECK (std::find (pl.front.begin (), pl.front.end (), 8) == pl.front.end ()); // its rear on the plane: straddles the jag band only
 	CHECK (std::find (pl.straddle.begin (), pl.straddle.end (), 8) != pl.straddle.end ());
 	CHECK (std::find (pl.front.begin (), pl.front.end (), 9) != pl.front.end ());
@@ -627,10 +629,15 @@ TEST_CASE ("tear 13: playback rebuilds the section debris from T + cut, no TearG
 	r.B ().Hit (h);
 	CHECK (!r.Cut ());                                                     // no gate math in playback
 	REQUIRE (r.S ().AddCut (r.a, cut, true));
+	REQUIRE (torn.kin);                                                    // M3: the live kick rides on the T row
+	torn.dv = Vector (0, 1.5, 0), torn.dw = Vector (0, 0, 0.5), torn.mass = 777;
 	r.B ().Torn (r.a, torn);
 	CHECK (r.B ().Hidden (r.a, 0, 9));
 	r.B ().Post (0, 0.01);
 	REQUIRE (r.sdk.Calls ("VesselCreate") == 1);
 	REQUIRE (r.B ().Debris ().size () == 1);
 	CHECK (r.B ().Debris ()[0].row.rec.back ().p.bits & DENTC_KEEP);
+	BFake::V *dv = BFake::X (r.B ().Debris ()[0].h);
+	CHECK ((r.sdk.created[dv].rvel - Vector (0, 1.5, 0)).length () < 1e-9);
+	CHECK (r.sdk.caps[dv].mass == 777);
 }

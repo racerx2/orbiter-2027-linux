@@ -528,7 +528,7 @@ static bool SameAffine (const CollAffine &X, const CollAffine &Y)
 }
 
 // parts of mesh whose t1 sphere meets the ball (cw, r), mapped into the frame toT o pose[1]; the hit part always (dent2 D2)
-static int ViewNear (const CollShape *sh, uint32_t mesh, uint32_t hit, const CollAffine &toT, const Vector &cw, double r, DentViewData &view, const std::function<bool (uint32_t)> &hidden = nullptr)
+static int ViewNear (const CollShape *sh, uint32_t mesh, uint32_t hit, const CollAffine &toT, const Vector &cw, double r, DentViewData &view, const std::function<bool (uint32_t)> &hidden = nullptr, std::vector<int> *vg = nullptr)
 {
 	int n = 0;
 	for (uint32_t j = 0; j < sh->nPart (); j++) {
@@ -544,6 +544,7 @@ static int ViewNear (const CollShape *sh, uint32_t mesh, uint32_t hit, const Col
 		const CollGeom &G = Q.Geom ();
 		uint32_t base = (uint32_t)view.rest.size ();
 		for (uint32_t i = 0; i < G.vtx.size (); i++) view.rest.push_back (CollApply (X, G.RestPos (i))), view.cur.push_back (CollApply (X, G.Pos (i)));
+		if (vg) for (uint32_t i = 0; i < G.vtx.size (); i++) vg->push_back (G.refOfs[i] < G.refOfs[i+1] && G.ref[G.refOfs[i]].src < G.srcTab.size () ? (int)G.srcTab[G.ref[G.refOfs[i]].src].grp : -1); // m6
 		for (const CollTri &tr : G.tri) view.tri.insert (view.tri.end (), { base + tr.v[0], base + tr.v[1], base + tr.v[2] });
 		n++;
 	}
@@ -551,14 +552,18 @@ static int ViewNear (const CollShape *sh, uint32_t mesh, uint32_t hit, const Col
 }
 
 // dmg3 tear: view vertices a cut moved take the post-cut position as rest (dents start on the stump face)
-static void RebaseCut (const VesselDamageA &v, uint32_t mesh, DentViewData &view)
+static void RebaseCut (const VesselDamageA &v, uint32_t mesh, DentViewData &view, const std::vector<int> &grp)
 {
-	std::vector<const DentParams *> op;
 	bool any = false;
-	for (size_t k = 0; k < v.d.rec.size () && k < v.match.size (); k++)
-		if (v.match[k] == (int)mesh) op.push_back (&v.d.rec[k].p), any = any || v.d.rec[k].p.mode == DENTM_CUT;
+	for (size_t k = 0; k < v.d.rec.size () && k < v.match.size (); k++) any = any || (v.match[k] == (int)mesh && v.d.rec[k].p.mode == DENTM_CUT);
 	if (!any) return;
 	for (size_t i = 0; i < view.rest.size () && i < view.cur.size (); i++) {
+		int g = i < grp.size () ? grp[i] : -1;
+		std::vector<const DentParams *> op; // m6: records that list the vertex's group
+		for (size_t k = 0; k < v.d.rec.size () && k < v.match.size (); k++) {
+			const DentRecord &R = v.d.rec[k];
+			if (v.match[k] == (int)mesh && (R.grp.empty () || g < 0 || std::find (R.grp.begin (), R.grp.end (), (uint16_t)g) != R.grp.end ())) op.push_back (&R.p);
+		}
 		bool cut = false;
 		DentMath::Fold (op.data (), op.size (), view.rest[i], false, &cut);
 		if (cut) view.rest[i] = view.cur[i];
@@ -580,12 +585,15 @@ static void CapView (const CollShape *sh, uint32_t mesh, const CollDmgSlot &slot
 			if (v.match[k] == (int)mesh && (R.grp.empty () || std::find (R.grp.begin (), R.grp.end (), (uint16_t)g) != R.grp.end ())) on.push_back (&R);
 		}
 		std::vector<const DentParams *> op;
-		for (const DentRecord *R : on) op.push_back (&R->p);
+		bool anyCut = false;
+		for (const DentRecord *R : on) op.push_back (&R->p), anyCut = anyCut || R->p.mode == DENTM_CUT;
 		for (const CollVtx &x : slot.rest->grp[g].vtx) {
 			Vector p (x.x, x.y, x.z), w = CollApply (X, p);
 			if (!((w - c).length () < r)) continue;
 			bool cut = false;
-			Vector q = p + DentMath::Fold (op.data (), op.size (), p, false, &cut); // dmg3 tear: cuts as maps, not bowls
+			Vector q = p;
+			if (anyCut) q = p + DentMath::Fold (op.data (), op.size (), p, false, &cut); // dmg3 tear: cuts as maps, not bowls
+			else for (const DentRecord *R : on) q += DentMath::DisplaceLow (R->p, p); // m7: the old summation order
 			Vector wq = CollApply (X, q);
 			out.rest.push_back (cut ? wq : w), out.cur.push_back (wq); // dmg3 tear: stump rest is post-cut
 		}
@@ -628,8 +636,9 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, 
 	std::function<bool (uint32_t)> hid = nullptr;
 	if (brk) hid = [this, &v, mesh] (uint32_t g) { return brk->Hidden (v.id, mesh, g); };
 	DentViewData view;
-	int nview = ViewNear (sh, mesh, (uint32_t)part, Pi, CollApply (P.pose[1], s.c), Rmax, view, hid);
-	RebaseCut (v, mesh, view);
+	std::vector<int> vgrp;
+	int nview = ViewNear (sh, mesh, (uint32_t)part, Pi, CollApply (P.pose[1], s.c), Rmax, view, hid, &vgrp);
+	RebaseCut (v, mesh, view, vgrp);
 	CollAffine ofs = CollCompose (P.pose[1], CollInverse (P.anim[1])); // Translate(mesh offset)
 	DentViewData capv; // D7 groups for the depth cap only (fix1)
 	CapView (sh, mesh, slot, v, Pi, ofs, s.c, std::max (Rmax, DentMath::LowPolyFloor (view.View (), s.c)), capv, hid);

@@ -45,6 +45,7 @@ struct CollSlotA {                                        // rest geometry of on
 	std::vector<int> pieceOf; std::vector<CollPieceA> piece; double area = 0, rad = 0;
 	std::set<uint16_t> keep;                              // sidecar ";@KEEPFLAGS": module-owned flag groups P never touches
 	std::vector<int> tier; std::vector<uint32_t> cls;     // dmg3 tear: per group tier and pose class
+	uint32_t staticCls = 0;                               // dmg3 tear: pose class of the hull (largest piece)
 };
 struct CollDebrisA { uint32_t id = ~0u, parent = 0, other = 0, event = 0; CollH h = nullptr, mesh = nullptr; double birth = 0; DentDebris row; uint32_t fnv = 0; };
 struct CollSpawnA { uint32_t parent = 0, other = 0, event = 0; std::string mesh; DentDebris row; Vector cv, dv, dw; double mass = 0; CollSdk::DebrisCaps caps; };
@@ -91,6 +92,7 @@ private:
 	bool Section (uint32_t id, CollH vh, const CollDamageHit &hit, const CollSlotA &sl, const CollCutPlan &pl, uint32_t event); // dmg3 tear: apply a planned tear
 	bool MakeTearSpawn (uint32_t id, CollH vh, const CollDamageHit &hit, const CollSlotA &sl, const std::vector<uint16_t> &front, const std::vector<uint16_t> &straddle, const DentRecord &cut, uint32_t event, CollSpawnA &sp);
 	std::vector<CollAffine> Poses (uint32_t id, uint32_t mesh, size_t ng);
+	static CollAffine StaticPose (const CollSlotA &sl, const std::vector<CollAffine> &F); // dmg3 tear: pose of the static class
 	bool MakeSpawn (uint32_t id, CollH vh, const CollDamageHit &hit, const CollSlotA &sl, const std::vector<int> &pk, uint32_t event, CollSpawnA &sp);
 	static CollSdk::DebrisCaps Caps (const std::vector<std::pair<std::vector<DentVtx>, std::vector<uint16_t>>> &geo, double mass, uint32_t *fnv);
 	double Mass (uint32_t parent, const CollSlotA &sl, const std::vector<int> &pk);

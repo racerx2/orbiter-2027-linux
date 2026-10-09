@@ -3142,3 +3142,29 @@ TEST_CASE ("dmg3 tear 4: jag bits repeat, |J| <= A_j", "[dent][dmg3][tear]")
 		CHECK (std::fabs (a) <= p.P);
 	}
 }
+
+TEST_CASE ("dmg3 tear M1 M3: KEEP lands inside the rim; T row kinematics round trip", "[dent][dmg3][tear]")
+{
+	DentParams k = TearCut (true);
+	for (int i = 0; i < 50; i++) {
+		Vector x (5.4 - 0.2 * i, 3.0 + 0.1 * i, -0.5 - 0.05 * i);
+		Vector y = DentMath::CutMap (k, x, true), d = y - k.c;
+		Vector dp = d - k.n * (d & k.n);
+		CHECK (dp.length () <= k.R * (1.0 + 1e-12));
+	}
+	DentTorn t; t.kind = 3; t.slot = 0; t.key = 0x1234; t.ngrp = 120; t.nvtx = 9000; t.simt = 12.5; t.debris = "PB-A_D2";
+	for (int g = 0; g < 60; g++) t.grp.push_back ((uint16_t)(g * 2));
+	t.kin = true, t.dv = Vector (7.125, -0.5, 1e-3), t.dw = Vector (0.25, 0, -6.2831), t.mass = 2345.5;
+	std::vector<std::string> pay;
+	DentMath::FormatTornEvent (t, pay);
+	DentTorn o; std::vector<uint16_t> all; bool kin = false; Vector dv, dw; double m = 0;
+	for (auto &l : pay) {
+		CHECK (l.size () <= (size_t)DENT_EVENT_MAX);
+		bool more = false;
+		REQUIRE (DentMath::ParseTornEvent (l.c_str (), o, more));
+		all.insert (all.end (), o.grp.begin (), o.grp.end ());
+		if (o.kin) kin = true, dv = o.dv, dw = o.dw, m = o.mass;
+	}
+	CHECK (all == t.grp);
+	CHECK (kin); CHECK (dv.x == 7.125); CHECK (dw.z == -6.2831); CHECK (m == 2345.5);
+}

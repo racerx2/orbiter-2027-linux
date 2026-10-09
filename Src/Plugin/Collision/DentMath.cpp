@@ -611,6 +611,12 @@ bool ParseTornTok (const std::vector<Tok> &t, size_t i, DentTorn &o, bool &more)
 		|| !ParseInt (t[i+4], r.nvtx) || !ParseD (t[i+5], r.simt) || !ParseGroups (t[i+7], r.grp, more)) return false;
 	r.kind = (uint8_t)kind, r.ngrp = (uint16_t)ngrp;
 	r.debris = NameUntok (t[i+6]);
+	double kv[7];
+	if (!more && t.size () >= i + 16 && IEq (t[i+8].p, t[i+8].n, "K")) { // dmg3 tear: kinematics
+		bool ok = true;
+		for (int j = 0; j < 7 && ok; j++) ok = ParseD (t[i+9+j], kv[j]) && std::fabs (kv[j]) <= 1e9;
+		if (ok) r.kin = true, r.dv = Vector (kv[0], kv[1], kv[2]), r.dw = Vector (kv[3], kv[4], kv[5]), r.mass = kv[6];
+	}
 	o = r;
 	return true;
 }
@@ -744,6 +750,8 @@ Vector DentMath::CutMap (const DentParams &p, const Vector &cur, bool full)
 	double J = CutJag (p, cur, full), hl = p.hz > 0.0 ? p.hz : 0.0;
 	if (p.bits & DENTC_KEEP) {
 		if (!(s < J)) return cur;
+		double l2 = Len2 (dp);
+		if (l2 > p.R * p.R) dp = dp * (p.R / std::sqrt (l2)); // M1: behind vertices land inside the rim
 		double sg = (J - s) / (J - s + hl);
 		return p.c + dp * (1.0 - DENT_CUT_PINCH * sg) + p.n * (J + hl * sg);
 	}
@@ -1338,6 +1346,14 @@ bool DentMath::ParseExtEvent (const char *payload, uint32_t &recidx, uint32_t &h
 
 void DentMath::FormatTornEvent (const DentTorn &t, std::vector<std::string> &payload)
 {
+	if (t.kin) { // dmg3 tear: live debris kinematics after the groups of the last payload
+		std::string k = " K";
+		const double v[7] = { t.dv.x, t.dv.y, t.dv.z, t.dw.x, t.dw.y, t.dw.z, t.mass };
+		for (double x : v) PutNumArg (k, Clamp (x, -1e9, 1e9));
+		GroupLines (TornHead (t), t.grp, (size_t)DENT_EVENT_MAX - k.size (), payload);
+		payload.back () += k;
+		return;
+	}
 	GroupLines (TornHead (t), t.grp, (size_t)DENT_EVENT_MAX, payload);
 }
 

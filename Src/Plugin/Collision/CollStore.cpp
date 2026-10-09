@@ -384,6 +384,7 @@ bool CollSide::Parse (const std::string &text, CollSideFile &out)
 				&& out.ev.back ().torn.key == ev.torn.key && out.ev.back ().torn.kind == ev.torn.kind) {
 				std::vector<uint16_t> &g = out.ev.back ().torn.grp;
 				if (g.size () + ev.torn.grp.size () <= DENT_MAX_GRPLIST) g.insert (g.end (), ev.torn.grp.begin (), ev.torn.grp.end ());
+				if (ev.torn.kin) { DentTorn &o = out.ev.back ().torn; o.kin = true, o.dv = ev.torn.dv, o.dw = ev.torn.dw, o.mass = ev.torn.mass; } // dmg3 tear
 				topen = more;
 				continue;
 			}
