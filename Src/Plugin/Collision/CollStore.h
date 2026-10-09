@@ -63,6 +63,8 @@ struct CollSideEvent {
 	uint32_t h8 = 0; double E = 0, vn = 0, vt = 0; // dmg3 X: record hash, event energy and speeds (rec.p holds the extension)
 	int xhit = -1; uint32_t evflags = 0;          // dmg3 X: 1 the event's hit record, 0 not, -1 old line
 	DentTorn torn;                           // dmg3 T
+	DentSites sites; uint32_t nsites = 0;    // blast V: sites (complete after Parse), declared count
+	uint32_t slot = 0; std::vector<uint32_t> bonds; // blast K: slot and broken bond indices
 };
 struct CollSideFile { std::string id; std::vector<CollSideAlias> alias; std::vector<CollSideEvent> ev; int skipped = 0; };
 
@@ -74,6 +76,8 @@ namespace CollSide {
 	std::string Repair (double t, uint32_t alias);
 	std::string Ext (double t, uint32_t alias, uint32_t recidx, const DentParams &p, double E, double vn, double vt, int hit = -1, uint32_t evflags = 0); // dmg3 X, after the record's D lines
 	void Torn (double t, uint32_t alias, const DentTorn &tr, std::vector<std::string> &lines); // dmg3 T, groups continued like D
+	void Sites (double t, uint32_t alias, const DentSites &s, std::vector<std::string> &lines); // blast V (S is the state event)
+	void Bonds (double t, uint32_t alias, uint32_t slot, const std::vector<uint32_t> &b, std::vector<std::string> &lines); // blast K
 	std::string Building (double t, uint32_t alias, uint32_t obj, double eabs, uint32_t flags, const std::string &planetBase);
 	bool Parse (const std::string &text, CollSideFile &out);            // a truncated last line is skipped
 	std::string Fmt17 (double v);

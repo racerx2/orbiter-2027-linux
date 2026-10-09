@@ -1709,3 +1709,173 @@ TEST_CASE ("dmg3 tear 7: AddCut at DENT_MAX_VESSEL is refused; inside Dent it is
 	CHECK (cut);                                                           // applied after the solve returned
 	CHECK (ColliderExact (q, qa));
 }
+
+namespace { // blast: four cells over the plate
+DentSites PlateSites () { DentSites s; s.slot = 0, s.key = DentMath::MeshKey ("plate"); s.s = { Vector (-2.5, -2.5, 0.5), Vector (2.5, -2.5, 0.5), Vector (-2.5, 2.5, 0.5), Vector (2.5, 2.5, 0.5) }; return s; }
+bool ColliderVCut (Rig &r, uint32_t id) // fresh collider: records in order, each VCUT set once at its first record
+{
+	auto &b = r.B (id);
+	CollShape fresh;
+	CollMeshInfo mi = b.mi;
+	CollAnim ca;
+	CollTemplateCache cache;
+	fresh.Update (&mi, 1, ca, nullptr, 0, cache);
+	const VesselDamageA *v = r.s.Damage (id);
+	std::vector<const DentRecord *> l;
+	if (v) for (const DentRecord &x : v->d.rec) l.push_back (&x);
+	DentVCut vc;
+	DentMath::VCutSet (l, r.s.Sites (id, 0), vc);
+	bool rm = false, kp = false;
+	for (const DentRecord *x : l) {
+		std::vector<uint32_t> g (x->grp.begin (), x->grp.end ());
+		if (x->p.mode == DENTM_VCUT) {
+			bool k = (x->p.bits & DENTC_KEEP) != 0;
+			if (k ? kp : rm) continue;
+			(k ? kp : rm) = true;
+			DentVCut c = vc; c.on = k;
+			fresh.ApplyMap (0, g.data (), g.size (), DentMath::MapVCut, &c);
+		} else if (x->p.mode == DENTM_CUT) fresh.ApplyMap (0, g.data (), g.size (), DentMath::MapLow, x);
+		else fresh.ApplyDent (0, g.data (), g.size (), DentMath::FieldLow, x);
+	}
+	if (fresh.nPart () != b.sh->nPart ()) return false;
+	for (uint32_t p = 0; p < fresh.nPart (); p++) {
+		const CollGeom &A = fresh.Part (p).Geom (), &B = b.sh->Part (p).Geom ();
+		if (A.vtx.size () != B.vtx.size ()) return false;
+		for (size_t i = 0; i < A.vtx.size (); i++) if (std::memcmp (&A.vtx[i], &B.vtx[i], sizeof (Vector))) return false;
+	}
+	return true;
+}
+size_t MovedCollider (Rig &r, uint32_t id)
+{
+	auto &b = r.B (id);
+	size_t n = 0;
+	for (uint32_t p = 0; p < b.sh->nPart (); p++) { const CollGeom &A = b.sh->Part (p).Geom (); for (uint32_t i = 0; i < A.vtx.size (); i++) { Vector x = A.RestPos (i), y = A.Pos (i); if (x.x != y.x || x.y != y.y || x.z != y.z) n++; } }
+	return n;
+}
+bool MirrorVCut (Rig &r, uint32_t id) // the client copy equals rest plus Fold with the sites
+{
+	const DentMeshCopyA *c = r.s.vis.Copy (id, 0);
+	const VesselDamageA *v = r.s.Damage (id);
+	if (!c || !v) return false;
+	std::vector<const DentParams *> l;
+	for (const DentRecord &x : v->d.rec) l.push_back (&x.p);
+	for (size_t i = 0; i < c->rp[0].size (); i++) {
+		Vector x (c->rp[0][i].x, c->rp[0][i].y, c->rp[0][i].z), y = x + DentMath::Fold (l.data (), l.size (), x, true, nullptr, r.s.Sites (id, 0));
+		if (c->cur[0][i].x != (float)y.x || c->cur[0][i].y != (float)y.y || c->cur[0][i].z != (float)y.z) return false;
+	}
+	return true;
+}
+}
+
+TEST_CASE ("blast AddCellCuts: one VCUT record per cell, X events, collider and mirror flushed, deferred inside Dent; V K played back", "[blast]")
+{
+	auto dir = std::filesystem::temp_directory_path () / "collD_blast";
+	std::filesystem::remove_all (dir);
+	std::vector<std::string> playScn, saved;
+	std::vector<DentRecord> recorded;
+	DentSites st = PlateSites ();
+	{
+		Rig r;
+		r.s.sideDir = dir.string ();
+		r.cfg.testRecId = "BLAST1";
+		uint32_t a = r.Add ("PB-A");
+		r.Begin ();
+		r.Frame ();
+		r.B (a).v->recording = true;
+		r.s.SaveLines (playScn);
+		r.s.AddCellCuts (a, 0, { 1 });                                      // no sites yet: nothing
+		CHECK (r.s.Damage (a)->d.rec.empty ());
+		r.s.SetSites (a, st);
+		REQUIRE (r.s.Sites (a, 0));
+		r.s.AddBrokenBonds (a, 0, { 7, 3, 7 });
+		r.s.AddCellCuts (a, 0, { 1, 1, 9 });                                // a duplicate and a cell past the site count
+		const VesselDamageA *v = r.s.Damage (a);
+		REQUIRE (v->d.rec.size () == 1);
+		const DentRecord &x = v->d.rec[0];
+		CHECK (x.p.mode == DENTM_VCUT); CHECK (x.p.P == 1.0); CHECK (x.p.seed == 4); CHECK (x.p.h == 0.0); CHECK (x.p.bits == 0u);
+		CHECK (std::memcmp (&x.p.c, &st.s[1], sizeof (Vector)) == 0);
+		CHECK (x.grp.empty ());                                            // one pose class: all groups
+		CHECK (x.p.hz > 0); CHECK (x.p.hd > 0);
+		CHECK (v->match[0] == 0);
+		size_t m1 = MovedCollider (r, a);
+		CHECK (m1 > 0);
+		CHECK (ColliderVCut (r, a));
+		CHECK (MirrorVCut (r, a));
+		r.s.AddCellCuts (a, 0, { 3, 1 });                                   // 1 is cut already
+		REQUIRE (v->d.rec.size () == 2);
+		CHECK (v->d.rec[1].p.P == 3.0);
+		CHECK (MovedCollider (r, a) > m1);
+		CHECK (ColliderVCut (r, a));                                       // a second VCUT replays the slot: one union map
+		CHECK (MirrorVCut (r, a));
+		r.Frame ();
+		CHECK (ColliderVCut (r, a));
+		r.s.SaveLines (saved);
+		bool S = false, K = false, x2 = false;
+		for (auto &l : saved) { CHECK (l.size () <= 200); S = S || l.find ("XDMGM S 0 ") != std::string::npos; K = K || l.find ("XDMGM K 0 3,7") != std::string::npos; x2 = x2 || l.find ("XDMG 2 ") != std::string::npos; }
+		CHECK (S); CHECK (K); CHECK (x2);
+		recorded = v->d.rec;
+		r.s.End ();
+	}
+	REQUIRE (std::filesystem::exists (dir / "BLAST1.txt"));
+	{
+		std::ifstream f (dir / "BLAST1.txt");
+		std::stringstream ss;
+		ss << f.rdbuf ();
+		std::string txt = ss.str ();
+		size_t vv = txt.find (" V "), k = txt.find (" K "), d = txt.find (" D "), x = txt.find (" X ");
+		CHECK (vv != std::string::npos); CHECK (k != std::string::npos);
+		CHECK (d != std::string::npos); CHECK (x != std::string::npos);
+		CHECK (vv < d); CHECK (d < x);
+	}
+	Rig p;
+	p.s.sideDir = dir.string ();
+	uint32_t a = p.Add ("PB-A");
+	p.B (a).v->playback = true;
+	CollStoreBlock blk;
+	size_t pos = 0;
+	REQUIRE (CollStore::Parse ([&] (std::string &l) { if (pos >= playScn.size ()) return false; l = playScn[pos++]; return true; }, blk));
+	p.Begin (std::move (blk));
+	for (int k = 0; k < 6; k++) p.Frame ();
+	REQUIRE (p.s.Damage (a));
+	REQUIRE (p.s.Damage (a)->d.rec.size () == recorded.size ());
+	for (size_t i = 0; i < recorded.size (); i++) CHECK (std::memcmp (&p.s.Damage (a)->d.rec[i].p, &recorded[i].p, sizeof (DentParams)) == 0);
+	REQUIRE (p.s.Sites (a, 0));
+	CHECK (p.s.Sites (a, 0)->s.size () == 4);
+	REQUIRE (p.s.BrokenBonds (a, 0));
+	CHECK (*p.s.BrokenBonds (a, 0) == std::vector<uint32_t> { 3, 7 });
+	CHECK (ColliderVCut (p, a));
+	CHECK (MirrorVCut (p, a));
+	std::filesystem::remove_all (dir);
+	Rig q; // reload: sites, bonds and records from the saved block
+	uint32_t qa = q.Add ("PB-A");
+	CollStoreBlock qb;
+	pos = 0;
+	REQUIRE (CollStore::Parse ([&] (std::string &l) { if (pos >= saved.size ()) return false; l = saved[pos++]; return true; }, qb));
+	q.Begin (std::move (qb));
+	q.Frame ();
+	REQUIRE (q.s.Damage (qa));
+	CHECK (q.s.Damage (qa)->d.rec.size () == 2);
+	CHECK (q.s.Sites (qa, 0));
+	CHECK (ColliderVCut (q, qa));
+	CHECK (MirrorVCut (q, qa));
+	Rig w; // inside Dent: deferred until the solve returns
+	uint32_t wa = w.Add ("PB-A"), wb = w.Add ("PB-B");
+	w.cfg.brk = false;
+	w.Begin ();
+	w.Frame ();
+	w.s.SetSites (wa, st);
+	struct Sink : CollDmgSink {
+		CollDmgSession *s = nullptr; size_t during = 0, before = 0; bool called = false, deferred = false;
+		void Hit (const CollDamageHit &h) override { if (called) return; called = true; before = s->Damage (h.id)->d.rec.size (); s->AddCellCuts (h.id, 0, { 2 }); deferred = s->PendingCuts () == 1; during = s->Damage (h.id)->d.rec.size (); }
+	};
+	auto *sk = new Sink (); sk->s = &w.s;
+	w.s.brk.reset (sk);
+	w.Frame ({ Hit (wa, -1, wb, 10.0, 3.0e4) });
+	REQUIRE (sk->called);
+	CHECK (sk->deferred);
+	CHECK (sk->during == sk->before);
+	CHECK (w.s.PendingCuts () == 0);
+	bool vc = false; for (auto &x : w.s.Damage (wa)->d.rec) if (x.p.mode == DENTM_VCUT && x.p.P == 2.0) vc = true;
+	CHECK (vc);
+	CHECK (ColliderVCut (w, wa));
+}

@@ -92,7 +92,21 @@ std::vector<uint16_t> Sentinels (const std::vector<uint16_t> &sent, const std::v
 
 }
 
-void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDmgSlot &s, uint32_t slot, const std::vector<const DentRecord *> &rec)
+std::vector<uint16_t> CollVisualA::StaticGroups (const CollShape *sh, uint32_t mesh, const CollRestMesh &rest)
+{
+	size_t ng = rest.grp.size ();
+	std::vector<uint32_t> cls = PoseClasses (sh, mesh, ng);
+	std::map<uint32_t, size_t> nv;
+	for (size_t g = 0; g < ng; g++) nv[cls[g]] += rest.grp[g].vtx.size ();
+	if (nv.size () <= 1) return {};
+	uint32_t best = 0; size_t bn = 0;
+	for (auto &x : nv) if (x.second > bn) best = x.first, bn = x.second;
+	std::vector<uint16_t> out;
+	for (size_t g = 0; g < ng && g < 65536; g++) if (cls[g] == best) out.push_back ((uint16_t)g);
+	return out;
+}
+
+void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDmgSlot &s, uint32_t slot, const std::vector<const DentRecord *> &rec, const DentSites *sites)
 {
 	if (!cfg.visuals || mode == MODE_OFF || !s.rest) return;
 	auto vi = ves.find (id);
@@ -143,6 +157,13 @@ void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDm
 	size_t k = c.done.size ();
 	bool inc = k > 0 && k <= rec.size ();
 	for (size_t i = 0; inc && i < k; i++) inc = SameRecord (c.done[i], *rec[i]);
+	bool vOld = false, vNew = false; // blast: VCUT sets apply once, so a new VCUT record after an applied one rebuilds
+	for (size_t i = 0; i < rec.size (); i++) if (rec[i]->p.mode == DENTM_VCUT) (i < k ? vOld : vNew) = true;
+	std::vector<Vector> sv;
+	if (sites) sv = sites->s;
+	bool sameSites = sv.size () == c.sites.size () && (sv.empty () || !std::memcmp (sv.data (), c.sites.data (), sv.size () * sizeof (Vector)));
+	if ((vOld || vNew) && !sameSites) inc = inc && !vOld, c.sites = sv;
+	if (vOld && vNew) inc = false;
 	if (inc && k == rec.size ()) { v.pending = true; return; } // nothing new
 	if (inc) { // only new records: positions as a full build gives them (same order), normals from rest again
 		for (size_t g = 0; g < ng; g++)
@@ -157,15 +178,24 @@ void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDm
 	}
 	bool anyBig = false;
 	for (const auto &G : c.g) anyBig = anyBig || G.big;
+	DentVCut vc; // blast: the VCUT sets of all records, each applied at its first record
+	DentMath::VCutSet (rec, sites, vc);
+	bool vRm = false, vKeep = false;
+	for (size_t r = 0; r < k; r++) if (rec[r]->p.mode == DENTM_VCUT) ((rec[r]->p.bits & DENTC_KEEP) ? vKeep : vRm) = true;
 	for (size_t r = k; r < rec.size (); r++) {
 		const DentRecord &R = *rec[r];
-		std::vector<std::vector<uint8_t>> *dset = R.p.mode == DENTM_CUT ? &c.cutDirty : nullptr; // dmg3 tear
-		if (!anyBig) DentMath::Apply (R.p, c.rp, c.cur, R.grp.data (), R.grp.size (), dset);
+		if (R.p.mode == DENTM_VCUT) {
+			bool &d = (R.p.bits & DENTC_KEEP) ? vKeep : vRm;
+			if (d) { c.done.push_back (R); continue; }
+			d = true;
+		}
+		std::vector<std::vector<uint8_t>> *dset = DentMath::IsCut (R.p.mode) ? &c.cutDirty : nullptr; // dmg3 tear
+		if (!anyBig) DentMath::Apply (R.p, c.rp, c.cur, R.grp.data (), R.grp.size (), dset, &vc);
 		else { // big groups left out
 			std::vector<uint16_t> gl;
 			if (R.grp.empty ()) { for (size_t g = 0; g < ng; g++) if (!c.g[g].big) gl.push_back ((uint16_t)g); }
 			else for (uint16_t g : R.grp) if (g < ng && !c.g[g].big) gl.push_back (g);
-			if (!gl.empty ()) DentMath::Apply (R.p, c.rp, c.cur, gl.data (), gl.size (), dset);
+			if (!gl.empty ()) DentMath::Apply (R.p, c.rp, c.cur, gl.data (), gl.size (), dset, &vc);
 		}
 		c.done.push_back (R);
 	}
@@ -179,7 +209,7 @@ void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDm
 			const DentRecord &R = *rec[r];
 			if (R.p.mode < DENTM_CRUSH) continue;
 			if (facet.empty ()) facet.assign (c.nweld, 0);
-			if (R.p.mode == DENTM_CUT) { // dmg3 tear: Apply's dirty set
+			if (DentMath::IsCut (R.p.mode)) { // dmg3 tear: Apply's dirty set
 				for (size_t g = 0; g < c.cutDirty.size () && g < c.weld.size (); g++)
 					for (size_t i = 0; i < c.cutDirty[g].size () && i < c.weld[g].size (); i++)
 						if (c.cutDirty[g][i] && c.weld[g][i] < c.nweld) facet[c.weld[g][i]] = 1;

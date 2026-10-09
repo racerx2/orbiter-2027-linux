@@ -131,6 +131,8 @@ struct DentDebrisPose { Vector p; double q[4] = { 0, 0, 0, 1 }; std::vector<uint
 struct DentDebris { uint32_t id = 0, slot = 0, key = 0; uint16_t ngrp = 0; uint32_t nvtx = 0; double simt = 0, mass = 0; std::string name; std::vector<DentDebrisPose> pose; std::vector<DentRecord> rec; };
 // blast: Voronoi sites of one vessel slot (rest frame of the static class), rounded through %.9g
 struct DentSites { uint32_t slot = 0, key = 0; std::vector<Vector> s; };
+// blast: VCUT records of one record list by cell (null: not in the set); on: MapVCut applies the keep set
+struct DentVCut { const DentSites *s = nullptr; std::vector<const DentParams *> rm, keep; size_t nrm = 0, nkeep = 0; bool on = false; };
 struct DentVesselText {
 	double eabs = 0; uint32_t flags = 0;          // XDMG: 1 destroyed, 2 module handles effects, 4 catastrophic seen
 	std::vector<DentRecord> rec;                  // application order
@@ -182,6 +184,15 @@ namespace DentMath {
 	Vector CutMap (const DentParams &p, const Vector &cur, bool full); // dmg3 tear: mode 3 map of a current position
 	Vector Fold (const DentParams *const *rec, size_t n, const Vector &rest, bool full, bool *cut = nullptr); // dmg3 tear: displacement of records in order, cuts as maps; cut: a cut moved it
 	Vector Fold (const std::vector<DentRecord> &rec, int g, const Vector &rest, bool full); // records listing group g (g < 0: all)
+	Vector Fold (const DentParams *const *rec, size_t n, const Vector &rest, bool full, bool *cut, const DentSites *sites); // blast: VCUT records with the slot's sites (null: no effect)
+	Vector Fold (const DentParams *const *rec, size_t n, const Vector &rest, bool full, bool *cut, const DentVCut *vc); // blast: vc from VCutSet of the same list
+	Vector Fold (const std::vector<DentRecord> &rec, int g, const Vector &rest, bool full, const DentSites *sites); // blast: records listing group g with sites
+	void   VCutSet (const DentParams *const *rec, size_t n, const DentSites *s, DentVCut &out); // blast: VCUT cells of the list whose seed is the site count
+	void   VCutSet (const std::vector<const DentRecord *> &rec, const DentSites *s, DentVCut &out); // blast: same from records
+	size_t Nearest (const DentSites &s, const Vector &x);          // blast: nearest site, lowest index on ties
+	Vector VCutMap (const DentVCut &v, bool keep, const Vector &cur, bool full); // blast: removed cells to the bisector with the nearest kept site; keep: the complement
+	Vector MapVCut (const void *ctx, const Vector &rest, const Vector &cur); // blast: CollMapFn of VCutMap low, ctx = const DentVCut * (on = keep set)
+	bool   IsCut (uint32_t mode);                                 // blast: DENTM_CUT or DENTM_VCUT
 	Vector MapLow (const void *ctx, const Vector &rest, const Vector &cur); // dmg3 tear: CollMapFn of CutMap low, ctx = const DentRecord *
 	bool   HasCut (const std::vector<DentRecord> &rec, int g); // dmg3 tear: a mode-3 record lists group g (g < 0: any)
 	Vector FieldLow (const void *ctx, const Vector &rest);       // dmg3: CollDisplaceFn of DisplaceLow
@@ -201,6 +212,14 @@ namespace DentMath {
 	void   MakeView (const DentObject &o, DentViewData &d);       // flattens all groups (vertices not welded)
 	size_t Apply (const DentParams &p, const std::vector<std::vector<DentVtx>> &rest, std::vector<std::vector<DentVtx>> &cur,
 		const uint16_t *grp, size_t ngrp, std::vector<std::vector<uint8_t>> *dirty); // cur += Displace(rest) on listed groups (all if ngrp 0); vertices moved
+	size_t Apply (const DentParams &p, const std::vector<std::vector<DentVtx>> &rest, std::vector<std::vector<DentVtx>> &cur,
+		const uint16_t *grp, size_t ngrp, std::vector<std::vector<uint8_t>> *dirty, const DentVCut *vc); // blast: a VCUT record applies vc's set of its kind
+	void   FormatSites (const DentSites &s, const std::string &ind, std::vector<std::string> &lines); // blast: XDMGM S rows (continued with a trailing ',')
+	void   FormatBonds (uint32_t slot, const std::vector<uint32_t> &b, const std::string &ind, std::vector<std::string> &lines); // blast: XDMGM K rows
+	void   FormatSitesEvent (const DentSites &s, std::vector<std::string> &payload); // blast: recorder V payloads <slot> <key8> <n> <first> x y z ..., each <= 180
+	bool   ParseSitesEvent (const char *payload, DentSites &s, uint32_t &n, uint32_t &first); // blast: s.s holds this payload's sites only
+	void   FormatBondsEvent (uint32_t slot, const std::vector<uint32_t> &b, std::vector<std::string> &payload); // blast: recorder K payloads
+	bool   ParseBondsEvent (const char *payload, uint32_t &slot, std::vector<uint32_t> &b, bool &more);
 	uint32_t WeldMap (const std::vector<std::vector<DentVtx>> &v, double tol, std::vector<std::vector<uint32_t>> &weld); // grid over all groups; returns the id count
 	uint32_t WeldMap (const std::vector<std::vector<DentVtx>> &v, double tol, std::vector<std::vector<uint32_t>> &weld, const std::vector<uint32_t> *cls); // cls[g]: only groups of one class weld
 	void   FaceNormalSums (const std::vector<std::vector<DentVtx>> &v, const std::vector<std::vector<uint16_t>> &idx,
@@ -269,6 +288,10 @@ private:
 	struct Ext { uint32_t j, h8; DentParams p; };
 	std::vector<Ext> m_ext;                               // dmg3: XDMGD rows of section 2
 	std::vector<DentTorn> m_torn;                         // dmg3: XDMGM T rows
+	std::vector<DentSites> m_sites;                       // blast: XDMGM S rows
+	std::vector<std::pair<uint32_t, std::vector<uint32_t>>> m_bonds; // blast: XDMGM K rows
+	int m_sOpen = 0;                                      // blast: 1 the last S row continues, 2 the last K row continues
+	uint32_t m_sLeft = 0;                                 // blast: sites still expected by the open S row
 	std::vector<DentDebris> m_debris;                     // dmg3: XDMGM B, Q and XDMGD B rows
 	int m_qOpen = 0;                                      // dmg3: 1 the last Q row continues, 2 the last XDMGD B row continues
 	bool m_tornOpen = false;                              // dmg3: the last torn row's group list continues

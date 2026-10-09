@@ -3168,3 +3168,248 @@ TEST_CASE ("dmg3 tear M1 M3: KEEP lands inside the rim; T row kinematics round t
 	CHECK (all == t.grp);
 	CHECK (kin); CHECK (dv.x == 7.125); CHECK (dw.z == -6.2831); CHECK (m == 2345.5);
 }
+
+namespace { // blast: a 2 x 2 site grid in z = 0, cell 1 at (2, 0, 0)
+DentSites Grid4 () { DentSites s; s.slot = 0, s.key = 0x1234; s.s = { Vector (0, 0, 0), Vector (2, 0, 0), Vector (0, 2, 0), Vector (2, 2, 0) }; return s; }
+DentParams VCut (uint32_t cell, bool keep, double hd, double hz)
+{
+	DentParams p {};
+	p.mode = DENTM_VCUT, p.c = Grid4 ().s[cell], p.n = Vector (0, 0, 1), p.t = Vector (1, 0, 0), p.R = 1, p.h = 0, p.T = 0;
+	p.P = cell, p.seed = 4, p.bits = keep ? DENTC_KEEP : 0, p.hd = hd, p.hz = hz;
+	return p;
+}
+}
+
+TEST_CASE ("blast VCUT 1: a vertex of a removed cell lands on the bisector with the nearest kept site, others unchanged", "[dent][blast]")
+{
+	DentSites s = Grid4 ();
+	DentParams p = VCut (1, false, 0, 0);
+	const DentParams *l[] = { &p };
+	Vector x (1.8, 0.3, 0.1);
+	Vector y = x + DentMath::Fold (l, 1, x, true, nullptr, &s);
+	CHECK (std::fabs (y.y - 1.0) < 1e-12);                         // bisector of sites 1 and 3 (nearest kept)
+	CHECK (std::fabs ((y - Vector (2, 0, 0)).length () - (y - Vector (2, 2, 0)).length ()) < 1e-12);
+	bool cut = false;
+	DentMath::Fold (l, 1, x, true, &cut, &s);
+	CHECK (cut);
+	for (Vector o : { Vector (0.9, 0.3, 0), Vector (0.2, 1.5, -0.3), Vector (1.5, 1.2, 0.4) }) {
+		Vector d = DentMath::Fold (l, 1, o, true, &cut, &s);
+		CHECK (d.x == 0.0); CHECK (d.y == 0.0); CHECK (d.z == 0.0); CHECK (!cut);
+	}
+	CHECK (DentMath::Fold (l, 1, x, true, nullptr, (const DentSites *)nullptr).length () == 0.0); // no sites: no effect
+	DentParams bad = p; bad.seed = 5;                              // site count mismatch: no effect
+	const DentParams *lb[] = { &bad };
+	CHECK (DentMath::Fold (lb, 1, x, true, nullptr, &s).length () == 0.0);
+	CHECK (DentMath::Displace (p, x).length () == 0.0);
+	CHECK (DentMath::DisplaceLow (p, x).length () == 0.0);
+	CHECK (DentMath::Weight (p, x) == 0.0);
+	DentRecord r {}; r.p = p; r.slot = 0, r.key = 0x1234;
+	std::vector<DentRecord> rl { r };
+	CHECK (DentMath::FindCoalesce (rl, r, nullptr, true) == -1);
+	DentRecord b = r; b.p = DentParams {}; b.p.c = Vector (1.8, 0.3, 0), b.p.n = Vector (0, 0, 1), b.p.R = 1, b.p.h = 0.01;
+	std::vector<DentRecord> bl { b, r };
+	CHECK (DentMath::FindCoalesce (bl, b) == -1);                  // no growth below a VCUT
+	Vector c = Vector (1.8, 0.3, 0), n = Vector (0, 0, 1);
+	std::vector<const DentParams *> mr { &p };
+	DentMath::MapToRest (mr, c, n);
+	CHECK (c.x == 1.8);
+}
+
+TEST_CASE ("blast VCUT 2: KEEP takes the complement onto the same jag surface", "[dent][blast]")
+{
+	DentSites s = Grid4 ();
+	DentParams k = VCut (1, true, 0, 0);
+	const DentParams *l[] = { &k };
+	Vector x (0.3, 0.2, 0.1);                                      // cell 0: onto the bisector with site 1
+	Vector y = x + DentMath::Fold (l, 1, x, true, nullptr, &s);
+	CHECK (std::fabs (y.x - 1.0) < 1e-12);
+	Vector in (1.9, 0.4, -0.2);
+	CHECK (DentMath::Fold (l, 1, in, true, nullptr, &s).length () == 0.0); // kept cell unchanged
+	DentParams pr = VCut (1, false, 0.2, 0), pk = VCut (1, true, 0.2, 0);
+	const DentParams *a[] = { &pr }, *b[] = { &pk };
+	for (int i = 0; i < 20; i++) {
+		double u = 1.3 + 0.06 * i, w = -0.5 + 0.05 * i;
+		Vector x1 (u, 0.8, w), x2 (u, 1.2, w);                       // either side of the face of cells 1 and 3
+		Vector y1 = x1 + DentMath::Fold (a, 1, x1, true, nullptr, &s), y2 = x2 + DentMath::Fold (b, 1, x2, true, nullptr, &s);
+		if (y1.y != x1.y && y2.y != x2.y) { CHECK (y1.y == y2.y); CHECK (y1.x == y2.x); CHECK (y1.z == y2.z); }
+		CHECK (std::fabs (y1.y - 1.0) <= 0.4 * 0.2 + 1e-12);
+	}
+}
+
+TEST_CASE ("blast VCUT 3: two removed adjacent cells go to the kept cells, not to their shared face", "[dent][blast]")
+{
+	DentSites s = Grid4 ();
+	DentParams p1 = VCut (1, false, 0, 0), p3 = VCut (3, false, 0, 0);
+	const DentParams *l[] = { &p1, &p3 };
+	Vector a (1.8, 0.9, 0), b (1.8, 1.1, 0);
+	Vector ya = a + DentMath::Fold (l, 2, a, true, nullptr, &s), yb = b + DentMath::Fold (l, 2, b, true, nullptr, &s);
+	CHECK (std::fabs (ya.x - 1.0) < 1e-12);                        // site 0 is the nearest kept one
+	CHECK (std::fabs (yb.x - 1.0) < 1e-12);                        // site 2
+	DentVCut vc;
+	DentMath::VCutSet (l, 2, &s, vc);
+	CHECK (vc.nrm == 2); CHECK (vc.nkeep == 0);
+	CHECK (DentMath::Nearest (s, Vector (1.1, 1.1, 0)) == 3);
+	CHECK (DentMath::Nearest (s, Vector (1, 1, 0)) == 0);          // ties: lowest index
+	DentParams all[4]; const DentParams *la[4];
+	for (uint32_t c = 0; c < 4; c++) all[c] = VCut (c, false, 0, 0), la[c] = &all[c];
+	Vector g = a + DentMath::Fold (la, 4, a, true, nullptr, &s);
+	CHECK (g.x == 2.0); CHECK (g.y == 0.0);                        // every cell removed: to its site
+}
+
+TEST_CASE ("blast VCUT 4: collider path without jag; visual Apply matches Fold; crater pulls back", "[dent][blast]")
+{
+	DentSites s = Grid4 ();
+	DentParams pj = VCut (1, false, 0.3, 0.05), p0 = VCut (1, false, 0, 0.05);
+	const DentParams *lj[] = { &pj }, *l0[] = { &p0 };
+	DentVCut vc;
+	DentMath::VCutSet (lj, 1, &s, vc);
+	for (int i = 0; i < 30; i++) {
+		Vector x (1.1 + 0.03 * i, 0.1 + 0.02 * i, -0.3 + 0.02 * i);
+		Vector lo = x + DentMath::Fold (lj, 1, x, false, nullptr, &s), ref = x + DentMath::Fold (l0, 1, x, true, nullptr, &s);
+		CHECK (std::memcmp (&lo, &ref, sizeof (Vector)) == 0);       // full = false: J = 0
+		Vector m = DentMath::MapVCut (&vc, x, x);
+		CHECK (std::memcmp (&m, &lo, sizeof (Vector)) == 0);
+		if (DentMath::Nearest (s, x) == 1) CHECK (DentMath::Nearest (s, lo) != 1); // crater: behind the face, on the kept side
+	}
+	std::vector<std::vector<DentVtx>> rest (1), cur;
+	for (int i = 0; i < 40; i++) rest[0].push_back (DentVtx { (float)(0.05 * i), (float)(0.03 * i), 0.1f, 0, 0, 1, 0, 0 });
+	cur = rest;
+	std::vector<std::vector<uint8_t>> dirty;
+	size_t moved = DentMath::Apply (pj, rest, cur, nullptr, 0, &dirty, &vc);
+	CHECK (moved > 0);
+	for (size_t i = 0; i < rest[0].size (); i++) {
+		Vector x (rest[0][i].x, rest[0][i].y, rest[0][i].z), y = x + DentMath::Fold (lj, 1, x, true, nullptr, &s);
+		CHECK (cur[0][i].x == (float)y.x); CHECK (cur[0][i].y == (float)y.y); CHECK (cur[0][i].z == (float)y.z);
+		CHECK ((dirty[0][i] != 0) == (cur[0][i].x != rest[0][i].x || cur[0][i].y != rest[0][i].y || cur[0][i].z != rest[0][i].z));
+	}
+	std::vector<std::vector<DentVtx>> c2 = rest;
+	CHECK (DentMath::Apply (pj, rest, c2, nullptr, 0, nullptr) == 0); // no set: no effect
+}
+
+TEST_CASE ("blast rows: VCUT extension, S and K rows round trip within 200; old parser sees a zero bowl", "[dent][blast]")
+{
+	DentVesselText v;
+	DentSites st; st.slot = 2, st.key = DentMath::MeshKey ("deltaglider");
+	Rng g { 77 };
+	for (int i = 0; i < 64; i++) st.s.push_back (Vector (std::stod ([&] { char b[32]; std::snprintf (b, sizeof b, "%.9g", g.U (-12345.678, 12345.678)); return std::string (b); } ()),
+		std::stod ([&] { char b[32]; std::snprintf (b, sizeof b, "%.9g", g.U (-1, 1) * 1e-5); return std::string (b); } ()), -0.125 * i));
+	v.sites.push_back (st);
+	DentSites s2; s2.slot = 0, s2.key = 0xabcdef01; s2.s = { Vector (1, 2, 3) };
+	v.sites.push_back (s2);
+	std::vector<uint32_t> bonds;
+	for (uint32_t i = 0; i < 300; i++) bonds.push_back (i * 7919u);
+	v.brokenBonds.push_back ({ 2, bonds });
+	v.brokenBonds.push_back ({ 5, { 4 } });
+	DentRecord r {};
+	r.p.mode = DENTM_VCUT, r.p.c = st.s[17], r.p.n = Vector (0, 0, 1), r.p.t = Vector (1, 0, 0), r.p.R = 0.8, r.p.h = 0;
+	r.p.P = 17, r.p.seed = 64, r.p.bits = DENTC_KEEP, r.p.hd = 0.25, r.p.hz = 0.04;
+	DentMath::Quantise (r.p);
+	r.slot = 2, r.key = st.key, r.ngrp = 300, r.nvtx = 9000;
+	for (int k = 0; k < 120; k++) r.grp.push_back ((uint16_t)(k * 2));
+	v.rec.push_back (r);
+	std::vector<std::string> lines;
+	DentMath::FormatVessel (v, "  ", lines);
+	size_t ns = 0, nk = 0;
+	for (auto &l : lines) { CHECK (l.size () <= 200); if (l.find ("XDMGM S ") != std::string::npos) ns++; if (l.find ("XDMGM K ") != std::string::npos) nk++; }
+	CHECK (ns > 2); CHECK (nk > 1);
+	DentVesselParser ps;
+	for (auto &l : lines) ps.Line (l.c_str ());
+	DentVesselText o;
+	ps.Finish (o);
+	CHECK (ps.Skipped () == 0);
+	REQUIRE (o.rec.size () == 1);
+	CHECK (std::memcmp (&o.rec[0].p, &r.p, sizeof (DentParams)) == 0);
+	CHECK (o.rec[0].grp == r.grp);
+	REQUIRE (o.sites.size () == 2);
+	CHECK (o.sites[0].slot == 2); CHECK (o.sites[0].key == st.key);
+	REQUIRE (o.sites[0].s.size () == 64);
+	CHECK (std::memcmp (o.sites[0].s.data (), st.s.data (), 64 * sizeof (Vector)) == 0);
+	CHECK (o.sites[1].s.size () == 1);
+	REQUIRE (o.brokenBonds.size () == 2);
+	CHECK (o.brokenBonds[0].first == 2); CHECK (o.brokenBonds[0].second == bonds);
+	CHECK (o.brokenBonds[1].second == std::vector<uint32_t> { 4 });
+	std::vector<std::string> again;
+	DentMath::FormatVessel (o, "  ", again);
+	CHECK (again == lines);
+	DentVesselParser old; // the version-1 section alone (an old build skips the extension rows)
+	bool sec2 = false;
+	for (auto &l : lines) { if (l.find ("XDMG 2 ") != std::string::npos) sec2 = true; if (!sec2) old.Line (l.c_str ()); }
+	DentVesselText oo; old.Finish (oo);
+	REQUIRE (oo.rec.size () == 1);
+	CHECK (DentMath::Displace (oo.rec[0].p, st.s[17]).length () == 0.0);
+	std::vector<std::string> cut (lines.begin (), lines.end ()); // a site list cut short is dropped, the rest holds
+	for (size_t i = 0; i < cut.size (); i++) if (cut[i].find ("XDMGM S 2 ") != std::string::npos && cut[i].back () == ',') { cut.erase (cut.begin () + (long)i + 1); break; }
+	DentVesselParser pc;
+	for (auto &l : cut) pc.Line (l.c_str ());
+	DentVesselText oc; pc.Finish (oc);
+	CHECK (oc.sites.size () == 1);
+	CHECK (oc.brokenBonds.size () == 2);
+	CHECK (pc.Skipped () > 0);
+	DentVesselText only; only.sites.push_back (s2); // sites alone still write a block
+	std::vector<std::string> ol;
+	DentMath::FormatVessel (only, "", ol);
+	DentVesselParser po;
+	for (auto &l : ol) po.Line (l.c_str ());
+	DentVesselText oo2; po.Finish (oo2);
+	CHECK (oo2.sites.size () == 1);
+}
+
+TEST_CASE ("blast events: V and K payloads within 180 round trip", "[dent][blast]")
+{
+	DentSites st; st.slot = 1, st.key = 0x0badf00d;
+	auto q9 = [] (double x) { char b[32]; std::snprintf (b, sizeof b, "%.9g", x); return std::strtod (b, nullptr); }; // as SetSites gets them
+	for (int i = 0; i < 40; i++) st.s.push_back (Vector (q9 (-1234.56789 + i), q9 (1.25e-7 * i), q9 (98765.4321 - i)));
+	std::vector<std::string> pay;
+	DentMath::FormatSitesEvent (st, pay);
+	CHECK (pay.size () > 1);
+	std::vector<Vector> all;
+	for (auto &l : pay) {
+		CHECK (l.size () <= (size_t)DENT_EVENT_MAX);
+		DentSites o; uint32_t n = 0, first = 0;
+		REQUIRE (DentMath::ParseSitesEvent (l.c_str (), o, n, first));
+		CHECK (n == 40); CHECK (first == all.size ()); CHECK (o.slot == 1); CHECK (o.key == st.key);
+		all.insert (all.end (), o.s.begin (), o.s.end ());
+	}
+	REQUIRE (all.size () == 40);
+	CHECK (std::memcmp (all.data (), st.s.data (), 40 * sizeof (Vector)) == 0);
+	std::vector<uint32_t> b;
+	for (uint32_t i = 0; i < 100; i++) b.push_back (i * 104729u);
+	std::vector<std::string> kp;
+	DentMath::FormatBondsEvent (3, b, kp);
+	std::vector<uint32_t> got;
+	for (size_t i = 0; i < kp.size (); i++) {
+		CHECK (kp[i].size () <= (size_t)DENT_EVENT_MAX);
+		uint32_t slot = 0; std::vector<uint32_t> x; bool more = false;
+		REQUIRE (DentMath::ParseBondsEvent (kp[i].c_str (), slot, x, more));
+		CHECK (slot == 3); CHECK (more == (i + 1 < kp.size ()));
+		got.insert (got.end (), x.begin (), x.end ());
+	}
+	CHECK (got == b);
+}
+
+TEST_CASE ("blast VCUT 5: a debris list (parent cut, then KEEP) evaluates both sets in order; Apply matches Fold", "[dent][blast]")
+{
+	DentSites s = Grid4 ();
+	DentParams rm = VCut (3, false, 0, 0), kp = VCut (1, true, 0, 0);
+	const DentParams *l[] = { &rm, &kp };
+	Vector in (2.2, 0.1, 0.05);
+	CHECK (DentMath::Fold (l, 2, in, true, nullptr, &s).length () == 0.0); // in the kept cell, away from the cut
+	Vector a (0.4, 0.3, 0), ya = a + DentMath::Fold (l, 2, a, true, nullptr, &s);
+	CHECK (std::fabs (ya.x - 1.0) < 1e-12);                        // cell 0 onto its face with cell 1
+	Vector c (2.0, 1.6, 0), yc = c + DentMath::Fold (l, 2, c, true, nullptr, &s);
+	CHECK (yc.x == 2.0); CHECK (yc.y == 1.0); CHECK (yc.z == 0.0);   // cell 3 cut onto its face with cell 1, then kept
+	DentVCut vc;
+	DentMath::VCutSet (l, 2, &s, vc);
+	CHECK (vc.nrm == 1); CHECK (vc.nkeep == 1);
+	std::vector<std::vector<DentVtx>> rest (1), cur;
+	for (int i = 0; i < 25; i++) for (int j = 0; j < 25; j++) rest[0].push_back (DentVtx { (float)(-0.5 + 0.125 * i), (float)(-0.5 + 0.125 * j), 0.0f, 0, 0, 1, 0, 0 });
+	cur = rest;
+	DentMath::Apply (rm, rest, cur, nullptr, 0, nullptr, &vc);
+	DentMath::Apply (kp, rest, cur, nullptr, 0, nullptr, &vc);
+	for (size_t i = 0; i < rest[0].size (); i++) {
+		Vector x (rest[0][i].x, rest[0][i].y, rest[0][i].z);
+		Vector y1 = x + DentMath::Fold (l, 1, x, true, nullptr, &s);
+		Vector c1 ((float)y1.x, (float)y1.y, (float)y1.z), m = DentMath::VCutMap (vc, true, c1, true), e = c1 + (m - c1); // the float copy between the two records
+		CHECK (cur[0][i].x == (float)e.x); CHECK (cur[0][i].y == (float)e.y); CHECK (cur[0][i].z == (float)e.z);
+	}
+}
