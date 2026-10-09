@@ -276,7 +276,10 @@ TEST_CASE ("A17 unseen push in the speculative step: FREE path or touch, never a
 		REQUIRE (S.host.none == 0);
 		for (const CollImpactEvent &e : S.evs) REQUIRE (e.s[0].owner.vesselId + e.s[1].owner.vesselId == 3);
 		REQUIRE (gmin >= -0.25);
-		REQUIRE (S.tb[0].o.s.vel.x < S.tb[1].o.s.vel.x);
+		const Vector dp = S.tb[0].o.s.pos - S.tb[1].o.s.pos, dv = S.tb[0].o.s.vel - S.tb[1].o.s.vel;
+		REQUIRE ((dp & dv) > 0.0);                                            // separating along the line of centres (push 120 is a glancing hit, review 2 M1)
+		if (push > 0.0) REQUIRE (dp.y > 0.0);                                 // the pushed sphere stays ahead in y: B is not dragged through A
+		if (push == 0.0) REQUIRE (S.tb[0].o.s.vel.x < S.tb[1].o.s.vel.x);
 		REQUIRE (S.fr.Stats ().checkFail == 0);
 	}
 	g_collLog = nullptr;

@@ -1278,19 +1278,18 @@ struct CollDetect::Impl {
 					double l = ng.length ();
 					if (l > 0.0) { y.n = (baseA ? -ng : ng)/l; done = true; }
 				}
-				if (!done) {                                       // crossing faces: minimum-penetration face normal, A pushed along it clears B (5.5, fix1)
-					Vector nf[2] = { crossp (ta[1] - ta[0], ta[2] - ta[0]), crossp (tb[1] - tb[0], tb[2] - tb[0]) };
+				if (!done) {                                       // crossing faces: minimum-penetration outward face direction, -nA or +nB (5.5, fix2 M1)
+					double sa = Det3 (a.X.A) < 0.0 ? -1.0 : 1.0, sb = Det3 (b.X.A) < 0.0 ? -1.0 : 1.0;   // a mirroring placement flips the winding
+					Vector nf[2] = { crossp (ta[1] - ta[0], ta[2] - ta[0])*(-sa), crossp (tb[1] - tb[0], tb[2] - tb[0])*sb };
 					double best = 1e300;
 					for (const Vector &f : nf) {
 						double l = f.length ();
 						if (!(l > 0.0)) continue;
-						for (double sg : { 1.0, -1.0 }) {
-							Vector u = f*(sg/l);
-							double amin = 1e300, bmax = -1e300;
-							for (int j = 0; j < 3; j++) { amin = std::min (amin, ta[j] & u); bmax = std::max (bmax, tb[j] & u); }
-							double dep = bmax - amin;
-							if (dep < best || (dep == best && (u & -cx.r) > (y.n & -cx.r))) { best = dep; y.n = u; done = true; }
-						}
+						Vector u = f/l;
+						double amin = 1e300, bmax = -1e300;
+						for (int j = 0; j < 3; j++) { amin = std::min (amin, ta[j] & u); bmax = std::max (bmax, tb[j] & u); }
+						double dep = bmax - amin;
+						if (dep < best || (dep == best && (u & -cx.r) > (y.n & -cx.r))) { best = dep; y.n = u; done = true; }
 					}
 				}
 				if (!done) {                                       // both faces degenerate: relative velocity

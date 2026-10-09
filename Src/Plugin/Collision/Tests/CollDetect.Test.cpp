@@ -2084,7 +2084,7 @@ TEST_CASE("fix1 5.5: crossing triangles of a sliding sunk box take the plate's n
 {
 	const double h = 1.0/60.0;
 	const CollGeom *plate = Geom (BoxM (Vector (5, 5, 2), Vector (0, 0, -2))), *box = Geom (BoxM (Vector (1, 1, 1)));
-	for (double sink : { 0.01 })                                          // fix2 M1 deeper-than-half case (1.1) open: outward-only normals break CollAddonFrame A17
+	for (double sink : { 0.01, 1.1 })                                     // 1.1: deeper than half the box, the shallower side is the wrong one (review 2 M1)
 	for (const Vector &v : { Vector (3, 0, 0), Vector (-2, 1.5, 0), Vector (0, 0, 0) }) {
 		std::vector<CollBody> bs;
 		bs.push_back (Still (1, Vector (), h)); AddPart (bs.back (), plate, VKey (1));
