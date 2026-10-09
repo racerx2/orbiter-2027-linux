@@ -305,6 +305,7 @@ protected:
 #endif
 	}
 public: // dmg3 area P
+	void SetEmptyMass (CollH v, double m) override { if (m > 0) Ves (v)->SetEmptyMass (m); }
 	CollH MeshLoad (const char *name) override
 	{
 		std::string n (name ? name : "");

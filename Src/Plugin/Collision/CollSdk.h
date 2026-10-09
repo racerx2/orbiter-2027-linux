@@ -179,6 +179,7 @@ public: // dmg3 area P
 	virtual bool  DebrisClassExists () { std::string t; return ReadText (Resolve ("Config/Vessels/CollDebris.cfg"), t); }
 	virtual uint32_t TouchdownCount (CollH) { return 0; }
 	virtual bool  Touchdown (CollH, uint32_t, Vector &) { return false; }   // vessel frame
+	virtual void  SetEmptyMass (CollH, double) {}               // blast: the parent loses the mass of its broken cells
 	virtual bool  ThrusterPos (CollH, CollH, Vector &) { return false; }    // vessel frame
 protected:
 	virtual int   DoGroupFlag (CollH, uint32_t, uint32_t, bool) { return -1; }

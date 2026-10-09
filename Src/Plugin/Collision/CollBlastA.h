@@ -28,6 +28,7 @@ constexpr double BLAST_LIVE      = 2.0;      // solver runs this long after a li
 constexpr double BLAST_KICK      = 0.1;      // separation speed = this * vn
 constexpr int    BLAST_CONVERGE  = 8;        // impact frame: add + update at most this often until converged
 constexpr double BLAST_TAU_MIN   = 0.002;    // contact time floor [s]: F = Jn / max (depth / vn, this)
+constexpr double BLAST_MASS_CUT  = 0.9;      // at most this fraction of the empty mass leaves with debris
 
 struct CollBlastInput {                      // triangles of one slot, rest frame of its static class
 	std::vector<Vector> v;                   // 3 corners per triangle

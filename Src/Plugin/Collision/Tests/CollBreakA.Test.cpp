@@ -53,6 +53,7 @@ public:
 	double Warp () override { return 1; }
 	void ReadVessel (CollH h, CollVesselRead &o, uint32_t) override { o = X (h)->rd; }
 	double EmptyMass (CollH h) override { return X (h)->empty; }
+	void SetEmptyMass (CollH h, double m) override { V *x = X (h); x->rd.m += m - x->empty; x->empty = m; } // total mass follows
 	bool Recording (CollH) override { return false; }
 	bool Playback (CollH h) override { return X (h)->playback; }
 	int DamageModel (CollH) override { return 1; }
@@ -742,8 +743,13 @@ TEST_CASE ("blast P1: a 70 m/s hit separates cells; SpawnCells makes one debris 
 	size_t ns = 0;
 	for (auto &x : r.sdk.states) if (x.first == pv) ns++;
 	CHECK (ns == r.B ().kicks.size ());
+	double cut = r.B ().MassCut (a), dsum = 0;
+	for (auto &d : r.B ().Debris ()) dsum += d.row.mass;
+	CHECK (cut > 0);
+	CHECK (std::fabs (cut - dsum) <= 1e-6 * dsum);                  // the parent loses what flies off
+	CHECK (pv->empty == 5000 - cut); CHECK (pv->rd.m == 5000 - cut);
 	for (auto &k : r.B ().kicks) {
-		CHECK (k.M == 5000);
+		CHECK (k.M == 5000 - cut);
 		Pm += k.dv * k.M;
 		Hm += Vector (2.7 * k.dw.x, 2.7 * k.dw.y, 2.7 * k.dw.z) * k.M;
 	}
@@ -857,4 +863,38 @@ TEST_CASE ("blast P5: the contact force uses the contact time, not the frame: 30
 	CHECK (k[0] == k[1]);
 	CHECK (n[0] == n[1]);
 	CHECK (!k[0].empty ());
+}
+
+TEST_CASE ("blast P6: the parent's empty mass drops by the broken cells, a reload cuts the same mass, repair restores it", "[dmg3P][blast]")
+{
+	BlastRig r; uint32_t a = r.Ship ("A");
+	r.B ().Hit (r.K (70));
+	CollBlastA *x = r.B ().Blast (a, 0);
+	REQUIRE (x); REQUIRE (r.B ().blastBreaks >= 1);
+	double cut = r.B ().MassCut (a), gone = 0;
+	std::vector<uint32_t> cells;
+	for (size_t c = 0; c < x->chunk.size (); c++) if (x->gone[c]) { gone += x->chunk[c].mass; if (x->chunk[c].cell >= 0) cells.push_back ((uint32_t)x->chunk[c].cell); }
+	CHECK (std::fabs (cut - gone) <= 1e-9 * gone);
+	CHECK (r.body.front ().v->empty == 5000 - cut);
+	CHECK (r.sdk.Logged ("Collision blast 'A' empty mass 5000 -> "));
+	DentSites ds = *r.S ().Sites (a, 0);
+	BlastRig q; uint32_t b = q.Ship ("A");
+	q.S ().SetSites (b, ds);
+	for (uint32_t c : cells) {
+		DentRecord rc {};
+		rc.slot = 0; rc.key = ds.key; rc.ngrp = 6; rc.nvtx = 6 * 49; rc.grp = { 0, 1, 2, 3, 4, 5 };
+		rc.p.mode = DENTM_VCUT; rc.p.P = c; rc.p.seed = 64; rc.p.c = ds.s[c]; rc.p.n = Vector (0, 0, 1); rc.p.t = Vector (1, 0, 0);
+		REQUIRE (q.S ().AddCut (b, rc, true));
+	}
+	q.B ().Post (0, 0.02);                                           // first post-step after load
+	CHECK (std::fabs (q.B ().MassCut (b) - cut) <= 1e-9 * cut);
+	CHECK (std::fabs (q.body.front ().v->empty - (5000 - cut)) <= 1e-9 * 5000);
+	q.B ().Post (0.02, 0.02);
+	CHECK (std::fabs (q.B ().MassCut (b) - cut) <= 1e-9 * cut);   // once per load
+	r.B ().Repair (a);
+	CHECK (r.body.front ().v->empty == 5000); CHECK (r.body.front ().v->rd.m == 5000);
+	CHECK (r.B ().MassCut (a) == 0);
+	BlastRig z; uint32_t e = z.Ship ("A");
+	z.B ().Post (0, 0.02);
+	CHECK (z.B ().MassCut (e) == 0); CHECK (z.body.front ().v->empty == 5000); // no sites: no cut
 }

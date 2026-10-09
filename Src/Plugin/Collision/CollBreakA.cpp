@@ -969,6 +969,8 @@ void CollBreakA::Repair (uint32_t id)
 	}
 	b.rows.clear ();
 	if (const VesselDamageA *vd = s.Damage (id)) b.adopted = vd->d.torn.size ();
+	auto mc = massCut.find (id);
+	if (mc != massCut.end ()) { if (vh) sdk.SetEmptyMass (vh, mc->second.first); Log ("Collision blast '%s' empty mass restored %.6g kg", vh ? sdk.Name (vh).c_str () : "-", mc->second.first); massCut.erase (mc); }
 	for (auto bi = blast.begin (); bi != blast.end ();) { if (bi->first.first == id) bi = blast.erase (bi); else ++bi; }
 }
 
@@ -996,7 +998,7 @@ void CollBreakA::DropVessel (uint32_t id, CollH h)
 	}
 	for (auto &f : freeMesh) if (h && f.h == h) f.dropped = true;
 	for (size_t k = pairs.size (); k-- > 0;) if (pairs[k].a == id || pairs[k].b == id) { s.noPair.erase ({ pairs[k].a, pairs[k].b }); pairs.erase (pairs.begin () + (long)k); }
-	ves.erase (id);
+	ves.erase (id); massCut.erase (id);
 	for (auto it = slots.begin (); it != slots.end ();) { if (it->first.first == id) it = slots.erase (it); else ++it; }
 	for (auto bi = blast.begin (); bi != blast.end ();) { if (bi->first.first == id) bi = blast.erase (bi); else ++bi; }
 }
@@ -1070,8 +1072,10 @@ void CollBreakA::Post (double simt, double simdt)
 {
 	if (quiet) return;
 	postDt = simdt;
+	bool first = !rebuilt;
 	if (!rebuilt) { rebuilt = true; Rebuild (simt); }
 	Adopt ();
+	if (first) LoadMass ();
 	if (cfg.blast) for (auto &kv : blast) { // blast: spin loads only for slots hit within BLAST_LIVE
 		CollBlastSlotA &bs = kv.second;
 		if (!bs.b || !(simt - bs.lastHit <= BLAST_LIVE) || simt <= bs.lastHit) continue;
@@ -1095,11 +1099,38 @@ void CollBreakA::End ()
 		for (auto &d : live) if (d.mesh) sdk.MeshFree (d.mesh);
 		for (auto &f : freeMesh) if (f.mesh) sdk.MeshFree (f.mesh);
 	}
-	live.clear (); freeMesh.clear (); spawn.clear (); pairs.clear (); ves.clear (); slots.clear (); blast.clear ();
+	live.clear (); freeMesh.clear (); spawn.clear (); pairs.clear (); ves.clear (); slots.clear (); blast.clear (); massCut.clear ();
 	rebuilt = false; cfgOk = -1; loggedNoCfg = false;
 }
 
 // blast: cells, stress and debris from cells (design-CA-blast 2, 4, 5)
+
+void CollBreakA::CutMass (uint32_t id, CollH vh, double m)
+{
+	if (!vh || !(m > 0)) return;
+	auto &mc = massCut[id];
+	if (!(mc.first > 0)) mc.first = sdk.EmptyMass (vh);
+	if (!(mc.first > 0)) { massCut.erase (id); return; }
+	mc.second = std::min (mc.second + m, BLAST_MASS_CUT * mc.first); // the main structure keeps at least a tenth
+	sdk.SetEmptyMass (vh, mc.first - mc.second);
+	Log ("Collision blast '%s' empty mass %.6g -> %.6g kg", sdk.Name (vh).c_str (), mc.first, mc.first - mc.second);
+}
+
+void CollBreakA::LoadMass ()
+{
+	for (auto &kv : s.Vessels ()) { // load: the parent's empty mass without the cells its VCUT records removed
+		if (kv.second.d.sites.empty () || massCut.count (kv.first)) continue;
+		CollH vh = s.VesselHandle (kv.first);
+		if (!vh || sdk.Playback (vh)) continue;
+		double m = 0;
+		for (auto &ds : kv.second.d.sites) {
+			const CollSlotA *sl = Slot (kv.first, ds.slot);
+			if (!sl || !sl->ok || sl->key != ds.key) continue;
+			if (CollBlastSlotA *bs = BlastSlot (kv.first, ds.slot, vh, *sl)) m += bs->cutMass;
+		}
+		CutMass (kv.first, vh, m);
+	}
+}
 
 CollBlastSlotA *CollBreakA::BlastSlot (uint32_t id, uint32_t mesh, CollH vh, const CollSlotA &sl)
 {
@@ -1146,6 +1177,8 @@ CollBlastSlotA *CollBreakA::BlastSlot (uint32_t id, uint32_t mesh, CollH vh, con
 		if (all) removed.push_back ((uint32_t)c);
 	}
 	if (const std::vector<uint32_t> *kb = s.BrokenBonds (id, mesh)) bonds = bs.b->BondsOfPairs (*kb); // K rows hold chunk key pairs
+	std::sort (removed.begin (), removed.end ()); removed.erase (std::unique (removed.begin (), removed.end ()), removed.end ());
+	for (uint32_t c : removed) bs.cutMass += bs.b->chunk[c].mass;
 	if (!removed.empty () || !bonds.empty ()) bs.b->Restore (bonds, removed);
 	bs.recorded = bs.b->BrokenPairs ();
 	Log ("Collision blast '%s' slot=%u cells=%zu chunks=%zu bonds=%zu t=%.4g restored=%zu/%zu", sdk.Name (vh).c_str (), mesh, bs.b->site.size (), bs.b->chunk.size (), bs.b->bond.size (), bs.b->t, removed.size (), bonds.size ());
@@ -1291,6 +1324,7 @@ void CollBreakA::SpawnCells (const CollBlastBreak &bk)
 		spawn.push_back (sp);
 	}
 	if (!bk.cells.empty ()) s.AddCellCuts (bk.id, bk.slot, bk.cells);
+	CutMass (bk.id, vh, bk.mass);
 	for (uint32_t k : bk.pieces) { // animated pieces: torn rows, existing hide path
 		if (k >= sl->piece.size ()) continue;
 		DentTorn t;

@@ -203,6 +203,7 @@ public: // dmg3 area P
 	struct MeshP { std::vector<CollGroupData> grp; bool freed = false; }; // private mesh copies of MeshLoad
 	std::deque<MeshP> meshP; std::vector<std::string> callsP; std::map<const Ves *, DebrisCaps> debrisP;
 	bool debrisCfgP = true;
+	void SetEmptyMass (CollH v, double m) override { Ves *x = V (v); if (!x) return; double o = EmptyMass (v); emptyMassE[x] = m; x->rd.m += m - o; callsP.push_back ("SetEmptyMass"); } // total mass follows
 	CollH MeshLoad (const char *name) override
 	{
 		for (auto &t : tpls) if (name && t.name == name) { meshP.push_back ({ t.grp, false }); callsP.push_back ("MeshLoad"); return &meshP.back (); }
