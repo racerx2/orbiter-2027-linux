@@ -109,3 +109,14 @@ TEST_CASE ("fix2 E: the fake's deleted tanks are dead; empty mass, velocity and 
 	s.damageModelE = 1;
 	REQUIRE (s.DamageModel (v) == 1);
 }
+
+TEST_CASE ("fix2 review: clearing an annotation that is not shown is no write", "[CollSdk]")
+{
+	CollFakeSdk s (false);
+	s.Annotation ("", 0);
+	REQUIRE (s.Count ().n[CSK_UI] == 0); // a session end with nothing on screen logs no "Collision write ... ui"
+	s.Annotation ("x", 8.0);
+	s.Annotation ("", 0);
+	REQUIRE (s.Count ().n[CSK_UI] == 2);
+	REQUIRE (s.annotation.empty ());
+}

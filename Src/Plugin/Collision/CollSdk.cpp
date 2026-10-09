@@ -67,8 +67,9 @@ void CollSdk::Notification (int type, const char *title, const char *text)
 
 void CollSdk::Annotation (const char *text, double holdSys)
 {
-	cnt.n[CSK_UI]++; LogCall (CSK_UI, nullptr);
 	bool clear = !text || !*text;
+	if (clear && noteUntil < 0) return; // nothing shown: no write (a session end must not log one)
+	cnt.n[CSK_UI]++; LogCall (CSK_UI, nullptr);
 	noteUntil = clear ? -1 : SysTime () + holdSys;
 	DoAnnotation (clear ? "" : text);
 }
