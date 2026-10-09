@@ -27,6 +27,8 @@ struct DentMeshCopyA {
 	std::vector<std::vector<uint32_t>> weld; uint32_t nweld = 0; std::vector<Vector> restSum;
 	std::vector<uint32_t> cls;                          // pose class per group; the weld map stays within one class
 	std::vector<DentRecord> done;                       // records in cur, in order: a list that only grows is applied incrementally
+	std::vector<std::vector<uint8_t>> cutDirty;         // dmg3 tear: vertices a cut record moved (Apply's dirty set)
+	std::vector<Vector> sites;                          // blast: sites cur was built with
 	bool norec = false;                                 // no record left (repair): freed once nothing is sent
 	uint32_t nullWait = 0; bool loggedNull = false;     // DevMesh NULL: retry every 64 passes
 	uint32_t skips = 0;                                 // consecutive passes the slot was skipped with return 1
@@ -39,7 +41,8 @@ public:
 	enum { PASS_ALL = 0, PASS_PENDING = 1 };
 	enum { MODE_FULL = 0, MODE_ABSOLUTE = 1, MODE_OFF = 2 };                // 3.11
 	CollVisualA (CollSdk &sdk, CollDmgHost &host, const CollCfgValues &cfg) : sdk (sdk), host (host), cfg (cfg) {}
-	void SetRecords (uint32_t id, const std::string &name, const CollDmgSlot &s, uint32_t slot, const std::vector<const DentRecord *> &rec); // build or recompute cur; pushed kept
+	void SetRecords (uint32_t id, const std::string &name, const CollDmgSlot &s, uint32_t slot, const std::vector<const DentRecord *> &rec, const DentSites *sites = nullptr); // build or recompute cur; pushed kept; sites: blast VCUT
+	static std::vector<uint16_t> StaticGroups (const CollShape *sh, uint32_t mesh, const CollRestMesh &rest); // blast: groups of the pose class with the most vertices (all when one class)
 	void DropSlot (uint32_t id, uint32_t slot);
 	void DropVessel (uint32_t id);
 	void Rebuilt (uint32_t id, uint32_t slot, uint32_t serial, bool gccore); // SLOTEV_REBUILT: copy takes the serial; gccore: pushed := rp

@@ -30,12 +30,27 @@ double Smooth (double a, double b, double x)
 }
 
 // cur += field(rest), one float cast per record; true if position changed; none past float range
-bool AddField (const DentParams &p, const DentVtx &r, DentVtx &c)
+bool AddField (const DentParams &p, const DentVtx &r, DentVtx &c, const DentVCut *vc = nullptr)
 {
 	Vector rp = Pos (r);
-	double q = DentMath::Weight (p, rp);
-	if (q == 0.0) return false;
-	Vector d = p.n * (-(p.h * q)); // the expression of DentMath::Displace
+	Vector d;
+	if (p.mode == DENTM_VCUT) { // blast: vc's set of this record's kind
+		if (!vc || !vc->s) return false;
+		Vector cp = Pos (c);
+		d = DentMath::VCutMap (*vc, (p.bits & DENTC_KEEP) != 0, rp, cp, true) - cp;
+		if (d.x == 0.0 && d.y == 0.0 && d.z == 0.0) return false;
+	} else if (p.mode == DENTM_CUT) {
+		Vector cp = Pos (c);
+		d = DentMath::CutMap (p, cp, true) - cp;
+		if (d.x == 0.0 && d.y == 0.0 && d.z == 0.0) return false;
+	} else if (DentMath::Legacy (p)) {
+		double q = DentMath::Weight (p, rp);
+		if (q == 0.0) return false;
+		d = p.n * (-(p.h * q)); // the expression of DentMath::Displace
+	} else {
+		d = DentMath::Displace (p, rp);
+		if (d.x == 0.0 && d.y == 0.0 && d.z == 0.0) return false;
+	}
 	double dx = (double)c.x + d.x, dy = (double)c.y + d.y, dz = (double)c.z + d.z;
 	if (!(std::fabs (dx) <= FLT_MAX && std::fabs (dy) <= FLT_MAX && std::fabs (dz) <= FLT_MAX)) return false;
 	float x = (float)dx, y = (float)dy, z = (float)dz;
@@ -276,6 +291,72 @@ void GroupLines (const std::string &head, const std::vector<uint16_t> &grp, size
 
 bool SameBits (double a, double b) { return std::memcmp (&a, &b, sizeof (double)) == 0; }
 
+// blast: head + x y z triples in lines of <= lim chars; all but the last end in ','
+void SiteLines (const std::string &head, const std::vector<Vector> &v, size_t lim, std::vector<std::string> &out)
+{
+	std::string l = head;
+	bool any = false;
+	for (const Vector &x : v) {
+		std::string t;
+		t += ' '; PutNum (t, x.x); t += ' '; PutNum (t, x.y); t += ' '; PutNum (t, x.z);
+		if (any && l.size () + t.size () + 1 > lim) { out.push_back (l + ","); l = head; any = false; }
+		l += t;
+		any = true;
+	}
+	out.push_back (l);
+}
+
+// blast: x y z triples from t[i..]; more: the last token ends in ','
+bool ParseSiteToks (const std::vector<Tok> &t, size_t i, std::vector<Vector> &v, bool &more)
+{
+	more = false;
+	if (t.size () <= i || (t.size () - i) % 3) return false;
+	for (size_t k = i; k < t.size (); k += 3) {
+		double c[3];
+		for (size_t j = 0; j < 3; j++) {
+			Tok x = t[k + j];
+			if (k + j + 1 == t.size () && x.n > 1 && x.p[x.n - 1] == ',') x.n--, more = true;
+			if (!ParseD (x, c[j]) || !(std::fabs (c[j]) <= DENT_LIM_POS)) return false;
+		}
+		v.push_back (Vector (Q9 (c[0]), Q9 (c[1]), Q9 (c[2])));
+	}
+	return true;
+}
+
+// blast: head + b,b,... in lines of <= lim chars; all but the last end in ','
+void BondLines (const std::string &head, const std::vector<uint32_t> &b, size_t lim, std::vector<std::string> &out)
+{
+	std::string l = head;
+	bool first = true;
+	for (uint32_t x : b) {
+		std::string t;
+		PutInt (t, x);
+		if (!first && l.size () + 1 + t.size () + 1 > lim) { out.push_back (l + ","); l = head; first = true; }
+		l += first ? ' ' : ',';
+		l += t;
+		first = false;
+	}
+	out.push_back (l);
+}
+
+// blast: "3,17,40" with a trailing ',' when continued (more)
+bool ParseBondTok (const Tok &t, std::vector<uint32_t> &b, bool &more)
+{
+	b.clear ();
+	more = false;
+	const char *s = t.p, *e = t.p + t.n;
+	if (t.n > 1 && e[-1] == ',') more = true, e--;
+	while (s <= e) {
+		const char *c = s;
+		while (c < e && *c != ',') c++;
+		uint32_t v;
+		if (!ParseInt (s, c, v)) return false;
+		b.push_back (v);
+		s = c + 1;
+	}
+	return !b.empty ();
+}
+
 bool SameParams (const DentParams &a, const DentParams &b)
 {
 	return SameBits (a.c.x, b.c.x) && SameBits (a.c.y, b.c.y) && SameBits (a.c.z, b.c.z)
@@ -446,6 +527,209 @@ struct Refiner {
 	}
 };
 
+// dmg3 noise frame: u along t, w along n x t, in units of 0.5 R
+void NoiseUW (const DentParams &p, const Vector &rest, double &u, double &w)
+{
+	double lam = 0.5 * p.R;
+	Vector d = rest - p.c;
+	u = Dot (d, p.t) / lam, w = Dot (d, Cross (p.n, p.t)) / lam;
+}
+
+// dmg3 lobed radius: R (1 - 0.06 (1 + T_m(u / rho))), m = 3 + seed % 5
+double LobeR (const DentParams &p, const Vector &rest)
+{
+	double u, w;
+	NoiseUW (p, rest, u, w);
+	double rho = std::sqrt (u * u + w * w);
+	if (!(rho >= 1e-9)) return p.R;
+	double x = u / rho, t0 = 1.0, t1 = x;
+	uint32_t m = 3 + p.seed % 5;
+	for (uint32_t k = 1; k < m; k++) { double t2 = 2.0 * x * t1 - t0; t0 = t1, t1 = t2; }
+	return p.R * (1.0 - 0.06 * (1.0 + t1));
+}
+
+// dmg3 bowl weight with noise J and lobes (full), plain kernel and slab otherwise
+double BowlQ (const DentParams &p, const Vector &rest, bool full)
+{
+	if (!(p.R > 0.0)) return 0.0;
+	double R = (full && (p.bits & DENTB_LOBES)) ? LobeR (p, rest) : p.R;
+	double k = DentMath::Kernel (Len2 (rest - p.c) / (R * R));
+	if (k == 0.0) return 0.0;
+	if (p.T > 0.0) k *= 1.0 - Smooth (DENT_SLAB_LO * p.T, DENT_SLAB_HI * p.T, Dot (p.c - rest, p.n));
+	if (full && p.seed) { double u, w; NoiseUW (p, rest, u, w); k *= 1.0 + DENT_NOISE_J * DentMath::Noise (p.seed, u, w); }
+	return k;
+}
+
+// dmg3 crush: k_flat * max(0, P + delta N - max(s, 0)) / P, s = (c - x).n, lateral r < R
+double CrushQ (const DentParams &p, const Vector &rest, bool full)
+{
+	if (!(p.R > 0.0) || !(p.P > 0.0)) return 0.0;
+	Vector d = rest - p.c;
+	double s = Dot (p.c - rest, p.n);
+	double dn = 0.0;
+	if (full && p.seed) {
+		double u, w;
+		NoiseUW (p, rest, u, w);
+		dn = std::min (std::min (0.05 * p.R, 0.1 * p.P), DENT_CRUSH_NOISE) * DentMath::Noise (p.seed, u, w);
+	}
+	double a = p.P + dn - (s > 0.0 ? s : 0.0);
+	if (!(a > 0.0)) return 0.0;
+	double r2 = Len2 (d) - s * s;
+	double r = r2 > 0.0 ? std::sqrt (r2) : 0.0;
+	if (!(r < p.R)) return 0.0;
+	double k = 1.0 - Smooth (DENT_CRUSH_CORE * p.R, p.R, r);
+	return k * a / p.P;
+}
+
+double CrushWeight (const DentParams &p, const Vector &rest) { return CrushQ (p, rest, true); }
+
+// dmg3 hinge: Cayley rotation by tau = P r^2 (3 - 2r) about the line h0 + s e, faded by |v.e| from R to 2R
+Vector HingeD (const DentParams &p, const Vector &rest, double sign)
+{
+	if (!(p.R > 0.0) || p.P == 0.0) return Vector ();
+	const Vector &a = p.t, &n = p.n;
+	Vector e = Cross (n, a);
+	Vector h0 = p.c - a * p.hd - n * p.hz;
+	Vector v = rest - h0;
+	double va = Dot (v, a), vn = Dot (v, n), ve = Dot (v, e);
+	double l = std::max (2.0 * p.hz, 0.25 * p.R);
+	double r = va / l;
+	if (!(r > 0.0)) return Vector ();
+	if (r > 1.0) r = 1.0;
+	double tau = sign * p.P * r * r * (3.0 - 2.0 * r);
+	double d = 1.0 + tau * tau, co = (1.0 - tau * tau) / d, si = 2.0 * tau / d;
+	double w = 1.0 - Smooth (p.R, 2.0 * p.R, std::fabs (ve));
+	if (w == 0.0) return Vector ();
+	double va2 = va * co + vn * si, vn2 = -va * si + vn * co;
+	return (a * (va2 - va) + n * (vn2 - vn)) * w;
+}
+
+Vector DisplaceAny (const DentParams &p, const Vector &rest, bool full)
+{
+	if (DentMath::IsCut (p.mode)) return Vector ();
+	if (p.mode == DENTM_HINGE) return HingeD (p, rest, 1.0);
+	double q = p.mode == DENTM_CRUSH ? CrushQ (p, rest, full) : BowlQ (p, rest, full);
+	return p.n * (-(p.h * q));
+}
+
+uint32_t Lowbias32 (uint32_t x)
+{
+	x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16;
+	return x;
+}
+
+double LatticeN (uint32_t seed, int32_t i, int32_t j)
+{
+	uint32_t h = Lowbias32 (seed ^ Lowbias32 ((uint32_t)i * 0x9e3779b9U ^ Lowbias32 ((uint32_t)j + 0x632be5abU)));
+	return (double)(h >> 8) / 8388607.5 - 1.0;
+}
+
+void PutHexArg (std::string &s, uint32_t v) { s += ' '; PutHex8 (s, v); }
+void PutNumArg (std::string &s, double v) { s += ' '; PutNum (s, v); }
+void Put17 (std::string &s, double v)
+{
+	char b[48];
+	auto r = std::to_chars (b, b + sizeof (b), v, std::chars_format::general, 17);
+	s.append (b, r.ptr);
+}
+
+// dmg3 extension fields from tokens t[i..i+8]: mode P seed8 tx ty tz bits hd hz
+bool ParseExtFields (const std::vector<Tok> &t, size_t i, DentParams &e)
+{
+	if (t.size () < i + 9) return false;
+	uint32_t mode, seed, bits;
+	double P, tx, ty, tz, hd, hz;
+	if (!ParseInt (t[i], mode) || mode > DENTM_VCUT || !ParseD (t[i+1], P) || t[i+2].n > 8 || !ParseInt (t[i+2], seed, 16) || !ParseD (t[i+3], tx) || !ParseD (t[i+4], ty)
+		|| !ParseD (t[i+5], tz) || !ParseInt (t[i+6], bits) || !ParseD (t[i+7], hd) || !ParseD (t[i+8], hz)) return false;
+	if (!(P >= 0.0 && P <= (mode == DENTM_VCUT ? 65535.0 : DENT_LIM_H)) || std::fabs (hd) > DENT_LIM_R || std::fabs (hz) > DENT_LIM_R || std::fabs (tx) > 2.0 || std::fabs (ty) > 2.0 || std::fabs (tz) > 2.0) return false;
+	e.mode = mode, e.P = Q9 (P), e.seed = seed, e.t = Vector (Q9 (tx), Q9 (ty), Q9 (tz)), e.bits = bits, e.hd = Q9 (hd), e.hz = Q9 (hz);
+	return true;
+}
+
+void PutExtFields (std::string &s, const DentParams &p)
+{
+	s += ' '; PutInt (s, p.mode);
+	PutNumArg (s, p.P);
+	PutHexArg (s, p.seed);
+	PutNumArg (s, p.t.x); PutNumArg (s, p.t.y); PutNumArg (s, p.t.z);
+	s += ' '; PutInt (s, p.bits);
+	PutNumArg (s, p.hd); PutNumArg (s, p.hz);
+}
+
+std::string NameTok (const std::string &n);
+std::string NameUntok (const Tok &t);
+
+// "<kind> <slot> <key8> <ngrp> <nvtx> <simt> <debris>"
+std::string TornHead (const DentTorn &t)
+{
+	std::string s;
+	PutInt (s, (unsigned)t.kind); s += ' ';
+	PutInt (s, t.slot);
+	PutHexArg (s, t.key);
+	s += ' '; PutInt (s, (unsigned)t.ngrp);
+	s += ' '; PutInt (s, t.nvtx);
+	s += ' '; Put17 (s, t.simt);
+	s += ' '; s += NameTok (Clean (t.debris, false)); // dmg3 m4: %-escaped, round-trips blanks
+	return s;
+}
+
+bool ParseTornTok (const std::vector<Tok> &t, size_t i, DentTorn &o, bool &more)
+{
+	if (t.size () < i + 8) return false;
+	uint32_t kind, ngrp;
+	DentTorn r;
+	if (!ParseInt (t[i], kind) || kind > 255 || !ParseInt (t[i+1], r.slot) || t[i+2].n > 8 || !ParseInt (t[i+2], r.key, 16) || !ParseInt (t[i+3], ngrp) || ngrp > 65535
+		|| !ParseInt (t[i+4], r.nvtx) || !ParseD (t[i+5], r.simt) || !ParseGroups (t[i+7], r.grp, more)) return false;
+	r.kind = (uint8_t)kind, r.ngrp = (uint16_t)ngrp;
+	r.debris = NameUntok (t[i+6]);
+	double kv[7];
+	if (!more && t.size () >= i + 16 && IEq (t[i+8].p, t[i+8].n, "K")) { // dmg3 tear: kinematics
+		bool ok = true;
+		for (int j = 0; j < 7 && ok; j++) ok = ParseD (t[i+9+j], kv[j]) && std::fabs (kv[j]) <= 1e9;
+		if (ok) r.kin = true, r.dv = Vector (kv[0], kv[1], kv[2]), r.dw = Vector (kv[3], kv[4], kv[5]), r.mass = kv[6];
+	}
+	o = r;
+	return true;
+}
+
+// debris name as one token: '%' escapes of blank, '%', ',' and control characters
+std::string NameTok (const std::string &n)
+{
+	if (n.empty ()) return "-";
+	static const char *hx = "0123456789ABCDEF";
+	std::string o;
+	for (unsigned char c : n) {
+		if (c <= ' ' || c == '%' || c == ',' || c == 127) o += '%', o += hx[c >> 4], o += hx[c & 15];
+		else o += (char)c;
+	}
+	return o;
+}
+
+std::string NameUntok (const Tok &t)
+{
+	std::string o, r (t.p, t.n);
+	if (r == "-") return o;
+	for (size_t i = 0; i < r.size (); i++) {
+		auto hv = [] (char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
+		if (r[i] == '%' && i + 2 < r.size () && hv (r[i+1]) >= 0 && hv (r[i+2]) >= 0) { o += (char)(hv (r[i+1]) * 16 + hv (r[i+2])); i += 2; }
+		else o += r[i];
+	}
+	return o;
+}
+
+std::string PoseHead (const DentDebrisPose &q)
+{
+	std::string s;
+	const double v[7] = { q.p.x, q.p.y, q.p.z, q.q[0], q.q[1], q.q[2], q.q[3] };
+	for (double x : v) { s += ' '; PutNum (s, x); }
+	return s;
+}
+
+bool SameTornHead (const DentTorn &a, const DentTorn &b)
+{
+	return a.kind == b.kind && a.slot == b.slot && a.key == b.key && a.ngrp == b.ngrp && a.nvtx == b.nvtx && SameBits (a.simt, b.simt) && a.debris == b.debris;
+}
+
 } // namespace
 
 // field (4.1)
@@ -459,6 +743,10 @@ double DentMath::Kernel (double t2)
 
 double DentMath::Weight (const DentParams &p, const Vector &rest)
 {
+	if (IsCut (p.mode)) return 0.0;
+	if (p.mode == DENTM_CRUSH) return CrushWeight (p, rest);
+	if (p.mode == DENTM_HINGE) return p.h > 0.0 ? std::min (1.0, Len (HingeD (p, rest, 1.0)) / p.h) : 0.0;
+	if (p.seed) return BowlQ (p, rest, true);
 	if (!(p.R > 0.0)) return 0.0;
 	double k = Kernel (Len2 (rest - p.c) / (p.R * p.R));
 	if (k == 0.0 || !(p.T > 0.0)) return k;
@@ -468,13 +756,250 @@ double DentMath::Weight (const DentParams &p, const Vector &rest)
 
 Vector DentMath::Displace (const DentParams &p, const Vector &rest)
 {
+	if (!Legacy (p)) return DisplaceAny (p, rest, true);
 	return p.n * (-(p.h * Weight (p, rest)));
+}
+
+Vector DentMath::DisplaceLow (const DentParams &p, const Vector &rest)
+{
+	if (!Legacy (p)) return DisplaceAny (p, rest, false);
+	return p.n * (-(p.h * Weight (p, rest)));
+}
+
+Vector DentMath::FieldLow (const void *ctx, const Vector &rest)
+{
+	const DentRecord *r = (const DentRecord*)ctx;
+	return r ? DisplaceLow (r->p, rest) : Vector ();
+}
+
+double DentMath::Noise (uint32_t seed, double u, double w)
+{
+	const double lim = 1073741824.0;
+	u = Clamp (u, -lim, lim), w = Clamp (w, -lim, lim);
+	double fu = std::floor (u), fw = std::floor (w);
+	int32_t i = (int32_t)fu, j = (int32_t)fw;
+	double x = u - fu, y = w - fw;
+	x = x * x * (3.0 - 2.0 * x), y = y * y * (3.0 - 2.0 * y);
+	double a = LatticeN (seed, i, j), b = LatticeN (seed, i + 1, j), c = LatticeN (seed, i, j + 1), d = LatticeN (seed, i + 1, j + 1);
+	double ab = a + (b - a) * x, cd = c + (d - c) * x;
+	return ab + (cd - ab) * y;
 }
 
 Vector DentMath::Field (const void *ctx, const Vector &rest)
 {
 	const DentRecord *r = (const DentRecord*)ctx;
 	return r ? Displace (r->p, rest) : Vector ();
+}
+
+// bilinear lattice noise with linear weights (sharp ridges)
+double LatticeL (uint32_t seed, double u, double w)
+{
+	const double lim = 1073741824.0;
+	u = Clamp (u, -lim, lim), w = Clamp (w, -lim, lim);
+	double fu = std::floor (u), fw = std::floor (w);
+	int32_t i = (int32_t)fu, j = (int32_t)fw;
+	double x = u - fu, y = w - fw;
+	double a = LatticeN (seed, i, j), b = LatticeN (seed, i + 1, j), c = LatticeN (seed, i, j + 1), d = LatticeN (seed, i + 1, j + 1);
+	double ab = a + (b - a) * x, cd = c + (d - c) * x;
+	return ab + (cd - ab) * y;
+}
+
+double DentMath::CutJag (const DentParams &p, const Vector &x, bool full)
+{
+	if (!full || !(p.hd > 0.0) || p.P == 0.0) return 0.0;
+	Vector d = x - p.c, e = Cross (p.n, p.t);
+	double u = Dot (d, p.t) / p.hd, w = Dot (d, e) / p.hd;
+	return p.P * (0.65 * LatticeL (p.seed, u, w) + 0.35 * LatticeL (p.seed ^ 0x5bd1e995U, 2.0 * u + 17.0, 2.0 * w + 31.0));
+}
+
+Vector DentMath::CutMap (const DentParams &p, const Vector &cur, bool full)
+{
+	if (p.mode != DENTM_CUT) return cur;
+	Vector d = cur - p.c;
+	double s = Dot (d, p.n);
+	Vector dp = d - p.n * s;
+	double J = CutJag (p, cur, full), hl = p.hz > 0.0 ? p.hz : 0.0;
+	if (p.bits & DENTC_KEEP) {
+		if (!(s < J)) return cur;
+		double l2 = Len2 (dp);
+		if (l2 > p.R * p.R) dp = dp * (p.R / std::sqrt (l2)); // M1: behind vertices land inside the rim
+		double sg = (J - s) / (J - s + hl);
+		return p.c + dp * (1.0 - DENT_CUT_PINCH * sg) + p.n * (J + hl * sg);
+	}
+	if (!(s > J) || !(Len2 (dp) < p.R * p.R)) return cur;
+	double sg = (s - J) / (s - J + hl);
+	return p.c + dp * (1.0 - DENT_CUT_PINCH * sg) + p.n * (J - hl * sg);
+}
+
+Vector DentMath::Fold (const DentParams *const *rec, size_t n, const Vector &rest, bool full, bool *cut)
+{
+	return Fold (rec, n, rest, full, cut, (const DentVCut *)nullptr);
+}
+
+Vector DentMath::Fold (const DentParams *const *rec, size_t n, const Vector &rest, bool full, bool *cut, const DentSites *sites)
+{
+	DentVCut vc;
+	if (sites) VCutSet (rec, n, sites, vc);
+	return Fold (rec, n, rest, full, cut, sites ? &vc : nullptr);
+}
+
+Vector DentMath::Fold (const DentParams *const *rec, size_t n, const Vector &rest, bool full, bool *cut, const DentVCut *vc)
+{
+	Vector acc;
+	bool doneRm = false, doneKeep = false;
+	if (cut) *cut = false;
+	for (size_t i = 0; i < n; i++) {
+		const DentParams *p = rec[i];
+		if (!p) continue;
+		if (p->mode == DENTM_VCUT) { // blast: each set once, at its first record
+			bool k = (p->bits & DENTC_KEEP) != 0;
+			bool &done = k ? doneKeep : doneRm;
+			if (done || !vc || !vc->s) continue;
+			done = true;
+			Vector x = rest + acc, y = VCutMap (*vc, k, rest, x, full);
+			if (cut && (y.x != x.x || y.y != x.y || y.z != x.z)) *cut = true;
+			acc = y - rest;
+		}
+		else if (p->mode == DENTM_CUT) {
+			Vector x = rest + acc, y = CutMap (*p, x, full);
+			if (cut && (y.x != x.x || y.y != x.y || y.z != x.z)) *cut = true;
+			acc = y - rest;
+		}
+		else if (full) acc += Displace (*p, rest);
+		else acc += DisplaceLow (*p, rest);
+	}
+	return acc;
+}
+
+Vector DentMath::Fold (const std::vector<DentRecord> &rec, int g, const Vector &rest, bool full)
+{
+	std::vector<const DentParams *> l;
+	for (const DentRecord &r : rec)
+		if (g < 0 || r.grp.empty () || std::find (r.grp.begin (), r.grp.end (), (uint16_t)g) != r.grp.end ()) l.push_back (&r.p);
+	return Fold (l.data (), l.size (), rest, full);
+}
+
+Vector DentMath::Fold (const std::vector<DentRecord> &rec, int g, const Vector &rest, bool full, const DentSites *sites)
+{
+	std::vector<const DentParams *> l;
+	for (const DentRecord &r : rec)
+		if (g < 0 || r.grp.empty () || std::find (r.grp.begin (), r.grp.end (), (uint16_t)g) != r.grp.end ()) l.push_back (&r.p);
+	return Fold (l.data (), l.size (), rest, full, nullptr, sites);
+}
+
+bool DentMath::IsCut (uint32_t mode) { return mode == DENTM_CUT || mode == DENTM_VCUT; }
+
+void DentMath::VCutSet (const DentParams *const *rec, size_t n, const DentSites *s, DentVCut &o)
+{
+	o.s = s, o.rm.clear (), o.keep.clear (), o.nrm = o.nkeep = 0;
+	if (!s || s->s.empty ()) return;
+	size_t ns = s->s.size ();
+	o.rm.assign (ns, nullptr), o.keep.assign (ns, nullptr);
+	for (size_t i = 0; i < n; i++) {
+		const DentParams *p = rec[i];
+		if (!p || p->mode != DENTM_VCUT || p->seed != ns || !(p->P >= 0.0) || !(p->P < (double)ns)) continue;
+		size_t c = (size_t)p->P;
+		if ((double)c != p->P) continue;
+		bool k = (p->bits & DENTC_KEEP) != 0;
+		std::vector<const DentParams *> &v = k ? o.keep : o.rm;
+		if (v[c]) continue;
+		v[c] = p;
+		(k ? o.nkeep : o.nrm)++;
+	}
+}
+
+void DentMath::VCutSet (const std::vector<const DentRecord *> &rec, const DentSites *s, DentVCut &o)
+{
+	std::vector<const DentParams *> l;
+	for (const DentRecord *r : rec) if (r) l.push_back (&r->p);
+	VCutSet (l.data (), l.size (), s, o);
+}
+
+size_t DentMath::Nearest (const DentSites &s, const Vector &x)
+{
+	size_t b = 0;
+	double bd = 0.0;
+	for (size_t i = 0; i < s.s.size (); i++) {
+		double d = Len2 (x - s.s[i]);
+		if (i == 0 || d < bd) b = i, bd = d;
+	}
+	return b;
+}
+
+Vector DentMath::VCutMap (const DentVCut &v, bool keep, const Vector &rest, const Vector &cur, bool full)
+{
+	if (!v.s || (keep ? v.nkeep : v.nrm) == 0) return cur;
+	const std::vector<Vector> &S = v.s->s;
+	const std::vector<const DentParams *> &set = keep ? v.keep : v.rm;
+	size_t ns = S.size ();
+	if (set.size () != ns) return cur;
+	size_t a = Nearest (*v.s, rest); // cells by rest position
+	if (keep == (set[a] != nullptr)) return cur; // removed set: a vertex outside it stays; keep set: a vertex inside it stays
+	size_t b = ns;
+	double bd = 0.0;
+	for (size_t i = 0; i < ns; i++) {
+		if (keep == (set[i] == nullptr)) continue; // removed set: nearest kept site; keep set: nearest site of the set
+		double d = Len2 (rest - S[i]);
+		if (b == ns || d < bd) b = i, bd = d;
+	}
+	if (b == ns) return S[a]; // every cell removed: the vertex goes to its site
+	{ // the face of b's region the line from the vertex to S[b] crosses last: far vertices land on b's own boundary, not halfway across the hull
+		Vector dl = S[b] - rest;
+		double tb = -1.0;
+		for (size_t j = 0; j < ns; j++) {
+			if (j == b || keep != (set[j] == nullptr)) continue; // the other side: outside the keep set, or inside the removed set
+			Vector e = S[j] - S[b];
+			double c0 = Dot (e, rest) - 0.5 * (Len2 (S[j]) - Len2 (S[b])), c1 = Dot (e, dl);
+			if (c0 > 0.0 && c1 < 0.0) { double t = -c0 / c1; if (t > tb) tb = t, a = j; }
+		}
+	}
+	const DentParams &p = keep ? *set[b] : *set[a];
+	size_t lo = a < b ? a : b, hi = a < b ? b : a;
+	Vector nf = S[hi] - S[lo];
+	double l = Len (nf);
+	if (!(l > 0.0)) return cur;
+	nf = nf / l;
+	DentParams f;
+	f.mode = DENTM_CUT, f.c = (S[lo] + S[hi]) * 0.5, f.n = nf, f.t = Tangent (nf, Vector (), 0.0);
+	double hh = 0.5 * l, rc = 1.2 * hh; // bisector half-distance; rc about 0.6 sqrt(cell area)
+	f.hd = p.hd, f.P = std::min (0.4 * p.hd, 0.1 * hh), f.hz = 0.0; // jag amplitude from the cell scale, never from P (the cell index)
+	f.seed = Lowbias32 ((uint32_t)lo * 0x9e3779b9U ^ Lowbias32 ((uint32_t)hi + 0x632be5abU) ^ (uint32_t)ns) | 1u;
+	double sgn = (keep ? b : a) == hi ? 1.0 : -1.0; // n into the removed cell a, or for keep into the kept cell b (mode-3 KEEP sense)
+	Vector n = nf * sgn;
+	Vector d = cur - f.c;
+	double s = Dot (d, n);
+	Vector dp = d - n * s;
+	double J = CutJag (f, cur, full) * sgn, hl = p.hz > 0.0 ? std::min (p.hz, 0.05 * hh) : 0.0;
+	double l2 = Len2 (dp);
+	bool far = l2 > rc * rc;
+	if (far) dp = dp * (rc / std::sqrt (l2)); // M8: no hull-sized sheet on the face
+	if (keep) {
+		if (!(s < J)) return far ? f.c + dp + n * s : cur; // a jag tooth stays, inside the radius
+		double sg = (J - s) / (J - s + hl);
+		return f.c + dp * (1.0 - DENT_CUT_PINCH * sg) + n * (J + hl * sg);
+	}
+	if (!(s > J)) return far ? f.c + dp + n * s : cur;
+	double sg = (s - J) / (s - J + hl);
+	return f.c + dp * (1.0 - DENT_CUT_PINCH * sg) + n * (J - hl * sg);
+}
+
+Vector DentMath::MapVCut (const void *ctx, const Vector &rest, const Vector &cur)
+{
+	const DentVCut *v = (const DentVCut*)ctx;
+	return v ? VCutMap (*v, v->on, rest, cur, false) : cur;
+}
+
+Vector DentMath::MapLow (const void *ctx, const Vector &rest, const Vector &cur)
+{
+	const DentRecord *r = (const DentRecord*)ctx;
+	return r ? CutMap (r->p, cur, false) : cur;
+}
+
+bool DentMath::HasCut (const std::vector<DentRecord> &rec, int g)
+{
+	for (const DentRecord &r : rec)
+		if (IsCut (r.p.mode) && (g < 0 || r.grp.empty () || std::find (r.grp.begin (), r.grp.end (), (uint16_t)g) != r.grp.end ())) return true;
+	return false;
 }
 
 // radius, slab, depth, caps (4.2-4.5)
@@ -606,6 +1131,7 @@ int DentMath::Solve (const DentInput &in, const DentMeshView &m, const DentMeshV
 {
 	const DentMaterial &mat = in.mat ? *in.mat : DefaultMaterial (-1);
 	double ln = Len (in.n);
+	out = DentParams ();
 	out.c = in.c, out.n = in.n, out.R = 0.0, out.h = 0.0, out.T = 0.0;
 	if (!(ln > 0.0) || !std::isfinite (ln) || !Finite (in.c)) return DENT_NOSURFACE;
 	if (ln != 1.0) out.n = in.n / ln;
@@ -615,17 +1141,184 @@ int DentMath::Solve (const DentInput &in, const DentMeshView &m, const DentMeshV
 	out.R = R;
 	out.T = SlabT (in.rayT, R);
 	if (!(R > 0.0) || R > DENT_LIM_R || !Within (in.c, DENT_LIM_POS)) return DENT_NOSURFACE; // beyond what a record can hold (9.2)
+	double hcap = HUGE_VAL;
+	uint32_t mode = DENTM_BOWL;
+	double H = 0.0;
+	Vector ax;
+	if (in.vessel && (in.modes & DENTI_NOISE)) { // seed from the hit record text, t from the slip
+		DentParams q = out;
+		Quantise (q);
+		out.seed = ParamsHash (q) ^ in.salt;
+		if (!out.seed) out.seed = 1;
+		out.t = Tangent (out.n, in.tdir, in.vt);
+		if (LobeGate (out, m)) out.bits |= DENTB_LOBES;
+	}
+	if (in.vessel && (in.modes & (DENTI_CRUSH | DENTI_HINGE))) {
+		uint32_t cls = Classify (out, m, H, ax);
+		mode = in.force >= 0 ? (uint32_t)in.force : cls;
+		if (mode == DENTM_CRUSH && !(in.modes & DENTI_CRUSH)) mode = DENTM_BOWL;
+		if (mode == DENTM_HINGE && (!(in.modes & DENTI_HINGE) || !(H > 0.0) || !(Len2 (ax) > 0.0))) mode = DENTM_BOWL;
+		if (in.x) in.x->cls = cls, in.x->H = H;
+		if (mode == DENTM_CRUSH) {
+			out.bits &= ~DENTB_LOBES;
+			int r = SolveCrush (in, m, capView, out);
+			if (in.x && r == DENT_OK) { in.x->S = VolumeFactor (out, m); in.x->Esurplus = std::max (0.0, in.E - mat.sigma_c * out.h * in.x->S); }
+			return r;
+		}
+		if (mode == DENTM_HINGE) hcap = DENT_HINGE_D * H;
+	}
 	double S = VolumeFactor (out, m);
 	if (!(S > 0.0)) return DENT_NOSURFACE;
 	double h = V / S;
-	double cap = DepthCap (out, m, capView, in.vessel ? DmaxVessel (out.T, R, in.L) : Dmax (mat.t_cap, out.T, R, in.L));
+	double cap = DepthCap (out, m, capView, std::min (hcap, in.vessel ? DmaxVessel (out.T, R, in.L) : Dmax (mat.t_cap, out.T, R, in.L)));
 	if (h > cap) h = cap;
 	if (h > DENT_LIM_H) h = DENT_LIM_H;
 	if (!(h > 0.0)) h = 0.0;
 	out.h = h;
 	double qmax = 0.0;
 	for (size_t v = 0; v < m.nv; v++) qmax = std::max (qmax, Weight (out, m.rest[v]));
+	if (in.x) {
+		in.x->S = S;
+		double Eh = in.E - mat.sigma_c * h * S;
+		in.x->Esurplus = std::max (0.0, Eh);
+		if (mode == DENTM_HINGE && Eh > 0.0) { // overflow of a plate bowl: the rest folds the plate (S design 4)
+			DentParams hp = out;
+			hp.mode = DENTM_HINGE, hp.t = ax, hp.hd = 0.5 * R, hp.hz = 0.5 * H, hp.bits = 0, hp.T = 0.0;
+			double Mp = HingeMp (hp, mat);
+			if (Mp > 0.0) {
+				hp.P = std::min (Eh / (2.0 * Mp), DENT_HINGE_TMAX);
+				hp.h = 1.0;
+				hp.h = std::min (MaxDisplace (hp, m), hp.hz);
+				in.x->hinge = hp.h > 0.0, in.x->hp = hp, in.x->Mp = Mp;
+				in.x->Esurplus = std::max (0.0, Eh - 2.0 * Mp * hp.P);
+			}
+		}
+	}
 	return (h * qmax < DENT_MIN_DEPTH) ? DENT_SMALL : DENT_OK;
+}
+
+uint32_t DentMath::Classify (const DentParams &p, const DentMeshView &m, double &H, Vector &a)
+{
+	H = 0.0, a = Vector ();
+	if (!(p.R > 0.0)) return DENTM_BOWL;
+	const double R2 = p.R * p.R;
+	std::vector<double> q1 (m.nv, 0.0), q5 (m.nv, 0.0);
+	for (size_t v = 0; v < m.nv; v++) {
+		double s = Dot (p.c - m.rest[v], p.n);
+		double t2 = (Len2 (m.rest[v] - p.c) - s * s) / R2;
+		double k = Kernel (t2 < 0.0 ? 0.0 : t2);
+		if (std::fabs (s) < DENT_CRUSH_BAND * p.R) q1[v] = k;
+		if (std::fabs (s) < 0.5 * p.R) q5[v] = k;
+	}
+	double S1 = 0.0, S5 = 0.0;
+	Vector G;
+	for (size_t i = 0; i < m.nt; i++) {
+		const uint32_t *v = m.tri + 3 * i;
+		if (v[0] >= m.nv || v[1] >= m.nv || v[2] >= m.nv) continue;
+		double an = Dot (Area (m.rest[v[0]], m.rest[v[1]], m.rest[v[2]]), p.n);
+		if (!(an > 0.0)) continue;
+		double a1 = an * (q1[v[0]] + q1[v[1]] + q1[v[2]]) / 3.0;
+		S1 += a1, S5 += an * (q5[v[0]] + q5[v[1]] + q5[v[2]]) / 3.0;
+		G += ((m.rest[v[0]] + m.rest[v[1]] + m.rest[v[2]]) / 3.0 - p.c) * a1;
+	}
+	const double disk = Pi * R2 / 3.0;
+	double rho = S1 / disk, rho5 = S5 / disk;
+	H = PlateThickness (m, p.c, p.n, p.R);
+	bool plate = H > 0.0 && H < 0.5 * p.R && rho5 <= 1.25 * rho + 0.05;
+	if (plate && rho >= 0.05 && rho <= 0.6 && S1 > 0.0) {
+		Vector g = G / S1;
+		g = g - p.n * Dot (g, p.n);
+		double lg = Len (g);
+		if (lg / p.R >= 0.15) { a = g / (-lg); return DENTM_HINGE; }
+	}
+	return rho < DENT_CRUSH_RHO ? DENTM_CRUSH : DENTM_BOWL;
+}
+
+double DentMath::PlateThickness (const DentMeshView &m, const Vector &c, const Vector &n, double R)
+{
+	double tmin = std::max (0.05, 0.02 * R), best = HUGE_VAL;
+	Vector d = n * -1.0;
+	for (size_t i = 0; i < m.nt; i++) {
+		const uint32_t *v = m.tri + 3 * i;
+		if (v[0] >= m.nv || v[1] >= m.nv || v[2] >= m.nv) continue;
+		Vector A = Cross (m.rest[v[1]] - m.rest[v[0]], m.rest[v[2]] - m.rest[v[0]]);
+		double la = Len (A);
+		if (!(la > 0.0) || !(Dot (A, d) / la > 0.5)) continue; // back faces only
+		DentMeshView one = m;
+		one.tri = v, one.nt = 1;
+		double t;
+		if (RayCast (one, c, d, tmin, best, t) && t < best) best = t;
+	}
+	return best < HUGE_VAL ? best : 0.0;
+}
+
+double DentMath::HingeMp (const DentParams &p, const DentMaterial &mat)
+{
+	double b = 2.0 * p.R, H = 2.0 * p.hz;
+	return DENT_HINGE_K * mat.sigma_c * b * H * H / 4.0;
+}
+
+bool DentMath::LobeGate (const DentParams &p, const DentMeshView &m)
+{
+	std::vector<std::pair<double, double>> e; // edge length, area weight
+	double tot = 0.0;
+	for (size_t i = 0; i < m.nt; i++) {
+		const uint32_t *v = m.tri + 3 * i;
+		if (v[0] >= m.nv || v[1] >= m.nv || v[2] >= m.nv) continue;
+		const Vector &a = m.rest[v[0]], &b = m.rest[v[1]], &c = m.rest[v[2]];
+		if (!(Len2 ((a + b + c) / 3.0 - p.c) < p.R * p.R)) continue;
+		double A = Len (Area (a, b, c));
+		if (!(A > 0.0)) continue;
+		for (double l : { Len (b - a), Len (c - b), Len (a - c) }) e.push_back ({ l, A }), tot += A;
+	}
+	if (e.empty ()) return false;
+	std::sort (e.begin (), e.end ());
+	double acc = 0.0;
+	for (const auto &x : e) { acc += x.second; if (acc >= 0.5 * tot) return x.first < DENT_LOBE_EDGE; }
+	return e.back ().first < DENT_LOBE_EDGE;
+}
+
+Vector DentMath::Tangent (const Vector &n, const Vector &tdir, double vt)
+{
+	Vector t = tdir - n * Dot (tdir, n);
+	double l = Len (t);
+	if (vt > 0.5 && l > 1e-6) return t / l;
+	double ax = std::fabs (n.x), ay = std::fabs (n.y), az = std::fabs (n.z);
+	Vector e = (ax <= ay && ax <= az) ? Vector (1, 0, 0) : (ay <= az ? Vector (0, 1, 0) : Vector (0, 0, 1));
+	t = Cross (n, e);
+	l = Len (t);
+	return l > 0.0 ? t / l : Vector (1, 0, 0);
+}
+
+void DentMath::MapToRest (const std::vector<const DentParams *> &rec, Vector &c, Vector &n)
+{
+	std::vector<const DentParams *> r;
+	for (const DentParams *p : rec) if (p && p->mode >= DENTM_CRUSH && !IsCut (p->mode)) r.push_back (p);
+	if (r.empty ()) return;
+	Vector x = c;
+	for (int it = 0; it < 6; it++) {
+		Vector d;
+		for (const DentParams *p : r) d += DisplaceLow (*p, x); // dmg3 m3: the collider's field
+		x = c - d;
+	}
+	const DentParams *hb = nullptr;
+	double best = 0.0;
+	for (const DentParams *p : r) {
+		if (p->mode != DENTM_HINGE) continue;
+		double l = Len (DisplaceLow (*p, x));
+		if (l > best) best = l, hb = p;
+	}
+	if (hb) { // n by the inverse Cayley rotation (-tau) at x
+		const Vector &a = hb->t, &nn = hb->n;
+		Vector v = x - (hb->c - a * hb->hd - nn * hb->hz);
+		double l = std::max (2.0 * hb->hz, 0.25 * hb->R), r = Clamp (Dot (v, a) / l, 0.0, 1.0);
+		double tau = -hb->P * r * r * (3.0 - 2.0 * r), d = 1.0 + tau * tau, co = (1.0 - tau * tau) / d, si = 2.0 * tau / d;
+		double na = Dot (n, a), nb = Dot (n, nn);
+		Vector m = n + a * (na * co + nb * si - na) + nn * (-na * si + nb * co - nb);
+		double lm = Len (m);
+		if (lm > 0.0) n = m / lm;
+	}
+	c = x;
 }
 
 int DentMath::FindCoalesce (const std::vector<DentRecord> &rec, const DentRecord &r)
@@ -635,11 +1328,22 @@ int DentMath::FindCoalesce (const std::vector<DentRecord> &rec, const DentRecord
 
 int DentMath::FindCoalesce (const std::vector<DentRecord> &rec, const DentRecord &r, const std::vector<uint8_t> *key)
 {
+	return FindCoalesce (rec, r, key, false);
+}
+
+int DentMath::FindCoalesce (const std::vector<DentRecord> &rec, const DentRecord &r, const std::vector<uint8_t> *key, bool anyMode)
+{
 	const double cmin = std::cos (DENT_COALESCE_ANGLE * Pi / 180.0);
 	auto keyed = [key] (const std::vector<uint16_t> &g) {
 		std::vector<uint16_t> o;
 		for (uint16_t x : g) if (x < key->size () && (*key)[x]) o.push_back (x);
 		return o;
+	};
+	if (IsCut (r.p.mode)) return -1; // dmg3 tear: a cut never grows
+	auto shares = [] (const std::vector<uint16_t> &a, const std::vector<uint16_t> &b) {
+		if (a.empty () || b.empty ()) return true;
+		for (uint16_t x : a) if (std::find (b.begin (), b.end (), x) != b.end ()) return true;
+		return false;
 	};
 	std::vector<uint16_t> rk;
 	if (key) rk = keyed (r.grp);
@@ -649,6 +1353,12 @@ int DentMath::FindCoalesce (const std::vector<DentRecord> &rec, const DentRecord
 	for (size_t i = 0; i < rec.size (); i++) {
 		const DentRecord &o = rec[i];
 		if (o.slot != r.slot || o.key != r.key || o.ngrp != r.ngrp || o.nvtx != r.nvtx) continue;
+		if (!anyMode && o.p.mode != r.p.mode) continue; // dmg3: never across modes
+		if (IsCut (o.p.mode)) continue;
+		bool below = false; // dmg3 tear: no growth of a record below a cut on a shared group
+		for (size_t j = i + 1; j < rec.size () && !below; j++)
+			below = IsCut (rec[j].p.mode) && rec[j].slot == o.slot && rec[j].key == o.key && shares (rec[j].grp, o.grp);
+		if (below) continue;
 		if (exact ? o.grp != r.grp : (o.grp.empty () || keyed (o.grp) != rk)) continue;
 		double d = Len (r.p.c - o.p.c);
 		if (!(d < DENT_COALESCE_R * o.p.R) || !(Dot (r.p.n, o.p.n) > cmin)) continue;
@@ -677,6 +1387,184 @@ void DentMath::Quantise (DentParams &p)
 	p.c = Vector (Q9 (p.c.x), Q9 (p.c.y), Q9 (p.c.z));
 	p.n = Vector (Q9 (p.n.x), Q9 (p.n.y), Q9 (p.n.z));
 	p.R = Q9 (p.R), p.h = Q9 (p.h), p.T = Q9 (p.T);
+	if (Legacy (p) && p.P == 0.0 && p.hd == 0.0 && p.hz == 0.0) return; // legacy records: no new fields to round
+	p.t = Vector (Q9 (p.t.x), Q9 (p.t.y), Q9 (p.t.z));
+	p.P = Q9 (p.P), p.hd = Q9 (p.hd), p.hz = Q9 (p.hz);
+}
+
+// dmg3 crush (S design 2-3)
+
+bool DentMath::Legacy (const DentParams &p) { return p.mode == 0 && p.seed == 0; }
+
+double DentMath::DmaxCrush (double L) { return std::min (DENT_CRUSH_L * L, DENT_LIM_H); }
+
+double DentMath::Coverage (const DentParams &p, const DentMeshView &m)
+{
+	if (!(p.R > 0.0)) return 0.0;
+	const double band = DENT_CRUSH_BAND * p.R;
+	std::vector<double> q (m.nv, 0.0);
+	for (size_t v = 0; v < m.nv; v++) {
+		double s = Dot (p.c - m.rest[v], p.n);
+		double r2 = (Len2 (m.rest[v] - p.c) - s * s) / (p.R * p.R);
+		if (std::fabs (s) < band) q[v] = Kernel (r2);
+	}
+	double S = 0.0;
+	for (size_t i = 0; i < m.nt; i++) {
+		const uint32_t *v = m.tri + 3 * i;
+		if (v[0] >= m.nv || v[1] >= m.nv || v[2] >= m.nv) continue;
+		double qs = q[v[0]] + q[v[1]] + q[v[2]];
+		if (!(qs > 0.0)) continue;
+		double an = Dot (Area (m.rest[v[0]], m.rest[v[1]], m.rest[v[2]]), p.n);
+		if (an > 0.0) S += an * (qs / 3.0);
+	}
+	return S / (Pi * p.R * p.R / 3.0);
+}
+
+double DentMath::CrushW (const DentParams &p, const DentMeshView &m)
+{
+	return p.P * VolumeFactor (p, m);
+}
+
+int DentMath::SolveCrush (const DentInput &in, const DentMeshView &m, const DentMeshView *capView, DentParams &out)
+{
+	const DentMaterial &mat = in.mat ? *in.mat : DefaultMaterial (-1);
+	double V = (in.E > 0.0 && mat.sigma_c > 0.0) ? in.E / mat.sigma_c : 0.0;
+	double R = out.R, Pcap = DmaxCrush (in.L);
+	if (!(Pcap > 0.0)) return DENT_NOSURFACE;
+	double want = 0.0, core = DENT_CRUSH_CORE * R;
+	for (size_t v = 0; v < m.nv; v++) { // the most protruding rest vertex of the flat core
+		double s = Dot (out.c - m.rest[v], out.n);
+		double r2 = Len2 (m.rest[v] - out.c) - s * s;
+		if (r2 < core * core && -s > want) want = -s;
+	}
+	const DentParams base = out;
+	auto at = [&] (double P) {
+		DentParams q = base;
+		q.mode = DENTM_CRUSH, q.P = P;
+		double mv = std::min (std::min (want, DENT_CRUSH_MOVE * R), 0.5 * P);
+		q.c = base.c + base.n * mv;
+		return q;
+	};
+	double P = Pcap;
+	if (!(CrushW (at (Pcap), m) < V)) {
+		double lo = 0.0, hi = Pcap;
+		for (int i = 0; i < DENT_CRUSH_STEPS; i++) {
+			double mid = 0.5 * (lo + hi);
+			if (CrushW (at (mid), m) < V) lo = mid;
+			else hi = mid;
+		}
+		P = hi;
+	}
+	out = at (P);
+	if (!(P > 0.0) || !Within (out.c, DENT_LIM_POS)) return DENT_NOSURFACE;
+	double S = VolumeFactor (out, m);
+	if (!(S > 0.0)) return DENT_NOSURFACE;
+	double h = std::min (P, V / S);
+	double cap = DepthCap (out, m, capView, DmaxCrush (in.L));
+	if (h > cap) h = cap;
+	if (h > DENT_LIM_H) h = DENT_LIM_H;
+	if (!(h > 0.0)) h = 0.0;
+	out.h = h;
+	double qmax = 0.0;
+	for (size_t v = 0; v < m.nv; v++) qmax = std::max (qmax, Weight (out, m.rest[v]));
+	return (h * qmax < DENT_MIN_DEPTH) ? DENT_SMALL : DENT_OK;
+}
+
+bool DentMath::CoalesceCrush (const DentParams &old, double V, const DentMeshView &m, const DentMeshView *cap, double L, double &P, double &h)
+{
+	P = old.P, h = old.h;
+	if (!(V > 0.0) || old.mode != DENTM_CRUSH) return false;
+	double target = CrushW (old, m) + V, Pcap = DmaxCrush (L); // dmg3 m2: same measure as the bisection
+	if (!(Pcap > old.P)) return false;
+	auto at = [&] (double x) { DentParams q = old; q.P = x; return q; };
+	double Pn = Pcap;
+	if (!(CrushW (at (Pcap), m) < target)) {
+		double lo = old.P, hi = Pcap;
+		for (int i = 0; i < DENT_CRUSH_STEPS; i++) {
+			double mid = 0.5 * (lo + hi);
+			if (CrushW (at (mid), m) < target) lo = mid;
+			else hi = mid;
+		}
+		Pn = hi;
+	}
+	DentParams q = at (Pn);
+	double S = VolumeFactor (q, m);
+	if (!(S > 0.0)) return false;
+	double hn = std::min (Pn, target / S);
+	double dc = DepthCap (q, m, cap, DmaxCrush (L));
+	hn = std::min (hn, old.h + std::max (0.0, dc));
+	hn = std::min (hn, DENT_LIM_H);
+	if (hn < old.h) hn = old.h;
+	if (!(Pn - old.P > 1e-9 * Pcap)) return false; // dmg3 m2: no P growth, no record growth
+	P = Pn, h = hn;
+	return true;
+}
+
+double DentMath::MaxDisplace (const DentParams &p, const DentMeshView &m)
+{
+	double dmax = 0.0;
+	for (size_t v = 0; v < m.nv; v++) dmax = std::max (dmax, Len (Displace (p, m.rest[v])));
+	return dmax;
+}
+
+uint32_t DentMath::ParamsHash (const DentParams &p)
+{
+	std::string s;
+	const double v[7] = { p.c.x, p.c.y, p.c.z, p.n.x, p.n.y, p.n.z, p.R };
+	for (double x : v) { s += ' '; PutNum (s, x); }
+	return Fnv1a (s.data (), s.size ());
+}
+
+void DentMath::ApplyExt (DentParams &p, const DentParams &e)
+{
+	p.mode = e.mode, p.seed = e.seed, p.t = e.t, p.P = e.P, p.hd = e.hd, p.hz = e.hz, p.bits = e.bits;
+}
+
+std::string DentMath::FormatExtEvent (uint32_t recidx, const DentParams &p, double E, double vn, double vt, int hit, uint32_t evflags)
+{
+	std::string s;
+	PutInt (s, recidx);
+	PutHexArg (s, ParamsHash (p));
+	PutExtFields (s, p);
+	PutNumArg (s, Clamp (E, 0.0, DENT_LIM_E)); PutNumArg (s, Clamp (vn, -1e9, 1e9)); PutNumArg (s, Clamp (vt, -1e9, 1e9));
+	if (hit >= 0) { s += ' '; PutInt (s, (uint32_t)(hit ? 1 : 0)); PutHexArg (s, evflags); } // dmg3 M3
+	return s;
+}
+
+bool DentMath::ParseExtEvent (const char *payload, uint32_t &recidx, uint32_t &h8, DentParams &ext, double &E, double &vn, double &vt, int *hit, uint32_t *evflags)
+{
+	std::vector<Tok> t;
+	Split (payload, t);
+	DentParams e {};
+	uint32_t k, h;
+	double a, b, c;
+	if (t.size () < 14 || !ParseInt (t[0], k) || t[1].n > 8 || !ParseInt (t[1], h, 16) || !ParseExtFields (t, 2, e) || !ParseD (t[11], a) || !ParseD (t[12], b) || !ParseD (t[13], c)) return false;
+	uint32_t hk = 0, ef = 0;
+	bool flag = t.size () >= 16 && ParseInt (t[14], hk) && hk <= 1 && t[15].n <= 8 && ParseInt (t[15], ef, 16); // dmg3 M3: optional hit flag and event flags
+	recidx = k, h8 = h, ext = e, E = a, vn = b, vt = c;
+	if (hit) *hit = flag ? (int)hk : -1;
+	if (evflags) *evflags = flag ? ef : 0u;
+	return true;
+}
+
+void DentMath::FormatTornEvent (const DentTorn &t, std::vector<std::string> &payload)
+{
+	if (t.kin) { // dmg3 tear: live debris kinematics after the groups of the last payload
+		std::string k = " K";
+		const double v[7] = { t.dv.x, t.dv.y, t.dv.z, t.dw.x, t.dw.y, t.dw.z, t.mass };
+		for (double x : v) PutNumArg (k, Clamp (x, -1e9, 1e9));
+		GroupLines (TornHead (t), t.grp, (size_t)DENT_EVENT_MAX - k.size (), payload);
+		payload.back () += k;
+		return;
+	}
+	GroupLines (TornHead (t), t.grp, (size_t)DENT_EVENT_MAX, payload);
+}
+
+bool DentMath::ParseTornEvent (const char *payload, DentTorn &t, bool &more)
+{
+	std::vector<Tok> k;
+	Split (payload, k);
+	return ParseTornTok (k, 0, t, more);
 }
 
 // geometry on plain arrays (4.8, 4.9, 13.3, 13.4)
@@ -706,6 +1594,12 @@ void DentMath::MakeView (const DentObject &o, DentViewData &d)
 size_t DentMath::Apply (const DentParams &p, const std::vector<std::vector<DentVtx>> &rest, std::vector<std::vector<DentVtx>> &cur,
 	const uint16_t *grp, size_t ngrp, std::vector<std::vector<uint8_t>> *dirty)
 {
+	return Apply (p, rest, cur, grp, ngrp, dirty, nullptr);
+}
+
+size_t DentMath::Apply (const DentParams &p, const std::vector<std::vector<DentVtx>> &rest, std::vector<std::vector<DentVtx>> &cur,
+	const uint16_t *grp, size_t ngrp, std::vector<std::vector<uint8_t>> *dirty, const DentVCut *vc)
+{
 	size_t ng = std::min (rest.size (), cur.size ());
 	std::vector<uint8_t> sel;
 	if (ngrp) { // listed groups once each, whatever the list order
@@ -719,7 +1613,7 @@ size_t DentMath::Apply (const DentParams &p, const std::vector<std::vector<DentV
 		size_t n = std::min (rest[g].size (), cur[g].size ());
 		if (dirty && (*dirty)[g].size () < cur[g].size ()) (*dirty)[g].resize (cur[g].size (), 0);
 		for (size_t i = 0; i < n; i++)
-			if (AddField (p, rest[g][i], cur[g][i])) {
+			if (AddField (p, rest[g][i], cur[g][i], vc)) {
 				moved++;
 				if (dirty) (*dirty)[g][i] = 1;
 			}
@@ -788,7 +1682,8 @@ void DentMath::FaceNormalSums (const std::vector<std::vector<DentVtx>> &v, const
 }
 
 void DentMath::Normals (const std::vector<std::vector<DentVtx>> &rest, const std::vector<Vector> &restSum, const std::vector<std::vector<uint16_t>> &idx,
-	const std::vector<std::vector<uint32_t>> &weld, uint32_t nweld, const std::vector<uint8_t> &touched, std::vector<std::vector<DentVtx>> &cur)
+	const std::vector<std::vector<uint32_t>> &weld, uint32_t nweld, const std::vector<uint8_t> &touched, std::vector<std::vector<DentVtx>> &cur,
+	const std::vector<uint8_t> *facet)
 {
 	size_t ng = std::min (std::min (rest.size (), cur.size ()), std::min (idx.size (), weld.size ()));
 	auto valid = [&] (size_t g, uint32_t a) { return a < rest[g].size () && a < cur[g].size () && a < weld[g].size () && weld[g][a] < nweld; };
@@ -815,11 +1710,46 @@ void DentMath::Normals (const std::vector<std::vector<DentVtx>> &rest, const std
 			if (!Finite (A)) continue;
 			sum[wa] += A, sum[wb] += A, sum[wc] += A;
 		}
+	struct FaceN { Vector r, c; };
+	std::vector<std::vector<FaceN>> fl; // dmg3 crease rule: unit rest and current face normals per faceted weld id
+	auto fac = [&] (uint32_t w) { return facet && w < facet->size () && (*facet)[w]; };
+	if (facet) {
+		fl.resize (nweld);
+		for (size_t g = 0; g < ng; g++)
+			for (size_t j = 0; j + 2 < idx[g].size (); j += 3) {
+				uint32_t a = idx[g][j], b = idx[g][j+1], c = idx[g][j+2];
+				if (!valid (g, a) || !valid (g, b) || !valid (g, c)) continue;
+				uint32_t wa = weld[g][a], wb = weld[g][b], wc = weld[g][c];
+				if (wa == wb || wb == wc || wc == wa || !(fac (wa) || fac (wb) || fac (wc))) continue;
+				Vector Ar = Area (Pos (rest[g][a]), Pos (rest[g][b]), Pos (rest[g][c])), Ac = Area (Pos (cur[g][a]), Pos (cur[g][b]), Pos (cur[g][c]));
+				double lr = Len (Ar), lc = Len (Ac);
+				if (!(lr > 0.0) || !(lc > 0.0) || !Finite (Ac)) continue;
+				FaceN f { Ar / lr, Ac / lc };
+				for (uint32_t w : { wa, wb, wc }) if (fac (w)) fl[w].push_back (f);
+			}
+	}
+	auto crease = [&] (uint32_t w, const Vector &nr, Vector &x) {
+		if (!facet || w >= fl.size () || fl[w].size () < 2) return false;
+		const std::vector<FaceN> &F = fl[w];
+		double dmin = 1.0;
+		for (size_t i = 0; i < F.size (); i++) for (size_t j = i + 1; j < F.size (); j++) dmin = std::min (dmin, Dot (F[i].c, F[j].c));
+		if (!(dmin < 0.866)) return false;
+		size_t k = 0;
+		double turn = 2.0;
+		for (size_t i = 0; i < F.size (); i++) { double d = Dot (F[i].r, F[i].c); if (d < turn) turn = d, k = i; }
+		x = RotateMin (nr, F[k].r, F[k].c);
+		return true;
+	};
 	for (size_t g = 0; g < ng; g++)
 		for (size_t i = 0; i < rest[g].size () && i < cur[g].size () && i < weld[g].size (); i++) {
 			uint32_t w = weld[g][i];
 			if (w >= nweld || !upd[w] || w >= restSum.size ()) continue;
 			Vector nr = Nml (rest[g][i]);
+			Vector cx;
+			if (Len2 (nr) >= 0.01 && crease (w, nr, cx)) {
+				double l = Len (cx);
+				if (l > 0.0 && std::isfinite (l)) { cx /= l; cur[g][i].nx = (float)cx.x, cur[g][i].ny = (float)cx.y, cur[g][i].nz = (float)cx.z; continue; }
+			}
 			const Vector &u = restSum[w], &s = sum[w];
 			if (Len2 (nr) < 0.01 || !(Len2 (u) > 0.0) || !Finite (u)) continue; // degenerate rest normal or sum: stays
 			DentVtx &cv = cur[g][i];
@@ -1028,7 +1958,7 @@ void DentMath::FormatVessel (const DentVesselText &v, const char *indent, std::v
 		if (ind.size () + s.size () <= lim) lines.push_back (ind + s);
 		else if (s.size () <= lim) lines.push_back (s);
 	}
-	if (v.rec.empty () && v.eabs == 0.0 && v.flags == 0) return;
+	if (v.rec.empty () && v.eabs == 0.0 && v.flags == 0 && v.torn.empty () && v.debris.empty () && v.sites.empty () && v.brokenBonds.empty () && v.weakBonds.empty ()) return;
 	std::string s = ind + "XDMG ";
 	PutInt (s, DENT_VERSION);
 	s += ' ';
@@ -1073,6 +2003,130 @@ void DentMath::FormatVessel (const DentVesselText &v, const char *indent, std::v
 		PutInt (s, kof[j]);
 		PutParams (s, r.p);
 		GroupLines (s, r.grp, lim, lines);
+	}
+	std::vector<size_t> ext; // dmg3 extension section: written ordinals of new-build records
+	for (size_t j = 0; j < ok.size (); j++) if (!Legacy (v.rec[ok[j]].p)) ext.push_back (j);
+	if (ext.empty () && v.torn.empty () && v.debris.empty () && v.sites.empty () && v.brokenBonds.empty () && v.weakBonds.empty ()) return;
+	s = ind + "XDMG ";
+	PutInt (s, DENT_VERSION_X);
+	s += ' '; PutInt (s, ok.size ());
+	PutHexArg (s, ok.empty () ? 0u : ParamsHash (v.rec[ok.back ()].p));
+	PutNumArg (s, Clamp (v.eabs, 0.0, DENT_LIM_E));
+	lines.push_back (s);
+	for (size_t j : ext) {
+		const DentParams &p = v.rec[ok[j]].p;
+		s = ind + "XDMGD ";
+		PutInt (s, j);
+		PutHexArg (s, ParamsHash (p));
+		PutExtFields (s, p);
+		lines.push_back (s);
+	}
+	for (const DentTorn &t : v.torn) GroupLines (ind + "XDMGM T " + TornHead (t), t.grp, lim, lines);
+	for (const DentDebris &d : v.debris) FormatDebris (d, ind, lines);
+	for (const DentSites &x : v.sites) FormatSites (x, ind, lines);
+	for (const auto &b : v.brokenBonds) FormatBonds (b.first, b.second, ind, lines);
+	for (const auto &b : v.weakBonds) FormatBonds (b.first, b.second, ind, lines, "W");
+}
+
+void DentMath::FormatSites (const DentSites &x, const std::string &ind, std::vector<std::string> &lines)
+{
+	if (x.s.empty () || x.s.size () > 65535) return;
+	std::string h = ind + "XDMGM S ";
+	PutInt (h, x.slot); h += ' ';
+	PutHex8 (h, x.key); h += ' ';
+	PutInt (h, x.s.size ());
+	SiteLines (h, x.s, (size_t)DENT_LINE_MAX, lines);
+}
+
+void DentMath::FormatBonds (uint32_t slot, const std::vector<uint32_t> &b, const std::string &ind, std::vector<std::string> &lines, const char *tag)
+{
+	if (b.empty ()) return;
+	std::string h = ind + "XDMGM " + tag + " ";
+	PutInt (h, slot);
+	BondLines (h, b, (size_t)DENT_LINE_MAX, lines);
+}
+
+void DentMath::FormatSitesEvent (const DentSites &x, std::vector<std::string> &payload)
+{
+	const size_t lim = (size_t)DENT_EVENT_MAX;
+	size_t i = 0;
+	while (i < x.s.size ()) {
+		std::string l;
+		PutInt (l, x.slot); l += ' ';
+		PutHex8 (l, x.key); l += ' ';
+		PutInt (l, x.s.size ()); l += ' ';
+		PutInt (l, i);
+		size_t k = 0;
+		while (i < x.s.size ()) {
+			std::string t;
+			PutNumArg (t, x.s[i].x); PutNumArg (t, x.s[i].y); PutNumArg (t, x.s[i].z);
+			if (k && l.size () + t.size () > lim) break;
+			l += t, i++, k++;
+		}
+		payload.push_back (l);
+	}
+}
+
+bool DentMath::ParseSitesEvent (const char *payload, DentSites &x, uint32_t &n, uint32_t &first)
+{
+	std::vector<Tok> t;
+	Split (payload, t);
+	x = DentSites ();
+	bool more = false;
+	if (t.size () < 7 || !ParseInt (t[0], x.slot) || t[1].n > 8 || !ParseInt (t[1], x.key, 16) || !ParseInt (t[2], n) || !ParseInt (t[3], first) || n == 0 || n > 65535 || first >= n) return false;
+	if (!ParseSiteToks (t, 4, x.s, more) || more) return false;
+	return first + x.s.size () <= n;
+}
+
+void DentMath::FormatBondsEvent (uint32_t slot, const std::vector<uint32_t> &b, std::vector<std::string> &payload)
+{
+	std::string h;
+	PutInt (h, slot);
+	BondLines (h, b, (size_t)DENT_EVENT_MAX, payload);
+}
+
+bool DentMath::ParseBondsEvent (const char *payload, uint32_t &slot, std::vector<uint32_t> &b, bool &more)
+{
+	std::vector<Tok> t;
+	Split (payload, t);
+	return t.size () == 2 && ParseInt (t[0], slot) && ParseBondTok (t[1], b, more);
+}
+
+void DentMath::FormatDebris (const DentDebris &d, const std::string &ind, std::vector<std::string> &lines)
+{
+	const size_t lim = (size_t)DENT_LINE_MAX - 2;
+	std::string s = ind + "XDMGM B ";
+	PutInt (s, d.id); s += ' ';
+	PutInt (s, d.slot);
+	PutHexArg (s, d.key);
+	s += ' '; PutInt (s, (unsigned)d.ngrp);
+	s += ' '; PutInt (s, d.nvtx);
+	s += ' '; Put17 (s, d.simt);
+	std::string nm = NameTok (Clean (d.name, false));
+	if (s.size () + 1 + nm.size () + (d.mass > 0.0 ? 17 : 0) > lim) { nm = "#"; PutHex8 (nm, Fnv1a (d.name.data (), d.name.size ())); }
+	s += " " + nm;
+	if (d.mass > 0.0) PutNumArg (s, d.mass); // dmg3 tear: section mass, reused on reload
+	lines.push_back (s);
+	for (const DentDebrisPose &q : d.pose) {
+		std::string h = ind + "XDMGM Q ";
+		PutInt (h, d.id);
+		GroupLines (h + PoseHead (q), q.grp, lim, lines);
+	}
+	uint32_t j = 0; // dmg3 m4: ordinal among written rows
+	for (size_t jr = 0; jr < d.rec.size (); jr++) {
+		const DentRecord &r = d.rec[jr];
+		if (!ParamsOk (r.p)) continue;
+		std::string h = ind + "XDMGD B ";
+		PutInt (h, d.id); h += ' ';
+		PutInt (h, j++);
+		std::string x = h;
+		PutParams (h, r.p);
+		GroupLines (h, r.grp, lim, lines);
+		if (Legacy (r.p)) continue;
+		x += " X";
+		PutHexArg (x, ParamsHash (r.p));
+		PutExtFields (x, r.p);
+		lines.push_back (x);
 	}
 }
 
@@ -1222,14 +2276,23 @@ bool DentVesselParser::Line (const char *line)
 	if (kw > 0) { // in the section of the XDMG line before it
 		if (m_sec == 0) m_pending.push_back (raw);
 		else if (m_sec == 1) V1 (raw);
+		else if (m_sec == 4) V2 (raw);
 		else Keep (raw);
 		return true;
 	}
 	Close (); // an XDMG line ends an open group list
+	m_tornOpen = false, m_qOpen = 0, m_sOpen = 0;
 	int ver;
 	if (t.size () < 2 || !ParseInt (t[1], ver)) { m_skipped++; return true; } // no section change
 	bool first = m_sec == 0;
-	if (ver != DENT_VERSION) {
+	uint32_t xn = 0, xh = 0;
+	double xe = 0;
+	bool x2 = ver == DENT_VERSION_X && !m_x2 && t.size () == 5 && ParseInt (t[2], xn) && t[3].n == 8 && ParseInt (t[3], xh, 16) && ParseD (t[4], xe) && xe >= 0.0;
+	if (x2) { // dmg3 extension section: XDMG 2 <n> <h8last> <eabs>; any other version-2 line is an unknown section
+		m_sec = 4;
+		m_x2 = true, m_xn = xn, m_xh = xh, m_xe = Q9 (xe);
+		if (first) for (const std::string &l : m_pending) V2 (l);
+	} else if (ver != DENT_VERSION) {
 		m_sec = raw.size () <= (size_t)DENT_LINE_MAX ? 2 : 3; // a section whose XDMG line cannot be kept is dropped whole
 		if (first) for (const std::string &l : m_pending) Keep (l);
 		Keep (raw);
@@ -1253,6 +2316,7 @@ void DentVesselParser::Close ()
 	if (!m_open) return;
 	if (m_meshIdx.count (m_dent.back ().first)) m_nKnown--;
 	m_dent.pop_back ();
+	m_ord.pop_back ();
 	m_skipped++;
 	m_open = m_over = false;
 }
@@ -1283,18 +2347,19 @@ void DentVesselParser::V1 (const std::string &line)
 	uint32_t k;
 	DentRecord r {};
 	bool more = false;
-	if (t.size () < 12 || !ParseInt (t[1], k) || !ParseParams (t, 2, r.p) || !ParseGroups (t[11], r.grp, more)) { Close (); m_skipped++; return; }
+	if (t.size () < 12 || !ParseInt (t[1], k) || !ParseParams (t, 2, r.p) || !ParseGroups (t[11], r.grp, more)) { Close (); m_skipped++; m_nord++; return; }
 	if (m_open) { // the previous line's list ended in ',': this line continues it, or the record dangles
 		DentRecord &p = m_dent.back ().second;
 		if (m_dent.back ().first == k && SameParams (p.p, r.p) && !r.grp.empty ()) {
 			if (p.grp.size () + r.grp.size () > DENT_MAX_GRPLIST) m_over = m_capped = true; // no more groups stored; the record is dropped at its end
 			else if (!m_over) p.grp.insert (p.grp.end (), r.grp.begin (), r.grp.end ());
 			m_open = more;
-			if (!m_open && m_over) { if (m_meshIdx.count (k)) m_nKnown--; m_dent.pop_back (); m_skipped++; m_over = false; }
+			if (!m_open && m_over) { if (m_meshIdx.count (k)) m_nKnown--; m_dent.pop_back (); m_ord.pop_back (); m_skipped++; m_over = false; }
 			return;
 		}
 		Close ();
 	}
+	uint32_t ord = m_nord++;                              // dmg3: written ordinal of this record
 	bool known = m_meshIdx.count (k) != 0;                // orphans do not count toward the cap; Finish skips them
 	if ((known && m_nKnown >= DENT_MAX_VESSEL) || r.grp.size () > DENT_MAX_GRPLIST) { // past the live cap (R7) or the group limit: not stored
 		m_capped = true;
@@ -1302,8 +2367,143 @@ void DentVesselParser::V1 (const std::string &line)
 		r.grp.clear (), m_over = true; // its continuation lines are read and dropped with it
 	}
 	m_dent.push_back ({ k, r });
+	m_ord.push_back (ord);
 	if (known) m_nKnown++;
 	m_open = more;
+}
+
+void DentVesselParser::V2 (const std::string &line)
+{
+	std::vector<Tok> t;
+	Split (line.c_str (), t);
+	int so = m_sOpen;
+	m_sOpen = 0;
+	if (t.size () >= 2 && IEq (t[0].p, t[0].n, "XDMGM") && (IEq (t[1].p, t[1].n, "S") || IEq (t[1].p, t[1].n, "K") || IEq (t[1].p, t[1].n, "W"))) { // blast: sites, broken and weakened bonds
+		m_tornOpen = false, m_qOpen = 0;
+		bool more = false;
+		bool w = IEq (t[1].p, t[1].n, "W");
+		if (w || IEq (t[1].p, t[1].n, "K")) { // XDMGM K <slot> <b,b,...>; XDMGM W <slot> <pair,h,pair,h,...>
+			uint32_t slot;
+			std::vector<uint32_t> b;
+			auto &L = w ? m_weak : m_bonds;
+			int open = w ? 3 : 2;
+			if (t.size () != 4 || !ParseInt (t[2], slot) || !ParseBondTok (t[3], b, more)) { m_skipped++; return; }
+			if (so == open && !L.empty () && L.back ().first == slot) {
+				std::vector<uint32_t> &o = L.back ().second;
+				if (o.size () + b.size () <= (w ? 2 : 1) * (size_t)DENT_MAX_GRPLIST) o.insert (o.end (), b.begin (), b.end ());
+			} else {
+				for (size_t i = 0; i < L.size (); i++) if (L[i].first == slot) { L.erase (L.begin () + i); break; }
+				L.push_back ({ slot, b });
+			}
+			m_sOpen = more ? open : 0;
+			return;
+		}
+		DentSites x; // XDMGM S <slot> <key8> <n> x y z ...
+		uint32_t n;
+		if (t.size () < 8 || !ParseInt (t[2], x.slot) || t[3].n > 8 || !ParseInt (t[3], x.key, 16) || !ParseInt (t[4], n) || n == 0 || n > 65535 || !ParseSiteToks (t, 5, x.s, more)) {
+			if (so == 1 && m_sLeft) m_sites.pop_back (), m_sLeft = 0;
+			m_skipped++;
+			return;
+		}
+		if (so == 1 && m_sLeft && m_sites.back ().slot == x.slot && m_sites.back ().key == x.key && m_sites.back ().s.size () + m_sLeft == n && x.s.size () <= m_sLeft) {
+			std::vector<Vector> &o = m_sites.back ().s;
+			o.insert (o.end (), x.s.begin (), x.s.end ());
+			m_sLeft -= (uint32_t)x.s.size ();
+		} else {
+			if (m_sLeft) m_sites.pop_back (), m_sLeft = 0, m_skipped++; // the open list never ended
+			if (x.s.size () > n) { m_skipped++; return; }
+			for (size_t i = 0; i < m_sites.size (); i++) if (m_sites[i].slot == x.slot) { m_sites.erase (m_sites.begin () + i); break; }
+			m_sLeft = n - (uint32_t)x.s.size ();
+			m_sites.push_back (x);
+		}
+		if (m_sLeft && !more) m_sites.pop_back (), m_sLeft = 0, m_skipped++; // short list
+		else if (!m_sLeft && more) more = false;
+		m_sOpen = more ? 1 : 0;
+		return;
+	}
+	if (m_sLeft) m_sites.pop_back (), m_sLeft = 0, m_skipped++;
+	if (t.size () >= 2 && IEq (t[1].p, t[1].n, "B")) { // debris rows: XDMGM B header, XDMGD B parent record copy and its X extension
+		m_tornOpen = false;
+		uint32_t id;
+		if (t.size () < 4 || !ParseInt (t[2], id)) { m_qOpen = 0; m_skipped++; return; }
+		DentDebris *d = nullptr;
+		for (DentDebris &x : m_debris) if (x.id == id) d = &x;
+		if (IEq (t[0].p, t[0].n, "XDMGM")) {
+			m_qOpen = 0;
+			DentDebris n;
+			uint32_t ngrp;
+			n.id = id;
+			if (d || t.size () < 9 || !ParseInt (t[3], n.slot) || t[4].n > 8 || !ParseInt (t[4], n.key, 16) || !ParseInt (t[5], ngrp) || ngrp > 65535 || !ParseInt (t[6], n.nvtx)
+				|| !ParseD (t[7], n.simt)) { m_skipped++; return; }
+			n.ngrp = (uint16_t)ngrp, n.name = NameUntok (t[8]);
+			double ms;
+			if (t.size () >= 10 && ParseD (t[9], ms) && ms > 0.0 && ms < 1e12) n.mass = Q9 (ms);
+			m_debris.push_back (n);
+			return;
+		}
+		uint32_t j;
+		if (!d || !ParseInt (t[3], j)) { m_qOpen = 0; m_skipped++; return; }
+		if (t.size () >= 6 && IEq (t[4].p, t[4].n, "X")) { // XDMGD B <id> <j> X <h8> <ext>
+			m_qOpen = 0;
+			uint32_t h8;
+			DentParams e {};
+			if (j >= d->rec.size () || t.size () < 15 || t[5].n > 8 || !ParseInt (t[5], h8, 16) || !ParseExtFields (t, 6, e) || DentMath::ParamsHash (d->rec[j].p) != h8) { m_skipped++; return; }
+			DentMath::ApplyExt (d->rec[j].p, e);
+			return;
+		}
+		DentRecord r {};
+		bool more = false;
+		if (t.size () < 14 || !ParseParams (t, 4, r.p) || !ParseGroups (t[13], r.grp, more)) { m_qOpen = 0; m_skipped++; return; }
+		if (m_qOpen == 2 && j + 1 == d->rec.size () && SameParams (d->rec.back ().p, r.p) && !r.grp.empty ()) {
+			std::vector<uint16_t> &g = d->rec.back ().grp;
+			if (g.size () + r.grp.size () <= DENT_MAX_GRPLIST) g.insert (g.end (), r.grp.begin (), r.grp.end ());
+		} else if (j == d->rec.size () && d->rec.size () < DENT_MAX_VESSEL) {
+			r.slot = d->slot, r.key = d->key, r.ngrp = d->ngrp, r.nvtx = d->nvtx;
+			d->rec.push_back (r);
+		} else { m_qOpen = 0; m_skipped++; return; }
+		m_qOpen = more ? 2 : 0;
+		return;
+	}
+	if (t.size () >= 2 && IEq (t[0].p, t[0].n, "XDMGM") && IEq (t[1].p, t[1].n, "Q")) { // XDMGM Q <id> <px> <py> <pz> <qx> <qy> <qz> <qw> <groups>
+		m_tornOpen = false;
+		uint32_t id;
+		DentDebrisPose q;
+		double v[7];
+		bool more = false, ok = t.size () >= 11 && ParseInt (t[2], id);
+		for (int k = 0; ok && k < 7; k++) ok = ParseD (t[3 + k], v[k]);
+		ok = ok && ParseGroups (t[10], q.grp, more);
+		DentDebris *d = nullptr;
+		if (ok) for (DentDebris &x : m_debris) if (x.id == id) d = &x;
+		if (!d) { m_qOpen = 0; m_skipped++; return; }
+		q.p = Vector (Q9 (v[0]), Q9 (v[1]), Q9 (v[2]));
+		for (int k = 0; k < 4; k++) q.q[k] = Q9 (v[3 + k]);
+		if (m_qOpen == 1 && !d->pose.empty () && d == &m_debris.back () && SameBits (d->pose.back ().p.x, q.p.x) && SameBits (d->pose.back ().p.y, q.p.y) && SameBits (d->pose.back ().p.z, q.p.z)
+			&& std::memcmp (d->pose.back ().q, q.q, sizeof q.q) == 0 && !q.grp.empty ()) {
+			std::vector<uint16_t> &g = d->pose.back ().grp;
+			if (g.size () + q.grp.size () <= DENT_MAX_GRPLIST) g.insert (g.end (), q.grp.begin (), q.grp.end ());
+		} else d->pose.push_back (q);
+		m_qOpen = more ? 1 : 0;
+		return;
+	}
+	m_qOpen = 0;
+	if (IEq (t[0].p, t[0].n, "XDMGD")) { // XDMGD <j> <h8> <mode> <P> <seed8> <tx> <ty> <tz> <bits> <hd> <hz>
+		m_tornOpen = false;
+		Ext e {};
+		if (t.size () < 12 || !ParseInt (t[1], e.j) || t[2].n > 8 || !ParseInt (t[2], e.h8, 16) || !ParseExtFields (t, 3, e.p)) { m_skipped++; return; }
+		m_ext.push_back (e);
+		return;
+	}
+	DentTorn r; // XDMGM T <kind> <slot> <key8> <ngrp> <nvtx> <simt> <debris> <groups>
+	bool more = false;
+	if (t.size () < 10 || !IEq (t[1].p, t[1].n, "T") || !ParseTornTok (t, 2, r, more)) { m_tornOpen = false; m_skipped++; return; }
+	if (m_tornOpen && SameTornHead (m_torn.back (), r) && !r.grp.empty ()) {
+		std::vector<uint16_t> &g = m_torn.back ().grp;
+		if (g.size () + r.grp.size () <= DENT_MAX_GRPLIST) g.insert (g.end (), r.grp.begin (), r.grp.end ());
+		m_tornOpen = more;
+		return;
+	}
+	m_torn.push_back (r);
+	m_tornOpen = more;
 }
 
 void DentVesselParser::Finish (DentVesselText &out)
@@ -1318,15 +2518,36 @@ void DentVesselParser::Finish (DentVesselText &out)
 	int skipped = m_skipped + m_long;
 	out.verbatim = m_lines;
 	out.eabs = m_eabs, out.flags = m_flags;
-	for (const auto &d : m_dent) {
+	std::unordered_map<uint32_t, size_t> ordRec; // dmg3: written ordinal -> out.rec index
+	for (size_t i = 0; i < m_dent.size (); i++) {
+		const auto &d = m_dent[i];
 		auto mi = m_meshIdx.find (d.first);
 		if (mi == m_meshIdx.end ()) { skipped++; continue; } // unknown key
 		const DentRecord *m = &m_mesh[mi->second].second;
 		if (out.rec.size () >= DENT_MAX_VESSEL) { skipped++, m_capped = true; continue; } // the live cap (R7); the rest counts as skipped
 		DentRecord r = d.second;
 		r.slot = m->slot, r.key = m->key, r.ngrp = m->ngrp, r.nvtx = m->nvtx;
+		if (i < m_ord.size ()) ordRec[m_ord[i]] = out.rec.size ();
 		out.rec.push_back (r);
 	}
+	for (const Ext &e : m_ext) { // bound by written ordinal and the hash of c, n, R; else the record stays a bowl
+		auto f = ordRec.find (e.j);
+		if (f == ordRec.end () || DentMath::ParamsHash (out.rec[f->second].p) != e.h8) { skipped++; continue; }
+		DentMath::ApplyExt (out.rec[f->second].p, e.p);
+	}
+	if (m_x2 && !m_torn.empty ()) { // torn rows hold while the saved record set does
+		bool ok = m_xn == 0 ? out.eabs >= m_xe : (out.rec.size () >= m_xn && DentMath::ParamsHash (out.rec[m_xn - 1].p) == m_xh);
+		if (ok) out.torn = m_torn;
+		else skipped += (int)m_torn.size ();
+	}
+	if (m_x2 && !m_debris.empty ()) { // debris rows: same binding as torn rows
+		bool ok = m_xn == 0 ? out.eabs >= m_xe : (out.rec.size () >= m_xn && DentMath::ParamsHash (out.rec[m_xn - 1].p) == m_xh);
+		if (ok) out.debris = m_debris;
+		else skipped += (int)m_debris.size ();
+	}
+	if (m_sLeft) m_sites.pop_back (), m_sLeft = 0, skipped++;
+	out.sites = m_sites, out.brokenBonds = m_bonds, out.weakBonds = m_weak; // blast
+	for (auto &x : out.weakBonds) if (x.second.size () & 1) x.second.pop_back (); // pairs only
 	for (const auto &n : m_names)
 		if (n.first < 4096) { // readers only; no huge tables from a bad slot
 			if (out.slotName.size () <= n.first) out.slotName.resize (n.first + 1);

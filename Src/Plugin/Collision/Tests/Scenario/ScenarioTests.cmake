@@ -163,3 +163,20 @@ coll_scenario_test(Coll.Base.Hangar SCN gen:hangar FRAMES 300 CHECK hangar LABEL
 coll_scenario_test(Coll.Stack.Hit SCN gen:stack FRAMES 450 CHECK stackhit RUNS "off|headless|off||||" "on|headless|on||||")
 coll_scenario_test(Coll.Stack.Attached SCN gen:attached FRAMES 300 CHECK stackhit RUNS "off|headless|off||||" "on|headless|on||||")
 coll_scenario_test(Coll.Landed.Wake SCN gen:wake FRAMES 150 CHECK landedwake RUNS "main|headless|on||||")
+
+# dmg3: DGs head-on (pair noses 6 + g0 m apart is a PB value, DG CGs 106 m and 46 m apart), contact near t 1.3 s and 1.8 s
+set(dg70 "gen:pair:g0=100,vA=35,vB=-35,A=DeltaGlider,B=DeltaGlider,director=1")
+set(dg15 "gen:pair:g0=40,vA=7.5,vB=-7.5,A=DeltaGlider,B=DeltaGlider,director=1")
+set(dg30 "gen:pair:g0=60,vA=15,vB=-15,A=DeltaGlider,B=DeltaGlider,director=1")
+coll_scenario_test(Coll.Dmg3.Crash70 SCN ${dg70} FRAMES 300 TIMEOUT 300 CHECK dmg3crash LABELS slow RUNS "main|headless|on||||") # crush dents, nose break, debris, section tear
+coll_scenario_test(Coll.Dmg3.Crash30 SCN ${dg30} FRAMES 300 TIMEOUT 300 CHECK dmg3crash LABELS slow RUNS "main|headless|on||||") # no section tear
+coll_scenario_test(Coll.Dmg3.Crash15 SCN ${dg15} FRAMES 300 TIMEOUT 300 CHECK dmg3crash LABELS slow RUNS "main|headless|on||||") # dents only
+coll_scenario_test(Coll.Dmg3.SaveLoad SCN ${dg70} FRAMES 200 TIMEOUT 300 CHECK dmg3save LABELS slow
+	RUNS "crash|headless|on||||LUASAVE 150 dmg3" "load|headless|on||@scn=Tests/Coll/Inherit/dmg3|crash|")
+coll_scenario_test(Coll.Dmg3.RecPlay SCN ${dg70} FRAMES 300 TIMEOUT 300 CHECK dmg3recplay LABELS slow
+	RUNS "rec|headless|on||||TESTRECORD 1 300" "play|headless|on||@scn=Playback/{stem}|rec|")
+coll_scenario_test(Coll.Dmg3.Fx SCN ${dg70} FRAMES 150 TIMEOUT 300 CHECK dmg3fx LABELS slow RUNS "main|headless|on||||")
+coll_scenario_test(Coll.Base.Crash70 SCN gen:crash:kind=base,u=70 FRAMES 150 TIMEOUT 300 CHECK groundcrash LABELS slow RUNS "main|headless|on||||") # blast: a DG into the KSC hangar breaks and throws debris
+coll_scenario_test(Coll.Ground.Crash70 SCN gen:crash:kind=ground,u=70 FRAMES 150 TIMEOUT 300 CHECK groundcrash LABELS slow RUNS "main|headless|on||||") # blast: a DG into open ground breaks and throws debris
+coll_scenario_test(Coll.Dmg3.Crash70.Client VISUAL SCN ${dg70} FRAMES 300 TIMEOUT 900 CHECK dmg3crash RUNS "main|client|on||||") # the same crash in VulkanClient
+coll_scenario_test(Coll.Dmg3.Tear.Client VISUAL SCN "${dg70},cam=side" FRAMES 300 TIMEOUT 900 CHECK dmg3crash RUNS "main|client|on||||") # dmg3 tear: side view of the torn section

@@ -304,6 +304,32 @@ std::string CollSide::State (double t, uint32_t alias, double eabs, uint32_t fla
 
 std::string CollSide::Repair (double t, uint32_t alias) { return Fmt17 (t) + " R " + std::to_string (alias); }
 
+std::string CollSide::Ext (double t, uint32_t alias, uint32_t recidx, const DentParams &p, double E, double vn, double vt, int hit, uint32_t evflags)
+{
+	return Fmt17 (t) + " X " + std::to_string (alias) + " " + DentMath::FormatExtEvent (recidx, p, E, vn, vt, hit, evflags);
+}
+
+void CollSide::Torn (double t, uint32_t alias, const DentTorn &tr, std::vector<std::string> &lines)
+{
+	std::vector<std::string> pay;
+	DentMath::FormatTornEvent (tr, pay);
+	for (const std::string &p : pay) lines.push_back (Fmt17 (t) + " T " + std::to_string (alias) + " " + p);
+}
+
+void CollSide::Sites (double t, uint32_t alias, const DentSites &x, std::vector<std::string> &lines)
+{
+	std::vector<std::string> pay;
+	DentMath::FormatSitesEvent (x, pay);
+	for (const std::string &p : pay) lines.push_back (Fmt17 (t) + " V " + std::to_string (alias) + " " + p);
+}
+
+void CollSide::Bonds (double t, uint32_t alias, uint32_t slot, const std::vector<uint32_t> &b, std::vector<std::string> &lines)
+{
+	std::vector<std::string> pay;
+	DentMath::FormatBondsEvent (slot, b, pay);
+	for (const std::string &p : pay) lines.push_back (Fmt17 (t) + " K " + std::to_string (alias) + " " + p);
+}
+
 std::string CollSide::Building (double t, uint32_t alias, uint32_t obj, double eabs, uint32_t flags, const std::string &planetBase)
 {
 	return Fmt17 (t) + " B " + std::to_string (alias) + " " + std::to_string (obj) + " " + DentMath::FormatStateEvent (eabs, flags) + " " + CollKey::Escape (planetBase);
@@ -314,6 +340,8 @@ bool CollSide::Parse (const std::string &text, CollSideFile &out)
 	out = CollSideFile ();
 	size_t pos = 0;
 	bool head = false, open = false, over = false; // over: the open D event's group list passed DENT_MAX_GRPLIST, dropped at its end
+	bool topen = false;                            // dmg3: the last T event's group list continues
+	bool kopen = false;                            // blast: the last K event's list continues
 	while (pos < text.size ()) {
 		size_t e = text.find ('\n', pos);
 		if (e == std::string::npos) { out.skipped++; break; } // truncated last line
@@ -359,6 +387,43 @@ bool CollSide::Parse (const std::string &text, CollSideFile &out)
 			ok = DentMath::ParseStateEvent ((t[3] + " " + t[4]).c_str (), ev.eabs, ev.flags);
 		} else if (ev.kind == 'R') {
 			ok = true;
+		} else if (ev.kind == 'X') { // dmg3: extension of the D event just before it
+			uint32_t k = 0;
+			ok = DentMath::ParseExtEvent (l.c_str () + TokStart (l, 3), k, ev.h8, ev.rec.p, ev.E, ev.vn, ev.vt, &ev.xhit, &ev.evflags);
+			ev.recidx = k;
+			ok = ok && !out.ev.empty () && out.ev.back ().kind == 'D' && out.ev.back ().alias == ev.alias && out.ev.back ().recidx == k && !open;
+		} else if (ev.kind == 'T') { // dmg3: torn groups
+			bool more = false;
+			ok = DentMath::ParseTornEvent (l.c_str () + TokStart (l, 3), ev.torn, more);
+			if (ok && topen && !out.ev.empty () && out.ev.back ().kind == 'T' && out.ev.back ().alias == ev.alias && out.ev.back ().torn.slot == ev.torn.slot
+				&& out.ev.back ().torn.key == ev.torn.key && out.ev.back ().torn.kind == ev.torn.kind) {
+				std::vector<uint16_t> &g = out.ev.back ().torn.grp;
+				if (g.size () + ev.torn.grp.size () <= DENT_MAX_GRPLIST) g.insert (g.end (), ev.torn.grp.begin (), ev.torn.grp.end ());
+				if (ev.torn.kin) { DentTorn &o = out.ev.back ().torn; o.kin = true, o.dv = ev.torn.dv, o.dw = ev.torn.dw, o.mass = ev.torn.mass; } // dmg3 tear
+				topen = more;
+				continue;
+			}
+			topen = ok && more;
+		} else if (ev.kind == 'V') { // blast: sites, payloads continued by their first index
+			uint32_t first = 0;
+			ok = DentMath::ParseSitesEvent (l.c_str () + TokStart (l, 3), ev.sites, ev.nsites, first);
+			if (ok && first > 0) {
+				CollSideEvent *o = out.ev.empty () ? nullptr : &out.ev.back ();
+				if (o && o->kind == 'V' && o->alias == ev.alias && o->sites.slot == ev.sites.slot && o->sites.key == ev.sites.key && o->nsites == ev.nsites && o->sites.s.size () == first)
+					o->sites.s.insert (o->sites.s.end (), ev.sites.s.begin (), ev.sites.s.end ());
+				else out.skipped++;
+				continue;
+			}
+		} else if (ev.kind == 'K') { // blast: broken bonds, continued like T
+			bool more = false;
+			ok = DentMath::ParseBondsEvent (l.c_str () + TokStart (l, 3), ev.slot, ev.bonds, more);
+			if (ok && kopen && !out.ev.empty () && out.ev.back ().kind == 'K' && out.ev.back ().alias == ev.alias && out.ev.back ().slot == ev.slot) {
+				std::vector<uint32_t> &b = out.ev.back ().bonds;
+				if (b.size () + ev.bonds.size () <= DENT_MAX_GRPLIST) b.insert (b.end (), ev.bonds.begin (), ev.bonds.end ());
+				kopen = more;
+				continue;
+			}
+			kopen = ok && more;
 		} else if (ev.kind == 'B' && t.size () >= 7 && Num (t[3], ev.obj)) {
 			ok = DentMath::ParseStateEvent ((t[4] + " " + t[5]).c_str (), ev.eabs, ev.flags) && CollKey::Unescape (t[6], ev.base);
 		}
@@ -366,9 +431,15 @@ bool CollSide::Parse (const std::string &text, CollSideFile &out)
 			if (open && over) { out.ev.pop_back (); out.skipped++; }
 			open = over = false;
 		}
+		if (ev.kind != 'T') topen = false;
+		if (ev.kind != 'K') kopen = false;
 		if (ok) out.ev.push_back (ev);
 		else out.skipped++;
 	}
 	if (open && over && !out.ev.empty ()) { out.ev.pop_back (); out.skipped++; } // the dropped list never ended (file ends)
+	for (size_t i = 0; i < out.ev.size (); ) { // blast: incomplete site lists are dropped
+		if (out.ev[i].kind == 'V' && out.ev[i].sites.s.size () != out.ev[i].nsites) { out.ev.erase (out.ev.begin () + i); out.skipped++; }
+		else i++;
+	}
 	return head;
 }

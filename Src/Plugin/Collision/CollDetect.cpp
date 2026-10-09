@@ -1610,6 +1610,14 @@ struct CollDetect::Impl {
 		return CollCapsuleHit (Q, A.rmax + B.rmax + d.m_prm.deltaCt + std::min (E, COLL_E_CAND));
 	}
 
+	// dmg3 L5: a pair filtered by the damage session (parent and debris), never two bases
+	static bool NoPair (const CollDetect &d, int i, int j)
+	{
+		const CollBody &A = d.m_body[i], &B = d.m_body[j];
+		if (A.kind == COLLB_BASE || B.kind == COLLB_BASE) return false;
+		return std::binary_search (d.m_noPair.begin (), d.m_noPair.end (), std::make_pair (std::min (A.id, B.id), std::max (A.id, B.id)));
+	}
+
 	// candidate body pairs (2.2, 2.3); b >= 0: only pairs with b
 	static void Broad (const CollDetect &d, int b, std::vector<std::pair<int, int>> &cand)
 	{
@@ -1641,6 +1649,7 @@ struct CollDetect::Impl {
 		}
 		for (const auto &p : pre) {
 			if (Skip (d.m_body[p.first], d.m_body[p.second])) continue;
+			if (!d.m_noPair.empty () && NoPair (d, p.first, p.second)) continue;
 			if (Capsule (d, p.first, p.second)) cand.push_back (p);
 		}
 	}
@@ -2187,4 +2196,12 @@ bool CollDetect::Embedded (const CollEmbedQuery &q)
 	auto it = std::lower_bound (e.embed.begin (), e.embed.end (), q.key, [] (const std::pair<uint64_t, uint8_t> &x, uint64_t k) { return x.first < k; });
 	e.embed.insert (it, { q.key, (uint8_t)(hit ? 1 : 0) });
 	return hit;
+}
+
+void CollDetect::SetNoPair (const std::vector<std::pair<uint32_t, uint32_t>> &p)
+{
+	m_noPair.clear ();
+	for (const auto &x : p) m_noPair.push_back ({ std::min (x.first, x.second), std::max (x.first, x.second) });
+	std::sort (m_noPair.begin (), m_noPair.end ());
+	m_noPair.erase (std::unique (m_noPair.begin (), m_noPair.end ()), m_noPair.end ());
 }

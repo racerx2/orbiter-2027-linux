@@ -7,6 +7,9 @@
 #include "CollBaseA.h"
 #include "CollDamageA.h"
 #include "CollDmgHost.h"
+#include "CollBreakA.h"
+#include "CollFxA.h"
+#include "CollGroundA.h"
 #include "CollSdkOrbiter.h"
 #include "CollSourceA.h"
 #include "CollWorldA.h"
@@ -246,6 +249,7 @@ CollSession::CollSession (uint32_t s, const CollCfgValues &c) : serial (s), cfg 
 	dhost = std::make_unique<CollDmgHostOf<CollGeomSession, CollSession>> (*geom, *this);
 	dmg = std::make_unique<CollDmgSession> (*sdk, *dhost, cfg);
 	sink = std::make_unique<ShapeSinkA> (*dmg);
+	ground = std::make_unique<CollGroundA> (*sdk, cfg);
 }
 
 CollSession::~CollSession () = default;
@@ -275,6 +279,7 @@ void CollSession::PurgeVessel (uint32_t id)
 	geom->DeleteVessel (id);
 	phys->OnDeleteVessel (id);
 	dmg->OnDeleteVessel (id);
+	ground->Drop (id);
 }
 
 void CollSession::NewVessel (OBJHANDLE h, bool inStep)
@@ -289,6 +294,10 @@ void CollSession::DeleteVessel (OBJHANDLE h, bool inStep)
 	auto it = idOf.find (h);
 	if (it == idOf.end ()) return;
 	uint32_t id = it->second;
+	if (started && !quiet) {                // dmg3: parts and effects drop the vessel while it is alive
+		if (dmg->fx) dmg->fx->DropVessel (id, (CollH)h);
+		if (dmg->brk) dmg->brk->DropVessel (id, (CollH)h);
+	}
 	vessel[id] = nullptr;
 	idOf.erase (it);
 	if (inStep) queued.push_back (Op { true, id, h });
@@ -347,6 +356,7 @@ std::string CollSession::Who (const CollOwnerRef &o)
 		OBJHANDLE h = Vessel (o.vesselId);
 		return h ? sdk->Name ((CollH)h) : "#" + std::to_string (o.vesselId);
 	}
+	if (CollGroundSide (o)) return "ground";
 	const CollBaseObjView *v = geom->bases ? geom->BaseObject (o.planet, o.base, o.obj) : nullptr;
 	if (v) return v->planet + ":" + v->base + " " + v->type + " #" + std::to_string (o.obj);
 	return "building " + std::to_string (o.planet) + ":" + std::to_string (o.base) + " #" + std::to_string (o.obj);
@@ -357,6 +367,7 @@ void CollSession::PreStep (double simt, double simdt)
 	// PS1 BeginFrame: E2 PreStep, E1 snapshot (reads only)
 	Clock::time_point a = Clock::now ();
 	geom->BeginFrame (simt, simdt);
+	dmg->Spawns (simt, simdt);                                   // blast: debris and the parents' kicks before the snapshot, so the solver starts from them
 	Clock::time_point b = Clock::now ();
 	std::vector<CollPhysVessel> v;
 	PhysGeomA &pg = static_cast<PhysGeomA &> (*pgeom);
@@ -370,17 +381,27 @@ void CollSession::PreStep (double simt, double simdt)
 	Clock::time_point d = Clock::now ();
 	dmg->PrePhysics ();
 	Clock::time_point e = Clock::now ();
-	// PS3 physics and every state write
+	// PS3 physics and every state write; dmg3 L5 pair filter first
+	std::vector<std::pair<uint32_t, uint32_t>> np;
+	for (const auto &kv : dmg->noPair) np.push_back (kv.first);
+	phys->SetNoPair (np);
 	phys->PS3Physics (*shost);
 	Clock::time_point f = Clock::now ();
-	// PS4 damage
-	const std::vector<CollImpactEvent> &ev = phys->Events ();
+	// PS4 damage: the solver's events and the ground events (CA-ground)
+	std::vector<CollImpactEvent> ev = phys->Events ();
+	std::vector<CollFxContact> fc = phys->Contacts ();
+	std::vector<CollGroundVessel> gv;
+	for (uint32_t id = 1; id < vessel.size (); id++) {
+		const CollVesselGeom *vg = vessel[id] ? geom->Geom (id) : nullptr;
+		if (vg && vg->shape) gv.push_back (CollGroundVessel { id, (CollH)vessel[id], vg->shape });
+	}
+	ground->Frame (simt, simdt, gv, ev, fc);
 	for (const CollImpactEvent &x : ev) {
 		n.events++;
 		CollLogF ("Collision impact t=%.6f '%s' '%s' vn=%.4f m/s vsep=%.4f m/s E=%.6g J J=%.6g N s", x.t, Who (x.s[0].owner).c_str (), Who (x.s[1].owner).c_str (),
 			x.vn, x.vn_post, x.dKE, x.Jn);
 	}
-	dmg->Commit (ev, simt);
+	dmg->Commit (ev, simt, &fc);
 	Clock::time_point g = Clock::now ();
 	// PS5 notices: E1 CONTACT, then E3
 	phys->PS5Notices ();
@@ -403,6 +424,17 @@ void CollSession::TimeJump ()
 	static_cast<PhysGeomA &> (*pgeom).pvel.clear ();
 	phys->OnTimeJump ();
 	geom->TimeJump ();
+	ground->TimeJump ();
+	if (started) {                          // dmg3: effects and parts
+		if (dmg->fx) dmg->fx->TimeJump ();
+		if (dmg->brk) dmg->brk->TimeJump ();
+	}
+}
+
+void CollSession::Quiet ()
+{
+	quiet = true;
+	if (started && dmg && dmg->fx) dmg->fx->Quiet ();
 }
 
 void CollSession::VesselJump (OBJHANDLE h)
@@ -461,6 +493,11 @@ void CollSession::Close ()
 	double f = n.frames ? (double)n.frames : 1.0, p = t.posts ? (double)t.posts : 1.0;
 	CollLogF ("Collision summary: frames=%llu contacts=%llu events=%llu writes=%llu probes=%llu vtx=%llu matrix=%llu notices=%llu spec=%llu free=%llu missed=%llu",
 		u (n.frames), u (n.contacts), u (n.events), u (n.writes), u (n.probes), u (n.vtx), u (n.matrix), u (n.notices), u (n.spec), u (n.free), u (n.missed));
+	{
+		const CollFxA *fx = dynamic_cast<const CollFxA *> (dmg->fx.get ());
+		const CollBreakA *bk = dynamic_cast<const CollBreakA *> (dmg->brk.get ());
+		CollLogF ("Collision dmg3: fx=%llu streams=%llu breaks=%llu reasserts=%llu", u (fx ? fx->Counters ().requests : 0), u (fx ? fx->Counters ().streams : 0), u (bk ? bk->breaks : 0), u (bk ? bk->reasserts : 0));
+	}
 	CollLogF ("Collision perf: prestep_mean_us=%.3f prestep_max_us=%.3f e2_us=%.3f e1_us=%.3f e3_us=%.3f post_us=%.3f build_ms=%.3f first_frame_ms=%.3f",
 		t.prestep / f, t.prestepMax, t.e2 / f, t.e1 / f, t.e3 / f, t.post / p, t.build * 1e-3, t.firstFrame * 1e-3);
 	phys->End ();

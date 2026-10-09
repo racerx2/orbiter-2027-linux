@@ -22,6 +22,7 @@ bool g_failed = false;               // an exception reached a callback or an ex
 void Fail (const char *where, const char *what) // CollGuard's hook: one log line per session
 {
 	if (g_failed) return;
+	try { if (CollSession *x = g_plugin ? g_plugin->Session () : nullptr) x->Quiet (); } catch (...) {} // dmg3: effects quiet, before Session () turns off
 	g_failed = true;
 	CollLogF ("Collision: error in %s: %s; collisions off until the session ends", where, what ? what : "");
 }

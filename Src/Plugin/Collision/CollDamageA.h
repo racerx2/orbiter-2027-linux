@@ -8,8 +8,11 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <memory>
+#include <functional>
 #include "CollCfg.h"
 #include "CollDmgHost.h"
+#include "CollDmgTypes.h"
 #include "CollSdk.h"
 #include "CollShape.h"
 #include "CollSolve.h"
@@ -45,7 +48,7 @@ struct RepairReq { uint32_t id = 0; bool building = false; std::string planetBas
 struct CollE3Counters { uint64_t dents = 0, coalesced = 0, repairs = 0, relinks = 0, remakes = 0, notices = 0, playback = 0, side = 0, replays = 0; }; // replays: collider meshes reset and replayed
 
 struct CollRecLink  { bool active = false, failed = false; std::string id; double t0 = 0; std::ofstream file; std::vector<std::string> buf; uint32_t nalias = 0; };
-struct CollPlayLink { bool active = false, read = false, warned = false; std::string id; CollSideFile f; size_t cursor = 0; std::map<uint32_t, uint32_t> aliasId; };
+struct CollPlayLink { bool active = false, read = false, warned = false; std::string id; CollSideFile f; size_t cursor = 0; std::map<uint32_t, uint32_t> aliasId; double xT = -1; uint32_t xA = UINT32_MAX; }; // xT, xA: last X event (dmg3 M3)
 
 class CollDmgSession {
 public:
@@ -66,7 +69,8 @@ public:
 	}
 	void ShapesUpdatedEv (uint32_t id, CollShape *shape, const std::vector<CollDmgSlotEv> &ev);
 	void PrePhysics ();                                                      // PS2b: repairs, playback, recording link check
-	void Commit (const std::vector<CollImpactEvent> &ev, double simt);       // PS4
+	void Spawns (double simt, double simdt);                                 // pre-step before the snapshot: debris vessels and the parents' kicks
+	void Commit (const std::vector<CollImpactEvent> &ev, double simt, const std::vector<CollFxContact> *contacts = nullptr); // PS4; contacts: dmg3 L4
 	void SendNotices ();                                                     // PS5, after E1's CONTACT notices
 	void EndFrame ();                                                        // PS7: thrust cut, last
 	// other callbacks
@@ -91,7 +95,29 @@ public:
 	std::string sideDir = "Flights/_Collision";                             // recorder side files (8.3)
 	CollE3Counters n;
 	CollVisualA vis;
+	// dmg3: parts (P) and effects (F) units, null when off; pair filter written by P, read by the session (L5)
+	std::unique_ptr<CollDmgSink> brk, fx;
+	std::map<std::pair<uint32_t, uint32_t>, double> noPair;                  // vessel ids (low, high) -> simt the filter was set
+	void AddTorn (uint32_t id, const DentTorn &t);                           // P: record a torn row (saved, recorder T event)
+	void SetDebris (uint32_t id, const std::vector<DentDebris> &d);          // P: the vessel's live debris rows (saved)
+	// blast (design-CA-blast 3)
+	void SetSites (uint32_t id, const DentSites &s);                         // store or replace the slot's sites (saved, recorder S event)
+	const DentSites *Sites (uint32_t id, uint32_t slot) const;
+	void AddCellCuts (uint32_t id, uint32_t slot, const std::vector<uint32_t> &cells); // one VCUT record per cell, recorder X events, dirty flush
+	size_t Room (uint32_t id) const { auto it = vessel.find (id); auto lt = laterCuts.find (id); size_t n = (it == vessel.end () ? 0 : it->second.d.rec.size ()) + (lt == laterCuts.end () ? 0 : lt->second); return n < DENT_MAX_VESSEL ? DENT_MAX_VESSEL - n : 0; } // blast: records still free
+	void AddBrokenBonds (uint32_t id, uint32_t slot, const std::vector<uint32_t> &bonds); // saved, recorder K event
+	const std::vector<uint32_t> *BrokenBonds (uint32_t id, uint32_t slot) const;
+	void SetWeakBonds (uint32_t id, uint32_t slot, const std::vector<uint32_t> &w); // blast: weakened bonds of a slot (pair, health x 1e6, ...), replaces
+	const std::vector<uint32_t> *WeakBonds (uint32_t id, uint32_t slot) const;
+	bool AddCut (uint32_t id, const DentRecord &r, bool playback);          // dmg3 tear: append a cut record (cap, match, frameT); deferred inside Dent
+	size_t PendingCuts () const { return later.size (); }                    // dmg3 tear: deferred cut and torn actions
+	bool InDent () const { return inDent; }
 private:
+	void ApplyCut (uint32_t id, const DentRecord &r, bool playback);
+	void FlushLater ();                                                      // dmg3 tear: deferred actions after the solve returns
+	std::vector<std::function<void ()>> later;
+	std::map<uint32_t, size_t> laterCuts;                                    // deferred cuts per vessel (cap)
+	bool inDent = false;
 	VesselDamageA *Find (uint32_t id);
 	VesselDamageA &Get (uint32_t id);
 	void MatchAll ();
@@ -100,7 +126,9 @@ private:
 	void SyncMirror (VesselDamageA &v, uint32_t mesh);
 	void MarkDirty (uint32_t id, uint32_t mesh, bool replay);               // dent events: one collider sync and one mirror sync per slot at the next FlushDirty
 	void FlushDirty ();                                                      // end of Commit and Playback
-	void Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, double E, const DentMaterial &mat, double t, NoticeA &note);
+	void Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, double E, const DentMaterial &mat, double t, NoticeA &note, const CollImpactEvent *ev = nullptr, uint32_t other = 0);
+	void EmitHit (const CollDamageHit &hit);                                // dmg3: parts and effects units
+	bool IsDebris (CollH h);                                                 // dmg3: class CollDebris (L6)
 	void DestroyedTest (VesselDamageA &v, CollH h, double Ei, double t, uint32_t extraFlags);
 	void DoRepair (VesselDamageA &v, bool playback);
 	double Threshold (uint32_t id) const;
@@ -131,6 +159,8 @@ private:
 	CollRecLink rec;
 	CollPlayLink play;
 	double frameT = 0;                                                       // pre-step time of Commit's frame
+	double lastPostT = -1;                                                   // dmg3: sim time of the last PostStep (simdt for the units)
+	double lastPostDt = 0;                                                  // blast: last post-step frame step [s]
 	bool begun = false, matched = false, loggedNoFirst = false;
 };
 

@@ -66,6 +66,7 @@ void CollPhysSession::OnDeleteVessel (uint32_t id)
 	snap.erase (std::remove_if (snap.begin (), snap.end (), [id] (const Snap &s) { return s.id == id; }), snap.end ());
 	last.erase (std::remove_if (last.begin (), last.end (), [id] (const Last &l) { return l.id == id; }), last.end ());
 	for (CollImpactEvent &e : ev) for (CollImpactSide &s : e.s) if (s.owner.vesselId == id) s.owner.vesselId = 0xFFFFFFFFu; // no notice to it
+	fxc.erase (std::remove_if (fxc.begin (), fxc.end (), [id] (const CollFxContact &c) { return c.id == id; }), fxc.end ());
 }
 
 void CollPhysSession::OnTimeJump ()
@@ -109,7 +110,7 @@ void CollPhysSession::PS1Snapshot (double t, double dt, const std::vector<CollPh
 // PS3: solver bodies (1.4), entry bits (1.5), the frame driver (5.3), the write sequence (6.4)
 void CollPhysSession::PS3Physics (CollSolveHost &host)
 {
-	ev.clear (); wr.clear ();
+	ev.clear (); wr.clear (); fxc.clear ();
 	if (!started || cfg.model == 0 || !(simdt > 0.0)) return;    // simdt == 0: nothing (1.2)
 	bool anyLive = false;
 	for (const Snap &s : snap) anyLive = anyLive || !s.rd.playback;
@@ -213,7 +214,40 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 	body.insert (body.begin (), bases.begin (), bases.end ());
 	std::vector<CollZone> zones;
 	if (cfg.dockZone || cfg.attachZone) geom.Zones (body, simdt, zones);
+	std::vector<std::pair<uint32_t, uint32_t>> np;                 // dmg3 L5: vessel ids to body ids (a docked vessel's body)
+	for (const auto &x : noPairV) {
+		uint32_t ba = 0, bb = 0; bool fa = false, fb = false;
+		for (const CollABody &B : body) {
+			if (B.kind == COLLB_BASE) continue;
+			if (std::find (B.member.begin (), B.member.end (), x.first) != B.member.end ()) ba = B.id, fa = true;
+			if (std::find (B.member.begin (), B.member.end (), x.second) != B.member.end ()) bb = B.id, fb = true;
+		}
+		if (fa && fb && ba != bb) np.push_back ({ ba, bb });
+	}
+	fwd.SetNoPair (np); ver.SetNoPair (np);
 	frame.Run (fwd, ver, mirror, body, zones, simdt, simt, host, wr, ev);
+	for (const CollContactRec &r : frame.contacts)                 // dmg3 L4: vessel sides in the vessel frame
+		for (int side = 0; side < 2; side++) {
+			const CollImpactSide &s = r.s[side], &o = r.s[1 - side];
+			const Snap *x = s.owner.vesselId ? SnapOf (s.owner.vesselId) : nullptr;
+			if (!x) continue;
+			CollFxContact c;
+			c.id = x->id; c.h = x->h;
+			c.c = s.c; c.n = s.n;
+			geom.PartToVessel (c.id, s.mesh, s.grp, c.c, c.n);
+			if (s.tdir.length () > 0.0) {
+				Vector p = s.c, t = s.tdir;
+				geom.PartToVessel (c.id, s.mesh, s.grp, p, t);
+				t -= c.n*dotp (t, c.n);
+				double l = t.length ();
+				c.tdir = l > 1e-12 ? t/l : Vector ();
+			}
+			c.vn = r.vn; c.vt = r.vt; c.Jn = r.Jn; c.Jt = r.Jt; c.dt = r.dt; c.flags = r.flags;
+			c.building = !o.owner.vesselId;
+			if (c.building) c.nOther = o.n;
+			c.playback = x->rd.playback;
+			fxc.push_back (c);
+		}
 	last.clear ();
 	for (const CollABody &B : body) if (B.kind != COLLB_BASE) last.push_back (Last { B.id, B.kind, B.memberHash, B.ground });
 	queuedNew.clear (); jumped.clear ();
@@ -246,9 +280,9 @@ void CollPhysSession::WriteBack (std::vector<CollAWrite> &wl)
 				double rl = loc.length ();
 				double lng = std::atan2 (loc.z, loc.x), lat = rl > 0 ? std::asin (std::max (-1.0, std::min (1.0, loc.y/rl))) : 0.0;
 				double rp = sdk.Size (s.rbody);
-				bool near = rl < rp + 25e3 && std::find (belowLogged.begin (), belowLogged.end (), B.member[0]) == belowLogged.end ();  // elevation queried only within 25 km of the radius
-				double rt = near ? rp + sdk.Elevation (s.rbody, lng, lat) : rp;
-				if (near && rl < rt) {
+				bool inReach = rl < rp + 25e3 && std::find (belowLogged.begin (), belowLogged.end (), B.member[0]) == belowLogged.end ();  // elevation queried only within 25 km of the radius
+				double rt = inReach ? rp + sdk.Elevation (s.rbody, lng, lat) : rp;
+				if (inReach && rl < rt) {
 					belowLogged.push_back (B.member[0]);
 					Log (1, "Collision: state write of '%s' %.3f m below the terrain; Orbiter lifts it to the surface", sdk.Name (r->h).c_str (), rt - rl);
 				}

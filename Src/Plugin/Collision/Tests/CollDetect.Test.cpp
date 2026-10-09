@@ -2214,3 +2214,38 @@ TEST_CASE("fix2: entry check keeps at most 4096 raw intersections per part pair"
 	std::printf ("fix2 entry cap: %lld crossing pairs, %d triangle pairs tested, %zu scoped leaf pairs\n", want, st.triPairs, e->grace.size ());
 	CHECK (st.triPairs < want);
 }
+
+TEST_CASE("dmg3 L5 pair filter: a filtered body pair gives no results, the others still do, bases never filtered", "[colldetect][dmg3]")
+{
+	const CollGeom *g = Geom (BoxM (Vector (1, 1, 1)));
+	const double h = 0.1;
+	CollParams p;
+	auto scene = [&] () {
+		std::vector<CollBody> b { Still (7, Vector (0, -2.03, 0), h, COLLB_BASE), Lin (1, Vector (-1.2, 0, 0), Vector (2, 0, 0), h), Lin (2, Vector (1.2, 0, 0), Vector (-2, 0, 0), h),
+			Lin (3, Vector (-1.1, 2.15, 0), Vector (0, -2, 0), h) };
+		AddPart (b[0], g, BKey (0, 0, 1)); AddPart (b[1], g, VKey (1)); AddPart (b[2], g, VKey (2)); AddPart (b[3], g, VKey (3));
+		return b;
+	};
+	auto pairs = [] (const std::vector<CollPairResult> &r) {
+		std::vector<std::pair<int, int>> o;
+		for (const CollPairResult &x : r) if (x.kind != COLL_NONE) o.push_back ({ x.bodyA, x.bodyB });
+		std::sort (o.begin (), o.end ()); o.erase (std::unique (o.begin (), o.end ()), o.end ());
+		return o;
+	};
+	CollDetect d0, d1;
+	std::vector<CollPairResult> r0, r1;
+	Frame (d0, p, h, scene (), r0);
+	d1.SetNoPair ({ { 2, 1 }, { 7, 1 } });                            // 7 is the base's id: a base pair is never filtered
+	Frame (d1, p, h, scene (), r1);
+	std::vector<std::pair<int, int>> a = pairs (r0), b = pairs (r1);
+	CAPTURE (a.size (), b.size ());
+	REQUIRE (std::find (a.begin (), a.end (), std::make_pair (1, 2)) != a.end ());
+	REQUIRE (std::find (b.begin (), b.end (), std::make_pair (0, 1)) != b.end ());
+	REQUIRE (std::find (b.begin (), b.end (), std::make_pair (1, 3)) != b.end ());
+	REQUIRE (std::find (b.begin (), b.end (), std::make_pair (1, 2)) == b.end ());
+	REQUIRE (a.size () == b.size () + 1);
+	for (const auto &x : b) REQUIRE (std::find (a.begin (), a.end (), x) != a.end ());
+	d1.SetNoPair ({});
+	Frame (d1, p, h, scene (), r1);
+	REQUIRE (pairs (r1) == a);
+}

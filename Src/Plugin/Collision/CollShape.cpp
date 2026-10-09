@@ -931,7 +931,19 @@ bool CollShape::RayRest (uint32_t mesh, uint32_t grp, const Vector &o, const Vec
 
 size_t CollShape::ApplyDent (uint32_t mesh, const uint32_t *grp, size_t ngrp, CollDisplaceFn fn, const void *ctx)
 {
-	if (mesh >= slots.size() || !fn) return 0;
+	if (!fn) return 0;
+	return ApplyAny (mesh, grp, ngrp, fn, nullptr, ctx);
+}
+
+size_t CollShape::ApplyMap (uint32_t mesh, const uint32_t *grp, size_t ngrp, CollMapFn fn, const void *ctx)
+{
+	if (!fn) return 0;
+	return ApplyAny (mesh, grp, ngrp, nullptr, fn, ctx);
+}
+
+size_t CollShape::ApplyAny (uint32_t mesh, const uint32_t *grp, size_t ngrp, CollDisplaceFn fn, CollMapFn mfn, const void *ctx)
+{
+	if (mesh >= slots.size() || (!fn && !mfn)) return 0;
 	bool all = (ngrp == 0 || !grp || slots[mesh].coll); // MESH replacement: by position over all groups (R16)
 	size_t moved = 0;
 	std::vector<uint8_t> sel;
@@ -948,7 +960,7 @@ size_t CollShape::ApplyDent (uint32_t mesh, const uint32_t *grp, size_t ngrp, Co
 			bool listed = false;
 			for (uint32_t r = G.refOfs[v]; r < G.refOfs[v+1] && !listed; r++) listed = G.ref[r].src < sel.size() && sel[G.ref[r].src];
 			if (!listed) continue;
-			Vector x = fn (ctx, G.RestPos (v));  // field on rest positions (7.3)
+			Vector x = fn ? fn (ctx, G.RestPos (v)) : mfn (ctx, G.RestPos (v), G.Pos (v)) - G.Pos (v);  // field on rest positions (7.3)
 			Vector p = G.Pos (v) + x;
 			if (!std::isfinite (p.x) || !std::isfinite (p.y) || !std::isfinite (p.z)) {
 				if (!loggedBadDent) { loggedBadDent = true; CollLog (COLLLOG_WARN, "Collider: dent field of mesh %u gives a non-finite position, vertex left in place", mesh); }

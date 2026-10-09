@@ -26,6 +26,8 @@ struct Geom : CollPhysGeom {
 	CollGeom geom;
 	std::vector<CollPhysAsm> asmb;
 	void Assemblies (std::vector<CollPhysAsm> &out) override { out = asmb; }
+	Vector shift;                                    // dmg3 L4 test: part rest frame -> vessel frame offset
+	void PartToVessel (uint32_t, int, int, Vector &p, Vector &) override { p += shift; }
 	Geom () { CollSrcGroup s { &g, CollSrc { 0, 0, 0, 0, 0 } }; geom.Build (&s, 1, COLL_WELD_DEFAULT, nullptr); }
 	bool Parts (uint32_t id, std::vector<CollPartRef> &fwd, std::vector<CollPartRef> &past, double &rmax) override
 	{
@@ -344,4 +346,55 @@ TEST_CASE ("fix2: a landed playback vessel moves with its cache, not with predic
 	REQUIRE (P->kin.a0.length () < 1e-9);
 	REQUIRE ((P->kin.c1 - P->x).length () < 1e-9);
 	REQUIRE (W.sdk.misuse == 0);
+}
+
+TEST_CASE ("dmg3 L4: contacts of a glancing pair, vessel sides in the vessel frame with slip direction, one per side per frame", "[CollWorldA]")
+{
+	World W;
+	W.geom.shift = Vector (0, 0, 10);
+	W.sdk.applyWrites = true;
+	W.Add ("A", Vector (-1.15, 0.5, 0), Vector (2, 1, 0));
+	W.Add ("B", Vector (1.15, -0.5, 0), Vector (-2, -1, 0));
+	int frames = 0;
+	for (int f = 0; f < 10; f++) {
+		W.Frame (0.05);
+		const std::vector<CollFxContact> &c = W.ps->Contacts ();
+		if (c.empty ()) continue;
+		frames++;
+		REQUIRE (c.size () == 2);
+		for (const CollFxContact &x : c) {
+			CAPTURE (f, x.id, x.c.x, x.c.y, x.c.z, x.n.x, x.tdir.x, x.tdir.y, x.vt, x.Jn, x.dt);
+			REQUIRE ((x.id == 1 || x.id == 2));
+			REQUIRE (x.h == (CollH)W.v[x.id - 1]);
+			REQUIRE (!x.building);
+			REQUIRE (!x.playback);
+			REQUIRE (x.dt == 0.05);
+			REQUIRE (x.Jn > 0.0);
+			REQUIRE (std::fabs (x.c.z - 10.0) <= 1.0);         // mapped through PartToVessel (the box face spans z -1..1)
+			REQUIRE (std::fabs (std::fabs (x.n.x) - 1.0) <= 1e-6);
+			REQUIRE (std::fabs (x.tdir.y - (x.id == 1 ? 1.0 : -1.0)) <= 1e-6); // A's surface moves +y relative to B
+			REQUIRE (x.vt > 0.5);
+		}
+		REQUIRE (c[0].id != c[1].id);
+	}
+	REQUIRE (frames > 0);
+}
+
+TEST_CASE ("dmg3 L5: a vessel pair filter maps to the docked body, both detectors skip it; unfiltered pairs still touch", "[CollWorldA]")
+{
+	for (int filt : { 1, 0 }) {
+		World W;
+		W.sdk.applyWrites = true;
+		W.Add ("A", Vector (-1.15, 0, 0), Vector (2, 0, 0));
+		W.Add ("A2", Vector (-3.30, 0, 0), Vector (2, 0, 0));
+		W.Add ("B", Vector (1.15, 0, 0), Vector (-2, 0, 0));
+		CollPhysAsm a; a.member = { 1, 2 }; a.root = 2; a.memberHash = 12;
+		W.geom.asmb = { a };
+		W.ps->SetNoPair ({ filt ? std::make_pair (3u, 2u) : std::make_pair (2u, 5u) });
+		int con = 0;
+		for (int f = 0; f < 10; f++) { W.Frame (0.05); con += (int)W.ps->Contacts ().size (); }
+		CAPTURE (filt, con, W.sdk.Count ().Writes ());
+		if (filt) { REQUIRE (con == 0); REQUIRE (W.ps->Stats ().real == 0); REQUIRE (W.ps->Stats ().spec == 0); }
+		else REQUIRE (con > 0);
+	}
 }

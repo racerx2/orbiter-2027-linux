@@ -1,6 +1,7 @@
 // not upstream: E3-U1 to E3-U6: keys, block text, prefix scan, matching, side file (Design CA E3 12.1)
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <random>
 #include <string>
@@ -274,4 +275,238 @@ TEST_CASE ("fix2 M5 a capped dormant vessel keeps every line through a save")
 	REQUIRE (!d.slotName.empty ());
 	CHECK (name.compare (0, d.slotName[0].size (), d.slotName[0]) == 0); // cut to fit the indented line, never dropped
 	CHECK (d.slotName[0].size () == 200 - 27);
+}
+
+TEST_CASE ("dmg3 side file: X after its D event, T with continuation, unknown kinds skipped")
+{
+	DentRecord r {};
+	r.p.c = Vector (1, 2, 3), r.p.n = Vector (0, 0, 1), r.p.R = 1, r.p.h = 0.1, r.slot = 0, r.grp = { 2, 4 };
+	DentParams x = r.p;
+	x.mode = DENTM_CRUSH, x.P = 0.25, x.seed = 0xdeadbeef, x.t = Vector (1, 0, 0), x.bits = 0;
+	std::string text = CollSide::Header ("X") + "\n" + CollSide::Vdef (0, 0, "PB-A", "ShuttlePB") + "\n";
+	std::vector<std::string> l;
+	CollSide::Dent (1.5, 0, 0, r, l);
+	l.push_back (CollSide::Ext (1.5, 0, 0, x, 12345.5, 30.25, 1.75));
+	l.push_back (CollSide::Ext (1.5, 0, 7, x, 1, 1, 1)); // no D event of record 7 before it: skipped
+	DentTorn t;
+	t.kind = 2, t.slot = 0, t.key = 0x1234, t.ngrp = 3, t.nvtx = 99, t.simt = 1.5, t.debris = "Deb-1";
+	for (int g = 0; g < 200; g++) t.grp.push_back ((uint16_t)(g * 11));
+	CollSide::Torn (1.6, 0, t, l);
+	CHECK (l.size () > 4); // the T list continues over lines
+	l.push_back ("1.7 Z 0 future kind");
+	for (auto &s : l) { CHECK (s.size () < 256); text += s + "\n"; }
+	CollSideFile f;
+	REQUIRE (CollSide::Parse (text, f));
+	REQUIRE (f.ev.size () == 3);
+	CHECK (f.ev[0].kind == 'D');
+	CHECK (f.ev[1].kind == 'X');
+	CHECK (f.ev[1].recidx == 0);
+	CHECK (f.ev[1].h8 == DentMath::ParamsHash (r.p));
+	CHECK (f.ev[1].rec.p.mode == DENTM_CRUSH);
+	CHECK (f.ev[1].rec.p.seed == 0xdeadbeef);
+	CHECK (f.ev[1].E == 12345.5);
+	CHECK (f.ev[1].vn == 30.25);
+	CHECK (f.ev[1].vt == 1.75);
+	CHECK (f.ev[2].kind == 'T');
+	CHECK (f.ev[2].torn.grp == t.grp);
+	CHECK (f.ev[2].torn.debris == "Deb-1");
+	CHECK (f.skipped == 2);
+}
+
+TEST_CASE ("dmg3 a capped dormant rewrite keeps the v2 rows: torn T, debris B and Q, XDMGD B; lines <= 200; re-parse equal")
+{
+	DentVesselText v;
+	v.eabs = 7.5e5;
+	for (uint32_t i = 0; i < DENT_MAX_VESSEL; i++) {
+		DentRecord r {};
+		r.slot = 0, r.key = 5, r.ngrp = 300, r.nvtx = 4000;
+		r.p.c = Vector (0.01 * i, 1, 2), r.p.n = Vector (0, 1, 0), r.p.R = 1.5, r.p.h = 0.2;
+		if (i == 0) r.p.mode = DENTM_CRUSH, r.p.P = 0.4, r.p.seed = 0x1234, r.p.t = Vector (0, 0, 1);
+		if (i == 1) r.p.mode = DENTM_HINGE, r.p.P = 0.2, r.p.t = Vector (1, 0, 0), r.p.hd = 0.75, r.p.hz = 0.1;
+		DentMath::Quantise (r.p);
+		r.grp = { 1, 2 };
+		v.rec.push_back (r);
+	}
+	DentTorn t;
+	t.kind = 2, t.slot = 0, t.key = 5, t.ngrp = 300, t.nvtx = 4000, t.simt = 12.5, t.debris = "Deb-1";
+	for (int g = 0; g < 180; g++) t.grp.push_back ((uint16_t)(g + 10));
+	v.torn.push_back (t);
+	DentDebris d;
+	d.id = 3, d.slot = 0, d.key = 5, d.ngrp = 300, d.nvtx = 4000, d.simt = 12.5, d.name = "Deb-1";
+	DentDebrisPose q;
+	q.p = Vector (0.5, -1.25, 7.0), q.q[0] = 0.1, q.q[1] = 0.2, q.q[2] = 0.3, q.q[3] = 0.927;
+	for (int g = 0; g < 150; g++) q.grp.push_back ((uint16_t)(g + 10));
+	d.pose.push_back (q);
+	d.rec.push_back (v.rec[0]), d.rec.push_back (v.rec[1]);
+	v.debris.push_back (d);
+	std::vector<std::string> f;
+	DentMath::FormatVessel (v, "  ", f);
+	std::vector<std::string> L { "VESSEL 0 PB-A ShuttlePB" };
+	for (const std::string &x : f) L.push_back (x.substr (2));
+	size_t at = 0;
+	while (at < L.size () && L[at].compare (0, 7, "XDMG 2 ") != 0) at++;
+	REQUIRE (at < L.size ());
+	for (uint32_t i = 0; i < 10; i++) L.insert (L.begin () + at, "XDMGD 0 9 0 3 0 0 1 1 0.1 0 *"); // version-1 records past the cap
+	L.push_back ("END_VESSEL");
+	CollStoreBlock b;
+	CollStore::ParseBody (L, b);
+	REQUIRE (b.vessel.size () == 1);
+	const CollStoreVessel &sv = b.vessel[0];
+	REQUIRE (sv.d.rec.size () == DENT_MAX_VESSEL);
+	REQUIRE (sv.d.torn.size () == 1);
+	REQUIRE (sv.d.debris.size () == 1);
+	std::vector<std::string> saved;
+	bool hasT = false, hasB = false, hasDB = false;
+	for (size_t i = 0; i < sv.raw.size (); i++) {
+		std::string s = (i == 0 || i + 1 == sv.raw.size ()) ? sv.raw[i] : "  " + sv.raw[i];
+		CHECK (CollStore::Line200 (s));
+		CHECK (s.size () <= 200);
+		hasT |= s.compare (0, 10, "  XDMGM T ") == 0;
+		hasB |= s.compare (0, 10, "  XDMGM B ") == 0;
+		hasDB |= s.compare (0, 10, "  XDMGD B ") == 0;
+		saved.push_back (s);
+	}
+	CHECK (sv.raw.size () < L.size ()); // the over-cap lines are gone, the rest kept
+	CHECK (hasT);
+	CHECK (hasB);
+	CHECK (hasDB);
+	CollStoreBlock b2;
+	CollStore::ParseBody (saved, b2);
+	REQUIRE (b2.vessel.size () == 1);
+	const DentVesselText &w = b2.vessel[0].d;
+	CHECK (b2.vessel[0].skipped == 0);
+	REQUIRE (w.rec.size () == DENT_MAX_VESSEL);
+	CHECK (std::memcmp (&w.rec[0].p, &v.rec[0].p, sizeof v.rec[0].p) == 0);
+	CHECK (std::memcmp (&w.rec[1].p, &v.rec[1].p, sizeof v.rec[1].p) == 0);
+	CHECK (w.rec[0].p.mode == DENTM_CRUSH);
+	CHECK (w.rec[1].p.mode == DENTM_HINGE);
+	REQUIRE (w.torn.size () == 1);
+	CHECK (w.torn[0].kind == t.kind);
+	CHECK (w.torn[0].grp == t.grp);
+	CHECK (w.torn[0].debris == t.debris);
+	CHECK (w.torn[0].simt == t.simt);
+	REQUIRE (w.debris.size () == 1);
+	CHECK (w.debris[0].name == d.name);
+	REQUIRE (w.debris[0].pose.size () == 1);
+	CHECK (w.debris[0].pose[0].grp == q.grp);
+	CHECK (w.debris[0].pose[0].q[3] == 0.927);
+	REQUIRE (w.debris[0].rec.size () == 2);
+	CHECK (std::memcmp (&w.debris[0].rec[0].p, &v.rec[0].p, sizeof v.rec[0].p) == 0);
+	std::vector<std::string> f2, f3;
+	DentMath::FormatVessel (sv.d, "", f2);
+	DentMath::FormatVessel (w, "", f3);
+	CHECK (f2 == f3);
+}
+
+TEST_CASE ("blast recorder: V sites and K bonds events round trip; a cut V list is dropped; S stays the state event", "[blast]")
+{
+	DentSites st; st.slot = 2, st.key = 0x89abcdef;
+	for (int i = 0; i < 30; i++) st.s.push_back (Vector (100.5 + i, -0.25 * i, 7.75));
+	std::vector<uint32_t> b;
+	for (uint32_t i = 0; i < 90; i++) b.push_back (i * 65537u);
+	std::vector<std::string> l;
+	l.push_back (CollSide::Header ("BL1"));
+	l.push_back (CollSide::Vdef (0, 0, "PB-A", "ShuttlePB"));
+	CollSide::Sites (1.5, 0, st, l);
+	CollSide::Bonds (1.5, 0, 2, b, l);
+	l.push_back (CollSide::State (1.5, 0, 12.5, 4));
+	DentRecord r {};
+	r.p.mode = DENTM_VCUT, r.p.c = st.s[3], r.p.n = Vector (0, 0, 1), r.p.t = Vector (1, 0, 0), r.p.R = 0.5, r.p.h = 0, r.p.P = 3, r.p.seed = 30, r.p.hd = 0.2, r.p.hz = 0.02;
+	r.slot = 2, r.grp = { 0, 4 };
+	CollSide::Dent (1.5, 0, 0, r, l);
+	l.push_back (CollSide::Ext (1.5, 0, 0, r.p, 0, 0, 0, 0, 0u));
+	std::string text;
+	size_t nv = 0;
+	for (auto &x : l) { CHECK (x.size () < 256); if (x.find (" V 0 ") != std::string::npos) nv++; text += x + "\n"; }
+	CHECK (nv > 1);
+	CollSideFile f;
+	REQUIRE (CollSide::Parse (text, f));
+	CHECK (f.skipped == 0);
+	REQUIRE (f.ev.size () == 5);
+	CHECK (f.ev[0].kind == 'V');
+	REQUIRE (f.ev[0].sites.s.size () == 30);
+	CHECK (f.ev[0].sites.slot == 2); CHECK (f.ev[0].sites.key == st.key);
+	CHECK (std::memcmp (f.ev[0].sites.s.data (), st.s.data (), 30 * sizeof (Vector)) == 0);
+	CHECK (f.ev[1].kind == 'K'); CHECK (f.ev[1].slot == 2); CHECK (f.ev[1].bonds == b);
+	CHECK (f.ev[2].kind == 'S'); CHECK (f.ev[2].eabs == 12.5); CHECK (f.ev[2].flags == 4);
+	CHECK (f.ev[3].kind == 'D'); CHECK (f.ev[4].kind == 'X'); CHECK (f.ev[4].rec.p.mode == DENTM_VCUT); CHECK (f.ev[4].rec.p.P == 3.0); CHECK (f.ev[4].rec.p.seed == 30);
+	std::string cut;
+	bool dropped = false;
+	for (auto &x : l) { if (!dropped && x.find (" V 0 ") != std::string::npos && x.find (" V 0 2 89abcdef 30 0 ") == std::string::npos) { dropped = true; continue; } cut += x + "\n"; }
+	REQUIRE (dropped);
+	CollSideFile g;
+	REQUIRE (CollSide::Parse (cut, g));
+	CHECK (g.skipped > 0);
+	for (auto &e : g.ev) CHECK (e.kind != 'V');
+}
+
+TEST_CASE ("blast a capped dormant rewrite keeps the S and K rows", "[blast]")
+{
+	DentVesselText v;
+	for (uint32_t i = 0; i < DENT_MAX_VESSEL; i++) {
+		DentRecord r {};
+		r.slot = 0, r.key = 5, r.ngrp = 300, r.nvtx = 4000;
+		r.p.c = Vector (0.01 * i, 1, 2), r.p.n = Vector (0, 1, 0), r.p.R = 1.5, r.p.h = 0.2;
+		if (i == 1) r.p.mode = DENTM_VCUT, r.p.h = 0, r.p.P = 7, r.p.seed = 20, r.p.t = Vector (1, 0, 0), r.p.hd = 0.2, r.p.hz = 0.02;
+		DentMath::Quantise (r.p);
+		v.rec.push_back (r);
+	}
+	DentSites st; st.slot = 0, st.key = 5;
+	for (int i = 0; i < 20; i++) st.s.push_back (Vector (1.5 * i, -2.25, 0.125 * i));
+	v.sites.push_back (st);
+	std::vector<uint32_t> bonds;
+	for (uint32_t i = 0; i < 80; i++) bonds.push_back (i * 3);
+	v.brokenBonds.push_back ({ 0, bonds });
+	std::vector<std::string> f;
+	DentMath::FormatVessel (v, "  ", f);
+	std::vector<std::string> L { "VESSEL 0 PB-A ShuttlePB" };
+	for (const std::string &x : f) L.push_back (x.substr (2));
+	size_t at = 0;
+	while (at < L.size () && L[at].compare (0, 7, "XDMG 2 ") != 0) at++;
+	REQUIRE (at < L.size ());
+	for (uint32_t i = 0; i < 10; i++) L.insert (L.begin () + at, "XDMGD 0 9 0 3 0 0 1 1 0.1 0 *");
+	L.push_back ("END_VESSEL");
+	CollStoreBlock b;
+	CollStore::ParseBody (L, b);
+	REQUIRE (b.vessel.size () == 1);
+	const CollStoreVessel &sv = b.vessel[0];
+	REQUIRE (sv.d.rec.size () == DENT_MAX_VESSEL);
+	CHECK (sv.d.rec[1].p.mode == DENTM_VCUT);
+	REQUIRE (sv.d.sites.size () == 1);
+	REQUIRE (sv.d.brokenBonds.size () == 1);
+	std::vector<std::string> saved;
+	bool hasS = false, hasK = false;
+	for (size_t i = 0; i < sv.raw.size (); i++) {
+		std::string s = (i == 0 || i + 1 == sv.raw.size ()) ? sv.raw[i] : "  " + sv.raw[i];
+		CHECK (CollStore::Line200 (s));
+		hasS |= s.compare (0, 10, "  XDMGM S ") == 0;
+		hasK |= s.compare (0, 10, "  XDMGM K ") == 0;
+		saved.push_back (s);
+	}
+	CHECK (sv.raw.size () < L.size ());
+	CHECK (hasS); CHECK (hasK);
+	CollStoreBlock b2;
+	CollStore::ParseBody (saved, b2);
+	REQUIRE (b2.vessel.size () == 1);
+	REQUIRE (b2.vessel[0].d.sites.size () == 1);
+	CHECK (std::memcmp (b2.vessel[0].d.sites[0].s.data (), st.s.data (), st.s.size () * sizeof (Vector)) == 0);
+	REQUIRE (b2.vessel[0].d.brokenBonds.size () == 1);
+	CHECK (b2.vessel[0].d.brokenBonds[0].second == bonds);
+}
+
+TEST_CASE ("blast fix m10: K events keep 32-bit chunk pairs a * 65536 + b", "[blast]")
+{
+	std::vector<uint32_t> b;
+	for (uint32_t a = 0; a < 60; a++) b.push_back (a * 65536u + a + 1u);
+	b.push_back (0xfffeffffu);
+	std::vector<std::string> l { CollSide::Header ("BL2"), CollSide::Vdef (0, 0, "PB-A", "ShuttlePB") };
+	CollSide::Bonds (2.0, 0, 7, b, l);
+	std::string text;
+	for (auto &x : l) text += x + "\n";
+	CHECK (l.size () > 3);
+	CollSideFile f;
+	REQUIRE (CollSide::Parse (text, f));
+	CHECK (f.skipped == 0);
+	REQUIRE (f.ev.size () == 1);
+	CHECK (f.ev[0].kind == 'K'); CHECK (f.ev[0].slot == 7); CHECK (f.ev[0].bonds == b);
 }

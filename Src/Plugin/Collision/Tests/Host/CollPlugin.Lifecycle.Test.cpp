@@ -206,6 +206,28 @@ double oapiGetTimeAcceleration () { WorldCall (); return 1; }
 void oapiSetTimeAcceleration (double) { WorldCall (); }
 UINT VESSEL::GetAnimPtr (ANIMATION **anim) const { WorldCall (); *anim = nullptr; return 0; }
 DEVMESHHANDLE VESSEL::GetDevMesh (VISHANDLE, UINT) const { WorldCall (); return nullptr; }
+// dmg3: parts, debris and effects calls; the host has no meshes, debris or particles
+MESHHANDLE oapiLoadMesh (const char *) { WorldCall (); return nullptr; }
+void oapiDeleteMesh (MESHHANDLE) { WorldCall (); }
+bool oapiDeleteVessel (OBJHANDLE, OBJHANDLE) { WorldCall (); return false; }
+int oapiEditMeshGroup (MESHHANDLE, DWORD, GROUPEDITSPEC *) { WorldCall (); return -1; }
+OBJHANDLE oapiCreateVesselEx (const char *, const char *, const void *) { WorldCall (); return nullptr; }
+SURFHANDLE oapiRegisterParticleTexture (char *) { WorldCall (); return nullptr; }
+double VESSEL::GetAltitude (AltitudeMode, int *) { WorldCall (); return 0; }
+void VESSEL::SetEmptyMass (double) const { WorldCall (); }
+double VESSEL::GetAtmDensity () const { WorldCall (); return 0; }
+void VESSEL::HorizonInvRot (const VECTOR3 &r, VECTOR3 &l) const { WorldCall (); l = r; }
+void VESSEL::GetThrusterRef (THRUSTER_HANDLE, VECTOR3 &pos) const { WorldCall (); pos = _V (0, 0, 0); }
+bool VESSEL::DelExhaustStream (PSTREAM_HANDLE) const { WorldCall (); return false; }
+void VESSEL::SetCrossSections (const VECTOR3 &) const { WorldCall (); }
+PSTREAM_HANDLE VESSEL::AddParticleStream (PARTICLESTREAMSPEC *, const VECTOR3 &, const VECTOR3 &, double *) const { WorldCall (); return nullptr; }
+bool VESSEL::GetTouchdownPoint (TOUCHDOWNVTX &, DWORD) const { WorldCall (); return false; }
+void VESSEL::SetTouchdownPoints (const TOUCHDOWNVTX *, DWORD) const { WorldCall (); }
+bool VESSEL::GetGroundspeedVector (REFFRAME, VECTOR3 &v) const { WorldCall (); v = _V (0, 0, 0); return false; }
+DWORD VESSEL::GetTouchdownPointCount () const { WorldCall (); return 0; }
+void VESSEL::SetPMI (const VECTOR3 &) const { WorldCall (); }
+UINT VESSEL::AddMesh (MESHHANDLE, const VECTOR3 *) const { WorldCall (); return 0; }
+void VESSEL::SetSize (double) const { WorldCall (); }
 const char *VESSEL::GetMeshName (UINT) const { WorldCall (); return nullptr; }
 char *VESSEL::GetClassName () const { WorldCall (); static char c[] = "FakeVessel"; return c; }
 double VESSEL::GetEmptyMass () const { WorldCall (); return 1000; }
@@ -219,6 +241,9 @@ DOCKHANDLE VESSEL::GetDockHandle (UINT) const { WorldCall (); return nullptr; }
 void VESSEL::GetDockParams (DOCKHANDLE, VECTOR3 &pos, VECTOR3 &dir, VECTOR3 &rot) const { WorldCall (); pos = dir = rot = Z (); }
 OBJHANDLE VESSEL::GetDockStatus (DOCKHANDLE) const { WorldCall (); return nullptr; }
 const OBJHANDLE VESSEL::GetGravityRef () const { WorldCall (); return nullptr; }
+const OBJHANDLE VESSEL::GetSurfaceRef () const { WorldCall (); return nullptr; }
+void VESSEL::GetRelativePos (OBJHANDLE, VECTOR3 &pos) const { WorldCall (); pos = Z (); }
+void VESSEL::GetRelativeVel (OBJHANDLE, VECTOR3 &vel) const { WorldCall (); vel = Z (); }
 bool VESSEL::GetMeshOffset (UINT, VECTOR3 &ofs) const { WorldCall (); ofs = Z (); return false; }
 bool VESSEL::GroundContact () const { WorldCall (); return false; }
 void VESSEL::SetAngularVel (const VECTOR3 &) const { WorldCall (); Bug ("spin write in a mesh-less world"); }

@@ -19,6 +19,7 @@ class CollSolveHost;
 class CollDmgSession;
 class CollDmgHost;
 class CollShapeSink;
+class CollGroundA;
 struct CollOwnerRef;
 
 struct CollCounters { uint64_t frames = 0, contacts = 0, events = 0, writes = 0, probes = 0, vtx = 0, matrix = 0, notices = 0, spec = 0, free = 0, missed = 0; };
@@ -56,6 +57,7 @@ public:
 	void FrameEnd ();
 	void Close ();                          // session end: E3 End, A3 from counters, no world access
 	void Abort ();                          // end of a session turned off by an error: E3 End and the annotation only
+	void Quiet ();                          // failure path: effects stop emitting, no SDK call; no dmg3 drop hooks after it
 	CollDmgSession *Dmg () const { return started ? dmg.get () : nullptr; }
 	CollSdk &Sdk () { return *sdk; }
 	CollCounters n;
@@ -67,7 +69,7 @@ private:
 	std::string Who (const CollOwnerRef &o);
 	uint32_t serial;
 	CollCfgValues cfg;
-	bool started = false;
+	bool started = false, quiet = false;
 	std::vector<OBJHANDLE> vessel;          // by id; id 0 unused
 	std::unordered_map<OBJHANDLE, uint32_t> idOf; // live handles only; looked up, never iterated
 	std::vector<Op> queued;                 // vessel changes raised inside the pre-step
@@ -80,6 +82,7 @@ private:
 	std::unique_ptr<CollDmgHost> dhost;     // E3's view of E2 and the id map
 	std::unique_ptr<CollDmgSession> dmg;    // E3
 	std::unique_ptr<CollShapeSink> sink;    // E2 Deliver -> E3 ShapesUpdated
+	std::unique_ptr<CollGroundA> ground;    // ground impacts for E3 (CA-ground)
 	Clock::time_point t0;
 };
 #endif

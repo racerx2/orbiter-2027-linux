@@ -43,6 +43,7 @@ struct CollImpactSide {
 	int mesh, grp, tri;      // hit render feature, original triangle index, -1 if unknown
 	Vector c, n;             // contact centroid and outward normal in the hit part's rest frame (base frame for buildings)
 	double a;                // contact patch radius [m]
+	Vector tdir;             // dmg3 L1: unit slip direction of this side's surface relative to the other, hit part rest frame; zero below 1e-6 m/s
 };
 struct CollImpactEvent {
 	CollImpactSide s[2];
@@ -156,13 +157,21 @@ struct CollEventRec {                        // one solved contact point: what e
 	double vpost, slip, Jt;                  // separation speed after phase 1, slip at tau, tangential impulse
 	double meff;                             // effective mass of the island at the owner pair's centroid
 	double jsum;                             // |J1| + |J2| of the point
+	Vector slipv;                            // dmg3 L1: tangential relative velocity at tau (a minus b), global axes
+	double JnT, JtT;                         // dmg3 L4: normal and tangential parts of J1 + J2
 	bool surf, woke, corrected;
 	double t;                                // event time of the point; < 0: simt0 + tau h of its result (E1 5.6)
 };
 struct CollInaccLog { CollOwnerKey a, b; double t; }; // owner pair warned for INACCURATE results and when
+struct CollContactRec {                      // dmg3 L4: one owner pair that exchanged impulse this frame, steady slides included
+	CollImpactSide s[2];                     // as CollImpactEvent, points weighted by total impulse
+	double vn, vt, Jn, Jt, dt;               // total-impulse weighted approach and slip speed; total normal and tangent impulse; frame step
+	uint32_t flags;                          // COLLEV_*
+};
 // events per owner pair and building supports per dynamic body from solved points (8.1, 8.2, 7.5; E1 frame change 4); body may be null
 void CollFillEvents (const CollDetect &det, const std::vector<CollPairResult> &solved, const std::vector<CollEventRec> &rec, double h, double simt0,
-	const CollSolveParams &p, CollSolveHost &host, std::vector<CollImpactEvent> &ev, std::vector<CollFrameBody> *body, std::vector<CollInaccLog> *inacc);
+	const CollSolveParams &p, CollSolveHost &host, std::vector<CollImpactEvent> &ev, std::vector<CollFrameBody> *body, std::vector<CollInaccLog> *inacc,
+	std::vector<CollContactRec> *con = nullptr);
 struct CollSolveStats { int islands, rounds, resweeps, nonconverged, exhausted, guards; };
 class CollFrameSolver {                      // own translation unit CollSolveFrame.cpp, so CollSolve.Test links without CollDetect.cpp
 public:
@@ -171,6 +180,7 @@ public:
 		const CollSolveParams &p, int rounds, CollSolveHost &host, std::vector<CollBodyDelta> &delta, std::vector<CollImpactEvent> &ev);
 	bool check = false;                      // CollisionCheck: momentum and energy checks in release builds (9)
 	CollSolveStats stats = {};               // last Run
+	std::vector<CollContactRec> *contacts = nullptr; // dmg3 L4: appended by Run when set
 private:
 	int nWarn = 0, nQuiet = 0;               // check warnings written, and suppressed since the last summary (9)
 	double tWarn = 0;                        // sim time of the last summary

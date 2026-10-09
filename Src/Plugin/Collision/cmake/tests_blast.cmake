@@ -1,0 +1,12 @@
+# not upstream: collision addon, Blast unit tests (Design CA-blast 1, 7)
+coll_unit_test(Blast.Smoke.Test 30)
+if (TARGET Coll_CollBlastA)
+	if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Tests/CollBlastA.Test.cpp)
+		coll_unit_test(CollBlastA.Test 120 UNITS CollBlastA Vecmat)
+	endif ()
+	foreach (t CollDamageA.Test CollBreakA.Test) # their units reach CollBlastA
+		if (TARGET ${t})
+			target_sources(${t} PRIVATE $<TARGET_OBJECTS:Coll_CollBlastA>)
+		endif ()
+	endforeach ()
+endif ()
