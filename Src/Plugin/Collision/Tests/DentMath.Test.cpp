@@ -3409,7 +3409,83 @@ TEST_CASE ("blast VCUT 5: a debris list (parent cut, then KEEP) evaluates both s
 	for (size_t i = 0; i < rest[0].size (); i++) {
 		Vector x (rest[0][i].x, rest[0][i].y, rest[0][i].z);
 		Vector y1 = x + DentMath::Fold (l, 1, x, true, nullptr, &s);
-		Vector c1 ((float)y1.x, (float)y1.y, (float)y1.z), m = DentMath::VCutMap (vc, true, c1, true), e = c1 + (m - c1); // the float copy between the two records
+		Vector c1 ((float)y1.x, (float)y1.y, (float)y1.z), m = DentMath::VCutMap (vc, true, x, c1, true), e = c1 + (m - c1); // the float copy between the two records
 		CHECK (cur[0][i].x == (float)e.x); CHECK (cur[0][i].y == (float)e.y); CHECK (cur[0][i].z == (float)e.z);
 	}
+}
+
+TEST_CASE ("blast fix M7: VCUT jag and crater scale with the cell, never with P (the cell index); IsCut", "[dent][blast]")
+{
+	DentSites s = Grid4 ();
+	DentParams p = VCut (3, false, 50.0, 0), q = VCut (3, false, 50.0, 0.3);   // P = 3, a huge hd
+	const DentParams *l[] = { &p }, *lq[] = { &q };
+	double hh = 1.0, A = 0.1 * hh;                                  // sites 2 m apart
+	for (int i = 0; i < 200; i++) {
+		Vector x (1.2 + 0.004 * i, 1.05 + 0.004 * i, -0.4 + 0.004 * i);
+		if (DentMath::Nearest (s, x) != 3) continue;
+		Vector y = x + DentMath::Fold (l, 1, x, true, nullptr, &s);
+		double e1 = std::fabs (y.x - 1.0), e2 = std::fabs (y.y - 1.0);
+		CHECK (std::min (e1, e2) <= A + 1e-12);                     // |J| <= 0.1 hh, not P = 3
+		Vector z = x + DentMath::Fold (lq, 1, x, true, nullptr, &s);
+		CHECK (std::min (std::fabs (z.x - 1.0), std::fabs (z.y - 1.0)) <= A + 0.05 * hh + 1e-12); // crater capped at 0.05 hh
+	}
+	CHECK (DentMath::IsCut (DENTM_CUT)); CHECK (DentMath::IsCut (DENTM_VCUT)); CHECK (!DentMath::IsCut (DENTM_HINGE));
+	DentRecord r {}; r.p = p; r.grp = { 2 };
+	CHECK (DentMath::HasCut ({ r }, 2)); CHECK (!DentMath::HasCut ({ r }, 3));
+}
+
+TEST_CASE ("blast fix M8: projected vertices stay within 1.2 x the bisector half-distance of the midpoint (KEEP and removed)", "[dent][blast]")
+{
+	DentSites s = Grid4 ();
+	DentParams k = VCut (1, true, 0.3, 0.05), r = VCut (1, false, 0.3, 0.05);
+	const DentParams *lk[] = { &k }, *lr[] = { &r };
+	Rng g { 5 };
+	for (int i = 0; i < 2000; i++) {
+		Vector x (g.U (-60, 60), g.U (-60, 60), g.U (-30, 30));
+		size_t a = DentMath::Nearest (s, x);
+		Vector y = x + DentMath::Fold (lk, 1, x, true, nullptr, &s);
+		if (a == 1) { CHECK (std::memcmp (&x, &y, sizeof (Vector)) == 0); continue; }
+		Vector m = (s.s[a] + s.s[1]) * 0.5, nf = s.s[1] - s.s[a];
+		double hh = 0.5 * nf.length ();
+		nf = nf / nf.length ();
+		Vector d = y - m, dp = d - nf * (d & nf);
+		CHECK (dp.length () <= 1.2 * hh * (1 + 1e-12));            // no hull-sized sheet
+		CHECK (std::fabs (d & nf) <= 0.1 * hh + 0.05 * hh + 1e-12);
+	}
+	Vector far (2.5, -40, 3);                                      // removed cell 1, far out
+	Vector y = far + DentMath::Fold (lr, 1, far, true, nullptr, &s);
+	Vector m (1, 0, 0);
+	Vector d = y - m;
+	CHECK (std::sqrt (d.y * d.y + d.z * d.z) <= 1.2 * (1 + 1e-12));
+}
+
+TEST_CASE ("blast fix: classification by rest position; K rows and events keep 32-bit chunk pairs", "[dent][blast]")
+{
+	DentSites s = Grid4 ();
+	DentParams p = VCut (1, false, 0, 0);
+	const DentParams *l[] = { &p };
+	DentVCut vc;
+	DentMath::VCutSet (l, 1, &s, vc);
+	Vector restIn (1.8, 0.3, 0), curOut (0.5, 0.3, 0);               // rest in the removed cell, current moved out by a dent
+	Vector y = DentMath::VCutMap (vc, false, restIn, curOut, true);
+	CHECK (std::memcmp (&y, &curOut, sizeof (Vector)) != 0);
+	Vector restOut (0.5, 0.3, 0), curIn (1.8, 0.3, 0);               // rest outside: stays
+	Vector z = DentMath::VCutMap (vc, false, restOut, curIn, true);
+	CHECK (std::memcmp (&z, &curIn, sizeof (Vector)) == 0);
+	std::vector<uint32_t> b { 63u * 65536u + 64u, 1u * 65536u + 2u, 0xfffeffffu, 4294901759u };
+	DentVesselText v;
+	v.brokenBonds.push_back ({ 3, b });
+	std::vector<std::string> lines;
+	DentMath::FormatVessel (v, "  ", lines);
+	DentVesselParser ps;
+	for (auto &x : lines) { CHECK (x.size () <= 200); ps.Line (x.c_str ()); }
+	DentVesselText o; ps.Finish (o);
+	REQUIRE (o.brokenBonds.size () == 1);
+	CHECK (o.brokenBonds[0].second == b);
+	std::vector<std::string> pay;
+	DentMath::FormatBondsEvent (3, b, pay);
+	REQUIRE (pay.size () == 1);
+	uint32_t slot = 0; std::vector<uint32_t> got; bool more = true;
+	REQUIRE (DentMath::ParseBondsEvent (pay[0].c_str (), slot, got, more));
+	CHECK (got == b); CHECK (!more);
 }

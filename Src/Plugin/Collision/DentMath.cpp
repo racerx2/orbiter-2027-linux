@@ -37,7 +37,7 @@ bool AddField (const DentParams &p, const DentVtx &r, DentVtx &c, const DentVCut
 	if (p.mode == DENTM_VCUT) { // blast: vc's set of this record's kind
 		if (!vc || !vc->s) return false;
 		Vector cp = Pos (c);
-		d = DentMath::VCutMap (*vc, (p.bits & DENTC_KEEP) != 0, cp, true) - cp;
+		d = DentMath::VCutMap (*vc, (p.bits & DENTC_KEEP) != 0, rp, cp, true) - cp;
 		if (d.x == 0.0 && d.y == 0.0 && d.z == 0.0) return false;
 	} else if (p.mode == DENTM_CUT) {
 		Vector cp = Pos (c);
@@ -606,7 +606,7 @@ Vector HingeD (const DentParams &p, const Vector &rest, double sign)
 
 Vector DisplaceAny (const DentParams &p, const Vector &rest, bool full)
 {
-	if (p.mode == DENTM_CUT || p.mode == DENTM_VCUT) return Vector ();
+	if (DentMath::IsCut (p.mode)) return Vector ();
 	if (p.mode == DENTM_HINGE) return HingeD (p, rest, 1.0);
 	double q = p.mode == DENTM_CRUSH ? CrushQ (p, rest, full) : BowlQ (p, rest, full);
 	return p.n * (-(p.h * q));
@@ -743,7 +743,7 @@ double DentMath::Kernel (double t2)
 
 double DentMath::Weight (const DentParams &p, const Vector &rest)
 {
-	if (p.mode == DENTM_CUT || p.mode == DENTM_VCUT) return 0.0;
+	if (IsCut (p.mode)) return 0.0;
 	if (p.mode == DENTM_CRUSH) return CrushWeight (p, rest);
 	if (p.mode == DENTM_HINGE) return p.h > 0.0 ? std::min (1.0, Len (HingeD (p, rest, 1.0)) / p.h) : 0.0;
 	if (p.seed) return BowlQ (p, rest, true);
@@ -856,7 +856,7 @@ Vector DentMath::Fold (const DentParams *const *rec, size_t n, const Vector &res
 			bool &done = k ? doneKeep : doneRm;
 			if (done || !vc || !vc->s) continue;
 			done = true;
-			Vector x = rest + acc, y = VCutMap (*vc, k, x, full);
+			Vector x = rest + acc, y = VCutMap (*vc, k, rest, x, full);
 			if (cut && (y.x != x.x || y.y != x.y || y.z != x.z)) *cut = true;
 			acc = y - rest;
 		}
@@ -926,20 +926,20 @@ size_t DentMath::Nearest (const DentSites &s, const Vector &x)
 	return b;
 }
 
-Vector DentMath::VCutMap (const DentVCut &v, bool keep, const Vector &cur, bool full)
+Vector DentMath::VCutMap (const DentVCut &v, bool keep, const Vector &rest, const Vector &cur, bool full)
 {
 	if (!v.s || (keep ? v.nkeep : v.nrm) == 0) return cur;
 	const std::vector<Vector> &S = v.s->s;
 	const std::vector<const DentParams *> &set = keep ? v.keep : v.rm;
 	size_t ns = S.size ();
 	if (set.size () != ns) return cur;
-	size_t a = Nearest (*v.s, cur);
+	size_t a = Nearest (*v.s, rest); // cells by rest position
 	if (keep == (set[a] != nullptr)) return cur; // removed set: a vertex outside it stays; keep set: a vertex inside it stays
 	size_t b = ns;
 	double bd = 0.0;
 	for (size_t i = 0; i < ns; i++) {
 		if (keep == (set[i] == nullptr)) continue; // removed set: nearest kept site; keep set: nearest site of the set
-		double d = Len2 (cur - S[i]);
+		double d = Len2 (rest - S[i]);
 		if (b == ns || d < bd) b = i, bd = d;
 	}
 	if (b == ns) return S[a]; // every cell removed: the vertex goes to its site
@@ -951,20 +951,24 @@ Vector DentMath::VCutMap (const DentVCut &v, bool keep, const Vector &cur, bool 
 	nf = nf / l;
 	DentParams f;
 	f.mode = DENTM_CUT, f.c = (S[lo] + S[hi]) * 0.5, f.n = nf, f.t = Tangent (nf, Vector (), 0.0);
-	f.hd = p.hd, f.P = 0.4 * p.hd, f.hz = p.hz;
+	double hh = 0.5 * l, rc = 1.2 * hh; // bisector half-distance; rc about 0.6 sqrt(cell area)
+	f.hd = p.hd, f.P = std::min (0.4 * p.hd, 0.1 * hh), f.hz = 0.0; // jag amplitude from the cell scale, never from P (the cell index)
 	f.seed = Lowbias32 ((uint32_t)lo * 0x9e3779b9U ^ Lowbias32 ((uint32_t)hi + 0x632be5abU) ^ (uint32_t)ns) | 1u;
 	double sgn = (keep ? b : a) == hi ? 1.0 : -1.0; // n into the removed cell a, or for keep into the kept cell b (mode-3 KEEP sense)
 	Vector n = nf * sgn;
 	Vector d = cur - f.c;
 	double s = Dot (d, n);
 	Vector dp = d - n * s;
-	double J = CutJag (f, cur, full) * sgn, hl = p.hz > 0.0 ? p.hz : 0.0;
+	double J = CutJag (f, cur, full) * sgn, hl = p.hz > 0.0 ? std::min (p.hz, 0.05 * hh) : 0.0;
+	double l2 = Len2 (dp);
+	bool far = l2 > rc * rc;
+	if (far) dp = dp * (rc / std::sqrt (l2)); // M8: no hull-sized sheet on the face
 	if (keep) {
-		if (!(s < J)) return cur;
+		if (!(s < J)) return far ? f.c + dp + n * s : cur; // a jag tooth stays, inside the radius
 		double sg = (J - s) / (J - s + hl);
 		return f.c + dp * (1.0 - DENT_CUT_PINCH * sg) + n * (J + hl * sg);
 	}
-	if (!(s > J)) return cur;
+	if (!(s > J)) return far ? f.c + dp + n * s : cur;
 	double sg = (s - J) / (s - J + hl);
 	return f.c + dp * (1.0 - DENT_CUT_PINCH * sg) + n * (J - hl * sg);
 }
@@ -972,7 +976,7 @@ Vector DentMath::VCutMap (const DentVCut &v, bool keep, const Vector &cur, bool 
 Vector DentMath::MapVCut (const void *ctx, const Vector &rest, const Vector &cur)
 {
 	const DentVCut *v = (const DentVCut*)ctx;
-	return v ? VCutMap (*v, v->on, cur, false) : cur;
+	return v ? VCutMap (*v, v->on, rest, cur, false) : cur;
 }
 
 Vector DentMath::MapLow (const void *ctx, const Vector &rest, const Vector &cur)
@@ -984,7 +988,7 @@ Vector DentMath::MapLow (const void *ctx, const Vector &rest, const Vector &cur)
 bool DentMath::HasCut (const std::vector<DentRecord> &rec, int g)
 {
 	for (const DentRecord &r : rec)
-		if (r.p.mode == DENTM_CUT && (g < 0 || r.grp.empty () || std::find (r.grp.begin (), r.grp.end (), (uint16_t)g) != r.grp.end ())) return true;
+		if (IsCut (r.p.mode) && (g < 0 || r.grp.empty () || std::find (r.grp.begin (), r.grp.end (), (uint16_t)g) != r.grp.end ())) return true;
 	return false;
 }
 

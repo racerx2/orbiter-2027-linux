@@ -493,3 +493,20 @@ TEST_CASE ("blast a capped dormant rewrite keeps the S and K rows", "[blast]")
 	REQUIRE (b2.vessel[0].d.brokenBonds.size () == 1);
 	CHECK (b2.vessel[0].d.brokenBonds[0].second == bonds);
 }
+
+TEST_CASE ("blast fix m10: K events keep 32-bit chunk pairs a * 65536 + b", "[blast]")
+{
+	std::vector<uint32_t> b;
+	for (uint32_t a = 0; a < 60; a++) b.push_back (a * 65536u + a + 1u);
+	b.push_back (0xfffeffffu);
+	std::vector<std::string> l { CollSide::Header ("BL2"), CollSide::Vdef (0, 0, "PB-A", "ShuttlePB") };
+	CollSide::Bonds (2.0, 0, 7, b, l);
+	std::string text;
+	for (auto &x : l) text += x + "\n";
+	CHECK (l.size () > 3);
+	CollSideFile f;
+	REQUIRE (CollSide::Parse (text, f));
+	CHECK (f.skipped == 0);
+	REQUIRE (f.ev.size () == 1);
+	CHECK (f.ev[0].kind == 'K'); CHECK (f.ev[0].slot == 7); CHECK (f.ev[0].bonds == b);
+}

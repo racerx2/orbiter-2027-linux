@@ -190,7 +190,7 @@ namespace DentMath {
 	void   VCutSet (const DentParams *const *rec, size_t n, const DentSites *s, DentVCut &out); // blast: VCUT cells of the list whose seed is the site count
 	void   VCutSet (const std::vector<const DentRecord *> &rec, const DentSites *s, DentVCut &out); // blast: same from records
 	size_t Nearest (const DentSites &s, const Vector &x);          // blast: nearest site, lowest index on ties
-	Vector VCutMap (const DentVCut &v, bool keep, const Vector &cur, bool full); // blast: removed cells to the bisector with the nearest kept site; keep: the complement
+	Vector VCutMap (const DentVCut &v, bool keep, const Vector &rest, const Vector &cur, bool full); // blast: cells by rest; cur of removed cells to the bisector with the nearest kept site; keep: the complement
 	Vector MapVCut (const void *ctx, const Vector &rest, const Vector &cur); // blast: CollMapFn of VCutMap low, ctx = const DentVCut * (on = keep set)
 	bool   IsCut (uint32_t mode);                                 // blast: DENTM_CUT or DENTM_VCUT
 	Vector MapLow (const void *ctx, const Vector &rest, const Vector &cur); // dmg3 tear: CollMapFn of CutMap low, ctx = const DentRecord *
