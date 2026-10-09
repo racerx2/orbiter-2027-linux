@@ -81,6 +81,7 @@ enum : uint32_t { COLLSH_NONE = 1, COLLSH_BUILT = 2, COLLSH_REBUILT = 4, COLLSH_
 
 // displacement field callback; D4 passes DentMath's field with the record as ctx (7.3)
 typedef Vector (*CollDisplaceFn) (const void *ctx, const Vector &rest);
+typedef Vector (*CollMapFn) (const void *ctx, const Vector &rest, const Vector &cur); // dmg3 tear: new position from rest and current
 
 // collider of one vessel: parts, poses at t0 and t1, bounds, damage API (3.6, 7.3)
 class CollShape {
@@ -107,8 +108,11 @@ public:
 		double tmin, double tmax, CollRayHit &hit) const;                          // first hit over all parts at pose[1]; o, d in grp's part frame
 	size_t   ApplyDent (uint32_t mesh, const uint32_t *grp, size_t ngrp,
 		CollDisplaceFn fn, const void *ctx);                                       // vtx += fn(rest), then Refit; returns vertices moved; non-finite displacements skipped (log once)
+	size_t   ApplyMap (uint32_t mesh, const uint32_t *grp, size_t ngrp,
+		CollMapFn fn, const void *ctx);                                            // dmg3 tear: vtx = fn(rest, vtx), then Refit; returns vertices moved
 	void     ResetDents (uint32_t mesh);                                           // repair: drop private copies of that mesh
 private:
+	size_t   ApplyAny (uint32_t mesh, const uint32_t *grp, size_t ngrp, CollDisplaceFn fn, CollMapFn mfn, const void *ctx); // ApplyDent and ApplyMap
 	struct MeshEntry {                           // one slot as last built (implementation may extend)
 		bool collide = false; uint32_t serial = 0; std::string key;
 		Vector ofs, dofs;                        // offset at the last Update, its raw change

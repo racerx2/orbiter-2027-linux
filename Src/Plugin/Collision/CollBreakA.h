@@ -9,6 +9,7 @@
 #include <vector>
 #include "CollCfg.h"
 #include "CollDmgTypes.h"
+#include "CollGeom.h"
 
 constexpr double BRK_VN_PART      = 20.0;   // parts need approach speed >= this [m/s]: 200 J/kg closing, above the 113 J/kg of a DG-DG 15 m/s hit
 constexpr double BRK_RATIO_PART   = 0.6;    // crush / own depth: thin-walled crush zones bottom out at 0.6-0.75 stroke
@@ -21,6 +22,15 @@ constexpr double BRK_FIXED_A      = 0.2;    // or with more than this share of t
 constexpr double BRK_MASS_MAX     = 0.05;   // piece mass <= this * parent empty mass
 constexpr double BRK_MIN_MASS     = 2.0;    // lighter or smaller pieces are hidden without debris [kg]
 constexpr double BRK_MIN_R        = 0.25;   // [m]
+constexpr double BRK_DEBRIS_R     = 0.5;    // dmg3 tear: debris only for pieces this wide or more; smaller ones are hidden [m]
+constexpr double BRK_TEAR_VN      = 40.0;   // dmg3 tear: section tear needs vn >= this [m/s]
+constexpr double BRK_TEAR_E       = 300.0;  // and eSpec >= this [J/kg]; the dock pin is released from here
+constexpr double BRK_TEAR_DMAX    = 0.75;   // cut depth <= this * L
+constexpr double BRK_TEAR_FMIN    = 0.01;   // section area share >= this
+constexpr double BRK_TEAR_FMAX    = 0.3;    // and <= this
+constexpr double BRK_TEAR_RX      = 0.4;    // cut radius <= this * L
+constexpr double BRK_TEAR_MMAX    = 0.3;    // section mass <= this * parent empty mass
+constexpr double BRK_TEAR_KICK    = 0.1;    // section kick = this * vn along +-t or +-e
 constexpr double BRK_KICK         = 0.15;   // debris speed = this * vn
 constexpr double BRK_SEP          = 0.05;   // pair filter released at this bound gap [m]
 constexpr double BRK_STUCK        = 10.0;   // debris still overlapping after this is deleted [s]
@@ -28,15 +38,17 @@ constexpr double BRK_FUNC_DIST    = 0.15;   // a touchdown, thruster or dock poi
 constexpr int    BRK_PER_EVENT    = 4;      // debris per event
 constexpr const char *BRK_CLASS   = "CollDebris";
 
-struct CollPieceA { std::vector<uint16_t> grp; int tier = CBRK_PART; Vector c; double r = 0, area = 0; uint32_t comps = 1; bool fixed = false, functional = false; };
+struct CollPieceA { std::vector<uint16_t> grp; int tier = CBRK_PART; Vector c; double r = 0, area = 0; uint32_t comps = 1; bool fixed = false; uint32_t functional = 0; }; // functional: CBRK_FN_* bits
 struct CollSlotA {                                        // rest geometry of one slot and its pieces
 	bool ok = false; std::string name; uint32_t key = 0, nvtx = 0; uint16_t ngrp = 0; CollH tpl = nullptr;
 	std::vector<std::vector<DentVtx>> v; std::vector<std::vector<uint16_t>> idx; std::vector<uint32_t> usr;
 	std::vector<int> pieceOf; std::vector<CollPieceA> piece; double area = 0, rad = 0;
 	std::set<uint16_t> keep;                              // sidecar ";@KEEPFLAGS": module-owned flag groups P never touches
+	std::vector<int> tier; std::vector<uint32_t> cls;     // dmg3 tear: per group tier and pose class
 };
 struct CollDebrisA { uint32_t id = ~0u, parent = 0, other = 0, event = 0; CollH h = nullptr, mesh = nullptr; double birth = 0; DentDebris row; uint32_t fnv = 0; };
 struct CollSpawnA { uint32_t parent = 0, other = 0, event = 0; std::string mesh; DentDebris row; Vector cv, dv, dw; double mass = 0; CollSdk::DebrisCaps caps; };
+struct CollCutPlan { bool ok = false; DentRecord rec; std::vector<uint16_t> front, straddle; double d = 0, f = 0, area = 0; const char *why = ""; }; // dmg3 tear: planned cut
 struct CollFreeA { CollH mesh = nullptr, h = nullptr; bool dropped = false; };
 struct CollPairA { uint32_t a = 0, b = 0; double t = 0; uint32_t debris = 0; };
 
@@ -59,6 +71,10 @@ public:
 	const std::vector<CollPairA> &Pairs () const { return pairs; }
 	size_t Pending () const { return spawn.size (); }
 	uint64_t reasserts = 0, breaks = 0;
+	static bool TearGate (const CollDamageHit &h, const DentParams &crush, double L); // dmg3 tear: section gate
+	static bool TipGate (const CollDamageHit &h, const DentParams &hinge);         // dmg3 tear: wing/fin tip gate
+	CollCutPlan PlanCut (uint32_t id, const CollSlotA &sl, const CollDamageHit &h, const DentParams &src, double L, bool tip, uint32_t event); // dmg3 tear: cut plane, groups, record
+	uint64_t tears = 0;
 	static std::vector<DentVtx> PieceVertices (const std::vector<DentVtx> &rest, uint16_t g, const DentDebrisPose &p, const std::vector<DentRecord> &rec); // A(q) (rest + records) + p
 private:
 	struct VesB { std::vector<DentTorn> rows; size_t adopted = 0; CollShape *sh = nullptr; bool seen = false; CollDamageHit last; bool haveLast = false; };
@@ -72,6 +88,9 @@ private:
 	void PairCheck (double simt);
 	void Tear (uint32_t id, CollH h, const CollDamageHit &hit, const CollSlotA &sl, const std::vector<int> &pk, uint32_t event, bool playback);
 	bool BuildMesh (CollH mesh, const DentDebris &d, std::vector<std::pair<std::vector<DentVtx>, std::vector<uint16_t>>> &geo); // flags and piece vertices of a private copy
+	bool Section (uint32_t id, CollH vh, const CollDamageHit &hit, const CollSlotA &sl, const CollCutPlan &pl, uint32_t event); // dmg3 tear: apply a planned tear
+	bool MakeTearSpawn (uint32_t id, CollH vh, const CollDamageHit &hit, const CollSlotA &sl, const std::vector<uint16_t> &front, const std::vector<uint16_t> &straddle, const DentRecord &cut, uint32_t event, CollSpawnA &sp);
+	std::vector<CollAffine> Poses (uint32_t id, uint32_t mesh, size_t ng);
 	bool MakeSpawn (uint32_t id, CollH vh, const CollDamageHit &hit, const CollSlotA &sl, const std::vector<int> &pk, uint32_t event, CollSpawnA &sp);
 	static CollSdk::DebrisCaps Caps (const std::vector<std::pair<std::vector<DentVtx>, std::vector<uint16_t>>> &geo, double mass, uint32_t *fnv);
 	double Mass (uint32_t parent, const CollSlotA &sl, const std::vector<int> &pk);

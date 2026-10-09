@@ -5,6 +5,8 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <set>
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -18,7 +20,7 @@ struct MeshT { std::string name; std::vector<CollGroupData> grp; bool freed = fa
 
 class BFake final : public CollSdk {
 public:
-	struct V { std::string name, cls; std::vector<MeshT *> slot; Vector ofs; bool playback = false, alive = true; int visual = 0; CollVesselRead rd {}; double empty = 500; };
+	struct V { std::string name, cls; std::vector<MeshT *> slot; Vector ofs; bool playback = false, alive = true; int visual = 0; CollVesselRead rd {}; double empty = 500, size = 1; std::vector<Vector> dock; };
 	BFake () : CollSdk (false) {}
 	std::deque<V> ves; std::vector<V *> list; std::deque<MeshT> mesh;
 	std::vector<std::string> log, calls; std::map<std::string, std::string> files;
@@ -35,7 +37,7 @@ public:
 	int ObjType (CollH) override { return 10; }
 	std::string Name (CollH h) override { return h ? X (h)->name : ""; }
 	std::string ClassName (CollH h) override { return h ? X (h)->cls : ""; }
-	double Size (CollH) override { return 1; }
+	double Size (CollH h) override { return X (h)->size; }
 	void GlobalState (CollH h, Vector &p, Vector &v, Matrix &R) override { p = X (h)->rd.x; v = X (h)->rd.v; R = X (h)->rd.R; }
 	uint32_t GbodyCount () override { return 0; }
 	CollH Gbody (uint32_t) override { return nullptr; }
@@ -70,8 +72,8 @@ public:
 		return true;
 	}
 	uint32_t Anims (CollH, const ANIMATION **a) override { *a = nullptr; return 0; }
-	uint32_t DockCount (CollH) override { return 0; }
-	bool Dock (CollH, uint32_t, CollPortInfo &) override { return false; }
+	uint32_t DockCount (CollH h) override { return (uint32_t)X (h)->dock.size (); }
+	bool Dock (CollH h, uint32_t i, CollPortInfo &p) override { if (i >= X (h)->dock.size ()) return false; p = CollPortInfo {}; p.pos = X (h)->dock[i]; return true; }
 	uint32_t AttachCount (CollH, bool) override { return 0; }
 	bool Attach (CollH, bool, uint32_t, CollAttInfo &) override { return false; }
 	uint32_t ThrusterCount (CollH) override { return 0; }
@@ -106,6 +108,7 @@ public:
 	{
 		auto *m = (MeshT *)h;
 		if (g >= m->grp.size ()) return false;
+		calls.push_back ("MeshEdit");
 		m->grp[g].usrflag |= add;
 		for (uint32_t i = 0; vtx && i < n; i++) std::memcpy (&m->grp[g].vtx[i], &vtx[i], sizeof (CollVtx));
 		return true;
@@ -139,7 +142,7 @@ protected:
 		if (onCreate) onCreate (v);
 		return v;
 	}
-	bool DoDebrisSetup (CollH h, CollH m, const DebrisCaps &c) override { caps[X (h)] = c; debrisMesh[X (h)] = (MeshT *)m; return true; }
+	bool DoDebrisSetup (CollH h, CollH m, const DebrisCaps &c) override { calls.push_back ("DebrisSetup"); caps[X (h)] = c; debrisMesh[X (h)] = (MeshT *)m; return true; }
 	bool DoVesselDelete (CollH h) override
 	{
 		V *v = X (h); v->alive = false; calls.push_back ("VesselDelete");
@@ -311,7 +314,7 @@ TEST_CASE ("P6 repair: delete only flags P added, collider unhidden", "[dmg3P]")
 	r.B ().Hit (r.H (a, 1, 30, 0.9));
 	CollDamageHit h = r.H (a, 3, 30, 0); h.Esurplus = 1e6;
 	r.B ().Hit (h);
-	REQUIRE (r.B ().Hidden (a, 0, 3));
+	CHECK (!r.B ().Hidden (a, 0, 3));                      // dmg3 tear: hidden at rest: never broken
 	r.sdk.flags.clear ();
 	r.B ().Repair (a);
 	bool del1 = false, del3 = false;
@@ -442,4 +445,192 @@ TEST_CASE ("P12 a hit on a CollDebris vessel breaks nothing", "[dmg3P]")
 	r.B ().Hit (r.H (a, 1, 70, 0.9));
 	CHECK (!r.B ().Hidden (a, 0, 1));
 	CHECK (r.S ().Damage (a) == nullptr);
+}
+
+// dmg3 tear (design-CA-dmg3-tear 7, tests 8-13): a 10 m strip of ten 1 m groups along x, nose at x = 5
+namespace {
+MeshT Fuse ()
+{
+	MeshT m; m.name = "ship"; m.grp.resize (10);
+	for (int k = 0; k < 10; k++) Quad (m.grp[k], k - 5.0, -0.5, 0, 1, 4);
+	return m;
+}
+struct TearRig : Rig {
+	uint32_t a = 0;
+	explicit TearRig (bool fuse = true) { if (fuse) { sdk.mesh.front () = Fuse (); sdk.files["Meshes/ship.col"] = "COLLIDER-V1\n"; } }
+	uint32_t Seed (const std::string &name, double P, double R)
+	{
+		a = Add (name); body.back ().v->size = 10;
+		DentRecord c {};
+		c.p.mode = DENTM_CRUSH, c.p.c = Vector (5, 0, 0), c.p.n = Vector (1, 0, 0), c.p.t = Vector (0, 1, 0), c.p.R = R, c.p.h = P, c.p.P = P;
+		c.slot = 0, c.key = DentMath::MeshKey ("ship"), c.ngrp = (uint16_t)sdk.mesh.front ().grp.size ();
+		for (auto &g : sdk.mesh.front ().grp) c.nvtx += (uint32_t)g.vtx.size ();
+		REQUIRE (S ().AddCut (a, c, true));
+		return a;
+	}
+	CollDamageHit T (double eSpec, double vn, double Es = 1)
+	{
+		CollDamageHit h;
+		h.id = a; h.h = host.Vessel (a); h.mesh = 0; h.grp = 9; h.rec = 0; h.c = Vector (5, 0, 0); h.n = Vector (1, 0, 0); h.R = 0.5;
+		h.vn = vn; h.eSpec = eSpec; h.E = eSpec * 500; h.Esurplus = Es; h.mat = &kMat; h.simt = sdk.simt; h.mode = DENTM_CRUSH;
+		return h;
+	}
+	const DentRecord *Cut () { const VesselDamageA *v = S ().Damage (a); if (v) for (auto &r : v->d.rec) if (r.p.mode == DENTM_CUT) return &r; return nullptr; }
+};
+}
+
+TEST_CASE ("tear 8: gate (555, 70) cuts, debris holds straddlers; (100, 30) and (25, 15) do not", "[dmg3P][tear]")
+{
+	DentParams cr {}; cr.mode = DENTM_CRUSH; cr.P = 0.1;
+	CollDamageHit h; h.Esurplus = 1; h.vn = 70; h.eSpec = 555;
+	CHECK (CollBreakA::TearGate (h, cr, 10));
+	h.vn = 30; h.eSpec = 100; CHECK (!CollBreakA::TearGate (h, cr, 10));
+	h.vn = 15; h.eSpec = 25; CHECK (!CollBreakA::TearGate (h, cr, 10));
+	h.vn = 70; h.eSpec = 555; h.Esurplus = 0; CHECK (!CollBreakA::TearGate (h, cr, 10)); cr.P = 0.95 * DentMath::DmaxCrush (10); CHECK (CollBreakA::TearGate (h, cr, 10));
+	TearRig r; r.Seed ("A", 0.6, 0.5);
+	r.B ().Hit (r.T (555, 70));
+	const DentRecord *c = r.Cut ();
+	REQUIRE (c);
+	CHECK (c->p.h == 0.0); CHECK (c->p.hz > 0); CHECK (std::fabs (c->p.P - 0.4 * c->p.hd) < 1e-6);
+	CHECK (c->grp == std::vector<uint16_t> { 7 });                    // straddler x 2..3
+	CHECK (r.B ().Hidden (r.a, 0, 8)); CHECK (r.B ().Hidden (r.a, 0, 9)); CHECK (!r.B ().Hidden (r.a, 0, 7));
+	REQUIRE (r.B ().Pending () == 1);
+	r.B ().Post (0, 0.01);
+	REQUIRE (r.B ().Debris ().size () == 1);
+	const DentDebris &d = r.B ().Debris ()[0].row;
+	std::set<uint16_t> in; for (auto &ps : d.pose) in.insert (ps.grp.begin (), ps.grp.end ());
+	CHECK (in == std::set<uint16_t> { 7, 8, 9 });
+	REQUIRE (!d.rec.empty ()); CHECK (d.rec.back ().p.mode == DENTM_CUT); CHECK ((d.rec.back ().p.bits & DENTC_KEEP));
+	CHECK (r.sdk.Logged ("Collision tear 'A'"));
+	TearRig q; q.Seed ("B", 0.6, 0.5);
+	q.B ().Hit (q.T (100, 30)); q.B ().Hit (q.T (25, 15));
+	CHECK (!q.Cut ()); CHECK (!q.B ().Hidden (q.a, 0, 9));
+}
+
+TEST_CASE ("tear 9: B row mass reused on reload, MeshEdit before DebrisSetup, FNV equal", "[dmg3P][tear]")
+{
+	std::vector<DentDebris> rows; std::vector<DentTorn> torn; uint32_t fnv = 0; double mass = 0;
+	{
+		TearRig r; r.Seed ("A", 0.6, 0.5);
+		r.B ().Hit (r.T (555, 70)); r.B ().Post (0, 0.01);
+		REQUIRE (r.B ().Debris ().size () == 1);
+		fnv = r.B ().Debris ()[0].fnv;
+		BFake::V *dv = BFake::X (r.B ().Debris ()[0].h);
+		mass = r.sdk.caps[dv].mass;
+		size_t e = 0, ds = 0;
+		for (size_t i = 0; i < r.sdk.calls.size (); i++) { if (r.sdk.calls[i] == "MeshEdit" && !e) e = i + 1; if (r.sdk.calls[i] == "DebrisSetup") ds = i + 1; }
+		CHECK (e > 0); CHECK (e < ds);
+		rows = r.S ().Damage (r.a)->d.debris; torn = r.S ().Damage (r.a)->d.torn;
+		REQUIRE (rows.size () == 1);
+		CHECK (rows[0].mass == mass);
+		std::vector<std::string> lines; DentMath::FormatDebris (rows[0], "", lines);
+		DentVesselParser p; p.Line ("XDMG 1 0 0"); for (auto &l : lines) p.Line (l.c_str ());
+		r.B ().End ();
+	}
+	CHECK (mass > 1); CHECK (mass <= BRK_TEAR_MMAX * 500 + 1e-9);
+	TearRig r; r.Seed ("A", 0.6, 0.5);
+	BFake::V *dv = r.sdk.Add ("A_D1", "CollDebris"); r.host.IdOf (dv);
+	for (auto &t : torn) r.S ().AddTorn (r.a, t);
+	r.body.front ().v->empty = 900; // a changed parent mass does not change the stored section mass
+	r.S ().SetDebris (r.a, rows);
+	r.B ().Post (3, 0.01);
+	REQUIRE (r.B ().Debris ().size () == 1);
+	CHECK (r.B ().Debris ()[0].fnv == fnv);
+	CHECK (r.sdk.caps[dv].mass == mass);
+}
+
+TEST_CASE ("tear 10: belly hit does not cut; snap moves the plane to a group's rear", "[dmg3P][tear]")
+{
+	TearRig r; r.Seed ("A", 0.6, 0.5);
+	DentRecord b {};
+	b.p.mode = DENTM_CRUSH, b.p.c = Vector (0, 0, 0), b.p.n = Vector (0, 0, 1), b.p.t = Vector (1, 0, 0), b.p.R = 0.5, b.p.h = b.p.P = 0.3;
+	b.slot = 0, b.key = DentMath::MeshKey ("ship"), b.ngrp = 10; for (auto &g : r.sdk.mesh.front ().grp) b.nvtx += (uint32_t)g.vtx.size ();
+	REQUIRE (r.S ().AddCut (r.a, b, true));
+	CollDamageHit h = r.T (555, 70); h.rec = 1; h.grp = 5; h.c = Vector (0, 0, 0); h.n = Vector (0, 0, 1);
+	r.B ().Hit (h);
+	CHECK (!r.Cut ());
+	TearRig q; q.Seed ("B", 1.45, 0.5);
+	CollCutPlan pl = q.B ().PlanCut (q.a, *q.B ().Slot (q.a, 0), q.T (300, 70), q.S ().Damage (q.a)->d.rec[0].p, 10, false, 1);
+	REQUIRE (pl.ok);
+	CHECK (std::fabs (pl.d - 2.0) < 1e-9);                                        // 1.95 snapped back to the rear of group 8 (x = 3)
+	CHECK (std::find (pl.front.begin (), pl.front.end (), 8) == pl.front.end ()); // its rear on the plane: straddles the jag band only
+	CHECK (std::find (pl.straddle.begin (), pl.straddle.end (), 8) != pl.straddle.end ());
+	CHECK (std::find (pl.front.begin (), pl.front.end (), 9) != pl.front.end ());
+}
+
+TEST_CASE ("tear 11: tip gate at 1.0 Mp, not 0.5; rest-hidden never debris; 0.4 m piece hidden only; dock pin released at 300 J/kg", "[dmg3P][tear]")
+{
+	DentParams hp {}; hp.mode = DENTM_HINGE; hp.P = DENT_HINGE_TMAX;
+	CollDamageHit h; h.Mp = 1000; h.vn = 30; h.Esurplus = 1000;
+	CHECK (CollBreakA::TipGate (h, hp));
+	h.Esurplus = 500; CHECK (!CollBreakA::TipGate (h, hp));
+	{
+		TearRig r (true);
+		r.sdk.mesh.front ().grp[8].usrflag = 2;
+		r.Seed ("A", 0.6, 0.5);
+		r.B ().Hit (r.T (555, 70)); r.B ().Post (0, 0.01);
+		REQUIRE (r.B ().Debris ().size () == 1);
+		for (auto &ps : r.B ().Debris ()[0].row.pose) CHECK (std::find (ps.grp.begin (), ps.grp.end (), 8) == ps.grp.end ());
+		bool row8 = false; for (auto &t : r.S ().Damage (r.a)->d.torn) for (uint16_t g : t.grp) if (g == 8) row8 = true;
+		CHECK (row8);
+	}
+	{
+		Rig r; r.sdk.mesh.front ().grp[1] = CollGroupData (); Quad (r.sdk.mesh.front ().grp[1], 5.5, -0.2, 0.2, 0.4, 4);
+		uint32_t a = r.Add ("A");
+		r.B ().Hit (r.H (a, 1, 70, 0.9)); r.B ().Post (0, 0.01);
+		CHECK (r.B ().Hidden (a, 0, 1));
+		CHECK (r.sdk.Calls ("VesselCreate") == 0);
+	}
+	{
+		Rig r2; uint32_t a2 = r2.Add ("A");
+		r2.body.front ().v->dock.push_back (Vector (6, 0, 0.2));
+		const CollSlotA *sl = r2.B ().Slot (a2, 0);
+		REQUIRE (sl); CHECK ((sl->piece[sl->pieceOf[1]].functional & CBRK_FN_DOCK));
+		CollDamageHit lo = r2.H (a2, 1, 30, 0.9); lo.eSpec = 100;
+		r2.B ().Hit (lo); CHECK (!r2.B ().Hidden (a2, 0, 1));
+		CollDamageHit hi = lo; hi.eSpec = 300;
+		r2.B ().Hit (hi); CHECK (r2.B ().Hidden (a2, 0, 1));
+	}
+}
+
+TEST_CASE ("tear 12: spawn velocity uses the post-impulse rd.v; kick along +-t / +-e only", "[dmg3P][tear]")
+{
+	TearRig r; r.Seed ("A", 0.6, 0.5);
+	r.B ().Hit (r.T (555, 70));
+	r.body.front ().v->rd.v = Vector (0, 0, 3);                         // PS4 wrote the post-impulse state before PO2
+	r.B ().Post (0, 0.01);
+	REQUIRE (r.B ().Debris ().size () == 1);
+	BFake::V *dv = BFake::X (r.B ().Debris ()[0].h);
+	CollStateWrite st = r.sdk.created[dv];
+	const DentRecord *c = r.Cut ();
+	REQUIRE (c);
+	Vector kick = st.rvel - Vector (0, 0, 3);
+	CHECK (std::fabs (kick & c->p.n) < 1e-9);
+	Vector e = crossp (c->p.n, c->p.t);
+	CHECK ((std::fabs (std::fabs (kick & c->p.t) - kick.length ()) < 1e-9 || std::fabs (std::fabs (kick & e) - kick.length ()) < 1e-9));
+	CHECK (kick.length () >= 0.8 * BRK_TEAR_KICK * 70 - 1e-9); CHECK (kick.length () <= 1.2 * BRK_TEAR_KICK * 70 + 1e-9);
+}
+
+TEST_CASE ("tear 13: playback rebuilds the section debris from T + cut, no TearGate", "[dmg3P][tear]")
+{
+	DentRecord cut; DentTorn torn;
+	{
+		TearRig r; r.Seed ("A", 0.6, 0.5);
+		r.B ().Hit (r.T (555, 70));
+		REQUIRE (r.Cut ()); cut = *r.Cut ();
+		for (auto &t : r.S ().Damage (r.a)->d.torn) if (t.kind == CBRK_SECTION) torn = t;
+		REQUIRE (torn.kind == CBRK_SECTION);
+	}
+	TearRig r; r.Seed ("A", 0.6, 0.5);
+	r.body.front ().v->playback = true;
+	CollDamageHit h = r.T (555, 70); h.playback = true;
+	r.B ().Hit (h);
+	CHECK (!r.Cut ());                                                     // no gate math in playback
+	REQUIRE (r.S ().AddCut (r.a, cut, true));
+	r.B ().Torn (r.a, torn);
+	CHECK (r.B ().Hidden (r.a, 0, 9));
+	r.B ().Post (0, 0.01);
+	REQUIRE (r.sdk.Calls ("VesselCreate") == 1);
+	REQUIRE (r.B ().Debris ().size () == 1);
+	CHECK (r.B ().Debris ()[0].row.rec.back ().p.bits & DENTC_KEEP);
 }

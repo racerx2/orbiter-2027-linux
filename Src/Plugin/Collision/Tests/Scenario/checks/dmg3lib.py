@@ -6,6 +6,7 @@ DENT = re.compile(r"^Collision dent t=(\S+) '([^']*)' mesh=(\d+) grp=(\d+) .* mo
 BREAK = re.compile(r"^Collision break '([^']*)' kind=(-?\d+) slot=(\d+) groups=(\S*) debris=(\S*) vn=(\S+)")
 DEBRIS = re.compile(r"^Collision debris '([^']*)' from '([^']*)' slot=(\d+) mass=(\S+) fnv=([0-9a-f]{8})")
 RESTORED = re.compile(r"^Collision break restored '([^']*)' fnv=([0-9a-f]{8})")
+TEAR = re.compile(r"^Collision tear '([^']*)' slot=(\d+) d=(\S+) f=(\S+) R=(\S+) groups=(\S+) debris=(\S+) eSpec=(\S+) vn=(\S+)")
 DMG3 = re.compile(r"^Collision dmg3: fx=(\d+) streams=(\d+) breaks=(\d+) reasserts=(\d+)")
 PAIR = ('PB-A', 'PB-B')
 DEBRIS_CLASS = 'CollDebris'
@@ -79,3 +80,21 @@ def broke(r):  # the crash of 70 m/s: dents of mode 1, break lines, a debris ves
     if first_debris_frame(r) is None:
         fail('run %s: no vessel of class %s in the dump' % (r.spec.id, DEBRIS_CLASS))
     return brk, deb, s
+
+
+def tears(r):  # section tear lines of the pair
+    return [m for m in matches(r, TEAR) if m.group(1) in PAIR]
+
+
+def tear70(r):  # the 70 m/s crash tears a section: d in [5, 8] m, its debris at least 1000 kg
+    t = tears(r)
+    if not t:
+        fail('run %s: no "Collision tear" line of PB-A or PB-B' % r.spec.id)
+    ok = [m for m in t if 5.0 <= float(m.group(3)) <= 8.0]
+    if not ok:
+        fail('run %s: tear depth d=%s, [5, 8] m expected' % (r.spec.id, ','.join(m.group(3) for m in t)))
+    mass = dict((m.group(1), float(m.group(4))) for m in matches(r, DEBRIS))
+    heavy = [m for m in ok if m.group(7) != '-' and mass.get(m.group(7), 0.0) >= 1000.0]
+    if not heavy:
+        fail('run %s: no tear debris of 1000 kg or more (%s)' % (r.spec.id, ','.join('%s=%s' % (m.group(7), mass.get(m.group(7))) for m in ok)))
+    return ok

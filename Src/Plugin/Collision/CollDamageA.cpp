@@ -29,6 +29,7 @@ Vector MapT (const CollAffine &X, const Vector &tw, const Vector &n)
 void ApplyRec (CollShape *sh, uint32_t mesh, const DentRecord &r)
 {
 	std::vector<uint32_t> g = Grp32 (r.grp);
+	if (r.p.mode == DENTM_CUT) { sh->ApplyMap (mesh, g.data (), g.size (), DentMath::MapLow, &r); return; } // dmg3 tear
 	sh->ApplyDent (mesh, g.data (), g.size (), DentMath::FieldLow, &r); // dmg3: collider without noise and lobes (FieldLow = Field for legacy records)
 }
 
@@ -58,8 +59,54 @@ CollDmgSession::CollDmgSession (CollSdk &s, CollDmgHost &h, const CollCfgValues 
 	if (c.fx) fx = CollMakeFx (s, *this, c);
 }
 
+bool CollDmgSession::AddCut (uint32_t id, const DentRecord &r, bool playback)
+{
+	VesselDamageA &v = Get (id);
+	size_t pend = laterCuts.count (id) ? laterCuts[id] : 0;
+	if (v.d.rec.size () + pend >= DENT_MAX_VESSEL) {
+		if (!v.loggedCap) { v.loggedCap = true; Log ("Collision dent: '%s' holds %u records, no tear", v.name.c_str (), DENT_MAX_VESSEL); }
+		return false;
+	}
+	if (inDent) { laterCuts[id]++; later.push_back ([this, id, r, playback] () { ApplyCut (id, r, playback); }); return true; }
+	ApplyCut (id, r, playback);
+	return true;
+}
+
+void CollDmgSession::ApplyCut (uint32_t id, const DentRecord &r, bool playback)
+{
+	VesselDamageA &v = Get (id);
+	if (v.d.rec.size () >= DENT_MAX_VESSEL) return;
+	DentRecord x = r;
+	std::sort (x.grp.begin (), x.grp.end ());
+	x.grp.erase (std::unique (x.grp.begin (), x.grp.end ()), x.grp.end ());
+	DentMath::Quantise (x.p);
+	v.d.rec.push_back (x);
+	v.match.push_back ((int)x.slot);
+	CollShape *sh = host.Shape (id);
+	if (sh) SyncCollider (v, sh, x.slot, false);
+	SyncMirror (v, x.slot);
+	n.dents++;
+	CollH h = host.Vessel (id);
+	if (!playback && rec.active && h && !sdk.Playback (h)) {
+		uint32_t k = (uint32_t)(v.d.rec.size () - 1);
+		std::vector<std::string> l;
+		CollSide::Dent (frameT - rec.t0, Alias (v, h), k, x, l);
+		for (auto &s2 : l) Side (s2);
+		Side (CollSide::Ext (frameT - rec.t0, Alias (v, h), k, x.p, 0.0, 0.0, 0.0, 0, 0u)); // X hit = 0, before the T rows
+	}
+}
+
+void CollDmgSession::FlushLater ()
+{
+	std::vector<std::function<void ()>> q;
+	q.swap (later);
+	laterCuts.clear ();
+	for (auto &f : q) f ();
+}
+
 void CollDmgSession::AddTorn (uint32_t id, const DentTorn &t)
 {
+	if (inDent && !later.empty ()) { later.push_back ([this, id, t] () { AddTorn (id, t); }); return; } // dmg3 tear: T after its cut's X
 	VesselDamageA &v = Get (id);
 	v.d.torn.push_back (t);
 	CollH h = host.Vessel (id);
@@ -503,6 +550,21 @@ static int ViewNear (const CollShape *sh, uint32_t mesh, uint32_t hit, const Col
 	return n;
 }
 
+// dmg3 tear: view vertices a cut moved take the post-cut position as rest (dents start on the stump face)
+static void RebaseCut (const VesselDamageA &v, uint32_t mesh, DentViewData &view)
+{
+	std::vector<const DentParams *> op;
+	bool any = false;
+	for (size_t k = 0; k < v.d.rec.size () && k < v.match.size (); k++)
+		if (v.match[k] == (int)mesh) op.push_back (&v.d.rec[k].p), any = any || v.d.rec[k].p.mode == DENTM_CUT;
+	if (!any) return;
+	for (size_t i = 0; i < view.rest.size () && i < view.cur.size (); i++) {
+		bool cut = false;
+		DentMath::Fold (op.data (), op.size (), view.rest[i], false, &cut);
+		if (cut) view.rest[i] = view.cur[i];
+	}
+}
+
 // groups without a collider (D7) near (c, r) in the frame toT: rest and rest + matched records on them, for DepthCap only
 static void CapView (const CollShape *sh, uint32_t mesh, const CollDmgSlot &slot, const VesselDamageA &v, const CollAffine &toT, const CollAffine &ofs, const Vector &c, double r, DentViewData &out, const std::function<bool (uint32_t)> &hidden = nullptr)
 {
@@ -517,18 +579,23 @@ static void CapView (const CollShape *sh, uint32_t mesh, const CollDmgSlot &slot
 			const DentRecord &R = v.d.rec[k];
 			if (v.match[k] == (int)mesh && (R.grp.empty () || std::find (R.grp.begin (), R.grp.end (), (uint16_t)g) != R.grp.end ())) on.push_back (&R);
 		}
+		std::vector<const DentParams *> op;
+		for (const DentRecord *R : on) op.push_back (&R->p);
 		for (const CollVtx &x : slot.rest->grp[g].vtx) {
 			Vector p (x.x, x.y, x.z), w = CollApply (X, p);
 			if (!((w - c).length () < r)) continue;
-			Vector q = p;
-			for (const DentRecord *R : on) q += DentMath::DisplaceLow (R->p, p);
-			out.rest.push_back (w), out.cur.push_back (CollApply (X, q));
+			bool cut = false;
+			Vector q = p + DentMath::Fold (op.data (), op.size (), p, false, &cut); // dmg3 tear: cuts as maps, not bowls
+			Vector wq = CollApply (X, q);
+			out.rest.push_back (cut ? wq : w), out.cur.push_back (wq); // dmg3 tear: stump rest is post-cut
 		}
 	}
 }
 
 void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, double E, const DentMaterial &mat, double t, NoticeA &note, const CollImpactEvent *ev, uint32_t other)
 {
+	struct Guard { CollDmgSession *d; bool was; ~Guard () { d->inDent = was; if (!was) d->FlushLater (); } } guard { this, inDent }; // dmg3 tear: cuts wait for the solve
+	inDent = true;
 	CollShape *sh = host.Shape (v.id);
 	if (!sh || s0.mesh < 0 || s0.grp < 0) return;
 	CollImpactSide s = s0;
@@ -562,6 +629,7 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, 
 	if (brk) hid = [this, &v, mesh] (uint32_t g) { return brk->Hidden (v.id, mesh, g); };
 	DentViewData view;
 	int nview = ViewNear (sh, mesh, (uint32_t)part, Pi, CollApply (P.pose[1], s.c), Rmax, view, hid);
+	RebaseCut (v, mesh, view);
 	CollAffine ofs = CollCompose (P.pose[1], CollInverse (P.anim[1])); // Translate(mesh offset)
 	DentViewData capv; // D7 groups for the depth cap only (fix1)
 	CapView (sh, mesh, slot, v, Pi, ofs, s.c, std::max (Rmax, DentMath::LowPolyFloor (view.View (), s.c)), capv, hid);
@@ -586,7 +654,7 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, 
 		DentRecord pr {};
 		pr.p.c = s.c, pr.p.n = Unit (s.n), pr.p.R = 1.0, pr.slot = mesh, pr.key = slot.key, pr.ngrp = slot.ngrp, pr.nvtx = slot.nvtx, pr.grp = partGroups0 (G);
 		int kp = DentMath::FindCoalesce (v.d.rec, pr, key, true);
-		if (kp >= 0 && v.match[kp] == (int)mesh) in.force = (int)v.d.rec[kp].p.mode;
+		if (kp >= 0 && v.match[kp] == (int)mesh && v.d.rec[kp].p.mode != DENTM_CUT) in.force = (int)v.d.rec[kp].p.mode; // dmg3 tear: never forces a cut
 		pr.p.mode = DENTM_HINGE;
 		for (size_t k = 0; k < v.d.rec.size (); k++) {
 			const DentRecord &o = v.d.rec[k];
@@ -800,6 +868,7 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, 
 	dh3.R = p.R, dh3.depth = std::max (0.0, depth), dh3.mode = hitRec >= 0 && (size_t)hitRec < v.d.rec.size () ? v.d.rec[hitRec].p.mode : p.mode;
 	if (ev) dh3.vn = ev->vn, dh3.vt = ev->vt, dh3.evflags = ev->flags;
 	dh3.simt = t, dh3.playback = false, dh3.mat = &mat;
+	dh3.Mp = hingeMp > 0 ? hingeMp : sx.Mp; // dmg3 tear: tip tear gate
 	EmitHit (dh3);
 }
 

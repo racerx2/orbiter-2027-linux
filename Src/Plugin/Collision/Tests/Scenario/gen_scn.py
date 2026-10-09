@@ -44,6 +44,8 @@ def pair(p):  # P0 LEO pair (T 7.2): A at the P0 orbit, B 6 m + g0 ahead along z
     ca, cb = p.get('A', 'ShuttlePB'), p.get('B', 'ShuttlePB')
     v0 = v_circ('Earth', R_P0)
     s = head('PB-A', 'P0 pair g0=%s vA=%s vB=%s' % (g0, va, vb))
+    if p.get('cam') == 'side':  # dmg3 tear GIF: fixed side view of the pair (Camera.cpp:1438-1440)
+        s = s.replace('POS 4.00 20.00 10.00\n  TRACKMODE TargetRelative', 'POS 6.00 90.00 45.00\n  TRACKMODE AbsoluteDirection')
     if p.get('director') == '1':
         s += director('Earth')
     s += 'PB-A:%s\n  STATUS Orbiting Earth\n  RPOS %s 0 0\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0\nEND\n' % (ca, g(R_P0), g(v0 + va))

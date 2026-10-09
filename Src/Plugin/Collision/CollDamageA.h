@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 #include <memory>
+#include <functional>
 #include "CollCfg.h"
 #include "CollDmgHost.h"
 #include "CollDmgTypes.h"
@@ -98,7 +99,15 @@ public:
 	std::map<std::pair<uint32_t, uint32_t>, double> noPair;                  // vessel ids (low, high) -> simt the filter was set
 	void AddTorn (uint32_t id, const DentTorn &t);                           // P: record a torn row (saved, recorder T event)
 	void SetDebris (uint32_t id, const std::vector<DentDebris> &d);          // P: the vessel's live debris rows (saved)
+	bool AddCut (uint32_t id, const DentRecord &r, bool playback);          // dmg3 tear: append a cut record (cap, match, frameT); deferred inside Dent
+	size_t PendingCuts () const { return later.size (); }                    // dmg3 tear: deferred cut and torn actions
+	bool InDent () const { return inDent; }
 private:
+	void ApplyCut (uint32_t id, const DentRecord &r, bool playback);
+	void FlushLater ();                                                      // dmg3 tear: deferred actions after the solve returns
+	std::vector<std::function<void ()>> later;
+	std::map<uint32_t, size_t> laterCuts;                                    // deferred cuts per vessel (cap)
+	bool inDent = false;
 	VesselDamageA *Find (uint32_t id);
 	VesselDamageA &Get (uint32_t id);
 	void MatchAll ();

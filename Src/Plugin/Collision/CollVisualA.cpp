@@ -138,7 +138,7 @@ void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDm
 		c.cls = cls;
 		c.nweld = DentMath::WeldMap (c.rp, DENT_WELD, c.weld, &c.cls);
 		DentMath::FaceNormalSums (c.rp, c.idx, c.weld, c.nweld, c.restSum);
-		c.done.clear ();
+		c.done.clear (), c.cutDirty.clear ();
 	}
 	size_t k = c.done.size ();
 	bool inc = k > 0 && k <= rec.size ();
@@ -151,6 +151,7 @@ void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDm
 	} else {
 		c.cur = c.rp;
 		c.done.clear ();
+		c.cutDirty.clear ();
 		k = 0;
 		n.builds++;
 	}
@@ -158,12 +159,13 @@ void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDm
 	for (const auto &G : c.g) anyBig = anyBig || G.big;
 	for (size_t r = k; r < rec.size (); r++) {
 		const DentRecord &R = *rec[r];
-		if (!anyBig) DentMath::Apply (R.p, c.rp, c.cur, R.grp.data (), R.grp.size (), nullptr);
+		std::vector<std::vector<uint8_t>> *dset = R.p.mode == DENTM_CUT ? &c.cutDirty : nullptr; // dmg3 tear
+		if (!anyBig) DentMath::Apply (R.p, c.rp, c.cur, R.grp.data (), R.grp.size (), dset);
 		else { // big groups left out
 			std::vector<uint16_t> gl;
 			if (R.grp.empty ()) { for (size_t g = 0; g < ng; g++) if (!c.g[g].big) gl.push_back ((uint16_t)g); }
 			else for (uint16_t g : R.grp) if (g < ng && !c.g[g].big) gl.push_back (g);
-			if (!gl.empty ()) DentMath::Apply (R.p, c.rp, c.cur, gl.data (), gl.size (), nullptr);
+			if (!gl.empty ()) DentMath::Apply (R.p, c.rp, c.cur, gl.data (), gl.size (), dset);
 		}
 		c.done.push_back (R);
 	}
@@ -177,6 +179,12 @@ void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDm
 			const DentRecord &R = *rec[r];
 			if (R.p.mode < DENTM_CRUSH) continue;
 			if (facet.empty ()) facet.assign (c.nweld, 0);
+			if (R.p.mode == DENTM_CUT) { // dmg3 tear: Apply's dirty set
+				for (size_t g = 0; g < c.cutDirty.size () && g < c.weld.size (); g++)
+					for (size_t i = 0; i < c.cutDirty[g].size () && i < c.weld[g].size (); i++)
+						if (c.cutDirty[g][i] && c.weld[g][i] < c.nweld) facet[c.weld[g][i]] = 1;
+				continue;
+			}
 			for (size_t g = 0; g < ng && g < c.rp.size (); g++) {
 				if (!R.grp.empty () && !std::binary_search (R.grp.begin (), R.grp.end (), (uint16_t)g)) continue;
 				for (size_t i = 0; i < c.rp[g].size () && i < c.weld[g].size (); i++) {

@@ -47,9 +47,9 @@ bool Lists (const DentRecord &r, uint16_t g) { return r.grp.empty () || std::fin
 
 Vector Disp (const std::vector<const DentRecord *> &rec, uint16_t g, const Vector &x)
 {
-	Vector d;
-	for (const DentRecord *r : rec) if (Lists (*r, g)) d += DentMath::Field (r, x);
-	return d;
+	std::vector<const DentParams *> l;
+	for (const DentRecord *r : rec) if (Lists (*r, g)) l.push_back (&r->p);
+	return DentMath::Fold (l.data (), l.size (), x, true); // dmg3 tear: cuts as maps
 }
 
 Vector Unit (const Vector &v) { double l = v.length (); return l > 0 ? v / l : v; }
@@ -148,7 +148,8 @@ const CollSlotA *CollBreakA::Slot (uint32_t id, uint32_t mesh)
 	CollShape *sh = ves[id].sh;
 	std::vector<int> tier (ng, CBRK_PART); std::vector<uint8_t> gear (ng, 0);
 	std::vector<uint32_t> cls (ng, 0);
-	std::map<std::string, uint32_t> clsOf;
+	std::map<std::string, uint32_t> clsOf, poseOf;
+	sl.cls.assign (ng, 0);
 	for (uint32_t g = 0; g < ng; g++) {
 		std::string k;
 		if (sh) {
@@ -164,6 +165,9 @@ const CollSlotA *CollBreakA::Slot (uint32_t id, uint32_t mesh)
 				k = "P" + std::to_string (sh->PoseGroup ((uint32_t)part));
 			}
 		}
+		if (sl.usr[g] & 0x2) tier[g] = CBRK_RESTHIDDEN; // dmg3 tear: hidden at rest: never broken or debris
+		auto pc = poseOf.emplace (tier[g] == CBRK_INTERIOR ? "I" + k : k, (uint32_t)poseOf.size ());
+		sl.cls[g] = pc.first->second;
 		k = std::to_string (tier[g]) + ":" + k;
 		auto c = clsOf.emplace (k, (uint32_t)clsOf.size ());
 		cls[g] = c.first->second;
@@ -192,6 +196,7 @@ const CollSlotA *CollBreakA::Slot (uint32_t id, uint32_t mesh)
 		auto r = rootGrp.emplace (uf.F (base[g] + i), g);
 		if (!r.second) ug.U (r.first->second, g);
 	}
+	sl.tier = tier;
 	sl.pieceOf.assign (ng, -1);
 	std::map<size_t, int> pieceOfRoot;
 	for (uint32_t g = 0; g < ng; g++) {
@@ -202,16 +207,16 @@ const CollSlotA *CollBreakA::Slot (uint32_t id, uint32_t mesh)
 		sl.pieceOf[g] = r.first->second;
 	}
 	// functional points in the mesh frame
-	std::vector<Vector> fp;
+	std::vector<std::pair<Vector, uint32_t>> fp;
 	Vector ofs = sdk.MeshOffset (vh, mesh), x;
-	for (uint32_t i = 0, n = sdk.TouchdownCount (vh); i < n; i++) if (sdk.Touchdown (vh, i, x)) fp.push_back (x - ofs);
-	for (uint32_t i = 0, n = sdk.ThrusterCount (vh); i < n; i++) if (sdk.ThrusterPos (vh, sdk.Thruster (vh, i), x)) fp.push_back (x - ofs);
-	for (uint32_t i = 0, n = sdk.DockCount (vh); i < n; i++) { CollPortInfo pi; if (sdk.Dock (vh, i, pi)) fp.push_back (pi.pos - ofs); }
+	for (uint32_t i = 0, n = sdk.TouchdownCount (vh); i < n; i++) if (sdk.Touchdown (vh, i, x)) fp.push_back ({ x - ofs, CBRK_FN_TD });
+	for (uint32_t i = 0, n = sdk.ThrusterCount (vh); i < n; i++) if (sdk.ThrusterPos (vh, sdk.Thruster (vh, i), x)) fp.push_back ({ x - ofs, CBRK_FN_THR });
+	for (uint32_t i = 0, n = sdk.DockCount (vh); i < n; i++) { CollPortInfo pi; if (sdk.Dock (vh, i, pi)) fp.push_back ({ pi.pos - ofs, CBRK_FN_DOCK }); }
 	Vector lo (1e300, 1e300, 1e300), hi (-1e300, -1e300, -1e300);
 	for (auto &pc : sl.piece) {
 		Vector cs; double A = 0; std::set<size_t> roots;
 		for (uint16_t g : pc.grp) {
-			if (gear[g]) pc.functional = true;
+			if (gear[g]) pc.functional |= CBRK_FN_GEAR;
 			for (size_t t = 0; t + 2 < sl.idx[g].size (); t += 3) {
 				size_t a = sl.idx[g][t], b = sl.idx[g][t + 1], c = sl.idx[g][t + 2];
 				if (a >= sl.v[g].size () || b >= sl.v[g].size () || c >= sl.v[g].size ()) continue;
@@ -224,7 +229,7 @@ const CollSlotA *CollBreakA::Slot (uint32_t id, uint32_t mesh)
 				Vector p = P (sl.v[g][i]);
 				lo = Vector (std::min (lo.x, p.x), std::min (lo.y, p.y), std::min (lo.z, p.z));
 				hi = Vector (std::max (hi.x, p.x), std::max (hi.y, p.y), std::max (hi.z, p.z));
-				for (auto &f : fp) if ((f - p).length () <= BRK_FUNC_DIST) pc.functional = true;
+				for (auto &f : fp) if ((f.first - p).length () <= BRK_FUNC_DIST) pc.functional |= f.second;
 			}
 		}
 		pc.area = A; pc.comps = (uint32_t)std::max<size_t> (1, roots.size ());
@@ -241,7 +246,7 @@ const CollSlotA *CollBreakA::Slot (uint32_t id, uint32_t mesh)
 		CollPieceA &pc = sl.piece[k];
 		bool keepAll = true;
 		for (uint16_t g : pc.grp) if (!sl.keep.count (g)) keepAll = false;
-		pc.fixed = (int)k == big || pc.functional || keepAll;
+		pc.fixed = (int)k == big || (pc.functional & ~CBRK_FN_DOCK) || keepAll; // dmg3 tear: the dock pin is decided per hit
 		if (pc.tier == CBRK_PART && (pc.r > BRK_FIXED_R * sl.rad || pc.area > BRK_FIXED_A * sl.area)) pc.fixed = true;
 	}
 	return &sl;
@@ -263,11 +268,24 @@ void CollBreakA::Hit (const CollDamageHit &h)
 	Vector ofs = sdk.MeshOffset (vh, h.mesh);
 	std::vector<const DentRecord *> rec;
 	if (const VesselDamageA *vd = s.Damage (h.id)) for (auto &r : vd->d.rec) if (r.slot == h.mesh && r.key == sl->key) rec.push_back (&r);
+	if (h.rec >= 0) if (const VesselDamageA *vd = s.Damage (h.id)) if ((size_t)h.rec < vd->d.rec.size ()) { // dmg3 tear: section or tip first
+		const DentParams &src = vd->d.rec[h.rec].p;
+		double L = sdk.Size (vh);
+		bool tip = TipGate (h, src), sec = !tip && TearGate (h, src, L);
+		for (size_t k = (size_t)h.rec + 1; k < vd->d.rec.size () && (tip || sec); k++) // one tear per crush or hinge record: later cuts on the slot came from it
+			if (vd->d.rec[k].p.mode == DENTM_CUT && vd->d.rec[k].slot == h.mesh) tip = sec = false;
+		if (tip || sec) {
+			uint32_t ev = ++events;
+			CollCutPlan pl = PlanCut (h.id, *sl, h, src, L, tip, ev);
+			if (pl.ok) Section (h.id, vh, h, *sl, pl, ev);
+			else if (cfg.logLevel >= 1) Log ("Collision tear '%s' refused: %s", sdk.Name (vh).c_str (), pl.why);
+		}
+	}
 	std::vector<int> pk;
 	double R = std::max (h.R, 1e-3);
 	for (size_t k = 0; k < sl->piece.size (); k++) {
 		const CollPieceA &p = sl->piece[k];
-		if (p.fixed) continue;
+		if (p.fixed || p.tier == CBRK_RESTHIDDEN || ((p.functional & CBRK_FN_DOCK) && h.eSpec < BRK_TEAR_E)) continue; // dmg3 tear: dock pin released above the tear threshold
 		bool any = false;
 		for (uint16_t g : p.grp) if (!sl->keep.count (g) && !Hidden (h.id, h.mesh, g)) any = true;
 		if (!any) continue;
@@ -321,7 +339,7 @@ bool CollBreakA::MakeSpawn (uint32_t id, CollH vh, const CollDamageHit &hit, con
 		ps.p = F[i].t - cd;
 		ps.p = Vector (Q9 (ps.p.x), Q9 (ps.p.y), Q9 (ps.p.z)); // as saved (%.9g), so a reload rebuilds the same bits
 		for (double &x : ps.q) x = Q9 (x);
-		for (uint16_t g : p.grp) if (!sl.keep.count (g)) ps.grp.push_back (g);
+		for (uint16_t g : p.grp) if (!sl.keep.count (g) && !(g < sl.usr.size () && (sl.usr[g] & 0x2))) ps.grp.push_back (g);
 		if (ps.grp.empty ()) continue;
 		rmax = std::max (rmax, (mul (F[i].A, p.c) + F[i].t - cd).length () + p.r);
 		d.pose.push_back (ps);
@@ -336,7 +354,7 @@ bool CollBreakA::MakeSpawn (uint32_t id, CollH vh, const CollDamageHit &hit, con
 	sp.parent = id; sp.other = hit.other; sp.event = event; sp.mesh = sl.name;
 	sp.cv = cd + ofs;
 	sp.mass = Mass (id, sl, pk);
-	if (sp.mass < BRK_MIN_MASS || rmax < BRK_MIN_R) return false;
+	if (sp.mass < BRK_MIN_MASS || rmax < BRK_DEBRIS_R) return false; // dmg3 tear: small parts are hidden only
 	Vector n = Unit (hit.n), u = Unit (sp.cv);
 	double un = u & n;
 	if (un > 0) u = u - n * un;                                      // never toward the impactor (outside along +n)
@@ -349,6 +367,232 @@ bool CollBreakA::MakeSpawn (uint32_t id, CollH vh, const CollDamageHit &hit, con
 	double wl = dw.length ();
 	if (wl > 2 * 3.14159265358979) dw *= 2 * 3.14159265358979 / wl;
 	sp.dw = dw;
+	return true;
+}
+
+// dmg3 tear: sections and tips (design-CA-dmg3-tear 2, 3)
+
+bool CollBreakA::TearGate (const CollDamageHit &h, const DentParams &crush, double L)
+{
+	if (crush.mode != DENTM_CRUSH) return false;
+	bool cap = h.Esurplus > 0 || crush.P >= 0.95 * DentMath::DmaxCrush (L);
+	return cap && h.vn >= BRK_TEAR_VN && h.eSpec >= BRK_TEAR_E;
+}
+
+bool CollBreakA::TipGate (const CollDamageHit &h, const DentParams &hp)
+{
+	if (hp.mode != DENTM_HINGE || !(h.Mp > 0)) return false;
+	return hp.P >= 0.999 * DENT_HINGE_TMAX && h.Esurplus >= 0.951 * h.Mp && h.vn >= BRK_VN_PART;
+}
+
+std::vector<CollAffine> CollBreakA::Poses (uint32_t id, uint32_t mesh, size_t ng)
+{
+	std::vector<CollAffine> F (ng);
+	CollShape *sh = ves[id].sh;
+	if (sh) for (size_t g = 0; g < ng; g++) sh->GroupPose (mesh, (uint32_t)g, F[g]);
+	return F;
+}
+
+CollCutPlan CollBreakA::PlanCut (uint32_t id, const CollSlotA &sl, const CollDamageHit &h, const DentParams &src, double L, bool tip, uint32_t event)
+{
+	CollCutPlan pl;
+	size_t ng = sl.v.size ();
+	if (h.grp < 0 || (size_t)h.grp >= ng || sl.cls.size () != ng || sl.tier.size () != ng) { pl.why = "group"; return pl; }
+	std::vector<CollAffine> F = Poses (id, h.mesh, ng);
+	auto X = [&] (size_t g, const DentVtx &v) { return mul (F[g].A, P (v)) + F[g].t; };
+	uint32_t hcls = sl.cls[h.grp];
+	auto live = [&] (size_t g) { return sl.idx[g].size () >= 3 && !sl.v[g].empty () && !sl.keep.count ((uint16_t)g) && !Hidden (id, h.mesh, (uint32_t)g); };
+	Vector n, c;
+	double cap = BRK_TEAR_DMAX * L, Rcr = std::max (src.R, 1e-3);
+	if (tip) {
+		n = Unit (src.t);
+		c = src.c - src.t * src.hd - src.n * src.hz;
+	} else {
+		double vr = h.vn > 0 ? std::min (1.0, h.vt / h.vn) : 0.0;
+		Vector td = h.tdir - src.n * (h.tdir & src.n);
+		n = Unit (src.n + td * (0.3 * vr));
+		pl.d = std::min (src.P + Rcr * (1 + 3 * std::min (1.0, (h.eSpec - BRK_TEAR_E) / BRK_TEAR_E)), cap);
+		c = src.c - n * pl.d;
+		for (int it = 0; it < 256; it++) { // snap to a group's rear when the plane would leave a sliver
+			bool moved = false;
+			for (size_t g = 0; g < ng && !moved; g++) {
+				if (!live (g) || sl.cls[g] != hcls) continue;
+				double lo = 1e300, hi = -1e300;
+				for (auto &v : sl.v[g]) { double t = (X (g, v) - c) & n; lo = std::min (lo, t), hi = std::max (hi, t); }
+				if (lo < 0 && hi > 0 && -lo < 0.25 * Rcr && pl.d - lo <= cap) { pl.d -= lo; c = src.c - n * pl.d; moved = true; }
+			}
+			if (!moved) break;
+		}
+	}
+	auto classify = [&] (double band, std::vector<uint16_t> &front, std::vector<uint16_t> &strad) {
+		front.clear (), strad.clear ();
+		for (size_t g = 0; g < ng; g++) {
+			if (!live (g)) continue;
+			double lo = 1e300, hi = -1e300; Vector cs;
+			for (auto &v : sl.v[g]) { Vector x = X (g, v); double t = (x - c) & n; lo = std::min (lo, t), hi = std::max (hi, t); cs += x; }
+			cs /= (double)sl.v[g].size ();
+			if (lo > band) front.push_back ((uint16_t)g);
+			else if (hi > -band && sl.cls[g] == hcls && (sl.tier[g] == CBRK_PART || sl.tier[g] == CBRK_GLASS)) strad.push_back ((uint16_t)g);
+			else if (hi > band && ((cs - c) & n) > 0) front.push_back ((uint16_t)g);
+		}
+	};
+	auto extent = [&] (const std::vector<uint16_t> &front, const std::vector<uint16_t> &strad, Vector &ctr, double &R, double &Af, double &edge) {
+		std::vector<Vector> pts; Af = 0; edge = 0; size_t ne = 0;
+		for (uint16_t g : front) for (auto &v : sl.v[g]) pts.push_back (X (g, v));
+		for (uint16_t g : strad) for (auto &v : sl.v[g]) { Vector x = X (g, v); if (((x - c) & n) > 0) pts.push_back (x); }
+		auto triA = [&] (uint16_t g, bool half) {
+			for (size_t t = 0; t + 2 < sl.idx[g].size (); t += 3) {
+				size_t a = sl.idx[g][t], b = sl.idx[g][t + 1], d = sl.idx[g][t + 2];
+				if (a >= sl.v[g].size () || b >= sl.v[g].size () || d >= sl.v[g].size ()) continue;
+				Vector pa = X (g, sl.v[g][a]), pb = X (g, sl.v[g][b]), pd = X (g, sl.v[g][d]);
+				if (half) { edge += (pb - pa).length () + (pd - pb).length () + (pa - pd).length (); ne += 3; }
+				if (half && ((((pa + pb + pd) / 3.0) - c) & n) <= 0) continue;
+				Af += 0.5 * crossp (pb - pa, pd - pa).length ();
+			}
+		};
+		for (uint16_t g : front) triA (g, false);
+		for (uint16_t g : strad) triA (g, true);
+		edge = ne ? edge / (double)ne : 0.0;
+		ctr = c;
+		if (tip && !pts.empty ()) { Vector m; for (auto &x : pts) m += x; m /= (double)pts.size (); ctr = m - n * ((m - c) & n); }
+		R = 0;
+		for (auto &x : pts) { Vector d = x - ctr; R = std::max (R, (d - n * (d & n)).length ()); }
+		R *= 1.05;
+	};
+	std::vector<uint16_t> front, strad;
+	classify (0.0, front, strad);
+	Vector ctr; double R, Af, edge;
+	extent (front, strad, ctr, R, Af, edge);
+	double wc = std::max (std::min (std::max (0.25 * R, 0.15), 0.6), 1.5 * edge), Aj = 0.4 * wc;
+	classify (Aj, front, strad);
+	extent (front, strad, ctr, R, Af, edge);
+	pl.front = front, pl.straddle = strad, pl.area = Af, pl.f = sl.area > 0 ? Af / sl.area : 0.0;
+	if (front.empty () && strad.empty ()) { pl.why = "empty"; return pl; }
+	if (pl.f < BRK_TEAR_FMIN || pl.f > BRK_TEAR_FMAX) { pl.why = "area"; return pl; }
+	double Rmax = tip ? std::min (3.0 * src.R, 0.45 * L) : BRK_TEAR_RX * L;
+	if (!(R > 0) || R > Rmax) { pl.why = "radius"; return pl; }
+	DentRecord &r = pl.rec;
+	r.slot = h.mesh, r.key = sl.key, r.ngrp = sl.ngrp, r.nvtx = sl.nvtx;
+	r.grp = strad;
+	std::sort (r.grp.begin (), r.grp.end ());
+	DentParams &p = r.p;
+	p.mode = DENTM_CUT, p.c = ctr, p.n = n, p.t = DentMath::Tangent (n, h.tdir, h.vt), p.R = R, p.h = 0, p.T = 0;
+	p.P = Aj, p.hd = wc, p.hz = std::min (0.1 * R, 0.4), p.bits = 0;
+	const VesselDamageA *vd = s.Damage (id);
+	p.seed = Hash (event, vd ? (uint32_t)vd->d.rec.size () : 0u) | 1u;
+	DentMath::Quantise (p);
+	pl.ok = true;
+	return pl;
+}
+
+bool CollBreakA::MakeTearSpawn (uint32_t id, CollH vh, const CollDamageHit &hit, const CollSlotA &sl, const std::vector<uint16_t> &front, const std::vector<uint16_t> &straddle, const DentRecord &cut, uint32_t event, CollSpawnA &sp)
+{
+	uint32_t mesh = hit.mesh;
+	size_t ng = sl.v.size ();
+	Vector ofs = sdk.MeshOffset (vh, mesh);
+	std::vector<CollAffine> F = Poses (id, mesh, ng);
+	DentDebris &d = sp.row;
+	d.id = ++debrisSeq; d.slot = mesh; d.key = sl.key; d.ngrp = sl.ngrp; d.nvtx = sl.nvtx; d.simt = hit.simt;
+	std::vector<uint16_t> in;
+	auto ok = [&] (uint16_t g) { return g < ng && !sl.keep.count (g) && !(sl.usr[g] & 0x2) && (g >= sl.tier.size () || sl.tier[g] == CBRK_PART); }; // no glass, interior or rest-hidden groups
+	for (uint16_t g : front) if (ok (g)) in.push_back (g);
+	for (uint16_t g : straddle) if (ok (g)) in.push_back (g);
+	if (in.empty ()) return false;
+	Vector cd; double A = 0, Afront = 0;
+	for (uint16_t g : in) {
+		bool fr = std::find (front.begin (), front.end (), g) != front.end ();
+		for (size_t t = 0; t + 2 < sl.idx[g].size (); t += 3) {
+			size_t a = sl.idx[g][t], b = sl.idx[g][t + 1], c = sl.idx[g][t + 2];
+			if (a >= sl.v[g].size () || b >= sl.v[g].size () || c >= sl.v[g].size ()) continue;
+			Vector pa = mul (F[g].A, P (sl.v[g][a])) + F[g].t, pb = mul (F[g].A, P (sl.v[g][b])) + F[g].t, pc = mul (F[g].A, P (sl.v[g][c])) + F[g].t;
+			Vector m = (pa + pb + pc) / 3.0;
+			if (!fr && ((m - cut.p.c) & cut.p.n) <= 0) continue;
+			double ar = 0.5 * crossp (pb - pa, pc - pa).length ();
+			cd += m * ar; A += ar;
+			Afront += ar;
+		}
+	}
+	if (!(A > 0)) return false;
+	cd /= A;
+	std::map<std::string, size_t> poseIdx;
+	double rmax = 0;
+	for (uint16_t g : in) {
+		std::string k ((const char *)&F[g], sizeof (CollAffine));
+		auto it = poseIdx.find (k);
+		if (it == poseIdx.end ()) {
+			DentDebrisPose ps;
+			MatQ (F[g].A, ps.q);
+			ps.p = F[g].t - cd;
+			ps.p = Vector (Q9 (ps.p.x), Q9 (ps.p.y), Q9 (ps.p.z));
+			for (double &x : ps.q) x = Q9 (x);
+			it = poseIdx.emplace (k, d.pose.size ()).first;
+			d.pose.push_back (ps);
+		}
+		d.pose[it->second].grp.push_back (g);
+		for (auto &v : sl.v[g]) rmax = std::max (rmax, (mul (F[g].A, P (v)) + F[g].t - cd).length ());
+	}
+	for (auto &ps : d.pose) std::sort (ps.grp.begin (), ps.grp.end ());
+	if (const VesselDamageA *vd = s.Damage (id)) for (auto &r : vd->d.rec) {
+		if (r.slot != mesh || r.key != sl.key || (r.p.mode == DENTM_CUT && r.p.seed == cut.p.seed && r.p.R == cut.p.R && r.p.c.x == cut.p.c.x && r.p.c.y == cut.p.c.y && r.p.c.z == cut.p.c.z)) continue;
+		bool any = false;
+		for (uint16_t g : in) if (Lists (r, g)) any = true;
+		if (any) d.rec.push_back (r);
+	}
+	DentRecord kc = cut;
+	kc.p.bits |= DENTC_KEEP;
+	d.rec.push_back (kc);
+	CollH ph = s.VesselHandle (id);
+	double M = ph ? sdk.EmptyMass (ph) : 0;
+	double m = sl.area > 0 ? M * Afront / sl.area : 0;
+	d.mass = Q9 (std::max (1.0, std::min (m, BRK_TEAR_MMAX * M)));
+	sp.parent = id; sp.other = hit.other; sp.event = event; sp.mesh = sl.name;
+	sp.cv = cd + ofs;
+	sp.mass = d.mass;
+	Vector n = Unit (cut.p.n), t = Unit (cut.p.t), e = crossp (n, t);
+	const Vector dir[4] = { t, t * -1.0, e, e * -1.0 };
+	uint32_t hh = Hash (id, event);
+	int k = (int)(hh & 3);
+	if (hit.vt > 0.2 * hit.vn) { double best = -1e300; for (int i = 0; i < 4; i++) { double x = dir[i] & hit.tdir; if (x > best) best = x, k = i; } }
+	Vector u = dir[k];
+	double jit = 0.8 + 0.4 * (hh % 1000) / 999.0;
+	sp.dv = u * (BRK_TEAR_KICK * hit.vn * jit);
+	Vector w = crossp (n, u) * (sp.dv.length () / (2.0 * std::max (rmax, 0.1)));
+	double wl = w.length ();
+	if (wl > 2 * 3.14159265358979) w *= 2 * 3.14159265358979 / wl;
+	sp.dw = w;
+	return true;
+}
+
+bool CollBreakA::Section (uint32_t id, CollH vh, const CollDamageHit &hit, const CollSlotA &sl, const CollCutPlan &pl, uint32_t event)
+{
+	VesB &b = ves[id];
+	uint32_t mesh = hit.mesh;
+	if (!s.AddCut (id, pl.rec, false)) return false;
+	tears++;
+	bool canDebris = cfg.visuals && s.vis.Mode () != CollVisualA::MODE_OFF;
+	if (canDebris && cfgOk < 0) cfgOk = sdk.DebrisClassExists () ? 1 : 0;
+	if (canDebris && !cfgOk) { if (!loggedNoCfg) Log ("Collision: Config/Vessels/CollDebris.cfg missing: parts are hidden without debris"); loggedNoCfg = true; canDebris = false; }
+	std::string name = "-";
+	CollSpawnA sp;
+	if (canDebris && MakeTearSpawn (id, vh, hit, sl, pl.front, pl.straddle, pl.rec, event, sp)) {
+		sp.row.name = name = NewName (sdk.Name (vh));
+		spawn.push_back (sp);
+	}
+	DentTorn t;
+	t.kind = (uint8_t)CBRK_SECTION; t.slot = mesh; t.key = sl.key; t.ngrp = sl.ngrp; t.nvtx = sl.nvtx; t.simt = hit.simt; t.debris = name;
+	t.grp = pl.front;
+	std::sort (t.grp.begin (), t.grp.end ());
+	std::string gl;
+	for (uint16_t g : t.grp) gl += (gl.empty () ? "" : ",") + std::to_string (g);
+	if (!t.grp.empty ()) {
+		b.rows.push_back (t);
+		s.AddTorn (id, t); b.adopted++;
+		if (b.sh) for (uint16_t g : t.grp) b.sh->SetGroupHidden (mesh, g, true);
+	}
+	Log ("Collision tear '%s' slot=%u d=%.4g f=%.4g R=%.4g groups=%s debris=%s eSpec=%.4g vn=%.4g", sdk.Name (vh).c_str (), mesh, pl.d, pl.f, pl.rec.p.R, gl.empty () ? "-" : gl.c_str (), name.c_str (), hit.eSpec, hit.vn);
+	CollBreakEvent ev;
+	ev.id = id; ev.kind = CBRK_SECTION; ev.c = pl.rec.p.c + sdk.MeshOffset (vh, mesh); ev.n = hit.n; ev.r = pl.rec.p.R; ev.playback = false;
+	if (s.fx) s.fx->Break (ev);
 	return true;
 }
 
@@ -640,6 +884,19 @@ void CollBreakA::Torn (uint32_t id, const DentTorn &t)
 	CollDamageHit hit;
 	if (b.haveLast) hit = b.last; else { hit.vn = 10; hit.n = Vector (0, 0, 1); }
 	hit.id = id; hit.mesh = t.slot; hit.simt = sdk.SimTime (); hit.playback = true;
+	if (t.kind == CBRK_SECTION) { // dmg3 tear: playback rebuilds the section from the T row and its cut record, no gate math
+		const VesselDamageA *vd = s.Damage (id);
+		const DentRecord *cut = nullptr;
+		if (vd) for (auto &r : vd->d.rec) if (r.slot == t.slot && r.p.mode == DENTM_CUT && !(r.p.bits & DENTC_KEEP)) cut = &r;
+		if (!cut || !sl || !sl->ok || t.debris == "-" || !cfg.debrisPlayback || !cfg.visuals || s.vis.Mode () == CollVisualA::MODE_OFF) return;
+		if (cfgOk < 0) cfgOk = sdk.DebrisClassExists () ? 1 : 0;
+		if (!cfgOk) return;
+		CollSpawnA sp;
+		if (!MakeTearSpawn (id, vh, hit, *sl, t.grp, cut->grp, *cut, ++events, sp)) return;
+		sp.row.name = NewName (sdk.Name (vh));
+		spawn.push_back (sp);
+		return;
+	}
 	for (int k : pk) {
 		CollBreakEvent ev;
 		ev.id = id; ev.kind = t.kind; ev.c = sl->piece[k].c + sdk.MeshOffset (vh, t.slot); ev.n = hit.n; ev.r = sl->piece[k].r; ev.playback = true;
@@ -747,7 +1004,7 @@ void CollBreakA::Rebuild (double simt)
 			std::vector<int> pk;
 			for (auto &ps : row.pose) for (uint16_t g : ps.grp) if (g < sl->pieceOf.size () && sl->pieceOf[g] >= 0 && std::find (pk.begin (), pk.end (), sl->pieceOf[g]) == pk.end ()) pk.push_back (sl->pieceOf[g]);
 			uint32_t fnv = 0;
-			CollSdk::DebrisCaps caps = Caps (geo, Mass (pid, *sl, pk), &fnv);
+			CollSdk::DebrisCaps caps = Caps (geo, row.mass > 0 ? row.mass : Mass (pid, *sl, pk), &fnv); // dmg3 tear: the B row mass
 			sdk.DebrisSetup (h, mesh, caps);
 			CollDebrisA d;
 			d.h = h; d.mesh = mesh; d.parent = pid; d.birth = std::min (row.simt, simt); d.row = row; d.fnv = fnv; d.id = FindId (h); // birth: sim time restarts on load

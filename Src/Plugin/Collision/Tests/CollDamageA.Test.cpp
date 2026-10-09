@@ -276,7 +276,11 @@ bool ColliderExact (Rig &r, uint32_t id)
 	CollTemplateCache cache;
 	fresh.Update (&mi, 1, ca, nullptr, 0, cache);
 	const VesselDamageA *v = r.s.Damage (id);
-	if (v) for (const DentRecord &x : v->d.rec) { std::vector<uint32_t> g (x.grp.begin (), x.grp.end ()); fresh.ApplyDent (0, g.data (), g.size (), DentMath::Field, &x); }
+	if (v) for (const DentRecord &x : v->d.rec) {
+		std::vector<uint32_t> g (x.grp.begin (), x.grp.end ());
+		if (x.p.mode == DENTM_CUT) fresh.ApplyMap (0, g.data (), g.size (), DentMath::MapLow, &x); // dmg3 tear
+		else fresh.ApplyDent (0, g.data (), g.size (), DentMath::Field, &x);
+	}
 	if (fresh.nPart () != b.sh->nPart ()) return false;
 	for (uint32_t p = 0; p < fresh.nPart (); p++) {
 		const CollGeom &A = fresh.Part (p).Geom (), &B = b.sh->Part (p).Geom ();
@@ -1621,3 +1625,87 @@ TEST_CASE ("dmg3 cr3 M2: the hinge reaches an aileron beyond the bowl radius")
 	for (const CollVtx &x : m->grp[1].vtx) CHECK ((DentMath::Displace (hg[0]->p, Vector (x.x, x.y, x.z)) - DentMath::Displace (hg[1]->p, Vector (x.x, x.y, x.z))).length () < 1e-6);
 }
 
+
+// dmg3 tear (design-CA-dmg3-tear 7, tests 5-7)
+static DentRecord PlateCut (const Rig &r)
+{
+	DentRecord c {};
+	c.p.mode = DENTM_CUT, c.p.c = Vector (0, 0, -0.2), c.p.n = Vector (0, 0, 1), c.p.t = Vector (1, 0, 0), c.p.R = 2, c.p.h = 0;
+	c.p.P = 0.05, c.p.hd = 0.3, c.p.hz = 0.1, c.p.seed = 0x51u;
+	c.slot = 0, c.key = DentMath::MeshKey ("plate"), c.ngrp = 1, c.nvtx = r.plate->nvtx;
+	return c;
+}
+
+TEST_CASE ("dmg3 tear 5: no growth below a cut; anyMode never forces a cut", "[dmg3][tear]")
+{
+	Rig r;
+	DentRecord b {};
+	b.p.c = Vector (0.1, 0.1, 0), b.p.n = Vector (0, 0, 1), b.p.R = 1, b.p.h = 0.05;
+	b.slot = 0, b.key = DentMath::MeshKey ("plate"), b.ngrp = 1, b.nvtx = r.plate->nvtx;
+	DentRecord c = PlateCut (r);
+	std::vector<DentRecord> l { b };
+	CHECK (DentMath::FindCoalesce (l, b) == 0);
+	l.push_back (c);
+	CHECK (DentMath::FindCoalesce (l, b) == -1);                          // record 0 is below the cut
+	CHECK (DentMath::FindCoalesce (l, b, nullptr, true) == -1);
+	DentRecord nc = c; nc.p.c = Vector (0, 0, -0.19);
+	std::vector<DentRecord> lc { c };
+	CHECK (DentMath::FindCoalesce (lc, nc, nullptr, true) == -1);        // a cut never grows
+	DentRecord probe = b; probe.p.mode = DENTM_BOWL;
+	CHECK (DentMath::FindCoalesce (lc, probe, nullptr, true) == -1);       // anyMode: no cut partner, so no force = 3
+}
+
+TEST_CASE ("dmg3 tear 6: a dent on the stump starts from the post-cut rest", "[dmg3][tear]")
+{
+	Rig r;
+	uint32_t a = r.Add ("PB-A"), b = r.Add ("PB-B");
+	r.Begin ();
+	r.Frame ();
+	REQUIRE (r.s.AddCut (a, PlateCut (r), true));
+	REQUIRE (ColliderExact (r, a));
+	CollImpactEvent e = Hit (a, -1, b, 10.0, 3.0e4);
+	double zc = -0.2 - 0.1 * (0.2 / 0.3);
+	e.s[0].c = Vector (0.1, 0.1, zc);
+	r.Frame ({ e });
+	const VesselDamageA *v = r.s.Damage (a);
+	REQUIRE (v);
+	REQUIRE (v->d.rec.size () >= 2);
+	CHECK (v->d.rec[0].p.mode == DENTM_CUT);
+	const DentRecord &d = v->d.rec.back ();
+	CHECK (d.p.mode != DENTM_CUT);
+	CHECK (std::fabs (d.p.c.z - zc) < 1e-6);                               // on the stump face, not mapped back through the cut
+	CHECK (d.p.h > 0);
+	CHECK (ColliderExact (r, a));
+	CHECK (DentMath::DisplaceLow (v->d.rec[0].p, Vector (0.1, 0.1, 0)).length () == 0.0); // the cap view sees no bowl from the cut
+}
+
+TEST_CASE ("dmg3 tear 7: AddCut at DENT_MAX_VESSEL is refused; inside Dent it is deferred", "[dmg3][tear]")
+{
+	Rig r;
+	uint32_t a = r.Add ("PB-A");
+	r.Begin ();
+	r.Frame ();
+	DentRecord c = PlateCut (r);
+	for (uint32_t k = 0; k < DENT_MAX_VESSEL; k++) { DentRecord x = c; x.p.mode = DENTM_BOWL; x.p.seed = 0; x.p.P = x.p.hd = x.p.hz = 0; x.p.t = Vector (); x.p.h = 0.001; x.p.c = Vector (-4 + 0.01 * k, 0, 0); REQUIRE (r.s.AddCut (a, x, true)); }
+	CHECK (!r.s.AddCut (a, c, true));
+	CHECK (r.s.Damage (a)->d.rec.size () == DENT_MAX_VESSEL);
+	Rig q;
+	uint32_t qa = q.Add ("PB-A"), qb = q.Add ("PB-B");
+	q.cfg.brk = false;
+	q.Begin ();
+	q.Frame ();
+	struct Sink : CollDmgSink {
+		CollDmgSession *s = nullptr; DentRecord c; size_t during = 0, before = 0; bool called = false, deferred = false;
+		void Hit (const CollDamageHit &h) override { if (called) return; called = true; before = s->Damage (h.id)->d.rec.size (); deferred = s->AddCut (h.id, c, false) && s->PendingCuts () == 1; during = s->Damage (h.id)->d.rec.size (); }
+	};
+	auto *sk = new Sink (); sk->s = &q.s; sk->c = PlateCut (q);
+	q.s.brk.reset (sk);
+	q.Frame ({ Hit (qa, -1, qb, 10.0, 3.0e4) });
+	REQUIRE (sk->called);
+	CHECK (sk->deferred);
+	CHECK (sk->during == sk->before);                                      // not appended inside Dent
+	CHECK (q.s.PendingCuts () == 0);
+	bool cut = false; for (auto &x : q.s.Damage (qa)->d.rec) if (x.p.mode == DENTM_CUT) cut = true;
+	CHECK (cut);                                                           // applied after the solve returned
+	CHECK (ColliderExact (q, qa));
+}

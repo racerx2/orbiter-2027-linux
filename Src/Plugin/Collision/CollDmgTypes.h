@@ -17,13 +17,15 @@ struct CollDamageHit {                                   // one vessel side of a
 	Vector c, n, tdir;                                   // contact centre, outward normal, slip direction of this side
 	double E = 0, eSpec = 0, Esurplus = 0;               // J, J/kg of empty mass, J the capped solve could not place
 	double R = 0, depth = 0;                             // dent radius, max displacement of this event [m]
+	double Mp = 0;                                       // dmg3 tear: hinge plastic moment of this event [J/rad]
 	uint32_t mode = 0;                                   // DentParams mode
 	double vn = 0, vt = 0;                               // approach and slip speed [m/s]
 	uint32_t evflags = 0;                                // COLLEV_*
 	double simt = 0; bool playback = false;
 	const DentMaterial *mat = nullptr;
 };
-enum : int { CBRK_PART = 0, CBRK_GLASS = 1, CBRK_INTERIOR = 2 };
+enum : int { CBRK_PART = 0, CBRK_GLASS = 1, CBRK_INTERIOR = 2, CBRK_SECTION = 3, CBRK_RESTHIDDEN = 4 };
+enum : uint32_t { CBRK_FN_TD = 1, CBRK_FN_THR = 2, CBRK_FN_DOCK = 4, CBRK_FN_GEAR = 8 }; // dmg3 tear: CollPieceA::functional bits
 struct CollBreakEvent { uint32_t id = 0; int kind = 0; Vector c, n; double r = 0; bool playback = false; }; // vessel frame (L3)
 struct CollFxContact {                                   // one vessel side of a contact pair this frame, slides included (L4)
 	uint32_t id = 0; CollH h = nullptr;

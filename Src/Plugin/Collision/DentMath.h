@@ -54,9 +54,11 @@ constexpr double   DENT_CRUSH_CORE     = 0.6;     // dmg3: flat core r_perp < th
 constexpr double   DENT_CRUSH_MOVE     = 0.25;    // dmg3: contact move along n <= this * R and <= P / 2
 constexpr int      DENT_CRUSH_STEPS    = 48;      // dmg3: bisection steps for P
 constexpr int      DENT_VERSION_X      = 2;       // dmg3: extension section version
-enum : uint32_t { DENTM_BOWL = 0, DENTM_CRUSH = 1, DENTM_HINGE = 2 }; // DentParams::mode
+enum : uint32_t { DENTM_BOWL = 0, DENTM_CRUSH = 1, DENTM_HINGE = 2, DENTM_CUT = 3 }; // DentParams::mode
 enum : uint32_t { DENTI_CRUSH = 1, DENTI_HINGE = 2, DENTI_NOISE = 4 }; // DentInput::modes bits
 enum : uint32_t { DENTB_LOBES = 1 };              // DentParams::bits
+enum : uint32_t { DENTC_KEEP = 2 };               // dmg3 tear: cut bits, complement side (debris)
+constexpr double   DENT_CUT_PINCH      = 0.4;     // dmg3 tear: rim pinch beta of a cut (format constant)
 constexpr double   DENT_CRUSH_NOISE    = 0.15;    // dmg3: crush face noise amplitude limit [m]
 constexpr double   DENT_HINGE_D        = 0.25;    // dmg3: plate bowl depth cap before a hinge, times the plate thickness
 constexpr double   DENT_HINGE_TMAX     = 0.32;    // dmg3: hinge tan(theta/2) cap (35.5 deg)
@@ -126,7 +128,7 @@ enum { DENT_OK = 0, DENT_SMALL = 1, DENT_NOSURFACE = 2, DENT_FLOOR_CAP = 3 }; //
 struct DentTorn { uint8_t kind = 0; uint32_t slot = 0, key = 0; uint16_t ngrp = 0; uint32_t nvtx = 0; double simt = 0; std::string debris; std::vector<uint16_t> grp; };
 // one debris piece spawned from a vessel slot (dmg3 area P meaning, area S rows XDMGM B/Q and XDMGD B)
 struct DentDebrisPose { Vector p; double q[4] = { 0, 0, 0, 1 }; std::vector<uint16_t> grp; }; // piece origin and rotation (x y z w) in the parent mesh frame
-struct DentDebris { uint32_t id = 0, slot = 0, key = 0; uint16_t ngrp = 0; uint32_t nvtx = 0; double simt = 0; std::string name; std::vector<DentDebrisPose> pose; std::vector<DentRecord> rec; };
+struct DentDebris { uint32_t id = 0, slot = 0, key = 0; uint16_t ngrp = 0; uint32_t nvtx = 0; double simt = 0, mass = 0; std::string name; std::vector<DentDebrisPose> pose; std::vector<DentRecord> rec; };
 struct DentVesselText {
 	double eabs = 0; uint32_t flags = 0;          // XDMG: 1 destroyed, 2 module handles effects, 4 catastrophic seen
 	std::vector<DentRecord> rec;                  // application order
@@ -172,6 +174,12 @@ namespace DentMath {
 	double DmaxCrush (double L);                                  // dmg3: DENT_CRUSH_L * L
 	double MaxDisplace (const DentParams &p, const DentMeshView &m); // dmg3: max |D| over the view's rest vertices
 	Vector DisplaceLow (const DentParams &p, const Vector &rest); // dmg3: Displace without noise and lobes (collider)
+	double CutJag (const DentParams &p, const Vector &x, bool full); // dmg3 tear: jag J at x (0 when not full)
+	Vector CutMap (const DentParams &p, const Vector &cur, bool full); // dmg3 tear: mode 3 map of a current position
+	Vector Fold (const DentParams *const *rec, size_t n, const Vector &rest, bool full, bool *cut = nullptr); // dmg3 tear: displacement of records in order, cuts as maps; cut: a cut moved it
+	Vector Fold (const std::vector<DentRecord> &rec, int g, const Vector &rest, bool full); // records listing group g (g < 0: all)
+	Vector MapLow (const void *ctx, const Vector &rest, const Vector &cur); // dmg3 tear: CollMapFn of CutMap low, ctx = const DentRecord *
+	bool   HasCut (const std::vector<DentRecord> &rec, int g); // dmg3 tear: a mode-3 record lists group g (g < 0: any)
 	Vector FieldLow (const void *ctx, const Vector &rest);       // dmg3: CollDisplaceFn of DisplaceLow
 	double Noise (uint32_t seed, double u, double w);            // dmg3: smooth lattice noise in [-1, 1]
 	uint32_t Classify (const DentParams &p, const DentMeshView &m, double &H, Vector &a); // dmg3: DENTM_* for the rest view at c, n, R; H plate thickness, a hinge axis

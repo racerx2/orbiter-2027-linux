@@ -27,6 +27,7 @@ struct DentMeshCopyA {
 	std::vector<std::vector<uint32_t>> weld; uint32_t nweld = 0; std::vector<Vector> restSum;
 	std::vector<uint32_t> cls;                          // pose class per group; the weld map stays within one class
 	std::vector<DentRecord> done;                       // records in cur, in order: a list that only grows is applied incrementally
+	std::vector<std::vector<uint8_t>> cutDirty;         // dmg3 tear: vertices a cut record moved (Apply's dirty set)
 	bool norec = false;                                 // no record left (repair): freed once nothing is sent
 	uint32_t nullWait = 0; bool loggedNull = false;     // DevMesh NULL: retry every 64 passes
 	uint32_t skips = 0;                                 // consecutive passes the slot was skipped with return 1

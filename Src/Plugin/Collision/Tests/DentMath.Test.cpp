@@ -3036,3 +3036,109 @@ TEST_CASE ("dmg3 cr3 M3 m4: X hit flag token, torn name and debris ordinals")
 	for (auto &l : lines) { if (l.rfind ("XDMGD B 4 0 ", 0) == 0) j0 = true; CHECK (l.rfind ("XDMGD B 4 1 ", 0) != 0); }
 	CHECK (j0);
 }
+
+// dmg3 tear (design-CA-dmg3-tear 7)
+static DentParams TearCut (bool keep)
+{
+	DentParams p {};
+	p.mode = DENTM_CUT, p.c = Vector (0, 0, 0), p.n = Vector (0, 0, 1), p.t = Vector (1, 0, 0), p.R = 2, p.h = 0, p.T = 0;
+	p.P = 0.12, p.hd = 0.3, p.hz = 0.2, p.seed = 0x1234567u | 1u, p.bits = keep ? DENTC_KEEP : 0u;
+	return p;
+}
+
+TEST_CASE ("dmg3 tear 1: CutMap parent and KEEP, J at each input", "[dent][dmg3][tear]")
+{
+	DentParams p = TearCut (false), k = TearCut (true);
+	for (int i = 0; i < 400; i++) {
+		Vector x ((i % 20) * 0.17 - 1.7, (i / 20) * 0.13 - 1.3, 0.05 + (i % 7) * 0.3);
+		double J = DentMath::CutJag (p, x, true);
+		Vector y = DentMath::CutMap (p, x, true);
+		double s = (x - p.c) & p.n, ys = (y - p.c) & p.n;
+		Vector dp = x - p.n * s;
+		if (s > J && dp.length () < p.R) { CHECK (ys >= J - p.hz - 1e-12); CHECK (ys <= J + 1e-12); }
+		else CHECK ((y - x).length () == 0.0);
+	}
+	Vector out (5, 0, 0.5); // outside R: parent unchanged
+	CHECK ((DentMath::CutMap (p, out, true) - out).length () == 0.0);
+	for (int i = 0; i < 200; i++) { // KEEP: every s < J collapses, also r > R
+		Vector x ((i % 10) * 0.9 - 4.5, (i / 10) * 0.4 - 4, -0.05 - (i % 5) * 0.7);
+		double J = DentMath::CutJag (k, x, true);
+		Vector y = DentMath::CutMap (k, x, true);
+		double ys = (y - k.c) & k.n;
+		CHECK (ys >= J - 1e-12); CHECK (ys <= J + k.hz + 1e-12);
+	}
+	Vector behind (0.3, 0.2, 1.0);
+	double Jb = DentMath::CutJag (k, behind, true);
+	if (((behind - k.c) & k.n) >= Jb) CHECK ((DentMath::CutMap (k, behind, true) - behind).length () == 0.0);
+	CHECK (DentMath::CutJag (p, Vector (0.4, 0.1, 0), false) == 0.0); // low: J = 0
+}
+
+TEST_CASE ("dmg3 tear 2: Fold crush+cut; no mode 3 is the old sum; DisplaceAny and Weight are 0 for a cut", "[dent][dmg3][tear]")
+{
+	DentParams a {}, b {};
+	a.c = Vector (0, 0, 0), a.n = Vector (0, 0, 1), a.R = 1, a.h = 0.1, a.T = 0;
+	b = a; b.mode = DENTM_CRUSH, b.P = 0.3, b.t = Vector (1, 0, 0), b.seed = 7;
+	std::vector<const DentParams *> l { &a, &b };
+	for (int i = 0; i < 50; i++) {
+		Vector x (i * 0.03 - 0.7, 0.1, -0.1 * (i % 3));
+		Vector old; // the old Disp sum
+		old += DentMath::Displace (a, x); old += DentMath::Displace (b, x);
+		Vector f = DentMath::Fold (l.data (), l.size (), x, true);
+		CHECK (std::memcmp (&old, &f, sizeof (Vector)) == 0);
+	}
+	DentParams c = TearCut (false);
+	CHECK (DentMath::Weight (c, Vector (0, 0, 1)) == 0.0);
+	CHECK (DentMath::Displace (c, Vector (0, 0, 1)).length () == 0.0);
+	CHECK (DentMath::DisplaceLow (c, Vector (0, 0, 1)).length () == 0.0);
+	std::vector<const DentParams *> l2 { &b, &c };
+	Vector x (0.1, 0.1, 0.5);
+	bool cut = false;
+	Vector f2 = DentMath::Fold (l2.data (), l2.size (), x, true, &cut);
+	Vector want = DentMath::CutMap (c, x + DentMath::Displace (b, x), true) - x;
+	CHECK (std::memcmp (&want, &f2, sizeof (Vector)) == 0);
+	CHECK (cut);
+}
+
+TEST_CASE ("dmg3 tear 3: mode 3 row round trip, 40 groups, base h = 0", "[dent][dmg3][tear]")
+{
+	DentVesselText v;
+	DentRecord r {};
+	r.p = TearCut (false); r.p.c = Vector (1.25, -0.5, 3.75);
+	DentMath::Quantise (r.p);
+	r.slot = 0, r.key = DentMath::MeshKey ("deltaglider"), r.ngrp = 120, r.nvtx = 5000;
+	for (int g = 0; g < 40; g++) r.grp.push_back ((uint16_t)(g * 3));
+	v.rec.push_back (r);
+	v.slotName.push_back ("deltaglider");
+	std::vector<std::string> lines;
+	DentMath::FormatVessel (v, "  ", lines);
+	bool base = false;
+	for (auto &l : lines) {
+		CHECK (l.size () <= 200);
+		if (l.find ("XDMGD 0 ") != std::string::npos && l.find (" X ") == std::string::npos) base = true;
+	}
+	CHECK (base);
+	DentVesselParser ps;
+	for (auto &l : lines) ps.Line (l.c_str ());
+	DentVesselText o;
+	ps.Finish (o);
+	REQUIRE (o.rec.size () == 1);
+	CHECK (o.rec[0].p.mode == DENTM_CUT);
+	CHECK (o.rec[0].p.h == 0.0);
+	CHECK (std::memcmp (&o.rec[0].p, &r.p, sizeof (DentParams)) == 0);
+	CHECK (o.rec[0].grp == r.grp);
+	DentVesselParser old; // the base row alone (an old build drops the extension): a zero-depth bowl
+	for (auto &l : lines) if (l.find ("XDMGD") == std::string::npos || l.find (" X") == std::string::npos) old.Line (l.c_str ());
+	DentVesselText oo; old.Finish (oo);
+	if (!oo.rec.empty ()) CHECK (DentMath::Displace (oo.rec[0].p, Vector (1.25, -0.5, 3.7)).length () == 0.0);
+}
+
+TEST_CASE ("dmg3 tear 4: jag bits repeat, |J| <= A_j", "[dent][dmg3][tear]")
+{
+	DentParams p = TearCut (false);
+	for (int i = 0; i < 2000; i++) {
+		Vector x (std::sin (i * 0.37) * 3, std::cos (i * 0.11) * 3, 0);
+		double a = DentMath::CutJag (p, x, true), b = DentMath::CutJag (p, x, true);
+		CHECK (std::memcmp (&a, &b, sizeof (double)) == 0);
+		CHECK (std::fabs (a) <= p.P);
+	}
+}
