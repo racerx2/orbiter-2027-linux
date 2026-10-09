@@ -89,7 +89,7 @@ void Place (VESSEL *v, OBJHANDLE gref, const VECTOR3 &gpos, const VECTOR3 &gvel,
 class CollTestVessel : public VESSEL4 {
 public:
 	CollTestVessel (OBJHANDLE h, int fm) : VESSEL4 (h, fm) {}
-	~CollTestVessel () override { if (k) Log ("mxcsr last k=%d ctl=0x%04x", k, ctlLast); } // M10: the last post-step's control bits
+	~CollTestVessel () { if (k) Log ("mxcsr last k=%d ctl=0x%04x", k, ctlLast); } // M10: the last post-step's control bits
 	void clbkSetClassCaps (FILEHANDLE cfg) override;
 	void clbkLoadStateEx (FILEHANDLE scn, void *status) override;
 	void clbkPostCreation () override;
