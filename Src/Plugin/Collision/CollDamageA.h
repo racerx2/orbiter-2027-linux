@@ -33,7 +33,7 @@ struct VesselDamageA {
 	ThrustCutA cut;
 	uint32_t alias = ~0u;                                     // recorder side-file alias
 	uint32_t nslot = 0;                                       // slot count at the last rematch
-	bool loggedCap = false, playback = false;
+	bool loggedCap = false;
 };
 struct BuildingDamageA { CollDmgBaseObj obj; double eabs = 0; uint32_t flags = 0; };
 struct NoticeA {                                              // one notice of this pre-step

@@ -243,3 +243,35 @@ TEST_CASE ("fix1 review: an over-long D event cut off by the end of the side fil
 	REQUIRE (CollSide::Parse (text, f));
 	CHECK (f.ev.empty ()); // not kept with an empty list (= all groups)
 }
+
+TEST_CASE ("fix2 M5 a capped dormant vessel keeps every line through a save")
+{
+	std::string name (190, 'm');
+	std::vector<std::string> L { "VESSEL 0 PB-A ShuttlePB", "XDMG 1 100 0", "XDMGM 0 0 deadbeef 7 140 " + name };
+	std::string g = "1";
+	for (int i = 2; i < 200; i++) g += "," + std::to_string (i);
+	L.push_back ("XDMGD 0 0 0 3 0 0 1 1 0.1 0 " + g);
+	for (uint32_t i = 0; i < DENT_MAX_VESSEL + 10; i++) L.push_back ("XDMGD 0 " + std::to_string (i + 1) + " 0 3 0 0 1 1 0.1 0 *");
+	L.push_back ("END_VESSEL");
+	CollStoreBlock b;
+	CollStore::ParseBody (L, b);
+	REQUIRE (b.vessel.size () == 1);
+	const CollStoreVessel &v = b.vessel[0];
+	REQUIRE (v.d.rec.size () == DENT_MAX_VESSEL);
+	std::vector<std::string> saved; // the save writes inner lines with two spaces and drops lines over 200
+	for (size_t i = 0; i < v.raw.size (); i++) {
+		std::string s = (i == 0 || i + 1 == v.raw.size ()) ? v.raw[i] : "  " + v.raw[i];
+		CHECK (CollStore::Line200 (s));
+		saved.push_back (s);
+	}
+	CollStoreBlock b2;
+	CollStore::ParseBody (saved, b2);
+	REQUIRE (b2.vessel.size () == 1);
+	const DentVesselText &d = b2.vessel[0].d;
+	REQUIRE (d.rec.size () == DENT_MAX_VESSEL);
+	CHECK (d.rec[0].grp == v.d.rec[0].grp);
+	CHECK (d.rec[0].grp.size () == 199);
+	REQUIRE (!d.slotName.empty ());
+	CHECK (name.compare (0, d.slotName[0].size (), d.slotName[0]) == 0); // cut to fit the indented line, never dropped
+	CHECK (d.slotName[0].size () == 200 - 27);
+}

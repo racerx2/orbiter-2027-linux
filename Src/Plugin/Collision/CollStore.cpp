@@ -194,7 +194,9 @@ void CollStore::ParseBody (const std::vector<std::string> &lines, CollStoreBlock
 			v.skipped += p.Skipped ();
 			if (p.Capped ()) { // a dormant write-back keeps the capped text, not every line read
 				v.raw.resize (1);
-				DentMath::FormatVessel (v.d, "", v.raw);
+				std::vector<std::string> f;
+				DentMath::FormatVessel (v.d, "  ", f); // the save indent, so every line still fits once written back
+				for (const std::string &x : f) v.raw.push_back (x.compare (0, 2, "  ") == 0 ? x.substr (2) : x);
 				v.raw.push_back ("END_VESSEL");
 			}
 			if (ok) out.vessel.push_back (std::move (v));

@@ -480,6 +480,11 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s, d
 	CollShape *sh = host.Shape (v.id);
 	if (!sh || s.mesh < 0 || s.grp < 0) return;
 	uint32_t mesh = (uint32_t)s.mesh, grp = (uint32_t)s.grp;
+	auto dv = dirty.find (v.id);
+	if (dv != dirty.end ()) {
+		auto dm = dv->second.find (mesh);
+		if (dm != dv->second.end () && dm->second) { SyncCollider (v, sh, mesh, true); dm->second = false; } // a record grown earlier in this commit: replay before this hit reads the collider
+	}
 	int part = sh->PartOf (mesh, grp);
 	CollDmgSlot slot;
 	if (part < 0 || !host.Slot (v.id, mesh, slot) || !slot.present) return;
@@ -632,7 +637,7 @@ void CollDmgSession::SendNotices ()
 		COLLA_DAMAGEINFO info;
 		std::memset (&info, 0, sizeof info);
 		info.hdr.magic = COLLA_MAGIC, info.hdr.version = COLLA_VERSION, info.hdr.kind = (uint16_t)nt.kind, info.hdr.size = sizeof info;
-		info.flags = nt.flags | (v ? NoticeFlags (v->d.flags, v->cut.dummy != nullptr) : 0) | (v && v->playback ? COLLA_DMG_PLAYBACK : 0);
+		info.flags = nt.flags | (v ? NoticeFlags (v->d.flags, v->cut.dummy != nullptr) : 0) | (sdk.Playback (h) ? COLLA_DMG_PLAYBACK : 0); // now, not when the vessel was last played back
 		info.hOther = (OBJHANDLE)nt.hOther, info.otherObj = nt.otherObj, info.mesh = nt.mesh, info.group = nt.group;
 		info.ndent = v ? (uint32_t)v->d.rec.size () : 0;
 		info.simt = nt.simt;
@@ -794,7 +799,7 @@ int CollDmgSession::GetVesselDamage (CollH h, void *out)
 	x.otherObj = -1, x.mesh = -1, x.group = -1;
 	x.destroyEnergy = Threshold (id);
 	if (v) {
-		x.flags = NoticeFlags (v->d.flags, v->cut.dummy != nullptr) | (v->playback ? COLLA_DMG_PLAYBACK : 0);
+		x.flags = NoticeFlags (v->d.flags, v->cut.dummy != nullptr) | (sdk.Playback (h) ? COLLA_DMG_PLAYBACK : 0);
 		x.ndent = (uint32_t)v->d.rec.size ();
 		x.energy_total = v->d.eabs;
 		for (size_t r = 0; r < v->d.rec.size (); r++)
@@ -906,6 +911,7 @@ void CollDmgSession::SaveLines (std::vector<std::string> &out)
 	auto raw = [&] (const std::vector<std::string> &sec) {
 		for (size_t i = 0; i < sec.size (); i++) {
 			std::string s = (i == 0 || i + 1 == sec.size ()) ? sec[i] : "  " + sec[i];
+			if (!CollStore::Line200 (s)) s = sec[i]; // as FormatVessel: a line that cannot take the indent goes without it
 			if (CollStore::Line200 (s)) out.push_back (s);
 		}
 	};
@@ -1007,7 +1013,6 @@ void CollDmgSession::Playback (double simt)
 			continue;
 		}
 		VesselDamageA &v = Get (it->second);
-		v.playback = true;
 		if (e.kind == 'R') { DoRepair (v, true); continue; }
 		if (e.kind == 'S') {
 			bool was = v.d.flags & XDMG_DESTROYED;

@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 #include "DentMath.h"
+#include "CollShape.h" // COLL_RANGE_MAX only
+#include <chrono>
 
 // measured numbers are printed with DENT_TEST_VERBOSE set
 #define NOTE(...) do { if (std::getenv ("DENT_TEST_VERBOSE")) std::printf (__VA_ARGS__); } while (0)
@@ -2233,7 +2235,7 @@ TEST_CASE ("fix1 M8 parser keeps DENT_MAX_VESSEL records and bounded group lists
 	CHECK (v.rec.back ().p.c.x == DENT_MAX_VESSEL - 1); // the first ones
 	CHECK (sk == 600 - (int)DENT_MAX_VESSEL);
 	CHECK (Format (v).size () == 2 + DENT_MAX_VESSEL);
-	// a continued group list past 65535 entries is dropped whole; one at the limit is kept
+	// a continued group list past 65536 entries is dropped whole; one at the limit is kept
 	auto lists = [] (int lines, int last) {
 		std::vector<std::string> o { "XDMG 1 0 0", "XDMGM 0 0 deadbeef 7 140" };
 		for (int i = 0; i < lines; i++) o.push_back ("XDMGD 0 1 1 1 0 0 1 1 0.1 0 1,2,3,4,5,6,7,8,9,10,");
@@ -2247,10 +2249,13 @@ TEST_CASE ("fix1 M8 parser keeps DENT_MAX_VESSEL records and bounded group lists
 	REQUIRE (big.rec.size () == 1);
 	CHECK (big.rec[0].grp == std::vector<uint16_t> { 4 });
 	CHECK (sk == 1);
-	DentVesselText atLim = ParseVessel (lists (6553, 5), &sk);
+	DentVesselText atLim = ParseVessel (lists (6553, 6), &sk);
 	REQUIRE (atLim.rec.size () == 2);
 	CHECK (atLim.rec[0].grp.size () == DENT_MAX_GRPLIST);
 	CHECK (sk == 0);
+	DentVesselText past = ParseVessel (lists (6553, 7), &sk);
+	REQUIRE (past.rec.size () == 1);
+	CHECK (sk == 1);
 }
 
 TEST_CASE ("fix1 D7 vertices join the depth cap only", "[dent]")
@@ -2312,4 +2317,100 @@ TEST_CASE ("fix1 weld map within one pose class", "[dent]")
 	CHECK (n2 == o.nweld + 17); // the 17 seam vertices on y = 4 get their own ids
 	CHECK (w[0][8] == w[1][0]);  // same class still welds
 	CHECK (w[2][0] != w[0][16 * 9]);
+}
+
+static_assert (DENT_MAX_GRPLIST == COLL_RANGE_MAX, "one group list limit");
+
+TEST_CASE ("fix2 M4 vessel parser is linear and stores at most DENT_MAX_VESSEL records", "[dent]")
+{
+	const int N = 40000;
+	char b[128];
+	auto t0 = std::chrono::steady_clock::now ();
+	DentVesselParser p;
+	p.Line ("XDMG 1 0 0");
+	for (int i = 0; i < N; i++) { std::snprintf (b, sizeof b, "XDMGM %d 0 0 1 10", i); p.Line (b); }
+	for (int i = 0; i < N; i++) { std::snprintf (b, sizeof b, "XDMGD %d %d 0 0 0 0 1 1 0.1 0 *", N - 1 - i, i); p.Line (b); }
+	DentVesselText o;
+	p.Finish (o);
+	double dt = std::chrono::duration<double> (std::chrono::steady_clock::now () - t0).count ();
+	NOTE ("fix2 M4: 80k lines in %.3f s\n", dt);
+	CHECK (dt < 0.5);
+	REQUIRE (o.rec.size () == DENT_MAX_VESSEL);
+	CHECK (o.rec.back ().p.c.x == DENT_MAX_VESSEL - 1);
+	CHECK (p.Skipped () == N - (int)DENT_MAX_VESSEL);
+	CHECK (p.Capped ());
+	// a continued record past the cap is read and dropped whole
+	std::vector<std::string> l { "XDMG 1 0 0", "XDMGM 0 0 deadbeef 7 140" };
+	for (uint32_t i = 0; i < DENT_MAX_VESSEL; i++) l.push_back ("XDMGD 0 " + std::to_string (i) + " 0 0 0 0 1 1 0.1 0 *");
+	l.push_back ("XDMGD 0 1e3 0 0 0 0 1 1 0.1 0 1,2,");
+	l.push_back ("XDMGD 0 1e3 0 0 0 0 1 1 0.1 0 3");
+	int sk = -1;
+	DentVesselText v = ParseVessel (l, &sk);
+	CHECK (v.rec.size () == DENT_MAX_VESSEL);
+	CHECK (sk == 1);
+}
+
+TEST_CASE ("fix2 numbers reject a sign after '+'", "[dent]")
+{
+	DentRecord r;
+	CHECK (DentMath::ParseDentEvent ("0 1 0 0 0 0 1 1 0.1 0 *", r));
+	CHECK (DentMath::ParseDentEvent ("0 +1 0 0 0 0 1 1 0.1 0 *", r));
+	CHECK (!DentMath::ParseDentEvent ("0 +-1 0 0 0 0 1 1 0.1 0 *", r));
+	CHECK (!DentMath::ParseDentEvent ("0 +-0 0 0 0 0 1 1 0.1 0 *", r));
+	double e; uint32_t f;
+	CHECK (DentMath::ParseStateEvent ("+0 1", e, f));
+	CHECK (!DentMath::ParseStateEvent ("+-0 1", e, f));
+	int a, bb, c; DentParams q;
+	CHECK (DentMath::ParseBaseDentEvent ("+0:0:0 0 0 0 0 0 1 1 0.1 0", a, bb, c, q));
+	CHECK (!DentMath::ParseBaseDentEvent ("+-0:0:0 0 0 0 0 0 1 1 0.1 0", a, bb, c, q));
+	int sk = -1;
+	CHECK (ParseVessel ({ "XDMG +-1 0 0" }, &sk).eabs == 0.0);
+	CHECK (sk == 1);
+}
+
+TEST_CASE ("fix2 bases parser keeps DENT_MAX_OBJECT records per object", "[dent]")
+{
+	std::vector<std::string> l { "BEGIN_XDMG_BASES", "BASE Earth:Habana" };
+	for (uint32_t i = 0; i < DENT_MAX_OBJECT + 5; i++) l.push_back ("ODENT 3 " + std::to_string (i) + " 0 0 0 1 0 1 0.1 0");
+	l.push_back ("ODENT 4 0 0 0 0 1 0 1 0.1 0");
+	l.push_back ("END_BASE");
+	l.push_back ("BASE Earth:Cape");
+	l.push_back ("ODENT 3 0 0 0 0 1 0 1 0.1 0");
+	l.push_back ("END_BASE");
+	l.push_back ("END_XDMG_BASES");
+	int sk = -1;
+	std::vector<DentBaseText> b = ParseBases (l, &sk);
+	REQUIRE (b.size () == 2);
+	REQUIRE (b[0].rec.size () == DENT_MAX_OBJECT + 1);
+	CHECK (b[0].rec[DENT_MAX_OBJECT - 1].p.c.x == DENT_MAX_OBJECT - 1); // the first ones
+	CHECK (b[0].rec.back ().slot == 4);
+	CHECK (b[1].rec.size () == 1);
+	CHECK (sk == 5);
+}
+
+TEST_CASE ("fix2 refinement splits degenerate triangles with their edges (no T-junction)", "[dent]")
+{
+	const int n = 4;
+	DentObject o;
+	o.rest.resize (1), o.idx.resize (1);
+	for (int y = 0; y <= n; y++) for (int x = 0; x <= n; x++) { DentVtx v {}; v.x = (float)x, v.y = (float)y, v.nz = 1; o.rest[0].push_back (v); }
+	for (int y = 0; y < n; y++) for (int x = 0; x < n; x++) {
+		uint16_t a = (uint16_t)(y * (n + 1) + x), b = (uint16_t)(a + 1), c = (uint16_t)(a + n + 1), d = (uint16_t)(c + 1);
+		o.idx[0].insert (o.idx[0].end (), { a, b, d, a, d, c });
+	}
+	uint16_t i0 = 2 * (n + 1) + 1, i1 = i0 + 1; // centre edge (1,2)-(2,2)
+	o.rest[0].push_back (o.rest[0][i0]); // a duplicate of i0: welds to it
+	uint16_t dup = (uint16_t)(o.rest[0].size () - 1);
+	o.idx[0].insert (o.idx[0].end (), { i0, dup, i1 }); // a welded-degenerate triangle on that edge
+	o.cur = o.rest;
+	o.nweld = DentMath::WeldMap (o.rest, DENT_WELD, o.weld);
+	REQUIRE (o.weld[0][dup] == o.weld[0][i0]);
+	REQUIRE (TJunctions (o) == 0);
+	int added = DentMath::Refine (o, Vector (2.0, 2.0, 0.0), 2.0, nullptr, 0, nullptr);
+	REQUIRE (added > 0);
+	CHECK (TJunctions (o) == 0); // every split edge is split on both sides
+	size_t nt = 0;
+	for (size_t j = 0; j + 2 < o.idx[0].size (); j += 3) nt++;
+	CHECK (o.idx[0].size () % 3 == 0);
+	CHECK (nt > (size_t)(2 * n * n + 1));
 }

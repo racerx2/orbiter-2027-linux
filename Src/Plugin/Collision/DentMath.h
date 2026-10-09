@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #include "Vecmat.h"
@@ -32,7 +33,7 @@ constexpr double   DENT_COALESCE_R     = 0.5;     // coalesce when |c - c_r| < t
 constexpr double   DENT_COALESCE_ANGLE = 30.0;    // and n . n_r > cos(this) [deg]
 constexpr uint32_t DENT_MAX_VESSEL     = 512;     // records per vessel after coalescing
 constexpr uint32_t DENT_MAX_OBJECT     = 64;      // records per base object
-constexpr uint32_t DENT_MAX_GRPLIST    = 65535;   // group list entries per record (mesh group limit)
+constexpr uint32_t DENT_MAX_GRPLIST    = 65536;   // group list entries per record (= COLL_RANGE_MAX)
 constexpr double   DENT_REFINE_EDGE    = 0.25;    // refinement target: longest rest edge <= this * R (4.9)
 constexpr uint32_t DENT_REFINE_NEW     = 4096;    // new triangles per dent
 constexpr uint32_t DENT_REFINE_MAX     = 65536;   // triangles per object
@@ -184,6 +185,7 @@ private:
 	bool m_head = false;                                  // a valid XDMG 1 line was read
 	double m_eabs = 0; uint32_t m_flags = 0;
 	std::vector<std::pair<uint32_t, DentRecord>> m_mesh;  // XDMGM: key k -> slot, key, ngrp, nvtx
+	std::unordered_map<uint32_t, size_t> m_meshIdx;       // key k -> index in m_mesh
 	std::vector<std::pair<uint32_t, DentRecord>> m_dent;  // XDMGD: key k -> params and groups
 	std::vector<std::string> m_pending;                   // lines before the first XDMG line; they join its section
 	std::vector<std::string> m_lines;                     // unknown-version lines up to 200 characters, verbatim
@@ -203,6 +205,7 @@ public:
 	int  Skipped () const;
 private:
 	std::vector<DentBaseText> m_base;
+	std::unordered_map<uint32_t, uint32_t> m_nrec;        // ODENT records per object index of the current base
 	bool m_inBase = false, m_done = false;
 	int m_skipped = 0;
 };
