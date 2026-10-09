@@ -367,6 +367,7 @@ void CollSession::PreStep (double simt, double simdt)
 	// PS1 BeginFrame: E2 PreStep, E1 snapshot (reads only)
 	Clock::time_point a = Clock::now ();
 	geom->BeginFrame (simt, simdt);
+	dmg->Spawns (simt, simdt);                                   // blast: debris and the parents' kicks before the snapshot, so the solver starts from them
 	Clock::time_point b = Clock::now ();
 	std::vector<CollPhysVessel> v;
 	PhysGeomA &pg = static_cast<PhysGeomA &> (*pgeom);

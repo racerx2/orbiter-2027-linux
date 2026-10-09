@@ -65,6 +65,7 @@ struct CollBlastSlotA {                                   // blast: one vessel s
 	bool rebuild = false;                                 // a held piece split off: rebuild from the stored state after the pass
 };
 bool CollPieceHeld (const CollPieceA &p, const CollDamageHit &h); // blast: dmg3 part gates for an actor of animated pieces only (approach speed, dock pin)
+struct CollParentA { bool read = false; CollVesselRead rd {}; Vector rp, rv, J, H; double M = 0; std::vector<std::pair<Vector, Vector>> jf; }; // pre-step: one read and one write per parent; jf: impulse and point of each debris (stacks)
 struct CollKickA { uint32_t parent = 0; Vector dv, dw; double M = 0; }; // blast: parent velocity and spin change of one debris kick, parent mass (tests)
 
 class CollBreakA : public CollDmgSink {
@@ -78,7 +79,7 @@ public:
 	void Torn (uint32_t id, const DentTorn &t) override;
 	void Repair (uint32_t id) override;
 	void DropVessel (uint32_t id, CollH h) override;
-	void PreStep (double simt) override;                    // spawns queued by the last post-step: debris vessels and the parents' kicks
+	void PreStep (double simt, double simdt) override;                  // spawns queued by the last post-step: debris vessels and the parents' kicks
 	void Boot (double simt);                              // first pass after load: rebuild debris, adopt rows, queue the load mass cut
 	void End () override;
 	void Quiet () override { quiet = true; }
@@ -104,7 +105,7 @@ private:
 	void Collider (uint32_t id, VesB &b, bool force);     // collider hides
 	void Adopt ();                                        // rows loaded by the session
 	void Rebuild (double simt);                           // first Post: debris from saved rows
-	void Spawn (CollSpawnA &sp, double simt);
+	void Spawn (CollSpawnA &sp, double simt, std::map<uint32_t, CollParentA> &pc);
 	void Kill (size_t i, const char *why);
 	void SyncRows (uint32_t parent);
 	void PairCheck (double simt);
@@ -131,7 +132,7 @@ private:
 	std::vector<CollSpawnA> spawn;
 	std::vector<CollPairA> pairs;
 	std::map<std::pair<uint32_t, uint32_t>, CollBlastSlotA> blast; // blast: (vessel, slot)
-	double postDt = 0;                                    // blast: last post-step frame [s]
+	double postDt = 0, preDt = 0;                                  // blast: last post-step frame [s]
 	std::map<uint32_t, MassCutA> massCut;                 // blast: per vessel
 	std::set<uint32_t> massPending;                       // blast: loaded vessels whose saved cut is not applied yet
 	void CutMass (uint32_t id, CollH vh, double m, const Vector &icut); // blast: lower the parent's empty mass and PMI

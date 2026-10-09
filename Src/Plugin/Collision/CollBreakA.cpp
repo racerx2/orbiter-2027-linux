@@ -596,6 +596,7 @@ bool CollBreakA::Section (uint32_t id, CollH vh, const CollDamageHit &hit, const
 	if (canDebris && MakeTearSpawn (id, vh, hit, sl, pl.front, pl.straddle, pl.rec, event, sp)) {
 		sp.row.name = name = NewName (sdk.Name (vh));
 		spawn.push_back (sp);
+		SyncRows (sp.parent);
 	}
 	DentTorn t;
 	t.kind = (uint8_t)CBRK_SECTION; t.slot = mesh; t.key = sl.key; t.ngrp = sl.ngrp; t.nvtx = sl.nvtx; t.simt = hit.simt; t.debris = name;
@@ -644,6 +645,7 @@ void CollBreakA::Tear (uint32_t id, CollH vh, const CollDamageHit &hit, const Co
 		sp.row.name = NewName (sdk.Name (vh));
 		nameOf[i] = sp.row.name;
 		spawn.push_back (sp);
+		SyncRows (sp.parent);
 		made++;
 	}
 	for (size_t i = 0; i < pk.size (); i++) {
@@ -756,7 +758,7 @@ uint32_t CollBreakA::FindId (CollH h)
 	return ~0u;
 }
 
-void CollBreakA::Spawn (CollSpawnA &sp, double simt)
+void CollBreakA::Spawn (CollSpawnA &sp, double simt, std::map<uint32_t, CollParentA> &pc)
 {
 	CollH vh = s.VesselHandle (sp.parent);
 	if (!vh) return;
@@ -767,36 +769,32 @@ void CollBreakA::Spawn (CollSpawnA &sp, double simt)
 	if (!BuildMesh (mesh, sp.row, geo, sp.parent)) { sdk.MeshFree (mesh); Log ("Collision: debris mesh '%s' does not match its slot, no debris", sp.mesh.c_str ()); return; }
 	uint32_t fnv = 0;
 	CollSdk::DebrisCaps caps = Caps (geo, sp.mass, &fnv);
-	CollVesselRead rd {};
-	sdk.ReadVessel (vh, rd, CVR_NOWEIGHT);
+	CollParentA &P = pc[sp.parent];
+	if (!P.read) { // the parent as it was before any kick of this pre-step: every debris starts from it
+		sdk.ReadVessel (vh, P.rd, CVR_NOWEIGHT);
+		sdk.RelState (vh, P.rd.gref, P.rp, P.rv); // the core's own relative state
+		P.M = P.rd.m > 0 ? P.rd.m : sdk.EmptyMass (vh);
+		P.read = true;
+	}
+	const CollVesselRead &rd = P.rd;
 	CollStateWrite st;
 	st.rbody = rd.gref;
-	Vector rp, rv;
-	sdk.RelState (vh, rd.gref, rp, rv); // the core's own relative state: the planet and the vessel at one time in the post-step
-	st.rpos = rp + mul (rd.R, sp.cv);
-	st.rvel = rv + mul (rd.R, crossp (sp.cv, rd.w) + sp.dv);
+	st.rpos = P.rp + mul (rd.R, sp.cv);
+	st.rvel = P.rv + mul (rd.R, crossp (sp.cv, rd.w) + sp.dv);
 	st.vrot = rd.w + sp.dw; st.arot = Vector ();
 	CollH h = sdk.VesselCreate (sp.row.name.c_str (), BRK_CLASS, st);
 	if (!h) { sdk.MeshFree (mesh); Log ("Collision: debris vessel '%s' not created", sp.row.name.c_str ()); return; }
 	sdk.DebrisSetup (h, mesh, caps);
 	sdk.SetAttitude (h, rd.R);
 	sdk.SetSpin (h, rd.w + sp.dw);
-	if (sp.blast) { // blast: the parent takes -m dv and the debris spin through its state, momentum exact
-		CollVesselRead pr {};
-		sdk.ReadVessel (vh, pr, CVR_NOWEIGHT);
-		double M = pr.m > 0 ? pr.m : sdk.EmptyMass (vh);
+	if (sp.blast) { // blast: the parent takes -m dv and the debris spin, summed over this pre-step's debris and written once
+		const CollVesselRead &pr = P.rd;
+		double M = P.M;
 		Vector J = (sp.dv + crossp (sp.cv, rd.w)) * caps.mass;              // vessel frame: the debris keeps the parent's rotation velocity at its centroid
 		Vector H = crossp (sp.dv, sp.cv) * caps.mass + Vector (caps.pmi.x * sp.dw.x, caps.pmi.y * sp.dw.y, caps.pmi.z * sp.dw.z) * caps.mass; // Orbiter convention: H = m crossp (v, r) + m pmi w
+		P.J += J; P.H += H; P.jf.push_back ({ J, sp.cv });
 		Vector dvp = M > 0 ? J * (-1.0 / M) : Vector ();
 		Vector dwp (pr.pmi.x > 0 && M > 0 ? -H.x / (M * pr.pmi.x) : 0, pr.pmi.y > 0 && M > 0 ? -H.y / (M * pr.pmi.y) : 0, pr.pmi.z > 0 && M > 0 ? -H.z / (M * pr.pmi.z) : 0);
-		CollStateWrite ps {};
-		ps.rbody = pr.gref;
-		Vector prp, prv;
-		sdk.RelState (vh, ps.rbody, prp, prv);
-		ps.rpos = prp; ps.rvel = prv + mul (pr.R, dvp); ps.vrot = pr.w + dwp;
-		ps.arot = Vector (std::atan2 (pr.R (1, 2), pr.R (2, 2)), -std::asin (std::max (-1.0, std::min (1.0, pr.R (0, 2)))), std::atan2 (pr.R (0, 1), pr.R (0, 0))); // inverse of Vessel::SetGlobalOrientation
-		if (pr.sv) sdk.AddForce (vh, J * (-1.0 / (postDt > 0 ? postDt : 1.0 / 60)), sp.cv); // docked stack: the stack takes the impulse over one step
-		else { sdk.SetState (vh, ps); sdk.SetAttitude (vh, pr.R); sdk.SetSpin (vh, pr.w + dwp); }
 		if (kicks.size () < 256) kicks.push_back ({ sp.parent, dvp, dwp, M });
 	}
 	CollDebrisA d;
@@ -818,6 +816,7 @@ void CollBreakA::SyncRows (uint32_t parent)
 	if (!s.VesselHandle (parent)) return;
 	std::vector<DentDebris> r;
 	for (auto &d : live) if (d.parent == parent) r.push_back (d.row);
+	for (auto &x : spawn) if (x.parent == parent) r.push_back (x.row); // queued for the next pre-step: a save in between keeps them
 	const VesselDamageA *vd = s.Damage (parent);
 	if (r.empty () && (!vd || vd->d.debris.empty ())) return;
 	s.SetDebris (parent, r);
@@ -935,6 +934,7 @@ void CollBreakA::Torn (uint32_t id, const DentTorn &t)
 		if (t.kin) sp.dv = t.dv, sp.dw = t.dw, sp.mass = sp.row.mass = t.mass; // M3: the recorded kick and mass
 		sp.row.name = NewName (sdk.Name (vh));
 		spawn.push_back (sp);
+		SyncRows (sp.parent);
 		return;
 	}
 	for (int k : pk) {
@@ -949,6 +949,7 @@ void CollBreakA::Torn (uint32_t id, const DentTorn &t)
 	if (!MakeSpawn (id, vh, hit, *sl, pk, ++events, sp)) return;
 	sp.row.name = NewName (sdk.Name (vh));
 	spawn.push_back (sp);
+	SyncRows (sp.parent);
 }
 
 void CollBreakA::Repair (uint32_t id)
@@ -1044,7 +1045,20 @@ void CollBreakA::Rebuild (double simt)
 			debrisSeq = std::max (debrisSeq, row.id);
 			CollH h = nullptr;
 			for (uint32_t i = 0, c = sdk.VesselCount (); i < c && !h; i++) { CollH x = sdk.Vessel (i); if (CollKey::IEqual (sdk.Name (x), row.name)) h = x; }
-			if (!h) { Log ("Collision: debris row '%s' without its vessel dropped", row.name.c_str ()); continue; }
+			if (!h) { // saved between the post-step that queued it and the pre-step that spawns it: spawn it now from the row
+				bool queued = false;
+				for (auto &x : spawn) if (x.parent == pid && x.row.id == row.id) queued = true;
+				if (queued) continue;
+				const CollSlotA *sl = vh ? Slot (pid, row.slot) : nullptr;
+				if (!sl || !sl->ok || sl->key != row.key || row.pose.empty () || row.pose[0].grp.empty () || row.pose[0].grp[0] >= sl->v.size ()) { Log ("Collision: debris row '%s' without its vessel dropped", row.name.c_str ()); continue; }
+				std::vector<CollAffine> F = Poses (pid, row.slot, sl->v.size ());
+				CollSpawnA sp;
+				sp.parent = pid; sp.event = ++events; sp.mesh = sl->name; sp.row = row; sp.mass = row.mass;
+				sp.cv = F[row.pose[0].grp[0]].t - row.pose[0].p + sdk.MeshOffset (vh, row.slot); // the piece centroid as the row placed it
+				spawn.push_back (sp);
+				Log ("Collision: debris row '%s' without its vessel spawned again", row.name.c_str ());
+				continue;
+			}
 			if (!CollKey::IEqual (sdk.ClassName (h), BRK_CLASS)) continue;
 			claimed.insert (row.name);
 			const CollSlotA *sl = vh ? Slot (pid, row.slot) : nullptr;
@@ -1110,13 +1124,29 @@ void CollBreakA::Boot (double simt)
 	for (auto &kv : s.Vessels ()) if (!kv.second.d.sites.empty ()) massPending.insert (kv.first);
 }
 
-void CollBreakA::PreStep (double simt)
+void CollBreakA::PreStep (double simt, double simdt)
 {
 	if (quiet) return;
+	preDt = simdt;
 	Boot (simt);
 	std::vector<CollSpawnA> sp;
 	sp.swap (spawn);
-	for (auto &x : sp) Spawn (x, simt); // in the pre-step: the core places the new vessel and the parent's write where they were read
+	std::map<uint32_t, CollParentA> pc;
+	for (auto &x : sp) Spawn (x, simt, pc); // in the pre-step: the core places the new vessel and the parent's write where they were read
+	for (auto &kv : pc) { // one write per parent: the sum of its debris' impulses
+		CollParentA &P = kv.second;
+		CollH vh = s.VesselHandle (kv.first);
+		if (!vh || P.jf.empty () || !(P.M > 0)) continue;
+		const CollVesselRead &pr = P.rd;
+		if (pr.sv) { for (auto &f : P.jf) sdk.AddForce (vh, f.first * (-1.0 / (simdt > 0 ? simdt : 1.0 / 60)), f.second); continue; } // docked stack: the stack takes each impulse over this step
+		Vector dvp = P.J * (-1.0 / P.M);
+		Vector dwp (pr.pmi.x > 0 ? -P.H.x / (P.M * pr.pmi.x) : 0, pr.pmi.y > 0 ? -P.H.y / (P.M * pr.pmi.y) : 0, pr.pmi.z > 0 ? -P.H.z / (P.M * pr.pmi.z) : 0);
+		CollStateWrite ps {};
+		ps.rbody = pr.gref;
+		ps.rpos = P.rp; ps.rvel = P.rv + mul (pr.R, dvp); ps.vrot = pr.w + dwp;
+		ps.arot = Vector (std::atan2 (pr.R (1, 2), pr.R (2, 2)), -std::asin (std::max (-1.0, std::min (1.0, pr.R (0, 2)))), std::atan2 (pr.R (0, 1), pr.R (0, 0))); // inverse of Vessel::SetGlobalOrientation
+		sdk.SetState (vh, ps); sdk.SetAttitude (vh, pr.R); sdk.SetSpin (vh, pr.w + dwp);
+	}
 }
 
 void CollBreakA::End ()
@@ -1471,6 +1501,7 @@ void CollBreakA::SpawnCells (const CollBlastBreak &bk)
 	if (canDebris && queued < (size_t)std::max (BRK_PER_EVENT, cfg.debrisMax) && MakeCellSpawn (bk, *sl, vh, site, stat, event, sp)) { // every Blast break of debris mass flies
 		sp.row.name = name = NewName (sdk.Name (vh));
 		spawn.push_back (sp);
+		SyncRows (sp.parent);
 	}
 	if (!bk.cells.empty ()) s.AddCellCuts (bk.id, bk.slot, bk.cells);
 	CutMass (bk.id, vh, bk.mass, bk.inertia);

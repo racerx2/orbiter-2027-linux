@@ -486,11 +486,17 @@ void CollDmgSession::ShapesUpdatedEv (uint32_t id, CollShape *shape, const std::
 
 // pre-physics (PS2b): repairs, playback, recording link
 
+void CollDmgSession::Spawns (double simt, double simdt)
+{
+	if (!begun || !brk) return;
+	if (!matched) MatchAll ();
+	brk->PreStep (simt, simdt);
+}
+
 void CollDmgSession::PrePhysics ()
 {
 	if (!begun) return;
 	if (!matched) MatchAll ();
-	if (brk) brk->PreStep (sdk.SimTime ());
 	double simt = -1;
 	for (CollTestRepair &t : blk.testRepair) {
 		if (t.done) continue;

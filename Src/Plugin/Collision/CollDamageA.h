@@ -69,6 +69,7 @@ public:
 	}
 	void ShapesUpdatedEv (uint32_t id, CollShape *shape, const std::vector<CollDmgSlotEv> &ev);
 	void PrePhysics ();                                                      // PS2b: repairs, playback, recording link check
+	void Spawns (double simt, double simdt);                                 // pre-step before the snapshot: debris vessels and the parents' kicks
 	void Commit (const std::vector<CollImpactEvent> &ev, double simt, const std::vector<CollFxContact> *contacts = nullptr); // PS4; contacts: dmg3 L4
 	void SendNotices ();                                                     // PS5, after E1's CONTACT notices
 	void EndFrame ();                                                        // PS7: thrust cut, last

@@ -43,6 +43,7 @@ private:
 	int Vessel (const CollGroundVessel &x, double simt, double simdt, CollImpactEvent &e, CollFxContact &c); // 0 no candidate, 1 none fired, 2 event
 	static bool Locked (const std::vector<Lock> &l, const Cand &c, double rb);
 	void Kick (CollH h, const CollVesselRead &rd, const Vector &p, const Vector &J, double simdt); // impulse J (vessel frame) at p: velocity, spin
+	double StackMass (CollH h);                   // mass of the docked stack of h
 	CollSdk &sdk;
 	const CollCfgValues &cfg;
 	std::map<uint32_t, std::vector<Lock>> locks;  // per vessel: regions of the events of the last COLL_GROUND_GAP

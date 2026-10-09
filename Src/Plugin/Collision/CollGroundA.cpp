@@ -78,6 +78,19 @@ void CollGroundA::Kick (CollH h, const CollVesselRead &rd, const Vector &p, cons
 	sdk.SetSpin (h, rd.w + dw);
 }
 
+double CollGroundA::StackMass (CollH h)
+{
+	std::vector<CollH> seen { h }; // docked stack: every vessel reachable through the docks
+	double m = 0;
+	for (size_t k = 0; k < seen.size () && k < 64; k++) {
+		CollVesselRead r {};
+		sdk.ReadVessel (seen[k], r, CVR_NOWEIGHT);
+		m += r.m;
+		for (uint32_t i = 0, n = sdk.DockCount (seen[k]); i < n; i++) { CollPortInfo pi {}; if (sdk.Dock (seen[k], i, pi) && pi.mate && std::find (seen.begin (), seen.end (), pi.mate) == seen.end ()) seen.push_back (pi.mate); }
+	}
+	return m;
+}
+
 int CollGroundA::Vessel (const CollGroundVessel &x, double simt, double simdt, CollImpactEvent &e, CollFxContact &c)
 {
 	if (!x.h || !x.shape || !x.shape->nPart ()) return 0;
@@ -176,7 +189,17 @@ int CollGroundA::Vessel (const CollGroundVessel &x, double simt, double simdt, C
 		const CollGeom &G = P.Geom ();
 		const uint8_t *mask = sh.GroupMask (q.part);
 		Vector nv = tmul (R, -nL), vt = q.vr + nL * vn;      // outward normal of the vessel side, vessel frame; tangential relative velocity, global
-		double lt = vt.length (), m = CollGroundMeff (rd.m, rd.pmi, q.p, nv);
+		CollH mb = x.h;                                     // the body that moves: an attached child's root (the core carries children), a docked stack as a whole
+		for (int k = 0; k < 16; k++) {
+			CollH up = nullptr;
+			for (uint32_t i = 0, na = sdk.AttachCount (mb, true); i < na && !up; i++) { CollAttInfo ai {}; if (sdk.Attach (mb, true, i, ai) && ai.mate) up = ai.mate; }
+			if (!up || up == x.h) break;
+			mb = up;
+		}
+		CollVesselRead tr = rd;
+		if (mb != x.h) sdk.ReadVessel (mb, tr, CVR_NOWEIGHT);
+		Vector pt = tmul (tr.R, q.g - tr.x), nt = tmul (tr.R, nL); // the hit point and terrain up in that body's frame
+		double lt = vt.length (), m = CollGroundMeff (tr.sv ? StackMass (mb) : tr.m, tr.pmi, pt, nt);
 		Vector tg = lt >= 1e-6 ? vt / lt : Vector ();
 		CollImpactSide &s = e.s[0], &o = e.s[1];
 		s.owner = CollOwnerRef { x.id, -1, -1, -1, -1 };
@@ -215,7 +238,7 @@ int CollGroundA::Vessel (const CollGroundVessel &x, double simt, double simdt, C
 		c.nOther = Vector (dotp (nL, east), dotp (nL, uv), dotp (nL, north));
 		c.matOther = &DentMath::DefaultMaterial (DENTB_BLOCK);
 		lk.push_back (Lock { q.part, q.p, simt, vn });
-		Kick (x.h, rd, q.p, tmul (R, nL) * e.Jn, simdt);
+		Kick (mb, tr, pt, nt * e.Jn, simdt);
 		return 2;
 	}
 	return 1;

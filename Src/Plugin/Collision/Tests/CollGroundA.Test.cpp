@@ -540,3 +540,24 @@ TEST_CASE ("ground: the event's impulse goes to the vessel, the hit point leaves
 	REQUIRE (r.Frame () == 1);
 	CHECK (nF () == nf + 1);
 }
+
+TEST_CASE ("ground: an attached child's root takes the impulse, with the root's mass", "[ground]")
+{
+	Rig r;
+	r.sdk.applyWrites = true;
+	Matrix R = Tilt ();
+	r.Place (R, 0.1, Vector (-20, 0, 0));
+	CollFakeSdk::Ves *root = r.sdk.AddVessel ("ROOT", "ShuttlePB");
+	root->rd = r.v->rd; root->rd.m = 9000; root->rd.pmi = Vector (5, 6, 7);
+	root->rd.x = r.v->rd.x + Vector (0, 3, 0);                       // 3 m beside the child
+	CollAttInfo ai {}; ai.mate = root;
+	r.v->att[1].push_back (ai);                                       // the child hangs on ROOT
+	Vector vc = r.v->rd.v, vr0 = root->rd.v;
+	r.sdk.simT = 2;
+	REQUIRE (r.Frame () == 1);
+	const CollImpactEvent &e = r.ev[0];
+	CHECK ((r.v->rd.v - vc).length () == 0);                          // the child is not written
+	Vector up (1, 0, 0), pt = tmul (R, r.v->rd.x + mul (R, e.s[0].c) - root->rd.x);
+	CHECK (std::fabs (e.meff - CollGroundMeff (9000, Vector (5, 6, 7), pt, tmul (R, up))) <= 1e-6 * e.meff); // up to the local normal over the box
+	CHECK (std::fabs (((root->rd.v - vr0) & up) * 9000 - e.Jn) <= 1e-6 * e.Jn); // the root takes Jn
+}
