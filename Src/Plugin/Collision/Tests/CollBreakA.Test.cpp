@@ -716,11 +716,25 @@ TEST_CASE ("blast P1: a 70 m/s hit separates cells; SpawnCells makes one debris 
 		CHECK (keep >= 1);
 		CHECK (d.row.mass > 2);
 		REQUIRE (d.row.pose.size () == 1);
-		CHECK (d.row.pose[0].grp == std::vector<uint16_t> { 0, 1, 2, 3, 4, 5 });
+		const MeshT &tp = r.sdk.mesh.front ();
+		std::set<uint32_t> kc;
+		for (auto &rc : d.row.rec) if (rc.p.mode == DENTM_VCUT) kc.insert ((uint32_t)rc.p.P);
+		std::vector<uint16_t> want;                                  // only the faces with a triangle in the kept cells
+		for (uint16_t g = 0; g < 6; g++) {
+			bool any = false;
+			for (size_t t = 0; t + 2 < tp.grp[g].idx.size (); t += 3) {
+				Vector x;
+				for (int k = 0; k < 3; k++) { const auto &q = tp.grp[g].vtx[tp.grp[g].idx[t + k]]; x += Vector (q.x, q.y, q.z) / 3.0; }
+				size_t bi = 0; for (size_t c = 1; c < ds->s.size (); c++) if ((x - ds->s[c]).length2 () < (x - ds->s[bi]).length2 ()) bi = c;
+				if (kc.count ((uint32_t)bi)) any = true;
+			}
+			if (any) want.push_back (g);
+		}
+		CHECK (!want.empty ()); CHECK (want.size () < 6);
+		CHECK (d.row.pose[0].grp == want);
 		const MeshT *dm = r.sdk.debrisMesh[(const BFake::V *)d.h];      // VCUT KEEP evaluated with the parent's sites: far vertices fold onto the cell
 		REQUIRE (dm);
-		const MeshT &tp = r.sdk.mesh.front ();
-		for (size_t g = 0; g < 6; g++) for (size_t i = 0; i < tp.grp[g].vtx.size (); i++) {
+		for (uint16_t g : want) for (size_t i = 0; i < tp.grp[g].vtx.size (); i++) {
 			Vector x (tp.grp[g].vtx[i].x, tp.grp[g].vtx[i].y, tp.grp[g].vtx[i].z), y (dm->grp[g].vtx[i].x, dm->grp[g].vtx[i].y, dm->grp[g].vtx[i].z);
 			Vector yr = y - d.row.pose[0].p;                        // rest frame: identity pose
 			nv++; if ((yr - x).length () > 1e-3) moved++;

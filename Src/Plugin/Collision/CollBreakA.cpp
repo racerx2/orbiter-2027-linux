@@ -1376,7 +1376,20 @@ bool CollBreakA::MakeCellSpawn (const CollBlastBreak &bk, const CollSlotA &sl, C
 		if (!ps.grp.empty ()) d.pose.push_back (ps);
 	};
 	std::vector<uint16_t> sg;
-	if (!bk.cells.empty ()) for (uint16_t g : stat) if (!Hidden (bk.id, bk.slot, g)) sg.push_back (g);
+	std::set<uint32_t> kc (bk.cells.begin (), bk.cells.end ());
+	if (!bk.cells.empty ()) for (uint16_t g : stat) { // only groups with a triangle in the break's cells: a small piece, not a folded copy of the whole hull
+		if (Hidden (bk.id, bk.slot, g) || g >= sl.v.size () || g >= sl.idx.size ()) continue;
+		bool any = false;
+		for (size_t t = 0; t + 2 < sl.idx[g].size () && !any; t += 3) {
+			size_t i = sl.idx[g][t], j = sl.idx[g][t + 1], k = sl.idx[g][t + 2];
+			if (i >= sl.v[g].size () || j >= sl.v[g].size () || k >= sl.v[g].size ()) continue;
+			Vector x = (P (sl.v[g][i]) + P (sl.v[g][j]) + P (sl.v[g][k])) / 3.0;
+			int bi = -1; double bd = 1e300;
+			for (size_t c = 0; c < site.size (); c++) { double d = (x - site[c]).length2 (); if (d < bd) bd = d, bi = (int)c; }
+			any = bi >= 0 && kc.count ((uint32_t)bi);
+		}
+		if (any) sg.push_back (g);
+	}
 	pose (Fs, sg);
 	for (uint32_t k : bk.pieces) {
 		if (k >= sl.piece.size ()) continue;
