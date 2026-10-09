@@ -3,3 +3,4 @@ COLLIDER-V1
 EXCLUDE MATERIAL dgint* dgpilot* pnsgr* psng* visor HUD_glass
 MAT glass MATERIAL cockpitglass
 MAT gear GROUP 95-97 99-101
+;@KEEPFLAGS 29 30 35 36 57-60 111-114 116-119

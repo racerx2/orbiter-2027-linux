@@ -636,7 +636,7 @@ void CollBreakA::Torn (uint32_t id, const DentTorn &t)
 		ev.id = id; ev.kind = t.kind; ev.c = sl->piece[k].c + sdk.MeshOffset (vh, t.slot); ev.n = hit.n; ev.r = sl->piece[k].r; ev.playback = true;
 		if (s.fx) s.fx->Break (ev);
 	}
-	if (t.debris == "-" || t.kind != CBRK_PART || pk.empty () || !cfg.visuals || s.vis.Mode () == CollVisualA::MODE_OFF) return;
+	if (!cfg.debrisPlayback || t.debris == "-" || t.kind != CBRK_PART || pk.empty () || !cfg.visuals || s.vis.Mode () == CollVisualA::MODE_OFF) return;
 	if (cfgOk < 0) cfgOk = sdk.DebrisClassExists () ? 1 : 0;
 	if (!cfgOk) return;
 	CollSpawnA sp;

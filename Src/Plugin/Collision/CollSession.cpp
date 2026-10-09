@@ -7,6 +7,8 @@
 #include "CollBaseA.h"
 #include "CollDamageA.h"
 #include "CollDmgHost.h"
+#include "CollBreakA.h"
+#include "CollFxA.h"
 #include "CollSdkOrbiter.h"
 #include "CollSourceA.h"
 #include "CollWorldA.h"
@@ -478,6 +480,11 @@ void CollSession::Close ()
 	double f = n.frames ? (double)n.frames : 1.0, p = t.posts ? (double)t.posts : 1.0;
 	CollLogF ("Collision summary: frames=%llu contacts=%llu events=%llu writes=%llu probes=%llu vtx=%llu matrix=%llu notices=%llu spec=%llu free=%llu missed=%llu",
 		u (n.frames), u (n.contacts), u (n.events), u (n.writes), u (n.probes), u (n.vtx), u (n.matrix), u (n.notices), u (n.spec), u (n.free), u (n.missed));
+	{
+		const CollFxA *fx = dynamic_cast<const CollFxA *> (dmg->fx.get ());
+		const CollBreakA *bk = dynamic_cast<const CollBreakA *> (dmg->brk.get ());
+		CollLogF ("Collision dmg3: fx=%llu streams=%llu breaks=%llu reasserts=%llu", u (fx ? fx->Counters ().requests : 0), u (fx ? fx->Counters ().streams : 0), u (bk ? bk->breaks : 0), u (bk ? bk->reasserts : 0));
+	}
 	CollLogF ("Collision perf: prestep_mean_us=%.3f prestep_max_us=%.3f e2_us=%.3f e1_us=%.3f e3_us=%.3f post_us=%.3f build_ms=%.3f first_frame_ms=%.3f",
 		t.prestep / f, t.prestepMax, t.e2 / f, t.e1 / f, t.e3 / f, t.post / p, t.build * 1e-3, t.firstFrame * 1e-3);
 	phys->End ();

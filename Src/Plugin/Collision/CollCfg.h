@@ -30,6 +30,7 @@ struct CollCfgValues {
 	bool brk = true;                        // CollisionBreak (dmg3 P): parts, glass and interior break
 	int debrisMax = 8;                      // CollisionDebrisMax (dmg3 P): live debris vessels
 	double debrisLife = 1800;               // CollisionDebrisLife (dmg3 P) [s]
+	bool debrisPlayback = true;             // CollisionDebrisPlayback (dmg3 P): playback spawns debris as live vessels
 	bool fx = true;                         // CollisionFx (dmg3 F)
 	int fxMask = 15;                        // CollisionFxMask (dmg3 F): 1 flakes, 2 vent, 4 sparks, 8 dust
 	double fxIntensity = 1;                 // CollisionFxIntensity (dmg3 F): 0..2
@@ -66,6 +67,7 @@ template <class V, class F> void CollCfgFields (V &v, F &&f)
 	f ("CollisionBreak", v.brk);
 	f ("CollisionDebrisMax", v.debrisMax);
 	f ("CollisionDebrisLife", v.debrisLife);
+	f ("CollisionDebrisPlayback", v.debrisPlayback);
 	f ("CollisionFx", v.fx);
 	f ("CollisionFxMask", v.fxMask);
 	f ("CollisionFxIntensity", v.fxIntensity);

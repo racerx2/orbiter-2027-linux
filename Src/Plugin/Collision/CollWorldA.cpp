@@ -280,9 +280,9 @@ void CollPhysSession::WriteBack (std::vector<CollAWrite> &wl)
 				double rl = loc.length ();
 				double lng = std::atan2 (loc.z, loc.x), lat = rl > 0 ? std::asin (std::max (-1.0, std::min (1.0, loc.y/rl))) : 0.0;
 				double rp = sdk.Size (s.rbody);
-				bool near = rl < rp + 25e3 && std::find (belowLogged.begin (), belowLogged.end (), B.member[0]) == belowLogged.end ();  // elevation queried only within 25 km of the radius
-				double rt = near ? rp + sdk.Elevation (s.rbody, lng, lat) : rp;
-				if (near && rl < rt) {
+				bool inReach = rl < rp + 25e3 && std::find (belowLogged.begin (), belowLogged.end (), B.member[0]) == belowLogged.end ();  // elevation queried only within 25 km of the radius
+				double rt = inReach ? rp + sdk.Elevation (s.rbody, lng, lat) : rp;
+				if (inReach && rl < rt) {
 					belowLogged.push_back (B.member[0]);
 					Log (1, "Collision: state write of '%s' %.3f m below the terrain; Orbiter lifts it to the surface", sdk.Name (r->h).c_str (), rt - rl);
 				}
