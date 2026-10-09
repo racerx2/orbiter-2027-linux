@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -80,8 +81,6 @@ public:
 	CollH Base (CollH p, uint32_t i) override { auto *b = (const Body *)p; return i < b->base.size () ? b->base[i] : nullptr; }
 	void BaseEquPos (CollH base, double &lng, double &lat, double &rad) override { auto *b = (const Body *)base; lng = b->lng; lat = b->lat; rad = 0; }
 	int elevCalls = 0;
-	double Elevation (CollH planet, double, double) override { elevCalls++; return ((const Body *)planet)->elev; }
-	double PlanetPeriod (CollH) override { return 86164; }
 	double Mass (CollH h) override { for (auto &b : bodies) if (&b == h) return b.mass; Ves *v = V (h); return v ? v->rd.m : 0; }
 	double SimTime () override { return simT; }
 	double SimMJD () override { return mjd; }
@@ -262,5 +261,10 @@ public: // dmg3 area F
 	}
 	void FxDetach (CollH v) { for (auto &f : fx) if (f.v == v && f.alive) { f.alive = false; f.detached = true; f.lvl = nullptr; } } // vessel destroyed or ClearThrusterDefinitions
 	size_t FxLive () const { size_t n = 0; for (auto &f : fx) n += f.alive; return n; }
+public: // ground area G
+	std::function<double (double lng, double lat)> elevG; // terrain by position; empty: the body's elev
+	double periodG = 86164;                    // PlanetPeriod of every body; 0: not rotating
+	double Elevation (CollH planet, double lng, double lat) override { elevCalls++; return elevG ? elevG (lng, lat) : ((const Body *)planet)->elev; }
+	double PlanetPeriod (CollH) override { return periodG; }
 };
 #endif

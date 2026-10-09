@@ -1879,3 +1879,28 @@ TEST_CASE ("blast AddCellCuts: one VCUT record per cell, X events, collider and 
 	CHECK (vc);
 	CHECK (ColliderVCut (w, wa));
 }
+
+TEST_CASE ("ground: a ground event dents the vessel side with the block material, the ground side is skipped", "[ground]")
+{
+	Rig r;
+	uint32_t a = r.Add ("PB-A");
+	r.host.bases.push_back (CollDmgBaseObj { "Earth", "Habana", "BLOCK", 0, 0, 1, DENTB_BLOCK, Vector (10, 10, 10), 0, 0, 0, nullptr, (CollH)0x77 });
+	r.Begin ();
+	r.Frame ();
+	CollImpactEvent e = Hit (a, 0, 0, 10.0, 3.0e4);
+	e.s[1].owner = CollOwnerRef { 0, 0, -1, -1, -1 };
+	e.s[1].mesh = e.s[1].grp = e.s[1].tri = -1;
+	r.Frame ({ e });
+	const VesselDamageA *v = r.s.Damage (a);
+	REQUIRE (v);
+	double E[2], ea[2], Ev[2], eav[2];
+	DentMath::SplitEnergy (3.0e4, 0, 10.0, true, DentMath::DefaultMaterial (-1), DentMath::DefaultMaterial (DENTB_BLOCK), E, ea);
+	DentMath::SplitEnergy (3.0e4, 0, 10.0, true, DentMath::DefaultMaterial (-1), DentMath::DefaultMaterial (-1), Ev, eav);
+	CHECK (ea[0] != eav[0]);
+	CHECK (v->d.eabs == ea[0]);
+	CHECK (v->d.rec.size () >= 1);
+	CHECK (r.s.Buildings ().empty ());
+	CHECK (ColliderExact (r, a));
+	CHECK (r.sdk.Logged ("Collision dent t="));
+	CHECK_FALSE (r.sdk.Logged ("Collision building"));
+}

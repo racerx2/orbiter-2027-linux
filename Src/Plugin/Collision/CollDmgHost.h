@@ -63,6 +63,7 @@ public:
 	double DestroyEnergy (uint32_t id) override { return gv.Keys (id).destroyEnergy; }
 	bool BaseObject (int planet, int base, int obj, CollDmgBaseObj &out) override
 	{
+		if (base < 0) return false; // the ground side of an impact (CA-ground)
 		auto *o = gv.BaseObject (planet, base, obj);
 		if (!o) return false;
 		Copy (*o, out);

@@ -5,4 +5,5 @@ if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/CollSdk.cpp) # the counted SDK calls of E
 		list(APPEND COLL_UNITS CollSdk)
 	endif ()
 	list(APPEND COLL_UNITS CollVisualA CollBreakA CollFxA CollDamageA CollApiA)
+	list(APPEND COLL_UNITS CollGroundA) # ground impacts (design CA-ground 1)
 endif ()

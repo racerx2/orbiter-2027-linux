@@ -9,6 +9,7 @@
 #include "CollDmgHost.h"
 #include "CollBreakA.h"
 #include "CollFxA.h"
+#include "CollGroundA.h"
 #include "CollSdkOrbiter.h"
 #include "CollSourceA.h"
 #include "CollWorldA.h"
@@ -248,6 +249,7 @@ CollSession::CollSession (uint32_t s, const CollCfgValues &c) : serial (s), cfg 
 	dhost = std::make_unique<CollDmgHostOf<CollGeomSession, CollSession>> (*geom, *this);
 	dmg = std::make_unique<CollDmgSession> (*sdk, *dhost, cfg);
 	sink = std::make_unique<ShapeSinkA> (*dmg);
+	ground = std::make_unique<CollGroundA> (*sdk, cfg);
 }
 
 CollSession::~CollSession () = default;
@@ -277,6 +279,7 @@ void CollSession::PurgeVessel (uint32_t id)
 	geom->DeleteVessel (id);
 	phys->OnDeleteVessel (id);
 	dmg->OnDeleteVessel (id);
+	ground->Drop (id);
 }
 
 void CollSession::NewVessel (OBJHANDLE h, bool inStep)
@@ -353,6 +356,7 @@ std::string CollSession::Who (const CollOwnerRef &o)
 		OBJHANDLE h = Vessel (o.vesselId);
 		return h ? sdk->Name ((CollH)h) : "#" + std::to_string (o.vesselId);
 	}
+	if (CollGroundSide (o)) return "ground";
 	const CollBaseObjView *v = geom->bases ? geom->BaseObject (o.planet, o.base, o.obj) : nullptr;
 	if (v) return v->planet + ":" + v->base + " " + v->type + " #" + std::to_string (o.obj);
 	return "building " + std::to_string (o.planet) + ":" + std::to_string (o.base) + " #" + std::to_string (o.obj);
@@ -382,14 +386,21 @@ void CollSession::PreStep (double simt, double simdt)
 	phys->SetNoPair (np);
 	phys->PS3Physics (*shost);
 	Clock::time_point f = Clock::now ();
-	// PS4 damage
-	const std::vector<CollImpactEvent> &ev = phys->Events ();
+	// PS4 damage: the solver's events and the ground events (CA-ground)
+	std::vector<CollImpactEvent> ev = phys->Events ();
+	std::vector<CollFxContact> fc = phys->Contacts ();
+	std::vector<CollGroundVessel> gv;
+	for (uint32_t id = 1; id < vessel.size (); id++) {
+		const CollVesselGeom *vg = vessel[id] ? geom->Geom (id) : nullptr;
+		if (vg && vg->shape) gv.push_back (CollGroundVessel { id, (CollH)vessel[id], vg->shape });
+	}
+	ground->Frame (simt, simdt, gv, ev, fc);
 	for (const CollImpactEvent &x : ev) {
 		n.events++;
 		CollLogF ("Collision impact t=%.6f '%s' '%s' vn=%.4f m/s vsep=%.4f m/s E=%.6g J J=%.6g N s", x.t, Who (x.s[0].owner).c_str (), Who (x.s[1].owner).c_str (),
 			x.vn, x.vn_post, x.dKE, x.Jn);
 	}
-	dmg->Commit (ev, simt, &phys->Contacts ());
+	dmg->Commit (ev, simt, &fc);
 	Clock::time_point g = Clock::now ();
 	// PS5 notices: E1 CONTACT, then E3
 	phys->PS5Notices ();
@@ -412,6 +423,7 @@ void CollSession::TimeJump ()
 	static_cast<PhysGeomA &> (*pgeom).pvel.clear ();
 	phys->OnTimeJump ();
 	geom->TimeJump ();
+	ground->TimeJump ();
 	if (started) {                          // dmg3: effects and parts
 		if (dmg->fx) dmg->fx->TimeJump ();
 		if (dmg->brk) dmg->brk->TimeJump ();
