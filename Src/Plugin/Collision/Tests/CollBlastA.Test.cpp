@@ -143,3 +143,29 @@ TEST_CASE ("blast 4: per-frame cost for 64 cells below 0.5 ms", "[blast][budget]
 	CHECK (avg < 0.25);                                              // half the 0.5 ms budget as margin
 	CHECK (a.Partition ().size () == 1);
 }
+
+TEST_CASE ("blast 5: bond health is the bond area; unwelded islands join the nearest cell with one proximity bond", "[blast]")
+{
+	CollBlastInput in = Box (4, 6, 5000, 10);
+	CollBlastA a;
+	REQUIRE (a.Build (in));
+	for (uint32_t i = 0; i < a.bond.size (); i++) CHECK (a.Health (i) == (double)(float)a.bond[i].area);
+	size_t prox = 0; for (auto &b : a.bond) prox += b.prox;
+	CHECK (prox == 0);                                               // one welded hull: no proximity bond
+	CollBlastInput two = Box (4, 6, 5000, 10), sh = Box (4, 6, 5000, 10);
+	uint32_t wmax = 0; for (uint32_t w : two.w) wmax = std::max (wmax, w);
+	for (size_t i = 0; i < sh.v.size (); i++) { two.v.push_back (sh.v[i] + Vector (6, 0, 0)); two.w.push_back (sh.w[i] + wmax + 1); }
+	two.piece.insert (two.piece.end (), sh.piece.begin (), sh.piece.end ());
+	CollBlastA b;
+	REQUIRE (b.Build (two));
+	prox = 0; const CollBlastBond *pb = nullptr;
+	for (auto &x : b.bond) if (x.prox) prox++, pb = &x;
+	REQUIRE (prox == 1);
+	CHECK ((b.chunk[pb->a].c.x < 3) != (b.chunk[pb->b].c.x < 3));  // across the gap
+	CHECK (pb->area >= 0.1 * std::sqrt (b.Acell) * b.t - 1e-15);
+	CHECK (b.Partition ().size () == 1);
+	b.Force (Vector (0, 0, 2), Vector (0, 0, -1e5));
+	b.Spin (Vector (3, 0, 0), Vector (0, 0.2, 0));
+	CHECK (b.Step ().empty ());                                       // the first solve does not throw the island off
+	CHECK (b.Partition ().size () == 1);
+}

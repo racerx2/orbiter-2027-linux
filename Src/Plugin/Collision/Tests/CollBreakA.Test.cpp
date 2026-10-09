@@ -117,12 +117,12 @@ public:
 	bool DebrisClassExists () override { return cfgDebris; }
 	std::map<const V *, DebrisCaps> caps; std::map<const V *, MeshT *> debrisMesh; std::vector<std::pair<uint32_t, bool>> flags; std::map<const V *, CollStateWrite> created;
 protected:
-	void DoSetState (CollH, const CollStateWrite &) override {}
+	void DoSetState (CollH h, const CollStateWrite &st) override { states.push_back ({ X (h), st }); }
 	void DoSetAttitude (CollH, const Matrix &) override {}
 	void DoSetSpin (CollH h, const Vector &w) override { spins[X (h)] = w; }
 	void DoAddForce (CollH h, const Vector &F, const Vector &r) override { forces.push_back ({ X (h), { F, r } }); }
 public:
-	std::map<const V *, Vector> spins; std::vector<std::pair<const V *, std::pair<Vector, Vector>>> forces; // blast: SetSpin and AddForce calls
+	std::vector<std::pair<const V *, CollStateWrite>> states; std::map<const V *, Vector> spins; std::vector<std::pair<const V *, std::pair<Vector, Vector>>> forces; // blast: SetSpin and AddForce calls
 protected:
 	void DoSetTank (CollH, CollH, CollH) override {}
 	CollH DoCreateTank (CollH, double, double) override { return nullptr; }
@@ -666,12 +666,12 @@ MeshT BoxMesh ()
 struct BlastRig : Rig {
 	uint32_t a = 0;
 	BlastRig () { sdk.mesh.front () = BoxMesh (); sdk.files["Meshes/ship.col"] = "COLLIDER-V1\n"; cfg.blast = true; }
-	uint32_t Ship (const std::string &name) { a = Add (name); body.back ().v->size = 10; body.back ().v->empty = 5000; body.back ().v->rd.m = 5000; return a; }
+	uint32_t Ship (const std::string &name) { a = Add (name); body.back ().v->size = 10; body.back ().v->empty = 5000; body.back ().v->rd.m = 5000; body.back ().v->rd.pmi = Vector (2.7, 2.7, 2.7); return a; }
 	CollDamageHit K (double vn, double R = 1.5)
 	{
 		CollDamageHit h;
 		h.id = a; h.h = host.Vessel (a); h.mesh = 0; h.grp = 5; h.rec = -1; h.c = Vector (0.3, 0.2, 2); h.n = Vector (0, 0, 1); h.tdir = Vector (1, 0, 0); h.R = R;
-		h.vn = vn; h.eSpec = 0.5 * vn * vn; h.E = h.eSpec * 5000; h.Jn = 2500 * vn; h.dt = 0.02; h.mat = &kMat; h.simt = sdk.simt;
+		h.vn = vn; h.eSpec = 0.5 * vn * vn; h.E = h.eSpec * 5000; h.Jn = 2500 * vn; h.dt = 0.02; h.depth = 0.004 * vn; h.mat = &kMat; h.simt = sdk.simt;
 		return h;
 	}
 };
@@ -689,13 +689,17 @@ TEST_CASE ("blast P1: a 70 m/s hit separates cells; SpawnCells makes one debris 
 	CHECK (r.B ().Pending () >= 1);
 	const std::vector<uint32_t> *kb = r.S ().BrokenBonds (a, 0);
 	REQUIRE (kb); CHECK (!kb->empty ());
-	CHECK (*kb == r.B ().Blast (a, 0)->Broken ());
+	CHECK (*kb == r.B ().Blast (a, 0)->BrokenPairs ());          // K rows: chunk key pairs
+	for (uint32_t p : *kb) { CHECK (p / 65536 < p % 65536); CHECK (p % 65536 < 64); }
+	CHECK (r.B ().Blast (a, 0)->BondsOfPairs (*kb) == r.B ().Blast (a, 0)->Broken ());
 	CHECK (r.sdk.Logged ("Collision blast break 'A' slot=0 cells="));
 	r.sdk.simt = 0.02;
 	r.B ().Post (0.02, 0.02);
 	REQUIRE (!r.B ().Debris ().empty ());
 	CHECK (r.sdk.Calls ("VesselCreate") == (int)r.B ().Debris ().size ());
 	Vector Pm, Hm; double scale = 0;
+	const BFake::V *pv = r.body.front ().v;
+	size_t moved = 0, nv = 0;
 	for (auto &d : r.B ().Debris ()) {
 		CHECK (d.parent == a);
 		size_t keep = 0;
@@ -711,6 +715,14 @@ TEST_CASE ("blast P1: a 70 m/s hit separates cells; SpawnCells makes one debris 
 		CHECK (d.row.mass > 2);
 		REQUIRE (d.row.pose.size () == 1);
 		CHECK (d.row.pose[0].grp == std::vector<uint16_t> { 0, 1, 2, 3, 4, 5 });
+		const MeshT *dm = r.sdk.debrisMesh[(const BFake::V *)d.h];      // VCUT KEEP evaluated with the parent's sites: far vertices fold onto the cell
+		REQUIRE (dm);
+		const MeshT &tp = r.sdk.mesh.front ();
+		for (size_t g = 0; g < 6; g++) for (size_t i = 0; i < tp.grp[g].vtx.size (); i++) {
+			Vector x (tp.grp[g].vtx[i].x, tp.grp[g].vtx[i].y, tp.grp[g].vtx[i].z), y (dm->grp[g].vtx[i].x, dm->grp[g].vtx[i].y, dm->grp[g].vtx[i].z);
+			Vector yr = y - d.row.pose[0].p;                        // rest frame: identity pose
+			nv++; if ((yr - x).length () > 1e-3) moved++;
+		}
 		const BFake::V *dv = (const BFake::V *)d.h;
 		REQUIRE (r.sdk.created.count (dv)); REQUIRE (r.sdk.caps.count (dv)); REQUIRE (r.sdk.spins.count (dv));
 		const CollStateWrite &st = r.sdk.created[dv];
@@ -720,19 +732,27 @@ TEST_CASE ("blast P1: a 70 m/s hit separates cells; SpawnCells makes one debris 
 		Vector v = st.rvel, cv = st.rpos, w = r.sdk.spins[dv];      // parent at rest at the origin: relative kick, centroid, spin
 		CHECK (std::fabs (v.length () - 0.1 * 70) < 1e-9);
 		CHECK (cv.z > 1.0);
+		CHECK (std::fabs (w & v) <= 1e-9 * std::max (1.0, w.length () * v.length ())); // kick torque from our lever arm: spin normal to the kick
 		Pm += v * m; Hm += crossp (v, cv) * m + Vector (cp.pmi.x * w.x, cp.pmi.y * w.y, cp.pmi.z * w.z) * m;
 		scale = std::max (scale, m * v.length () * (1 + cv.length ()));
 	}
-	REQUIRE (!r.B ().kicks.empty ());
-	size_t nf = 0;
-	for (auto &f : r.sdk.forces) {
-		REQUIRE (f.first == r.body.front ().v);                    // parent only
-		Pm += f.second.first * 0.02; Hm += crossp (f.second.first, f.second.second) * 0.02; nf++;
+	CHECK (moved > nv / 2);
+	REQUIRE (r.B ().kicks.size () == r.B ().Debris ().size ());
+	CHECK (r.sdk.forces.empty ());                                  // no AddForce over an unknown step
+	size_t ns = 0;
+	for (auto &x : r.sdk.states) if (x.first == pv) ns++;
+	CHECK (ns == r.B ().kicks.size ());
+	for (auto &k : r.B ().kicks) {
+		CHECK (k.M == 5000);
+		Pm += k.dv * k.M;
+		Hm += Vector (2.7 * k.dw.x, 2.7 * k.dw.y, 2.7 * k.dw.z) * k.M;
 	}
-	CHECK (nf == r.B ().kicks.size ());
+	Vector vlast; for (auto &x : r.sdk.states) if (x.first == pv) vlast = x.second.rvel;
+	Vector vsum; for (auto &k : r.B ().kicks) vsum += k.dv;
+	CHECK ((vlast - r.B ().kicks.back ().dv).length () < 1e-12);   // each write: rd.v (unchanged in the fake) + its kick
 	CHECK (Pm.length () <= 1e-9 * std::max (1.0, scale));
 	CHECK (Hm.length () <= 1e-9 * std::max (1.0, scale));
-	printf ("blast P1: %zu debris, %llu breaks, parent+debris |P| %.3g |H| %.3g (scale %.3g)\n", r.B ().Debris ().size (), (unsigned long long)r.B ().blastBreaks, Pm.length (), Hm.length (), scale);
+	printf ("blast P1: %zu debris, %llu breaks, parent+debris |P| %.3g |H| %.3g (scale %.3g), %zu/%zu debris vertices folded\n", r.B ().Debris ().size (), (unsigned long long)r.B ().blastBreaks, Pm.length (), Hm.length (), scale, moved, nv);
 	for (auto &d : r.B ().Debris ()) for (auto &pr : r.B ().Pairs ()) if (pr.debris == d.id) CHECK ((pr.a == a || pr.b == a));
 	CHECK (!r.B ().Pairs ().empty ());                              // pair filter parent-debris
 }
@@ -821,4 +841,20 @@ TEST_CASE ("blast P4: cfg.blast off keeps the part, tear and tip gates; on, part
 		CHECK (r.Cut () == nullptr);                                // on: no section cut
 		CHECK (r.B ().tears == 0);
 	}
+}
+
+TEST_CASE ("blast P5: the contact force uses the contact time, not the frame: 30 and 60 fps break the same bonds", "[dmg3P][blast]")
+{
+	std::vector<uint32_t> k[2]; uint64_t n[2];
+	for (int f = 0; f < 2; f++) {
+		BlastRig r; uint32_t a = r.Ship ("A");
+		CollDamageHit h = r.K (40);
+		h.dt = f ? 1.0 / 60 : 1.0 / 30;
+		r.B ().Hit (h);
+		REQUIRE (r.B ().Blast (a, 0));
+		k[f] = r.B ().Blast (a, 0)->BrokenPairs (); n[f] = r.B ().blastBreaks;
+	}
+	CHECK (k[0] == k[1]);
+	CHECK (n[0] == n[1]);
+	CHECK (!k[0].empty ());
 }

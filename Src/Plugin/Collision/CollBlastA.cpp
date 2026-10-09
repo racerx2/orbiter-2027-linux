@@ -170,6 +170,32 @@ bool CollBlastA::Build (const CollBlastInput &in, const std::vector<Vector> *giv
 		if (!(b.n.length () > 0)) b.n = Vector (1, 0, 0);
 		bond.push_back (b);
 	}
+	// unwelded islands: each joins the nearest chunk of the connected set with a proximity bond
+	{
+		std::vector<uint32_t> comp (chunk.size ());
+		for (size_t i = 0; i < comp.size (); i++) comp[i] = (uint32_t)i;
+		auto F = [&] (uint32_t x) { while (comp[x] != x) x = comp[x] = comp[comp[x]]; return x; };
+		for (auto &b : bond) { uint32_t x = F (b.a), y = F (b.b); if (x != y) comp[std::max (x, y)] = std::min (x, y); }
+		double sp = std::sqrt (Acell);
+		for (uint32_t k = 1; k < chunk.size (); k++) {
+			if (F (k) == F (0) || F (k) != k) continue;
+			uint32_t bi = 0, bj = 0; double bd = 1e300;
+			for (uint32_t i = 0; i < chunk.size (); i++) if (F (i) == k) for (uint32_t j = 0; j < chunk.size (); j++) if (F (j) == F (0)) {
+				double d = (chunk[i].c - chunk[j].c).length2 ();
+				if (d < bd) bd = d, bi = i, bj = j;
+			}
+			CollBlastBond b;
+			b.a = std::min (bi, bj); b.b = std::max (bi, bj); b.prox = true;
+			double gap = std::max (0.0, std::sqrt (bd) - sp);
+			b.len = std::max (lmin, sp - gap);
+			b.area = b.len * t;
+			b.c = (chunk[bi].c + chunk[bj].c) * 0.5;
+			b.n = Unit (chunk[b.b].c - chunk[b.a].c);
+			if (!(b.n.length () > 0)) b.n = Vector (1, 0, 0);
+			bond.push_back (b);
+			comp[k] = F (0);
+		}
+	}
 	// asset, family, first actor
 	std::vector<NvBlastChunkDesc> cd (chunk.size ());
 	for (size_t i = 0; i < chunk.size (); i++) {
@@ -216,11 +242,10 @@ bool CollBlastA::Build (const CollBlastInput &in, const std::vector<Vector> *giv
 	st.maxSolverIterationsPerFrame = BLAST_ITER; st.graphReductionLevel = 0;
 	solver = Nv::Blast::ExtStressSolver::create (*family, st);
 	if (!solver) { Release (); return false; }
-	for (uint32_t n = 0; n < g.nodeCount; n++) {
-		uint32_t ci = g.chunkIndices[n];
-		if (ci >= chunk.size ()) continue;
-		solver->setNodeInfo (n, (float)chunk[ci].mass, (float)(chunk[ci].area * t), N3 (chunk[ci].c));
-	}
+	solver->setAllNodesInfoFromLL ((float)BLAST_RHO);           // chunk volume = area * t: node mass = the skin mass
+	meanMass = 0;
+	for (auto &c : chunk) meanMass += c.area * t * BLAST_RHO;
+	meanMass /= (double)chunk.size ();
 	Material (BLAST_SIGMA_Y, BLAST_SIGMA_U);
 	solver->notifyActorCreated (*main);
 	accel = NvBlastExtDamageAcceleratorCreate (asset, 1);
@@ -309,8 +334,7 @@ std::vector<CollBlastSplit> CollBlastA::Step ()
 	if (impD > 0 && impR > 0 && accel && nb) {
 		NvBlastExtImpactSpreadDamageDesc d;
 		d.damage = (float)(impD * maxArea); d.position[0] = (float)impC.x; d.position[1] = (float)impC.y; d.position[2] = (float)impC.z; // health is area: 1 breaks the strongest bond
-		double rc = impR + std::sqrt (Acell);                          // graph distance to the neighbours of the crushed cells
-		d.minRadius = (float)rc; d.maxRadius = (float)(rc + std::sqrt (Acell));
+		d.minRadius = (float)impR; d.maxRadius = (float)(impR + std::sqrt (Acell)); // falloff over one cell spacing
 		NvBlastExtProgramParams pp (&d, nullptr, accel);
 		NvBlastDamageProgram prog { NvBlastExtImpactSpreadGraphShader, NvBlastExtImpactSpreadSubgraphShader };
 		std::vector<NvBlastBondFractureData> bf (nb);
@@ -321,9 +345,13 @@ std::vector<CollBlastSplit> CollBlastA::Step ()
 		Split (&out);
 	}
 	if (!force.empty () || spin) {
-		for (auto &f : force) solver->addForce (*main, N3 (f.first), N3 (f.second), Nv::Blast::ExtForceMode::FORCE);
-		if (spin) solver->addCentrifugalAcceleration (*main, N3 (com), N3 (w));
-		solver->update ();
+		int nit = force.empty () ? 1 : BLAST_CONVERGE;              // impact frame: repeat until converged
+		for (int it = 0; it < nit; it++) {
+			for (auto &f : force) solver->addForce (*main, N3 (f.first), N3 (f.second / meanMass), Nv::Blast::ExtForceMode::ACCELERATION); // the solver equalizes node masses
+			if (spin) solver->addCentrifugalAcceleration (*main, N3 (com), N3 (w));
+			solver->update ();
+			if (solver->converged () || solver->getOverstressedBondCount () > 0) break;
+		}
 		if (solver->getOverstressedBondCount () > 0) {
 			NvBlastFractureBuffers cmd { 0, 0, nullptr, nullptr };
 			solver->generateFractureCommands (*main, cmd);
@@ -387,4 +415,32 @@ int CollBlastA::ChunkOfPiece (int piece) const
 {
 	for (size_t i = 0; i < chunk.size (); i++) if (chunk[i].piece == piece) return (int)i;
 	return -1;
+}
+
+uint32_t CollBlastA::ChunkKey (uint32_t c) const { return chunk[c].cell >= 0 ? (uint32_t)chunk[c].cell : (uint32_t)(site.size () + chunk[c].piece); }
+
+std::vector<uint32_t> CollBlastA::BrokenPairs () const
+{
+	std::vector<uint32_t> r;
+	for (uint32_t b : Broken ()) { uint32_t x = ChunkKey (bond[b].a), y = ChunkKey (bond[b].b); r.push_back (std::min (x, y) * 65536u + std::max (x, y)); }
+	std::sort (r.begin (), r.end ());
+	r.erase (std::unique (r.begin (), r.end ()), r.end ());
+	return r;
+}
+
+std::vector<uint32_t> CollBlastA::BondsOfPairs (const std::vector<uint32_t> &pairs) const
+{
+	std::map<uint32_t, uint32_t> idx;
+	for (size_t i = 0; i < bond.size (); i++) { uint32_t x = ChunkKey (bond[i].a), y = ChunkKey (bond[i].b); idx[std::min (x, y) * 65536u + std::max (x, y)] = (uint32_t)i; }
+	std::vector<uint32_t> r;
+	for (uint32_t p : pairs) { auto it = idx.find (p); if (it != idx.end ()) r.push_back (it->second); }
+	std::sort (r.begin (), r.end ());
+	return r;
+}
+
+double CollBlastA::Health (uint32_t b) const
+{
+	if (!main || b >= bond.size () || bond[b].asset == UINT32_MAX) return 0;
+	const float *h = NvBlastActorGetBondHealths (main, BlastLog);
+	return h ? h[bond[b].asset] : 0;
 }

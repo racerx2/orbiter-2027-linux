@@ -26,6 +26,8 @@ constexpr double BLAST_SHEAR     = 0.6;      // shear limits = this * compressio
 constexpr int    BLAST_ITER      = 64;       // solver iterations per frame
 constexpr double BLAST_LIVE      = 2.0;      // solver runs this long after a live hit [s]
 constexpr double BLAST_KICK      = 0.1;      // separation speed = this * vn
+constexpr int    BLAST_CONVERGE  = 8;        // impact frame: add + update at most this often until converged
+constexpr double BLAST_TAU_MIN   = 0.002;    // contact time floor [s]: F = Jn / max (depth / vn, this)
 
 struct CollBlastInput {                      // triangles of one slot, rest frame of its static class
 	std::vector<Vector> v;                   // 3 corners per triangle
@@ -35,7 +37,7 @@ struct CollBlastInput {                      // triangles of one slot, rest fram
 	int maxCells = 64;                       // cfg.blastCells
 };
 struct CollBlastChunk { int cell = -1, piece = -1; Vector c; double area = 0, mass = 0; };
-struct CollBlastBond { uint32_t a = 0, b = 0; double area = 0, len = 0; Vector c, n; uint32_t asset = 0; }; // chunks a < b; asset: Blast bond index
+struct CollBlastBond { uint32_t a = 0, b = 0; double area = 0, len = 0; Vector c, n; uint32_t asset = 0; bool prox = false; }; // chunks a < b; asset: Blast bond index; prox: joins an unwelded island
 struct CollBlastSplit { std::vector<uint32_t> chunks; double mass = 0; Vector c, n; }; // one actor separated from the main one: chunks, mass, centroid, unit kick direction (rest frame)
 
 class CollBlastA {
@@ -58,13 +60,17 @@ public:
 	std::vector<uint32_t> MainChunks () const;
 	int ChunkOfCell (uint32_t cell) const;
 	int ChunkOfPiece (int piece) const;
+	uint32_t ChunkKey (uint32_t c) const;                   // cell, or site count + piece
+	std::vector<uint32_t> BrokenPairs () const;             // K rows: key a * 65536 + key b (a < b), sorted
+	std::vector<uint32_t> BondsOfPairs (const std::vector<uint32_t> &pairs) const;
+	double Health (uint32_t b) const;                       // remaining bond area [m^2]
 	bool Ok () const { return main != nullptr; }
 	std::vector<Vector> site;                               // rest frame, %.9g
 	std::vector<int> cellOf;                                // per input triangle: cell, -1 animated
 	std::vector<CollBlastChunk> chunk;
 	std::vector<CollBlastBond> bond;
 	std::vector<uint8_t> gone;                              // chunks that left the main actor
-	double t = 0, Acell = 0, Atotal = 0, maxArea = 0;
+	double t = 0, Acell = 0, Atotal = 0, maxArea = 0, meanMass = 1;
 	static uint64_t logErrors;                              // Blast error messages seen
 private:
 	struct Buf { std::vector<unsigned char> b; void *Get (size_t n); };

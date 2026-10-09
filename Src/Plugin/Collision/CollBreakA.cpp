@@ -47,11 +47,11 @@ Vector P (const DentVtx &v) { return Vector (v.x, v.y, v.z); }
 
 bool Lists (const DentRecord &r, uint16_t g) { return r.grp.empty () || std::find (r.grp.begin (), r.grp.end (), g) != r.grp.end (); }
 
-Vector Disp (const std::vector<const DentRecord *> &rec, uint16_t g, const Vector &x)
+Vector Disp (const std::vector<const DentRecord *> &rec, uint16_t g, const Vector &x, const DentSites *sites)
 {
 	std::vector<const DentParams *> l;
 	for (const DentRecord *r : rec) if (Lists (*r, g)) l.push_back (&r->p);
-	return DentMath::Fold (l.data (), l.size (), x, true); // dmg3 tear: cuts as maps
+	return DentMath::Fold (l.data (), l.size (), x, true, nullptr, sites); // dmg3 tear: cuts as maps; blast: VCUT with the slot's sites
 }
 
 Vector Unit (const Vector &v) { double l = v.length (); return l > 0 ? v / l : v; }
@@ -98,7 +98,7 @@ static double Q9 (double v) // round trip through the saved %.9g text
 	return strtod (b, nullptr);
 }
 
-std::vector<DentVtx> CollBreakA::PieceVertices (const std::vector<DentVtx> &rest, uint16_t g, const DentDebrisPose &p, const std::vector<DentRecord> &rec)
+std::vector<DentVtx> CollBreakA::PieceVertices (const std::vector<DentVtx> &rest, uint16_t g, const DentDebrisPose &p, const std::vector<DentRecord> &rec, const DentSites *sites)
 {
 	std::vector<const DentRecord *> rp;
 	for (auto &r : rec) rp.push_back (&r);
@@ -106,7 +106,7 @@ std::vector<DentVtx> CollBreakA::PieceVertices (const std::vector<DentVtx> &rest
 	std::vector<DentVtx> out = rest;
 	for (size_t i = 0; i < rest.size (); i++) {
 		Vector x = P (rest[i]);
-		Vector y = mul (A, x + Disp (rp, g, x)) + p.p, n = mul (A, Vector (rest[i].nx, rest[i].ny, rest[i].nz));
+		Vector y = mul (A, x + Disp (rp, g, x, sites)) + p.p, n = mul (A, Vector (rest[i].nx, rest[i].ny, rest[i].nz));
 		out[i].x = (float)y.x, out[i].y = (float)y.y, out[i].z = (float)y.z;
 		out[i].nx = (float)n.x, out[i].ny = (float)n.y, out[i].nz = (float)n.z;
 	}
@@ -275,7 +275,7 @@ void CollBreakA::Hit (const CollDamageHit &h)
 		double L = sdk.Size (vh);
 		bool tip = TipGate (h, src), sec = !tip && TearGate (h, src, L);
 		for (size_t k = (size_t)h.rec + 1; k < vd->d.rec.size () && (tip || sec); k++) // one tear per crush or hinge record: later cuts on the slot came from it
-			if (vd->d.rec[k].p.mode == DENTM_CUT && vd->d.rec[k].slot == h.mesh) tip = sec = false;
+			if ((vd->d.rec[k].p.mode == DENTM_CUT || vd->d.rec[k].p.mode == DENTM_VCUT) && vd->d.rec[k].slot == h.mesh) tip = sec = false;
 		if (tip || sec) {
 			uint32_t ev = ++events;
 			CollCutPlan pl = PlanCut (h.id, *sl, h, src, L, tip, ev);
@@ -286,6 +286,7 @@ void CollBreakA::Hit (const CollDamageHit &h)
 	std::vector<const DentRecord *> rec; // m5: after the tear block appended its cut
 	if (const VesselDamageA *vd = s.Damage (h.id)) for (auto &r : vd->d.rec) if (r.slot == h.mesh && r.key == sl->key) rec.push_back (&r);
 	std::vector<int> pk;
+	const DentSites *hs = s.Sites (h.id, h.mesh);
 	double R = std::max (h.R, 1e-3);
 	for (size_t k = 0; k < sl->piece.size (); k++) {
 		const CollPieceA &p = sl->piece[k];
@@ -305,7 +306,7 @@ void CollBreakA::Hit (const CollDamageHit &h)
 			double q = (x - cr).length2 () / (R * R);
 			if (q > 1) inside = false;
 			kmax = std::max (kmax, DentMath::Kernel (q));
-			if (p.tier != CBRK_GLASS) u = std::max (u, Disp (rec, g, x).length ());
+			if (p.tier != CBRK_GLASS) u = std::max (u, Disp (rec, g, x, hs).length ());
 		}
 		if (p.comps > 1 && !inside) continue;
 		bool brk = false;
@@ -558,7 +559,7 @@ bool CollBreakA::MakeTearSpawn (uint32_t id, CollH vh, const CollDamageHit &hit,
 	DentRecord kc = cut;
 	kc.p.bits |= DENTC_KEEP;
 	d.rec.push_back (kc);
-	for (auto &ps : d.pose) for (uint16_t g : ps.grp) for (auto &v : PieceVertices (sl.v[g], g, ps, d.rec)) rmax = std::max (rmax, Vector (v.x, v.y, v.z).length ()); // M1: post-cut extent
+	for (auto &ps : d.pose) for (uint16_t g : ps.grp) for (auto &v : PieceVertices (sl.v[g], g, ps, d.rec, s.Sites (id, mesh))) rmax = std::max (rmax, Vector (v.x, v.y, v.z).length ()); // M1: post-cut extent
 	CollH ph = s.VesselHandle (id);
 	double M = ph ? sdk.EmptyMass (ph) : 0;
 	double m = sl.area > 0 ? M * Afront / sl.area : 0;
@@ -686,7 +687,7 @@ double CollBreakA::Mass (uint32_t parent, const CollSlotA &sl, const std::vector
 	return std::max (1.0, std::min (m, BRK_MASS_MAX * M));
 }
 
-bool CollBreakA::BuildMesh (CollH mesh, const DentDebris &d, Geo &geo)
+bool CollBreakA::BuildMesh (CollH mesh, const DentDebris &d, Geo &geo, uint32_t parent)
 {
 	std::set<uint16_t> in;
 	for (auto &ps : d.pose) in.insert (ps.grp.begin (), ps.grp.end ());
@@ -699,7 +700,7 @@ bool CollBreakA::BuildMesh (CollH mesh, const DentDebris &d, Geo &geo)
 		if (!sdk.TplGroup (mesh, g, t)) return false;
 		std::vector<DentVtx> rest (t.nvtx);
 		if (t.nvtx) std::memcpy (rest.data (), t.vtx, sizeof (DentVtx) * t.nvtx);
-		std::vector<DentVtx> v = PieceVertices (rest, g, ps, d.rec);
+		std::vector<DentVtx> v = PieceVertices (rest, g, ps, d.rec, s.Sites (parent, d.slot));
 		sdk.MeshEdit (mesh, g, 0, v.data (), (uint32_t)v.size ());
 		geo.emplace_back (std::move (v), std::vector<uint16_t> (t.idx, t.idx + t.nidx));
 	}
@@ -763,7 +764,7 @@ void CollBreakA::Spawn (CollSpawnA &sp, double simt)
 	CollH mesh = sdk.MeshLoad (sp.mesh.c_str ());
 	if (!mesh) { Log ("Collision: debris mesh '%s' not loaded, no debris", sp.mesh.c_str ()); return; }
 	Geo geo;
-	if (!BuildMesh (mesh, sp.row, geo)) { sdk.MeshFree (mesh); Log ("Collision: debris mesh '%s' does not match its slot, no debris", sp.mesh.c_str ()); return; }
+	if (!BuildMesh (mesh, sp.row, geo, sp.parent)) { sdk.MeshFree (mesh); Log ("Collision: debris mesh '%s' does not match its slot, no debris", sp.mesh.c_str ()); return; }
 	uint32_t fnv = 0;
 	CollSdk::DebrisCaps caps = Caps (geo, sp.mass, &fnv);
 	CollVesselRead rd {};
@@ -780,18 +781,24 @@ void CollBreakA::Spawn (CollSpawnA &sp, double simt)
 	sdk.DebrisSetup (h, mesh, caps);
 	sdk.SetAttitude (h, rd.R);
 	sdk.SetSpin (h, rd.w + sp.dw);
-	if (sp.blast) { // blast: the parent takes -m dv at the centroid and the couple of the debris spin over one step
-		double dt = postDt > 0 ? postDt : 0.02;
-		auto push = [&] (const Vector &F, const Vector &r) { sdk.AddForce (vh, F, r); if (kicks.size () < 256) kicks.push_back ({ sp.parent, F, r, dt }); };
-		push (sp.dv * (-caps.mass / dt), sp.cv);
-		Vector L (caps.pmi.x * sp.dw.x, caps.pmi.y * sp.dw.y, caps.pmi.z * sp.dw.z);
-		Vector tau = L * (-caps.mass / dt);
-		double tl = tau.length ();
-		if (tl > 0) {
-			Vector a = Unit (crossp (tau, std::fabs (tau.x) < 0.9 * tl ? Vector (1, 0, 0) : Vector (0, 1, 0)));
-			Vector G = crossp (a, tau) * 0.5;
-			push (G, sp.cv + a); push (G * -1.0, sp.cv - a);
-		}
+	if (sp.blast) { // blast: the parent takes -m dv and the debris spin through its state, momentum exact
+		CollVesselRead pr {};
+		sdk.ReadVessel (vh, pr, CVR_NOWEIGHT);
+		double M = pr.m > 0 ? pr.m : sdk.EmptyMass (vh);
+		Vector J = sp.dv * caps.mass;                                         // vessel frame
+		Vector H = crossp (sp.dv, sp.cv) * caps.mass + Vector (caps.pmi.x * sp.dw.x, caps.pmi.y * sp.dw.y, caps.pmi.z * sp.dw.z) * caps.mass; // Orbiter convention: H = m crossp (v, r) + m pmi w
+		Vector dvp = M > 0 ? J * (-1.0 / M) : Vector ();
+		Vector dwp (pr.pmi.x > 0 && M > 0 ? -H.x / (M * pr.pmi.x) : 0, pr.pmi.y > 0 && M > 0 ? -H.y / (M * pr.pmi.y) : 0, pr.pmi.z > 0 && M > 0 ? -H.z / (M * pr.pmi.z) : 0);
+		CollStateWrite ps {};
+		ps.rbody = pr.gref;
+		Vector xr, vr; Matrix Rr;
+		if (ps.rbody) sdk.GlobalState (ps.rbody, xr, vr, Rr);
+		ps.rpos = pr.x - xr; ps.rvel = pr.v + mul (pr.R, dvp) - vr; ps.vrot = pr.w + dwp;
+		ps.arot = Vector (std::atan2 (pr.R (1, 2), pr.R (2, 2)), -std::asin (std::max (-1.0, std::min (1.0, pr.R (0, 2)))), std::atan2 (pr.R (0, 1), pr.R (0, 0))); // inverse of Vessel::SetGlobalOrientation
+		sdk.SetState (vh, ps);
+		sdk.SetAttitude (vh, pr.R);
+		sdk.SetSpin (vh, pr.w + dwp);
+		if (kicks.size () < 256) kicks.push_back ({ sp.parent, dvp, dwp, M });
 	}
 	CollDebrisA d;
 	d.h = h; d.mesh = mesh; d.parent = sp.parent; d.other = sp.other; d.event = sp.event; d.birth = simt; d.row = sp.row; d.fnv = fnv;
@@ -1030,7 +1037,7 @@ void CollBreakA::Rebuild (double simt)
 			const CollSlotA *sl = vh ? Slot (pid, row.slot) : nullptr;
 			CollH mesh = sl && sl->ok && sl->key == row.key ? sdk.MeshLoad (sl->name.c_str ()) : nullptr;
 			Geo geo;
-			if (!mesh || !BuildMesh (mesh, row, geo)) {
+			if (!mesh || !BuildMesh (mesh, row, geo, pid)) {
 				if (mesh) sdk.MeshFree (mesh);
 				Log ("Collision: debris '%s' mesh missing or changed, deleted", row.name.c_str ());
 				sdk.VesselDelete (h);
@@ -1138,9 +1145,9 @@ CollBlastSlotA *CollBreakA::BlastSlot (uint32_t id, uint32_t mesh, CollH vh, con
 		for (uint16_t g : sl.piece[pc].grp) if (!sl.keep.count (g) && !(sl.usr[g] & 0x2) && !Hidden (id, mesh, g)) all = false;
 		if (all) removed.push_back ((uint32_t)c);
 	}
-	if (const std::vector<uint32_t> *kb = s.BrokenBonds (id, mesh)) bonds = *kb;
+	if (const std::vector<uint32_t> *kb = s.BrokenBonds (id, mesh)) bonds = bs.b->BondsOfPairs (*kb); // K rows hold chunk key pairs
 	if (!removed.empty () || !bonds.empty ()) bs.b->Restore (bonds, removed);
-	bs.recorded = bs.b->Broken ();
+	bs.recorded = bs.b->BrokenPairs ();
 	Log ("Collision blast '%s' slot=%u cells=%zu chunks=%zu bonds=%zu t=%.4g restored=%zu/%zu", sdk.Name (vh).c_str (), mesh, bs.b->site.size (), bs.b->chunk.size (), bs.b->bond.size (), bs.b->t, removed.size (), bonds.size ());
 	return &bs;
 }
@@ -1153,7 +1160,10 @@ void CollBreakA::BlastHit (const CollDamageHit &h, CollH vh, const CollSlotA &sl
 	CollAffine Fsi = CollInverse (StaticPose (sl, F));
 	Vector ofs = sdk.MeshOffset (vh, h.mesh);
 	Vector cr = CollApply (Fsi, h.c - ofs);
-	if (h.Jn > 0 && h.dt > 0) bs->b->Force (cr, CollApplyDir (Fsi, Unit (h.n) * (-h.Jn / h.dt))); // contact force on this side: inward
+	double depth = h.depth;
+	if (!(depth > 0) && h.rec >= 0) if (const VesselDamageA *vd = s.Damage (h.id)) if ((size_t)h.rec < vd->d.rec.size () && vd->d.rec[h.rec].p.mode == DENTM_CRUSH) depth = vd->d.rec[h.rec].p.P;
+	double tau = std::max (h.vn > 0 && depth > 0 ? depth / h.vn : 0.0, BLAST_TAU_MIN); // physical contact time: frame rate and warp do not matter
+	if (h.Jn > 0) bs->b->Force (cr, CollApplyDir (Fsi, Unit (h.n) * (-h.Jn / tau))); // contact force on this side: inward
 	if (h.mat && h.mat->sigma_c > 0) { double k = std::max (0.1, std::min (10.0, h.mat->sigma_c / BLAST_SIGMA_C)); bs->b->Material (BLAST_SIGMA_Y * k, BLAST_SIGMA_U * k); }
 	double dmg = cfg.blastESpec > 0 ? std::max (0.0, std::min (1.0, h.eSpec / cfg.blastESpec)) : 0.0;
 	if (dmg > 0 && h.R > 0) bs->b->Impact (cr, h.R, dmg);
@@ -1173,7 +1183,7 @@ void CollBreakA::BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, Coll
 	sdk.ReadVessel (vh, rd, CVR_NOWEIGHT);
 	bs.b->Spin (CollApply (Fsi, Vector () - ofs), CollApplyDir (Fsi, rd.w));
 	std::vector<CollBlastSplit> sp = bs.b->Step ();
-	std::vector<uint32_t> br = bs.b->Broken (), nb;
+	std::vector<uint32_t> br = bs.b->BrokenPairs (), nb;
 	std::set_difference (br.begin (), br.end (), bs.recorded.begin (), bs.recorded.end (), std::back_inserter (nb));
 	if (!nb.empty ()) { s.AddBrokenBonds (id, mesh, nb); bs.recorded = br; }
 	blastSteps++;

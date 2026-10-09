@@ -59,7 +59,7 @@ struct CollBlastSlotA {                                   // blast: one vessel s
 	std::vector<uint16_t> groups;                         // static-class groups in the cells
 	std::vector<uint32_t> recorded;                       // broken bonds already stored
 };
-struct CollKickA { uint32_t parent = 0; Vector F, r; double dt = 0; }; // blast: parent force of one debris kick (tests)
+struct CollKickA { uint32_t parent = 0; Vector dv, dw; double M = 0; }; // blast: parent velocity and spin change of one debris kick, parent mass (tests)
 
 class CollBreakA : public CollDmgSink {
 public:
@@ -87,7 +87,7 @@ public:
 	void SpawnCells (const CollBlastBreak &b);            // blast: cell cuts, torn rows, one debris with KEEP VCUT copies, parent impulse
 	CollBlastA *Blast (uint32_t id, uint32_t mesh) { auto it = blast.find ({ id, mesh }); return it == blast.end () ? nullptr : it->second.b.get (); }
 	uint64_t blastBreaks = 0, blastSteps = 0; double blastMs = 0; std::vector<CollKickA> kicks;
-	static std::vector<DentVtx> PieceVertices (const std::vector<DentVtx> &rest, uint16_t g, const DentDebrisPose &p, const std::vector<DentRecord> &rec); // A(q) (rest + records) + p
+	static std::vector<DentVtx> PieceVertices (const std::vector<DentVtx> &rest, uint16_t g, const DentDebrisPose &p, const std::vector<DentRecord> &rec, const DentSites *sites = nullptr); // A(q) (rest + records with the slot's sites) + p
 private:
 	struct VesB { std::vector<DentTorn> rows; size_t adopted = 0; CollShape *sh = nullptr; bool seen = false; CollDamageHit last; bool haveLast = false; };
 	void Assert (uint32_t id, VesB &b);                   // visual flags of hidden groups
@@ -99,7 +99,7 @@ private:
 	void SyncRows (uint32_t parent);
 	void PairCheck (double simt);
 	void Tear (uint32_t id, CollH h, const CollDamageHit &hit, const CollSlotA &sl, const std::vector<int> &pk, uint32_t event, bool playback);
-	bool BuildMesh (CollH mesh, const DentDebris &d, std::vector<std::pair<std::vector<DentVtx>, std::vector<uint16_t>>> &geo); // flags and piece vertices of a private copy
+	bool BuildMesh (CollH mesh, const DentDebris &d, std::vector<std::pair<std::vector<DentVtx>, std::vector<uint16_t>>> &geo, uint32_t parent); // flags and piece vertices of a private copy
 	bool Section (uint32_t id, CollH vh, const CollDamageHit &hit, const CollSlotA &sl, const CollCutPlan &pl, uint32_t event); // dmg3 tear: apply a planned tear
 	bool MakeTearSpawn (uint32_t id, CollH vh, const CollDamageHit &hit, const CollSlotA &sl, const std::vector<uint16_t> &front, const std::vector<uint16_t> &straddle, const DentRecord &cut, uint32_t event, CollSpawnA &sp);
 	std::vector<CollAffine> Poses (uint32_t id, uint32_t mesh, size_t ng);
