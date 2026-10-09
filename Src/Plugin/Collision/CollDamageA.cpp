@@ -53,6 +53,11 @@ void CollDmgSession::AddTorn (uint32_t id, const DentTorn &t)
 	Get (id).d.torn.push_back (t);
 }
 
+void CollDmgSession::SetDebris (uint32_t id, const std::vector<DentDebris> &d)
+{
+	Get (id).d.debris = d;
+}
+
 void CollDmgSession::Log (const char *fmt, ...)
 {
 	char b[1024];

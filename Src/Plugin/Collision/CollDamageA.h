@@ -97,6 +97,7 @@ public:
 	std::unique_ptr<CollDmgSink> brk, fx;
 	std::map<std::pair<uint32_t, uint32_t>, double> noPair;                  // vessel ids (low, high) -> simt the filter was set
 	void AddTorn (uint32_t id, const DentTorn &t);                           // P: record a torn row (saved, recorder T event)
+	void SetDebris (uint32_t id, const std::vector<DentDebris> &d);          // P: the vessel's live debris rows (saved)
 private:
 	VesselDamageA *Find (uint32_t id);
 	VesselDamageA &Get (uint32_t id);
