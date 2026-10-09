@@ -1948,7 +1948,7 @@ void DentMath::FormatVessel (const DentVesselText &v, const char *indent, std::v
 		if (ind.size () + s.size () <= lim) lines.push_back (ind + s);
 		else if (s.size () <= lim) lines.push_back (s);
 	}
-	if (v.rec.empty () && v.eabs == 0.0 && v.flags == 0 && v.torn.empty () && v.debris.empty () && v.sites.empty () && v.brokenBonds.empty ()) return;
+	if (v.rec.empty () && v.eabs == 0.0 && v.flags == 0 && v.torn.empty () && v.debris.empty () && v.sites.empty () && v.brokenBonds.empty () && v.weakBonds.empty ()) return;
 	std::string s = ind + "XDMG ";
 	PutInt (s, DENT_VERSION);
 	s += ' ';
@@ -1996,7 +1996,7 @@ void DentMath::FormatVessel (const DentVesselText &v, const char *indent, std::v
 	}
 	std::vector<size_t> ext; // dmg3 extension section: written ordinals of new-build records
 	for (size_t j = 0; j < ok.size (); j++) if (!Legacy (v.rec[ok[j]].p)) ext.push_back (j);
-	if (ext.empty () && v.torn.empty () && v.debris.empty () && v.sites.empty () && v.brokenBonds.empty ()) return;
+	if (ext.empty () && v.torn.empty () && v.debris.empty () && v.sites.empty () && v.brokenBonds.empty () && v.weakBonds.empty ()) return;
 	s = ind + "XDMG ";
 	PutInt (s, DENT_VERSION_X);
 	s += ' '; PutInt (s, ok.size ());
@@ -2015,6 +2015,7 @@ void DentMath::FormatVessel (const DentVesselText &v, const char *indent, std::v
 	for (const DentDebris &d : v.debris) FormatDebris (d, ind, lines);
 	for (const DentSites &x : v.sites) FormatSites (x, ind, lines);
 	for (const auto &b : v.brokenBonds) FormatBonds (b.first, b.second, ind, lines);
+	for (const auto &b : v.weakBonds) FormatBonds (b.first, b.second, ind, lines, "W");
 }
 
 void DentMath::FormatSites (const DentSites &x, const std::string &ind, std::vector<std::string> &lines)
@@ -2027,10 +2028,10 @@ void DentMath::FormatSites (const DentSites &x, const std::string &ind, std::vec
 	SiteLines (h, x.s, (size_t)DENT_LINE_MAX, lines);
 }
 
-void DentMath::FormatBonds (uint32_t slot, const std::vector<uint32_t> &b, const std::string &ind, std::vector<std::string> &lines)
+void DentMath::FormatBonds (uint32_t slot, const std::vector<uint32_t> &b, const std::string &ind, std::vector<std::string> &lines, const char *tag)
 {
 	if (b.empty ()) return;
-	std::string h = ind + "XDMGM K ";
+	std::string h = ind + "XDMGM " + tag + " ";
 	PutInt (h, slot);
 	BondLines (h, b, (size_t)DENT_LINE_MAX, lines);
 }
@@ -2367,21 +2368,24 @@ void DentVesselParser::V2 (const std::string &line)
 	Split (line.c_str (), t);
 	int so = m_sOpen;
 	m_sOpen = 0;
-	if (t.size () >= 2 && IEq (t[0].p, t[0].n, "XDMGM") && (IEq (t[1].p, t[1].n, "S") || IEq (t[1].p, t[1].n, "K"))) { // blast: sites and broken bonds
+	if (t.size () >= 2 && IEq (t[0].p, t[0].n, "XDMGM") && (IEq (t[1].p, t[1].n, "S") || IEq (t[1].p, t[1].n, "K") || IEq (t[1].p, t[1].n, "W"))) { // blast: sites, broken and weakened bonds
 		m_tornOpen = false, m_qOpen = 0;
 		bool more = false;
-		if (IEq (t[1].p, t[1].n, "K")) { // XDMGM K <slot> <b,b,...>
+		bool w = IEq (t[1].p, t[1].n, "W");
+		if (w || IEq (t[1].p, t[1].n, "K")) { // XDMGM K <slot> <b,b,...>; XDMGM W <slot> <pair,h,pair,h,...>
 			uint32_t slot;
 			std::vector<uint32_t> b;
+			auto &L = w ? m_weak : m_bonds;
+			int open = w ? 3 : 2;
 			if (t.size () != 4 || !ParseInt (t[2], slot) || !ParseBondTok (t[3], b, more)) { m_skipped++; return; }
-			if (so == 2 && !m_bonds.empty () && m_bonds.back ().first == slot) {
-				std::vector<uint32_t> &o = m_bonds.back ().second;
-				if (o.size () + b.size () <= DENT_MAX_GRPLIST) o.insert (o.end (), b.begin (), b.end ());
+			if (so == open && !L.empty () && L.back ().first == slot) {
+				std::vector<uint32_t> &o = L.back ().second;
+				if (o.size () + b.size () <= (w ? 2 : 1) * (size_t)DENT_MAX_GRPLIST) o.insert (o.end (), b.begin (), b.end ());
 			} else {
-				for (size_t i = 0; i < m_bonds.size (); i++) if (m_bonds[i].first == slot) { m_bonds.erase (m_bonds.begin () + i); break; }
-				m_bonds.push_back ({ slot, b });
+				for (size_t i = 0; i < L.size (); i++) if (L[i].first == slot) { L.erase (L.begin () + i); break; }
+				L.push_back ({ slot, b });
 			}
-			m_sOpen = more ? 2 : 0;
+			m_sOpen = more ? open : 0;
 			return;
 		}
 		DentSites x; // XDMGM S <slot> <key8> <n> x y z ...
@@ -2532,7 +2536,8 @@ void DentVesselParser::Finish (DentVesselText &out)
 		else skipped += (int)m_debris.size ();
 	}
 	if (m_sLeft) m_sites.pop_back (), m_sLeft = 0, skipped++;
-	out.sites = m_sites, out.brokenBonds = m_bonds; // blast
+	out.sites = m_sites, out.brokenBonds = m_bonds, out.weakBonds = m_weak; // blast
+	for (auto &x : out.weakBonds) if (x.second.size () & 1) x.second.pop_back (); // pairs only
 	for (const auto &n : m_names)
 		if (n.first < 4096) { // readers only; no huge tables from a bad slot
 			if (out.slotName.size () <= n.first) out.slotName.resize (n.first + 1);

@@ -180,6 +180,7 @@ public: // dmg3 area P
 	virtual uint32_t TouchdownCount (CollH) { return 0; }
 	virtual bool  Touchdown (CollH, uint32_t, Vector &) { return false; }   // vessel frame
 	virtual void  SetEmptyMass (CollH, double) {}               // blast: the parent loses the mass of its broken cells
+	virtual void  SetPMI (CollH, const Vector &) {}             // blast: and their inertia
 	virtual bool  ThrusterPos (CollH, CollH, Vector &) { return false; }    // vessel frame
 protected:
 	virtual int   DoGroupFlag (CollH, uint32_t, uint32_t, bool) { return -1; }

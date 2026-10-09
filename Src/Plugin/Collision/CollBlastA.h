@@ -55,7 +55,8 @@ public:
 	void Spin (const Vector &com, const Vector &w);         // centrifugal load of the vessel spin [rad/s] about com
 	void Impact (const Vector &c, double R, double damage); // impact spread damage 0..1 within R of c
 	std::vector<CollBlastSplit> Step ();                    // impact, stress update, fracture, split: actors that left the main one
-	void Restore (const std::vector<uint32_t> &bonds, const std::vector<uint32_t> &removed); // load: broken bonds and removed chunks, split, no reports
+	void Restore (const std::vector<uint32_t> &bonds, const std::vector<uint32_t> &removed, const std::vector<uint32_t> &weak = {}); // load: broken bonds, removed chunks, weakened bonds (W rows), split, no reports
+	std::vector<uint32_t> WeakPairs () const;               // W rows: chunk key pair, remaining health x 1e6 (1..999999), sorted by pair
 	std::vector<uint32_t> Broken () const;                  // broken bond indices (ours), sorted
 	std::vector<std::vector<uint32_t>> Partition () const;  // chunks of every actor, sorted
 	std::vector<uint32_t> MainChunks () const;

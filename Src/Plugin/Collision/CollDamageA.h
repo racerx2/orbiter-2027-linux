@@ -103,8 +103,11 @@ public:
 	void SetSites (uint32_t id, const DentSites &s);                         // store or replace the slot's sites (saved, recorder S event)
 	const DentSites *Sites (uint32_t id, uint32_t slot) const;
 	void AddCellCuts (uint32_t id, uint32_t slot, const std::vector<uint32_t> &cells); // one VCUT record per cell, recorder X events, dirty flush
+	size_t Room (uint32_t id) const { auto it = vessel.find (id); auto lt = laterCuts.find (id); size_t n = (it == vessel.end () ? 0 : it->second.d.rec.size ()) + (lt == laterCuts.end () ? 0 : lt->second); return n < DENT_MAX_VESSEL ? DENT_MAX_VESSEL - n : 0; } // blast: records still free
 	void AddBrokenBonds (uint32_t id, uint32_t slot, const std::vector<uint32_t> &bonds); // saved, recorder K event
 	const std::vector<uint32_t> *BrokenBonds (uint32_t id, uint32_t slot) const;
+	void SetWeakBonds (uint32_t id, uint32_t slot, const std::vector<uint32_t> &w); // blast: weakened bonds of a slot (pair, health x 1e6, ...), replaces
+	const std::vector<uint32_t> *WeakBonds (uint32_t id, uint32_t slot) const;
 	bool AddCut (uint32_t id, const DentRecord &r, bool playback);          // dmg3 tear: append a cut record (cap, match, frameT); deferred inside Dent
 	size_t PendingCuts () const { return later.size (); }                    // dmg3 tear: deferred cut and torn actions
 	bool InDent () const { return inDent; }

@@ -59,6 +59,9 @@ struct CollBlastSlotA {                                   // blast: one vessel s
 	std::vector<uint16_t> groups;                         // static-class groups in the cells
 	std::vector<uint32_t> recorded;                       // broken bonds already stored
 	double cutMass = 0;                                   // mass of the chunks gone at build (load) [kg]
+	std::vector<uint32_t> cut;                            // chunks gone at build (load)
+	bool full = false;                                    // record limit reached, logged
+	std::vector<uint32_t> weak;                           // weakened bonds already stored (W rows)
 };
 struct CollKickA { uint32_t parent = 0; Vector dv, dw; double M = 0; }; // blast: parent velocity and spin change of one debris kick, parent mass (tests)
 
@@ -88,7 +91,8 @@ public:
 	void SpawnCells (const CollBlastBreak &b);            // blast: cell cuts, torn rows, one debris with KEEP VCUT copies, parent impulse
 	CollBlastA *Blast (uint32_t id, uint32_t mesh) { auto it = blast.find ({ id, mesh }); return it == blast.end () ? nullptr : it->second.b.get (); }
 	uint64_t blastBreaks = 0, blastSteps = 0; double blastMs = 0; std::vector<CollKickA> kicks;
-	double MassCut (uint32_t id) const { auto it = massCut.find (id); return it == massCut.end () ? 0 : it->second.second; } // blast: empty mass removed [kg]
+	struct MassCutA { double m0 = 0, cut = 0; Vector pmi0, icut; }; // blast: empty mass and PMI before cuts, mass and inertia removed
+	double MassCut (uint32_t id) const { auto it = massCut.find (id); return it == massCut.end () ? 0 : it->second.cut; } // blast: empty mass removed [kg]
 	static std::vector<DentVtx> PieceVertices (const std::vector<DentVtx> &rest, uint16_t g, const DentDebrisPose &p, const std::vector<DentRecord> &rec, const DentSites *sites = nullptr); // A(q) (rest + records with the slot's sites) + p
 private:
 	struct VesB { std::vector<DentTorn> rows; size_t adopted = 0; CollShape *sh = nullptr; bool seen = false; CollDamageHit last; bool haveLast = false; };
@@ -124,9 +128,11 @@ private:
 	std::vector<CollPairA> pairs;
 	std::map<std::pair<uint32_t, uint32_t>, CollBlastSlotA> blast; // blast: (vessel, slot)
 	double postDt = 0;                                    // blast: last post-step frame [s]
-	std::map<uint32_t, std::pair<double, double>> massCut; // blast: vessel -> (empty mass before cuts, mass removed)
-	void CutMass (uint32_t id, CollH vh, double m);       // blast: lower the parent's empty mass
-	void LoadMass ();                                     // blast: first post-step after load, cut mass from the saved cells
+	std::map<uint32_t, MassCutA> massCut;                 // blast: per vessel
+	std::set<uint32_t> massPending;                       // blast: loaded vessels whose saved cut is not applied yet
+	void CutMass (uint32_t id, CollH vh, double m, const Vector &icut); // blast: lower the parent's empty mass and PMI
+	void LoadMass ();                                     // blast: after load, cut mass from the saved cells
+	double BlastMass (uint32_t id, uint32_t mesh, CollH vh); // blast: the slot's share of the empty mass before cuts
 	std::vector<CollFreeA> freeMesh;                      // meshes of deleted debris, freed at the Post after OnDeleteVessel, or at End
 	uint32_t maxId = 0, events = 0, debrisSeq = 0;
 	int cfgOk = -1;                                       // CollDebris.cfg probe: -1 not yet

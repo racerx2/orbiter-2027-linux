@@ -306,6 +306,7 @@ protected:
 	}
 public: // dmg3 area P
 	void SetEmptyMass (CollH v, double m) override { if (m > 0) Ves (v)->SetEmptyMass (m); }
+	void SetPMI (CollH v, const Vector &p) override { if (p.x > 0 && p.y > 0 && p.z > 0) Ves (v)->SetPMI (O (p)); }
 	CollH MeshLoad (const char *name) override
 	{
 		std::string n (name ? name : "");

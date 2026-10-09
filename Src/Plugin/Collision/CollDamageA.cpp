@@ -235,6 +235,21 @@ const std::vector<uint32_t> *CollDmgSession::BrokenBonds (uint32_t id, uint32_t 
 	return nullptr;
 }
 
+void CollDmgSession::SetWeakBonds (uint32_t id, uint32_t slot, const std::vector<uint32_t> &w)
+{
+	auto &v = Get (id).d.weakBonds;
+	for (size_t i = 0; i < v.size (); i++) if (v[i].first == slot) { if (w.empty ()) v.erase (v.begin () + (long)i); else v[i].second = w; return; }
+	if (!w.empty ()) v.push_back ({ slot, w });
+}
+
+const std::vector<uint32_t> *CollDmgSession::WeakBonds (uint32_t id, uint32_t slot) const
+{
+	auto it = vessel.find (id);
+	if (it == vessel.end ()) return nullptr;
+	for (auto &x : it->second.d.weakBonds) if (x.first == slot) return &x.second;
+	return nullptr;
+}
+
 void CollDmgSession::SetDebris (uint32_t id, const std::vector<DentDebris> &d)
 {
 	Get (id).d.debris = d;
@@ -531,7 +546,7 @@ void CollDmgSession::DoRepair (VesselDamageA &v, bool playback)
 	v.d.eabs = 0;
 	v.d.flags = 0;
 	v.d.torn.clear (), v.d.debris.clear ();
-	v.d.brokenBonds.clear (); // blast: sites stay (mesh geometry)
+	v.d.brokenBonds.clear (), v.d.weakBonds.clear (); // blast: sites stay (mesh geometry)
 	if (brk) brk->Repair (v.id);
 	if (fx) fx->DropVessel (v.id, host.Vessel (v.id));
 	for (uint32_t m : meshes) SyncMirror (v, m); // cur := rp; the pass writes rp to sent vertices
@@ -1336,7 +1351,7 @@ void CollDmgSession::SaveLines (std::vector<std::string> &out)
 		for (uint32_t i = 0, nv = sdk.VesselCount (); i < nv; i++) { hs.push_back (sdk.Vessel (i)); live.push_back (CollLiveVessel { sdk.Name (hs[i]), sdk.ClassName (hs[i]) }); }
 		for (size_t i = 0; i < hs.size (); i++) {
 			const VesselDamageA *v = Damage (host.IdOf (hs[i]));
-			if (!v || (v->d.rec.empty () && v->d.eabs == 0 && v->d.flags == 0 && v->d.verbatim.empty () && v->d.sites.empty () && v->d.brokenBonds.empty ())) continue;
+			if (!v || (v->d.rec.empty () && v->d.eabs == 0 && v->d.flags == 0 && v->d.verbatim.empty () && v->d.sites.empty () && v->d.brokenBonds.empty () && v->d.weakBonds.empty ())) continue;
 			DentVesselText d = v->d;
 			for (size_t r = 0; r < d.rec.size (); r++) {
 				CollDmgSlot s;

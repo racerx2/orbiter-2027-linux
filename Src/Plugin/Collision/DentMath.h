@@ -142,6 +142,7 @@ struct DentVesselText {
 	std::vector<DentDebris> debris;               // dmg3: live debris spawned from this vessel (area P rebuilds them on load)
 	std::vector<DentSites> sites;                 // blast: Voronoi sites per slot (XDMGM S rows)
 	std::vector<std::pair<uint32_t, std::vector<uint32_t>>> brokenBonds; // blast: slot -> broken bond indices (XDMGM K rows)
+	std::vector<std::pair<uint32_t, std::vector<uint32_t>>> weakBonds; // blast: slot -> chunk key pair, remaining health x 1e6, ... (XDMGM W rows)
 };
 // building damage section (9.4)
 struct DentBaseObjText { uint32_t index; std::string type; double x, z, eabs; uint32_t flags; }; // OBJ line
@@ -215,7 +216,7 @@ namespace DentMath {
 	size_t Apply (const DentParams &p, const std::vector<std::vector<DentVtx>> &rest, std::vector<std::vector<DentVtx>> &cur,
 		const uint16_t *grp, size_t ngrp, std::vector<std::vector<uint8_t>> *dirty, const DentVCut *vc); // blast: a VCUT record applies vc's set of its kind
 	void   FormatSites (const DentSites &s, const std::string &ind, std::vector<std::string> &lines); // blast: XDMGM S rows (continued with a trailing ',')
-	void   FormatBonds (uint32_t slot, const std::vector<uint32_t> &b, const std::string &ind, std::vector<std::string> &lines); // blast: XDMGM K rows
+	void   FormatBonds (uint32_t slot, const std::vector<uint32_t> &b, const std::string &ind, std::vector<std::string> &lines, const char *tag = "K"); // blast: XDMGM K rows (W: weakened bonds)
 	void   FormatSitesEvent (const DentSites &s, std::vector<std::string> &payload); // blast: recorder V payloads <slot> <key8> <n> <first> x y z ..., each <= 180
 	bool   ParseSitesEvent (const char *payload, DentSites &s, uint32_t &n, uint32_t &first); // blast: s.s holds this payload's sites only
 	void   FormatBondsEvent (uint32_t slot, const std::vector<uint32_t> &b, std::vector<std::string> &payload); // blast: recorder K payloads
@@ -290,7 +291,8 @@ private:
 	std::vector<DentTorn> m_torn;                         // dmg3: XDMGM T rows
 	std::vector<DentSites> m_sites;                       // blast: XDMGM S rows
 	std::vector<std::pair<uint32_t, std::vector<uint32_t>>> m_bonds; // blast: XDMGM K rows
-	int m_sOpen = 0;                                      // blast: 1 the last S row continues, 2 the last K row continues
+	std::vector<std::pair<uint32_t, std::vector<uint32_t>>> m_weak; // blast: XDMGM W rows
+	int m_sOpen = 0;                                      // blast: 1 the last S row continues, 2 the last K row continues, 3 the last W row
 	uint32_t m_sLeft = 0;                                 // blast: sites still expected by the open S row
 	std::vector<DentDebris> m_debris;                     // dmg3: XDMGM B, Q and XDMGD B rows
 	int m_qOpen = 0;                                      // dmg3: 1 the last Q row continues, 2 the last XDMGD B row continues

@@ -34,6 +34,7 @@ struct CollBlastBreak {                                  // blast: one actor tha
 	std::vector<uint32_t> pieces;                        // animated pieces (CollBreakA piece indices of the slot)
 	double mass = 0;                                     // [kg]
 	Vector centroid, dv, dw;                             // vessel frame: centre of mass; separation velocity and spin relative to the parent
+	Vector inertia;                                      // vessel frame: point-mass inertia diagonal of the chunks about the vessel origin [kg m^2]
 	double simt = 0;
 };
 struct CollBreakEvent { uint32_t id = 0; int kind = 0; Vector c, n; double r = 0; bool playback = false; }; // vessel frame (L3)

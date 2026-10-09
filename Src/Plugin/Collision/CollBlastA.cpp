@@ -363,7 +363,7 @@ std::vector<CollBlastSplit> CollBlastA::Step ()
 	return out;
 }
 
-void CollBlastA::Restore (const std::vector<uint32_t> &bonds, const std::vector<uint32_t> &removed)
+void CollBlastA::Restore (const std::vector<uint32_t> &bonds, const std::vector<uint32_t> &removed, const std::vector<uint32_t> &weak)
 {
 	if (!main) return;
 	std::vector<uint8_t> rm (chunk.size (), 0), br (bond.size (), 0);
@@ -375,6 +375,17 @@ void CollBlastA::Restore (const std::vector<uint32_t> &bonds, const std::vector<
 		NvBlastBondFractureData f;
 		f.userdata = (uint32_t)i; f.nodeIndex0 = nodeOf[bond[i].a]; f.nodeIndex1 = nodeOf[bond[i].b]; f.health = 1e9f;
 		bf.push_back (f);
+	}
+	std::map<uint32_t, uint32_t> idx;
+	for (size_t i = 0; i < bond.size (); i++) { uint32_t x = ChunkKey (bond[i].a), y = ChunkKey (bond[i].b); idx[std::min (x, y) * 65536u + std::max (x, y)] = (uint32_t)i; }
+	for (size_t k = 0; k + 1 < weak.size (); k += 2) { // weakened bonds: take the lost health off
+		auto it = idx.find (weak[k]);
+		if (it == idx.end () || br[it->second] || bond[it->second].asset == UINT32_MAX || weak[k + 1] == 0 || weak[k + 1] >= 1000000u) continue;
+		uint32_t i = it->second;
+		NvBlastBondFractureData f;
+		f.userdata = i; f.nodeIndex0 = nodeOf[bond[i].a]; f.nodeIndex1 = nodeOf[bond[i].b];
+		f.health = (float)(bond[i].area * (1.0 - weak[k + 1] * 1e-6));
+		if (f.health > 0) bf.push_back (f);
 	}
 	if (bf.empty ()) return;
 	NvBlastFractureBuffers fb { (uint32_t)bf.size (), 0, bf.data (), nullptr };
@@ -425,6 +436,26 @@ std::vector<uint32_t> CollBlastA::BrokenPairs () const
 	for (uint32_t b : Broken ()) { uint32_t x = ChunkKey (bond[b].a), y = ChunkKey (bond[b].b); r.push_back (std::min (x, y) * 65536u + std::max (x, y)); }
 	std::sort (r.begin (), r.end ());
 	r.erase (std::unique (r.begin (), r.end ()), r.end ());
+	return r;
+}
+
+std::vector<uint32_t> CollBlastA::WeakPairs () const
+{
+	std::vector<std::pair<uint32_t, uint32_t>> w;
+	if (!main) return {};
+	const float *h = NvBlastActorGetBondHealths (main, BlastLog);
+	if (!h) return {};
+	for (size_t i = 0; i < bond.size (); i++) {
+		if (bond[i].asset == UINT32_MAX || !(h[bond[i].asset] > 0.0f) || !(bond[i].area > 0)) continue;
+		double f = h[bond[i].asset] / bond[i].area;
+		long q = std::lround (f * 1e6);
+		if (q >= 1000000 || (float)h[bond[i].asset] >= (float)bond[i].area) continue;
+		uint32_t x = ChunkKey (bond[i].a), y = ChunkKey (bond[i].b);
+		w.push_back ({ std::min (x, y) * 65536u + std::max (x, y), (uint32_t)std::max (1L, q) });
+	}
+	std::sort (w.begin (), w.end ());
+	std::vector<uint32_t> r;
+	for (auto &p : w) r.push_back (p.first), r.push_back (p.second);
 	return r;
 }
 

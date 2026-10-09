@@ -204,6 +204,7 @@ public: // dmg3 area P
 	std::deque<MeshP> meshP; std::vector<std::string> callsP; std::map<const Ves *, DebrisCaps> debrisP;
 	bool debrisCfgP = true;
 	void SetEmptyMass (CollH v, double m) override { Ves *x = V (v); if (!x) return; double o = EmptyMass (v); emptyMassE[x] = m; x->rd.m += m - o; callsP.push_back ("SetEmptyMass"); } // total mass follows
+	void SetPMI (CollH v, const Vector &p) override { Ves *x = V (v); if (x) x->rd.pmi = p; }
 	CollH MeshLoad (const char *name) override
 	{
 		for (auto &t : tpls) if (name && t.name == name) { meshP.push_back ({ t.grp, false }); callsP.push_back ("MeshLoad"); return &meshP.back (); }

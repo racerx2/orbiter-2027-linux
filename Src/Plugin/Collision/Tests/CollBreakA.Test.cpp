@@ -54,6 +54,7 @@ public:
 	void ReadVessel (CollH h, CollVesselRead &o, uint32_t) override { o = X (h)->rd; }
 	double EmptyMass (CollH h) override { return X (h)->empty; }
 	void SetEmptyMass (CollH h, double m) override { V *x = X (h); x->rd.m += m - x->empty; x->empty = m; } // total mass follows
+	void SetPMI (CollH h, const Vector &p) override { X (h)->rd.pmi = p; }
 	bool Recording (CollH) override { return false; }
 	bool Playback (CollH h) override { return X (h)->playback; }
 	int DamageModel (CollH) override { return 1; }
@@ -748,10 +749,12 @@ TEST_CASE ("blast P1: a 70 m/s hit separates cells; SpawnCells makes one debris 
 	CHECK (cut > 0);
 	CHECK (std::fabs (cut - dsum) <= 1e-6 * dsum);                  // the parent loses what flies off
 	CHECK (pv->empty == 5000 - cut); CHECK (pv->rd.m == 5000 - cut);
+	Vector pp = pv->rd.pmi;                                         // the parent's PMI without the debris inertia
+	CHECK ((pp.x < 2.7 || pp.y < 2.7));
 	for (auto &k : r.B ().kicks) {
 		CHECK (k.M == 5000 - cut);
 		Pm += k.dv * k.M;
-		Hm += Vector (2.7 * k.dw.x, 2.7 * k.dw.y, 2.7 * k.dw.z) * k.M;
+		Hm += Vector (pp.x * k.dw.x, pp.y * k.dw.y, pp.z * k.dw.z) * k.M;
 	}
 	Vector vlast; for (auto &x : r.sdk.states) if (x.first == pv) vlast = x.second.rvel;
 	Vector vsum; for (auto &k : r.B ().kicks) vsum += k.dv;
@@ -761,6 +764,18 @@ TEST_CASE ("blast P1: a 70 m/s hit separates cells; SpawnCells makes one debris 
 	printf ("blast P1: %zu debris, %llu breaks, parent+debris |P| %.3g |H| %.3g (scale %.3g), %zu/%zu debris vertices folded\n", r.B ().Debris ().size (), (unsigned long long)r.B ().blastBreaks, Pm.length (), Hm.length (), scale, moved, nv);
 	for (auto &d : r.B ().Debris ()) for (auto &pr : r.B ().Pairs ()) if (pr.debris == d.id) CHECK ((pr.a == a || pr.b == a));
 	CHECK (!r.B ().Pairs ().empty ());                              // pair filter parent-debris
+	for (auto &d : r.B ().Debris ()) {                              // blast debris rows save and parse with their KEEP VCUT records
+		DentVesselText vt; vt.debris.push_back (d.row);
+		std::vector<std::string> lines; DentMath::FormatVessel (vt, "", lines);
+		DentVesselParser p; for (auto &l : lines) p.Line (l.c_str ());
+		DentVesselText o; p.Finish (o);
+		REQUIRE (o.debris.size () == 1);
+		REQUIRE (o.debris[0].rec.size () == d.row.rec.size ());
+		for (size_t i = 0; i < d.row.rec.size (); i++) {
+			CHECK (o.debris[0].rec[i].p.mode == d.row.rec[i].p.mode); CHECK (o.debris[0].rec[i].p.P == d.row.rec[i].p.P);
+			CHECK (o.debris[0].rec[i].p.bits == d.row.rec[i].p.bits); CHECK (o.debris[0].rec[i].p.R > 0);
+		}
+	}
 }
 
 TEST_CASE ("blast P2: a small hit breaks nothing; Blast runs only within 2 s of a hit", "[dmg3P][blast]")
@@ -893,8 +908,49 @@ TEST_CASE ("blast P6: the parent's empty mass drops by the broken cells, a reloa
 	CHECK (std::fabs (q.B ().MassCut (b) - cut) <= 1e-9 * cut);   // once per load
 	r.B ().Repair (a);
 	CHECK (r.body.front ().v->empty == 5000); CHECK (r.body.front ().v->rd.m == 5000);
+	for (double c : { r.body.front ().v->rd.pmi.x, r.body.front ().v->rd.pmi.y, r.body.front ().v->rd.pmi.z }) CHECK (std::fabs (c - 2.7) < 1e-9); // PMI back
 	CHECK (r.B ().MassCut (a) == 0);
 	BlastRig z; uint32_t e = z.Ship ("A");
 	z.B ().Post (0, 0.02);
 	CHECK (z.B ().MassCut (e) == 0); CHECK (z.body.front ().v->empty == 5000); // no sites: no cut
+}
+
+TEST_CASE ("blast P7: bonds weakened without breaking are saved as W rows and a reload restores their health", "[dmg3P][blast]")
+{
+	for (double v : { 20.0, 70.0 }) {
+		INFO ("v " << v);
+		BlastRig r; uint32_t a = r.Ship ("A");
+		r.B ().Hit (r.K (v));
+		CollBlastA *x = r.B ().Blast (a, 0);
+		REQUIRE (x);
+		r.B ().Post (0.02, 0.02);
+		const std::vector<uint32_t> *wb = r.S ().WeakBonds (a, 0);
+		REQUIRE (wb); REQUIRE (!wb->empty ());
+		CHECK (*wb == x->WeakPairs ());
+		CHECK (wb->size () % 2 == 0);
+		for (size_t k = 1; k < wb->size (); k += 2) { CHECK ((*wb)[k] >= 1); CHECK ((*wb)[k] < 1000000u); }
+		const DentVesselText &vt = r.S ().Damage (a)->d;
+		std::vector<std::string> lines; DentMath::FormatVessel (vt, "", lines);
+		for (auto &l : lines) CHECK (l.size () <= 200);
+		DentVesselParser p; for (auto &l : lines) p.Line (l.c_str ());
+		DentVesselText o; p.Finish (o);
+		CHECK (o.weakBonds == vt.weakBonds); CHECK (o.brokenBonds == vt.brokenBonds); CHECK (o.sites.size () == vt.sites.size ());
+		BlastRig q; uint32_t b = q.Ship ("A");
+		q.S ().SetSites (b, o.sites[0]);
+		for (auto &kb : o.brokenBonds) q.S ().AddBrokenBonds (b, kb.first, kb.second);
+		for (auto &w : o.weakBonds) q.S ().SetWeakBonds (b, w.first, w.second);
+		for (auto &rc : vt.rec) if (rc.p.mode == DENTM_VCUT) REQUIRE (q.S ().AddCut (b, rc, true));
+		q.B ().Post (0, 0.02);                                       // load: built and restored without a hit
+		CollBlastA *y = q.B ().Blast (b, 0);
+		REQUIRE (y);
+		REQUIRE (y->bond.size () == x->bond.size ());
+		size_t weak = 0;
+		for (uint32_t i = 0; i < x->bond.size (); i++) {
+			CHECK (std::fabs (y->Health (i) - x->Health (i)) <= 2e-6 * x->bond[i].area + 1e-9);
+			if (x->Health (i) > 0 && (float)x->Health (i) < (float)x->bond[i].area) weak++;
+		}
+		CHECK (weak == wb->size () / 2);
+		CHECK (y->WeakPairs () == *wb);
+		CHECK (q.B ().blastBreaks == 0);
+	}
 }
