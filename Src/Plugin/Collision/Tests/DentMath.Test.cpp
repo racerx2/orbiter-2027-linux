@@ -3434,23 +3434,29 @@ TEST_CASE ("blast fix M7: VCUT jag and crater scale with the cell, never with P 
 	CHECK (DentMath::HasCut ({ r }, 2)); CHECK (!DentMath::HasCut ({ r }, 3));
 }
 
-TEST_CASE ("blast fix M8: projected vertices stay within 1.2 x the bisector half-distance of the midpoint (KEEP and removed)", "[dent][blast]")
+TEST_CASE ("blast fix M8: KEEP vertices land on a face of the kept cell, within reach of its site, however far they start", "[dent][blast]")
 {
 	DentSites s = Grid4 ();
 	DentParams k = VCut (1, true, 0.3, 0.05), r = VCut (1, false, 0.3, 0.05);
 	const DentParams *lk[] = { &k }, *lr[] = { &r };
 	Rng g { 5 };
+	double reach = 0;
+	for (size_t j = 0; j < s.s.size (); j++) if (j != 1) reach = std::max (reach, (s.s[j] - s.s[1]).length ());
 	for (int i = 0; i < 2000; i++) {
 		Vector x (g.U (-60, 60), g.U (-60, 60), g.U (-30, 30));
 		size_t a = DentMath::Nearest (s, x);
 		Vector y = x + DentMath::Fold (lk, 1, x, true, nullptr, &s);
 		if (a == 1) { CHECK (std::memcmp (&x, &y, sizeof (Vector)) == 0); continue; }
-		Vector m = (s.s[a] + s.s[1]) * 0.5, nf = s.s[1] - s.s[a];
-		double hh = 0.5 * nf.length ();
-		nf = nf / nf.length ();
-		Vector d = y - m, dp = d - nf * (d & nf);
-		CHECK (dp.length () <= 1.2 * hh * (1 + 1e-12));            // no hull-sized sheet
-		CHECK (std::fabs (d & nf) <= 0.1 * hh + 0.05 * hh + 1e-12);
+		CHECK ((y - s.s[1]).length () <= 1.6 * reach);               // no hull-sized sheet: the piece stays around its cell
+		double face = 1e300;                                         // on (near) one face of the kept cell
+		for (size_t j = 0; j < s.s.size (); j++) {
+			if (j == 1) continue;
+			Vector nf = s.s[1] - s.s[j];
+			double hh = 0.5 * nf.length ();
+			nf = nf / nf.length ();
+			face = std::min (face, std::fabs ((y - (s.s[1] + s.s[j]) * 0.5) & nf) - 0.15 * hh);
+		}
+		CHECK (face <= 1e-12);
 	}
 	Vector far (2.5, -40, 3);                                      // removed cell 1, far out
 	Vector y = far + DentMath::Fold (lr, 1, far, true, nullptr, &s);

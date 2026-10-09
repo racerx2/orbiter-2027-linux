@@ -943,6 +943,16 @@ Vector DentMath::VCutMap (const DentVCut &v, bool keep, const Vector &rest, cons
 		if (b == ns || d < bd) b = i, bd = d;
 	}
 	if (b == ns) return S[a]; // every cell removed: the vertex goes to its site
+	{ // the face of b's region the line from the vertex to S[b] crosses last: far vertices land on b's own boundary, not halfway across the hull
+		Vector dl = S[b] - rest;
+		double tb = -1.0;
+		for (size_t j = 0; j < ns; j++) {
+			if (j == b || keep != (set[j] == nullptr)) continue; // the other side: outside the keep set, or inside the removed set
+			Vector e = S[j] - S[b];
+			double c0 = Dot (e, rest) - 0.5 * (Len2 (S[j]) - Len2 (S[b])), c1 = Dot (e, dl);
+			if (c0 > 0.0 && c1 < 0.0) { double t = -c0 / c1; if (t > tb) tb = t, a = j; }
+		}
+	}
 	const DentParams &p = keep ? *set[b] : *set[a];
 	size_t lo = a < b ? a : b, hi = a < b ? b : a;
 	Vector nf = S[hi] - S[lo];
