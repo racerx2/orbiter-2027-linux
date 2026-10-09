@@ -1449,3 +1449,117 @@ TEST_CASE ("dmg3 corner crush: mode 1, the next hit inherits it and grows P; Esu
 	CHECK (r.s.Damage (a)->d.rec[0].p.P >= P0);
 	CHECK (ColliderExactLow (r, a));
 }
+
+TEST_CASE ("dmg3 CollVisualA crease normals: a low-valence seam vertex under a crush takes the most-turned face; welded copies equal; legacy normals bitwise")
+{
+	auto half = [] (CollGroupData &g, float x0) { // 11 x 11 grid over [x0, x0 + 5] x [-5, 0] in z = 0
+		for (int j = 0; j <= 10; j++) for (int i = 0; i <= 10; i++) g.vtx.push_back (CollVtx { x0 + 0.5f * i, -5.0f + 0.5f * j, 0, 0, 0, 1, 0, 0 });
+		for (int j = 0; j < 10; j++) for (int i = 0; i < 10; i++) {
+			uint16_t a = (uint16_t)(j * 11 + i), b = (uint16_t)(a + 1), c = (uint16_t)(a + 11), d = (uint16_t)(c + 1);
+			g.idx.insert (g.idx.end (), { a, b, c, b, d, c });
+		}
+	};
+	auto m = std::make_shared<CollRestMesh> ();
+	m->name = "seam";
+	m->grp.resize (2);
+	half (m->grp[0], -5.0f), half (m->grp[1], 0.0f);
+	m->nvtx = (uint32_t)(m->grp[0].vtx.size () + m->grp[1].vtx.size ());
+	CollDmgSlot s { true, DentMath::MeshKey ("seam"), 2, m->nvtx, m, "seam", 1 };
+	DentRecord crush {}, bowl {};
+	crush.p.c = Vector (0, -3.8, 0), crush.p.n = Vector (0, 0, 1), crush.p.R = 1.5, crush.p.h = 1.0, crush.p.T = 0;
+	crush.p.mode = DENTM_CRUSH, crush.p.P = 1.0, crush.p.t = Vector (1, 0, 0);
+	DentMath::Quantise (crush.p);
+	bowl.p.c = Vector (0, -2.5, 0), bowl.p.n = Vector (0, 0, 1), bowl.p.R = 1.5, bowl.p.h = 0.3, bowl.p.T = 0;
+	auto build = [&] (bool facet, const std::vector<const DentRecord *> &rec) {
+		auto r = std::make_unique<Rig> ();
+		r->cfg.dentModes = facet, r->cfg.dentFacetNormals = facet;
+		uint32_t a = r->Add ("PB-A");
+		r->host.slots[a] = { s };
+		r->s.vis.SetRecords (a, "PB-A", s, 0, rec);
+		const DentMeshCopyA *c = r->s.vis.Copy (a, 0);
+		REQUIRE (c);
+		return std::make_pair (c->cur, std::move (r));
+	};
+	auto on = build (true, { &crush });
+	const auto &cur = on.first;
+	const DentVtx &v0 = cur[0][10], &v1 = cur[1][0]; // corner (0, -5): one triangle in group 1, two in group 0
+	REQUIRE (std::memcmp (&v0, &m->grp[0].vtx[10], 12) != 0);
+	CHECK (std::memcmp (&v0, &v1, sizeof (DentVtx)) == 0); // welded copies equal
+	auto P = [] (const DentVtx &d) { return Vector (d.x, d.y, d.z); };
+	Vector best; double bd = 2;
+	for (int g = 0; g < 2; g++) {
+		const std::vector<uint16_t> &ix = m->grp[g].idx;
+		uint16_t corner = g == 0 ? 10 : 0;
+		for (size_t t = 0; t + 2 < ix.size (); t += 3) {
+			if (ix[t] != corner && ix[t + 1] != corner && ix[t + 2] != corner) continue;
+			Vector fn = crossp (P (cur[g][ix[t + 1]]) - P (cur[g][ix[t]]), P (cur[g][ix[t + 2]]) - P (cur[g][ix[t]]));
+			fn = fn / fn.length ();
+			if (fn.z < bd) bd = fn.z, best = fn;
+		}
+	}
+	REQUIRE (bd < 0.999);
+	CHECK (std::fabs (v0.nx - best.x) < 1e-5);
+	CHECK (std::fabs (v0.ny - best.y) < 1e-5);
+	CHECK (std::fabs (v0.nz - best.z) < 1e-5);
+	auto off = build (false, { &crush });
+	CHECK (std::memcmp (&off.first[0][10], &v0, 12) == 0); // same positions
+	CHECK (std::memcmp (&off.first[0][10].nx, &v0.nx, 12) != 0); // the smooth rule differs
+	auto l1 = build (true, { &bowl }), l0 = build (false, { &bowl }); // mode 0 seed 0: today's normals
+	for (int g = 0; g < 2; g++) CHECK (std::memcmp (l1.first[g].data (), l0.first[g].data (), l0.first[g].size () * sizeof (DentVtx)) == 0);
+	CHECK (std::memcmp (l1.first[0].data (), m->grp[0].vtx.data (), 12) == 0);
+}
+
+TEST_CASE ("dmg3 hinge copy to the aileron: the flap reaches a second part, both records fold it the same, no gap")
+{
+	Rig r;
+	r.cfg.dentModes = true;
+	uint32_t a = r.Add ("PB-A"), b = r.Add ("PB-B");
+	Rig::Body &w = r.body[0];
+	auto sheet = [] (CollGroupData &g, float x0, float x1, float y0, float y1, float z, float nz, int nx, int ny) { // one skin, normal (0, 0, nz)
+		uint16_t base = (uint16_t)g.vtx.size ();
+		for (int j = 0; j <= ny; j++) for (int i = 0; i <= nx; i++) g.vtx.push_back (CollVtx { x0 + (x1 - x0) * i / nx, y0 + (y1 - y0) * j / ny, z, 0, 0, nz, 0, 0 });
+		for (int j = 0; j < ny; j++) for (int i = 0; i < nx; i++) {
+			uint16_t p = (uint16_t)(base + j * (nx + 1) + i), q = (uint16_t)(p + 1), s = (uint16_t)(p + nx + 1), t = (uint16_t)(s + 1);
+			if (nz > 0) g.idx.insert (g.idx.end (), { p, q, s, q, t, s });
+			else g.idx.insert (g.idx.end (), { p, s, q, q, s, t });
+		}
+	};
+	auto m = std::make_shared<CollRestMesh> ();
+	m->name = "wing";
+	m->grp.resize (2);
+	sheet (m->grp[0], -8, 2, -6, 6, 0, 1, 5, 6), sheet (m->grp[0], -8, 2, -6, 6, -0.64f, -1, 5, 6);
+	sheet (m->grp[1], 2.6f, 3.6f, -0.5f, 0.5f, 0, 1, 1, 1), sheet (m->grp[1], 2.6f, 3.6f, -0.5f, 0.5f, -0.64f, -1, 1, 1);
+	m->nvtx = (uint32_t)(m->grp[0].vtx.size () + m->grp[1].vtx.size ());
+	w.mi.key = "wing", w.mi.rest = m;
+	w.tv.reset (new TestVessel ()), w.mod.reset (new TestModule ());
+	w.tv->coll = &w.ca;
+	w.tv->meshGrp = { 2 };
+	UINT an = w.tv->CreateAnimation (0);
+	w.tv->AddAnimationComponent (an, 0, 1, w.mod->Lin (0, w.mod->Grp ({1}), 1, _V(0,0,1)));
+	r.host.slots[a] = { CollDmgSlot { true, DentMath::MeshKey ("wing"), 2, m->nvtx, m, "wing", 1 } };
+	r.Begin ();
+	r.Frame ();
+	REQUIRE (r.B (a).sh->PartOf (0, 0) != r.B (a).sh->PartOf (0, 1));
+	CollImpactEvent e = Hit (a, -1, b, 30.0, 2.46e6); // 1.23 MJ on the wing side
+	e.s[0].c = Vector (1.9, 0, 0), e.s[0].a = 0.3;
+	r.Frame ({ e });
+	REQUIRE (r.s.Damage (a));
+	const std::vector<DentRecord> &rec = r.s.Damage (a)->d.rec;
+	std::vector<const DentRecord *> hg;
+	for (const DentRecord &x : rec) if (x.p.mode == DENTM_HINGE) hg.push_back (&x);
+	std::string lg;
+	for (auto &l : r.sdk.log) if (l.find ("Collision dent") != std::string::npos) lg += l + " | ";
+	INFO ("records " << rec.size () << " hinge " << hg.size () << " " << lg);
+	REQUIRE (hg.size () == 2);
+	CHECK (hg[0]->grp != hg[1]->grp);
+	CHECK (hg[0]->p.P > 0);
+	CHECK (hg[0]->p.P == hg[1]->p.P);
+	for (const CollVtx &x : m->grp[1].vtx) { // the aileron under either record moves the same: no gap at the split
+		Vector p (x.x, x.y, x.z);
+		Vector d0 = DentMath::Displace (hg[0]->p, p), d1 = DentMath::Displace (hg[1]->p, p);
+		CHECK ((d0 - d1).length () < 1e-6);
+	}
+	bool moved = false;
+	for (const CollVtx &x : m->grp[1].vtx) moved |= DentMath::Displace (hg[1]->p, Vector (x.x, x.y, x.z)).length () > 0.05;
+	CHECK (moved);
+}

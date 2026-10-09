@@ -1,6 +1,7 @@
 // not upstream: E3-U1 to E3-U6: keys, block text, prefix scan, matching, side file (Design CA E3 12.1)
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <random>
 #include <string>
@@ -310,4 +311,89 @@ TEST_CASE ("dmg3 side file: X after its D event, T with continuation, unknown ki
 	CHECK (f.ev[2].torn.grp == t.grp);
 	CHECK (f.ev[2].torn.debris == "Deb-1");
 	CHECK (f.skipped == 2);
+}
+
+TEST_CASE ("dmg3 a capped dormant rewrite keeps the v2 rows: torn T, debris B and Q, XDMGD B; lines <= 200; re-parse equal")
+{
+	DentVesselText v;
+	v.eabs = 7.5e5;
+	for (uint32_t i = 0; i < DENT_MAX_VESSEL; i++) {
+		DentRecord r {};
+		r.slot = 0, r.key = 5, r.ngrp = 300, r.nvtx = 4000;
+		r.p.c = Vector (0.01 * i, 1, 2), r.p.n = Vector (0, 1, 0), r.p.R = 1.5, r.p.h = 0.2;
+		if (i == 0) r.p.mode = DENTM_CRUSH, r.p.P = 0.4, r.p.seed = 0x1234, r.p.t = Vector (0, 0, 1);
+		if (i == 1) r.p.mode = DENTM_HINGE, r.p.P = 0.2, r.p.t = Vector (1, 0, 0), r.p.hd = 0.75, r.p.hz = 0.1;
+		DentMath::Quantise (r.p);
+		r.grp = { 1, 2 };
+		v.rec.push_back (r);
+	}
+	DentTorn t;
+	t.kind = 2, t.slot = 0, t.key = 5, t.ngrp = 300, t.nvtx = 4000, t.simt = 12.5, t.debris = "Deb-1";
+	for (int g = 0; g < 180; g++) t.grp.push_back ((uint16_t)(g + 10));
+	v.torn.push_back (t);
+	DentDebris d;
+	d.id = 3, d.slot = 0, d.key = 5, d.ngrp = 300, d.nvtx = 4000, d.simt = 12.5, d.name = "Deb-1";
+	DentDebrisPose q;
+	q.p = Vector (0.5, -1.25, 7.0), q.q[0] = 0.1, q.q[1] = 0.2, q.q[2] = 0.3, q.q[3] = 0.927;
+	for (int g = 0; g < 150; g++) q.grp.push_back ((uint16_t)(g + 10));
+	d.pose.push_back (q);
+	d.rec.push_back (v.rec[0]), d.rec.push_back (v.rec[1]);
+	v.debris.push_back (d);
+	std::vector<std::string> f;
+	DentMath::FormatVessel (v, "  ", f);
+	std::vector<std::string> L { "VESSEL 0 PB-A ShuttlePB" };
+	for (const std::string &x : f) L.push_back (x.substr (2));
+	size_t at = 0;
+	while (at < L.size () && L[at].compare (0, 7, "XDMG 2 ") != 0) at++;
+	REQUIRE (at < L.size ());
+	for (uint32_t i = 0; i < 10; i++) L.insert (L.begin () + at, "XDMGD 0 9 0 3 0 0 1 1 0.1 0 *"); // version-1 records past the cap
+	L.push_back ("END_VESSEL");
+	CollStoreBlock b;
+	CollStore::ParseBody (L, b);
+	REQUIRE (b.vessel.size () == 1);
+	const CollStoreVessel &sv = b.vessel[0];
+	REQUIRE (sv.d.rec.size () == DENT_MAX_VESSEL);
+	REQUIRE (sv.d.torn.size () == 1);
+	REQUIRE (sv.d.debris.size () == 1);
+	std::vector<std::string> saved;
+	bool hasT = false, hasB = false, hasDB = false;
+	for (size_t i = 0; i < sv.raw.size (); i++) {
+		std::string s = (i == 0 || i + 1 == sv.raw.size ()) ? sv.raw[i] : "  " + sv.raw[i];
+		CHECK (CollStore::Line200 (s));
+		CHECK (s.size () <= 200);
+		hasT |= s.compare (0, 10, "  XDMGM T ") == 0;
+		hasB |= s.compare (0, 10, "  XDMGM B ") == 0;
+		hasDB |= s.compare (0, 10, "  XDMGD B ") == 0;
+		saved.push_back (s);
+	}
+	CHECK (sv.raw.size () < L.size ()); // the over-cap lines are gone, the rest kept
+	CHECK (hasT);
+	CHECK (hasB);
+	CHECK (hasDB);
+	CollStoreBlock b2;
+	CollStore::ParseBody (saved, b2);
+	REQUIRE (b2.vessel.size () == 1);
+	const DentVesselText &w = b2.vessel[0].d;
+	CHECK (b2.vessel[0].skipped == 0);
+	REQUIRE (w.rec.size () == DENT_MAX_VESSEL);
+	CHECK (std::memcmp (&w.rec[0].p, &v.rec[0].p, sizeof v.rec[0].p) == 0);
+	CHECK (std::memcmp (&w.rec[1].p, &v.rec[1].p, sizeof v.rec[1].p) == 0);
+	CHECK (w.rec[0].p.mode == DENTM_CRUSH);
+	CHECK (w.rec[1].p.mode == DENTM_HINGE);
+	REQUIRE (w.torn.size () == 1);
+	CHECK (w.torn[0].kind == t.kind);
+	CHECK (w.torn[0].grp == t.grp);
+	CHECK (w.torn[0].debris == t.debris);
+	CHECK (w.torn[0].simt == t.simt);
+	REQUIRE (w.debris.size () == 1);
+	CHECK (w.debris[0].name == d.name);
+	REQUIRE (w.debris[0].pose.size () == 1);
+	CHECK (w.debris[0].pose[0].grp == q.grp);
+	CHECK (w.debris[0].pose[0].q[3] == 0.927);
+	REQUIRE (w.debris[0].rec.size () == 2);
+	CHECK (std::memcmp (&w.debris[0].rec[0].p, &v.rec[0].p, sizeof v.rec[0].p) == 0);
+	std::vector<std::string> f2, f3;
+	DentMath::FormatVessel (sv.d, "", f2);
+	DentMath::FormatVessel (w, "", f3);
+	CHECK (f2 == f3);
 }

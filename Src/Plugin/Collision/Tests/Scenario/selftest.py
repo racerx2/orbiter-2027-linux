@@ -98,6 +98,36 @@ def check_placebase():  # M13: the check fails when TESTPLACEBASE ignores the te
     return e
 
 
+def dmg3_case(name, log, debris=True):  # the dmg3 crash check on a synthetic run: PB-A_D1 of class CollDebris from frame 2
+    text = pair_dump()
+    if debris:
+        text = text.replace('F 3 ', 'V PB-A_D1 CollDebris fs=0\nF 3 ', 1)
+        text = text.replace('END 3', 'V PB-A_D1 CollDebris fs=0\nEND 3')
+    ctx = OneRun(FakeRun(text, [A1] + log))
+    ctx.args = type('A', (), {'name': name})
+    return ctx
+
+
+def check_dmg3():  # Coll.Dmg3.Crash70 and Crash15: crush dents, break and debris lines, the dmg3 line
+    sys.path.insert(0, os.path.join(HERE, 'checks'))
+    spec = importlib.util.spec_from_file_location('check_dmg3crash', os.path.join(HERE, 'checks', 'dmg3crash.py'))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    dent = "Collision dent t=1.3 '%s' mesh=0 grp=5 E=1 R=1 h=0.1 T=0.2 mode=%d P=0.1 parts=0 copies=1 eabs=1 (0.1 J/kg)"
+    brk = ["Collision break 'PB-A' kind=1 slot=0 groups=5,6 debris=PB-A_D1 vn=70", "Collision debris 'PB-A_D1' from 'PB-A' slot=0 mass=50 fnv=0123abcd"]
+    sm = 'Collision dmg3: fx=4 streams=2 breaks=%d reasserts=0'
+    good = [dent % ('PB-A', 1), dent % ('PB-B', 1)] + brk + [sm % 1]
+    e = expect_pass('dmg3 crash70', lambda: m.check(dmg3_case('Coll.Dmg3.Crash70', good)))
+    e += expect_fail('dmg3 crash70 bowl dents only', lambda: m.check(dmg3_case('Coll.Dmg3.Crash70', [l.replace('mode=1', 'mode=0') for l in good])))
+    e += expect_fail('dmg3 crash70 without debris', lambda: m.check(dmg3_case('Coll.Dmg3.Crash70', good, debris=False)))
+    e += expect_fail('dmg3 crash70 with an error line', lambda: m.check(dmg3_case('Coll.Dmg3.Crash70', good + ['Collision: error in clbkPostStep: x'])))
+    soft = [dent % ('PB-A', 1), dent % ('PB-B', 1), sm % 0]
+    e += expect_pass('dmg3 crash15', lambda: m.check(dmg3_case('Coll.Dmg3.Crash15', soft, debris=False)))
+    e += expect_fail('dmg3 crash15 with a break', lambda: m.check(dmg3_case('Coll.Dmg3.Crash15', soft + brk[:1], debris=False)))
+    e += expect_fail('dmg3 crash15 with debris', lambda: m.check(dmg3_case('Coll.Dmg3.Crash15', soft)))
+    return e
+
+
 def expect_fail(what, fn):
     try:
         fn()
@@ -186,6 +216,7 @@ def main(argv=None):
         e += 1
 
     e += check_placebase()
+    e += check_dmg3()
 
     # gen_scn: TEST* actions skip a CollTestAnim block listed first
     scn = 'BEGIN_SHIPS\nAN:CollTestAnim\nEND\nPB:CollTestVessel\nEND\nEND_SHIPS\n'

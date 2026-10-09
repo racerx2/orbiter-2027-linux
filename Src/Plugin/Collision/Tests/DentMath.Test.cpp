@@ -2935,3 +2935,77 @@ TEST_CASE("dmg3 legacy golden: XDMG 1 records apply with today's expression bitw
 	}
 	CHECK (SameVtx (mine, old));
 }
+
+TEST_CASE("dmg3 plate overflow angle: DG wing x6 plate, ~0 deg at the 15 m/s energy, a clear bend at 30 m/s", "[dent][dmg3]")
+{
+	// design S4: H 0.64, Eth 0.41 MJ; 15 m/s E 0.31 MJ is bowl only, 30 m/s E 1.23 MJ about 17 deg
+	DentViewData wing;
+	Sheet (wing, -8, -6, 2, 6, 0.0, 5, 6, false);
+	Sheet (wing, -8, -6, 2, 6, -0.64, 5, 6, true);
+	DentMaterial al = DentMath::DefaultMaterial (-1);
+	auto angle = [&] (double E, DentSolveX &sx) {
+		DentInput in = { E, &al, Vector (1.5, 0, 0), Vector (0, 0, 1), 0.3, 5.0, 12.0, -1.0, true };
+		in.modes = DENTI_CRUSH | DENTI_HINGE, in.x = &sx;
+		DentParams b;
+		REQUIRE (DentMath::Solve (in, wing.View (), b) == DENT_OK);
+		INFO ("R " << b.R << " h " << b.h << " cls " << sx.cls << " H " << sx.H << " S " << sx.S);
+		CHECK (sx.cls == DENTM_HINGE);
+		return sx.hinge ? 2.0 * std::atan (sx.hp.P) * 180.0 / Pi : 0.0;
+	};
+	DentSolveX s15, s30;
+	double a15 = angle (0.31e6, s15), a30 = angle (1.23e6, s30);
+	INFO ("a15 " << a15 << " a30 " << a30);
+	CHECK (a15 <= 5.0);
+	CHECK (a30 >= 10.0);
+	CHECK (a30 <= 35.6);
+	CHECK (a30 > a15);
+}
+
+namespace { // dmg3 old-save golden: hash of visual positions and normals and collider positions for a fixed XDMG 1 block
+uint64_t GoldenOldSave ()
+{
+	auto fnv = [] (uint64_t h, const void *p, size_t n) { const unsigned char *b = (const unsigned char *)p; for (size_t i = 0; i < n; i++) h = (h ^ b[i]) * 1099511628211ull; return h; };
+	std::vector<std::vector<DentVtx>> rest (2);
+	std::vector<std::vector<uint16_t>> idx (2);
+	for (int g = 0; g < 2; g++) {
+		float z = g ? -0.5f : 0.0f, nz = g ? -1.0f : 1.0f;
+		for (int j = 0; j <= 20; j++) for (int i = 0; i <= 20; i++) { DentVtx v {}; v.x = -5.0f + 0.5f * i, v.y = -5.0f + 0.5f * j, v.z = z, v.nz = nz; rest[g].push_back (v); }
+		for (int j = 0; j < 20; j++) for (int i = 0; i < 20; i++) {
+			uint16_t a = (uint16_t)(j * 21 + i), b = (uint16_t)(a + 1), c = (uint16_t)(a + 21), d = (uint16_t)(c + 1);
+			if (g == 0) idx[g].insert (idx[g].end (), { a, b, c, b, d, c });
+			else idx[g].insert (idx[g].end (), { a, c, b, b, c, d });
+		}
+	}
+	const char *L[] = { "XDMG 1 5000.5 0", "XDMGM 0 0 00000005 2 882", "XDMGD 0 0.5 0.5 0 0 0 1 2 0.3 0 *", "XDMGD 0 -2 1 0 0 0 1 1.5 0.2 0.5 0",
+		"XDMGD 0 3 -3 -0.5 0 0 -1 1 0.25 0 1", "XDMGD 0 0.75 0.25 0 0 0.6 0.8 1.25 0.15 0.25 *" };
+	DentVesselParser p;
+	for (const char *l : L) p.Line (l);
+	DentVesselText t;
+	p.Finish (t);
+	uint64_t h = 1469598103934665603ull;
+	h = fnv (h, &t.eabs, sizeof t.eabs);
+	uint32_t n = (uint32_t)t.rec.size ();
+	h = fnv (h, &n, sizeof n);
+	auto cur = rest;
+	for (const DentRecord &r : t.rec) DentMath::Apply (r.p, rest, cur, r.grp.data (), r.grp.size (), nullptr);
+	std::vector<std::vector<uint32_t>> weld;
+	uint32_t nw = DentMath::WeldMap (rest, DENT_WELD, weld);
+	std::vector<Vector> rs;
+	DentMath::FaceNormalSums (rest, idx, weld, nw, rs);
+	std::vector<uint8_t> touched (nw, 0);
+	for (size_t g = 0; g < 2; g++) for (size_t i = 0; i < cur[g].size (); i++) if (std::memcmp (&cur[g][i], &rest[g][i], 12)) touched[weld[g][i]] = 1;
+	DentMath::Normals (rest, rs, idx, weld, nw, touched, cur);
+	for (size_t g = 0; g < 2; g++) h = fnv (h, cur[g].data (), cur[g].size () * sizeof (DentVtx));
+	for (size_t g = 0; g < 2; g++) for (const DentVtx &v : rest[g]) { // collider: rest plus every record's Displace, in double
+		Vector x (v.x, v.y, v.z), y = x;
+		for (const DentRecord &r : t.rec) y = y + DentMath::Displace (r.p, x);
+		h = fnv (h, &y.x, 8), h = fnv (h, &y.y, 8), h = fnv (h, &y.z, 8);
+	}
+	return h;
+}
+}
+
+TEST_CASE("dmg3 old-save golden: an XDMG 1 block gives the pre-dmg3 (25fc21e) visual and collider bits", "[dent][dmg3]")
+{
+	CHECK (GoldenOldSave () == 0x44810fa010740741ull); // built from 25fc21e DentMath.cpp with the same function
+}
