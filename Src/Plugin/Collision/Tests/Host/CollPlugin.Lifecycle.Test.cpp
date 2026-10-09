@@ -241,6 +241,7 @@ DOCKHANDLE VESSEL::GetDockHandle (UINT) const { WorldCall (); return nullptr; }
 void VESSEL::GetDockParams (DOCKHANDLE, VECTOR3 &pos, VECTOR3 &dir, VECTOR3 &rot) const { WorldCall (); pos = dir = rot = Z (); }
 OBJHANDLE VESSEL::GetDockStatus (DOCKHANDLE) const { WorldCall (); return nullptr; }
 const OBJHANDLE VESSEL::GetGravityRef () const { WorldCall (); return nullptr; }
+const OBJHANDLE VESSEL::GetSurfaceRef () const { WorldCall (); return nullptr; }
 bool VESSEL::GetMeshOffset (UINT, VECTOR3 &ofs) const { WorldCall (); ofs = Z (); return false; }
 bool VESSEL::GroundContact () const { WorldCall (); return false; }
 void VESSEL::SetAngularVel (const VECTOR3 &) const { WorldCall (); Bug ("spin write in a mesh-less world"); }

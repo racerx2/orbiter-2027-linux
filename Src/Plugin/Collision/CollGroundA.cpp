@@ -44,125 +44,160 @@ void CollGroundA::Frame (double simt, double simdt, const std::vector<CollGround
 	for (const CollGroundVessel &x : v) {
 		CollImpactEvent e {};
 		CollFxContact c;
-		if (!Vessel (x, simt, simdt, e, c)) continue;
+		int r = Vessel (x, simt, simdt, e, c);
+		if (r == 0) locks.erase (x.id);                    // a frame with no candidate re-arms every region
+		if (r != 2) continue;
 		ev.push_back (e);
 		fx.push_back (c);
-		last[x.id] = simt;
 		events++;
 	}
+	pass++;
 }
 
-bool CollGroundA::Vessel (const CollGroundVessel &x, double simt, double simdt, CollImpactEvent &e, CollFxContact &c)
+bool CollGroundA::Locked (const std::vector<Lock> &l, const Cand &c, double rb)
 {
-	if (!x.h || !x.shape || !x.shape->nPart ()) return false;
-	auto lt = last.find (x.id);
-	if (lt != last.end () && simt - lt->second < COLL_GROUND_GAP) return false;
+	for (const Lock &x : l) if (x.part == c.part && (x.p - c.p).length () < COLL_GROUND_REGION * rb && !(c.vn > COLL_GROUND_REARM * x.vn)) return true;
+	return false;
+}
+
+int CollGroundA::Vessel (const CollGroundVessel &x, double simt, double simdt, CollImpactEvent &e, CollFxContact &c)
+{
+	if (!x.h || !x.shape || !x.shape->nPart ()) return 0;
 	CollVesselRead rd {};
 	sdk.ReadVessel (x.h, rd, CVR_NOWEIGHT);
-	if (rd.playback || !rd.gref || sdk.ObjType (rd.gref) != OBJTP_PLANET_G || IEq (sdk.ClassName (x.h), "CollDebris")) return false;
+	CollH sr = rd.sref;                                     // the body under the vessel, not its gravity reference
+	if (rd.playback || !sr || sdk.ObjType (sr) != OBJTP_PLANET_G) return 0;
 	const CollShape &sh = *x.shape;
+	const Matrix &R = rd.R;
 	Vector pp, pv; Matrix Rp;
-	sdk.GlobalState (rd.gref, pp, pv, Rp);
-	double T = sdk.PlanetPeriod (rd.gref);
+	sdk.GlobalState (sr, pp, pv, Rp);
+	double T = sdk.PlanetPeriod (sr);
 	Vector wp = std::fabs (T) > 0 ? mul (Rp, Vector (0, 1, 0)) * (2.0 * PI_G / T) : Vector ();
 	auto surf = [&] (const Vector &g) { return pv + crossp (g - pp, wp); }; // planet-fixed point g, as CollSurfaceVel
-	// near test: CG altitude over the terrain under it
-	double rp = sdk.Size (rd.gref), rb = 0;
+	double rp = sdk.Size (sr), rb = 0, hz = std::min (simdt, COLL_GROUND_HZ);
 	Vector cb;
 	sh.Bound (1, cb, rb);
+	double vmax = (rd.v - surf (rd.x)).length () + (rd.w - tmul (R, wp)).length () * rb; // fastest point relative to the surface, at most
+	if (vmax < cfg.groundMinSpeed) return 0;                // landed or slow: no point can strike, no terrain query
+	// near test: a loose vertical gate, then the distance to the terrain plane or to the highest sample
 	Vector loc = tmul (Rp, rd.x - pp);
 	double rl = loc.length ();
-	if (!(rl > 0)) return false;
-	double reach = rb + (rd.v - surf (rd.x)).length () * simdt + COLL_GROUND_NEAR;
-	if (!(rl - rp < reach + COLL_GROUND_REACH)) return false;
+	if (!(rl > 0)) return 0;
+	double reach = rb + vmax * hz + COLL_GROUND_NEAR, loose = reach + 2 * rb;
+	if (!(rl - rp < loose + COLL_GROUND_REACH) || IEq (sdk.ClassName (x.h), "CollDebris")) return 0;
 	double lng = std::atan2 (loc.z, loc.x), lat = Lat (loc, rl);
-	double e0 = sdk.Elevation (rd.gref, lng, lat);
-	if (!(rl - rp - e0 < reach)) return false;
-	// terrain plane through the footprint, normal from the elevations +-rb east and north
+	double e0 = sdk.Elevation (sr, lng, lat), emax = e0;
+	if (!(rl - rp - e0 < loose)) return 0;
 	double r0 = rp + e0, cl = std::cos (lat), dlat = r0 > 0 ? rb / r0 : 0;
 	Vector up = mul (Rp, loc / rl), nG = up, p0 = pp + up * r0;
 	if (rb > 0 && cl * r0 > rb && std::fabs (lat) + dlat < 0.5 * PI_G) {
 		double dlng = rb / (r0 * cl);
-		auto at = [&] (double lo, double la) { return pp + mul (Rp, Equ (lo, la) * (rp + sdk.Elevation (rd.gref, lo, la))); };
+		auto at = [&] (double lo, double la) { double h = sdk.Elevation (sr, lo, la); emax = std::max (emax, h); return pp + mul (Rp, Equ (lo, la) * (rp + h)); };
 		Vector de = at (lng + dlng, lat) - at (lng - dlng, lat), dn = at (lng, lat + dlat) - at (lng, lat - dlat);
 		Vector n = crossp (de, dn);
 		double l = n.length ();
 		if (l > 0) { n /= l; nG = dotp (n, up) < 0 ? -n : n; }
 	}
-	// collider vertices at the current pose: the deepest predicted at the end of the step
-	const Matrix &R = rd.R;
+	if (!(dotp (rd.x - p0, nG) < reach || rl - rp - emax < reach)) return 0;
+	// collider vertices at the current pose: a turning stride and each part's lowest along -nG; candidates approach at the event speed within the horizon
 	uint32_t nall = 0, base = 0;
 	for (uint32_t k = 0; k < sh.nPart (); k++) nall += (uint32_t)sh.Part (k).Geom ().vtx.size ();
-	uint32_t stride = std::max (1u, (nall + COLL_GROUND_VTX - 1) / COLL_GROUND_VTX);
-	int bk = -1; uint32_t bi = 0; double bh = 0; Vector bp, bg, bv;
+	uint32_t stride = std::max (1u, (nall + COLL_GROUND_VTX - 1) / COLL_GROUND_VTX), start = pass % stride;
+	Vector upv = tmul (R, nG);                              // terrain up in the vessel frame
+	std::vector<Cand> cand;
 	tested = 0;
 	for (uint32_t k = 0; k < sh.nPart (); k++) {
 		const CollPart &P = sh.Part (k);
 		const CollGeom &G = P.Geom ();
 		const uint8_t *mask = sh.GroupMask (k);
-		uint32_t n = (uint32_t)G.vtx.size ();
-		for (uint32_t i = (stride - base % stride) % stride; i < n; i += stride) {
+		uint32_t n = (uint32_t)G.vtx.size (), lo = n;
+		Vector d = tmul (P.pose[1].A, upv);
+		double dmin = 0;
+		for (uint32_t i = 0; i < n; i++) {
+			double s = dotp (G.Pos (i), d);
+			if ((lo == n || s < dmin) && Live (G, mask, i)) lo = i, dmin = s;
+		}
+		auto test = [&] (uint32_t i) {
 			tested++;
-			if (!Live (G, mask, i)) continue;
 			Vector p = CollApply (P.pose[1], G.Pos (i)), g = rd.x + mul (R, p);
 			Vector vr = rd.v + mul (R, crossp (p, rd.w)) - surf (g);
-			double hp = dotp (g - p0, nG) + dotp (vr, nG) * simdt;
-			if (hp <= 0 && (bk < 0 || hp < bh)) bk = (int)k, bi = i, bh = hp, bp = p, bg = g, bv = vr;
-		}
+			double vn = -dotp (vr, nG), hp = dotp (g - p0, nG) - vn * hz;
+			if (hp <= 0 && vn >= cfg.groundMinSpeed) cand.push_back (Cand { k, i, p, g, vr, vn, hp });
+		};
+		uint32_t first = (start + stride - base % stride) % stride;
+		for (uint32_t i = first; i < n; i += stride) if (Live (G, mask, i)) test (i); else tested++;
+		if (lo < n && (lo < first || (lo - first) % stride)) test (lo);
 		base += n;
 	}
-	if (bk < 0) return false;
-	double vn = -dotp (bv, nG);
-	if (!(vn >= cfg.groundMinSpeed)) return false;
-	Vector lb = tmul (Rp, bg - pp);
-	double rlb = lb.length ();
-	if (rlb - rp - sdk.Elevation (rd.gref, std::atan2 (lb.z, lb.x), Lat (lb, rlb)) > bv.length () * simdt + COLL_GROUND_REFINE) return false; // above its own terrain
+	if (cand.empty ()) return 0;
+	std::stable_sort (cand.begin (), cand.end (), [] (const Cand &a, const Cand &b) { return a.vn > b.vn || (a.vn == b.vn && a.hp < b.hp); });
 	int pidx = -1;
-	for (uint32_t i = 0, n = sdk.GbodyCount (); i < n && pidx < 0; i++) if (sdk.Gbody (i) == rd.gref) pidx = (int)i;
-	if (pidx < 0) return false;
-	// the event: vessel side in the hit part's rest frame, ground side in the planet frame
-	const CollPart &P = sh.Part ((uint32_t)bk);
-	const CollGeom &G = P.Geom ();
-	const uint8_t *mask = sh.GroupMask ((uint32_t)bk);
-	Vector nv = tmul (R, -nG), vt = bv + nG * vn;              // outward normal of the vessel side, vessel frame; tangential relative velocity, global
-	double lv = vt.length (), m = CollGroundMeff (rd.m, rd.pmi, bp, nv);
-	Vector tg = lv >= 1e-6 ? vt / lv : Vector ();
-	CollImpactSide &s = e.s[0], &o = e.s[1];
-	s.owner = CollOwnerRef { x.id, -1, -1, -1, -1 };
-	s.mesh = (int)P.mesh; s.grp = s.tri = -1;
-	for (uint32_t t = 0; t < G.tri.size (); t++) {
-		const CollTri &tr = G.tri[t];
-		if ((tr.v[0] != bi && tr.v[1] != bi && tr.v[2] != bi) || (mask && tr.src < G.srcTab.size () && mask[tr.src])) continue;
-		uint32_t mm = 0, gg = 0, ot = 0;
-		if (sh.RenderFeature ((uint32_t)bk, t, mm, gg, ot)) { s.mesh = (int)mm; s.grp = gg == ~0u ? -1 : (int)gg; s.tri = ot == ~0u ? -1 : (int)ot; }
-		break;
+	for (uint32_t i = 0, n = sdk.GbodyCount (); i < n && pidx < 0; i++) if (sdk.Gbody (i) == sr) pidx = (int)i;
+	if (pidx < 0) return 1;
+	std::vector<Lock> &lk = locks[x.id];
+	lk.erase (std::remove_if (lk.begin (), lk.end (), [&] (const Lock &l) { return simt - l.t >= COLL_GROUND_GAP; }), lk.end ());
+	int tries = 0;
+	for (const Cand &q : cand) {
+		if (Locked (lk, q, rb)) continue;
+		if (tries++ >= COLL_GROUND_TRIES) break;
+		// refine at the vertex: its own terrain height, the terrain normal from samples a few metres east and north
+		Vector lb = tmul (Rp, q.g - pp);
+		double rlb = lb.length (), lv = std::atan2 (lb.z, lb.x), av = Lat (lb, rlb), hv = sdk.Elevation (sr, lv, av);
+		if (rlb - rp - hv > q.vr.length () * hz + COLL_GROUND_REFINE) continue;
+		double rv = rp + hv, cv = std::cos (av);
+		Vector uv = mul (Rp, Equ (lv, av)), nL = uv;
+		Vector east = mul (Rp, Vector (-std::sin (lv), 0, std::cos (lv))), north = mul (Rp, Vector (-std::sin (av) * std::cos (lv), std::cos (av), -std::sin (av) * std::sin (lv)));
+		if (cv * rv > COLL_GROUND_DN && std::fabs (av) + COLL_GROUND_DN / rv < 0.5 * PI_G) { // slopes from radial heights: no curvature bias
+			double se = (sdk.Elevation (sr, lv + COLL_GROUND_DN / (rv * cv), av) - hv) / COLL_GROUND_DN, sn = (sdk.Elevation (sr, lv, av + COLL_GROUND_DN / rv) - hv) / COLL_GROUND_DN;
+			nL = (uv - east * se - north * sn).unit ();
+		}
+		double vn = -dotp (q.vr, nL);
+		if (!(vn >= cfg.groundMinSpeed)) continue;
+		// the event: vessel side in the hit part's rest frame, ground side in the planet frame
+		const CollPart &P = sh.Part (q.part);
+		const CollGeom &G = P.Geom ();
+		const uint8_t *mask = sh.GroupMask (q.part);
+		Vector nv = tmul (R, -nL), vt = q.vr + nL * vn;      // outward normal of the vessel side, vessel frame; tangential relative velocity, global
+		double lt = vt.length (), m = CollGroundMeff (rd.m, rd.pmi, q.p, nv);
+		Vector tg = lt >= 1e-6 ? vt / lt : Vector ();
+		CollImpactSide &s = e.s[0], &o = e.s[1];
+		s.owner = CollOwnerRef { x.id, -1, -1, -1, -1 };
+		s.mesh = (int)P.mesh; s.grp = s.tri = -1;
+		for (uint32_t t = 0; t < G.tri.size (); t++) {
+			const CollTri &tr = G.tri[t];
+			if ((tr.v[0] != q.vtx && tr.v[1] != q.vtx && tr.v[2] != q.vtx) || (mask && tr.src < G.srcTab.size () && mask[tr.src])) continue;
+			uint32_t mm = 0, gg = 0, ot = 0;
+			if (sh.RenderFeature (q.part, t, mm, gg, ot)) { s.mesh = (int)mm; s.grp = gg == ~0u ? -1 : (int)gg; s.tri = ot == ~0u ? -1 : (int)ot; }
+			break;
+		}
+		s.c = G.Pos (q.vtx);
+		Vector np = tmul (P.pose[1].A, nv);
+		double ln = np.length ();
+		s.n = ln > 0 ? np / ln : np;
+		s.a = COLL_GROUND_PATCH;
+		if (lt >= 1e-6) {
+			Vector t = tmul (P.pose[1].A, tmul (R, tg));
+			t -= s.n * dotp (t, s.n);
+			double l = t.length ();
+			s.tdir = l > 0 ? t / l : Vector ();
+		}
+		o.owner = CollOwnerRef { 0, pidx, -1, -1, -1 };
+		o.mesh = o.grp = o.tri = -1;
+		o.c = lb; o.n = tmul (Rp, nL); o.a = COLL_GROUND_PATCH; o.tdir = tmul (Rp, -tg);
+		e.t = simt;
+		e.vn = vn; e.vn_post = COLL_GROUND_E * vn; e.vt = lt;
+		e.dKE = 0.5 * m * vn * vn * (1 - COLL_GROUND_E * COLL_GROUND_E); e.Wf = 0;
+		e.Jn = m * vn * (1 + COLL_GROUND_E); e.Jt = 0; e.meff = m;
+		e.flags = COLLEV_FIRST;
+		// the dust of a building contact: nOther in the local horizon frame at the vertex (y up), block material
+		c.id = x.id; c.h = x.h;
+		c.c = q.p; c.n = nv; c.tdir = tmul (R, tg);
+		c.vn = vn; c.vt = lt; c.Jn = e.Jn; c.Jt = 0; c.dt = simdt; c.flags = COLLEV_FIRST;
+		c.building = true; c.playback = false;
+		c.nOther = Vector (dotp (nL, east), dotp (nL, uv), dotp (nL, north));
+		c.matOther = &DentMath::DefaultMaterial (DENTB_BLOCK);
+		lk.push_back (Lock { q.part, q.p, simt, vn });
+		return 2;
 	}
-	s.c = G.Pos (bi);
-	Vector np = tmul (P.pose[1].A, nv);
-	double ln = np.length ();
-	s.n = ln > 0 ? np / ln : np;
-	s.a = COLL_GROUND_PATCH;
-	if (lv >= 1e-6) {
-		Vector t = tmul (P.pose[1].A, tmul (R, tg));
-		t -= s.n * dotp (t, s.n);
-		double l = t.length ();
-		s.tdir = l > 0 ? t / l : Vector ();
-	}
-	o.owner = CollOwnerRef { 0, pidx, -1, -1, -1 };
-	o.mesh = o.grp = o.tri = -1;
-	o.c = tmul (Rp, bg - pp); o.n = tmul (Rp, nG); o.a = COLL_GROUND_PATCH; o.tdir = tmul (Rp, -tg);
-	e.t = simt;
-	e.vn = vn; e.vn_post = COLL_GROUND_E * vn; e.vt = lv;
-	e.dKE = 0.5 * m * vn * vn * (1 - COLL_GROUND_E * COLL_GROUND_E); e.Wf = 0;
-	e.Jn = m * vn * (1 + COLL_GROUND_E); e.Jt = 0; e.meff = m;
-	e.flags = COLLEV_FIRST;
-	// the dust of a building contact: nOther in the local horizon frame (y up), block material
-	c.id = x.id; c.h = x.h;
-	c.c = bp; c.n = nv; c.tdir = tmul (R, tg);
-	c.vn = vn; c.vt = lv; c.Jn = e.Jn; c.Jt = 0; c.dt = simdt; c.flags = COLLEV_FIRST;
-	c.building = true; c.playback = false;
-	Vector east = mul (Rp, Vector (-std::sin (lng), 0, std::cos (lng))), north = mul (Rp, Vector (-std::sin (lat) * std::cos (lng), std::cos (lat), -std::sin (lat) * std::sin (lng)));
-	c.nOther = Vector (dotp (nG, east), dotp (nG, up), dotp (nG, north));
-	c.matOther = &DentMath::DefaultMaterial (DENTB_BLOCK);
-	return true;
+	return 1;
 }

@@ -120,3 +120,22 @@ TEST_CASE ("fix2 review: clearing an annotation that is not shown is no write", 
 	REQUIRE (s.Count ().n[CSK_UI] == 2);
 	REQUIRE (s.annotation.empty ());
 }
+
+TEST_CASE ("ground: the fake reads the surface reference; terrain by position and the planet period default as before", "[CollSdk]")
+{
+	CollFakeSdk s;
+	s.bodies.push_back (CollFakeSdk::Body ());
+	CollFakeSdk::Body *moon = &s.bodies.back ();
+	moon->elev = 7;
+	auto *v = s.AddVessel ("GL-01");
+	v->rd.sref = moon;
+	CollVesselRead rd {};
+	s.ReadVessel (v, rd, CVR_NOWEIGHT);
+	REQUIRE (rd.sref == moon);
+	REQUIRE (rd.gref == nullptr);
+	REQUIRE (s.Elevation (moon, 0.1, 0.2) == 7);
+	REQUIRE (s.PlanetPeriod (moon) == 86164);
+	s.elevG = [] (double lng, double lat) { return lng + 10 * lat; };
+	REQUIRE (s.Elevation (moon, 1, 2) == 21);
+	REQUIRE (s.elevCalls == 2);
+}

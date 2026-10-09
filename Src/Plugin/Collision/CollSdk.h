@@ -27,7 +27,7 @@ struct CollVesselRead {                      // E1 1.2: one vessel at t0, s0 cop
 	Matrix R; double m; Vector pmi;          // GetRotationMatrix, GetMass, GetPMI
 	uint32_t status;                         // GetFlightStatus
 	bool playback, recording, ground, thrust; // Playback, Recording, GroundContact, GetThrustVector return value
-	CollH gref, sv;                          // GetGravityRef, GetSupervessel
+	CollH gref, sv, sref;                    // GetGravityRef, GetSupervessel, GetSurfaceRef
 };
 enum : uint32_t { CVR_NOWEIGHT = 1 };        // skip GetWeightVector, which primes weight_valid (review CA-3 10)
 struct CollStateWrite { CollH rbody; Vector rpos, rvel, vrot, arot; }; // DefSetStateEx with version 2, flag 0, status 0 (E1 6.2)

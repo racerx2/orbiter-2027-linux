@@ -83,7 +83,7 @@ public:
 		o.status = v->GetFlightStatus ();
 		o.playback = v->Playback (); o.recording = v->Recording (); o.ground = v->GroundContact ();
 		o.thrust = v->GetThrustVector (a);
-		o.gref = v->GetGravityRef (); o.sv = v->GetSupervessel ();
+		o.gref = v->GetGravityRef (); o.sv = v->GetSupervessel (); o.sref = v->GetSurfaceRef ();
 	}
 	double EmptyMass (CollH v) override { return Ves (v)->GetEmptyMass (); }
 	bool Recording (CollH v) override { return Ves (v)->Recording (); }

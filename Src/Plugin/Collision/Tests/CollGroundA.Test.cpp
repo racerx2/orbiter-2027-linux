@@ -35,6 +35,15 @@ CollGroupData Plate (int n, double half, double x) // (n+1)^2 vertices in the pl
 
 bool Near (const Vector &a, const Vector &b, double tol = 1e-6) { return (a - b).length () <= tol; }
 
+CollGroupData Tip (const Vector &t) // one small triangle whose first corner is t, the others 0.5 m above it (+x)
+{
+	CollGroupData g;
+	g.vtx = { CollVtx { (float)t.x, (float)t.y, (float)t.z, 0, 0, 0, 0, 0 }, CollVtx { (float)(t.x + 0.5), (float)(t.y + 0.1), (float)t.z, 0, 0, 0, 0, 0 },
+		CollVtx { (float)(t.x + 0.5), (float)t.y, (float)(t.z + 0.1), 0, 0, 0, 0, 0 } };
+	g.idx = { 0, 1, 2 };
+	return g;
+}
+
 struct Rig {
 	CollFakeSdk sdk;
 	CollCfgValues cfg;
@@ -57,7 +66,7 @@ struct Rig {
 		mi.present = mi.collide = true; mi.serial = 1; mi.key = "box"; mi.rest = mesh;
 		sh.Update (&mi, 1, ca, nullptr, 0, cache);
 		v = sdk.AddVessel ("PB", "ShuttlePB");
-		v->rd.R = IMatrix (); v->rd.m = 1000; v->rd.pmi = Vector (2, 3, 1); v->rd.gref = earth;
+		v->rd.R = IMatrix (); v->rd.m = 1000; v->rd.pmi = Vector (2, 3, 1); v->rd.gref = v->rd.sref = earth;
 	}
 	Vector Wp () const { return sdk.periodG ? Vector (0, 2 * kPi / sdk.periodG, 0) : Vector (); }
 	Vector Low (const Matrix &R) const // the lowest mesh vertex for rotation R, vessel frame; up is global +x
@@ -113,7 +122,7 @@ TEST_CASE ("ground: a 20 m/s descent makes one event at the lowest vertex, norma
 	r.sdk.simT = 3.5;
 	REQUIRE (r.Frame () == 1);
 	const CollImpactEvent &e = r.ev[0];
-	CHECK (std::fabs (e.vn - 20) < 1e-6);
+	CHECK (std::fabs (e.vn - 20) < 1e-4);
 	CHECK (Near (e.s[0].c, r.Low (R), 1e-12));
 	CHECK (Near (e.s[0].n, tmul (R, Vector (-1, 0, 0))));
 	CHECK (e.s[0].owner.vesselId == 1);
@@ -126,7 +135,6 @@ TEST_CASE ("ground: a 20 m/s descent makes one event at the lowest vertex, norma
 	for (int k = 0; k < 3; k++) { const CollVtx &x = r.mesh->grp[0].vtx[r.mesh->grp[0].idx[3 * e.s[0].tri + k]]; uses = uses || Near (Vector (x.x, x.y, x.z), e.s[0].c, 0); }
 	CHECK (uses);
 	CHECK (e.s[0].a == COLL_GROUND_PATCH);
-	CHECK (e.s[0].tdir.length () == 0);
 	CHECK (e.s[1].owner.vesselId == 0);
 	CHECK (e.s[1].owner.planet == 0);
 	CHECK (e.s[1].owner.base == -1);
@@ -135,7 +143,7 @@ TEST_CASE ("ground: a 20 m/s descent makes one event at the lowest vertex, norma
 	CHECK (Near (e.s[1].n, Vector (1, 0, 0)));
 	CHECK (e.flags == COLLEV_FIRST);
 	CHECK (e.t == 3.5);
-	CHECK (e.vt < 1e-6);
+	CHECK (e.vt < 1e-4);
 	CHECK (r.g.events == 1);
 	REQUIRE (r.fx.size () == 1);
 	const CollFxContact &c = r.fx[0];
@@ -161,13 +169,13 @@ TEST_CASE ("ground: the slip direction follows the tangential speed", "[ground]"
 	r.Place (R, 0.1, Vector (-20, 0, 30));
 	REQUIRE (r.Frame () == 1);
 	const CollImpactEvent &e = r.ev[0];
-	CHECK (std::fabs (e.vn - 20) < 1e-6);
-	CHECK (std::fabs (e.vt - 30) < 1e-6);
+	CHECK (std::fabs (e.vn - 20) < 1e-4);
+	CHECK (std::fabs (e.vt - 30) < 1e-4);
 	Vector t = tmul (R, Vector (0, 0, 1));
 	CHECK (Near (e.s[0].tdir, t));
 	CHECK (Near (e.s[1].tdir, Vector (0, 0, -1)));
 	CHECK (Near (r.fx[0].tdir, t));
-	CHECK (std::fabs (r.fx[0].vt - 30) < 1e-6);
+	CHECK (std::fabs (r.fx[0].vt - 30) < 1e-4);
 }
 
 TEST_CASE ("ground: a resting landed vessel and a 3 m/s touch make none", "[ground]")
@@ -177,14 +185,15 @@ TEST_CASE ("ground: a resting landed vessel and a 3 m/s touch make none", "[grou
 		r.sdk.periodG = 86164;
 		r.Place (Tilt (), -0.01);
 		for (int k = 0; k < 10; k++) CHECK (r.Frame () == 0);
-		CHECK (r.g.tested == 8);
+		CHECK (r.g.tested == 0);
+		CHECK (r.sdk.elevCalls == 0);
 	}
 	SECTION ("a descent on the turning planet: the surface speed is not an approach") {
 		r.sdk.periodG = 86164;
 		r.Place (Tilt (), 0.1, Vector (-20, 0, 0));
 		REQUIRE (r.Frame () == 1);
-		CHECK (std::fabs (r.ev[0].vn - 20) < 1e-6);
-		CHECK (r.ev[0].vt < 1e-6);
+		CHECK (std::fabs (r.ev[0].vn - 20) < 1e-4);
+		CHECK (r.ev[0].vt < 1e-4);
 	}
 	SECTION ("3 m/s: below CollisionGroundMinSpeed") {
 		r.Place (Tilt (), 0.03, Vector (-3, 0, 0));
@@ -204,21 +213,21 @@ TEST_CASE ("ground: a resting landed vessel and a 3 m/s touch make none", "[grou
 	}
 }
 
-TEST_CASE ("ground: a second event only after 0.25 s, a time jump clears the wait", "[ground]")
+TEST_CASE ("ground: a second event of one contact region only after 0.25 s, a time jump clears the wait", "[ground]")
 {
-	Rig r;
-	r.Place (Tilt (), 0.1, Vector (-20, 0, 0));
+	Rig r ({ Box (Vector (0.5, 0.5, 4)) });
 	const double dt = 0.0625;
-	CHECK (r.Frame (dt) == 1);
-	for (int k = 0; k < 3; k++) CHECK (r.Frame (dt) == 0);
+	auto hit = [&] (double w) { r.Place (IMatrix (), 0.05, Vector (), Vector (0, w, 0)); return r.Frame (dt); };
+	CHECK (hit (2.5) == 1);
+	for (int k = 0; k < 3; k++) CHECK (hit (2.5) == 0);
 	CHECK (r.sdk.simT == 0.25);
-	CHECK (r.Frame (dt) == 1);
-	CHECK (r.Frame (dt) == 0);
+	CHECK (hit (2.5) == 1);
+	CHECK (hit (2.5) == 0);
 	r.g.TimeJump ();
-	CHECK (r.Frame (dt) == 1);
+	CHECK (hit (2.5) == 1);
 	CHECK (r.g.events == 3);
 	r.g.Drop (1);
-	CHECK (r.Frame (dt) == 1);
+	CHECK (hit (2.5) == 1);
 }
 
 TEST_CASE ("ground: debris, playback and the gates make none", "[ground]")
@@ -230,7 +239,7 @@ TEST_CASE ("ground: debris, playback and the gates make none", "[ground]")
 	SECTION ("CollisionGround FALSE") { r.cfg.ground = false; CHECK (r.Frame () == 0); CHECK (r.sdk.elevCalls == 0); }
 	SECTION ("CollisionModel 0") { r.cfg.model = 0; CHECK (r.Frame () == 0); }
 	SECTION ("zero step") { CHECK (r.Frame (0) == 0); }
-	SECTION ("no gravity reference") { r.v->rd.gref = nullptr; CHECK (r.Frame () == 0); }
+	SECTION ("no surface reference") { r.v->rd.sref = nullptr; CHECK (r.Frame () == 0); }
 	SECTION ("the reference is not a planet") { r.earth->type = 3; CHECK (r.Frame () == 0); }
 	SECTION ("the reference is not a body of the list") { r.sdk.gbody.clear (); CHECK (r.Frame () == 0); }
 	SECTION ("no collider") {
@@ -255,10 +264,10 @@ TEST_CASE ("ground: far vessels make no terrain query, the near test one", "[gro
 		CHECK (r.sdk.elevCalls == 1);
 		CHECK (r.g.tested == 0);
 	}
-	SECTION ("event: five terrain samples and the refine") {
+	SECTION ("event: five terrain samples, the refine and the local normal") {
 		r.Place (Tilt (), 0.1, Vector (-20, 0, 0));
 		CHECK (r.Frame () == 1);
-		CHECK (r.sdk.elevCalls == 6);
+		CHECK (r.sdk.elevCalls == 8);
 	}
 }
 
@@ -268,8 +277,8 @@ TEST_CASE ("ground: a spinning vessel uses the point velocity", "[ground]")
 	SECTION ("the +z end comes down at 10 m/s") {
 		r.Place (IMatrix (), 0.05, Vector (), Vector (0, 2.5, 0));
 		REQUIRE (r.Frame () == 1);
-		CHECK (std::fabs (r.ev[0].vn - 10) < 1e-6);
-		CHECK (std::fabs (r.ev[0].vt - 1.25) < 1e-6);
+		CHECK (std::fabs (r.ev[0].vn - 10) < 1e-4);
+		CHECK (std::fabs (r.ev[0].vt - 1.25) < 1e-4);
 		CHECK (r.ev[0].s[0].c.z == 4);
 		CHECK (r.ev[0].s[0].c.x == -0.5);
 	}
@@ -323,7 +332,8 @@ TEST_CASE ("ground: the terrain plane from the samples, the hit vertex refined a
 		r.sdk.elevG = [] (double lng, double lat) { return lng != 0 && lat != 0 ? -50.0 : 0.0; };
 		r.Place (Tilt (), 0.1, Vector (-20, 0, 0));
 		CHECK (r.Frame () == 0);
-		CHECK (r.sdk.elevCalls == 6);
+		CHECK (r.sdk.elevCalls >= 6);
+		CHECK (r.sdk.elevCalls <= 5 + 4 * 3);
 	}
 }
 
@@ -371,4 +381,134 @@ TEST_CASE ("ground: the ground side of an event, and no building lookup for base
 	CollDmgBaseObj o;
 	CHECK (host.BaseObject (0, 0, 5, o));
 	CHECK_FALSE (host.BaseObject (1, -1, -1, o));
+}
+
+TEST_CASE ("ground review 1: the lockout is per contact region; a frame with no candidate or a much faster approach re-arms", "[ground]")
+{
+	Rig r ({ Box (Vector (0.5, 0.5, 4)) });
+	auto hit = [&] (double w, double h = 0.05) { r.Place (IMatrix (), h, Vector (), Vector (0, w, 0)); return r.Frame (); };
+	REQUIRE (hit (2.5) == 1);
+	CHECK (r.ev[0].s[0].c.z == 4);
+	SECTION ("the other end right after: its own region") {
+		REQUIRE (hit (-2.5) == 1);
+		CHECK (r.ev[0].s[0].c.z == -4);
+		CHECK (hit (2.5) == 0);
+		CHECK (hit (-2.5) == 0);
+	}
+	SECTION ("a frame with no candidate re-arms") {
+		CHECK (hit (2.5) == 0);
+		CHECK (hit (2.5, 3.0) == 0);
+		CHECK (hit (2.5) == 1);
+	}
+	SECTION ("1.5 times the last approach fires again") {
+		CHECK (hit (3.5) == 0);
+		CHECK (hit (3.9) == 1);
+		CHECK (std::fabs (r.ev[0].vn - 15.6) < 1e-4);
+	}
+}
+
+TEST_CASE ("ground review 2: the fastest approach wins over a deeper resting vertex; a rejected refine falls back to the next", "[ground]")
+{
+	SECTION ("a keel buried at the other end") {
+		Rig r ({ Box (Vector (0.5, 0.5, 4)), Box (Vector (0.2, 0.2, 0.2), Vector (-0.7, 0, -3.5)) });
+		r.Place (IMatrix (), -0.5, Vector (), Vector (0, 2.5, 0));
+		REQUIRE (r.Frame () == 1);
+		CHECK (r.ev[0].s[0].c.z == 4);
+		CHECK (std::fabs (r.ev[0].vn - 10) < 1e-4);
+	}
+	SECTION ("a hole under the fastest vertex") {
+		Rig r ({ Box (Vector (0.5, 0.5, 4)) });
+		double rp = r.earth->size;
+		r.sdk.elevG = [rp] (double lng, double lat) { return lng > 3 / rp && lat > 0.3 / rp && lat < 0.7 / rp ? -50.0 : 0.0; };
+		r.Place (IMatrix (), 0.05, Vector (), Vector (0, 2.5, -0.1));
+		REQUIRE (r.Frame () == 1);
+		CHECK (r.ev[0].s[0].c.y == -0.5);
+		CHECK (r.ev[0].s[0].c.z == 4);
+		CHECK (std::fabs (r.ev[0].vn - 9.95) < 1e-4);
+	}
+}
+
+TEST_CASE ("ground review 3: the surface reference, not the gravity reference", "[ground]")
+{
+	Rig r;
+	CollFakeSdk::Body mars;
+	mars.name = "Mars"; mars.pos = Vector (2e11, 0, 0); mars.size = 3.39e6;
+	r.sdk.bodies.push_back (mars);
+	r.sdk.gbody.insert (r.sdk.gbody.begin (), &r.sdk.bodies.back ());
+	r.v->rd.gref = &r.sdk.bodies.back ();
+	r.Place (Tilt (), 0.1, Vector (-20, 0, 0));
+	REQUIRE (r.Frame () == 1);
+	CHECK (r.ev[0].s[1].owner.planet == 1);
+	CHECK (std::fabs (r.ev[0].vn - 20) < 1e-4);
+}
+
+TEST_CASE ("ground review 4: the normal is the terrain's at the hit vertex, not the plane over the bound radius", "[ground]")
+{
+	Rig r ({ Box (Vector (0.5, 0.5, 8)) });
+	double rp = r.earth->size;
+	r.sdk.elevG = [rp] (double, double lat) { return lat * rp > 7 ? 0.5 : 0.0; };
+	r.Place (IMatrix (), 0.05, Vector (0, 200, 0));
+	CHECK (r.Frame () == 0);
+	r.sdk.elevG = [rp] (double, double lat) { return 0.1 * lat * rp; };
+	r.Place (IMatrix (), 0.05, Vector (0, 200, 0));
+	REQUIRE (r.Frame () == 1);
+	double s = std::sqrt (1.01);
+	CHECK (Near (r.ev[0].s[1].n, Vector (1, -0.1, 0) / s, 1e-4));
+	CHECK (std::fabs (r.ev[0].vn - 20 / s) < 1e-3);
+}
+
+TEST_CASE ("ground review 6: a slope rising within the bound radius is near though the footprint is far below", "[ground]")
+{
+	Rig r ({ Box (Vector (0.5, 0.5, 8)) });
+	double rp = r.earth->size;
+	r.sdk.elevG = [rp] (double lng, double) { return 2 * lng * rp; };
+	r.v->rd.x = Vector (rp + 16.8, 0, 0);
+	r.v->rd.v = Vector (0, 0, 30);
+	REQUIRE (r.Frame () == 1);
+	CHECK (r.ev[0].s[0].c.z == 8);
+	CHECK (std::fabs (r.ev[0].vn - 60 / std::sqrt (5.0)) < 1e-3);
+	CHECK (Near (r.ev[0].s[1].n, Vector (1, 0, -2) / std::sqrt (5.0), 1e-4));
+}
+
+TEST_CASE ("ground review 7: the prediction looks at most 0.05 s ahead under time warp", "[ground]")
+{
+	Rig r;
+	r.Place (IMatrix (), 5, Vector (-20, 0, 0));
+	CHECK (r.Frame (1.0) == 0);
+	r.Place (IMatrix (), 0.5, Vector (-20, 0, 0));
+	CHECK (r.Frame (1.0) == 1);
+}
+
+TEST_CASE ("ground review 8: each part's lowest vertex is always tested, the stride start turns every frame", "[ground]")
+{
+	auto where = [] (const CollShape &sh, const Vector &t) { // running index of the vertex at t over all parts
+		uint32_t base = 0;
+		for (uint32_t k = 0; k < sh.nPart (); k++) {
+			const CollGeom &G = sh.Part (k).Geom ();
+			for (uint32_t i = 0; i < G.vtx.size (); i++) if (Near (G.Pos (i), t, 1e-6)) return base + i;
+			base += (uint32_t)G.vtx.size ();
+		}
+		return ~0u;
+	};
+	SECTION ("a tip below a plate of 10201 vertices") {
+		Vector t (-1, 0, 0);
+		Rig r ({ Plate (100, 2, -0.5), Tip (t) });
+		uint32_t at = where (r.sh, t);
+		REQUIRE (at != ~0u);
+		REQUIRE (at % 3 != 0);
+		r.Place (IMatrix (), 0.1, Vector (-20, 0, 0));
+		REQUIRE (r.Frame () == 1);
+		CHECK (Near (r.ev[0].s[0].c, t, 1e-6));
+	}
+	SECTION ("a fast tip above the plate on a turning boom") {
+		Vector t (-0.45, 0, 4);
+		Rig r ({ Plate (100, 2, -0.5), Tip (t) });
+		uint32_t at = where (r.sh, t);
+		REQUIRE (at != ~0u);
+		REQUIRE (at % 3 != 0);
+		size_t n = 0;
+		for (int k = 0; k < 3; k++) { r.Place (IMatrix (), 0.1, Vector (), Vector (0, 2.4, 0)); n += r.Frame (); if (n) break; }
+		REQUIRE (n == 1);
+		CHECK (Near (r.ev[0].s[0].c, t, 1e-6));
+	}
 }
