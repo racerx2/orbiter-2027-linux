@@ -42,7 +42,7 @@ struct CollAWrite {                                // what CollWorldA does throu
 	Vector Fb, Mb;                                 // AddForce at the CG and couple, body frame
 	Vector cdx, cdv, cdth, cdw;                    // compensation terms (written minus physical, 3.1)
 };
-struct CollAStats { int spec, real, touchPath, freePath, past, missed, reapply, writes, forceWrites, attWrites, deliveryIt, rounds, rec, recPos, turnFree, featFree, jumps, retries, clampE, checkFail; };
+struct CollAStats { int spec, real, touchPath, freePath, past, missed, reapply, writes, forceWrites, attWrites, deliveryIt, rounds, rec, recPos, turnFree, featFree, jumps, retries, clampE, checkFail, deliveryRelevel; };
 struct CollAContactRec { uint64_t ka, kb; Vector ra, rb, J; };        // body keys (kind << 32 | id); points in each body's frame at t0; J on a, global
 struct CollAPairRec { uint64_t ka, kb; Vector ra, rb, n; double g0, u0; }; // one speculative pair: smallest-gap point, normal, gap and approach at t0
 struct CollABodyRec {

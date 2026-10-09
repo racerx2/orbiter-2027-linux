@@ -2414,3 +2414,14 @@ TEST_CASE ("fix2 refinement splits degenerate triangles with their edges (no T-j
 	CHECK (o.idx[0].size () % 3 == 0);
 	CHECK (nt > (size_t)(2 * n * n + 1));
 }
+
+TEST_CASE ("fix3 parse-time cap counts only records with a known mesh key; orphans ahead do not crowd them out", "[dent]")
+{
+	std::vector<std::string> l { "XDMG 1 100 0", "XDMGM 0 0 deadbeef 7 140" };
+	for (int i = 0; i < 600; i++) l.push_back ("XDMGD 9 " + std::to_string (i) + " 0 0 0 0 1 1 0.1 0 *");  // orphans: key 9 has no XDMGM
+	for (int i = 0; i < 10; i++) l.push_back ("XDMGD 0 " + std::to_string (i) + " 0 0 0 0 1 1 0.1 0 *");
+	int sk = -1;
+	DentVesselText v = ParseVessel (l, &sk);
+	CHECK (v.rec.size () == 10);
+	CHECK (sk == 600);
+}

@@ -1251,6 +1251,7 @@ bool DentVesselParser::Line (const char *line)
 void DentVesselParser::Close ()
 {
 	if (!m_open) return;
+	if (m_meshIdx.count (m_dent.back ().first)) m_nKnown--;
 	m_dent.pop_back ();
 	m_skipped++;
 	m_open = m_over = false;
@@ -1289,17 +1290,19 @@ void DentVesselParser::V1 (const std::string &line)
 			if (p.grp.size () + r.grp.size () > DENT_MAX_GRPLIST) m_over = m_capped = true; // no more groups stored; the record is dropped at its end
 			else if (!m_over) p.grp.insert (p.grp.end (), r.grp.begin (), r.grp.end ());
 			m_open = more;
-			if (!m_open && m_over) { m_dent.pop_back (); m_skipped++; m_over = false; }
+			if (!m_open && m_over) { if (m_meshIdx.count (k)) m_nKnown--; m_dent.pop_back (); m_skipped++; m_over = false; }
 			return;
 		}
 		Close ();
 	}
-	if (m_dent.size () >= DENT_MAX_VESSEL || r.grp.size () > DENT_MAX_GRPLIST) { // past the live cap (R7) or the group limit: not stored
+	bool known = m_meshIdx.count (k) != 0;                // orphans do not count toward the cap; Finish skips them
+	if ((known && m_nKnown >= DENT_MAX_VESSEL) || r.grp.size () > DENT_MAX_GRPLIST) { // past the live cap (R7) or the group limit: not stored
 		m_capped = true;
 		if (!more) { m_skipped++; return; }
 		r.grp.clear (), m_over = true; // its continuation lines are read and dropped with it
 	}
 	m_dent.push_back ({ k, r });
+	if (known) m_nKnown++;
 	m_open = more;
 }
 

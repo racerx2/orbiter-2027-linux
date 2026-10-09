@@ -2175,6 +2175,10 @@ TEST_CASE("fix2 S6: a scoped leaf pair bigger than the release cap keeps its GRA
 	e = d.Pairs ().Find (VKey (1), VKey (2));
 	REQUIRE (e);
 	CHECK (e->grace.size () == 1);
+	bs.back () = Still (2, Vector (10, 0, 0), h); AddPart (bs.back (), gb, VKey (2));  // leaves 10 m apart: bounding spheres separate, the scope is released
+	for (int f = 0; f < 2; f++) Frame (d, CollParams (), h, bs, res);
+	e = d.Pairs ().Find (VKey (1), VKey (2));
+	CHECK ((!e || e->grace.empty ()));
 }
 
 TEST_CASE("fix2: entry check keeps at most 4096 raw intersections per part pair", "[colldetect][fix2]")

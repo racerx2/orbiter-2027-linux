@@ -875,36 +875,44 @@ CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vecto
 	Matrix Js = Ml;
 	double eLast = 0, eFloor = 0;
 	int lvF = -1, nF = 0;                                    // integrator level and substeps of the first configured step, held for the loop (M7)
-	for (int it = 0; it < 8; it++) {
-		CollOrbState c = configure (write, xW, vWr, qa, wWr, wr.Fb, wr.Mb); mir.Step (c, h, lvF, nF);
-		if (lvF < 0) lvF = c.lv, nF = c.nsub;
-		CollOrbState cs = cf; mir.Step (cs, h, lvF, nF);
-		Vector eP = tgtP - (c.s.vel - cs.s.vel)*m;
-		Vector eL = tgtL - (c.SpinL () - cs.SpinL ());
-		eLast = eP.length ()/(tgtP.length () + m*1e-3);
-		eFloor = 4096.0*DBL_EPSILON*m*c.s.vel.length ()/(tgtP.length () + m*1e-3); // rounding floor of heliocentric velocities (30 km/s)
-		if (eP.length () <= 1e-14*(tgtP.length () + m*1e-3) && eL.length () <= 1e-14*(tgtL.length () + 1e-3)) break;
-		if (write) vWr += eP/m;
-		else {
-			CollOrbState c0 = configure (false, xW, vWr, qa, wWr, wr.Fb, wr.Mb), c0s = c0; mir.Step (c0s, h, lvF, nF);
-			for (int cc = 0; cc < 3; cc++) {
-				Vector e; e.data[cc] = 1.0;
-				CollOrbState c1 = c0; c1.AddForce (e, Vector ()); mir.Step (c1, h, lvF, nF);
-				Vector dv = (c1.s.vel - c0s.s.vel)*m;
-				Js(0,cc) = dv.x; Js(1,cc) = dv.y; Js(2,cc) = dv.z;
+	for (int pass = 0; pass < 2; pass++) {                  // second pass only when Orbiter's own Choose on the final state picks another level (M7)
+		for (int it = 0; it < 8; it++) {
+			CollOrbState c = configure (write, xW, vWr, qa, wWr, wr.Fb, wr.Mb); mir.Step (c, h, lvF, nF);
+			if (lvF < 0) lvF = c.lv, nF = c.nsub;
+			CollOrbState cs = cf; mir.Step (cs, h, lvF, nF);
+			Vector eP = tgtP - (c.s.vel - cs.s.vel)*m;
+			Vector eL = tgtL - (c.SpinL () - cs.SpinL ());
+			eLast = eP.length ()/(tgtP.length () + m*1e-3);
+			eFloor = 4096.0*DBL_EPSILON*m*c.s.vel.length ()/(tgtP.length () + m*1e-3); // rounding floor of heliocentric velocities (30 km/s)
+			if (eP.length () <= 1e-14*(tgtP.length () + m*1e-3) && eL.length () <= 1e-14*(tgtL.length () + 1e-3)) break;
+			if (write) vWr += eP/m;
+			else {
+				CollOrbState c0 = configure (false, xW, vWr, qa, wWr, wr.Fb, wr.Mb), c0s = c0; mir.Step (c0s, h, lvF, nF);
+				for (int cc = 0; cc < 3; cc++) {
+					Vector e; e.data[cc] = 1.0;
+					CollOrbState c1 = c0; c1.AddForce (e, Vector ()); mir.Step (c1, h, lvF, nF);
+					Vector dv = (c1.s.vel - c0s.s.vel)*m;
+					Js(0,cc) = dv.x; Js(1,cc) = dv.y; Js(2,cc) = dv.z;
+				}
+				wr.Fb += mul (InvM (Js), eP);
 			}
-			wr.Fb += mul (InvM (Js), eP);
+			Matrix Jw;
+			Vector L0 = c.SpinL ();
+			for (int k2 = 0; k2 < 3; k2++) {
+				Vector e; e.data[k2] = 1e-6*(1.0 + wWr.length ());
+				CollOrbState c2 = configure (write, xW, vWr, qa, wWr + e, wr.Fb, wr.Mb); mir.Step (c2, h, lvF, nF);
+				Vector d = (c2.SpinL () - L0)/e.data[k2];
+				Jw(0,k2) = d.x; Jw(1,k2) = d.y; Jw(2,k2) = d.z;
+			}
+			wWr += mul (InvM (Jw), eL);
+			if (count) F.st.deliveryIt++;
 		}
-		Matrix Jw;
-		Vector L0 = c.SpinL ();
-		for (int k2 = 0; k2 < 3; k2++) {
-			Vector e; e.data[k2] = 1e-6*(1.0 + wWr.length ());
-			CollOrbState c2 = configure (write, xW, vWr, qa, wWr + e, wr.Fb, wr.Mb); mir.Step (c2, h, lvF, nF);
-			Vector d = (c2.SpinL () - L0)/e.data[k2];
-			Jw(0,k2) = d.x; Jw(1,k2) = d.y; Jw(2,k2) = d.z;
-		}
-		wWr += mul (InvM (Jw), eL);
-		if (count) F.st.deliveryIt++;
+		CollOrbState cfin = configure (write, xW, vWr, qa, wWr, wr.Fb, wr.Mb);
+		int lvO, nO;
+		mir.Choose (h, cfin.s.omega.length (), cfin.ground, lvO, nO);
+		if ((lvO == lvF && nO == nF) || pass == 1) break;
+		lvF = lvO; nF = nO;
+		if (count) F.st.deliveryRelevel++;
 	}
 	if (F.check && eLast > std::max (1e-12, eFloor)) Fail ("delivery", eLast, 1.0);
 	wr.cdv = vWr - vW; wr.cdw = wWr - wW;
@@ -1301,7 +1309,7 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 				const APt &q = pts[pidx[m]];
 				if (!q.real || mapAll[m] < 0) continue;
 				const CollSContact &c = all.con[mapAll[m]];
-				if (!solvedRes[q.res]) { solvedRes[q.res] = 1; fwd.Solved (res[q.res]); }
+				solvedRes[q.res] = 1;                                   // fwd.Solved deferred until the restarts settle (M3)
 				CollEventRec e {};
 				e.t = q.t; e.pt = q.pt; e.con = mapAll[m];
 				auto ri = realIdx.find (q.res);
@@ -1365,6 +1373,7 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 			}
 		}
 	}
+	for (size_t r = 0; r < solvedRes.size (); r++) if (solvedRes[r]) fwd.Solved (res[r]);  // the settled attempt only (M3)
 	// events of the touch frames (5.6): FIRST real points, dKE and vn never negative
 	if (!erec.empty ()) {
 		std::vector<CollImpactEvent> e2;

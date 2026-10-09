@@ -187,6 +187,7 @@ private:
 	std::vector<std::pair<uint32_t, DentRecord>> m_mesh;  // XDMGM: key k -> slot, key, ngrp, nvtx
 	std::unordered_map<uint32_t, size_t> m_meshIdx;       // key k -> index in m_mesh
 	std::vector<std::pair<uint32_t, DentRecord>> m_dent;  // XDMGD: key k -> params and groups
+	size_t m_nKnown = 0;                                  // m_dent records whose key is in m_meshIdx: the parse-time cap counts only these
 	std::vector<std::string> m_pending;                   // lines before the first XDMG line; they join its section
 	std::vector<std::string> m_lines;                     // unknown-version lines up to 200 characters, verbatim
 	std::vector<std::pair<uint32_t, std::string>> m_names; // XDMGM slot -> mesh name (readers only)

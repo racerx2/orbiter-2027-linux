@@ -307,6 +307,24 @@ TEST_CASE ("fix2: a state write below the terrain is kept and logged once per ve
 	}
 }
 
+TEST_CASE ("fix3: state writes 30 km above the planet radius query no terrain elevation", "[CollWorldA]")
+{
+	World W;
+	W.sdk.bodies.push_back (CollFakeSdk::Body ());
+	CollFakeSdk::Body *earth = &W.sdk.bodies.back ();
+	const double R0 = earth->size + 30e3;
+	CollFakeSdk::Ves *a = W.Add ("A", Vector (R0, -1.15, 0), Vector (0, 2, 0));
+	CollFakeSdk::Ves *b = W.Add ("B", Vector (R0, 1.15, 0), Vector (0, -2, 0));
+	a->rd.gref = b->rd.gref = earth;
+	for (int f = 0; f < 4; f++) W.Frame (0.1);
+	int states = 0;
+	for (const CollFakeSdk::Wr &x : W.sdk.wr) if (x.op == 'S') states++;
+	CAPTURE (states, W.sdk.elevCalls);
+	REQUIRE (states > 0);
+	CHECK (W.sdk.elevCalls == 0);
+	REQUIRE (W.sdk.misuse == 0);
+}
+
 TEST_CASE ("fix2: a landed playback vessel moves with its cache, not with predicted gravity", "[CollWorldA]")
 {
 	const double r = 6.371e6;

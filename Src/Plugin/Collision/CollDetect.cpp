@@ -1747,6 +1747,22 @@ struct CollDetect::Impl {
 		}
 	}
 
+	// conservative leaf separation: bounding spheres of the two leaf AABBs, radii scaled by the Frobenius norm of the affine part
+	static bool LeafSpheresApart (const CollDetect &d, const CollAffine &XA, const CollAffine &XB, const CollNode &na, const CollNode &nb, double skin)
+	{
+		auto sphere = [] (const CollAffine &X, const CollNode &nd, double &r) {
+			Vector c ((nd.mn[0] + nd.mx[0])*0.5, (nd.mn[1] + nd.mx[1])*0.5, (nd.mn[2] + nd.mx[2])*0.5);
+			Vector hd ((nd.mx[0] - nd.mn[0])*0.5, (nd.mx[1] - nd.mn[1])*0.5, (nd.mx[2] - nd.mn[2])*0.5);
+			double f = 0.0;
+			for (int i = 0; i < 9; i++) f += X.A.data[i]*X.A.data[i];
+			r = std::sqrt (f)*hd.length ();
+			return CollApply (X, c);
+		};
+		double rA, rB;
+		Vector cA = sphere (XA, na, rA), cB = sphere (XB, nb, rB);
+		return (cA - cB).length () - rA - rB - skin >= d.m_prm.sRel;
+	}
+
 	static bool Released (const CollDetect &d, const CollPairEntry &e, const CollLeafPair &l)
 	{
 		bool sa, sb;
@@ -1771,7 +1787,7 @@ struct CollDetect::Impl {
 			for (uint32_t y = nb.first; y < nb.first + nb.count; y++) {
 				const CollTri &tb = rb.geom->tri[rb.geom->perm[y]];
 				if (rb.mask && rb.mask[tb.src]) continue;
-				if (n >= COLL_GRACE_RELEASE_TRI) return false;          // leaf pair too big to judge: keep the scope, re-checked next frame (fix2 S6)
+				if (n >= COLL_GRACE_RELEASE_TRI) return LeafSpheresApart (d, XA, XB, na, nb, ra.skin + rb.skin);  // too big to judge per triangle: release only on bounding sphere separation
 				Vector vb[3] = { CollApply (XB, rb.geom->vtx[tb.v[0]]), CollApply (XB, rb.geom->vtx[tb.v[1]]), CollApply (XB, rb.geom->vtx[tb.v[2]]) };
 				Vector pa2, pb2;
 				dmin = std::min (dmin, CollTriTriDistance (va, vb, pa2, pb2));

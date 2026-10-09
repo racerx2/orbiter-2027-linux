@@ -79,7 +79,8 @@ public:
 	uint32_t BaseCount (CollH p) override { return (uint32_t)((const Body *)p)->base.size (); }
 	CollH Base (CollH p, uint32_t i) override { auto *b = (const Body *)p; return i < b->base.size () ? b->base[i] : nullptr; }
 	void BaseEquPos (CollH base, double &lng, double &lat, double &rad) override { auto *b = (const Body *)base; lng = b->lng; lat = b->lat; rad = 0; }
-	double Elevation (CollH planet, double, double) override { return ((const Body *)planet)->elev; }
+	int elevCalls = 0;
+	double Elevation (CollH planet, double, double) override { elevCalls++; return ((const Body *)planet)->elev; }
 	double PlanetPeriod (CollH) override { return 86164; }
 	double Mass (CollH h) override { for (auto &b : bodies) if (&b == h) return b.mass; Ves *v = V (h); return v ? v->rd.m : 0; }
 	double SimTime () override { return simT; }
