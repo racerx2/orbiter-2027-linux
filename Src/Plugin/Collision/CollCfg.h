@@ -38,6 +38,9 @@ struct CollCfgValues {
 	double fxVentSpec = 150;                // CollisionFxVentSpec (dmg3 F) [J/kg]
 	int fxMaxStreams = 24;                  // CollisionFxMaxStreams (dmg3 F): at most 32
 	bool fxRollDust = false;                // CollisionFxRollDust (dmg3 F)
+	bool blast = true;                      // CollisionBlast (blast): live structural fracture with NVIDIA Blast
+	int blastCells = 64;                    // CollisionBlastCells (blast): Voronoi cells per vessel mesh, 8..256
+	double blastESpec = 300;                // CollisionBlastESpec (blast) [J/kg]: impact damage at full strength
 };
 
 // every key in file order, with its field; Read, Keys and the template test walk this one list; CollisionCfgVersion is the build's (cmake/CollisionCfgOnce.cmake)
@@ -75,6 +78,9 @@ template <class V, class F> void CollCfgFields (V &v, F &&f)
 	f ("CollisionFxVentSpec", v.fxVentSpec);
 	f ("CollisionFxMaxStreams", v.fxMaxStreams);
 	f ("CollisionFxRollDust", v.fxRollDust);
+	f ("CollisionBlast", v.blast);
+	f ("CollisionBlastCells", v.blastCells);
+	f ("CollisionBlastESpec", v.blastESpec);
 }
 
 namespace CollCfg {

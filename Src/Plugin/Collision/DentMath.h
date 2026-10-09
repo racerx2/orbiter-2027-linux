@@ -54,7 +54,7 @@ constexpr double   DENT_CRUSH_CORE     = 0.6;     // dmg3: flat core r_perp < th
 constexpr double   DENT_CRUSH_MOVE     = 0.25;    // dmg3: contact move along n <= this * R and <= P / 2
 constexpr int      DENT_CRUSH_STEPS    = 48;      // dmg3: bisection steps for P
 constexpr int      DENT_VERSION_X      = 2;       // dmg3: extension section version
-enum : uint32_t { DENTM_BOWL = 0, DENTM_CRUSH = 1, DENTM_HINGE = 2, DENTM_CUT = 3 }; // DentParams::mode
+enum : uint32_t { DENTM_BOWL = 0, DENTM_CRUSH = 1, DENTM_HINGE = 2, DENTM_CUT = 3, DENTM_VCUT = 4 }; // DentParams::mode; VCUT: blast Voronoi cell cut (P = cell, seed = site count)
 enum : uint32_t { DENTI_CRUSH = 1, DENTI_HINGE = 2, DENTI_NOISE = 4 }; // DentInput::modes bits
 enum : uint32_t { DENTB_LOBES = 1 };              // DentParams::bits
 enum : uint32_t { DENTC_KEEP = 2 };               // dmg3 tear: cut bits, complement side (debris)
@@ -129,6 +129,8 @@ struct DentTorn { uint8_t kind = 0; uint32_t slot = 0, key = 0; uint16_t ngrp = 
 // one debris piece spawned from a vessel slot (dmg3 area P meaning, area S rows XDMGM B/Q and XDMGD B)
 struct DentDebrisPose { Vector p; double q[4] = { 0, 0, 0, 1 }; std::vector<uint16_t> grp; }; // piece origin and rotation (x y z w) in the parent mesh frame
 struct DentDebris { uint32_t id = 0, slot = 0, key = 0; uint16_t ngrp = 0; uint32_t nvtx = 0; double simt = 0, mass = 0; std::string name; std::vector<DentDebrisPose> pose; std::vector<DentRecord> rec; };
+// blast: Voronoi sites of one vessel slot (rest frame of the static class), rounded through %.9g
+struct DentSites { uint32_t slot = 0, key = 0; std::vector<Vector> s; };
 struct DentVesselText {
 	double eabs = 0; uint32_t flags = 0;          // XDMG: 1 destroyed, 2 module handles effects, 4 catastrophic seen
 	std::vector<DentRecord> rec;                  // application order
@@ -136,6 +138,8 @@ struct DentVesselText {
 	std::vector<std::string> verbatim;            // XDMG* lines of unknown-version sections, <= 200 characters, written before the version-1 lines
 	std::vector<DentTorn> torn;                   // dmg3: parts gone (area P decides, area S saves)
 	std::vector<DentDebris> debris;               // dmg3: live debris spawned from this vessel (area P rebuilds them on load)
+	std::vector<DentSites> sites;                 // blast: Voronoi sites per slot (XDMGM S rows)
+	std::vector<std::pair<uint32_t, std::vector<uint32_t>>> brokenBonds; // blast: slot -> broken bond indices (XDMGM K rows)
 };
 // building damage section (9.4)
 struct DentBaseObjText { uint32_t index; std::string type; double x, z, eabs; uint32_t flags; }; // OBJ line

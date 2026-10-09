@@ -124,6 +124,43 @@ bool CollDmgSession::IsDebris (CollH h)
 	return h && CollKey::IEqual (sdk.ClassName (h), "CollDebris");
 }
 
+void CollDmgSession::SetSites (uint32_t id, const DentSites &s)
+{
+	auto &v = Get (id).d.sites;
+	for (auto &x : v) if (x.slot == s.slot) { x = s; return; }
+	v.push_back (s);
+}
+
+const DentSites *CollDmgSession::Sites (uint32_t id, uint32_t slot) const
+{
+	auto it = vessel.find (id);
+	if (it == vessel.end ()) return nullptr;
+	for (auto &x : it->second.d.sites) if (x.slot == slot) return &x;
+	return nullptr;
+}
+
+void CollDmgSession::AddCellCuts (uint32_t, uint32_t, const std::vector<uint32_t> &)
+{
+}
+
+void CollDmgSession::AddBrokenBonds (uint32_t id, uint32_t slot, const std::vector<uint32_t> &bonds)
+{
+	auto &v = Get (id).d.brokenBonds;
+	for (auto &x : v) if (x.first == slot) { for (uint32_t b : bonds) if (std::find (x.second.begin (), x.second.end (), b) == x.second.end ()) x.second.push_back (b); std::sort (x.second.begin (), x.second.end ()); return; }
+	std::vector<uint32_t> b = bonds;
+	std::sort (b.begin (), b.end ());
+	b.erase (std::unique (b.begin (), b.end ()), b.end ());
+	v.push_back ({ slot, b });
+}
+
+const std::vector<uint32_t> *CollDmgSession::BrokenBonds (uint32_t id, uint32_t slot) const
+{
+	auto it = vessel.find (id);
+	if (it == vessel.end ()) return nullptr;
+	for (auto &x : it->second.d.brokenBonds) if (x.first == slot) return &x.second;
+	return nullptr;
+}
+
 void CollDmgSession::SetDebris (uint32_t id, const std::vector<DentDebris> &d)
 {
 	Get (id).d.debris = d;
@@ -875,7 +912,8 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, 
 	dh3.E = E, dh3.eSpec = m > 0 ? E / m : 0.0;
 	dh3.Esurplus = hitRec < 0 ? E : std::min (E, std::max (0.0, E - mat.sigma_c * std::max (0.0, placed) - hingeE));
 	dh3.R = p.R, dh3.depth = std::max (0.0, depth), dh3.mode = hitRec >= 0 && (size_t)hitRec < v.d.rec.size () ? v.d.rec[hitRec].p.mode : p.mode;
-	if (ev) dh3.vn = ev->vn, dh3.vt = ev->vt, dh3.evflags = ev->flags;
+	if (ev) dh3.vn = ev->vn, dh3.vt = ev->vt, dh3.evflags = ev->flags, dh3.Jn = ev->Jn;
+	dh3.dt = lastPostDt > 0 ? lastPostDt : 1.0 / 60.0; // blast: frame step for force = Jn / dt
 	dh3.simt = t, dh3.playback = false, dh3.mat = &mat;
 	dh3.Mp = hingeMp > 0 ? hingeMp : sx.Mp; // dmg3 tear: tip tear gate
 	EmitHit (dh3);
@@ -1031,6 +1069,7 @@ void CollDmgSession::PostStep ()
 	vis.Pass (CollVisualA::PASS_ALL);
 	double t = sdk.SimTime (), dt = lastPostT >= 0 && t > lastPostT ? t - lastPostT : 0.0;
 	lastPostT = t;
+	if (dt > 0) lastPostDt = dt;
 	if (brk) brk->Post (t, dt);
 	if (fx) fx->Post (t, dt);
 }

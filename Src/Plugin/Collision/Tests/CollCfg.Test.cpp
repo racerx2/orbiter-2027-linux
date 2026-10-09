@@ -68,7 +68,7 @@ TEST_CASE ("E3-U13 defaults")
 {
 	int asked = 0;
 	CollCfgValues v = CollCfg::Read ([&] (const char *, std::string &) { asked++; return false; });
-	CHECK (asked == 32);
+	CHECK (asked == 35);
 	CHECK (v.model == 1);
 	CHECK (v.response);
 	CHECK_FALSE (v.check);
@@ -95,7 +95,8 @@ TEST_CASE ("E3-U13 keys")
 		"CollisionLog", "ClientCheck", "MeshProbe", "DestroyEnergy", "BuildingDestroyEnergy", "CollisionThrustCut", "CollisionVisuals",
 		"CollisionKeyPass", "CollisionCullFix", "CollisionNotify", "CollisionRecorder", "CollisionTestRecId", "CollisionTestSlotCheck",
 		"CollisionDentModes", "CollisionDentNoise", "CollisionDentFacetNormals", "CollisionBreak", "CollisionDebrisMax", "CollisionDebrisLife", "CollisionDebrisPlayback",
-		"CollisionFx", "CollisionFxMask", "CollisionFxIntensity", "CollisionFxPlayback", "CollisionFxVentSpec", "CollisionFxMaxStreams", "CollisionFxRollDust" };
+		"CollisionFx", "CollisionFxMask", "CollisionFxIntensity", "CollisionFxPlayback", "CollisionFxVentSpec", "CollisionFxMaxStreams", "CollisionFxRollDust",
+		"CollisionBlast", "CollisionBlastCells", "CollisionBlastESpec" };
 	std::vector<std::string> keys;
 	for (const char *k : CollCfg::Keys ()) keys.push_back (k);
 	CHECK (keys == want);
