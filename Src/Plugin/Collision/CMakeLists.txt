@@ -118,6 +118,7 @@ else ()
 		message(FATAL_ERROR "Collision: Collision.cfg copy or upgrade failed (${coll_cfg_rc})")
 	endif ()
 	set(COLL_DATA_CMDS COMMAND ${COLL_CFG_ONCE})
+	list(APPEND COLL_DATA_CMDS COMMAND ${CMAKE_COMMAND} -E make_directory ${ORBITER_BINARY_CONFIG_DIR}/Vessels COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/Config/Vessels/CollDebris.cfg ${ORBITER_BINARY_CONFIG_DIR}/Vessels/CollDebris.cfg) # dmg3 P debris class
 	if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Meshes)
 		list(APPEND COLL_DATA_CMDS COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_CURRENT_SOURCE_DIR}/Meshes/ ${ORBITER_BINARY_MESH_DIR})
 	endif ()
@@ -133,6 +134,7 @@ install(CODE "set(COLL_CFG_SRC [[${CMAKE_CURRENT_SOURCE_DIR}/Config/Collision.cf
 	endif ()
 	message(STATUS \"Collision.cfg: \${COLL_CFG_DST} (copied if missing, an older one upgraded, a user's edits kept)\")
 	include([[${CMAKE_CURRENT_SOURCE_DIR}/cmake/CollisionCfgOnce.cmake]])" COMPONENT Collision)
+install(FILES Config/Vessels/CollDebris.cfg DESTINATION ${COLL_DEST_ROOT}/Config/Vessels COMPONENT Collision) # dmg3 P debris class
 install(FILES CollisionAPI.h DESTINATION ${COLL_DEST_ROOT}/Orbitersdk/include COMPONENT Collision)
 if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Meshes)
 	install(DIRECTORY Meshes/ DESTINATION ${COLL_DEST_MESH} COMPONENT Collision FILES_MATCHING PATTERN "*.col")

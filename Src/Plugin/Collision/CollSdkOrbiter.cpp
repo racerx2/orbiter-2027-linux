@@ -305,7 +305,100 @@ protected:
 #endif
 	}
 public: // dmg3 area P
+	CollH MeshLoad (const char *name) override { std::string n (name ? name : ""); return n.empty () ? nullptr : (CollH)oapiLoadMesh (n.data ()); }
+	bool MeshEdit (CollH mesh, uint32_t g, uint32_t addFlag, const DentVtx *vtx, uint32_t n) override
+	{
+		if (!mesh) return false;
+		GROUPEDITSPEC ges; memset (&ges, 0, sizeof ges);
+		if (addFlag) ges.flags |= GRPEDIT_ADDUSERFLAG, ges.UsrFlag = addFlag;
+		if (vtx && n) ges.flags |= GRPEDIT_VTXCRD | GRPEDIT_VTXNML, ges.Vtx = (NTVERTEX *)vtx, ges.nVtx = n;
+		return oapiEditMeshGroup ((MESHHANDLE)mesh, g, &ges) == 0;
+	}
+	void MeshFree (CollH mesh) override { if (mesh) oapiDeleteMesh ((MESHHANDLE)mesh); }
+	bool DebrisClassExists () override
+	{
+		std::string f ("Vessels/CollDebris.cfg"), v;
+		return CfgString (f.c_str (), (int)CONFIG, "Size", v);
+	}
+	uint32_t TouchdownCount (CollH v) override { VESSEL *x = Ves (v); return x ? (uint32_t)x->GetTouchdownPointCount () : 0; }
+	bool Touchdown (CollH v, uint32_t i, Vector &pos) override
+	{
+		VESSEL *x = Ves (v);
+		TOUCHDOWNVTX t;
+		if (!x || i >= x->GetTouchdownPointCount () || !x->GetTouchdownPoint (t, i)) return false;
+		pos = V (t.pos);
+		return true;
+	}
+	bool ThrusterPos (CollH v, CollH th, Vector &pos) override
+	{
+		VESSEL *x = Ves (v);
+		if (!x || !th) return false;
+		VECTOR3 p; x->GetThrusterRef ((THRUSTER_HANDLE)th, p); pos = V (p);
+		return true;
+	}
+protected:
+	int DoGroupFlag (CollH dm, uint32_t g, uint32_t flag, bool add) override
+	{
+		if (!dm) return -1;
+		GROUPEDITSPEC ges; memset (&ges, 0, sizeof ges);
+		ges.flags = add ? GRPEDIT_ADDUSERFLAG : GRPEDIT_DELUSERFLAG; ges.UsrFlag = flag;
+		return oapiEditMeshGroup ((DEVMESHHANDLE)dm, g, &ges);
+	}
+	CollH DoVesselCreate (const char *name, const char *cls, const CollStateWrite &s) override
+	{
+		VESSELSTATUS2 vs; memset (&vs, 0, sizeof vs);
+		vs.version = 2; vs.flag = 0;
+		vs.rbody = H (s.rbody); vs.rpos = O (s.rpos); vs.rvel = O (s.rvel); vs.vrot = O (s.vrot); vs.arot = O (s.arot);
+		vs.status = 0;
+		std::string n (name ? name : ""), c (cls ? cls : "");
+		return oapiCreateVesselEx (n.data (), c.data (), &vs);
+	}
+	bool DoDebrisSetup (CollH v, CollH mesh, const DebrisCaps &c) override
+	{
+		VESSEL *x = Ves (v);
+		if (!x) return false;
+		if (mesh) x->AddMesh ((MESHHANDLE)mesh);
+		x->SetSize (c.size); x->SetEmptyMass (c.mass); x->SetPMI (O (c.pmi)); x->SetCrossSections (O (c.cs));
+		if (c.td.size () >= 3) {
+			std::vector<TOUCHDOWNVTX> td (c.td.size ());
+			for (size_t i = 0; i < td.size (); i++) td[i].pos = O (c.td[i]), td[i].stiffness = c.tdK, td[i].damping = c.tdD, td[i].mu = c.mu, td[i].mu_lng = c.mu;
+			x->SetTouchdownPoints (td.data (), (DWORD)td.size ());
+		}
+		return true;
+	}
+	bool DoVesselDelete (CollH v) override { return v && oapiIsVessel (H (v)) && oapiDeleteVessel (H (v)); }
+public:
 public: // dmg3 area F
+	CollH FxAdd (CollH h, const FxSpec &s, const Vector &pos, const Vector &dir, double *lvl) override
+	{
+		VESSEL *v = Ves (h);
+		if (!v) return nullptr;
+		static char tFlake[] = "Contrail1a", tSpark[] = "Exhaust", tVent[] = "Contrail1", tDust[] = "Contrail4"; // 2024 takes char*
+		char *tn = s.tex == FX_TEX_SPARK ? tSpark : s.tex == FX_TEX_VENT ? tVent : s.tex == FX_TEX_DUST ? tDust : tFlake;
+		PARTICLESTREAMSPEC p;
+		memset (&p, 0, sizeof p);
+		p.flags = 0; p.srcsize = s.size; p.srcrate = s.rate; p.v0 = s.v0; p.srcspread = s.spread;
+		p.lifetime = s.life; p.growthrate = s.grow; p.atmslowdown = s.slow;
+		p.ltype = s.ltype == FX_EMISSIVE ? PARTICLESTREAMSPEC::EMISSIVE : PARTICLESTREAMSPEC::DIFFUSE;
+		p.levelmap = s.lmap == FX_LVL_FLAT ? PARTICLESTREAMSPEC::LVL_FLAT : PARTICLESTREAMSPEC::LVL_LIN;
+		p.lmin = s.lmin; p.lmax = s.lmax;
+		p.atmsmap = PARTICLESTREAMSPEC::ATM_FLAT; p.amin = s.amin; p.amax = s.amax;
+		p.tex = oapiRegisterParticleTexture (tn);
+		return (CollH)v->AddParticleStream (&p, O (pos), O (dir), lvl);
+	}
+	bool FxDel (CollH h, CollH ps) override { VESSEL *v = Ves (h); return v && ps && v->DelExhaustStream ((PSTREAM_HANDLE)ps); }
+	double FxAtm (CollH h) override { VESSEL *v = Ves (h); return v ? v->GetAtmDensity () : 0; }
+	bool FxGround (CollH h, Vector &vLoc, Vector &upLoc, double &alt) override
+	{
+		vLoc = upLoc = Vector (); alt = 0;
+		VESSEL *v = Ves (h);
+		if (!v) return false;
+		VECTOR3 gs, r;
+		if (v->GetGroundspeedVector (FRAME_HORIZON, gs)) { v->HorizonInvRot (gs, r); vLoc = V (r); }
+		v->HorizonInvRot (_V (0, 1, 0), r); upLoc = V (r);
+		alt = v->GetAltitude (ALTMODE_GROUND);
+		return v->GroundContact ();
+	}
 };
 } // namespace
 

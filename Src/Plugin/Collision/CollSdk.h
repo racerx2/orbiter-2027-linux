@@ -167,7 +167,37 @@ protected:
 	virtual void  DoUnregisterCmd (int id) = 0;
 	virtual bool  DoOpenDialog (void *imguiDialog) = 0;         // only called with imgui
 public: // dmg3 area P
+	struct DebrisCaps { double size = 1, mass = 10; Vector pmi, cs; std::vector<Vector> td; double tdK = 0, tdD = 0, mu = 0.5; }; // CollDebris vessel setup
+	uint64_t flagCalls = 0;                                     // GroupFlag calls, separate from CSK_VTX (re-asserted every pass)
+	int   GroupFlag (CollH v, CollH dm, uint32_t g, uint32_t flag, bool add) { (void)v; flagCalls++; return DoGroupFlag (dm, g, flag, add); } // client UsrFlag add or delete
+	CollH VesselCreate (const char *name, const char *cls, const CollStateWrite &s) { cnt.n[CSK_STATE]++; LogCall (CSK_STATE, nullptr); return DoVesselCreate (name, cls, s); } // VESSELSTATUS2 v2, status 0
+	bool  DebrisSetup (CollH v, CollH mesh, const DebrisCaps &c) { cnt.n[CSK_STATE]++; LogCall (CSK_STATE, v); return DoDebrisSetup (v, mesh, c); } // AddMesh, size, mass, PMI, cross sections, touchdown points
+	bool  VesselDelete (CollH v) { cnt.n[CSK_STATE]++; LogCall (CSK_STATE, v); return DoVesselDelete (v); }
+	virtual CollH MeshLoad (const char *) { return nullptr; }  // oapiLoadMesh: private copy, NULL if missing
+	virtual bool  MeshEdit (CollH, uint32_t, uint32_t, const DentVtx *, uint32_t) { return false; } // template group: add UsrFlag (if nonzero), first n vertices (if vtx)
+	virtual void  MeshFree (CollH) {}                          // oapiDeleteMesh
+	virtual bool  DebrisClassExists () { std::string t; return ReadText (Resolve ("Config/Vessels/CollDebris.cfg"), t); }
+	virtual uint32_t TouchdownCount (CollH) { return 0; }
+	virtual bool  Touchdown (CollH, uint32_t, Vector &) { return false; }   // vessel frame
+	virtual bool  ThrusterPos (CollH, CollH, Vector &) { return false; }    // vessel frame
+protected:
+	virtual int   DoGroupFlag (CollH, uint32_t, uint32_t, bool) { return -1; }
+	virtual CollH DoVesselCreate (const char *, const char *, const CollStateWrite &) { return nullptr; }
+	virtual bool  DoDebrisSetup (CollH, CollH, const DebrisCaps &) { return false; }
+	virtual bool  DoVesselDelete (CollH) { return false; }
 public: // dmg3 area F
+	enum : uint8_t { FX_TEX_FLAKE = 0, FX_TEX_SPARK = 1, FX_TEX_VENT = 2, FX_TEX_DUST = 3 }; // Contrail1a, Exhaust, Contrail1, Contrail4
+	enum : uint8_t { FX_EMISSIVE = 0, FX_DIFFUSE = 1 };                // PARTICLESTREAMSPEC::LTYPE
+	enum : uint8_t { FX_LVL_FLAT = 0, FX_LVL_LIN = 1 };                // PARTICLESTREAMSPEC::LEVELMAP
+	struct FxSpec {                                                   // PARTICLESTREAMSPEC with ATM_FLAT; the client copies it
+		double size = 0, rate = 0, v0 = 0, spread = 0, life = 0, grow = 0, slow = 0;
+		uint8_t ltype = FX_DIFFUSE, lmap = FX_LVL_LIN, tex = FX_TEX_FLAKE;
+		double lmin = 0, lmax = 1, amin = 1, amax = 1;
+	};
+	virtual CollH  FxAdd (CollH, const FxSpec &, const Vector &, const Vector &, double *) { return nullptr; } // AddParticleStream (v, spec, pos, dir, lvl); NULL without a client or with streams off
+	virtual bool   FxDel (CollH, CollH) { return false; }            // DelExhaustStream (v, ps); false: unknown or detached handle
+	virtual double FxAtm (CollH) { return 0; }                       // GetAtmDensity [kg/m^3]
+	virtual bool   FxGround (CollH, Vector &vLoc, Vector &upLoc, double &alt) { vLoc = upLoc = Vector (); alt = 0; return false; } // GroundContact; ground speed and up in the vessel frame, altitude over ground
 private:
 	CollSdkCount cnt;
 	double noteUntil = -1;                                      // system time the annotation expires, -1 none

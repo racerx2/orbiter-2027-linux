@@ -200,6 +200,65 @@ public: // fix2 area E
 	int damageModelE = 0;                      // DamageModel for every vessel
 	bool TankDead (CollH tk) { auto *t = (const struct Tank *)tk; if (t && t->alive) return false; Bad ("deleted tank"); return true; } // a deleted tank's handle is dead
 public: // dmg3 area P
+	struct MeshP { std::vector<CollGroupData> grp; bool freed = false; }; // private mesh copies of MeshLoad
+	std::deque<MeshP> meshP; std::vector<std::string> callsP; std::map<const Ves *, DebrisCaps> debrisP;
+	bool debrisCfgP = true;
+	CollH MeshLoad (const char *name) override
+	{
+		for (auto &t : tpls) if (name && t.name == name) { meshP.push_back ({ t.grp, false }); callsP.push_back ("MeshLoad"); return &meshP.back (); }
+		return nullptr;
+	}
+	bool MeshEdit (CollH m, uint32_t g, uint32_t addFlag, const DentVtx *vtx, uint32_t n) override
+	{
+		auto *x = (MeshP *)m;
+		if (!x || g >= x->grp.size ()) return false;
+		x->grp[g].usrflag |= addFlag;
+		for (uint32_t i = 0; vtx && i < n && i < x->grp[g].vtx.size (); i++) std::memcpy (&x->grp[g].vtx[i], (const char *)vtx + sizeof (CollVtx) * i, sizeof (CollVtx)); // DentVtx is incomplete here, same layout
+		return true;
+	}
+	void MeshFree (CollH m) override { if (m) ((MeshP *)m)->freed = true; callsP.push_back ("MeshFree"); }
+	bool DebrisClassExists () override { return debrisCfgP; }
+protected:
+	int DoGroupFlag (CollH, uint32_t g, uint32_t flag, bool add) override { callsP.push_back (std::string (add ? "Flag+" : "Flag-") + std::to_string (g) + ":" + std::to_string (flag)); return 0; }
+	CollH DoVesselCreate (const char *name, const char *cls, const CollStateWrite &s) override { Ves *v = AddVessel (name, cls); v->rd.x = s.rpos; v->rd.v = s.rvel; v->rd.R = IMatrix (); callsP.push_back ("VesselCreate"); return v; }
+	bool DoDebrisSetup (CollH v, CollH, const DebrisCaps &c) override { Ves *x = V (v); if (!x) return false; debrisP[x] = c; return true; }
+	bool DoVesselDelete (CollH v) override { Ves *x = V (v); if (!x) return false; DelVessel (x); callsP.push_back ("VesselDelete"); return true; }
+public:
 public: // dmg3 area F
+	struct FxS { CollH v; FxSpec s; Vector pos, dir; double *lvl; bool alive, detached; };
+	struct GroundF { bool on = false; Vector vLoc, up = Vector (0, 1, 0); double alt = 0; };
+	std::deque<FxS> fx;                        // every stream created, in order; handles are addresses into it
+	bool fxNull = false;                       // FxAdd returns NULL (headless, EnableParticleStreams off)
+	std::map<const Ves *, double> atmF;        // FxAtm per vessel; absent: 0
+	std::map<const Ves *, GroundF> groundF;    // FxGround per vessel; absent: no contact
+	int fxAdds = 0, fxDels = 0, fxReads = 0;
+	CollH FxAdd (CollH v, const FxSpec &s, const Vector &pos, const Vector &dir, double *lvl) override
+	{
+		fxAdds++;
+		if (!V (v) || fxNull) return nullptr;
+		fx.push_back ({ v, s, pos, dir, lvl, true, false });
+		return &fx.back ();
+	}
+	bool FxDel (CollH v, CollH ps) override
+	{
+		fxDels++;
+		if (!V (v)) return false;
+		for (auto &f : fx) if (&f == ps) {
+			if (f.detached) return false;  // the core compares pointers first: safe, no misuse
+			if (!f.alive || f.v != v) { Bad ("FxDel dead or foreign stream"); return false; }
+			f.alive = false; f.lvl = nullptr; return true;
+		}
+		Bad ("FxDel unknown stream"); return false;
+	}
+	double FxAtm (CollH v) override { fxReads++; auto it = atmF.find ((const Ves *)v); return it == atmF.end () ? 0 : it->second; }
+	bool FxGround (CollH v, Vector &vLoc, Vector &upLoc, double &alt) override
+	{
+		fxReads++;
+		auto it = groundF.find ((const Ves *)v);
+		GroundF g = it == groundF.end () ? GroundF () : it->second;
+		vLoc = g.vLoc; upLoc = g.up; alt = g.alt; return g.on;
+	}
+	void FxDetach (CollH v) { for (auto &f : fx) if (f.v == v && f.alive) { f.alive = false; f.detached = true; f.lvl = nullptr; } } // vessel destroyed or ClearThrusterDefinitions
+	size_t FxLive () const { size_t n = 0; for (auto &f : fx) n += f.alive; return n; }
 };
 #endif

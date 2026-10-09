@@ -2,4 +2,6 @@
 coll_unit_test(CollStore.Test 30 UNITS CollStore DentMath Vecmat)
 if (TARGET Coll_CollDamageA)
 	coll_unit_test(CollDamageA.Test 120 UNITS CollDamageA CollBreakA CollFxA CollVisualA CollStore CollApiA CollSdk CollShape CollAnim CollGeom DentMath CollCfg Vecmat)
+	coll_unit_test(CollBreakA.Test 60 UNITS CollBreakA CollDamageA CollFxA CollVisualA CollStore CollApiA CollSdk CollShape CollAnim CollGeom DentMath CollCfg Vecmat)
+	coll_unit_test(CollFxA.Test 60 UNITS CollFxA CollSdk DentMath CollCfg Vecmat)
 endif ()
