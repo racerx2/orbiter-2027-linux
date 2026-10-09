@@ -490,6 +490,7 @@ void CollDmgSession::PrePhysics ()
 {
 	if (!begun) return;
 	if (!matched) MatchAll ();
+	if (brk) brk->PreStep (sdk.SimTime ());
 	double simt = -1;
 	for (CollTestRepair &t : blk.testRepair) {
 		if (t.done) continue;

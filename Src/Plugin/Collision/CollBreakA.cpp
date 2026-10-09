@@ -1083,10 +1083,8 @@ void CollBreakA::Post (double simt, double simdt)
 {
 	if (quiet) return;
 	postDt = simdt;
-	bool first = !rebuilt;
-	if (!rebuilt) { rebuilt = true; Rebuild (simt); }
+	Boot (simt);
 	Adopt ();
-	if (first) for (auto &kv : s.Vessels ()) if (!kv.second.d.sites.empty ()) massPending.insert (kv.first);
 	if (!massPending.empty ()) LoadMass ();
 	if (cfg.blast) for (auto &kv : blast) { // blast: spin loads only for slots hit within BLAST_LIVE
 		CollBlastSlotA &bs = kv.second;
@@ -1098,12 +1096,27 @@ void CollBreakA::Post (double simt, double simdt)
 	BlastRebuild ();
 	for (size_t i = freeMesh.size (); i-- > 0;) if (freeMesh[i].dropped) { if (freeMesh[i].mesh) sdk.MeshFree (freeMesh[i].mesh); freeMesh.erase (freeMesh.begin () + (long)i); }
 	for (auto &kv : ves) Assert (kv.first, kv.second);
-	std::vector<CollSpawnA> sp;
-	sp.swap (spawn);
-	for (auto &x : sp) Spawn (x, simt);
 	PairCheck (simt);
 	for (size_t i = live.size (); i-- > 0;) if (simt - live[i].birth > cfg.debrisLife) Kill (i, "life");
 	while (live.size () > (size_t)std::max (0, cfg.debrisMax)) Kill (0, "cap");
+}
+
+void CollBreakA::Boot (double simt)
+{
+	if (rebuilt) return; // first pass after load, pre-step or post-step: debris rows rebuilt before any new spawn
+	rebuilt = true;
+	Rebuild (simt);
+	Adopt ();
+	for (auto &kv : s.Vessels ()) if (!kv.second.d.sites.empty ()) massPending.insert (kv.first);
+}
+
+void CollBreakA::PreStep (double simt)
+{
+	if (quiet) return;
+	Boot (simt);
+	std::vector<CollSpawnA> sp;
+	sp.swap (spawn);
+	for (auto &x : sp) Spawn (x, simt); // in the pre-step: the core places the new vessel and the parent's write where they were read
 }
 
 void CollBreakA::End ()

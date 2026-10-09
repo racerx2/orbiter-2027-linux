@@ -58,6 +58,7 @@ public:
 	virtual void Destroyed (uint32_t) {}
 	virtual void Shapes (uint32_t, CollShape *) {}       // PS2: shapes updated (collider hide re-apply)
 	virtual void Post (double, double) {}                // post-step after the visual pass: simt, simdt
+	virtual void PreStep (double) {}                       // pre-step before the solver: vessel creation and state writes (a post-step write lands a step off)
 	virtual void Pass () {}                              // key and pause passes
 	virtual void Torn (uint32_t, const DentTorn &) {}    // playback or load: one torn row to apply
 	virtual void Repair (uint32_t) {}

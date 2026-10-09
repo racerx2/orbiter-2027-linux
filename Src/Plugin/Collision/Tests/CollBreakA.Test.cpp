@@ -258,7 +258,7 @@ TEST_CASE ("P2 crush ratio 0.55 keeps, 0.65 breaks; 15 m/s never breaks", "[dmg3
 	REQUIRE (r.S ().Damage (a)->d.torn.size () == 1);
 	CHECK (r.S ().Damage (a)->d.torn[0].grp == std::vector<uint16_t> { 1 });
 	CHECK (r.sdk.flags.empty ());                           // client flags only in the post-step pass
-	r.B ().Post (0, 0.01);
+	r.B ().PreStep (0); r.B ().Post (0, 0.01);
 	bool flagged = false; for (auto &f : r.sdk.flags) if (f.first == 1 && f.second) flagged = true;
 	CHECK (flagged);
 	CHECK (r.sdk.Logged ("Collision break 'A' kind=0"));
@@ -271,7 +271,7 @@ TEST_CASE ("P3 glass: 5 mm intact, 3 cm hidden, no debris", "[dmg3P]")
 	CHECK (!r.B ().Hidden (a, 0, 2));
 	r.B ().Hit (r.H (a, 2, 5, 0, 0.03));
 	CHECK (r.B ().Hidden (a, 0, 2));
-	r.B ().Post (0, 0.01);
+	r.B ().PreStep (0); r.B ().Post (0, 0.01);
 	CHECK (r.sdk.Calls ("VesselCreate") == 0);
 }
 
@@ -295,14 +295,14 @@ TEST_CASE ("P5 re-assert on every post and pass, separate counter, new visual", 
 	Rig r; uint32_t a = r.Add ("A");
 	r.B ().Hit (r.H (a, 1, 30, 0.9));
 	uint64_t vtx = r.sdk.Count ().n[CSK_VTX], f0 = r.sdk.flagCalls;
-	r.B ().Post (0, 0.01);
+	r.B ().PreStep (0); r.B ().Post (0, 0.01);
 	CHECK (r.sdk.flagCalls > f0);
 	uint64_t f1 = r.sdk.flagCalls;
 	r.B ().Pass ();
 	CHECK (r.sdk.flagCalls > f1);
 	r.body.front ().v->visual = 2;
 	uint64_t f2 = r.sdk.flagCalls;
-	r.B ().Post (0.1, 0.01);
+	r.B ().PreStep (0.1); r.B ().Post (0.1, 0.01);
 	CHECK (r.sdk.flagCalls > f2);
 	CHECK (r.sdk.Count ().n[CSK_VTX] == vtx);
 	CollShape fresh; CollTemplateCache cache;
@@ -336,7 +336,7 @@ TEST_CASE ("P7 debris: spawn in post, template flags, vertices, kick, cap, mesh 
 	r.B ().Hit (h);
 	CHECK (r.sdk.Calls ("VesselCreate") == 0);
 	CHECK (r.B ().Pending () == 1);
-	r.B ().Post (0, 0.01);
+	r.B ().PreStep (0); r.B ().Post (0, 0.01);
 	REQUIRE (r.sdk.Calls ("VesselCreate") == 1);
 	REQUIRE (r.B ().Debris ().size () == 1);
 	const CollDebrisA &d = r.B ().Debris ()[0];
@@ -362,13 +362,13 @@ TEST_CASE ("P7 debris: spawn in post, template flags, vertices, kick, cap, mesh 
 	r.cfg.debrisMax = 2;
 	std::vector<uint32_t> more;
 	for (int i = 0; i < 2; i++) { uint32_t c = r.Add ("C" + std::to_string (i)); r.B ().Hit (r.H (c, 1, 70, 0.9)); }
-	r.sdk.simt = 1; r.B ().Post (1, 0.01);
+	r.sdk.simt = 1; r.B ().PreStep (1); r.B ().Post (1, 0.01);
 	CHECK (r.B ().Debris ().size () == 2);
 	CHECK (r.sdk.Calls ("VesselDelete") == 1);
 	CHECK (!dv->alive);
 	CHECK (!m->freed);
 	r.B ().DropVessel (d.id, d.h);
-	r.B ().Post (1.1, 0.01);
+	r.B ().PreStep (1.1); r.B ().Post (1.1, 0.01);
 	CHECK (m->freed);
 	r.B ().End ();
 	for (auto &x : r.sdk.mesh) if (x.copy) CHECK (x.freed);
@@ -378,7 +378,7 @@ TEST_CASE ("P8 missing CollDebris.cfg: hide only, one log line", "[dmg3P]")
 {
 	Rig r; r.sdk.cfgDebris = false; uint32_t a = r.Add ("A"), b = r.Add ("B");
 	r.B ().Hit (r.H (a, 1, 70, 0.9)); r.B ().Hit (r.H (b, 1, 70, 0.9));
-	r.B ().Post (0, 0.01);
+	r.B ().PreStep (0); r.B ().Post (0, 0.01);
 	CHECK (r.B ().Hidden (a, 0, 1));
 	CHECK (r.sdk.Calls ("VesselCreate") == 0);
 	CHECK (r.sdk.Logs ("CollDebris.cfg missing") == 1);
@@ -389,7 +389,7 @@ TEST_CASE ("P9 load: torn rows adopted, debris rebuilt bitwise, orphans deleted"
 	std::vector<DentTorn> torn; std::vector<DentDebris> rows; uint32_t fnv = 0; std::vector<CollVtx> live;
 	{
 		Rig r; uint32_t a = r.Add ("A");
-		r.B ().Hit (r.H (a, 1, 70, 0.9)); r.B ().Post (0, 0.01);
+		r.B ().Hit (r.H (a, 1, 70, 0.9)); r.B ().PreStep (0); r.B ().Post (0, 0.01);
 		REQUIRE (r.B ().Debris ().size () == 1);
 		fnv = r.B ().Debris ()[0].fnv;
 		live = r.sdk.debrisMesh[BFake::X (r.B ().Debris ()[0].h)]->grp[1].vtx;
@@ -401,7 +401,7 @@ TEST_CASE ("P9 load: torn rows adopted, debris rebuilt bitwise, orphans deleted"
 	BFake::V *orphan = r.sdk.Add ("Z_D1", "CollDebris"); r.host.IdOf (orphan);
 	for (auto &t : torn) r.S ().AddTorn (a, t);
 	r.S ().SetDebris (a, rows);
-	r.B ().Post (3, 0.01);
+	r.B ().PreStep (3); r.B ().Post (3, 0.01);
 	CHECK (r.B ().Hidden (a, 0, 1));
 	REQUIRE (r.B ().Debris ().size () == 1);
 	CHECK (r.B ().Debris ()[0].fnv == fnv);
@@ -413,7 +413,7 @@ TEST_CASE ("P9 load: torn rows adopted, debris rebuilt bitwise, orphans deleted"
 	q.sdk.mesh.front ().grp.pop_back ();
 	BFake::V *qd = q.sdk.Add ("A_D1", "CollDebris"); q.host.IdOf (qd);
 	q.S ().SetDebris (qa, rows);
-	q.B ().Post (3, 0.01);
+	q.B ().PreStep (3); q.B ().Post (3, 0.01);
 	CHECK (!qd->alive);
 	CHECK (q.B ().Debris ().empty ());
 }
@@ -429,7 +429,7 @@ TEST_CASE ("P10 playback T: hide at t, debris spawned live, no parent write", "[
 	uint64_t w0 = r.sdk.Count ().n[CSK_STATE];
 	r.B ().Torn (a, t);
 	CHECK (r.B ().Hidden (a, 0, 1));
-	r.B ().Post (0, 0.01);
+	r.B ().PreStep (0); r.B ().Post (0, 0.01);
 	CHECK (r.sdk.Calls ("VesselCreate") == 1);
 	CHECK (r.sdk.Count ().n[CSK_STATE] == w0 + 2);      // create and setup of the debris only
 }
@@ -437,7 +437,7 @@ TEST_CASE ("P10 playback T: hide at t, debris spawned live, no parent write", "[
 TEST_CASE ("P11 idle: no hit, no P call", "[dmg3P]")
 {
 	Rig r; r.Add ("A"); r.Add ("B");
-	r.B ().Post (0, 0.01); r.B ().Pass (); r.B ().Post (1, 0.01);
+	r.B ().PreStep (0); r.B ().Post (0, 0.01); r.B ().Pass (); r.B ().PreStep (1); r.B ().Post (1, 0.01);
 	CHECK (r.sdk.flagCalls == 0);
 	CHECK (r.sdk.Count ().Writes () == 0);
 	CHECK (r.sdk.calls.empty ());
@@ -500,7 +500,7 @@ TEST_CASE ("tear 8: gate (555, 70) cuts, debris holds straddlers; (100, 30) and 
 	CHECK (c->grp == std::vector<uint16_t> { 7 });                    // straddler x 2..3
 	CHECK (r.B ().Hidden (r.a, 0, 8)); CHECK (r.B ().Hidden (r.a, 0, 9)); CHECK (!r.B ().Hidden (r.a, 0, 7));
 	REQUIRE (r.B ().Pending () == 1);
-	r.B ().Post (0, 0.01);
+	r.B ().PreStep (0); r.B ().Post (0, 0.01);
 	REQUIRE (r.B ().Debris ().size () == 1);
 	const DentDebris &d = r.B ().Debris ()[0].row;
 	std::set<uint16_t> in; for (auto &ps : d.pose) in.insert (ps.grp.begin (), ps.grp.end ());
@@ -517,7 +517,7 @@ TEST_CASE ("tear 9: B row mass reused on reload, MeshEdit before DebrisSetup, FN
 	std::vector<DentDebris> rows; std::vector<DentTorn> torn; uint32_t fnv = 0; double mass = 0;
 	{
 		TearRig r; r.Seed ("A", 0.6, 0.5);
-		r.B ().Hit (r.T (555, 70)); r.B ().Post (0, 0.01);
+		r.B ().Hit (r.T (555, 70)); r.B ().PreStep (0); r.B ().Post (0, 0.01);
 		REQUIRE (r.B ().Debris ().size () == 1);
 		fnv = r.B ().Debris ()[0].fnv;
 		BFake::V *dv = BFake::X (r.B ().Debris ()[0].h);
@@ -538,7 +538,7 @@ TEST_CASE ("tear 9: B row mass reused on reload, MeshEdit before DebrisSetup, FN
 	for (auto &t : torn) r.S ().AddTorn (r.a, t);
 	r.body.front ().v->empty = 900; // a changed parent mass does not change the stored section mass
 	r.S ().SetDebris (r.a, rows);
-	r.B ().Post (3, 0.01);
+	r.B ().PreStep (3); r.B ().Post (3, 0.01);
 	REQUIRE (r.B ().Debris ().size () == 1);
 	CHECK (r.B ().Debris ()[0].fnv == fnv);
 	CHECK (r.sdk.caps[dv].mass == mass);
@@ -575,7 +575,7 @@ TEST_CASE ("tear 11: tip gate at 1.0 Mp, not 0.5; rest-hidden never debris; 0.4 
 		TearRig r (true);
 		r.sdk.mesh.front ().grp[8].usrflag = 2;
 		r.Seed ("A", 0.6, 0.5);
-		r.B ().Hit (r.T (555, 70)); r.B ().Post (0, 0.01);
+		r.B ().Hit (r.T (555, 70)); r.B ().PreStep (0); r.B ().Post (0, 0.01);
 		REQUIRE (r.B ().Debris ().size () == 1);
 		for (auto &ps : r.B ().Debris ()[0].row.pose) CHECK (std::find (ps.grp.begin (), ps.grp.end (), 8) == ps.grp.end ());
 		bool row8 = false; for (auto &t : r.S ().Damage (r.a)->d.torn) for (uint16_t g : t.grp) if (g == 8) row8 = true;
@@ -584,7 +584,7 @@ TEST_CASE ("tear 11: tip gate at 1.0 Mp, not 0.5; rest-hidden never debris; 0.4 
 	{
 		Rig r; r.sdk.mesh.front ().grp[1] = CollGroupData (); Quad (r.sdk.mesh.front ().grp[1], 5.5, -0.2, 0.2, 0.4, 4);
 		uint32_t a = r.Add ("A");
-		r.B ().Hit (r.H (a, 1, 70, 0.9)); r.B ().Post (0, 0.01);
+		r.B ().Hit (r.H (a, 1, 70, 0.9)); r.B ().PreStep (0); r.B ().Post (0, 0.01);
 		CHECK (r.B ().Hidden (a, 0, 1));
 		CHECK (r.sdk.Calls ("VesselCreate") == 0);
 	}
@@ -605,7 +605,7 @@ TEST_CASE ("tear 12: spawn velocity uses the post-impulse rd.v; kick along +-t /
 	TearRig r; r.Seed ("A", 0.6, 0.5);
 	r.B ().Hit (r.T (555, 70));
 	r.body.front ().v->rd.v = Vector (0, 0, 3);                         // PS4 wrote the post-impulse state before PO2
-	r.B ().Post (0, 0.01);
+	r.B ().PreStep (0); r.B ().Post (0, 0.01);
 	REQUIRE (r.B ().Debris ().size () == 1);
 	BFake::V *dv = BFake::X (r.B ().Debris ()[0].h);
 	CollStateWrite st = r.sdk.created[dv];
@@ -638,7 +638,7 @@ TEST_CASE ("tear 13: playback rebuilds the section debris from T + cut, no TearG
 	torn.dv = Vector (0, 1.5, 0), torn.dw = Vector (0, 0, 0.5), torn.mass = 777;
 	r.B ().Torn (r.a, torn);
 	CHECK (r.B ().Hidden (r.a, 0, 9));
-	r.B ().Post (0, 0.01);
+	r.B ().PreStep (0); r.B ().Post (0, 0.01);
 	REQUIRE (r.sdk.Calls ("VesselCreate") == 1);
 	REQUIRE (r.B ().Debris ().size () == 1);
 	CHECK (r.B ().Debris ()[0].row.rec.back ().p.bits & DENTC_KEEP);
@@ -696,7 +696,7 @@ TEST_CASE ("blast P1: a 70 m/s hit separates cells; SpawnCells makes one debris 
 	CHECK (r.B ().Blast (a, 0)->BondsOfPairs (*kb) == r.B ().Blast (a, 0)->Broken ());
 	CHECK (r.sdk.Logged ("Collision blast break 'A' slot=0 cells="));
 	r.sdk.simt = 0.02;
-	r.B ().Post (0.02, 0.02);
+	r.B ().PreStep (0.02); r.B ().Post (0.02, 0.02);
 	REQUIRE (!r.B ().Debris ().empty ());
 	CHECK (r.sdk.Calls ("VesselCreate") == (int)r.B ().Debris ().size ());
 	Vector Pm, Hm; double scale = 0;
@@ -809,11 +809,11 @@ TEST_CASE ("blast P2: a small hit breaks nothing; Blast runs only within 2 s of 
 	CHECK ((!kb || kb->empty ()));
 	uint64_t n0 = r.B ().blastSteps;
 	r.body.front ().v->rd.w = Vector (0.2, 0.1, 0);
-	r.sdk.simt = 1.0; r.B ().Post (1.0, 0.02);
+	r.sdk.simt = 1.0; r.B ().PreStep (1.0); r.B ().Post (1.0, 0.02);
 	CHECK (r.B ().blastSteps == n0 + 1);
-	r.sdk.simt = 1.9; r.B ().Post (1.9, 0.02);
+	r.sdk.simt = 1.9; r.B ().PreStep (1.9); r.B ().Post (1.9, 0.02);
 	CHECK (r.B ().blastSteps == n0 + 2);
-	r.sdk.simt = 2.5; r.B ().Post (2.5, 0.02);
+	r.sdk.simt = 2.5; r.B ().PreStep (2.5); r.B ().Post (2.5, 0.02);
 	CHECK (r.B ().blastSteps == n0 + 2);                            // idle slots cost nothing
 	CHECK (r.B ().blastBreaks == 0);
 	CHECK (r.sdk.Calls ("VesselCreate") == 0);
@@ -921,17 +921,17 @@ TEST_CASE ("blast P6: the parent's empty mass drops by the broken cells, a reloa
 		rc.p.mode = DENTM_VCUT; rc.p.P = c; rc.p.seed = 64; rc.p.c = ds.s[c]; rc.p.n = Vector (0, 0, 1); rc.p.t = Vector (1, 0, 0);
 		REQUIRE (q.S ().AddCut (b, rc, true));
 	}
-	q.B ().Post (0, 0.02);                                           // first post-step after load
+	q.B ().PreStep (0); q.B ().Post (0, 0.02);                                           // first post-step after load
 	CHECK (std::fabs (q.B ().MassCut (b) - cut) <= 1e-9 * cut);
 	CHECK (std::fabs (q.body.front ().v->empty - (5000 - cut)) <= 1e-9 * 5000);
-	q.B ().Post (0.02, 0.02);
+	q.B ().PreStep (0.02); q.B ().Post (0.02, 0.02);
 	CHECK (std::fabs (q.B ().MassCut (b) - cut) <= 1e-9 * cut);   // once per load
 	r.B ().Repair (a);
 	CHECK (r.body.front ().v->empty == 5000); CHECK (r.body.front ().v->rd.m == 5000);
 	for (double c : { r.body.front ().v->rd.pmi.x, r.body.front ().v->rd.pmi.y, r.body.front ().v->rd.pmi.z }) CHECK (std::fabs (c - 2.7) < 1e-9); // PMI back
 	CHECK (r.B ().MassCut (a) == 0);
 	BlastRig z; uint32_t e = z.Ship ("A");
-	z.B ().Post (0, 0.02);
+	z.B ().PreStep (0); z.B ().Post (0, 0.02);
 	CHECK (z.B ().MassCut (e) == 0); CHECK (z.body.front ().v->empty == 5000); // no sites: no cut
 }
 
@@ -943,7 +943,7 @@ TEST_CASE ("blast P7: bonds weakened without breaking are saved as W rows and a 
 		r.B ().Hit (r.K (v));
 		CollBlastA *x = r.B ().Blast (a, 0);
 		REQUIRE (x);
-		r.B ().Post (0.02, 0.02);
+		r.B ().PreStep (0.02); r.B ().Post (0.02, 0.02);
 		const std::vector<uint32_t> *wb = r.S ().WeakBonds (a, 0);
 		REQUIRE (wb); REQUIRE (!wb->empty ());
 		CHECK (*wb == x->WeakPairs ());
@@ -960,7 +960,7 @@ TEST_CASE ("blast P7: bonds weakened without breaking are saved as W rows and a 
 		for (auto &kb : o.brokenBonds) q.S ().AddBrokenBonds (b, kb.first, kb.second);
 		for (auto &w : o.weakBonds) q.S ().SetWeakBonds (b, w.first, w.second);
 		for (auto &rc : vt.rec) if (rc.p.mode == DENTM_VCUT) REQUIRE (q.S ().AddCut (b, rc, true));
-		q.B ().Post (0, 0.02);                                       // load: built and restored without a hit
+		q.B ().PreStep (0); q.B ().Post (0, 0.02);                                       // load: built and restored without a hit
 		CollBlastA *y = q.B ().Blast (b, 0);
 		REQUIRE (y);
 		REQUIRE (y->bond.size () == x->bond.size ());
@@ -1000,7 +1000,7 @@ TEST_CASE ("blast P9: skin crushed beyond the part ratio tears off as fragments 
 		h.rec = (int)r.S ().Damage (a)->d.rec.size () - 1;
 		r.B ().Hit (h);
 		r.sdk.simt = 0.02;
-		r.B ().Post (0.02, 0.02);
+		r.B ().PreStep (0.02); r.B ().Post (0.02, 0.02);
 		brk[k] = r.B ().blastBreaks;
 		for (auto &d : r.B ().Debris ()) {
 			bool crush = false;

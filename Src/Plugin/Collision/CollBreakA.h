@@ -78,6 +78,8 @@ public:
 	void Torn (uint32_t id, const DentTorn &t) override;
 	void Repair (uint32_t id) override;
 	void DropVessel (uint32_t id, CollH h) override;
+	void PreStep (double simt) override;                    // spawns queued by the last post-step: debris vessels and the parents' kicks
+	void Boot (double simt);                              // first pass after load: rebuild debris, adopt rows, queue the load mass cut
 	void End () override;
 	void Quiet () override { quiet = true; }
 	bool Hidden (uint32_t id, uint32_t mesh, uint32_t g) const override;
