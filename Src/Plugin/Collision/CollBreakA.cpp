@@ -807,7 +807,7 @@ void CollBreakA::Spawn (CollSpawnA &sp, double simt)
 		auto add = [&] (uint32_t a) { if (a == d.id || !s.VesselHandle (a)) return; pairs.push_back ({ std::min (a, d.id), std::max (a, d.id), simt, d.id }); s.noPair[{ std::min (a, d.id), std::max (a, d.id) }] = simt; };
 		add (d.parent);
 		if (d.other) add (d.other);
-		for (auto &o : live) if (o.event == d.event && o.parent == d.parent && o.id != ~0u && o.id != d.id) add (o.id);
+		for (auto &o : live) if (o.id != ~0u && o.id != d.id) add (o.id); // debris do not collide with other debris
 	}
 	Log ("Collision debris '%s' from '%s' slot=%u mass=%.4g fnv=%08x", d.row.name.c_str (), sdk.Name (vh).c_str (), d.row.slot, sp.mass, fnv);
 	SyncRows (sp.parent);
@@ -887,6 +887,7 @@ void CollBreakA::Shapes (uint32_t id, CollShape *sh)
 		auto add = [&] (uint32_t a) { if (a == id || !s.VesselHandle (a)) return; pairs.push_back ({ std::min (a, id), std::max (a, id), sdk.SimTime (), id }); s.noPair[{ std::min (a, id), std::max (a, id) }] = sdk.SimTime (); };
 		add (d.parent);
 		if (d.other) add (d.other);
+		for (auto &o : live) if (o.id != ~0u && o.id != id) add (o.id);
 	}
 }
 
@@ -1019,11 +1020,12 @@ void CollBreakA::PairCheck (double simt)
 		CollPairA p = pairs[k];
 		CollH ha = s.VesselHandle (p.a), hb = s.VesselHandle (p.b);
 		if (!ha || !hb) { s.noPair.erase ({ p.a, p.b }); pairs.erase (pairs.begin () + (long)k); continue; }
+		if (p.sep) continue;
 		Vector pa, pb, v; Matrix R;
 		sdk.GlobalState (ha, pa, v, R); sdk.GlobalState (hb, pb, v, R);
 		auto rad = [&] (uint32_t id, CollH h) { auto it = ves.find (id); Vector c; double r = 0; if (it != ves.end () && it->second.sh) { it->second.sh->Bound (1, c, r); if (r > 0) return r; } return sdk.Size (h); };
 		double gap = (pa - pb).length () - rad (p.a, ha) - rad (p.b, hb);
-		if (gap > BRK_SEP) { s.noPair.erase ({ p.a, p.b }); pairs.erase (pairs.begin () + (long)k); continue; }
+		if (gap > BRK_SEP) { pairs[k].sep = true; continue; } // apart: no stuck check; the filter stays, a slow piece grazing its own wreck costs and adds nothing
 		if (simt - p.t > BRK_STUCK && std::find (stuck.begin (), stuck.end (), p.debris) == stuck.end ()) stuck.push_back (p.debris);
 	}
 	for (uint32_t id : stuck) for (size_t i = 0; i < live.size (); i++) if (live[i].id == id) { Kill (i, "still overlapping"); break; } // Kill erases pairs: never inside the pair loop

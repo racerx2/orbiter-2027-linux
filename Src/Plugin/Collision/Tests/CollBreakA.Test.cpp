@@ -776,7 +776,13 @@ TEST_CASE ("blast P1: a 70 m/s hit separates cells; SpawnCells makes one debris 
 	CHECK (Pm.length () <= 1e-9 * std::max (1.0, scale));
 	CHECK (Hm.length () <= 1e-9 * std::max (1.0, scale));
 	printf ("blast P1: %zu debris, %llu breaks, parent+debris |P| %.3g |H| %.3g (scale %.3g), %zu/%zu debris vertices folded\n", r.B ().Debris ().size (), (unsigned long long)r.B ().blastBreaks, Pm.length (), Hm.length (), scale, moved, nv);
-	for (auto &d : r.B ().Debris ()) for (auto &pr : r.B ().Pairs ()) if (pr.debris == d.id) CHECK ((pr.a == a || pr.b == a));
+	std::set<uint32_t> dids;
+	for (auto &d : r.B ().Debris ()) dids.insert (d.id);
+	for (auto &d : r.B ().Debris ()) {                              // every debris: filtered against its parent and every other debris, for good
+		CHECK (r.S ().noPair.count ({ std::min (a, d.id), std::max (a, d.id) }));
+		for (uint32_t o : dids) if (o != d.id) CHECK (r.S ().noPair.count ({ std::min (o, d.id), std::max (o, d.id) }));
+	}
+	for (auto &pr : r.B ().Pairs ()) CHECK (((pr.a == a || pr.b == a) || (dids.count (pr.a) && dids.count (pr.b))));
 	CHECK (!r.B ().Pairs ().empty ());                              // pair filter parent-debris
 	for (auto &d : r.B ().Debris ()) {                              // blast debris rows save and parse with their KEEP VCUT records
 		DentVesselText vt; vt.debris.push_back (d.row);

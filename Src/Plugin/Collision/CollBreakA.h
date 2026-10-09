@@ -34,7 +34,7 @@ constexpr double BRK_TEAR_RX      = 0.4;    // cut radius <= this * L
 constexpr double BRK_TEAR_MMAX    = 0.3;    // section mass <= this * parent empty mass
 constexpr double BRK_TEAR_KICK    = 0.1;    // section kick = this * vn along +-t or +-e
 constexpr double BRK_KICK         = 0.15;   // debris speed = this * vn
-constexpr double BRK_SEP          = 0.05;   // pair filter released at this bound gap [m]
+constexpr double BRK_SEP          = 0.05;   // pair counted apart at this bound gap [m]
 constexpr double BRK_STUCK        = 10.0;   // debris still overlapping after this is deleted [s]
 constexpr double BRK_FUNC_DIST    = 0.15;   // a touchdown, thruster or dock point this near a vertex holds the piece [m]
 constexpr int    BRK_PER_EVENT    = 4;      // debris per event
@@ -53,7 +53,7 @@ struct CollDebrisA { uint32_t id = ~0u, parent = 0, other = 0, event = 0; CollH 
 struct CollSpawnA { uint32_t parent = 0, other = 0, event = 0; std::string mesh; DentDebris row; Vector cv, dv, dw; double mass = 0; CollSdk::DebrisCaps caps; bool blast = false; }; // blast: the parent takes the opposite impulse
 struct CollCutPlan { bool ok = false; DentRecord rec; std::vector<uint16_t> front, straddle; double d = 0, f = 0, area = 0; const char *why = ""; }; // dmg3 tear: planned cut
 struct CollFreeA { CollH mesh = nullptr, h = nullptr; bool dropped = false; };
-struct CollPairA { uint32_t a = 0, b = 0; double t = 0; uint32_t debris = 0; };
+struct CollPairA { uint32_t a = 0, b = 0; double t = 0; uint32_t debris = 0; bool sep = false; }; // sep: apart once; the filter stays (debris never collide with their parents, impactors or other debris)
 struct CollBlastSlotA {                                   // blast: one vessel slot (design-CA-blast 2)
 	std::unique_ptr<CollBlastA> b; uint32_t key = 0; double lastHit = -1e300; CollDamageHit hit; bool haveHit = false;
 	std::vector<uint16_t> groups;                         // static-class groups in the cells
