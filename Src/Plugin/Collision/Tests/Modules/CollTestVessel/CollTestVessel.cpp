@@ -233,7 +233,7 @@ void CollTestVessel::clbkPreStep (double simt, double, double)
 void CollTestVessel::clbkPostStep (double simt, double, double)
 {
 	ctlLast = _mm_getcsr () & 0xffc0; // after the addon's pre-step of this frame
-	if (k == 1 || k == 5) Log ("mxcsr post k=%d ctl=0x%04x", k, ctlLast);
+	if (k == 1 || k == 5 || k % 50 == 0) Log ("mxcsr post k=%d ctl=0x%04x", k, ctlLast); // every 50th too: a fast shutdown skips the destructor's last line
 	for (const Words &w : acts)
 		if (Post (w, simt)) Act (w, simt);
 	if (meshLog) MeshLog ();

@@ -115,7 +115,7 @@ coll_scenario_test(Scn.Actions SCN gen:pair:g0=1000,A=CollTestVessel,B=CollTestV
 coll_scenario_test(Scn.PlaceBase SCN gen:surface FRAMES 10 CHECK placebase
 	RUNS "main|headless|off||||TESTCREATE 1 PL CollTestVessel PB 0 30 0 0 0 0,TESTPLACEBASE 3 PL Brighton_Beach 100 3 -173.21 0 0 0 90")
 coll_scenario_test(Scn.LuaCall SCN gen:surface:rcover=1 FRAMES 500 CHECK luacall RUNS "ref|headless|off||||" "call|headless|off||||LUACALL 5 GL Retro 0")
-coll_scenario_test(Coll.MXCSR SCN gen:pair:g0=1000,director=1 FRAMES 10 CHECK mxcsr RUNS "off|headless|off||||" "on|headless|on||||")
+coll_scenario_test(Coll.MXCSR SCN gen:pair:g0=1000,director=1 FRAMES 60 CHECK mxcsr RUNS "off|headless|off||||" "on|headless|on||||")
 coll_scenario_test(Scn.Jitter TIMING SCN gen:pair:g0=1000,director=1 FRAMES 60 CHECK jitter LABELS paced RUNS "main|paced|off||||TESTPACE 16.7,TESTSLEEP 30 100")
 coll_scenario_test(G5.Warp SCN gen:pair:g0=1000,director=1 FRAMES 500 EVERY 5 CHECK g5pair LABELS golden
 	RUNS "off|headless|off||||TESTWARP 100 10,TESTWARP 200 100,TESTWARP 300 1000,TESTWARP 400 1" "on|headless|on||||TESTWARP 100 10,TESTWARP 200 100,TESTWARP 300 1000,TESTWARP 400 1")
