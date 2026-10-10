@@ -63,6 +63,7 @@ struct CollBlastSlotA {                                   // blast: one vessel s
 	bool full = false;                                    // record limit reached, logged
 	std::vector<uint32_t> weak;                           // weakened bonds already stored (W rows)
 	std::set<uint32_t> held;                              // chunk keys of held pieces already logged
+	std::set<uint32_t> deferHeld; std::map<uint32_t, uint32_t> deferW; // held again under spin loads only at the 1 % floor: split until the next hit resets (W rows kept)
 };
 bool CollPieceHeld (const CollPieceA &p, const CollDamageHit &h, bool hitNow = true); // blast: dmg3 part gates for an actor of animated pieces only (approach speed, dock pin); without a hit this frame only the dock pin
 struct CollParentA { bool read = false; CollVesselRead rd {}; Vector rp, rv, J, H; double M = 0; std::vector<std::pair<Vector, Vector>> jf; }; // pre-step: one read and one write per parent; jf: impulse and point of each debris (stacks)
@@ -129,6 +130,7 @@ private:
 	CollBlastSlotA *BlastSlot (uint32_t id, uint32_t mesh, CollH vh, const CollSlotA &sl); // blast: lazy build, restore from the session
 	void BlastHit (const CollDamageHit &h, CollH vh, const CollSlotA &sl);
 	void BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, CollH vh, bool hit); // hit: a hit this frame, else spin loads only
+	bool ResetDeferred (CollBlastSlotA &bs);              // blast: held pieces deferred under spin loads go back into the structure; false: the slot was dropped
 	static std::vector<uint16_t> StatGroups (const CollSlotA &sl); // blast: groups of the static class that form cells
 	bool MakeCellSpawn (const CollBlastBreak &bk, const CollSlotA &sl, CollH vh, const std::vector<Vector> &site, const std::vector<uint16_t> &stat, uint32_t event, CollSpawnA &sp);
 	CollSdk &sdk; CollDmgSession &s; const CollCfgValues &cfg;

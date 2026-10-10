@@ -1356,6 +1356,7 @@ CollBlastSlotA *CollBreakA::BlastSlot (uint32_t id, uint32_t mesh, CollH vh, con
 	const DentSites *ds = s.Sites (id, mesh);
 	bool given = ds && ds->key == sl.key && !ds->s.empty ();
 	bs.b.reset (new CollBlastA ());
+	bs.deferHeld.clear (); bs.deferW.clear (); // a build from the records has every held piece in
 	if (!bs.b->Build (in, given ? &ds->s : nullptr, CollApply (Fsi, Vector () - sdk.MeshOffset (vh, mesh)))) { blast.erase (key); return nullptr; }
 	if (!given) { DentSites x; x.slot = mesh; x.key = sl.key; x.s = bs.b->site; s.SetSites (id, x); }
 	std::vector<uint32_t> removed, bonds;
@@ -1381,10 +1382,26 @@ CollBlastSlotA *CollBreakA::BlastSlot (uint32_t id, uint32_t mesh, CollH vh, con
 	return &bs;
 }
 
+bool CollBreakA::ResetDeferred (CollBlastSlotA &bs)
+{
+	if (bs.deferHeld.empty () || !bs.b) return true;
+	std::vector<uint32_t> br0 = bs.b->BrokenPairs (), rm;
+	br0.erase (std::remove_if (br0.begin (), br0.end (), [&] (uint32_t p) { return bs.deferW.count (p) > 0; }), br0.end ());
+	std::vector<uint32_t> kb = bs.b->BondsOfPairs (br0);
+	for (uint32_t c = 0; c < bs.b->chunk.size (); c++) if (bs.b->gone[c] && !bs.deferHeld.count (bs.b->ChunkKey (c))) rm.push_back (c);
+	bs.deferHeld.clear (); bs.deferW.clear ();
+	if (!bs.b->Reset ()) { bs.b.reset (); return false; } // rebuilt from the records at the next hit
+	bs.b->Restore (kb, rm, bs.weak);
+	bs.recorded = bs.b->BrokenPairs (); bs.weak = bs.b->WeakPairs ();
+	blastRebuilds++;
+	return true;
+}
+
 void CollBreakA::BlastHit (const CollDamageHit &h, CollH vh, const CollSlotA &sl)
 {
 	CollBlastSlotA *bs = BlastSlot (h.id, h.mesh, vh, sl);
 	if (!bs) return;
+	if (!ResetDeferred (*bs)) return; // a hit acts on the whole structure: the deferred held pieces go back in before its damage
 	std::vector<CollAffine> F = Poses (h.id, h.mesh, sl.v.size ());
 	CollAffine Fsi = CollInverse (StaticPose (sl, F));
 	Vector ofs = sdk.MeshOffset (vh, h.mesh);
@@ -1426,6 +1443,7 @@ void CollBreakA::BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, Coll
 		bs.full = true;
 		return;
 	}
+	if (hitNow && !ResetDeferred (bs)) return;
 	std::vector<uint32_t> w0 = bs.b->WeakPairs (), b0 = bs.b->BrokenPairs (); // before the step: held bonds keep this health
 	std::vector<CollBlastSplit> sp = bs.b->Step ();
 	std::vector<uint8_t> held (sp.size (), 0);
@@ -1449,6 +1467,9 @@ void CollBreakA::BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, Coll
 		}
 		br.erase (std::remove_if (br.begin (), br.end (), [&] (uint32_t p) { return hw.count (p) > 0; }), br.end ());
 	}
+	const bool floorOnly = std::all_of (hw.begin (), hw.end (), [] (const std::pair<const uint32_t, uint32_t> &x) { return x.second <= 10000u; });
+	for (auto &x : bs.deferW) hw.emplace (x.first, x.second); // deferred held bonds stay W rows
+	br.erase (std::remove_if (br.begin (), br.end (), [&] (uint32_t p) { return bs.deferW.count (p) > 0; }), br.end ());
 	std::set_difference (br.begin (), br.end (), bs.recorded.begin (), bs.recorded.end (), std::back_inserter (nb));
 	if (!nb.empty ()) { s.AddBrokenBonds (id, mesh, nb); bs.recorded = br; }
 	std::vector<uint32_t> wk = bs.b->WeakPairs ();
@@ -1489,9 +1510,15 @@ void CollBreakA::BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, Coll
 		}
 		SpawnCells (bk);
 	}
+	if (!hk.empty () && !hitNow && floorOnly) { // spin loads only, every held bond already at the floor: no Reset each frame, the next hit resets
+		for (uint32_t k : hk) bs.deferHeld.insert (k);
+		for (auto &x : hw) bs.deferW[x.first] = x.second;
+		return;
+	}
 	if (!hk.empty ()) { // held pieces stay on: the cached asset restarts with the live state as stored, so later hits can still tear them off
 		std::vector<uint32_t> rm, kb = bs.b->BondsOfPairs (br);
-		for (uint32_t c = 0; c < bs.b->chunk.size (); c++) if (bs.b->gone[c] && !hk.count (bs.b->ChunkKey (c))) rm.push_back (c);
+		for (uint32_t c = 0; c < bs.b->chunk.size (); c++) if (bs.b->gone[c] && !hk.count (bs.b->ChunkKey (c)) && !bs.deferHeld.count (bs.b->ChunkKey (c))) rm.push_back (c);
+		bs.deferHeld.clear (); bs.deferW.clear ();
 		if (!bs.b->Reset ()) { bs.b.reset (); return; } // rebuilt from the records at the next hit
 		bs.b->Restore (kb, rm, bs.weak);
 		bs.recorded = bs.b->BrokenPairs (); bs.weak = bs.b->WeakPairs ();

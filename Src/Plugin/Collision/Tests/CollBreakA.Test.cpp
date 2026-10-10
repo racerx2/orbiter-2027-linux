@@ -1608,3 +1608,26 @@ TEST_CASE ("custom-fix3 B4: a cell debris whose cell payloads are lost still spa
 	for (auto &ps : q.B ().Debris ()[0].row.pose) for (uint16_t g : ps.grp) if (g == 6) panel = true;
 	CHECK (panel);
 }
+
+TEST_CASE ("custom-fix5: a dock-pinned panel under spin loads after a hit is not reset every frame; the next hit resets it and can tear it off", "[dmg3P][blast]")
+{
+	HeldRig r; r.ShipA ("A");
+	r.body.front ().v->dock.push_back (Vector (0.67, 0.67, 2));    // the panel is a docking port: the pin holds below 300 J/kg
+	r.B ().Hit (r.P (5, 300, 0.5));                                   // a bump splits the panel: held by the part speed
+	r.sdk.simt = 0.01; r.B ().Hit (r.P (5, 100, 0.5));               // a light touch: the last hit is below the 300 J/kg pin threshold
+	const uint64_t r0 = r.B ().blastRebuilds;
+	REQUIRE (r0 >= 1);
+	const CollSlotA *sl = r.B ().Slot (r.a, 0);
+	REQUIRE (sl);
+	REQUIRE ((sl->piece[sl->pieceOf[6]].functional & CBRK_FN_DOCK));
+	r.body.front ().v->rd.w = Vector (60, 0, 0);                     // spin loads only inside BLAST_LIVE: the pin holds every frame
+	for (int k = 1; k <= 10; k++) { r.sdk.simt = 0.02 * k; r.B ().PreStep (r.sdk.simt, 0.02); r.B ().Post (r.sdk.simt, 0.02); }
+	CAPTURE (r0, r.B ().blastRebuilds);
+	CHECK (r.B ().blastRebuilds <= r0 + 1);                          // at most one Reset, not one per frame
+	CHECK (!r.B ().Hidden (r.a, 0, 6));                              // held: still on the hull
+	r.body.front ().v->rd.w = Vector ();
+	r.sdk.simt = 0.3;
+	CollDamageHit h = r.P (40, 800, 0.5); h.id = r.a; h.h = r.host.Vessel (r.a);
+	r.B ().Hit (h);                                                  // past the pin: the deferred reset puts the panel back, the hit tears it off
+	CHECK (r.B ().Hidden (r.a, 0, 6));
+}
