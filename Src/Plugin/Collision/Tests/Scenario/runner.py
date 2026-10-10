@@ -11,6 +11,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -77,6 +78,27 @@ def compilers_running():
         if comm in COMPILERS:
             found.append(comm)
     return found
+
+
+class BuildWatch:  # samples compilers_running() every 0.5 s during the runs: a short build between the two leak checks still excuses build-tree changes
+    def __init__(self, period=0.5):
+        self.period, self.seen, self.stop_ev = period, set(), threading.Event()
+        self.thread = threading.Thread(target=self.loop, daemon=True)
+
+    def loop(self):
+        while True:
+            self.seen.update(compilers_running())
+            if self.stop_ev.wait(self.period):
+                return
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.stop_ev.set()
+        self.thread.join()
+        return False
 
 
 def skip_checks(timing=True):  # step 1 of E4 7.5: a skipped run deletes nothing; only timing-sensitive tests skip, the others run under load
@@ -474,6 +496,25 @@ def selftest_leak(base):  # custom-fix T6: Collision.so is not snapshotted; a bu
             except TestError:
                 got = True
             if got != leak or (not leak and p == cfg and 'note: build running' not in LAST[0]):
+                log('selftest leak %s: %s' % (what, 'leak reported' if got else 'no leak reported'))
+                errors += 1
+        for what, mid, leak in (('cfg changed, short build during the runs', ['ninja'], False), ('cfg changed, no build during the runs', [], True)):
+            now, LAST[0] = [[]], ''
+            compilers_running = lambda: now[0]
+            before = leak_snapshot(root, '')
+            with BuildWatch(0.05) as watch:
+                time.sleep(0.2)
+                now[0] = mid
+                time.sleep(0.3)
+                bump(cfg)
+                now[0] = []
+                time.sleep(0.2)
+            try:
+                leak_check(before, root, '', sorted(watch.seen))
+                got = False
+            except TestError:
+                got = True
+            if got != leak or (not leak and 'note: build running' not in LAST[0]):
                 log('selftest leak %s: %s' % (what, 'leak reported' if got else 'no leak reported'))
                 errors += 1
     finally:
@@ -1104,9 +1145,10 @@ def run_test(a):
         building = compilers_running()
         ctx = scnlib.Context(a, golden_header(a))
         runid = '%d-%d' % (int(time.time()), os.getpid())
-        for spec in specs:
-            do_run(a, spec, ctx, runid)
-        leak_check(before, os.path.realpath(a.root), a.addon_so, building)
+        with BuildWatch() as watch:
+            for spec in specs:
+                do_run(a, spec, ctx, runid)
+        leak_check(before, os.path.realpath(a.root), a.addon_so, building + sorted(watch.seen))
         if check:
             check.check(ctx)
     finally:
