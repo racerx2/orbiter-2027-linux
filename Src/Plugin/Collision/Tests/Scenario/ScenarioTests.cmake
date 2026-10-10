@@ -103,15 +103,15 @@ coll_scenario_test(Scn.Twice SCN gen:pair:g0=1000 FRAMES 600 CHECK twice
 # T0.3 checker self-tests: synthetic dumps and logs with planted errors (E4 T0.3)
 coll_add_test(Scn.Selftest TIMEOUT 150 SERIAL LABELS scenario coll COMMAND ${Python3_EXECUTABLE} ${COLL_SCN_DIR}/selftest.py --work ${COLL_TEST_BIN}/run)
 
-# T0.4 goldens (E4 7.6, design-C-T 7.3): G1-G4 addon off, G5 addon on in quiet scenes; golden/<name>.dump.gz from an off run with COLL_GOLDEN_WRITE=1; quiet and off-vs-on run everywhere; under another compiler, build type or CPU the golden compare passes on equal content and skips (77) on a difference
-coll_scenario_test(Coll.Off.Golden.Pair SCN gen:pair:g0=0.5,vA=0.5,vB=-0.5 FRAMES 600 EVERY 5 CHECK golden LABELS golden RUNS "c0|headless|off||||")
-coll_scenario_test(Coll.Off.Golden.Smack SCN "Delta-glider/Smack!" FRAMES 1500 EVERY 10 CHECK golden LABELS golden RUNS "c0|headless|off||||")
-coll_scenario_test(Coll.Off.Golden.Ascent SCN gen:ascent STEP 0.05 FRAMES 3000 EVERY 10 TIMEOUT 600 CHECK golden LABELS golden long
+# T0.4 goldens (E4 7.6, design-C-T 7.3): G1-G4 addon off, G5 addon on in quiet scenes; golden/<name>.dump.gz from an off run with COLL_GOLDEN_WRITE=1; quiet and off-vs-on run everywhere; under another compiler, build type or CPU the golden compare passes on equal content and skips (77) on a difference; ElevationMode 0: installed elevation tiles do not change the dumps
+coll_scenario_test(Coll.Off.Golden.Pair SCN gen:pair:g0=0.5,vA=0.5,vB=-0.5 FRAMES 600 EVERY 5 CHECK golden CFG "ElevationMode = 0" LABELS golden RUNS "c0|headless|off||||")
+coll_scenario_test(Coll.Off.Golden.Smack SCN "Delta-glider/Smack!" FRAMES 1500 EVERY 10 CHECK golden CFG "ElevationMode = 0" LABELS golden RUNS "c0|headless|off||||")
+coll_scenario_test(Coll.Off.Golden.Ascent SCN gen:ascent STEP 0.05 FRAMES 3000 EVERY 10 TIMEOUT 600 CHECK golden CFG "ElevationMode = 0" LABELS golden long
 	RUNS "c0|headless|off||||")
-coll_scenario_test(Coll.Off.Golden.Surface SCN gen:surface FRAMES 600 EVERY 5 CHECK golden LABELS golden RUNS "c0|headless|off||||")
-coll_scenario_test(G5.Smack SCN "Delta-glider/Smack!" FRAMES 1500 EVERY 10 CHECK golden LABELS golden RUNS "c0|headless|off||||" "c1|headless|on||||")
-coll_scenario_test(G5.Surface SCN gen:surface FRAMES 600 EVERY 5 CHECK golden LABELS golden RUNS "c0|headless|off||||" "c1|headless|on||||")
-coll_scenario_test(G5.Far SCN gen:pair:g0=1000 FRAMES 600 EVERY 5 CHECK golden LABELS golden RUNS "c0|headless|off||||" "c1|headless|on||||")
+coll_scenario_test(Coll.Off.Golden.Surface SCN gen:surface FRAMES 600 EVERY 5 CHECK golden CFG "ElevationMode = 0" LABELS golden RUNS "c0|headless|off||||")
+coll_scenario_test(G5.Smack SCN "Delta-glider/Smack!" FRAMES 1500 EVERY 10 CHECK golden CFG "ElevationMode = 0" LABELS golden RUNS "c0|headless|off||||" "c1|headless|on||||")
+coll_scenario_test(G5.Surface SCN gen:surface FRAMES 600 EVERY 5 CHECK golden CFG "ElevationMode = 0" LABELS golden RUNS "c0|headless|off||||" "c1|headless|on||||")
+coll_scenario_test(G5.Far SCN gen:pair:g0=1000 FRAMES 600 EVERY 5 CHECK golden CFG "ElevationMode = 0" LABELS golden RUNS "c0|headless|off||||" "c1|headless|on||||")
 
 # T0.7 test modules and actions (E4 7.4, 7.10)
 coll_scenario_test(Scn.Place0 SCN gen:pair:g0=1000 FRAMES 10 CHECK place0 RUNS "main|headless|off||||TESTPLACEREL 5 PB-B PB-A 0 0 6 0 0 0 0 180 0")
