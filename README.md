@@ -1,3 +1,5 @@
+# For custom features goto the custom branch here: https://github.com/racerx2/orbiter2027-Linux/tree/Custom
+
 ![Orbiter logo](./Src/Orbiter/Bitmaps/banner.png)
 
 # Orbiter 2027 Space Flight Simulator — native Linux port+
@@ -16,7 +18,7 @@ a try. Orbiter is free, so you don’t need to invest more than a bit of your
 spare time.
 
 This tree is the Linux-only code of a line-by-line port of [orbitersim/orbiter](https://github.com/orbitersim/orbiter)
-(commits in `UPSTREAM`, via [racerx2/orbiter64-Linux](https://github.com/racerx2/orbiter64-Linux)) to native Linux: no Wine, no DXVK, graphics on Vulkan 1.3,
+to native Linux: no Wine, no DXVK, graphics on Vulkan 1.3,
 windows and dialogs on Qt 6, sound on PipeWire. It holds no Windows code; Orbiter for
 Windows is [orbitersim/orbiter](https://github.com/orbitersim/orbiter).
 
@@ -76,5 +78,4 @@ The in-game help system can be opened via the "Help" button on
 the Orbiter Launchpad dialog, or with Alt-F1 while running
 Orbiter.
 
-Remaining questions can be posted on the Orbiter user forum at
-[orbiter-forum.com](https://www.orbiter-forum.com).
+Remaining questions can be posted on my [Discord](https://discord.gg/fnxQYTKPFK).
