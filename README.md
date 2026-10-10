@@ -53,16 +53,20 @@ Ctrl+Shift+L always brings back the classic Launchpad.
 
 ### Collisions and damage
 
-![A Delta Glider before and after a 70 m/s head-on crash](./.github/readme/collisions.jpg)
+![Two Delta Gliders hit head-on at 70 m/s in orbit: the noses crush and break into debris](./.github/readme/collisions.gif)
 
-*A Delta Glider before (left) and after (right) a 70 m/s head-on crash.*
+*Two Delta Gliders hit head-on at 70 m/s in orbit.*
 
-An add-on that makes ships collide with each other and with base buildings:
+An add-on that makes ships collide with each other, with base buildings and with the ground:
 
 - Colliders follow each ship's real mesh, so cargo bays stay open.
 - Docked and attached stacks respond as one body, and every impact conserves momentum.
-- Dents form where the ships hit, sized by the crash energy. A ship that absorbs more than 1 kJ per kg is
-  destroyed (it loses thrust when the Damage model option is on).
+- Hulls dent, crush and tear where they hit, sized by the crash energy.
+- Structures break apart live in the simulation with NVIDIA Blast, on the CPU (no special graphics card needed).
+  Pieces that come off fly away as debris.
+- Crashes into buildings and into the ground do the same damage.
+- Damage and debris are saved with the scenario and play back in flight recordings.
+- A ship that absorbs more than 1 kJ per kg is destroyed (it loses thrust when the Damage model option is on).
 
 Turn it on in the Launchpad's **Modules** tab (Collision). Settings are in `Config/Collision.cfg`.
 
