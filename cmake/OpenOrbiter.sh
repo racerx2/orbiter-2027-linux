@@ -7,6 +7,7 @@
 #   OB_LAUNCHER_PM=apt|dnf|zypper|pacman   picks the package manager
 #   OB_LAUNCHER_NO_EXEC=1                  checks and fixes, then stops before starting Orbiter
 set -u
+for t in awk find; do command -v $t >/dev/null || { echo "OpenOrbiter needs '$t': install gawk and findutils from your distribution" >&2; exit 1; }; done # minimal systems (openSUSE images) lack them
 
 DIR=$(dirname "$(readlink -f "$0")")
 BIN="$DIR/Orbiter"
