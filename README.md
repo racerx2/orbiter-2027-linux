@@ -133,4 +133,4 @@ the Orbiter Launchpad dialog, or with Alt-F1 while running
 Orbiter.
 
 Remaining questions can be posted on the Orbiter user forum at
-[orbiter-forum.com](https://www.orbiter-forum.com).
+[Discord](https://discord.gg/fnxQYTKPFK).
