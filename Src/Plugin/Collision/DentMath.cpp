@@ -2423,7 +2423,7 @@ void DentVesselParser::V1 (const std::string &line)
 	uint32_t k;
 	DentRecord r {};
 	bool more = false;
-	if (t.size () < 12 || !ParseInt (t[1], k) || !ParseParams (t, 2, r.p) || !ParseGroups (t[11], r.grp, more)) { if (!m_open) m_nord++; Close (); m_skipped++; return; } // a bad continuation line: its record's ordinal is counted already
+	if (t.size () < 12 || !ParseInt (t[1], k) || !ParseParams (t, 2, r.p) || !ParseGroups (t[11], r.grp, more)) { m_skipped++; if (m_open) m_dent.back ().second.grp.clear (), m_over = true; else m_nord++; return; } // a bad continuation line drops its record and that record's later lines; its ordinal is counted already
 	if (m_open) { // the previous line's list ended in ',': this line continues it, or the record dangles
 		DentRecord &p = m_dent.back ().second;
 		if (m_dent.back ().first == k && SameParams (p.p, r.p) && !r.grp.empty ()) {
