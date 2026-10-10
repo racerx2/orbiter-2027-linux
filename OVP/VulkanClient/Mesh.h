@@ -357,10 +357,13 @@ private:
 	struct PbrDebug { DWORD flags, selmsh, selgrp, displ; bool active; };
 	bool			IsPbrGroup(DWORD g) const { return Grp[g].bPbr && Grp[g].MFDScreenId == 0; }
 	void			PbrTangents(DWORD g);
+	void			PbrVerify();
 	void			RenderPbr(const LPD3DXMATRIX pW, const D3DXMATRIX &mWorldMesh, int iTech, bool bGroupCull, const D3DXMATRIX &mWorldView, const D3DXVECTOR4 &Field, const PbrDebug &dbg);
 	std::vector<std::unique_ptr<PbrMaterial>> Pbr;	// by material index
 	bool bHasPbr;
 	bool bPbrAlphaTest;		// a PBR group needs the alpha-tested shadow path
+	bool bPbrVerify;		// the groups' shader variants are checked at the next Render
+	bool bPbrGlass, bPbrGlassT;	// visible transparent (transmission) groups in the last opaque pass
 	VkTex *pPbrEnvA;		// legacy env map of the current Render call
 
 	WORD	DefShader;

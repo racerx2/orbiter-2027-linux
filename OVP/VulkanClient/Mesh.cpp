@@ -199,6 +199,8 @@ void D3D9Mesh::Null(const char *meshName /* = NULL */)
 	bMtrlModidied = false;
 	bHasPbr = false; // custom: PBR materials
 	bPbrAlphaTest = false;
+	bPbrVerify = false;
+	bPbrGlass = bPbrGlassT = false;
 	pPbrEnvA = NULL;
 
 	Locals = new LightStruct[Config->MaxLights()];
@@ -1435,6 +1437,7 @@ void D3D9Mesh::CheckMeshStatus()
 		if (m->NeedsTangents() && !Grp[g].bPbrTangents) PbrTangents(g);
 	}
 	if (bHasPbr) bIsReflective = true;
+	bPbrVerify = bHasPbr;
 }
 
 
@@ -1465,17 +1468,22 @@ const PbrMaterial *D3D9Mesh::GetPbrMaterial(DWORD idx) const
 
 bool D3D9Mesh::HasPbrTransparent(bool *bTransmission) const
 {
+	if (bTransmission) *bTransmission = bPbrGlassT;
+	return bPbrGlass;
+}
+
+// render thread: groups whose shader variant can't be made are drawn as legacy groups
+void D3D9Mesh::PbrVerify()
+{
+	bPbrVerify = false;
 	bool any = false;
-	if (bTransmission) *bTransmission = false;
-	if (!bHasPbr) return false;
 	for (DWORD g = 0; g < nGrp; g++) {
-		if (!IsPbrGroup(g)) continue;
+		if (!Grp[g].bPbr) continue;
 		const PbrMaterial *m = GetPbrMaterial(Grp[g].MtrlIdx);
-		if (!m || !m->Transparent()) continue;
-		any = true;
-		if (bTransmission && m->transmission > 0) *bTransmission = true;
+		if (!m || !PbrRender::Variant(m->Features())) Grp[g].bPbr = false;
+		else any = true;
 	}
-	return any;
+	bHasPbr = any;
 }
 
 // UV tangents for a group's PBR maps; a mesh sharing its template's buffer gets its own copy first (as EditGroup)
@@ -1520,6 +1528,8 @@ void D3D9Mesh::Render(const LPD3DXMATRIX pW, int iTech, VkTex **pEnv, int nEnv)
 		if (bHasPbr) pBuf->Map(pDev); // custom: PBR tangents may have changed the vertices
 	}
 
+	if (bPbrVerify) PbrVerify(); // custom
+	if (PbrRender::GetPhase() == PbrRender::PHASE_OPAQUE) bPbrGlass = bPbrGlassT = false; // custom: set again by RenderPbr
 	pPbrEnvA = (nEnv >= 1) ? pEnv[0] : NULL; // custom: the PBR groups' fallback environment
 
 	if (DebugControls::IsActive() == false) {
@@ -2060,6 +2070,7 @@ void D3D9Mesh::RenderSimplified(const LPD3DXMATRIX pW, VkTex **pEnv, int nEnv, b
 	if (bMtrlModidied) {
 		CheckMeshStatus();
 		bMtrlModidied = false;
+		if (bHasPbr) pBuf->Map(pDev); // custom: PBR tangents may have changed the vertices
 	}
 
 	Scene *scn = gc->GetScene();
@@ -2656,10 +2667,14 @@ void D3D9Mesh::RenderPbr(const LPD3DXMATRIX pW, const D3DXMATRIX &mWorldMesh, in
 		const PbrMaterial *m = GetPbrMaterial(Grp[g].MtrlIdx);
 		if (!m) continue;
 		bool tr = m->Transparent();
-		if (tr && phase == PbrRender::PHASE_OPAQUE) continue;
 		if (!tr && phase == PbrRender::PHASE_TRANSPARENT) continue;
 		if (bGroupCull && !D9IsBSVisible(&Grp[g].BBox, (LPD3DXMATRIX)&mWorldView, (LPD3DXVECTOR4)&Field)) continue;
 		if (dbg.active && dbg.displ == 3 && g != dbg.selgrp) continue;
+		if (tr && phase == PbrRender::PHASE_OPAQUE) { // visible glass: the visual is deferred
+			bPbrGlass = true;
+			if (m->transmission > 0) bPbrGlassT = true;
+			continue;
+		}
 		D3DXVECTOR3 c;
 		D3DXVec3TransformCoord(&c, ptr(D3DXVECTOR3f4(Grp[g].BBox.bs)), (LPD3DXMATRIX)&mWorldView);
 		(tr ? glass : solid).push_back({ g, m, D3DXVec3Length(&c), m->Features() });
@@ -2715,8 +2730,11 @@ void D3D9Mesh::RenderPbr(const LPD3DXMATRIX pW, const D3DXMATRIX &mWorldMesh, in
 		if (!base && Grp[g].TexIdx && Tex[Grp[g].TexIdx] && Tex[Grp[g].TexIdx]->GetTexture()) {
 			base = Tex[Grp[g].TexIdx]->GetTexture();
 			gpu.texMask |= 1 << PBR_BASECOLOR;
-			gpu.flags |= PBRM_BASEGAMMA;
 		}
+		if (PbrRender::NeedsDecode(base)) gpu.flags |= PBRM_BASEGAMMA;
+		if (PbrRender::NeedsDecode(m->map[PBR_EMISSIVE].get())) gpu.flags |= PBRM_EMISGAMMA;
+		if (PbrRender::NeedsDecode(m->map[PBR_SPECULARCOLOR].get())) gpu.flags |= PBRM_SPECCOLGAMMA;
+		if (PbrRender::NeedsDecode(m->map[PBR_SHEENCOLOR].get())) gpu.flags |= PBRM_SHEENGAMMA;
 		if (Grp[g].UsrFlag & 0x4) gpu.flags |= PBRM_FULLYLIT;
 		if (Grp[g].UsrFlag & 0x10) gpu.flags |= PBRM_NOCOLOR;
 		cur->fx->SetValue(cur->hMtrl, &gpu, sizeof(gpu));

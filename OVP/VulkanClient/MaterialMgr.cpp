@@ -79,6 +79,7 @@ void MatMgr::RegisterMaterialChange(D3D9Mesh *pMesh, DWORD midx, const D3D9MatEx
 {
 	if (!pMesh || !pM) return;
 	MeshConfig[pMesh->GetName()].material[midx] = *pM;
+	MeshConfig[pMesh->GetName()].legacy = true; // custom
 }
 
 // ===========================================================================================
@@ -88,6 +89,7 @@ void MatMgr::RegisterShaderChange(D3D9Mesh *pMesh, WORD id)
 	if (!pMesh) return;
 	for (auto y : Shaders) if (y.id == id) {
 		MeshConfig[pMesh->GetName()].shader = id;
+		MeshConfig[pMesh->GetName()].legacy = true; // custom
 		break;
 	}
 }
@@ -105,7 +107,7 @@ void MatMgr::ApplyConfiguration(D3D9Mesh *pMesh)
 
 	if (MeshConfig.count(name)) 
 	{
-		pMesh->SetDefaultShader(MeshConfig[name].shader);
+		if (MeshConfig[name].legacy || MeshConfig[name].pbr.empty()) pMesh->SetDefaultShader(MeshConfig[name].shader); // custom: if
 
 		for (auto x : MeshConfig[name].material) 
 		{
@@ -228,6 +230,7 @@ bool MatMgr::LoadConfiguration(bool bAppend)
 
 		// --------------------------------------------------------------------------------------------
 		if (!strncmp(cbuf, "SHADER", 6)) {
+			MeshConfig[meshname].legacy = true; // custom
 			MeshConfig[meshname].shader = SHADER_NULL;
 			if (sscanf(cbuf, "SHADER %63s", shadername) != 1) LogErr("Invalid Line in (%s): %s", path, cbuf);
 			for (auto x : Shaders)
@@ -254,6 +257,8 @@ bool MatMgr::LoadConfiguration(bool bAppend)
 			continue;
 		}
 
+		const char *lp = cbuf + strspn(cbuf, " \t"); // custom: blank and comment lines don't make an entry legacy
+		if (*lp && *lp != ';' && *lp != '\r' && *lp != '\n') MeshConfig[meshname].legacy = true;
 		auto &Mat = MeshConfig[meshname].material[mat_idx];
 
 		// --------------------------------------------------------------------------------------------
@@ -390,7 +395,7 @@ bool MatMgr::SaveConfiguration()
 		fprintf(file.pFile,"; =============================================\n");
 		fprintf(file.pFile, "MESH %s\n", current.c_str());
 
-		for (auto y : Shaders) if (y.id == x.second.shader) fprintf(file.pFile, "SHADER %s\n", y.name.c_str());
+		if (x.second.legacy || x.second.pbr.empty()) for (auto y : Shaders) if (y.id == x.second.shader) fprintf(file.pFile, "SHADER %s\n", y.name.c_str()); // custom: if
 		
 		for (auto rec : x.second.material) 
 		{		

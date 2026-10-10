@@ -711,8 +711,8 @@ bool vVessel::Render(VkDev *dev, bool internalpass)
 
 	HR(D3D9Effect::FX->SetTexture(D3D9Effect::eIrradMap, pIrrad));
 
-	// custom: PBR groups of this visual read its prefiltered environment (design-pbr 7, 8)
-	struct PbrEnvScope { explicit PbrEnvScope(const PbrEnv *e) { PbrRender::SetEnvironment(e); } ~PbrEnvScope() { PbrRender::SetEnvironment(NULL); } } pbrEnvScope(&pbrEnv);
+	// custom: PBR groups of this visual read its prefiltered environment (design-pbr 7, 8); none in the cockpit, as the legacy groups there
+	struct PbrEnvScope { explicit PbrEnvScope(const PbrEnv *e) { PbrRender::SetEnvironment(e); } ~PbrEnvScope() { PbrRender::SetEnvironment(NULL); } } pbrEnvScope(internalpass ? NULL : &pbrEnv);
 	bool bPbrDefer = false, bPbrTransmission = false;
 
 	// Check VC MFD screen resolutions ------------------------------------------------
@@ -736,6 +736,7 @@ bool vVessel::Render(VkDev *dev, bool internalpass)
 	for (i=0;i<nmesh;i++) {
 
 		if (!meshlist[i].mesh) continue;
+		if (PbrRender::GetPhase() == PbrRender::PHASE_TRANSPARENT && !meshlist[i].mesh->HasPbrTransparent(NULL)) continue; // custom: no visible glass in this mesh
 
 		uCurrentMesh = i; // Used for debugging
 

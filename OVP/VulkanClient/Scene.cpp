@@ -2651,13 +2651,18 @@ void Scene::RenderPbrDeferred(bool bInternal)
 	std::sort(list.begin(), list.end(), [](const PbrDefer &a, const PbrDefer &b) { return a.vV->CamDist() > b.vV->CamDist(); });
 
 	SHADOWMAPPARAM keep = smap;
+	SHADOWMAPPARAM rrMap = smap; // the last map made again here, with its old and new serial
+	DWORD rrFrom = 0, rrTo = 0;
+	bool rr = false;
 	for (auto &d : list) {
 		if (!d.vV->IsActive()) continue;
 		if (!d.smap.pShadowMap) smap.pShadowMap = NULL;
 		else if (d.serial == smapSerial) smap = d.smap;
+		else if (rr && d.serial == rrFrom && smapSerial == rrTo) smap = rrMap;
 		else {
 			D3DXVECTOR3 pos = d.smap.pos, ld = d.smap.ld;
 			if (RenderShadowMap(pos, ld, d.smap.rad / 1.02f, bInternal) < 0) smap.pShadowMap = NULL;
+			rr = true; rrFrom = d.serial; rrTo = smapSerial; rrMap = smap;
 		}
 		pCurrentVisual = d.vV;
 		PbrRender::SetPhase(PbrRender::PHASE_TRANSPARENT);
