@@ -19,7 +19,8 @@ cd "$R"
 want() { awk -v k="$1" '$1 == k { print $2 }' deps.list; }
 case $PM in # the system libraries deps.list names, as the launcher asks for them
 	apt) pk=""; for w in $(want apt); do for a in ${w//|/ }; do apt-cache show --no-all-versions "$a" >/dev/null 2>&1 && { pk="$pk $a"; break; }; done; done
-		apt-get install -y -qq $pk >/dev/null 2>&1 && ok "apt installs the deps.list names" || bad "apt install: $pk" ;;
+		apt-get install -y -qq $pk >/dev/null 2>&1 && ok "apt installs the deps.list names" || bad "apt install: $pk"
+		dpkg --add-architecture i386 && apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq libx11-6:i386 >/dev/null 2>&1 || echo "note: no i386 packages" ;; # multi-arch: the launcher's installed check sees one line per architecture
 	dnf) dnf -y -q install $(want rpm) >/dev/null 2>&1 && ok "dnf installs the deps.list sonames" || bad "dnf install" ;;
 	zypper) zypper -q -n install $(want rpm) >/dev/null 2>&1 && ok "zypper installs the deps.list sonames" || bad "zypper install" ;;
 	pacman) pacman -S -q --noconfirm --needed $(want pacman) >/dev/null 2>&1 && ok "pacman installs the deps.list names" || bad "pacman install" ;;

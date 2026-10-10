@@ -138,7 +138,7 @@ missing_packages() {
             for want in $(list apt); do # a|b: the portable package names both spellings of a t64 rename
                 have=0
                 for a in ${want//|/ }; do
-                    [ "$(dpkg-query -W -f='${db:Status-Abbrev}' "$a" 2>/dev/null)" = "ii " ] && have=1 && break
+                    dpkg-query -W -f='${db:Status-Abbrev}\n' "$a" 2>/dev/null | grep -q '^ii' && have=1 && break # one line per installed architecture
                 done
                 [ "$have" = 1 ] && continue
                 alt=""
