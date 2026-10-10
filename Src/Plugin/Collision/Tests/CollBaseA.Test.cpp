@@ -268,6 +268,24 @@ TEST_CASE ("custom-fix S2: CONTEXT dirs are low-priority candidates, the locatio
 	CHECK (run ("DIR Earth\\Ctx PERIOD 0 99999 CONTEXT Apollo\n", 10, 20) == 2);              // both limiters cut the path
 }
 
+TEST_CASE ("custom-fix4 S2: a CONTEXT dir listed first with the same location never hides the plain dir's file", "[CollBaseA]")
+{
+	auto run = [] (const std::string &surf, int *tie) {
+		BaseWorld w ("BEGIN_SURFBASE\n" + surf + "END_SURFBASE\n");
+		w.Base ("Pad", 10, 20);
+		w.Dir ("Earth\\Ctx", "Pad.cfg", PadCfg ("Pad", 10, 20, 2));
+		w.Dir ("Earth\\Base", "Pad.cfg", PadCfg ("Pad", 10, 20, 1));
+		if (w.Build () != 1) return -1;
+		*tie = w.s.LogCount ("the plain one is used");
+		return (int)w.b.nObjects;
+	};
+	int tie = 0;
+	CHECK (run ("DIR Earth\\Ctx CONTEXT Apollo\nDIR Earth\\Base\n", &tie) == 1); // the plain dir's Pad (1 object), not the CONTEXT one (2)
+	CHECK (tie == 1);
+	CHECK (run ("DIR Earth\\Ctx CONTEXT Apollo\n", &tie) == 2);                      // only the CONTEXT dir has it: it is used
+	CHECK (tie == 0);
+}
+
 TEST_CASE ("custom-fix S3: the BASE-V2.0 header as the core reads it", "[CollBaseA]")
 {
 	auto run = [] (const std::string &head) {

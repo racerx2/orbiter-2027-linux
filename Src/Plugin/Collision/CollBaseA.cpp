@@ -133,13 +133,19 @@ void CollBaseA::Build (CollSdk &sdk, const CollDirs &d, bool geometry)
 			if (bname.empty ()) continue;
 			double lng, lat, rad;
 			sdk.BaseEquPos (hb, lng, lat, rad);
-			Cand *m = nullptr; int nm = 0;
+			Cand *m = nullptr, *mx = nullptr; int nm = 0; bool tie = false;
 			for (auto &c : cand) {
 				if (c.f.name != bname) continue;
-				if (c.f.haveLocation && c.f.lng == lng && c.f.lat == lat) { m = &c; nm = 1; break; }
+				if (c.f.haveLocation && c.f.lng == lng && c.f.lat == lat) {
+					if (c.ctx.empty ()) { tie = mx != nullptr; m = &c; nm = 1; mx = nullptr; break; } // an exact plain-dir file beats an exact CONTEXT one
+					if (!mx) mx = &c;
+					continue;
+				}
 				if (!m || (!m->ctx.empty () && c.ctx.empty ())) m = &c; // a CONTEXT dir's file only when no other has the name
 				nm++;
 			}
+			if (mx) { m = mx; nm = 1; }
+			if (tie) sdk.Log (1, ("Collision bases: base " + bname + " at the same location in a CONTEXT dir and a plain dir, the plain one is used").c_str ());
 			if (!m) { sdk.Log (1, ("Collision bases: no cfg file matches base " + bname).c_str ()); continue; }
 			if (nm > 1) sdk.Log (1, ("Collision bases: several cfg files match base " + bname + ", the first is used").c_str ());
 			auto r = std::make_unique<CollBaseRec> ();
