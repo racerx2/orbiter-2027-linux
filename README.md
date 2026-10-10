@@ -132,5 +132,5 @@ The in-game help system can be opened via the "Help" button on
 the Orbiter Launchpad dialog, or with Alt-F1 while running
 Orbiter.
 
-Remaining questions can be posted on the Orbiter user forum at
-[Discord](https://discord.gg/fnxQYTKPFK).
+Remaining questions can be posted on my [Discord](https://discord.gg/fnxQYTKPFK).
+
