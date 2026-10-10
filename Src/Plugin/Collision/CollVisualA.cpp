@@ -118,9 +118,12 @@ void CollVisualA::SetRecords (uint32_t id, const std::string &name, const CollDm
 	auto it = v.copy.find (slot);
 	std::vector<std::vector<DentVtx>> keep; // what the client holds when only the version changed (same rest, same visual)
 	if (it != v.copy.end () && (it->second.serial != s.serial || it->second.rest != s.rest)) {
-		if (it->second.rest == s.rest) for (auto &G : it->second.g) keep.push_back (std::move (G.pushed));
-		v.copy.erase (it);
-		it = v.copy.end ();
+		if (rec.empty () && it->second.rest == s.rest) it->second.serial = s.serial; // repair across a version change: the copy restores what the client holds, then goes
+		else {
+			if (it->second.rest == s.rest) for (auto &G : it->second.g) keep.push_back (std::move (G.pushed));
+			v.copy.erase (it);
+			it = v.copy.end ();
+		}
 	}
 	if (it == v.copy.end ()) {
 		if (rec.empty ()) return;

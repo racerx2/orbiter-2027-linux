@@ -554,6 +554,7 @@ void CollDmgSession::DoRepair (VesselDamageA &v, bool playback)
 	v.d.flags = 0;
 	v.d.torn.clear (), v.d.debris.clear ();
 	v.d.brokenBonds.clear (), v.d.weakBonds.clear (); // blast: sites stay (mesh geometry)
+	v.d.verbatim.clear (), v.loggedCap = false;       // a newer build's sections are repaired too; the cap message may come again
 	if (brk) brk->Repair (v.id);
 	if (fx) fx->DropVessel (v.id, host.Vessel (v.id));
 	for (uint32_t m : meshes) SyncMirror (v, m); // cur := rp; the pass writes rp to sent vertices

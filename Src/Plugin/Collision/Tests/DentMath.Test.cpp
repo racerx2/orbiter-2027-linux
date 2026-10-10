@@ -3037,6 +3037,41 @@ TEST_CASE ("dmg3 cr3 M3 m4: X hit flag token, torn name and debris ordinals")
 	CHECK (j0);
 }
 
+TEST_CASE ("custom-fix D3: a damaged continuation line keeps the ordinals of later records", "[dent][dmg3]")
+{
+	DentRecord a {};
+	a.slot = 0, a.key = 5, a.ngrp = 3, a.nvtx = 40;
+	a.p = Params (Vector (1, 2, 3), Vector (0, 1, 0), 1.5, 0.3, 0.0);
+	for (uint16_t g = 0; g < 40; g++) a.grp.push_back ((uint16_t)(60000 + g));
+	DentRecord c = a;
+	c.grp = { 1, 2 };
+	c.p = Params (Vector (4, 5, 6), Vector (0, 0, 1), 2.0, 0.7, 0.0);
+	c.p.mode = DENTM_CRUSH, c.p.P = 0.9, c.p.seed = 0xabcdef12, c.p.t = Vector (1, 0, 0);
+	DentMath::Quantise (c.p);
+	DentVesselText v;
+	v.rec = { a, c }, v.eabs = 100;
+	std::vector<std::string> l = Format (v);
+	int sk = -1;
+	DentVesselText w = ParseVessel (l, &sk);
+	REQUIRE ((sk == 0 && w.rec.size () == 2 && w.rec[1].p.mode == DENTM_CRUSH));
+	size_t open = l.size ();
+	for (size_t i = 0; i < l.size (); i++) if (l[i].find ("XDMGD") != std::string::npos && l[i].back () == ',') { REQUIRE (open == l.size ()); open = i; }
+	REQUIRE (open + 1 < l.size ());
+	REQUIRE ((l[open + 1].find ("XDMGD") != std::string::npos && l[open + 1].back () != ',')); // record a spans two lines
+	l[open + 1] = "  XDMGD 0"; // its second line is damaged
+	w = ParseVessel (l, &sk);
+	CHECK (sk == 2);                                             // record a and the bad line
+	REQUIRE (w.rec.size () == 1);
+	CHECK (w.rec[0].grp == c.grp);
+	CHECK (w.rec[0].p.mode == DENTM_CRUSH); // the extension row still binds to its written ordinal
+	CHECK (std::memcmp (&w.rec[0].p, &c.p, sizeof c.p) == 0);
+	l.erase (l.begin () + (long)open, l.begin () + (long)open + 2);
+	l.insert (l.begin () + (long)open, "  XDMGD 0");            // a damaged first line still counts its ordinal
+	w = ParseVessel (l, &sk);
+	REQUIRE (w.rec.size () == 1);
+	CHECK (w.rec[0].p.mode == DENTM_CRUSH);
+}
+
 // dmg3 tear (design-CA-dmg3-tear 7)
 static DentParams TearCut (bool keep)
 {

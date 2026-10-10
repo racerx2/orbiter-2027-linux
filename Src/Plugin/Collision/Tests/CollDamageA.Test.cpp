@@ -1240,6 +1240,50 @@ TEST_CASE ("fix2 a version change before the rebuilt event keeps what the client
 	CHECK (holds);
 }
 
+TEST_CASE ("custom-fix D4: a repair after a version change restores what the client holds, then frees the copy")
+{
+	Rig r;
+	uint32_t a = r.Add ("PB-A"), b = r.Add ("PB-B");
+	DFake::V *v = r.B (a).v;
+	v->visual = 1;
+	v->dev[0] = ClientRest (*r.plate);
+	r.Begin ();
+	r.Frame ();
+	r.Frame ({ Hit (a, -1, b, 10.0, 3.0e4) });
+	REQUIRE (r.s.vis.Copy (a, 0));
+	auto rest = ClientRest (*r.plate);
+	auto atRest = [&] { for (size_t i = 0; i < rest[0].size (); i++) if (std::memcmp (&v->dev[0][0][i], &rest[0][i], 12)) return false; return true; };
+	REQUIRE_FALSE (atRest ());
+	r.host.slots[a][0].serial = 2; // E2 sees a new version; its rebuilt event comes later
+	r.s.RepairVessel (v);
+	r.Frame ();
+	CHECK (atRest ());
+	CHECK (r.s.vis.Copy (a, 0) == nullptr);
+	CHECK (r.s.vis.ModuleGroups (a) == 0);
+}
+
+TEST_CASE ("custom-fix D5: a repair drops unknown-version rows and logs the record cap again")
+{
+	Rig r;
+	uint32_t a = r.Add ("PB-A");
+	r.sdk.scnIn = { "COLLA 1", "VESSEL 0 PB-A ShuttlePB", "XDMG 1 7 0", "XDMG 9 1 2", "XDMGD 9 future", "END_VESSEL", "END" };
+	CollStoreBlock pending;
+	REQUIRE (CollDmgSession::Parse (r.sdk, nullptr, pending));
+	r.Begin (std::move (pending));
+	r.Frame ();
+	REQUIRE (r.s.Damage (a));
+	CHECK (r.s.Damage (a)->d.verbatim.size () == 2);
+	const_cast<VesselDamageA *> (r.s.Damage (a))->loggedCap = true; // the cap message was logged before
+	r.s.RepairVessel (r.B (a).v);
+	r.Frame ();
+	REQUIRE (r.s.Damage (a));
+	CHECK (r.s.Damage (a)->d.verbatim.empty ());
+	CHECK_FALSE (r.s.Damage (a)->loggedCap);
+	std::vector<std::string> saved;
+	r.s.SaveLines (saved);
+	for (const std::string &l : saved) CHECK (l.find ("XDMG") == std::string::npos); // a newer build loading the save sees no repaired damage
+}
+
 TEST_CASE ("fix2 a hit after a growth in the same commit reads the grown collider")
 {
 	auto at = [] (uint32_t a, double x, double y, double dKE) { CollImpactEvent e = Hit (a, 0, 1, 10.0, dKE); e.s[0].c = Vector (x, y, 0); return e; };
