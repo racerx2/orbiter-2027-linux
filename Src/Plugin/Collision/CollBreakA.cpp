@@ -1404,9 +1404,9 @@ void CollBreakA::BlastHit (const CollDamageHit &h, CollH vh, const CollSlotA &sl
 	BlastStep (h.id, h.mesh, *bs, vh, true);
 }
 
-bool CollPieceHeld (const CollPieceA &p, const CollDamageHit &h)
+bool CollPieceHeld (const CollPieceA &p, const CollDamageHit &h, bool hitNow)
 {
-	if (h.vn < BRK_VN_PART) return true;                            // parts need the approach speed of the dmg3 part gate
+	if (hitNow && h.vn < BRK_VN_PART) return true;                  // parts need the approach speed of the dmg3 part gate; a spin-only step has no approach
 	return (p.functional & CBRK_FN_DOCK) && h.eSpec < BRK_TEAR_E;   // the dock pin holds below the tear threshold
 }
 
@@ -1432,7 +1432,7 @@ void CollBreakA::BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, Coll
 	std::set<uint32_t> hk, lost; // chunk keys of held actors and of actors torn off for good
 	for (size_t i = 0; i < sp.size (); i++) {
 		bool cells = false, hold = false;
-		for (uint32_t c : sp[i].chunks) { const CollBlastChunk &ch = bs.b->chunk[c]; if (ch.cell >= 0) cells = true; else if (bs.haveHit && ch.piece >= 0 && (size_t)ch.piece < sl->piece.size () && CollPieceHeld (sl->piece[ch.piece], bs.hit)) hold = true; }
+		for (uint32_t c : sp[i].chunks) { const CollBlastChunk &ch = bs.b->chunk[c]; if (ch.cell >= 0) cells = true; else if (bs.haveHit && ch.piece >= 0 && (size_t)ch.piece < sl->piece.size () && CollPieceHeld (sl->piece[ch.piece], bs.hit, hitNow)) hold = true; }
 		held[i] = !cells && hold;
 		for (uint32_t c : sp[i].chunks) (held[i] ? hk : lost).insert (bs.b->ChunkKey (c));
 	}

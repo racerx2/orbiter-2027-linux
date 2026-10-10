@@ -1373,6 +1373,18 @@ TEST_CASE ("B5: a split under spin loads only gets no kick: the debris keeps the
 	}
 }
 
+TEST_CASE ("cfix4 X1: a bump holds the panel, a tumble after it breaks it off without a Reset every frame", "[dmg3P][blast]")
+{
+	HeldRig r; r.ShipA ("A");
+	r.B ().Hit (r.P (5, 300, 0.5));                                  // a 5 m/s bump splits the panel: held below the part speed
+	REQUIRE (r.B ().blastRebuilds == 1);
+	uint64_t b0 = r.B ().blastBreaks;
+	r.body.front ().v->rd.w = Vector (60, 0, 0);                     // a tumble inside BLAST_LIVE that breaks the panel at the 1 % floor: spin loads only
+	for (int k = 1; k <= 10; k++) { r.sdk.simt = 0.02 * k; r.B ().PreStep (r.sdk.simt, 0.02); r.B ().Post (r.sdk.simt, 0.02); }
+	CHECK (r.B ().blastRebuilds <= 2);
+	CHECK (r.B ().blastBreaks > b0);                                 // the spin breaks the panel off
+}
+
 TEST_CASE ("B7: a held piece keeps its bonds' health from before the step as W rows; the same held set again is rebuilt the same", "[dmg3P][blast]")
 {
 	HeldRig r; uint32_t a = r.ShipA ("A");

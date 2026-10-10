@@ -64,7 +64,7 @@ struct CollBlastSlotA {                                   // blast: one vessel s
 	std::vector<uint32_t> weak;                           // weakened bonds already stored (W rows)
 	std::set<uint32_t> held;                              // chunk keys of held pieces already logged
 };
-bool CollPieceHeld (const CollPieceA &p, const CollDamageHit &h); // blast: dmg3 part gates for an actor of animated pieces only (approach speed, dock pin)
+bool CollPieceHeld (const CollPieceA &p, const CollDamageHit &h, bool hitNow = true); // blast: dmg3 part gates for an actor of animated pieces only (approach speed, dock pin); without a hit this frame only the dock pin
 struct CollParentA { bool read = false; CollVesselRead rd {}; Vector rp, rv, J, H; double M = 0; std::vector<std::pair<Vector, Vector>> jf; }; // pre-step: one read and one write per parent; jf: impulse and point of each debris (stacks)
 struct CollKickA { uint32_t parent = 0; Vector dv, dw; double M = 0; }; // blast: parent velocity and spin change of one debris kick, parent mass (tests)
 
