@@ -33,7 +33,13 @@ QString ResolveFile (const BuildEnv &env, const QString &nameIn)
 	}
 	if (name.startsWith ("${SKIN}")) path = env.skinDir + name.mid (7);
 	else if (QDir::isAbsolutePath (name)) path = name;
-	else path = QDir (env.formDir).absoluteFilePath (name);
+	else {
+		if (!env.rootDir.isEmpty ()) { // custom-fix L3: as Qt resolved it before, still only inside the skin
+			const QString r = QFileInfo (QDir (env.rootDir).absoluteFilePath (name)).canonicalFilePath ();
+			if (!r.isEmpty () && Inside (r, env.skinDir) && QFileInfo (r).isFile ()) return r;
+		}
+		path = QDir (env.formDir).absoluteFilePath (name);
+	}
 	const QString c = QFileInfo (path).canonicalFilePath ();
 	if (c.isEmpty () || !Inside (c, env.skinDir) || !QFileInfo (c).isFile ()) {
 		if (!env.warned.contains (name)) { env.warned.insert (name); env.Warn (name + ": not a file inside the skin folder"); }
@@ -97,6 +103,7 @@ QString SkinStyleSheet (const QString &skinDir, const QString &qss, bool forms, 
 	}
 	BuildEnv env; // a forms skin's style sheet reaches its form too: the checks of the form's own style sheets
 	env.skinDir = env.formDir = QFileInfo (skinDir).canonicalFilePath ();
+	env.rootDir = QDir::currentPath (); // Orbiter's folder: relative names there first, then in the skin folder
 	env.warn = warn;
 	return RewriteStyle (env, qss);
 }

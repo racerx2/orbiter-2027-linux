@@ -727,4 +727,25 @@ TEST_CASE ("Forms: a forms skin's Qss file gets the checks of the form's style s
 	CHECK (plain == "QWidget { image: url(\"" + s.skin + "/top.png\"); }");
 }
 
+TEST_CASE ("Forms: a relative url() in a forms skin's Qss file is looked up from Orbiter's folder before the skin folder")
+{
+	App ();
+	Sandbox s;
+	const QString root = QFileInfo (s.skin).path ();
+	REQUIRE (QFile::copy (s.skin + "/forms/ok.png", s.skin + "/top.png"));
+	REQUIRE (QFile::copy (s.skin + "/forms/ok.png", root + "/top.png"));
+	const QString cwd = QDir::currentPath ();
+	REQUIRE (QDir::setCurrent (root)); // Orbiter runs in its folder
+	QStringList warned;
+	const QString f = custom::SkinStyleSheet (s.skin, "#a { image: url(skin/forms/ok.png); }\n#b { image: url(\"top.png\"); }\n#c { image: url(outside.png); }\n#d { image: url(forms/ok.png); }",
+		true, [&warned](const QString &w) { warned << w; });
+	QDir::setCurrent (cwd);
+	INFO (f.toStdString ());
+	CHECK (f.contains ("#a { image: url(\"" + s.skin + "/forms/ok.png\"); }")); // as Qt resolved it before
+	CHECK (f.contains ("#b { image: url(\"" + s.skin + "/top.png\"); }")); // Orbiter's top.png is outside the skin
+	CHECK (f.contains ("#c { image: url(\"\"); }"));
+	CHECK (f.contains ("#d { image: url(\"" + s.skin + "/forms/ok.png\"); }"));
+	CHECK (warned.join ('|').toStdString () == "outside.png: not a file inside the skin folder");
+}
+
 #include "FormsRuntime.Test.moc"

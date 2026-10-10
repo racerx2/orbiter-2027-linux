@@ -14,6 +14,7 @@ namespace custom {
 	struct BuildEnv {
 		QString formDir;                  // canonical folder of the form
 		QString skinDir;                  // canonical skin folder
+		QString rootDir;                  // custom-fix L3: set for a skin's Qss file, relative names are tried here first (Orbiter's folder)
 		std::map<QString, QString> qrc;   // ":/prefix/file" -> canonical file path
 		std::function<void (const QString &)> warn;
 		mutable QSet<QString> warned;     // pictures warned about once

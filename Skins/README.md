@@ -63,6 +63,9 @@ Height = 860
 - Controls are named after their resource ids: `QPushButton#IDLAUNCH`, `QWidget#IDC_BLACKBOX`, `#IDC_SCN_LIST`...
   The "Back to skin" button of QML and Qt Designer launchers is `QPushButton#customSkinBack`.
 - `${SKIN}` is replaced by the skin folder's path; write `url("${SKIN}/image.svg")` with the quotes.
+- In a skin with `Forms`, every `url()` of the `Qss` file must be a file inside the skin folder. A relative name is
+  looked up from Orbiter's folder first (`url(Skins/My/bg.png)`), then from the skin folder (`url(bg.png)`); any
+  other file becomes `url("")` with a line in Orbiter.log.
 - The style sheet also reaches windows opened from the Launchpad (help, add-on dialogs), but not message boxes
   opened without a parent.
 
@@ -98,9 +101,9 @@ its controls by the dynamic properties `orbiterCtl`, `orbiterFp`, `orbiterContro
 control are ignored. Framed boxes with `orbiterStandIn` are areas Orbiter draws itself: only their place and size
 count. A changed control must stay on the form and be at least 8 x 8 (the page area 100 x 100). The form's size is
 the window's starting size; `IDD_MAIN` can't be smaller than 550 x 350. `${SKIN}` in a style sheet is the skin
-folder; other relative `url()`s resolve against Orbiter's folder. Options pages have no scroll bar in the Launchpad:
-a page taller than its area is cut off. `RefitText` measures with the dialog's font, so a label whose text Orbiter
-sets may not fit a font you enlarged.
+folder; other relative `url()`s resolve against Orbiter's folder (the `Qss` file of a skin with `Forms`: see Style
+sheets). Options pages have no scroll bar in the Launchpad: a page taller than its area is cut off. `RefitText`
+measures with the dialog's font, so a label whose text Orbiter sets may not fit a font you enlarged.
 
 **What Orbiter places itself** (at the start and whenever the window is resized; the forms note it in
 `orbiterNote`):
