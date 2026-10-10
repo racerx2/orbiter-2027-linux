@@ -6,6 +6,11 @@ PKG=/pkg.tar.xz; CLIENT=${CLIENT:-0}
 . /etc/os-release
 echo "== $PRETTY_NAME"
 fail=0; ok() { echo "PASS $*"; }; bad() { echo "FAIL $*"; fail=1; }
+XD=$((200 + RANDOM % 600)) # own display number: with the host network, X's abstract sockets are shared between containers
+xrun() { # Xvfb started once (EL9 has no xvfb-run)
+	[ -e /tmp/.X11-unix/X$XD ] || { mkdir -p -m 1777 /tmp/.X11-unix; Xvfb :$XD -screen 0 1280x800x24 >/tmp/xvfb.out 2>&1 & sleep 2; }
+	DISPLAY=:$XD "$@"
+}
 if command -v apt-get >/dev/null; then PM=apt; elif command -v dnf >/dev/null; then PM=dnf; elif command -v zypper >/dev/null; then PM=zypper; else PM=pacman; fi
 case $PM in
 	apt) export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null
@@ -45,8 +50,8 @@ Item { width: 400; height: 300; ColumnLayout { Text { text: "probe" } Shape { } 
 QML
 for plat in offscreen xcb; do
 	cp Orbiter.log /tmp/before.log 2>/dev/null
-	if [ $plat = xcb ]; then run="xvfb-run -a"; else run=""; fi
-	ORBITER_LAUNCHER_SKIN=QmlProbe QT_QPA_PLATFORM=$plat timeout 25 $run ./Orbiter >/tmp/l.out 2>&1; rc=$?
+	if [ $plat = xcb ]; then run=xrun; else run=""; fi
+	ORBITER_LAUNCHER_SKIN=QmlProbe QT_QPA_PLATFORM=$plat $run timeout 25 ./Orbiter >/tmp/l.out 2>&1; rc=$?
 	if [ $rc = 124 ] && ! grep -qiE 'not installed|module .* is not|failed to load|cannot load library|undefined symbol' /tmp/l.out Orbiter.log; then ok "Launchpad with a QML skin ($plat)"; else bad "Launchpad $plat rc=$rc: $(grep -iE 'qml|error|cannot|failed' /tmp/l.out Orbiter.log | head -4)"; fi
 done
 rm -rf Skins/QmlProbe
@@ -54,8 +59,8 @@ if [ "$CLIENT" = 1 ]; then
 	icd=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)
 	printf 'StartPaused = FALSE\nFullscreen = FALSE\nWindowWidth = 1280\nWindowHeight = 720\nDeviceIndex = 0\nACTIVE_MODULES\nVulkanClient\nEND_MODULES\n' > Orbiter.cfg
 	for force in false true; do
-		VK_SHADER_OBJECT_FORCE_ENABLE=$force VK_DRIVER_FILES=$icd VK_ICD_FILENAMES=$icd QT_QPA_PLATFORM=xcb timeout 240 xvfb-run -a -s '-screen 0 1280x800x24' ./Orbiter "--scenariox=Delta-glider/Smack!" --fixedstep=0.02 --maxframes=120 >/tmp/c.out 2>&1; rc=$?
-		if [ $rc = 0 ] && grep -qE 'Shader-object layer (available|folder)' Orbiter.log && ! grep -qE '\[ERROR\]|need ' Orbiter.log; then ok "client on lavapipe, layer forced=$force"; else bad "client force=$force rc=$rc: $(grep -E 'ERROR|need |layer|Vulkan' Orbiter.log | head -5)"; fi
+		VK_SHADER_OBJECT_FORCE_ENABLE=$force VK_DRIVER_FILES=$icd VK_ICD_FILENAMES=$icd QT_QPA_PLATFORM=xcb xrun timeout 240 ./Orbiter "--scenariox=Delta-glider/Smack!" --fixedstep=0.02 --maxframes=120 >/tmp/c.out 2>&1; rc=$?
+		if [ $rc = 0 ] && grep -q 'Shader-object layer available' Orbiter.log && ! grep -qE '\[ERROR\]|need ' Orbiter.log; then ok "client on lavapipe, layer forced=$force"; else bad "client force=$force rc=$rc: $(grep -E 'ERROR|need |layer|Vulkan' Orbiter.log | head -5)"; fi
 	done
 	if command -v weston >/dev/null; then
 		b=headless; weston --help 2>&1 | grep -q 'headless-backend.so' && b=headless-backend.so # weston 9/10 name the module

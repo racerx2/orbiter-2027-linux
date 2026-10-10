@@ -461,14 +461,17 @@ static void ShaderObjectLayer(QByteArrayList &layers)
 	const QString dir = QCoreApplication::applicationDirPath() + "/lib/vulkan";
 	if (!QFileInfo::exists(dir + "/VkLayer_khronos_shader_object.json")) return;
 	const QByteArray d = QFile::encodeName(dir);
-	QByteArray add = qgetenv("VK_ADD_LAYER_PATH");
-	qputenv("VK_ADD_LAYER_PATH", add.isEmpty() ? d : add + ':' + d); // loaders 1.3.234 and newer
+	QByteArray lp = qgetenv("VK_LAYER_PATH"); // every loader knows it; set before the first Vulkan call (Qt enumerates layers once per instance object)
+	if (lp.isEmpty()) {
+		QByteArray data = qgetenv("XDG_DATA_HOME");
+		if (data.isEmpty()) data = qgetenv("HOME") + "/.local/share";
+		lp = d + ':' + data + "/vulkan/explicit_layer.d:/etc/vulkan/explicit_layer.d:/usr/local/share/vulkan/explicit_layer.d:/usr/share/vulkan/explicit_layer.d"; // the loader's own folders stay searched
+	} else if (!lp.split(':').contains(d)) lp += ':' + d;
+	qputenv("VK_LAYER_PATH", lp);
 	QVulkanInstance probe;
-	const QVersionNumber v = probe.supportedApiVersion();
-	if (qEnvironmentVariableIsEmpty("VK_LAYER_PATH") && v.microVersion() < 234 && v < QVersionNumber(1, 4)) qputenv("VK_LAYER_PATH", d); // older loaders know only VK_LAYER_PATH
 	const bool found = probe.supportedLayers().contains(QByteArrayLiteral("VK_LAYER_KHRONOS_shader_object"));
 	if (found) layers << "VK_LAYER_KHRONOS_shader_object";
-	oapiWriteLogV("[D3D9] Shader-object layer %s in %s (loader %s)", found ? "available" : "NOT found", d.constData(), v.toString().toUtf8().constData());
+	oapiWriteLogV("[D3D9] Shader-object layer %s in %s (loader %s)", found ? "available" : "NOT found", d.constData(), probe.supportedApiVersion().toString().toUtf8().constData());
 }
 
 // ==============================================================
