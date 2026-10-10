@@ -67,6 +67,7 @@ struct CollAMem {                                  // per solver body, kept acro
 	bool loadPrev = false, seen = false;
 };
 
+Vector CollNoSpecSpin (const Matrix &R, const Vector &I, const Vector &wPlan, const Vector &dL1); // body spin of the plan without the speculative impulse dL1 (global), from the unclamped plan, clamped to 100 pi
 class CollAddonFrame {
 public:
 	CollSolveParams prm; CollParams dprm; int rounds = 4; bool check = true;

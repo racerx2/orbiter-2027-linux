@@ -709,6 +709,7 @@ void Settle (Sim &S)                                     // Orbiter's cache afte
 	if (!b.td.empty ()) S.Touch (b, f, mb);
 	b.o.acc = S.g + f/b.o.m; b.o.arot = b.o.EulerInv (mb/b.o.m, b.o.s.omega);
 }
+Vector Mulc3 (const Vector &a, const Vector &b) { return Vector (a.x*b.x, a.y*b.y, a.z*b.z); }
 Vector ClampL (const CollOrbState &o, const Vector &L)   // L as Orbiter keeps it at o's attitude: the body spin clamped to 100 pi (Rigidbody.cpp:279-294)
 {
 	Vector w = tmul (o.s.R, L);
@@ -763,6 +764,30 @@ TEST_CASE ("P1 HB_D2: ground debris with a small PMI and a large plan: the Sim g
 	g_collLog = nullptr;
 }
 
+TEST_CASE ("custom-fix3 HB_D2: with the touchdown force recomputed after the writes the delivered P and L stay within the contact damping of one step", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	g_log.clear ();
+	const double h = 0.02, P = 207.4, L = 159.9;
+	const Vector p = Vector (1, 0.3, 0.2).unit (), l = Vector (0.3, 1, 0.5).unit (), w (12, 25, 10);
+	Sim S, R;
+	for (Sim *x : { &S, &R }) { HBD2 (*x, w); x->touchHold = false; Settle (*x); }
+	std::vector<CollAPlanEdit> pe { CollAPlanEdit { 1, Vector (), Vector (), p*(P/h), l*(L/h) } };
+	S.fr.planEdit = &pe;
+	S.Frame (h); R.Frame (h);
+	S.fr.planEdit = nullptr;
+	const CollOrbState o1 = S.tb[0].o;
+	const double eL = RelL (o1, ClampL (o1, R.tb[0].o.SpinL () + l*L)), eP = ((o1.s.vel - R.tb[0].o.s.vel)*o1.m - p*P).length ()/P;
+	CAPTURE (eL, eP, S.fr.Stats ().checkFail);
+	REQUIRE (FinState (o1));
+	REQUIRE (S.fr.Stats ().checkFail == 0);
+	REQUIRE (LogCount ("delivery-nan") == 0);
+	REQUIRE (eP <= 0.6);                                     // measured 0.42: the dampers answer the 18 m/s written into an 11 kg piece inside the step, the unseen force the addon holds
+	REQUIRE (eL <= 0.6);                                     // measured 0.34, same cause through the touchdown levers
+	REQUIRE (eP >= 0.05);                                    // the held-force assumption is visible here, unlike the touchHold cases (1e-9)
+	g_collLog = nullptr;
+}
+
 TEST_CASE ("P1 spin clamp: a plan above 100 pi is clamped and logged, the Sim keeps the clamp, the next frame sees no own torque in the zeroed arot", "[CollAddonFrame]")
 {
 	g_collLog = LogSink;
@@ -803,6 +828,42 @@ TEST_CASE ("P1 spin clamp: a plan above 100 pi is clamped and logged, the Sim ke
 		REQUIRE (S.fr.Stats ().checkFail == 0);
 		REQUIRE (eT <= 1e-9);                                // the reference step keeps Orbiter's zeroed arot
 		REQUIRE (S.lastB[0].dev <= 1e-6);                    // the prediction of frame 2 has no spurious torque
+	}
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("custom-fix3: the plan without the speculative impulse comes from the unclamped plan, then is clamped", "[CollAddonFrame]")
+{
+	const double ca = std::cos (0.7), sa = std::sin (0.7), cb = std::cos (-0.4), sb = std::sin (-0.4);
+	const Matrix R = Matrix (ca, -sa, 0, sa, ca, 0, 0, 0, 1)*Matrix (1, 0, 0, 0, cb, -sb, 0, sb, cb);
+	const Vector I (2, 3, 4), u = Vector (0.2, -0.6, 0.77).unit ();
+	const Vector dL1 = mul (R, Mulc3 (I, u*200.0));            // the speculative part: +200 rad/s along u
+	const Vector w300 = CollNoSpecSpin (R, I, u*500.0, dL1);  // plan 500 (Orbiter keeps 314); without the impulse: 300, not 314 - 200
+	CHECK ((w300 - u*300.0).length () <= 1e-9*300.0);
+	const Vector w2 = CollNoSpecSpin (R, I, u*900.0, dL1);    // 700 without the impulse: clamped
+	CHECK (std::fabs (w2.length () - COLL_OMEGA_MAX) <= 1e-12*COLL_OMEGA_MAX);
+	CHECK ((w2.unit () - u).length () <= 1e-12);
+}
+
+TEST_CASE ("custom-fix3: a body Orbiter holds one rounding step above 100 pi logs no clamp line", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	for (int edit = 0; edit < 2; edit++) {
+		g_log.clear ();
+		const double m = 40;
+		const Vector pmi (0.02, 0.03, 0.04);
+		auto box = std::make_shared<Geo> (BoxMesh (Vector (0.4, 0.3, 0.2)));
+		Sim S;
+		S.Add (box, m, pmi, Vector (), Vector (), 0.6);
+		S.tb[0].o.s.omega = Vector (0, 0, std::nextafter (COLL_OMEGA_MAX, 1e9)); // what omega *= vmag_max/vmag can leave
+		Settle (S);
+		std::vector<CollAPlanEdit> pe { CollAPlanEdit { 1, Vector (), Vector (), Vector (), Vector () } };
+		if (edit) S.fr.planEdit = &pe;
+		S.Frame (0.02);
+		S.fr.planEdit = nullptr;
+		CAPTURE (edit);
+		CHECK (LogCount ("rad/s clamped") == 0);
+		CHECK (FinState (S.tb[0].o));
 	}
 	g_collLog = nullptr;
 }

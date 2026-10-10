@@ -115,6 +115,14 @@ struct Dlv { bool ok = false, write = false; double e = 0, eFloor = 0, f = 0, eL
 
 } // namespace
 
+Vector CollNoSpecSpin (const Matrix &R, const Vector &I, const Vector &wPlan, const Vector &dL1)
+{
+	Vector w = Divc (tmul (R, mul (R, Mulc (I, wPlan)) - dL1), I);
+	const double l = w.length ();
+	if (l > COLL_OMEGA_MAX*(1.0 + 1e-12)) w *= COLL_OMEGA_MAX/l;
+	return w;
+}
+
 struct CollAddonFrame::Impl {
 	CollAddonFrame &F;
 	CollDetect &fwd, &ver;
@@ -1573,9 +1581,10 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 		if (!inIsl[i]) { pl.vNew = B.V; pl.wNew = B.W; }
 		bool edited = false;
 		if (F.planEdit) for (const CollAPlanEdit &e : *F.planEdit) if (e.id == b[i].id) { pl.vNew += e.dv; pl.wNew += e.dwb; pl.F += e.F; pl.M += e.M; edited = true; }
+		const Vector wRaw = pl.wNew;                         // unclamped plan: the no-speculative plan is derived from it
 		double wl = pl.wNew.length ();
-		if (wl > COLL_OMEGA_MAX) {                           // Orbiter keeps at most 100 pi rad/s (Rigidbody.cpp:279-294), as CollApplyDeltaState
-			CollLog (COLLLOG_INFO, "Collision delivery: body %u spin %g rad/s clamped to %g", b[i].id, wl, COLL_OMEGA_MAX);
+		if (wl > COLL_OMEGA_MAX*(1.0 + 1e-12)) {             // Orbiter keeps at most 100 pi rad/s (Rigidbody.cpp:279-294); its own rescale may leave one ulp above
+			if (inIsl[i] || edited) CollLog (COLLLOG_INFO, "Collision delivery: body %u spin %g rad/s clamped to %g", b[i].id, wl, COLL_OMEGA_MAX);
 			pl.wNew *= COLL_OMEGA_MAX/wl;
 		}
 		bool needs = edited || inIsl[i] || B.posChanged || (B.V - B.o.s.vel).length () > 0 || (B.W - B.o.s.omega).length () > 0 || B.Fprev.length () > 0 || B.Mprev.length () > 0;
@@ -1599,9 +1608,7 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 				const SpecB &sp = spec[i];
 				Plan pf = pl;
 				pf.vNew -= sp.dP1/b[i].m;
-				pf.wNew = OmegaOf (i, Bf.Q, SpinL (i, Bf.Q, pl.wNew) - sp.dL1);
-				double fl = pf.wNew.length ();
-				if (fl > COLL_OMEGA_MAX) pf.wNew *= COLL_OMEGA_MAX/fl;
+				pf.wNew = CollNoSpecSpin (QM (Bf.Q), Ib (i), wRaw, sp.dL1); // clamp (pl - dL1), not clamp (pl) - dL1
 				pf.F -= sp.dP2/h; pf.M -= sp.dL2/h;
 				std::swap (w[i], Bf);
 				Apply (i, pf, false);
