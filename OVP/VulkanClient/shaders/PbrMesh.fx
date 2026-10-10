@@ -39,6 +39,9 @@
 #define PBRM_DOUBLESIDED 4
 #define PBRM_FULLYLIT 8
 #define PBRM_NOCOLOR 16
+#define PBRM_EMISGAMMA 32
+#define PBRM_SPECCOLGAMMA 64
+#define PBRM_SHEENGAMMA 128
 
 // Must match D3D9Client.fx (copied from the legacy effect by name)
 struct Sun
@@ -188,6 +191,7 @@ struct Surf
 	vec3  posW, V, N, Ng, T, B;
 	vec3  base;
 	float metallic, perceptual, a, NdotV;
+	float tRough;	// material roughness, no floor (blur of the scene seen through)
 	vec3  f0d;
 	float specW;
 	float trans, thick;
@@ -263,7 +267,7 @@ vec3 Transmitted (Surf s)
 		vec4 h = vec4(p, 1.0) * gVP;
 		vec2 uv = vec2(0.5 + 0.5 * h.x / h.w, 0.5 - 0.5 * h.y / h.w);
 		uv = clamp(uv, gScreen.zw * 0.5, vec2(1.0) - gScreen.zw * 0.5);
-		vec3 c = textureLod(SceneS, uv, s.perceptual * log2(max(gScreen.x, gScreen.y))).rgb;
+		vec3 c = textureLod(SceneS, uv, s.tRough * log2(max(gScreen.x, gScreen.y))).rgb;
 		c = (c - gSun.Inscatter) / max(gSun.Transmission, vec3(1e-3));
 #if !defined(_LIGHTGLOW)
 		c = clamp(c, 0.0, 0.99);
@@ -296,7 +300,7 @@ vec3 EvalLight (Surf s, vec3 L, vec3 col)
 		vec3 layer = mix(Fd, Fm, s.metallic) * (D * Vis);
 		layer += (1.0 - s.metallic) * (1.0 - Max3(Fd)) * (1.0 - s.trans) * s.base / PBR_PI;
 #ifdef PBR_SHEEN
-		float El = texture(LutS, vec2(NdotL, s.sheenR)).b;
+		float El = textureLod(LutS, vec2(NdotL, s.sheenR), 0.0).b;
 		float scale = min(1.0 - Max3(s.sheen) * s.sheenEv, 1.0 - Max3(s.sheen) * El);
 		layer = layer * scale + s.sheen * (DCharlie(NdotH, s.sheenR) * VCharlie(NdotL, s.NdotV, s.sheenR));
 #endif
@@ -314,7 +318,7 @@ vec3 EvalLight (Surf s, vec3 L, vec3 col)
 	}
 #endif
 #ifdef PBR_CLEARCOAT
-	float Fc = FSchlick1(0.04, 1.0, VdotH);
+	float Fc = FSchlick1(0.04, 1.0, s.NcV);
 	c *= 1.0 - s.cc * Fc;
 	float NcL = dot(s.Nc, L);
 	if (NcL > 0.0) {
@@ -369,7 +373,7 @@ vec4 PbrMeshPS (PbrVS f)
 		if (Flag(PBRM_BASEGAMMA)) t.rgb = SrgbToLinear(t.rgb);
 		base *= t;
 	}
-	if (Flag(PBRM_NOCOLOR)) base.rgb = vec3(1.0);
+	if (Flag(PBRM_NOCOLOR)) base.rgb = gPbr.baseColor.rgb; // as legacy: the texture's colour is left out, the material's kept
 	bool kill = (gPbr.alphaMode == 1) && (base.a < gPbr.alphaCutoff);
 	s.base = clamp(base.rgb, 0.0, 1.0);
 
@@ -400,6 +404,7 @@ vec4 PbrMeshPS (PbrVS f)
 		metallic *= mr.b;
 	}
 	s.metallic = clamp(metallic, 0.0, 1.0);
+	s.tRough = clamp(perc, 0.0, 1.0);
 	perc = clamp(perc, 0.045, 1.0);
 	vec3 dnx = dFdx(N), dny = dFdy(N);
 	float variance = 0.25 * (dot(dnx, dnx) + dot(dny, dny));
@@ -411,12 +416,18 @@ vec4 PbrMeshPS (PbrVS f)
 	if (HasMap(T_OCCLUSION)) ao = 1.0 + gPbr.occlusion * (texture(OcclusionS, uv).r - 1.0);
 
 	vec3 emis = gPbr.emissive * gPbr.emissiveStrength;
-	if (HasMap(T_EMISSIVE)) emis *= texture(EmissiveS, uv).rgb;
+	if (HasMap(T_EMISSIVE)) {
+		vec3 t = texture(EmissiveS, uv).rgb;
+		emis *= Flag(PBRM_EMISGAMMA) ? SrgbToLinear(t) : t;
+	}
 
 	s.specW = gPbr.specular;
 	if (HasMap(T_SPECULAR)) s.specW *= texture(SpecularS, uv).a;
 	vec3 specC = gPbr.specularColor;
-	if (HasMap(T_SPECULARCOLOR)) specC *= texture(SpecularColorS, uv).rgb;
+	if (HasMap(T_SPECULARCOLOR)) {
+		vec3 t = texture(SpecularColorS, uv).rgb;
+		specC *= Flag(PBRM_SPECCOLGAMMA) ? SrgbToLinear(t) : t;
+	}
 	s.f0d = min(vec3(Sq1((gPbr.ior - 1.0) / (gPbr.ior + 1.0))) * specC, vec3(1.0));
 
 	s.trans = 0.0; s.thick = 0.0;
@@ -482,7 +493,10 @@ vec4 PbrMeshPS (PbrVS f)
 
 #ifdef PBR_SHEEN
 	s.sheen = gPbr.sheenColor;
-	if (HasMap(T_SHEENCOLOR)) s.sheen *= texture(SheenColorS, uv).rgb;
+	if (HasMap(T_SHEENCOLOR)) {
+		vec3 t = texture(SheenColorS, uv).rgb;
+		s.sheen *= Flag(PBRM_SHEENGAMMA) ? SrgbToLinear(t) : t;
+	}
 	s.sheenR = gPbr.sheenRough;
 	if (HasMap(T_SHEENROUGH)) s.sheenR *= texture(SheenRoughS, uv).a;
 	s.sheenR = clamp(s.sheenR, 0.07, 1.0);
@@ -512,6 +526,9 @@ vec4 PbrMeshPS (PbrVS f)
 				if (Max3(lc) > 0.0) color += EvalLight(s, -p, lc);
 			}
 		}
+#endif
+#ifdef PBR_CLEARCOAT
+		emis *= 1.0 - s.cc * FSchlick1(0.04, 1.0, s.NcV); // emission is under the coat
 #endif
 		color += EvalIBL(s, ao) + emis;
 	}

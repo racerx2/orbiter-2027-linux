@@ -32,11 +32,14 @@ enum PbrAlpha { PBR_OPAQUE = 0, PBR_MASK = 1, PBR_BLEND = 2 };
 #define PBRF_COUNT        32
 
 // PbrMtrlGPU::flags (PbrMesh.fx PBRM_*)
-#define PBRM_BASEGAMMA    0x01   // base colour comes from the group's legacy texture: decoded in the shader
+#define PBRM_BASEGAMMA    0x01   // the base colour map is display-encoded in a linear format: decoded in the shader
 #define PBRM_GREENUP      0x02   // normal maps are glTF green-up
 #define PBRM_DOUBLESIDED  0x04
 #define PBRM_FULLYLIT     0x08
 #define PBRM_NOCOLOR      0x10
+#define PBRM_EMISGAMMA    0x20   // as BASEGAMMA, emissive map
+#define PBRM_SPECCOLGAMMA 0x40   // as BASEGAMMA, specular colour map
+#define PBRM_SHEENGAMMA   0x80   // as BASEGAMMA, sheen colour map
 
 struct PbrMaterial {
 	bool  enabled = false;

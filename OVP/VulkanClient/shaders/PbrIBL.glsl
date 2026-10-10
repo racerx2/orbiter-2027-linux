@@ -68,13 +68,15 @@ vec4 PSCharlie (float x, float y)
 	Basis(N, t, b);
 	float lod = clamp(log2(fSrcSize / 32.0), 0.0, fSrcMips - 1.0);
 	float r = max(fRough, 0.07);
+	float e = 0.5 / max(r * r, 1e-3);
 	uint n = uint(max(iSamples, 1));
 	vec3 sum = vec3(0.0);
 	float w = 0.0;
 	for (uint i = 0u; i < n; i++) {
 		vec3 l = SampleCosine(Hammersley(i, n));
 		vec3 L = t * l.x + b * l.y + N * l.z;
-		float d = DCharlie(dot(N, normalize(L + N)), r);
+		float nh = dot(N, normalize(L + N));
+		float d = pow(clamp(2.0 * (1.0 - nh * nh), 0.0, 1.0), e); // D_Charlie up to a constant; sin^2 of the half angle is at most 1/2
 		sum += textureLod(tSrc, L, lod).rgb * d;
 		w += d;
 	}

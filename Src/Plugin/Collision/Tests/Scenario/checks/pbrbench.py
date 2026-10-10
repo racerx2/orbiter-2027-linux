@@ -81,7 +81,7 @@ def check(ctx):
     if glow < 0.02 * len(disk(img['pbr'], 6)):
         fail('slot 6: %d emissive pixels, the grid does not glow' % glow)
     ref = base('bench_legacy.png')
-    for k in range(15):
+    for k in range(15):  # not the plate: the planet seen through its holes loads at its own pace
         a, b = disk(img['legacy'], k, 60), disk(ref, k, 60)
         n = changed(a, b)
         if n > 0.005 * len(a):

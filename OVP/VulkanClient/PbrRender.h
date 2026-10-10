@@ -47,7 +47,8 @@ public:
 	static bool Disabled ();                    // ORBITER_PBR_DISABLE: material configs keep their legacy look
 
 	static void LoadTextures (PbrMaterial &m);  // PBR_TEX files into m.map (sRGB slots decode on the GPU)
-	static PbrVariant *Variant (unsigned features); // created on first use; NULL if it can't compile
+	static bool NeedsDecode (const VkTex *t);   // a colour map in a format the sampler doesn't decode (UNORM, not float)
+	static PbrVariant *Variant (unsigned features); // created on first use; NULL if it can't compile or the lookup texture failed
 	static void BeginVariant (PbrVariant *v, VkTex *legacyEnv); // shared values from the legacy effect, frame values, environment
 
 	static void SetEnvironment (const PbrEnv *env) { curEnv = env; }
@@ -66,6 +67,7 @@ private:
 	static Phase phase;
 	static VkTex *sceneCopy;
 	static VkTex *lut;
+	static bool lutOk;
 	static ImageProcessing *ipDecode, *ipFilter, *ipLut;
 };
 

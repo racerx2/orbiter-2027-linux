@@ -78,6 +78,7 @@ private:
 		WORD shader;
 		map<int, D3D9MatExt> material;
 		map<int, PbrMaterial> pbr;		// custom: PBR_* keys of the MATERIAL blocks (design-pbr 9)
+		bool legacy = false;			// custom: made by a legacy line, as upstream would (a PBR-only entry leaves the default shader alone)
 	};
 
 	std::map<string, MESHREC> MeshConfig;

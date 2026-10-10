@@ -33,6 +33,7 @@ const PbrEnv *PbrRender::curEnv = NULL;
 PbrRender::Phase PbrRender::phase = PbrRender::PHASE_ALL;
 VkTex *PbrRender::sceneCopy = NULL;
 VkTex *PbrRender::lut = NULL;
+bool PbrRender::lutOk = false;
 ImageProcessing *PbrRender::ipDecode = NULL;
 ImageProcessing *PbrRender::ipFilter = NULL;
 ImageProcessing *PbrRender::ipLut = NULL;
@@ -77,15 +78,19 @@ void PbrRender::GlobalInit (VkDev *_dev)
 
 	if (!ipLut) ipLut = new ImageProcessing (dev, IblFile, "PSLut");
 	if (!lut) lut = new VkTex (dev, 128, 128, 1, VK_FORMAT_R16G16B16A16_SFLOAT, RTUsage);
+	lutOk = false;
 	if (ipLut->IsOK () && lut->img) {
 		VkSurf s (lut, 0);
 		ipLut->Activate ("PSLut");
 		ipLut->SetInt ("iSamples", 512);
 		ipLut->SetOutputNative (0, &s);
-		if (!ipLut->Execute (false)) LogErr ("PbrRender: the lookup texture failed");
+		lutOk = ipLut->Execute (false);
 		ipLut->SetOutputNative (0, NULL);
 	}
-	else LogErr ("PbrRender: PbrIBL.glsl (PSLut) did not compile, PBR materials get no specular image light");
+	if (!lutOk) {
+		LogErr ("PbrRender: the lookup texture (PbrIBL.glsl PSLut) failed, PBR materials are drawn as legacy materials");
+		SAFE_DELETE(lut);
+	}
 
 	const char *pre = getenv ("ORBITER_PBR_PRECOMPILE");
 	if (pre && pre[0] && strcmp (pre, "0")) {
@@ -117,6 +122,7 @@ void PbrRender::GlobalExit ()
 	SAFE_DELETE(ipFilter);
 	SAFE_DELETE(ipLut);
 	SAFE_DELETE(lut);
+	lutOk = false;
 	texCache.clear ();
 	curEnv = NULL;
 	sceneCopy = NULL;
@@ -153,6 +159,11 @@ static bool IsFloatFormat (VkFormat f)
 		f == VK_FORMAT_R32G32_SFLOAT || f == VK_FORMAT_R32G32B32_SFLOAT || f == VK_FORMAT_R32G32B32A32_SFLOAT;
 }
 
+static bool IsHdrFormat (VkFormat f)
+{
+	return IsFloatFormat (f) || f == VK_FORMAT_BC6H_UFLOAT_BLOCK || f == VK_FORMAT_BC6H_SFLOAT_BLOCK;
+}
+
 static std::shared_ptr<VkTex> LoadTex (VkDev *dev, const std::string &name, bool srgb)
 {
 	char path[MAX_PATH];
@@ -182,7 +193,7 @@ static std::shared_ptr<VkTex> LoadTex (VkDev *dev, const std::string &name, bool
 			px = std::move (cv);
 			tw = VK_FORMAT_B8G8R8A8_SRGB;
 		}
-		if (tw == VK_FORMAT_UNDEFINED) LogWrn ("PBR texture %s: format %d has no sRGB form, read as linear", full.c_str(), (int)fmt);
+		if (tw == VK_FORMAT_UNDEFINED) LogWrn ("PBR texture %s: format %d has no sRGB form, %s", full.c_str(), (int)fmt, IsHdrFormat (fmt) ? "read as linear" : "decoded in the shader");
 		else fmt = tw;
 	}
 
@@ -214,6 +225,20 @@ static std::shared_ptr<VkTex> LoadTex (VkDev *dev, const std::string &name, bool
 	return sp;
 }
 
+bool PbrRender::NeedsDecode (const VkTex *t)
+{
+	if (!t) return false;
+	VkFormat f = t->fmt;
+	if (IsHdrFormat (f)) return false;
+	switch (f) {
+	case VK_FORMAT_BC1_RGB_SRGB_BLOCK: case VK_FORMAT_BC1_RGBA_SRGB_BLOCK: case VK_FORMAT_BC2_SRGB_BLOCK: case VK_FORMAT_BC3_SRGB_BLOCK:
+	case VK_FORMAT_BC7_SRGB_BLOCK: case VK_FORMAT_B8G8R8A8_SRGB: case VK_FORMAT_R8G8B8A8_SRGB:
+		return false;
+	default:
+		return true;
+	}
+}
+
 void PbrRender::LoadTextures (PbrMaterial &m)
 {
 	if (!dev) dev = D3D9Effect::pDev;
@@ -231,7 +256,7 @@ PbrVariant *PbrRender::Variant (unsigned f)
 	f &= PBRF_COUNT - 1;
 	PbrVariant &v = variants[f];
 	if (v.fx) return &v;
-	if (v.failed || !D3D9Effect::FX) return NULL;
+	if (v.failed || !lutOk || !D3D9Effect::FX) return NULL;
 	if (!dev) dev = D3D9Effect::pDev;
 
 	VkMacros m = D3D9Effect::BaseMacros ();
@@ -244,7 +269,7 @@ PbrVariant *PbrRender::Variant (unsigned f)
 	v.fx = VkEffect::Create (dev, PbrFile, m);
 	if (!v.fx) {
 		v.failed = true;
-		LogErr ("PbrRender: PbrMesh.fx variant 0x%X did not compile, its groups are not drawn", f);
+		LogErr ("PbrRender: PbrMesh.fx variant 0x%X did not compile, its groups are drawn as legacy groups", f);
 		return NULL;
 	}
 	VkEffect *fx = v.fx;

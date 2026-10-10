@@ -111,7 +111,7 @@ float VCharlie (float NdotL, float NdotV, float r)
 // thin-film iridescence (Belcour, Barla 2017; KHR_materials_iridescence)
 vec3 IorToF0 (vec3 t, float i) { return (t - i) * (t - i) / ((t + i) * (t + i)); }
 float IorToF01 (float t, float i) { return Sq1((t - i) / (t + i)); }
-vec3 F0ToIor (vec3 f0) { vec3 s = sqrt(clamp(f0, 0.0, 0.9999)); return (1.0 + s) / (1.0 - s); }
+vec3 F0ToIor (vec3 f0) { vec3 s = sqrt(clamp(f0, 0.0, 0.9999)); return (1.0 + s) / (1.0 - s); } // own guard: F0 = 1 has no finite ior
 
 vec3 FilmSensitivity (float opd, vec3 shift)
 {
@@ -128,7 +128,8 @@ vec3 FilmSensitivity (float opd, vec3 shift)
 
 vec3 ThinFilmFresnel (float filmIor, float cos1, float thickness, vec3 baseF0)
 {
-	float n2 = mix(1.0, filmIor, smoothstep(0.0, 0.03, thickness));
+	if (thickness <= 0.0) return FSchlick(baseF0, vec3(1.0), cos1); // no film
+	float n2 = filmIor;
 	float sin2Sq = Sq1(1.0 / n2) * (1.0 - cos1 * cos1);
 	float cos2Sq = 1.0 - sin2Sq;
 	if (cos2Sq < 0.0) return vec3(1.0);
