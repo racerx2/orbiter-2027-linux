@@ -1,0 +1,132 @@
+\documentclass[Orbiter Technical Reference.tex]{subfiles}
+\begin{document}
+
+\section{Collision and damage model}
+\textbf{Orbiter 2027, Linux edition}
+
+
+\subsection{Introduction}
+The Collision module (Modules/Plugin/Collision.so) adds contacts between vessels, between vessels and base buildings, and between vessels and the terrain to Orbiter's rigid-body dynamics, and turns the energy of impacts into damage. It runs as a plugin: it does not change Orbiter's core or the SDK, and it works from the states Orbiter gives it at each frame, writing corrected states back before Orbiter integrates the step. This note describes the model as built. Its settings are listed in "Collisions and damage" in the Orbiter User Manual, and the files and interfaces for add-on makers in "Collisions for add-on developers" in the Orbiter Developer Manual.\\
+All computations use double precision. With the module inactive, or active with no contact in a scene, the simulation is bit-for-bit the same as without it.
+
+
+\subsection{Colliders}
+A vessel's collider is the set of triangles of its external meshes. The groups of a mesh are partitioned into parts: groups that the vessel's animations move together form one part, which follows its animation (a door, a gear leg, a robot arm). Groups can be left out or given a material by a collision mesh file. Each part has a bounding volume hierarchy built with a binned surface area heuristic (16 bins, 4 triangles per leaf), refitted when the part deforms.\\
+Every part has a skin of $s$ = 2 cm (0.01 to 0.5 m per mesh): two parts are in contact when their distance is below $2s$, so that the bodies' visible surfaces stay a few centimetres apart at rest and small numerical errors never let surfaces pass. Vertices within 0.1 mm of each other are welded into one, so that a hull made of several groups is one closed surface.\\
+Base buildings (blocks, hangars, tanks, mesh objects) are built from their definitions in the base configuration files, as Orbiter builds them, and are fixed to the rotating planet.
+
+
+\subsection{Detection}
+The module sees the bodies at the start of a frame, before Orbiter integrates it. It therefore predicts the coming step of each body from gravity and the non-gravitational acceleration of the last step, and tests the motion over this predicted interval:
+
+\begin{itemize}
+\item A broad phase over the bodies' swept bounds selects pairs (sort and sweep with more than 256 bodies).
+\item For each pair, conservative advancement finds the time of impact: the parts are advanced by the largest time that cannot close their distance, until they are within $\delta_{toi}$ = 5 mm of their skins, at most 32 times. A pair that does not converge becomes a speculative contact.
+\item At the time of impact, a contact manifold of up to 4 patches with up to 4 points each is collected from the triangle pairs within 3 cm; points closer than 1 cm with normals within 10° are merged.
+\end{itemize}
+
+\noindent
+A predicted contact is a speculative contact: it slows the approach just enough that the bodies meet at the time of impact. In the next frame, the module sees where the bodies really are. If the contact happened as predicted, the slowdown is undone and the impact is solved from the measured touch (the "touch" path); if the bodies turned or the prediction was wrong, the pair is rolled back to its free motion and the contact is solved from the past interval (the "free" path). Restitution and damage therefore always use the physical approach speed, not the slowed one. A contact that the prediction missed is found by the deviation test and the past check in the next frame and corrected one frame late.
+
+
+\subsection{Contact response}
+Contacts are solved with sequential impulses in two phases per frame:
+
+\begin{itemize}
+\item \textbf{Phase 1 (collision):} impulses along the contact normals and in the tangent plane remove the approach speed and apply restitution. The number of sweeps is $n = \mathrm{clamp}(\lceil 20 h / 0.167\,\mathrm{s} \rceil, 20, 60)$ for a step $h$; the loop ends early when every impulse change is below 10$^{-9}$ N s.
+\item \textbf{Phase 2 (contact):} impulses keep resting and sliding contacts from approaching, with friction. Remaining overlap is removed by a position correction of $\beta$ = 0.2 of the depth beyond a slop of 2 mm per frame, at most 5 cm per frame, in 8 Gauss-Seidel sweeps.
+\end{itemize}
+
+\noindent
+Friction follows Coulomb's law with a two-dimensional tangent impulse per contact point, solved as a $2 \times 2$ block and limited to the friction cone $|J_t| \le \mu J_n$.\\
+The coefficient of restitution falls with the approach speed $v$:
+
+\[ e(v) = \left\{
+\begin{array}{ll}
+0 & v < v_{rest} \;\mathrm{or}\; v \ge v_{d} \\
+e_{0} \min\left(1, \left(\frac{v_{y}}{v}\right)^{1/4}\right) \min\left(1, \frac{v_{d} - v}{v_{d} - v_{p}}\right) & \mathrm{otherwise}
+\end{array}
+\right. \]
+
+\noindent
+with $v_{rest}$ = 0.1 m/s (slower contacts rest), the first-yield speed $v_{y}$ (1 m/s for most materials, 3 m/s for landing gear), $v_{p}$ = 50 m/s and $v_{d}$ = 300 m/s (destructive impacts do not rebound). For two materials in contact, the larger $e_{0}$, the smaller $v_{y}$ and the geometric mean of the friction coefficients apply. The material values are listed in the Developer Manual.\\
+Docked and attached vessels respond as one body (the super-structure Orbiter forms for docked vessels, or the attachment tree), with the mass and inertia Orbiter gives it. Linear momentum is conserved exactly in every frame; with the setting \textit{CollisionCheck}, a failed momentum check stops the simulation. Landed vessels are woken when an impulse would change their velocity by more than 0.05 m/s or their rotation by more than 0.02 rad/s.\\
+Two free docking ports less than 3 m apart that face each other within 15°, are offset sideways by at most \textit{DockZoneRadius} (1.5 m) and close at less than 1 m/s ignore the contacts of their zones, so that Orbiter's docking still captures. Attachment points use the same rule within 2.5 m.
+
+
+\subsubsection{Time step limits}
+The solution is accurate when the step is small compared with the time a contact takes. The module therefore lowers the time acceleration, by powers of ten, before a predicted contact, so that approaching pairs are solved at steps of at most 0.1 s, and so that a body resting on a building under load is integrated at steps of at most 0.25 s. It looks ahead two steps. A user's later increase of the time acceleration is clamped while the limit holds.
+
+
+\subsection{Impact energy}
+Each impact event carries the kinetic energy $\Delta KE$ that the phase-1 impulses of the newly touching contacts took out of the relative motion, the friction work $W_{f}$, and the approach speed $v_{n}$. Impacts with $v_{n}$ = 1 m/s or less are elastic and give no damage. Above it, the energy that deforms the bodies
+
+\[ E_{n} = \max(0, \Delta KE - W_{f}) \]
+
+\noindent
+is shared between the two sides A and B by their crush strengths $\sigma_{c}$, so that the softer side takes the larger share, and reduced by a plastic factor:
+
+\[ E_{A} = E_{n} \frac{\sigma_{c,B}}{\sigma_{c,A} + \sigma_{c,B}} \max\left(0, 1 - \left(\frac{v_{el,A}}{v_{n}}\right)^{2}\right) \]
+
+\noindent
+with the material's elastic speed $v_{el}$ (1 m/s, 3 m/s for gear). The energy a side absorbs is $E_{A} + 0.25\,W_{f}$; it is added up over the vessel's life. A vessel is destroyed when its absorbed energy per kg of empty mass reaches \textit{DestroyEnergy} (1000 J/kg, set per vessel class or in Config/Collision.cfg); a building uses \textit{BuildingDestroyEnergy} and a mass estimated from its size and kind. One impact of 40 kJ/kg or more is flagged as catastrophic.
+
+
+\subsection{Dents}
+Each damaging impact leaves a dent record on the side it hit: a centre $\vec{c}$ and outward normal $\vec{n}$ at the contact, a radius $R$ and a depth $h$. The dent's volume is the absorbed energy over the crush strength, $V = E/\sigma_{c}$. For a bowl of depth $h = \kappa R$ with $\kappa$ = 0.3,
+
+\[ R_{0} = \left(\frac{3V}{\pi \kappa}\right)^{1/3} \]
+
+\noindent
+and $R$ is $R_{0}$ limited to at least the contact patch and at most half the vessel's \textit{Size}; on coarse meshes it is at least large enough to move some vertices. The depth is then the volume over the dent's area factor $S$ on the actual mesh, $h = V/S$, limited to half of $R$, a quarter of the part's extent and, where the hull is a thin shell of thickness $T$, 0.6 $T$.\\
+The vertices within $R$ of the centre move inwards along $\vec{n}$ with a smooth kernel. Three shapes are chosen from the hull around the contact:
+
+\begin{itemize}
+\item \textbf{Bowl:} the default round dent.
+\item \textbf{Crush:} where the impactor covers the hull around the contact only partly (a protruding nose, a fin edge), the hull is flattened against a plane behind the contact, as a crumpled front.
+\item \textbf{Hinge:} where a thin plate is hit off its centre, the energy that the bowl cannot take folds the plate about a hinge line, as a bent wing tip.
+\end{itemize}
+
+\noindent
+An irregular outline and depth and sharper shading of crushed areas are added for the visual mesh only. Records within half a radius and 30° of an earlier one are merged; a vessel keeps at most 512, and dents shallower than 2 mm are not recorded. The collider is dented with the same records, so later contacts see the deformed hull. Buildings keep their energy but are not drawn dented.
+
+
+\subsection{Breakage and debris}
+On destructive impacts, the mesh groups at the impact are classified as parts, glass, interior or groups hidden at rest. Parts tear off when the energy they absorb is large enough, glass breaks, and interior groups of a hull that is broken open are hidden. A section or tip torn off leaves a cut along the tear on the remaining hull. Groups that the vessel module controls (\textit{;@KEEPFLAGS}) and groups hidden at rest never break.\\
+A broken part becomes a debris vessel of the class CollDebris, with its own copy of the part's triangles, its share of the empty mass, its inertia and the motion of the parent at its position, plus a separation kick; the parent loses the mass and gets the opposite impulse, so momentum is conserved. Debris does not collide with its parent, the impactor or other debris; at most \textit{CollisionDebrisMax} (48) pieces exist, each for \textit{CollisionDebrisLife} (1800 s).
+
+
+\subsection{Structural fracture}
+With \textit{CollisionBlast}, each vessel mesh is also a structure of the NVIDIA Blast library:
+
+\begin{itemize}
+\item \textbf{Cells:} the triangles of the static part of the mesh are split into Voronoi cells around sites chosen by farthest-point sampling, with a cell size of 0.12 times the vessel's \textit{Size}, at least 8 and at most \textit{CollisionBlastCells} (64) cells. Each animated part is one chunk of its own. A cell's mass is that of an aluminium skin (2700 kg/m$^{3}$) over its area, with the thickness that gives the vessel's empty mass, between 1 and 50 mm.
+\item \textbf{Bonds:} neighbouring cells are bonded with the area and length of their shared boundary. The bonds' limits follow aluminium 6061-T6 (compression: 276 MPa elastic, 310 MPa fatal; tension half and shear 0.6 times those values), scaled by the crush strength of the hit material.
+\item \textbf{Loads:} an impact applies its contact force $F = J_{n} / \max(d/v_{n}, \mathrm{2\,ms})$ ($J_{n}$ the normal impulse, $d$ the penetration depth) at the contact, and the vessel's spin applies centrifugal loads. Blast's stress solver runs 64 iterations per frame for 2 s after a hit.
+\item \textbf{Fracture:} bonds above their limits break, and an impact of more than \textit{CollisionBlastESpec} (300 J/kg of empty mass) crushes the cells at the impact point. Groups of cells that lose their connection to the main structure fly off as debris with a separation speed of 0.1 $v_{n}$, and the vessel's empty mass drops by their mass; at most 90 \% of the empty mass can leave.
+\item The hull vertices along a fracture are moved onto the faces of the cells, so the edges of the pieces are jagged rather than straight.
+\end{itemize}
+
+\noindent
+Broken bonds, crushed cells and weakened bonds are saved with the scenario, and a reload rebuilds the same pieces.
+
+
+\subsection{Ground impacts}
+With \textit{CollisionGround}, the collider's vertices are tested against Orbiter's terrain (including elevation data). A vertex that reaches the terrain with an approach speed of at least \textit{CollisionGroundMinSpeed} (5 m/s) makes an impact event with the local terrain normal, which dents and breaks the vessel as an impact with another body would, and its impulse is applied to the vessel. Slower touchdowns, landing and rolling are left to Orbiter's touchdown-point model.
+
+
+\subsection{Persistence}
+Dent records, absorbed energy, destroyed flags, broken parts and Blast fracture state are written to the module's block of the scenario file and matched to vessels by name and class when it is loaded. During flight recording, a side file in Flights/\_Collision holds the same records with their times, so that playback shows the damage at the moments it happened.
+
+
+\subsection{Limits}
+\begin{enumerate}
+\item The module sees only the start of each frame and predicts the step; a contact the prediction misses is corrected one frame late, so two bodies can overlap for one frame, most visibly at large time steps.
+\item The angular response of a stack uses the inertia that the SDK exposes; it is exact for members aligned with the stack's axes and less accurate for members turned at large angles.
+\item A vessel resting on a building roof is held by the module's support force; Orbiter does not store it as landed there.
+\item Buildings are not drawn dented, and their colliders keep their shape.
+\item A mesh group that the vessel module itself rewrites shows no visual dent; its collider keeps the dent.
+\item While a destroyed vessel's thrust is cut, it has one more propellant resource, an empty tank of 10$^{-6}$ kg that is never saved.
+\end{enumerate}
+
+\end{document}

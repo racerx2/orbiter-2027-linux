@@ -1,0 +1,124 @@
+\documentclass[Orbiter Technical Reference.tex]{subfiles}
+\begin{document}
+
+\section{Ephemerides and rotation of the Linux edition}
+\textbf{Orbiter 2027, Linux edition}
+\begin{sloppypar}
+
+
+\subsection{Introduction}
+The Linux edition replaces or adds the ephemeris modules of several moons, adds the Pluto system, evaluates VSOP87 and ELP82 at a higher precision for the inner planets and the Moon, and fits the rotation of the Sun, Jupiter, Uranus, Neptune, Vesta and 17 moons to the IAU rotation model. This note describes the methods. The modules' sources are in Src/Celbody of the Orbiter sources (common/ephemeris.h, common/chebyshev.h, common/psrseries.h and common/psrmodule.h); the data sources are listed in the credits of the Orbiter User Manual.
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.3\textwidth}|p{0.6\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Bodies} & \textbf{Method}\\
+	\hline\rule{0pt}{2ex}
+	Phobos, Deimos, Umbriel, Triton & Precessing Kepler orbit\\
+	\hline\rule{0pt}{2ex}
+	Miranda, Ariel, Titania, Oberon, Proteus & Precessing Kepler orbit with periodic terms\\
+	\hline\rule{0pt}{2ex}
+	Nereid, Vesta & Chebyshev tables of JPL Horizons; a precessing Kepler orbit outside them\\
+	\hline\rule{0pt}{2ex}
+	Pluto, Charon, Styx, Nix, Kerberos, Hydra & Poisson series fitted to JPL's DE441 and plu060; two-body motion outside 1800-2200\\
+	\hline\rule{0pt}{2ex}
+	Hyperion & TASS 1.7 (as the other Saturn moons), with the velocity taken from the motion of the TASS position\\
+	\hline\rule{0pt}{2ex}
+	Mercury, Venus, Mars, Moon & VSOP87 and ELP82 with ErrorLimit = 10$^{-8}$\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+
+\subsection{Precessing Kepler orbits}
+The orbit of the moon relative to its planet is a Kepler ellipse with semi-major axis $a$, eccentricity $e$, mean motion $n$ and mean anomaly $M_{0}$ at the epoch $t_{0}$, whose plane and line of apsides precess at constant rates about a fitted axis $\hat{\vec{p}}$ (given by its right ascension and declination in the J2000 equator frame). With $\Delta t = t - t_{0}$:
+
+\[ M = M_{0} + n \Delta t + \frac{1}{2} \dot{n} \Delta t^{2} \]
+
+\noindent
+the orbit normal $\vec{h}_{0}$ and the periapsis direction $\vec{e}_{0}$ at the epoch are turned by the node angle $\dot{\Omega} \Delta t$ about $\hat{\vec{p}}$, and the periapsis direction further by $(\dot{\varpi} - \dot{\Omega}) \Delta t$ about the new normal $\vec{h}$:
+
+\[ \vec{h} = \mathcal{R}_{\hat{\vec{p}}}(\dot{\Omega}\Delta t)\, \vec{h}_{0}, \qquad \vec{e} = \mathcal{R}_{\vec{h}}((\dot{\varpi} - \dot{\Omega})\Delta t)\, \mathcal{R}_{\hat{\vec{p}}}(\dot{\Omega}\Delta t)\, \vec{e}_{0} \]
+
+\noindent
+Position and velocity in the precessing plane follow from Kepler's equation; the velocity of the precessing frame, $\dot{\Omega}\, \hat{\vec{p}} \times \vec{r} + (\dot{\varpi} - \dot{\Omega})\, \vec{h} \times \vec{r}$, is added to the velocity. The quadratic term $\dot{n}$ is used where a tidal acceleration is measurable (Phobos).\\
+The periodic terms add displacements along the radial, along-track and normal directions $\hat{\vec{R}}$, $\hat{\vec{T}} = \vec{h} \times \hat{\vec{R}}$ and $\vec{h}$:
+
+\[ \delta_{j} = \sum_{k} c_{k} \cos(m_{k} L + \nu_{k} \Delta t) + s_{k} \sin(m_{k} L + \nu_{k} \Delta t), \qquad L = M + \dot{\varpi} \Delta t \]
+
+\noindent
+with their time derivatives added to the velocity. All elements, rates, the axis and the terms are fitted to JPL Horizons over 1800-2200 (Mars satellites mar099, Uranus satellites ura184\_merged, Neptune satellites nep098\_merged). The result is given relative to the planet in the ecliptic frame of J2000.
+
+
+\subsection{Chebyshev tables}
+Nereid and Vesta use tables of Chebyshev polynomials fitted to JPL Horizons positions (Nereid 1800-2199, Vesta 1600-2500), in Config/<\textit{Body}>/Data/<\textit{body}>.cheb. The file starts with a text line
+
+\begin{lstlisting}[language=OSFS]
+CHEB1 <mjd0> <segment days> <segments> <coefficients>
+\end{lstlisting}
+
+\noindent
+followed by little-endian doubles ordered by segment, axis (x, y, z) and coefficient, in km in the ecliptic frame of J2000. Within a segment of length $\Delta$ starting at $t_{s}$, with $\tau = 2(t - t_{s})/\Delta - 1$, the position is $\sum_{m} c_{m} T_{m}(\tau)$ per axis and the velocity its derivative. The tables are continuous in position and velocity at every segment boundary. Outside the tables, or when the file is missing, the module uses its fitted precessing Kepler orbit.
+
+
+\subsection{Poisson series of the Pluto system}
+The six bodies of the Pluto system are given by Poisson series fitted to JPL's DE441 (the Pluto system barycentre) and plu060 (the bodies about it), in the PSR2 files of Config/<\textit{Body}>/Data. Each series is a sum of Legendre polynomials in the time $\tau = t/T_{0}$ and of trigonometric terms whose amplitudes are such polynomials:
+
+\[ x(t) = \sum_{m} a_{m} P_{m}(\tau) + \sum_{k} \left( \sum_{m} c_{km} P_{m}(\tau) \right) \cos(\omega_{k} t) + \left( \sum_{m} s_{km} P_{m}(\tau) \right) \sin(\omega_{k} t) \]
+
+\noindent
+and the velocity is its analytic derivative. Depending on the body, the series give Cartesian coordinates, or distance, longitude and latitude, or the deviation from a mean Kepler orbit whose elements are Legendre series themselves; some terms also have a phase that grows with $\tau^{2}$. Pluto's heliocentric state is the sum of two series: the barycentre of the Pluto system and Pluto's offset from it. Charon and the four small moons are given relative to Pluto. Within 1800-2200 the series are within 100 m of DE441 and plu060 at epochs not used in the fit. Outside these dates, each body continues on a two-body orbit from its state at the end of the span.
+
+
+\subsection{Planet and Moon series}
+VSOP87 (planets) and ELP82 (Moon) are truncated by the module's ErrorLimit. The Linux edition sets ErrorLimit = 10$^{-8}$ for Mercury, Venus, Mars and the Moon, the value Earth already used: Venus, Mars and the Moon then use all their terms, Mercury 4932 of 7123. The Sun and the giant planets stay at 10$^{-6}$.
+
+
+\subsection{Rotation}
+Orbiter turns a body about its axis with the sidereal period $T$ (\textit{SidRotPeriod}) from the offset $\phi_{0}$ (\textit{SidRotOffset}). The Linux edition adds two optional terms to the rotation angle, with $d$ the days since J2000:
+
+\[ \phi = \phi_{0} + \frac{2\pi}{T} t + a\, d^{2} + \sum_{k=1}^{4} A_{k} \sin\left(\frac{2\pi d}{P_{k}} + \varphi_{k} + c_{k} d^{2}\right) \]
+
+\noindent
+where $a$ is SidRotAccel [rad/day$^{2}$] and each group of SidRotTerms gives $A_{k}$ [rad], $P_{k}$ [days], $\varphi_{k}$ [rad] and $c_{k}$ [rad/day$^{2}$] (see "Planets" in the Orbiter Developer Manual). Both are zero by default, so a body without them turns as before.\\
+The rotation keys of 22 bodies (the Sun, Jupiter, Uranus, Neptune, Vesta and 17 moons) are fitted to the IAU WGCCRE rotation model as NAIF's pck00011 gives it: the axis (Obliquity, LAN, the precession keys), the period and offset, and for Phobos, Deimos, Mimas, Miranda and Tethys their librations as SidRotTerms (Phobos also SidRotAccel). Jupiter turns at its System III period (9.925 h), and its clouds turn with the planet. All 31 bodies with an IAU model are within 0.2° (pole) and 0.5° (prime meridian) of pck00011 over 1950-2050, and within 0.4° and 2° over 1800-2200. The moons of Mars, Uranus and Neptune with new modules have their SidRotOffset anchored to the configuration file's epoch, so that their sub-planet longitude averages zero: they face their planets.
+
+
+\subsection{Accuracy}
+Largest position difference from JPL Horizons, at random epochs not used in the fits:
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.25\textwidth}|p{0.3\textwidth}|p{0.3\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Body} & \textbf{2000-2040} & \textbf{1800-2200}\\
+	\hline\rule{0pt}{2ex}
+	Phobos & 7 km & 31 km\\
+	\hline\rule{0pt}{2ex}
+	Deimos & 128 km & 209 km\\
+	\hline\rule{0pt}{2ex}
+	Miranda & 227 km & 1,048 km\\
+	\hline\rule{0pt}{2ex}
+	Ariel & 275 km & 1,008 km\\
+	\hline\rule{0pt}{2ex}
+	Umbriel & 870 km & 1,270 km\\
+	\hline\rule{0pt}{2ex}
+	Titania & 1,069 km & 1,624 km\\
+	\hline\rule{0pt}{2ex}
+	Oberon & 1,039 km & 1,444 km\\
+	\hline\rule{0pt}{2ex}
+	Triton & 93 km & 497 km\\
+	\hline\rule{0pt}{2ex}
+	Proteus & & 20 km\\
+	\hline\rule{0pt}{2ex}
+	Nereid, Vesta (tables) & & 2.5 km, 3 km\\
+	\hline\rule{0pt}{2ex}
+	Pluto system & & 100 m\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\end{sloppypar}
+
+\end{document}

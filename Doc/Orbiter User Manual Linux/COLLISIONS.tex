@@ -1,0 +1,165 @@
+\documentclass[Orbiter User Manual.tex]{subfiles}
+\begin{document}
+
+\section{Collisions and damage}
+\label{sec:collisions}
+Without help, Orbiter lets spacecraft pass through each other and through the buildings of surface bases; only the ground and docking ports stop them. The \textit{Collision} module makes vessels collide with each other, with base buildings and with the ground, and gives them damage: dents where they hit, parts that tear off, breaking glass, debris and structural fracture. The module is part of the Linux edition.
+
+\begin{figure}[H]
+	\centering
+	\subfigure{\includegraphics[width=0.9\textwidth]{collisions.jpg}}
+	\caption{A Delta Glider before (left) and after (right) a 70 m/s head-on crash.}
+\end{figure}
+
+
+\subsection{Turning collisions on}
+Tick \textit{Collision} in the \textit{Physics} category of the Launchpad's \textit{Modules} tab (see section \ref{ssec:launchpad_modules}). Collisions are on as soon as the module is active. Its settings are in Config/Collision.cfg (see section \ref{ssec:coll_cfg}); \textit{CollisionModel = 0} there turns collisions and new damage off while the module still loads, saves, shows and repairs the damage of a scenario.\\
+Vessel destruction stops a vessel's engines only when the Launchpad option \textit{Damage and failure simulation} (Options tab, Vessel settings) is ticked, or the \textit{Damage model} of the in-flight Options dialog is on. Dents, broken parts and debris appear either way.
+
+
+\subsection{What collides}
+\begin{itemize}
+\item \textbf{Vessels:} each vessel's collider is made from the triangles of its own meshes, so open cargo bays, gaps and overhangs stay open. Moving parts (doors, gear, robot arms) move their colliders with them. Docked and attached vessels respond as one body, and every impact conserves momentum.
+\item \textbf{Base buildings:} blocks, hangars, tanks and mesh buildings of surface bases collide. Runways, landing pads and objects that follow the terrain do not. A building keeps the energy it has absorbed and is destroyed when it reaches its limit, but it is not drawn dented.
+\item \textbf{The ground:} a vessel that hits the terrain at 5 m/s or more dents and breaks as in a crash with another vessel. Slower touchdowns, landing and rolling are left to Orbiter's own ground contact, as before.
+\end{itemize}
+
+\noindent
+\textbf{Docking and attaching:} near a free docking port or attachment point, a slow approach (below 1 m/s, within 15° of the port's axis) does not collide there, so Orbiter can still dock or attach. Payloads released from a cargo bay leave without a push.\\
+\textbf{Time acceleration:} the module lowers the time acceleration before a contact, so that it is solved at a small enough step, and limits it while a vessel rests on a building. The limit ends when the bodies are apart.
+
+
+\subsection{Damage}
+The damage of an impact comes from the kinetic energy that the impact takes out of the motion of the two bodies. It is shared between them by the strength of the materials that touch; a softer hull takes the larger share. Impacts below about 1 m/s are elastic and leave no damage.
+
+\begin{itemize}
+\item \textbf{Dents:} each damaging impact leaves a dent in the vessel's mesh at the point of contact, sized by the energy it absorbed. Thin parts fold, and parts crushed against a flat face of the other body are flattened. The collider is dented with the visual mesh, so later contacts see the dented hull.
+\item \textbf{Destroyed vessels:} a vessel is destroyed when the energy it has absorbed reaches 1 kJ per kg of its empty mass (1000 J/kg, \textit{DestroyEnergy}; a vessel class may set its own value). With the \textit{Damage and failure simulation} option, a destroyed vessel loses the thrust of its engines; a vessel module may handle the destruction in its own way instead. A single impact of more than 40 kJ/kg counts as catastrophic.
+\item \textbf{Parts breaking off:} on destructive impacts, parts tear off and fly away as debris, glass breaks, and the interior groups of a hull that is broken open are hidden. Torn sections leave a cut edge on the remaining hull.
+\item \textbf{Structural fracture:} the module splits each vessel mesh into structural cells (64 by default) joined by bonds, and runs NVIDIA Blast's stress solver on them. Where an impact overloads the structure, the bonds break and the pieces fly as debris; a vessel loses the mass of the pieces it has lost.
+\item \textbf{Debris:} pieces become vessels of their own (class \textit{CollDebris}) that fly on, fall and come to rest on the ground. They do not collide with the vessel they came from, the vessel that hit it or other debris. At most 48 pieces exist at once; each lives 30 minutes of simulation time.
+\item \textbf{Impact effects:} paint and insulation flakes, venting gas from vessels hit hard enough, sparks of scraping metal and dust on the ground.
+\end{itemize}
+
+\noindent
+\textbf{Notifications:} a destroyed vessel or building is announced on screen; with \textit{CollisionNotify = 2} the first damage of a building is announced too, and a repair is always announced.\\
+\\
+\textbf{The Collision damage dialog:} \textit{Collision damage} in the \textit{Custom Functions} list (\Ctrl\keystroke{F4}) opens a report of the damaged vessels: their dent records, the absorbed energy in kJ, whether they are destroyed, whether their module handles the destruction, and whether the engine cut is active. Its \textit{Repair} button repairs a vessel at the next running frame: the dents disappear, broken parts return and the engines work again. Damaged buildings are listed below the vessels with their absorbed energy in J.
+
+
+\subsection{Saving and playback}
+The damage of vessels and buildings is saved with the scenario, in the module's own block, and restored when the scenario is loaded, also when the module's \textit{CollisionModel} is 0. Debris pieces are saved as vessels.\\
+While the flight recorder records, the module writes the damage into a side file in Flights/\_Collision. A recorded flight played back shows the dents and debris at the times they happened (with \textit{CollisionDebrisPlayback}, the pieces fly as live vessels), and the impact effects with \textit{CollisionFxPlayback}.
+
+
+\subsection{Settings}
+\label{ssec:coll_cfg}
+The module reads Config/Collision.cfg once at the start of each simulation session. The file is a plain text file with \textit{Item = value} lines; lines starting with a semicolon are comments. An update of Orbiter adds new items to an existing file and keeps every other line.
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.31\textwidth}|p{0.06\textwidth}|p{0.55\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Item} & \textbf{Type} & \textbf{Description}\\
+	\hline
+	\multicolumn{3}{|c|}{\rule{0pt}{2ex}\textbf{\textit{Collisions}}}\\
+	\hline\rule{0pt}{2ex}
+	CollisionModel & Int & 1: collisions and new damage on. 0: off; the module still loads, saves, shows and repairs damage. Default: 1\\
+	\hline\rule{0pt}{2ex}
+	CollisionResponse & Bool & If FALSE, contacts are detected and logged, but the bodies do not respond. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionDockZone & Bool & Slow approaches of free docking ports do not collide there, so Orbiter can still dock. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionAttachZone & Bool & The same for free attachment points. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionGround & Bool & Vessels that hit the terrain dent and break as in a crash with another vessel. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionGroundMinSpeed & Float & Slowest approach to the terrain that damages [m/s]. Default: 5\\
+	\hline
+	\multicolumn{3}{|c|}{\rule{0pt}{2ex}\textbf{\textit{Damage}}}\\
+	\hline\rule{0pt}{2ex}
+	DestroyEnergy & Float & Absorbed energy per kg of empty mass that destroys a vessel [J/kg]. A vessel class's own DestroyEnergy wins. Default: 1000\\
+	\hline\rule{0pt}{2ex}
+	BuildingDestroyEnergy & Float & The same for base buildings [J/kg]. Default: 1000\\
+	\hline\rule{0pt}{2ex}
+	CollisionThrustCut & Bool & Destroyed vessels lose thrust (only with the \textit{Damage and failure simulation} option). Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionVisuals & Bool & Dents are shown on the vessel meshes. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionDentModes & Bool & Crushed and folded dent shapes; FALSE gives round dents only. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionDentNoise & Bool & Irregular dent outline and depth. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionDentFacetNormals & Bool & Sharper shading of crushed and folded areas. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionBreak & Bool & Parts tear off, glass breaks and interiors are hidden on destructive hits. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionBlast & Bool & Live structural fracture with NVIDIA Blast. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionBlastCells & Int & Structural cells per vessel mesh (8 to 256). Default: 64\\
+	\hline\rule{0pt}{2ex}
+	CollisionBlastESpec & Float & Energy per kg of empty mass that crushes the cells at the impact point [J/kg]. Default: 300\\
+	\hline\rule{0pt}{2ex}
+	CollisionDebrisMax & Int & Debris pieces alive at once. Default: 48\\
+	\hline\rule{0pt}{2ex}
+	CollisionDebrisLife & Float & Lifetime of a debris piece [s]. Default: 1800\\
+	\hline\rule{0pt}{2ex}
+	CollisionNotify & Int & On-screen notifications: 0 none, 1 destroyed vessels and buildings, 2 also the first damage of a building. Default: 1\\
+	\hline
+	\multicolumn{3}{|c|}{\rule{0pt}{2ex}\textbf{\textit{Impact effects}}}\\
+	\hline\rule{0pt}{2ex}
+	CollisionFx & Bool & Impact effects on. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionFxMask & Int & Effects to show, added up: 1 flakes, 2 venting, 4 sparks, 8 dust. Default: 15\\
+	\hline\rule{0pt}{2ex}
+	CollisionFxIntensity & Float & Effect strength, 0 to 2. Default: 1\\
+	\hline\rule{0pt}{2ex}
+	CollisionFxVentSpec & Float & Energy per kg of empty mass that starts venting [J/kg]. Default: 150\\
+	\hline\rule{0pt}{2ex}
+	CollisionFxMaxStreams & Int & Particle streams alive at once (at most 32). Default: 24\\
+	\hline\rule{0pt}{2ex}
+	CollisionFxRollDust & Bool & Dust under any vessel sliding on the ground, not only under wrecks. Default: FALSE\\
+	\hline
+	\multicolumn{3}{|c|}{\rule{0pt}{2ex}\textbf{\textit{Flight recorder}}}\\
+	\hline\rule{0pt}{2ex}
+	CollisionRecorder & Bool & Damage side file next to flight recordings, for playback. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionDebrisPlayback & Bool & Playback spawns the debris pieces as live vessels. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionFxPlayback & Bool & Impact effects in playback. Default: TRUE\\
+	\hline
+	\multicolumn{3}{|c|}{\rule{0pt}{2ex}\textbf{\textit{Advanced and debugging}}}\\
+	\hline\rule{0pt}{2ex}
+	CollisionCfgVersion & Int & Version of the file's defaults, kept by the update. Default: 2\\
+	\hline\rule{0pt}{2ex}
+	CollisionLog & Int & Detail of the module's lines in Orbiter.log, 0 to 4: 1 events, 2 also state writes, 3 also distances, 4 also poses. Default: 1\\
+	\hline\rule{0pt}{2ex}
+	CollisionCheck & Bool & A failed momentum check stops the simulation with an error (for tests). Default: FALSE\\
+	\hline\rule{0pt}{2ex}
+	ClientCheck & Int & 1: animated meshes are checked against the graphics client. Default: 0\\
+	\hline\rule{0pt}{2ex}
+	MeshProbe & String & Vessel classes whose named meshes are probed once instead of every frame (separated by spaces). Default: empty\\
+	\hline\rule{0pt}{2ex}
+	CollisionKeyPass & Bool & Dents of the focus vessel are also shown from the keyboard callback, faster after a mesh change. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionCullFix & Bool & The graphics client's culling sphere of a dented mesh group is refreshed. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionTestRecId, CollisionTestSlotCheck & & Test items, empty or 0 in normal use\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+
+\subsection{Add-on vessels and bases}
+Add-on vessels and bases collide without changes: their colliders are made from their meshes and base definitions. Vessel and base makers can fine-tune them (leave out cabins and pilots, mark glass and gear, change the destruction limit) and vessel modules can react to impacts and damage. See "Collisions for add-on developers" in the Orbiter Developer Manual.
+
+
+\subsection{Limits}
+\begin{itemize}
+\item The module works from Orbiter's frame and predicts each coming step. A contact that the prediction misses is found and corrected one frame late, so two bodies can overlap for one frame, most visibly at large time steps.
+\item Buildings are not drawn dented.
+\item A vessel resting on a building roof is held by the module; Orbiter does not store it as landed there.
+\item Every vessel and building in contact adds to the frame time; a typical scene costs well under a millisecond per frame.
+\end{itemize}
+
+\end{document}

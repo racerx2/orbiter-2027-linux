@@ -1,0 +1,247 @@
+\documentclass[Orbiter Developer Manual.tex]{subfiles}
+\begin{document}
+
+\section{Collisions for add-on developers}
+\label{sec:collision_dev}
+\begin{sloppypar}
+The Collision module of the Linux edition (see "Collisions and damage" in the Orbiter User Manual) makes vessels collide with each other, with base buildings and with the ground, and damages them. It builds its colliders from the vessels' meshes and the bases' object lists, so add-ons collide without changes. This section describes how vessel and base makers can tune the colliders and the damage, and how a vessel module can react to impacts. The model itself is described in "Collision and damage model" in the Orbiter Technical Reference.
+
+
+\subsection{Vessel colliders}
+A vessel's collider is made from the triangles of its meshes that are shown in external view (MESHVIS\_\allowbreak EXTERNAL); cockpit-only meshes do not collide. Within a mesh:
+
+\begin{itemize}
+\item Groups with the user flag 0x02 (not rendered in the main pass) are left out, unless a collision mesh file includes them.
+\item Groups that an animation moves together form one part of the collider and move with the animation. The module follows animations, mesh insertions and removals while the simulation runs.
+\item Each part has a skin of 2 cm: contacts start when two skins touch, so the visible surfaces stay 4 cm apart at rest.
+\item Vertices closer than 0.1 mm are welded, so that triangles of different groups form one surface.
+\end{itemize}
+
+\noindent
+Docked and attached vessels respond as one body. Two free docking ports do not collide around each other while they are less than 3 m apart, face each other within 15°, are offset sideways by at most DockZoneRadius and close at less than 1 m/s, so that Orbiter can still dock them. The same holds for a free attachment point and a free child point less than 2.5 m apart, aligned within 15° and moving at less than 1 m/s relative to each other.
+
+
+\subsubsection{Vessel class configuration keys}
+The module reads these optional keys from the vessel class configuration file (and from its BaseClass):
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.25\textwidth}|p{0.09\textwidth}|p{0.58\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Item} & \textbf{Type} & \textbf{Description}\\
+	\hline\rule{0pt}{2ex}
+	EnableCollider & Bool & If FALSE, the vessel has no collider and passes through vessels and buildings as before. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	DockZoneRadius & Float & Largest sideways offset between two docking ports' axes at which a slow approach does not collide [m]. The larger value of the two vessels counts. Default: 1.5\\
+	\hline\rule{0pt}{2ex}
+	DestroyEnergy & Float & Absorbed energy per kg of empty mass that destroys a vessel of this class [J/kg]. Default: DestroyEnergy of Config/Collision.cfg (1000)\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+
+\subsection{Collision mesh files}
+A collision mesh file fine-tunes the collider of one mesh: it leaves out groups (cabin interiors, pilots, the HUD), gives groups a material, or replaces the visual mesh with a simpler collision mesh. It has the mesh's name with the extension .col and lies next to the mesh file: Meshes/DG/deltaglider.col for Meshes/DG/deltaglider.msh. Orbiter's Delta Glider, Shuttle-A and Atlantis come with collision mesh files.
+
+\begin{lstlisting}[language=OSFS]
+COLLIDER-V1
+; the Delta Glider: cabin, pilots and HUD excluded
+EXCLUDE MATERIAL dgint* dgpilot* pnsgr* psng* visor HUD_glass
+MAT glass MATERIAL cockpitglass
+MAT gear GROUP 95-97 99-101
+\end{lstlisting}
+
+\noindent
+The first line that is not empty must be COLLIDER-V1; otherwise the file is ignored. A semicolon starts a comment to the end of the line. Each further line is one rule; a line with an error is skipped with a warning in Orbiter.log, and a file larger than 1 MB is ignored.
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.3\textwidth}|p{0.62\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Rule} & \textbf{Description}\\
+	\hline\rule{0pt}{2ex}
+	EXCLUDE <selector> & The selected groups do not collide.\\
+	\hline\rule{0pt}{2ex}
+	INCLUDE <selector> & The selected groups collide (also groups with user flag 0x02).\\
+	\hline\rule{0pt}{2ex}
+	MAT <material> <selector> & The selected groups are of this material (see below).\\
+	\hline\rule{0pt}{2ex}
+	SKIN <d> & Skin thickness of this mesh's parts, 0.01 to 0.5 m. Default: 0.02\\
+	\hline\rule{0pt}{2ex}
+	WELD <d> & Weld distance of the vertices, 0 to 0.01 m. Default: 0.0001\\
+	\hline\rule{0pt}{2ex}
+	MESH <name> & The collider is made from this mesh instead of the visual one (a simplified collision mesh; the rest of the line is the name, as a MeshName).\\
+	\hline\rule{0pt}{2ex}
+	FOLLOW <groups> <group> & With MESH: the listed groups of the collision mesh move with the given group of the visual mesh (animated parts).\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+Selectors:
+
+\begin{itemize}
+\item \textbf{ALL:} every group.
+\item \textbf{GROUP} <i> ...: group indices and ranges, for example \texttt{GROUP 3 7-9}.
+\item \textbf{LABEL}, \textbf{MATERIAL}, \textbf{TEXTURE} <name> ...: groups by their LABEL, material or texture name in the .msh file. Names are compared without regard to case; a * at the end of a name matches any rest (\texttt{dgint*}).
+\end{itemize}
+
+\noindent
+Rules apply in the order of the file: for each group, the last EXCLUDE or INCLUDE that selects it decides whether it collides, and the last MAT its material.\\
+A comment line \texttt{;@KEEPFLAGS} followed by group indices and ranges names groups whose user flags the vessel module controls itself (lights, panels that it shows and hides); the damage never hides or breaks off these groups.
+
+
+\subsubsection{Materials}
+The material of a group sets how much energy a dent of a given size takes and how the surfaces bounce and slide. Vessel groups without a MAT rule are al\_structure; an unknown material name counts as the default too.
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.18\textwidth}|p{0.11\textwidth}|p{0.12\textwidth}|p{0.1\textwidth}|p{0.08\textwidth}|p{0.23\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Material} & \textbf{Crush strength [MPa]} & \textbf{Restitution} & \textbf{Elastic speed [m/s]} & \textbf{Friction} & \textbf{Use}\\
+	\hline\rule{0pt}{2ex}
+	al\_structure & 0.5 & 0.3 & 1 & 0.5 & default for vessels\\
+	\hline\rule{0pt}{2ex}
+	al\_skin & 0.2 & 0.3 & 1 & 0.5 & thin skin panels\\
+	\hline\rule{0pt}{2ex}
+	al\_honeycomb & 2.0 & 0.1 & 1 & 0.5 & honeycomb panels\\
+	\hline\rule{0pt}{2ex}
+	gear & 0.5 & 0.1 & 3 & 0.5 & landing gear\\
+	\hline\rule{0pt}{2ex}
+	steel\_structure & 1.0 & 0.3 & 1 & 0.5 & default for tanks and mesh buildings\\
+	\hline\rule{0pt}{2ex}
+	steel\_clad & 0.05 & 0.3 & 1 & 0.5 & default for hangars\\
+	\hline\rule{0pt}{2ex}
+	building\_rc & 0.4 & 0.3 & 1 & 0.5 & default for blocks\\
+	\hline\rule{0pt}{2ex}
+	concrete & 30 & 0.2 & 1 & 0.6 & solid concrete\\
+	\hline\rule{0pt}{2ex}
+	glass & 0.5 & 0.3 & 1 & 0.5 & windows: break on destructive impacts\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+The crush strength is the energy a dent takes per cubic metre. Below the elastic speed an impact leaves no dent; above it the restitution falls off (see the Technical Reference). Where two materials touch, the larger restitution, the smaller elastic speed and the geometric mean of the friction values apply.
+
+
+\subsection{Base buildings}
+The module reads the object lists of the surface bases. Buildings (blocks, hangars, tanks, mesh objects and the other solid objects) collide; landing pads, runways, trains and objects with UNDERSHADOWS or WRAPTOSURFACE do not. Three optional keys in an object's block change this:
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.25\textwidth}|p{0.67\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Key} & \textbf{Description}\\
+	\hline\rule{0pt}{2ex}
+	COLLIDE & The object collides, whatever its other settings.\\
+	\hline\rule{0pt}{2ex}
+	NOCOLLIDE & The object does not collide.\\
+	\hline\rule{0pt}{2ex}
+	COLLMAT <material> & The object's material (see Materials). Defaults: blocks building\_rc, hangars steel\_clad, tanks and meshes steel\_structure.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\begin{lstlisting}[language=OSFS]
+BLOCK
+  POS 120 0 -40
+  SCALE 30 12 20
+  COLLMAT concrete
+END
+\end{lstlisting}
+
+\noindent
+Orbiter itself ignores these keys. A building keeps the energy it has absorbed and is destroyed at BuildingDestroyEnergy (Config/Collision.cfg) per kg of its mass, which the module estimates from its size and kind. Buildings are not drawn dented.
+
+
+\subsection{Debris}
+Pieces that break off become vessels of the class CollDebris (Config/Vessels/CollDebris.cfg), which has no module; the Collision module gives each piece its own copy of the broken mesh groups, its mass and its motion. Debris pieces do not collide with the vessel they came from, the vessel that hit it or other debris, and are deleted after CollisionDebrisLife seconds. A vessel module should not treat CollDebris vessels as its own kind.
+
+
+\subsection{Notices to vessel modules}
+The module sends notices to the vessel modules concerned through VESSEL3::clbkGeneric. The public header CollisionAPI.h (in Orbitersdk/include) defines them; a module can use it without linking to the Collision module.\\
+Every notice has msgid = COLLA\_VMSG ("OCOL"), prm = the kind of notice and context = a pointer to its payload. Each payload starts with a COLLA\_HDR \{magic, version, kind, size\}; check magic (COLLA\_MAGIC) and read no field beyond size, so that later versions can add fields.
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.3\textwidth}|p{0.24\textwidth}|p{0.36\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Kind} & \textbf{Payload} & \textbf{Sent when}\\
+	\hline\rule{0pt}{2ex}
+	COLLA\_KIND\_CONTACT & COLLA\_CONTACTINFO & The vessel hits another vessel or a building: other body, hit mesh and group, impact point and normal in the vessel frame, approach and slip speed, impulse and the pair's damage energy.\\
+	\hline\rule{0pt}{2ex}
+	COLLA\_KIND\_DENT & COLLA\_DAMAGEINFO & An impact damaged the vessel.\\
+	\hline\rule{0pt}{2ex}
+	COLLA\_KIND\_DESTROYED & COLLA\_DAMAGEINFO & The absorbed energy reached the vessel's DestroyEnergy.\\
+	\hline\rule{0pt}{2ex}
+	COLLA\_KIND\_RESTORED & COLLA\_DAMAGEINFO & A loaded scenario gave the vessel its saved damage.\\
+	\hline\rule{0pt}{2ex}
+	COLLA\_KIND\_REPAIRED & COLLA\_DAMAGEINFO & The vessel was repaired.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+COLLA\_DAMAGEINFO holds the flags (COLLA\_DMG\_DESTROYED, \_MODULEFX, \_CATASTROPHIC for one impact above 40 kJ/kg, \_PLAYBACK, \_CUT), the other body of the deepest dent, its mesh, group, centre, normal and depth, the energy absorbed in this notice and in total [J], the number of dent records and the vessel's DestroyEnergy.\\
+A module that handles the destruction itself (its own wreck, its own failures) returns COLLA\_HANDLED from clbkGeneric for DESTROYED and RESTORED. The Collision module then leaves the vessel's engines alone and sets COLLA\_DMG\_MODULEFX. Otherwise, with the \textit{Damage and failure simulation} option, the module cuts the vessel's thrust by linking its thrusters to an empty tank, which a repair removes.
+
+\begin{lstlisting}
+#include "CollisionAPI.h"
+
+int MyVessel::clbkGeneric (int msgid, int prm, void *context)
+{
+    if (msgid == COLLA_VMSG && context) {
+        const COLLA_HDR *h = (const COLLA_HDR*)context;
+        if (h->magic != COLLA_MAGIC) return 0;
+        if (prm == COLLA_KIND_DESTROYED || prm == COLLA_KIND_RESTORED) {
+            SetMyWreckState (true);   // own effects
+            return COLLA_HANDLED;
+        }
+        if (prm == COLLA_KIND_REPAIRED) SetMyWreckState (false);
+    }
+    return 0;
+}
+\end{lstlisting}
+
+
+\subsection{Damage queries and repair}
+The Collision module exports functions that any module can call while a simulation runs. collaFind in CollisionAPI.h looks them up in the loaded module and returns NULL when it is not loaded:
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.5\textwidth}|p{0.42\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Function} & \textbf{Description}\\
+	\hline\rule{0pt}{2ex}
+	int collaVersion () & 1\\
+	\hline\rule{0pt}{2ex}
+	int collaGetVesselDamage (OBJHANDLE hVessel, COLLA\_DAMAGEINFO *info) & Fills info (set info->hdr.size to the size of your structure first). Returns 1, or 0 if hVessel is not a vessel.\\
+	\hline\rule{0pt}{2ex}
+	int collaGetBuildingDamage (const char *planetBase, int obj, double *eabs, uint32\_t *flags) & The absorbed energy [J] and flags of object number obj of the base "Planet:Base". Returns 0 for an unknown object.\\
+	\hline\rule{0pt}{2ex}
+	int collaRepairVessel (OBJHANDLE hVessel) & Repairs the vessel at the next running frame. Returns 1 if queued.\\
+	\hline\rule{0pt}{2ex}
+	int collaRepairBuilding (const char *planetBase, int obj) & The same for a building.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\begin{lstlisting}
+COLLA_PFN_GETVESSELDAMAGE get =
+    (COLLA_PFN_GETVESSELDAMAGE)collaFind ("collaGetVesselDamage");
+if (get) {
+    COLLA_DAMAGEINFO d = {};
+    d.hdr.size = sizeof (d);
+    if (get (GetHandle (), &d) && (d.flags & COLLA_DMG_DESTROYED))
+        ShowWarning ("Hull breached");
+}
+\end{lstlisting}
+
+
+\subsection{Saved state}
+The module saves the damage in its own block of the scenario file (BEGIN\_Collision ... END), with one record per damaged vessel and building, and restores it when the scenario is loaded. While the flight recorder records, it writes a side file into Flights/\_Collision, linked to the recording, so that playback shows the dents and debris. Records are matched to the vessels by name and class; a record whose vessel is missing stays in the block unchanged. Both formats are internal: do not write them by hand.
+
+\end{sloppypar}
+
+\end{document}

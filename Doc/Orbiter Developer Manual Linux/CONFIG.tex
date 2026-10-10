@@ -182,6 +182,10 @@ See also "Planetary axis precession" in Orbiter Technical Reference.
 	\hline\rule{0pt}{2ex}
 	SidRotOffset & Float & Rotation at epoch [rad]. Default: 0\\
 	\hline\rule{0pt}{2ex}
+	SidRotAccel & Float & Quadratic term of the rotation angle, $\Delta\phi = a d^2$ with $d$ the days since J2000 [rad/day$^2$] (tidal acceleration). Default: 0\\
+	\hline\rule{0pt}{2ex}
+	SidRotTerms & Float list & Up to 4 periodic terms of the rotation angle (librations), each a group of 4 values: amplitude $A$ [rad], period $P$ [days], phase at J2000 $\varphi$ [rad] and phase drift $c$ [rad/day$^2$]; each adds $A \sin(2\pi d/P + \varphi + c d^2)$. A value that is not a number, a period under 10$^{-6}$ days, a fifth term or an incomplete group is ignored with a warning in Orbiter.log. Default: none\\
+	\hline\rule{0pt}{2ex}
 	Obliquity & Float & Obliquity of axis: angle between planet axis and precession reference axis [rad]. Default: 0\\
 	\hline\rule{0pt}{2ex}
 	LAN & Float & Longitude of ascending node of equatorial plane [rad]. Default: 0\\

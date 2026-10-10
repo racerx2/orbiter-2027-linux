@@ -28,7 +28,7 @@ private:
 		s->Report (l);
 		if (!l.empty ()) ImGui::TextUnformatted (l[0].c_str ());
 		if ((table = ImGui::BeginTable ("vessels", 7))) {
-			ImGui::TableSetupColumn ("Vessel"); ImGui::TableSetupColumn ("Records"); ImGui::TableSetupColumn ("kJ/kg");
+			ImGui::TableSetupColumn ("Vessel"); ImGui::TableSetupColumn ("Records"); ImGui::TableSetupColumn ("kJ");
 			ImGui::TableSetupColumn ("Destroyed"); ImGui::TableSetupColumn ("Module"); ImGui::TableSetupColumn ("Cut"); ImGui::TableSetupColumn ("");
 			ImGui::TableHeadersRow ();
 			for (const auto &kv : s->Vessels ()) {
