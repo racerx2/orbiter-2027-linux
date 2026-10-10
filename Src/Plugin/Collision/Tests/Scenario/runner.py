@@ -375,20 +375,22 @@ def selftest_sandbox(work, base):  # M11: a run folder that is a symlink is refu
     return errors
 
 
+def fake_proc(comm=None):  # a python sleeper that names itself comm: a renamed copy of a multicall sleep exits at once
+    code = 'import time\n' + ('with open("/proc/self/comm", "w") as f: f.write(%r)\n' % comm if comm else '') + 'time.sleep(30)'
+    p = subprocess.Popen([sys.executable, '-c', code], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(200):  # until the rename: a zombie keeps its name, so pid_alive is asked as well
+        if not comm or is_ours(p.pid, comm) or p.poll() is not None:
+            break
+        time.sleep(0.025)
+    return p
+
+
 def selftest_skipscan(base):  # T0.9: a process named like a compiler makes the real scan report a build
-    fake = os.path.join(base, 'ninja')
-    sleep = shutil.which('sleep')
-    if not sleep:
-        return 0
-    copy_file(sleep, fake)
-    os.chmod(fake, 0o755)
-    p = subprocess.Popen([fake, '30'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    p = fake_proc('ninja')
     try:
-        for _ in range(20):
-            found = compilers_running()
-            if 'ninja' in found:
-                break
-            time.sleep(0.1)
+        if not is_ours(p.pid, 'ninja') or not pid_alive(p.pid):
+            log('selftest skipscan: the fake "ninja" is not running')
+            return 1
         try:
             skip_checks()
             log('selftest skipscan: a running "ninja" was not reported')
@@ -481,30 +483,24 @@ def selftest_leak(base):  # custom-fix T6: Collision.so is not snapshotted; a bu
 
 def selftest_xvfb(base):  # custom-fix T9: Stop kills only our Xvfb; a dead server's socket and lock are cleared, a live one's kept
     import tempfile
-    sleep = shutil.which('sleep')
-    if not sleep:
-        return 0
     w = os.path.join(base, 'xvfb')  # never the real fixture's pidfile
     ensure_dir(w)
-    fake = os.path.join(w, 'Xvfb')
-    copy_file(sleep, fake)
-    os.chmod(fake, 0o755)
-    procs = [subprocess.Popen([p, '30'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) for p in (sleep, fake)]
+    procs = [fake_proc(), fake_proc('Xvfb')]
     errors = 0
     try:
         for p, killed in zip(procs, (False, True)):
             write_if_changed(xvfb_pidfile(w), '%d\n' % p.pid)
-            for _ in range(20):  # the exec has renamed the child
-                if is_ours(p.pid) == killed:
-                    break
-                time.sleep(0.05)
+            if not pid_alive(p.pid) or is_ours(p.pid) != killed:
+                log('selftest xvfb: the fake %s is not running before Stop' % ('Xvfb' if killed else 'sleeper'))
+                errors += 1
+                continue
             xvfb_stop(w)
             try:
                 p.wait(timeout=5 if killed else 0.3)
             except subprocess.TimeoutExpired:
                 pass
-            if (p.poll() is not None) != killed or read_pid(xvfb_pidfile(w)) != 0:
-                log('selftest xvfb: pid of %s %s by Stop' % (os.path.basename(p.args[0]), 'killed' if p.poll() is not None else 'kept'))
+            if p.poll() != (-signal.SIGTERM if killed else None) or read_pid(xvfb_pidfile(w)) != 0:
+                log('selftest xvfb: the fake %s %s by Stop (exit %s)' % ('Xvfb' if killed else 'sleeper', 'kept' if p.poll() is None else 'ended', p.poll()))
                 errors += 1
         try:
             with open('/proc/sys/kernel/pid_max') as f:

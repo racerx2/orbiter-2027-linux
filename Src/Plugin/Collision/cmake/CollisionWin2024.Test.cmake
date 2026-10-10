@@ -6,7 +6,7 @@ file(WRITE "${COLL_WORK}/p/CMakeLists.txt" "cmake_minimum_required(VERSION 3.21)
 set(out "${COLL_WORK}/b/Win2024")
 
 function(git dir)
-	execute_process(COMMAND "${GIT}" -C "${dir}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false ${ARGN} RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e OUTPUT_STRIP_TRAILING_WHITESPACE)
+	execute_process(COMMAND "${GIT}" -C "${dir}" -c user.name=t -c user.email=t@t -c commit.gpgsign=false -c tag.gpgSign=false ${ARGN} RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e OUTPUT_STRIP_TRAILING_WHITESPACE)
 	if (NOT r EQUAL 0)
 		message(FATAL_ERROR "git ${ARGN} in ${dir}: ${e}")
 	endif ()
