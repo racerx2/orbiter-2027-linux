@@ -35,7 +35,7 @@ public:
 	std::map<std::string, std::vector<std::string>> dirs;
 	std::vector<std::string> log, calls;
 	std::string annotation;
-	int misuse = 0, noteCalls = 0, dialogs = 0, cmdNext = 1;
+	int misuse = 0, noteCalls = 0, dialogs = 0, cmdNext = 1, annotationCalls = 0, forgets = 0;
 	struct Wr { char op; CollH h; Vector a, b; Matrix R; CollStateWrite s; }; // op: S state, A attitude, W spin, F force
 	std::vector<Wr> wr;                     // state-changing vessel calls in order
 	bool applyWrites = false;               // apply them to rd; a vessel with sv and svcg moves as a stack component (SuperVessel.cpp:309-388)
@@ -189,7 +189,8 @@ protected:
 	}
 	bool DoNotify (CollH, int, void *, int &reply) override { reply = 0; return false; }
 	void DoNotification (int, const char *, const char *) override { noteCalls++; }
-	void DoAnnotation (const char *text) override { annotation = text; }
+	void DoAnnotation (const char *text) override { annotationCalls++; annotation = text; }
+	void DoForgetAnnotation () override { forgets++; }
 	int DoRegisterCmd (const char *, const char *, CollCmdFn, void *) override { return cmdNext++; }
 	void DoUnregisterCmd (int) override {}
 	bool DoOpenDialog (void *) override { dialogs++; return true; }

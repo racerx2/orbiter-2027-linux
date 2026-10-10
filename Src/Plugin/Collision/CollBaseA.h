@@ -46,7 +46,6 @@ struct CollBaseFile {
 	bool haveLocation = false; double lng = 0, lat = 0;
 	double objSize = 0; bool mapToSphere = false;
 	std::vector<CollBaseObjDef> obj;
-	bool periodOk = true, context = false;
 };
 
 struct CollBaseRec {

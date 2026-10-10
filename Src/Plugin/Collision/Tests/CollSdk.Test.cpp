@@ -121,6 +121,31 @@ TEST_CASE ("fix2 review: clearing an annotation that is not shown is no write", 
 	REQUIRE (s.annotation.empty ());
 }
 
+TEST_CASE ("custom-fix S1: a session end with an annotation shown makes no annotation call", "[CollSdk]")
+{
+	CollFakeSdk s (false);
+	s.Notification (COLLN_WARNING, "Collision", "GL-01 destroyed"); // shown for 8 s
+	REQUIRE (s.annotationCalls == 1);
+	uint64_t ui = s.Count ().n[CSK_UI];
+	s.ForgetAnnotation ();                                         // Close and Abort: the core has deleted the note already
+	CHECK (s.annotationCalls == 1);
+	CHECK (s.forgets == 1);
+	CHECK (s.Count ().n[CSK_UI] == ui);
+	s.sysT = 9; s.UiTick ();                                       // nothing expires later
+	s.Annotation ("", 0);
+	CHECK (s.annotationCalls == 1);
+	CHECK (s.Count ().n[CSK_UI] == ui);
+	CHECK (s.annotation == "Collision: GL-01 destroyed");
+	CHECK (s.misuse == 0);
+}
+
+TEST_CASE ("custom-fix S2: RefMJD is the MJD at simulation time 0", "[CollSdk]")
+{
+	CollFakeSdk s;
+	s.mjd = 51545.5; s.simT = 43200;
+	CHECK (s.RefMJD () == 51545.0);
+}
+
 TEST_CASE ("ground: the fake reads the surface reference; terrain by position and the planet period default as before", "[CollSdk]")
 {
 	CollFakeSdk s;

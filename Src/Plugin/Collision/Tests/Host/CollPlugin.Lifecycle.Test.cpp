@@ -174,6 +174,7 @@ double oapiGetMass (OBJHANDLE) { WorldCall (); return 1000; }
 double oapiGetSize (OBJHANDLE h) { WorldCall (); return Live (h) ? ((const FakeVessel *)h)->size : 0; }
 bool oapiIsVessel (OBJHANDLE h) { WorldCall (); if (H.throwIsVessel) throw std::runtime_error ("host IsVessel"); return Live (h); }
 double oapiGetSimMJD () { return 51544.5; }
+double oapiTime2MJD (double simt) { return 51544.5 + simt / 86400.0; }
 double oapiGetSimTime () { return 0; }
 double oapiGetSysTime () { return 0; }
 MESHGROUPEX *oapiMeshGroupEx (MESHHANDLE, DWORD) { WorldCall (); return nullptr; }

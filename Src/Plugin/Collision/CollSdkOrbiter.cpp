@@ -71,6 +71,7 @@ public:
 	double Mass (CollH h) override { return oapiGetMass (H (h)); }
 	double SimTime () override { return oapiGetSimTime (); }
 	double SimMJD () override { return oapiGetSimMJD (); }
+	double RefMJD () override { return oapiTime2MJD (0.0); }
 	double SysTime () override { return oapiGetSysTime (); }
 	double Warp () override { return oapiGetTimeAcceleration (); }
 	void ReadVessel (CollH h, CollVesselRead &o, uint32_t flags) override
@@ -290,6 +291,7 @@ protected:
 		std::string b (text);
 		oapiAnnotationSetText (note, b.data ());
 	}
+	void DoForgetAnnotation () override { note = nullptr; } // deleted by the core (Orbiter.cpp:935-940)
 	std::map<int, std::unique_ptr<char[]>> cmdDesc; // writable desc copies by command id: 2024 takes char* and keeps desc, copies the label
 	int DoRegisterCmd (const char *label, const char *desc, CollCmdFn fn, void *ctx) override
 	{

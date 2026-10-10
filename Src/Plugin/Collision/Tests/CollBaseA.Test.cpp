@@ -171,6 +171,121 @@ TEST_CASE ("fix2: MESH with a bare FILE line keeps the object (strdup of the emp
 	CHECK (!CollBaseObjGeometry (f.obj[0], s, d, 6.371e6, false, w));
 }
 
+namespace {
+const double kRad = 3.14159265358979323846 / 180.0; // the parser's LOCATION factor: an exact location match
+
+struct BaseWorld { // planet Earth with core bases at given locations (degrees), cfg files in memory
+	CollFakeSdk s;
+	CollFakeSdk::Body *E;
+	explicit BaseWorld (const std::string &earthCfg)
+	{
+		s.bodies.push_back ({}); E = &s.bodies.back (); E->name = "Earth"; E->type = 4;
+		s.gbody.push_back (E);
+		s.File (".\\Config\\Earth.cfg", earthCfg);
+	}
+	void Base (const std::string &name, double lng, double lat)
+	{
+		s.bodies.push_back ({}); CollFakeSdk::Body *x = &s.bodies.back ();
+		x->name = name; x->type = 20; x->lng = lng * kRad; x->lat = lat * kRad;
+		E->base.push_back (x);
+	}
+	void Dir (const std::string &dir, const std::string &file, const std::string &text)
+	{
+		s.dirs[CollFakeSdk::Norm (".\\Config\\" + dir)].push_back (file);
+		s.File (".\\Config\\" + dir + "\\" + file, text);
+	}
+	CollBaseA b;
+	size_t Build () { CollDirs d; b.Build (s, d, false); return b.rec.size (); }
+};
+
+std::string PadCfg (const std::string &name, double lng, double lat, int blocks, const std::string &extra = "")
+{
+	std::string t = "BASE-V2.0\nName = " + name + "\nLOCATION = " + std::to_string (lng) + " " + std::to_string (lat) + "\n" + extra + "BEGIN_OBJECTLIST\n";
+	for (int k = 0; k < blocks; k++) t += "BLOCK\n SCALE 10 10 10\nEND\n";
+	return t + "END_OBJECTLIST\n";
+}
+}
+
+TEST_CASE ("custom-fix S2: the DIR value is cut and limited as Planet::ScanBases does", "[CollBaseA]")
+{
+	auto run = [] (const std::string &surf, double refMjd = 51544.5, const std::string &extra = "") {
+		BaseWorld w ("Name = Earth\n" + surf);
+		w.Base ("Pad", 10, 20);
+		w.Dir ("Earth\\Base", "Pad.cfg", PadCfg ("Pad", 10, 20, 1, extra));
+		w.s.simT = 86400.0 * 1000; w.s.mjd = refMjd + 1000; // RefMJD = oapiTime2MJD (0), not the current MJD
+		return w.Build ();
+	};
+	CHECK (run ("BEGIN_SURFBASE\nDIR Earth\\Base ; stock bases\nEND_SURFBASE\n") == 1);
+	CHECK (run ("BEGIN_SURFBASE\nDIR Earth\\Base PERIOD 51000 52000\nEND_SURFBASE\n", 51500) == 1);
+	CHECK (run ("BEGIN_SURFBASE\nDIR Earth\\Base PERIOD 51000 52000\nEND_SURFBASE\n", 52500) == 0);
+	CHECK (run ("BEGIN_SURFBASE\nDIR Earth\\Base PERIOD 51600 52000\nEND_SURFBASE\n", 51500) == 0);
+	CHECK (run ("BEGIN_SURFBASE\nDIR Earth\\Base PERIOD 51600 -\nEND_SURFBASE\n", 51500) == 0);  // each bound that parses applies
+	CHECK (run ("BEGIN_SURFBASE\nDIR Earth\\Base PERIOD - 52000\nEND_SURFBASE\n", 51500) == 1);
+	CHECK (run ("BEGIN_SURFBASE\nDIR Earth\\Base PERIOD 51600\nEND_SURFBASE\n", 51500) == 1);    // one number: no limiter, the path is cut
+	CHECK (run ("BEGIN_SURFBASE\nDIR Earth\\Base period 51000 52000\nEND_SURFBASE\n") == 0);     // strstr is case-sensitive: part of the path
+	CHECK (run ("BEGIN_SURFBASE\nDIR Earth\\Base\nEND_SURFBASE\n", 51544.5, "PERIOD = 60000 70000\n") == 1); // the base file's PERIOD item is not read
+	CHECK (run ("BEGIN_SURFBASE\n  END_SURFBASE\nDIR Earth\\Base\nEND_SURFBASE\n") == 1);         // END_SURFBASE only at column 0
+	CHECK (run ("  BEGIN_SURFBASE\nDIR Earth\\Other\nEND_SURFBASE\n") == 1);                      // not found at column 0: Earth\Base is scanned
+	CHECK (run ("BEGIN_SURFBASE\nDIR Earth\\Other\nEND_SURFBASE\n") == 0);
+}
+
+TEST_CASE ("custom-fix S2: a single base line as the core: comment cut, both numbers needed", "[CollBaseA]")
+{
+	auto run = [] (const std::string &line) {
+		BaseWorld w ("BEGIN_SURFBASE\n" + line + "\nEND_SURFBASE\n");
+		w.Base ("Pad", 10, 20);
+		w.s.File (".\\Config\\Pad.cfg", "BASE-V2.0\nName = Pad\nBEGIN_OBJECTLIST\nBLOCK\n SCALE 10 10 10\nEND\nEND_OBJECTLIST\n");
+		size_t n = w.Build ();
+		return n == 1 && w.b.rec[0]->view.size () == 1 ? 1 : n == 0 ? 0 : -1;
+	};
+	CHECK (run ("Pad: 10 20 ; launch site") == 1);
+	CHECK (run (":Pad:10 20") == 1);
+	CHECK (run ("Pad: 10") == 0);
+	CHECK (run ("; Pad: 10 20") == 0);
+}
+
+TEST_CASE ("custom-fix S2: CONTEXT dirs are low-priority candidates, the location decides", "[CollBaseA]")
+{
+	auto run = [] (const std::string &surf, double lng, double lat, int *ctxLogs = nullptr) {
+		BaseWorld w ("BEGIN_SURFBASE\n" + surf + "END_SURFBASE\n");
+		w.Base ("Pad", lng, lat);
+		w.Dir ("Earth\\Ctx", "Pad.cfg", PadCfg ("Pad", 10, 20, 2));
+		w.Dir ("Earth\\Ctx2", "Pad.cfg", PadCfg ("Pad", 50, 60, 3));
+		w.Dir ("Earth\\Base", "Pad.cfg", PadCfg ("Pad", 30, 40, 1));
+		if (w.Build () != 1) return -1;
+		if (ctxLogs) *ctxLogs = w.s.LogCount ("CONTEXT");
+		return (int)w.b.nObjects;
+	};
+	int logs = 0;
+	CHECK (run ("DIR Earth\\Ctx CONTEXT Apollo\nDIR Earth\\Base\n", 10, 20, &logs) == 2); // the core loaded the CONTEXT dir's Pad
+	CHECK (logs == 1);
+	CHECK (run ("DIR Earth\\Ctx CONTEXT Apollo\nDIR Earth\\Base\n", 30, 40) == 1);
+	CHECK (run ("DIR Earth\\Ctx CONTEXT Apollo\nDIR Earth\\Base\n", 70, 80) == 1);           // no exact location: never the CONTEXT one
+	CHECK (run ("DIR Earth\\Base\nDIR Earth\\Ctx CONTEXT Apollo\n", 10, 20) == 1);           // a name already taken stays taken
+	CHECK (run ("DIR Earth\\Ctx CONTEXT Apollo\nDIR Earth\\Ctx2 CONTEXT Gemini\n", 50, 60, &logs) == 3);
+	CHECK (logs == 1);                                                                     // logged once
+	CHECK (run ("DIR Earth\\Ctx CONTEXT Apollo\nDIR Earth\\Ctx2 CONTEXT apollo\n", 50, 60) == 2); // same context: the first one holds the name
+	CHECK (run ("DIR Earth\\Ctx PERIOD 0 99999 CONTEXT Apollo\n", 10, 20) == 2);              // both limiters cut the path
+}
+
+TEST_CASE ("custom-fix S3: the BASE-V2.0 header as the core reads it", "[CollBaseA]")
+{
+	auto run = [] (const std::string &head) {
+		BaseWorld w ("Name = Earth\n");
+		w.Base ("Pad", 10, 20);
+		w.Dir ("Earth\\Base", "Pad.cfg", head + PadCfg ("Pad", 10, 20, 1).substr (10));
+		return w.Build ();
+	};
+	CHECK (run ("BASE-V2.0\n") == 1);
+	CHECK (run ("\n  \t\nBASE-V2.0\n") == 1);                    // empty lines skipped
+	CHECK (run ("   base-v2.0 ; header\r\n") == 1);              // trimmed, any case
+	CHECK (run ("; a comment line\nBASE-V2.0\n") == 1);          // a comment-only line is empty after the trim
+	CHECK (run ("BASE-V2.01\n") == 1);                            // a 9-character prefix
+	CHECK (run ("BASE-V2\n") == 0);
+	CHECK (run ("Name = Pad\nBASE-V2.0\n") == 0);
+	CHECK (run (std::string (300, ' ') + "\nBASE-V2.0\n") == 0); // a line over 255 characters ends the search
+}
+
 TEST_CASE ("fix2: COLLIDE on a WRAPTOSURFACE mesh follows the terrain per vertex (MapToAltitude)", "[CollBaseA]")
 {
 	CollFakeSdk s; CollDirs d;

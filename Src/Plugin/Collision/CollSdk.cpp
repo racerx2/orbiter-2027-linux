@@ -82,6 +82,12 @@ void CollSdk::UiTick ()
 	DoAnnotation ("");
 }
 
+void CollSdk::ForgetAnnotation ()
+{
+	noteUntil = -1;
+	DoForgetAnnotation ();
+}
+
 int CollSdk::RegisterCmd (const char *label, const char *desc, CollCmdFn fn, void *ctx)
 {
 	cnt.n[CSK_UI]++; LogCall (CSK_UI, nullptr);

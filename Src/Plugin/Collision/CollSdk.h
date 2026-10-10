@@ -84,6 +84,7 @@ public:
 	virtual double   Mass (CollH h) = 0;                        // oapiGetMass, any object (E1: the gravity reference, E1 6.3); for a vessel the value of GetMass
 	virtual double   SimTime () = 0;
 	virtual double   SimMJD () = 0;
+	virtual double   RefMJD () { return SimMJD () - SimTime () / 86400.0; } // MJD at simulation time 0, oapiTime2MJD (0): the core's td.MJD_ref
 	virtual double   SysTime () = 0;                            // annotation timeout, message rate limits
 	virtual double   Warp () = 0;
 	// vessel reads (E1, E3)
@@ -149,6 +150,7 @@ public:
 	void  Notification (int type, const char *title, const char *text); // COLLN_*; without imgui: log line + Annotation (8 s)
 	void  Annotation (const char *text, double holdSys);        // the session's screen line; "" clears; cleared after holdSys s of system time
 	void  UiTick ();                                            // clears an expired annotation; E4's post-step stage PO4 calls it
+	void  ForgetAnnotation ();                                  // session end: the core freed every annotation before clbkSimulationEnd, so no SDK call
 	int   RegisterCmd (const char *label, const char *desc, CollCmdFn fn, void *ctx); // E4, on its process instance (W1, 1.6)
 	void  UnregisterCmd (int id);                               // E4, on its process instance
 	bool  OpenDialog (void *imguiDialog);                       // E3's command handler, on the process instance; false without imgui
@@ -171,6 +173,7 @@ protected:
 	virtual bool  DoNotify (CollH v, int prm, void *payload, int &reply) = 0;
 	virtual void  DoNotification (int type, const char *title, const char *text) = 0; // only called with imgui
 	virtual void  DoAnnotation (const char *text) = 0;          // creates the note lazily; nothing without a render window
+	virtual void  DoForgetAnnotation () {}                      // drops the note handle without an SDK call; nothing in the fakes
 	virtual int   DoRegisterCmd (const char *label, const char *desc, CollCmdFn fn, void *ctx) = 0;
 	virtual void  DoUnregisterCmd (int id) = 0;
 	virtual bool  DoOpenDialog (void *imguiDialog) = 0;         // only called with imgui
