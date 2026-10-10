@@ -749,3 +749,11 @@ TEST_CASE ("Forms: a relative url() in a forms skin's Qss file is looked up from
 }
 
 #include "FormsRuntime.Test.moc"
+
+TEST_CASE ("custom-fix4 L3: a forms skin's folder name cannot add a blocked qproperty through ${SKIN}", "[forms]")
+{
+	const QString dir = QDir::temp ().filePath ("a;}QLabel{qproperty-text:");
+	const QString f = custom::SkinStyleSheet (dir, "QLabel { font: ${SKIN}\"<img src=/etc/hostname>\"; }", true, nullptr);
+	INFO (f.toStdString ());
+	CHECK (!f.contains ("qproperty-text", Qt::CaseInsensitive));
+}

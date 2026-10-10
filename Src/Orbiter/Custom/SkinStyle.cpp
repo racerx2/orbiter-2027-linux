@@ -55,6 +55,11 @@ QString RewriteStyle (const BuildEnv &env, const QString &qssIn)
 		if (!env.warned.contains ("\\")) { env.warned.insert ("\\"); env.Warn ("style sheets: backslashes are removed"); }
 		qss.remove ('\\');
 	}
+	if (qss.contains ("${SKIN}")) { // before the url and qproperty passes: a folder name cannot add a blocked property
+		QString d = env.skinDir;
+		d.replace ("\"", "\\\"");
+		qss.replace ("${SKIN}", d);
+	}
 	static const QRegularExpression url (R"(url\s*\()", QRegularExpression::CaseInsensitiveOption);
 	QString out;
 	qsizetype last = 0;
@@ -84,11 +89,6 @@ QString RewriteStyle (const BuildEnv &env, const QString &qssIn)
 	out += qss.mid (last);
 	static const QRegularExpression qprop (R"((?i:qproperty)-(text|toolTip|whatsThis|statusTip|styleSheet|openExternalLinks|textFormat|html|plainText|markdown|source)\b)");
 	if (out.contains ("qproperty", Qt::CaseInsensitive)) out.replace (qprop, "blocked-\\1"); // they would skip the checks of SafeValue
-	if (out.contains ("${SKIN}")) {
-		QString d = env.skinDir;
-		d.replace ("\"", "\\\"");
-		out.replace ("${SKIN}", d);
-	}
 	return out;
 }
 
