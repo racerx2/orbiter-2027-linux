@@ -1,11 +1,12 @@
 # not upstream: Coll.Dmg3.Crash70, Crash30 and Crash15, DGs head-on: 70 m/s crushes and breaks (Blast cells or a section tear), 15 m/s only dents (dmg3, blast)
 from scnlib import fail
-from dmg3lib import BLAST, BREAK, DEBRIS, blast70, blasts, broke, crush_each, debris_vessels, dmg3, first_debris_frame, matches, no_error, tear70, tears
+from dmg3lib import BLAST, BREAK, DEBRIS, blast70, blasts, broke, crash_speed, crush_each, debris_vessels, dmg3, first_debris_frame, matches, no_error, tear70, tears
 
 
 def check(ctx):
     r = ctx.first()
-    if 'Crash70' in ctx.args.name:
+    u = crash_speed(ctx)  # the scenario picks the branch, not the test name (Coll.Dmg3.Tear.Client is a 70 m/s crash)
+    if u == 70:
         brk, deb, s = broke(r)
         f = first_debris_frame(r)
         if blasts(r):  # CollisionBlast: Blast decides, no section tear
@@ -16,12 +17,12 @@ def check(ctx):
         print('crash70: %d break lines, %d debris, first debris at simt %.3f, tear d=%s, dmg3 %s' % (len(brk), len(deb), f['simt'], t[0].group(3), s))
         return
     no_error(r)
+    crush_each(r)  # the ships met: a crash with no contact passes nothing
     if tears(r):
-        fail('a tear line at %s: %s' % ('30 m/s' if 'Crash30' in ctx.args.name else '15 m/s', tears(r)[0].group(0)))
-    if 'Crash30' in ctx.args.name:
+        fail('a tear line at %d m/s: %s' % (u, tears(r)[0].group(0)))
+    if u == 30:
         print('crash30: no tear, %d blast breaks, dmg3 %s' % (len(blasts(r)), dmg3(r)))
         return
-    crush_each(r)
     if matches(r, BREAK):
         fail('a break line at 15 m/s: %s' % matches(r, BREAK)[0].group(0))
     if matches(r, BLAST):

@@ -1,9 +1,11 @@
 # not upstream: Scn.Selftest, the checkers of the collision addon scenario tests on synthetic dumps and logs (Design CA E4 T0.3, design-C-T T0.3)
 import argparse
+import gzip
 import importlib.util
 import math
 import os
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.dont_write_bytecode = True
@@ -98,13 +100,18 @@ def check_placebase():  # M13: the check fails when TESTPLACEBASE ignores the te
     return e
 
 
-def dmg3_case(name, log, debris=True):  # the dmg3 crash check on a synthetic run: PB-A_D1 of class CollDebris from frame 2
+DG = 'gen:pair:g0=%s,vA=%s,vB=-%s,A=DeltaGlider,B=DeltaGlider,director=1'  # the dg70, dg30, dg15 scenarios of ScenarioTests.cmake
+DGSCN = {'Coll.Dmg3.Crash70': DG % (100, 35, 35), 'Coll.Dmg3.Crash30': DG % (60, 15, 15), 'Coll.Dmg3.Crash15': DG % (40, 7.5, 7.5),
+         'Coll.Dmg3.Tear.Client': DG % (100, 35, 35) + ',cam=side'}
+
+
+def dmg3_case(name, log, debris=True, scn=None):  # the dmg3 crash check on a synthetic run: PB-A_D1 of class CollDebris from frame 2
     text = pair_dump()
     if debris:
         text = text.replace('F 3 ', 'V PB-A_D1 CollDebris fs=0\nF 3 ', 1)
         text = text.replace('END 3', 'V PB-A_D1 CollDebris fs=0\nEND 3')
     ctx = OneRun(FakeRun(text, [A1] + log))
-    ctx.args = type('A', (), {'name': name})
+    ctx.args = type('A', (), {'name': name, 'scn': scn or DGSCN[name]})
     return ctx
 
 
@@ -133,6 +140,66 @@ def check_dmg3():  # Coll.Dmg3.Crash70 and Crash15: crush dents, break and debri
     e += expect_fail('dmg3 crash15 with a tear', lambda: m.check(dmg3_case('Coll.Dmg3.Crash15', soft + [tear % '7.1'], debris=False)))
     e += expect_pass('dmg3 crash30', lambda: m.check(dmg3_case('Coll.Dmg3.Crash30', soft + brk, debris=True)))
     e += expect_fail('dmg3 crash30 with a tear', lambda: m.check(dmg3_case('Coll.Dmg3.Crash30', soft + brk + [tear % '6'], debris=True)))
+    e += expect_fail('dmg3 crash30 without a dent', lambda: m.check(dmg3_case('Coll.Dmg3.Crash30', brk + [sm % 1], debris=True)))
+    e += expect_fail('dmg3 crash30 with dents of PB-A only', lambda: m.check(dmg3_case('Coll.Dmg3.Crash30', [dent % ('PB-A', 1)] + brk + [sm % 1], debris=True)))
+    e += expect_pass('dmg3 tear client: the 70 m/s branch by its scenario', lambda: m.check(dmg3_case('Coll.Dmg3.Tear.Client', good)))
+    e += expect_fail('dmg3 tear client without a tear', lambda: m.check(dmg3_case('Coll.Dmg3.Tear.Client', [l for l in good if not l.startswith('Collision tear')])))
+    e += expect_pass('dmg3 crash15 scenario under another name', lambda: m.check(dmg3_case('Coll.Dmg3.Other70', soft, debris=False, scn=DGSCN['Coll.Dmg3.Crash15'])))
+    e += expect_fail('dmg3 crash at an unknown speed', lambda: m.check(dmg3_case('Coll.Dmg3.Crash15', soft, debris=False, scn=DG % (40, 10, 10))))
+    e += expect_fail('dmg3 crash on a stock scenario', lambda: m.check(dmg3_case('Coll.Dmg3.Crash70', good, scn='Delta-glider/Smack!')))
+    return e
+
+
+def golden_case(work, name, runs, head=None, body=None):  # custom-fix T1: the golden check on synthetic runs; exit code as runner.main maps it
+    data = os.path.join(work, 'golden-data')
+    os.makedirs(os.path.join(data, 'golden'), exist_ok=True)
+    args = type('A', (), {'name': name, 'data': data})
+    ctx = scnlib.Context(args, 'G upstream=self compiler=self build=self cpu=self addon=none')
+    for rid, r in runs:
+        r.spec.id = rid
+        ctx.runs[rid] = r
+        ctx.order.append(rid)
+    p = scnlib.golden_path(ctx, name.rsplit('.', 1)[1])
+    if body is None:
+        if os.path.exists(p):
+            os.unlink(p)
+    else:
+        with gzip.GzipFile(p, 'wb', mtime=0) as f:
+            f.write(((head or ctx.golden_header) + '\n' + '\n'.join(scnlib.Dump(body).body_lines()) + '\n').encode('latin-1'))
+    spec = importlib.util.spec_from_file_location('check_golden', os.path.join(HERE, 'checks', 'golden.py'))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    try:
+        m.check(ctx)
+    except scnlib.CheckFail as x:
+        print('  golden %s: %s' % (name, x))
+        return 1
+    except scnlib.Skip as x:
+        print('  golden %s: skip: %s' % (name, x))
+        return runner.SKIP
+    return 0
+
+
+def check_golden(work):  # the run checks of the golden tests run on every machine; only the stored-golden compare skips (77)
+    e = 0
+    other = 'G upstream=x compiler=GNU-15.2.0 build=Release cpu=other addon=none'
+    noisy = [A1, QUIET.replace('notices=0', 'notices=1')]
+    on = lambda log=None, text=None: FakeRun(text or pair_dump(), log or [A1, QUIET])
+    off = lambda text=None: FakeRun(text or pair_dump(), [], addon='off')
+    bumped = pair_dump().replace('v=0,0,0.5 ', 'v=0,0,%s ' % g(math.nextafter(0.5, 1.0)), 1)
+    for what, name, runs, head, body, want in (
+            ('G5 header mismatch, notices=1', 'G5.Smack', [('c1', on(noisy))], other, pair_dump(), 1),
+            ('G5 header mismatch, clean', 'G5.Smack', [('c1', on())], other, pair_dump(), runner.SKIP),
+            ('G5 no golden, a contact line', 'G5.Surface', [('c1', on([A1, QUIET, 'Collision t=1 PB-A PB-B']))], None, None, 1),
+            ('G5.Far header mismatch, off and on differ', 'G5.Far', [('c0', off()), ('c1', on(text=bumped))], other, pair_dump(), 1),
+            ('G5.Far header mismatch, off equals on', 'G5.Far', [('c0', off()), ('c1', on())], other, pair_dump(), runner.SKIP),
+            ('G5.Far golden equal', 'G5.Far', [('c0', off()), ('c1', on())], None, pair_dump(), 0),
+            ('golden off run differs by 1 ulp', 'Coll.Off.Golden.Pair', [('c0', off(bumped))], None, pair_dump(), 1),
+            ('golden off run, header mismatch', 'Coll.Off.Golden.Pair', [('c0', off())], other, pair_dump(), runner.SKIP)):
+        got = golden_case(work, name, runs, head, body)
+        if got != want:
+            print('selftest: golden %s: exit %d, %d expected' % (what, got, want))
+            e += 1
     return e
 
 
@@ -225,6 +292,8 @@ def main(argv=None):
 
     e += check_placebase()
     e += check_dmg3()
+    with tempfile.TemporaryDirectory(prefix='collgold') as t:
+        e += check_golden(t)
 
     # gen_scn: TEST* actions skip a CollTestAnim block listed first
     scn = 'BEGIN_SHIPS\nAN:CollTestAnim\nEND\nPB:CollTestVessel\nEND\nEND_SHIPS\n'

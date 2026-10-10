@@ -8,6 +8,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -25,6 +26,8 @@ NOMIRROR = {'Tests', 'CMakeFiles', 'Testing', '_deps', 'CMakeCache.txt', 'cmake_
 SPECIAL = {'Config', 'Scenarios', 'Script', 'Flights', 'Images', 'Modules', 'Textures', 'Meshes'}
 LVP_ICDS = ['/usr/share/vulkan/icd.d/lvp_icd.json', '/usr/share/vulkan/icd.d/lvp_icd.x86_64.json']
 XDISPLAY = ':58'
+XSOCK, XLOCK = '/tmp/.X11-unix/X58', '/tmp/.X58-lock'
+LOCK_WAIT = 60  # s; ScenarioTests.cmake adds 90 s to each test's TIMEOUT for it
 TEXBODIES = ('Earth', 'Moon', 'Mars')  # bodies whose textures upstream ships separately
 
 
@@ -84,20 +87,41 @@ def skip_checks(timing=True):  # step 1 of E4 7.5: a skipped run deletes nothing
         log('note: build running (%s), test run anyway' % ' '.join(sorted(set(c))))
 
 
-def take_lock(work):
+def lock_path(work):
     rt = os.environ.get('XDG_RUNTIME_DIR')
-    path = os.path.join(rt, 'orbiter-scn.lock') if rt and os.path.isdir(rt) else os.path.join(work, 'runner.lock')
+    return os.path.join(rt, 'orbiter-scn.lock') if rt and os.path.isdir(rt) else os.path.join(work, 'runner.lock')
+
+
+def lock_holder(f):
+    try:
+        f.seek(0)
+        return f.read().strip() or 'unknown'
+    except OSError:
+        return 'unknown'
+
+
+def take_lock(path, name, wait=None):  # the file names its holder (pid, test); a wait past LOCK_WAIT s is a test error, never a skip
+    wait = LOCK_WAIT if wait is None else wait
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    f = open(path, 'a')
-    t0 = time.time()
+    f = open(path, 'a+')
+    t0, logged = time.time(), False
     while True:
         try:
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return f
+            break
         except BlockingIOError:
-            if time.time() - t0 > 600:
-                raise Skipped('another scenario test holds %s for 10 min' % path)
-            time.sleep(1)
+            if not logged:
+                log('runner: waiting for lock %s held by %s' % (path, lock_holder(f)))
+                logged = True
+            if time.time() - t0 > wait:
+                holder = lock_holder(f)
+                f.close()
+                raise TestError('lock %s still held by %s after %g s' % (path, holder, wait))
+            time.sleep(0.2)
+    f.truncate(0)
+    f.write('pid %d test %s\n' % (os.getpid(), name))
+    f.flush()
+    return f
 
 
 # ---- fixed-folder sandbox (created once, overwritten in place)
@@ -376,6 +400,149 @@ def selftest_skipscan(base):  # T0.9: a process named like a compiler makes the 
         p.wait()
 
 
+def selftest_lock(work, base):  # custom-fix T5: a lock held past the wait is exit 1 through main, naming its holder at once and at the end
+    global LOCK_WAIT, log
+    rt = os.path.join(base, 'lockrt')
+    ensure_dir(rt)
+    saved, wait, real_log, seen = os.environ.get('XDG_RUNTIME_DIR'), LOCK_WAIT, log, []
+    os.environ['XDG_RUNTIME_DIR'] = rt
+    LOCK_WAIT = 0.5
+    log = lambda m: (seen.append(m), real_log(m))
+    errors = 0
+    try:
+        held = take_lock(lock_path(work), 'Scn.LockHolder')
+        try:
+            t0 = time.time()
+            rc = main(['--name', 'Scn.RunnerGuard', '--work', work, '--root', base, '--exe', '/bin/false', '--run', 'locked|headless|off||||'])
+            secs = time.time() - t0
+        finally:
+            held.close()
+        who = 'pid %d test Scn.LockHolder' % os.getpid()
+        wait_lines = [m for m in seen if m.startswith('runner: waiting for lock') and who in m]
+        if rc != 1 or who not in LAST[0] or not wait_lines or secs > 10:
+            log('selftest lock: exit %s in %.1f s, waiting line %s, last %s' % (rc, secs, bool(wait_lines), LAST[0]))
+            errors += 1
+        f = take_lock(lock_path(work), 'Scn.LockNext', wait=0)  # released: taken at once, the file names the new holder
+        f.close()
+        if read_text_file(lock_path(work)) != 'pid %d test Scn.LockNext\n' % os.getpid():
+            log('selftest lock: lock file %r' % read_text_file(lock_path(work)))
+            errors += 1
+    finally:
+        log, LOCK_WAIT = real_log, wait
+        if saved is None:
+            os.environ.pop('XDG_RUNTIME_DIR', None)
+        else:
+            os.environ['XDG_RUNTIME_DIR'] = saved
+    return errors
+
+
+def read_text_file(p):
+    try:
+        with open(p) as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def selftest_leak(base):  # custom-fix T6: Collision.so is not snapshotted; a build-tree change while a build runs is a note
+    global compilers_running
+    root = os.path.join(base, 'leakroot')
+    for d in ('Config', os.path.join('Modules', 'Plugin')):
+        ensure_dir(os.path.join(root, d))
+    cfg, so = os.path.join(root, 'Config', 'Collision.cfg'), os.path.join(root, 'Modules', 'Plugin', 'Collision.so')
+    n = [0]
+
+    def bump(p):
+        n[0] += 1
+        write_if_changed(p, 'x' * n[0])
+    bump(cfg)
+    bump(so)
+    real, errors = compilers_running, 0
+    try:
+        for what, build_start, build_end, p, leak in (('module rebuilt', [], [], so, False), ('cfg changed', [], [], cfg, True),
+                                                       ('cfg changed, build at start', ['ninja'], [], cfg, False),
+                                                       ('cfg changed, build at end', [], ['ninja'], cfg, False)):
+            compilers_running = lambda: []
+            before = leak_snapshot(root, '')
+            bump(p)
+            compilers_running = lambda: build_end
+            try:
+                leak_check(before, root, '', build_start)
+                got = False
+            except TestError:
+                got = True
+            if got != leak or (not leak and p == cfg and 'note: build running' not in LAST[0]):
+                log('selftest leak %s: %s' % (what, 'leak reported' if got else 'no leak reported'))
+                errors += 1
+    finally:
+        compilers_running = real
+    return errors
+
+
+def selftest_xvfb(base):  # custom-fix T9: Stop kills only our Xvfb; a dead server's socket and lock are cleared, a live one's kept
+    import tempfile
+    sleep = shutil.which('sleep')
+    if not sleep:
+        return 0
+    w = os.path.join(base, 'xvfb')  # never the real fixture's pidfile
+    ensure_dir(w)
+    fake = os.path.join(w, 'Xvfb')
+    copy_file(sleep, fake)
+    os.chmod(fake, 0o755)
+    procs = [subprocess.Popen([p, '30'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) for p in (sleep, fake)]
+    errors = 0
+    try:
+        for p, killed in zip(procs, (False, True)):
+            write_if_changed(xvfb_pidfile(w), '%d\n' % p.pid)
+            for _ in range(20):  # the exec has renamed the child
+                if is_ours(p.pid) == killed:
+                    break
+                time.sleep(0.05)
+            xvfb_stop(w)
+            try:
+                p.wait(timeout=5 if killed else 0.3)
+            except subprocess.TimeoutExpired:
+                pass
+            if (p.poll() is not None) != killed or read_pid(xvfb_pidfile(w)) != 0:
+                log('selftest xvfb: pid of %s %s by Stop' % (os.path.basename(p.args[0]), 'killed' if p.poll() is not None else 'kept'))
+                errors += 1
+        try:
+            with open('/proc/sys/kernel/pid_max') as f:
+                dead = int(f.read())  # pids stay below pid_max
+        except (OSError, ValueError):
+            dead = 4194304
+        exe_true = shutil.which('true') or '/bin/true'
+        zombie = subprocess.Popen([exe_true], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        procs.append(zombie)
+        for _ in range(100):  # exited, not reaped: a killed server whose parent does not reap
+            if not pid_alive(zombie.pid):
+                break
+            time.sleep(0.02)
+        with tempfile.TemporaryDirectory(prefix='collx') as t:  # a short path: AF_UNIX allows 107 bytes
+            sock, lockf = os.path.join(t, 'X58'), os.path.join(t, 'X58-lock')
+            for pid in (dead, zombie.pid):
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.bind(sock)
+                s.listen(1)
+                alive = x_alive(sock)
+                s.close()  # the file stays: a dead server's socket
+                write_if_changed(lockf, '%10d\n' % pid)
+                if not alive or x_alive(sock) or clear_stale(sock, lockf) or os.path.lexists(sock) or os.path.lexists(lockf):
+                    log('selftest xvfb: stale socket or lock of pid %d not cleared (alive %s)' % (pid, alive))
+                    errors += 1
+                    break
+            write_if_changed(lockf, '%10d\n' % os.getpid())
+            if not clear_stale(sock, lockf) or not os.path.exists(lockf):
+                log('selftest xvfb: the lock of a live pid was cleared')
+                errors += 1
+    finally:
+        for p in procs:
+            if p.poll() is None:
+                p.kill()
+            p.wait()
+    return errors
+
+
 def selftest_guards(work):  # T0.1: planted unsafe Flights folders give the step-3 error and delete nothing; a skipped run deletes nothing
     base = os.path.join(os.path.realpath(work), 'Scn.RunnerGuard')
     ensure_dir(os.path.join(base, 'outside'))
@@ -451,6 +618,9 @@ def selftest_guards(work):  # T0.1: planted unsafe Flights folders give the step
         log('selftest notiming: exit 77 for a test not marked timing-sensitive')
         errors += 1
     errors += selftest_skipscan(base)
+    errors += selftest_lock(work, base)
+    errors += selftest_leak(base)
+    errors += selftest_xvfb(base)
     log('runner guard selftest: %s' % ('FAIL' if errors else 'PASS'))
     return 1 if errors else 0
 
@@ -657,8 +827,7 @@ def leak_snapshot(root, addon_so):
         except OSError:
             snap[p] = None
 
-    for n in ('Orbiter.cfg', 'Orbiter.log', 'keymap.cfg', 'Sketchpad.log', os.path.join('Config', 'Collision.cfg'),
-              os.path.join('Modules', 'Plugin', 'Collision.so')):
+    for n in ('Orbiter.cfg', 'Orbiter.log', 'keymap.cfg', 'Sketchpad.log', os.path.join('Config', 'Collision.cfg')):  # not Collision.so: a rebuild replaces it
         add(os.path.join(root, n))
     for d, pat in (('Scenarios', None), ('Config', None), ('Flights', None), ('Images', None), ('Modules', r'\.(cfg|log|html)$'), ('Meshes', r'\.col$')):
         for base, _, files in os.walk(os.path.join(root, d)):
@@ -668,11 +837,16 @@ def leak_snapshot(root, addon_so):
     return snap
 
 
-def leak_check(before, root, addon_so):
+def leak_check(before, root, addon_so, building=()):  # building: compilers_running() when the snapshot was taken
     after = leak_snapshot(root, addon_so)
     bad = sorted(p for p in set(before) | set(after) if before.get(p) != after.get(p))
-    if bad:
-        raise TestError('sandbox leak: ' + ', '.join(bad[:10]))
+    if not bad:
+        return
+    c = sorted(set(list(building) + compilers_running()))
+    if c:
+        log('note: build running (%s), build tree changed, not counted as a sandbox leak: %s' % (' '.join(c), ', '.join(bad[:10])))
+        return
+    raise TestError('sandbox leak: ' + ', '.join(bad[:10]))
 
 
 # ---- Xvfb fixture (client runs)
@@ -681,36 +855,106 @@ def xvfb_pidfile(work):
     return os.path.join(work, 'xvfb58.pid')
 
 
+def x_alive(sock=XSOCK):  # a connect succeeds: a socket file alone may be left by a dead server
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(1.0)
+    try:
+        s.connect(sock)
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def is_ours(pid, comm='Xvfb'):  # a live process of this user with that name
+    try:
+        with open('/proc/%d/comm' % pid) as f:
+            return f.read().strip() == comm and os.stat('/proc/%d' % pid).st_uid == os.getuid()
+    except (OSError, ValueError):
+        return False
+
+
+def read_pid(p):
+    try:
+        with open(p) as f:
+            return int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def pid_alive(pid):  # a zombie counts as dead: its server is gone
+    try:
+        with open('/proc/%d/stat' % pid) as f:
+            return f.read().rsplit(')', 1)[1].split()[0] not in ('Z', 'X')
+    except (OSError, IndexError):
+        return False
+
+
+def clear_stale(sock=XSOCK, lockf=XLOCK):  # a dead server's socket (ours) and lock (dead pid) go; None, or why the display cannot be used
+    if os.path.lexists(sock):
+        try:
+            if os.lstat(sock).st_uid != os.getuid():
+                return '%s is stale and not ours' % sock
+            os.unlink(sock)
+            log('runner: stale %s removed' % sock)
+        except OSError as e:
+            return 'stale %s: %s' % (sock, e)
+    if os.path.lexists(lockf):
+        pid = read_pid(lockf)
+        if pid > 0 and pid_alive(pid):
+            return '%s names the live pid %d' % (lockf, pid)
+        try:
+            if os.lstat(lockf).st_uid != os.getuid():
+                return '%s is stale and not ours' % lockf
+            os.unlink(lockf)
+            log('runner: stale %s removed' % lockf)
+        except OSError as e:
+            return 'stale %s: %s' % (lockf, e)
+    return None
+
+
 def xvfb_start(work):
     os.makedirs(work, exist_ok=True)
-    if os.path.exists('/tmp/.X11-unix/X58'):
+    if x_alive():
+        if not is_ours(read_pid(xvfb_pidfile(work))):
+            write_if_changed(xvfb_pidfile(work), '')  # not started by us: Stop leaves it alone
         log('runner: X server on %s already running, used as is' % XDISPLAY)
         return 0
     if not shutil.which('Xvfb'):
         log('runner: Xvfb missing')
         return SKIP
+    why = clear_stale()
+    if why:
+        log('runner: display %s unusable: %s' % (XDISPLAY, why))
+        return 1
     p = subprocess.Popen(['nice', '-n', '10', 'Xvfb', XDISPLAY, '-screen', '0', '1920x1080x24', '-nolisten', 'tcp', '-noreset'],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    with open(xvfb_pidfile(work), 'w') as f:
-        f.write('%d\n' % p.pid)
-    for _ in range(50):
-        if os.path.exists('/tmp/.X11-unix/X58'):
+    for _ in range(100):
+        if p.poll() is not None:
+            log('runner: Xvfb exited with %s' % p.returncode)
+            return 1
+        if x_alive():
+            write_if_changed(xvfb_pidfile(work), '%d\n' % p.pid)
             return 0
         time.sleep(0.1)
-    log('runner: Xvfb did not start')
+    p.terminate()
+    log('runner: Xvfb did not accept a connection')
     return 1
 
 
 def xvfb_stop(work):
-    try:
-        pid = int(open(xvfb_pidfile(work)).read())
-    except (OSError, ValueError):
-        return 0
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError:
-        pass
-    write_if_changed(xvfb_pidfile(work), '')
+    pid = read_pid(xvfb_pidfile(work))
+    if pid > 0:
+        if is_ours(pid):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        else:
+            log('runner: pid %d is not our Xvfb, not killed' % pid)
+    if os.path.isfile(xvfb_pidfile(work)):
+        write_if_changed(xvfb_pidfile(work), '')
     return 0
 
 
@@ -814,7 +1058,7 @@ def do_run(a, spec, ctx, runid):
     if spec.client():
         if not lvp_icd():
             raise Skipped('lavapipe ICD missing')
-        if not os.path.exists('/tmp/.X11-unix/X58'):
+        if not x_alive():
             raise Skipped('no X server on %s (fixture Scn.Xvfb.Start)' % XDISPLAY)
     t0 = time.time()
     sbx.mirror(spec.client())  # step 2
@@ -855,17 +1099,18 @@ def run_test(a):
             break
         os.nice(1)
     skip_checks(a.timing)
-    lock = take_lock(a.work)
+    lock = take_lock(lock_path(a.work), a.name or '-')
     try:
         skip_checks(a.timing)
         specs = [RunSpec(r) for r in (a.run or ['main|headless|off||||'])]
         check = load_check(a)
         before = leak_snapshot(os.path.realpath(a.root), a.addon_so)
+        building = compilers_running()
         ctx = scnlib.Context(a, golden_header(a))
         runid = '%d-%d' % (int(time.time()), os.getpid())
         for spec in specs:
             do_run(a, spec, ctx, runid)
-        leak_check(before, os.path.realpath(a.root), a.addon_so)
+        leak_check(before, os.path.realpath(a.root), a.addon_so, building)
         if check:
             check.check(ctx)
     finally:

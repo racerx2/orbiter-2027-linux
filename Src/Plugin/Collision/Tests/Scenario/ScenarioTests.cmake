@@ -77,7 +77,11 @@ function(coll_scenario_test name)
 		list(APPEND labels visual)
 		set(props FIXTURES_REQUIRED xvfb)
 	endif ()
-	math(EXPR t "${S_TIMEOUT} + 30")
+	list(LENGTH S_RUNS n)
+	if (n LESS 1)
+		set(n 1) # the runner's default run
+	endif ()
+	math(EXPR t "${S_TIMEOUT} * ${n} + 90") # each run has its own --timeout; 90 s for the lock wait (60 s) and the checks
 	coll_add_test(${name} TIMEOUT ${t} SKIP 77 SERIAL LABELS ${labels} PROPS ${props} COMMAND ${cmd})
 endfunction()
 
@@ -86,7 +90,7 @@ if (NOT COLLISION_SCENARIO_TESTS)
 endif ()
 
 # T0.1 runner proofs (E4 7.9.4, 7.10)
-coll_add_test(Scn.RunnerGuard TIMEOUT 60 SKIP 77 SERIAL LABELS scenario coll COMMAND ${Python3_EXECUTABLE} ${COLL_SCN_DIR}/runner.py
+coll_add_test(Scn.RunnerGuard TIMEOUT 150 SKIP 77 SERIAL LABELS scenario coll COMMAND ${Python3_EXECUTABLE} ${COLL_SCN_DIR}/runner.py
 	--selftest-guards --work ${COLL_TEST_BIN}/run)
 coll_scenario_test(Scn.SanityCheck SCN "Delta-glider/Smack!" FRAMES 60 CHECK sanity RUNS "main|headless|off||||")
 coll_scenario_test(Scn.AddonLoad SCN "Delta-glider/Smack!" FRAMES 60 CHECK addonload RUNS "main|headless|on||||")
@@ -97,9 +101,9 @@ coll_scenario_test(Scn.Twice SCN gen:pair:g0=1000 FRAMES 600 CHECK twice
 	RUNS "off1|headless|off||||" "off2|headless|off||||" "on1|headless|on||||" "on2|headless|on||||")
 
 # T0.3 checker self-tests: synthetic dumps and logs with planted errors (E4 T0.3)
-coll_add_test(Scn.Selftest TIMEOUT 60 SERIAL LABELS scenario coll COMMAND ${Python3_EXECUTABLE} ${COLL_SCN_DIR}/selftest.py --work ${COLL_TEST_BIN}/run)
+coll_add_test(Scn.Selftest TIMEOUT 150 SERIAL LABELS scenario coll COMMAND ${Python3_EXECUTABLE} ${COLL_SCN_DIR}/selftest.py --work ${COLL_TEST_BIN}/run)
 
-# T0.4 goldens (E4 7.6, design-C-T 7.3): G1-G4 addon off, G5 addon on in quiet scenes; golden/<name>.dump.gz from an off run with COLL_GOLDEN_WRITE=1, another compiler, build type or CPU skips (77)
+# T0.4 goldens (E4 7.6, design-C-T 7.3): G1-G4 addon off, G5 addon on in quiet scenes; golden/<name>.dump.gz from an off run with COLL_GOLDEN_WRITE=1; quiet and off-vs-on run everywhere, another compiler, build type or CPU skips only the golden compare (77)
 coll_scenario_test(Coll.Off.Golden.Pair SCN gen:pair:g0=0.5,vA=0.5,vB=-0.5 FRAMES 600 EVERY 5 CHECK golden LABELS golden RUNS "c0|headless|off||||")
 coll_scenario_test(Coll.Off.Golden.Smack SCN "Delta-glider/Smack!" FRAMES 1500 EVERY 10 CHECK golden LABELS golden RUNS "c0|headless|off||||")
 coll_scenario_test(Coll.Off.Golden.Ascent SCN gen:ascent STEP 0.05 FRAMES 3000 EVERY 10 TIMEOUT 600 CHECK golden LABELS golden long
@@ -179,4 +183,4 @@ coll_scenario_test(Coll.Dmg3.Fx SCN ${dg70} FRAMES 150 TIMEOUT 300 CHECK dmg3fx 
 coll_scenario_test(Coll.Base.Crash70 SCN gen:crash:kind=base,u=70 FRAMES 150 TIMEOUT 300 CHECK groundcrash LABELS slow RUNS "main|headless|on||||") # blast: a DG into the KSC hangar breaks and throws debris
 coll_scenario_test(Coll.Ground.Crash70 SCN gen:crash:kind=ground,u=70 FRAMES 150 TIMEOUT 300 CHECK groundcrash LABELS slow RUNS "main|headless|on||||") # blast: a DG into open ground breaks and throws debris
 coll_scenario_test(Coll.Dmg3.Crash70.Client VISUAL SCN ${dg70} FRAMES 300 TIMEOUT 900 CHECK dmg3crash RUNS "main|client|on||||") # the same crash in VulkanClient
-coll_scenario_test(Coll.Dmg3.Tear.Client VISUAL SCN "${dg70},cam=side" FRAMES 300 TIMEOUT 900 CHECK dmg3crash RUNS "main|client|on||||") # dmg3 tear: side view of the torn section
+coll_scenario_test(Coll.Dmg3.Tear.Client VISUAL SCN "${dg70},cam=side" FRAMES 300 TIMEOUT 900 CHECK dmg3crash RUNS "main|client|on||||") # dmg3 tear: side view of the torn section; dmg3crash's branch comes from the scenario's speed

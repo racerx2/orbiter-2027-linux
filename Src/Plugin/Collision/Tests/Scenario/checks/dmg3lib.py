@@ -1,5 +1,6 @@
 # not upstream: helpers of the Coll.Dmg3.* checks, log lines of CollDamageA.cpp, CollBreakA.cpp, CollFxA.cpp and CollSession.cpp (dmg3)
 import re
+from gen_scn import params
 from scnlib import fail
 
 DENT = re.compile(r"^Collision dent t=(\S+) '([^']*)' mesh=(\d+) grp=(\d+) .* mode=(\d+) ")
@@ -12,6 +13,23 @@ TEAR = re.compile(r"^Collision tear '([^']*)' slot=(\d+) d=(\S+) f=(\S+) R=(\S+)
 DMG3 = re.compile(r"^Collision dmg3: fx=(\d+) streams=(\d+) breaks=(\d+) reasserts=(\d+)")
 PAIR = ('PB-A', 'PB-B')
 DEBRIS_CLASS = 'CollDebris'
+SPEEDS = (70, 30, 15)  # closing speeds of the dg70, dg30 and dg15 scenarios (ScenarioTests.cmake)
+
+
+def crash_speed(ctx):  # the closing speed vA - vB of the run's gen:pair scenario, one of SPEEDS
+    scn = ctx.args.scn or ''
+    kind, _, rest = scn[4:].partition(':') if scn.startswith('gen:') else ('', '', '')
+    if kind != 'pair':
+        fail('scenario %r is not gen:pair, no crash speed' % scn)
+    p = params(rest)
+    try:
+        u = float(p.get('vA', 0)) - float(p.get('vB', 0))
+    except ValueError:
+        fail('scenario %r: vA or vB is not a number' % scn)
+    for s in SPEEDS:
+        if abs(u - s) < 1e-9:
+            return s
+    fail('scenario %r closes at %g m/s, the check knows %s' % (scn, u, ', '.join('%d' % s for s in SPEEDS)))
 
 
 def matches(r, rx):
