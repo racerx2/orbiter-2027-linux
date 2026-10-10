@@ -680,7 +680,7 @@ class RunSpec:
         if self.order not in ('client-first', 'addon-first'):
             raise TestError('bad order %r' % self.order)
         self.args, self.cfg, self.acfg, self.exit, self.endon, self.stdin, self.dump = [], [], [], 0, None, None, True
-        self.scn, self.limit, self.expect = None, True, None
+        self.scn, self.limit, self.expect, self.env = None, True, None, {}
         for t in shlex.split(args):
             if t.startswith('@cfg:'):
                 self.cfg.append(item(t[5:]))
@@ -700,6 +700,9 @@ class RunSpec:
                 self.expect = t[8:]
             elif t.startswith('@scn='):
                 self.scn = t[5:]
+            elif t.startswith('@env:'):  # K=V in the run's environment
+                k, _, v = t[5:].partition('=')
+                self.env[k] = v
             else:
                 self.args.append(t)
 
@@ -1013,6 +1016,7 @@ def run_env(sbx, spec):
         icd = lvp_icd()
         env.update(DISPLAY=XDISPLAY, QT_QPA_PLATFORM='xcb', VK_DRIVER_FILES=icd, VK_ICD_FILENAMES=icd, LP_NUM_THREADS='4',
                    VK_INSTANCE_LAYERS='VK_LAYER_KHRONOS_validation', VK_LAYER_ENABLES='', VK_KHRONOS_VALIDATION_LOG_FILENAME=sbx.path('vvl.txt'))
+    env.update(spec.env)
     return env
 
 

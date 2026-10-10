@@ -260,6 +260,7 @@ public:
 
 	bool IntegrateIrradiance(vVessel *vV, VkTex *pSrc, VkTex *pOut);
 	bool RenderBlurredMap(VkDev *pDev, VkTex *pSrc);
+	void DeferPbr(vVessel *vV, bool bInternal, bool bTransmission); // custom: the visual's transparent PBR groups wait for RenderPbrDeferred (design-pbr 8)
 	void RenderMesh(DEVMESHHANDLE hMesh, const oapi::FMATRIX4 *pWorld);
 
 	VkSurf *GetIrradianceDepthStencil() const { return pIrradDS; }
@@ -421,6 +422,13 @@ protected:
 	void RenderGlares();
 
 private:
+	// custom: deferred transparent PBR groups and the opaque scene copy their transmission reads (design-pbr 8)
+	struct PbrDefer { vVessel *vV; bool bInternal; bool bTransmission; SHADOWMAPPARAM smap; DWORD serial; };
+	void		RenderPbrDeferred(bool bInternal);
+	std::vector<PbrDefer> pbrDeferred;
+	VkTex *pPbrCopy;
+	DWORD smapSerial;		// counts shadow map renders: a deferred visual reuses its map only if it is still the current one
+
 	void		ComputeLocalLightsVisibility();
 	DWORD		GetActiveParticleEffectCount();
 	float		ComputeNearClipPlane();

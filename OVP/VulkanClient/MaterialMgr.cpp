@@ -9,6 +9,7 @@
 #include "D3D9Surface.h"
 #include "OapiExtension.h"
 #include "VVessel.h"
+#include "PbrRender.h" // custom: PBR materials
 
 
 
@@ -137,6 +138,23 @@ void MatMgr::ApplyConfiguration(D3D9Mesh *pMesh)
 
 			LogBlu("Material %u setup applied to mesh (%s) Flags=0x%X", x.first, name, flags);
 		}
+
+		// custom: PBR records (design-pbr 9); ORBITER_PBR_DISABLE keeps the legacy look
+		pMesh->ClearPbrMaterials();
+		if (!PbrRender::Disabled()) {
+			for (auto &x : MeshConfig[name].pbr)
+			{
+				if (!x.second.enabled) continue;
+				if (x.first < 0 || x.first >= int(pMesh->GetMaterialCount())) {
+					LogErr("MatMgr::ApplyConfiguration: PBR material Idx %d out of range [%s.msh]", x.first, name);
+					continue;
+				}
+				PbrMaterial m = x.second;
+				PbrRender::LoadTextures(m);
+				pMesh->SetPbrMaterial(x.first, m);
+				LogBlu("PBR material %d applied to mesh (%s) features=0x%X", x.first, name, m.Features());
+			}
+		}
 	}
 }
 
@@ -228,6 +246,13 @@ bool MatMgr::LoadConfiguration(bool bAppend)
 
 		// --------------------------------------------------------------------------------------------
 		if (mat_idx == -1) continue;  // Do not continue without a valid material idx
+
+		// custom: PBR keys (design-pbr 9), whole tokens (PBR_SPECULAR and PBR_SPECULARCOLOR are different keys)
+		if (PbrIsKey(cbuf)) {
+			std::string err;
+			if (!PbrParseLine(cbuf, MeshConfig[meshname].pbr[mat_idx], &err)) LogErr("Invalid Line in (%s): %s (%s)", path, cbuf, err.c_str());
+			continue;
+		}
 
 		auto &Mat = MeshConfig[meshname].material[mat_idx];
 
@@ -386,6 +411,14 @@ bool MatMgr::SaveConfiguration()
 			if (flags&D3D9MATEX_EMISSION2) fprintf(file.pFile, "EMISSION2 %f %f %f\n", pM->Emission2.x, pM->Emission2.y, pM->Emission2.z);
 			if (flags&D3D9MATEX_ROUGHNESS) fprintf(file.pFile, "SMOOTHNESS %f %f\n", pM->Roughness.x, pM->Roughness.y);
 			if (flags&D3D9MATEX_METALNESS) fprintf(file.pFile, "METALNESS %f\n", pM->Metalness);		
+		}
+
+		// custom: PBR records in blocks of their own (a material may have both)
+		for (auto &rec : x.second.pbr)
+		{
+			fprintf(file.pFile,"; ---------------------------------------------\n");
+			fprintf(file.pFile,"MATERIAL %d\n", rec.first);
+			PbrWrite(file.pFile, rec.second);
 		}
 	}
 	return true;

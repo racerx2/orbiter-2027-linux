@@ -16,7 +16,9 @@
 #include "D3D9Config.h"
 #include "DebugControls.h"
 #include "VectorHelpers.h"
+#include "PbrRender.h" // custom: PBR materials
 #include <QMessageBox>
+#include <algorithm>
 
 // xnamath.h left out (Windows only): its vector operations below are written out on D3DXVECTOR3/4
 
@@ -26,7 +28,7 @@ using namespace oapi;
 MeshShader* D3D9Mesh::s_pShader[16] = {};
 MeshShader::VSConst MeshShader::vs_const = {};
 MeshShader::PSConst MeshShader::ps_const = {};
-MeshShader::PSBools MeshShader::ps_bools = {};
+MeshShader::PSBools MeshShader::ps_bools = { FALSE, 0.75f, FALSE }; // custom: fCutoff, the legacy alpha test level
 
 
 int compare_lights(const void * a, const void * b)
@@ -195,6 +197,9 @@ void D3D9Mesh::Null(const char *meshName /* = NULL */)
 	bIsReflective = false;
 	bCanRenderFast = false;
 	bMtrlModidied = false;
+	bHasPbr = false; // custom: PBR materials
+	bPbrAlphaTest = false;
+	pPbrEnvA = NULL;
 
 	Locals = new LightStruct[Config->MaxLights()];
 
@@ -345,6 +350,7 @@ D3D9Mesh::D3D9Mesh(MESHHANDLE hMesh, const D3D9Mesh &hTemp)
 	nMtrl = oapiMeshMaterialCount(hMesh); assert(nMtrl == hTemp.nMtrl);
 	if (nMtrl) Mtrl = new D3D9MatExt[nMtrl];
 	for (DWORD i = 0; i<nMtrl; i++)	SetMaterial((const D3DMATERIAL9*)oapiMeshMaterial(hMesh, i), i, false);
+	for (auto &p : hTemp.Pbr) Pbr.push_back(p ? std::make_unique<PbrMaterial>(*p) : nullptr); // custom: PBR records of the template
 
 	pGrpTF = new D3DXMATRIX[nGrp];
 
@@ -385,6 +391,7 @@ void D3D9Mesh::Release()
 	SAFE_DELETEA(Mtrl);
 	SAFE_DELETEA(pGrpTF);
 	SAFE_DELETEA(pTune);
+	Pbr.clear(); // custom: PBR records and their textures
 
 	if (pBuf) if (pBuf->IsLocalTo(this)) delete pBuf;
 }
@@ -404,6 +411,8 @@ void D3D9Mesh::ReLoadMeshFromHandle(MESHHANDLE hMesh)
 	SAFE_DELETEA(Mtrl);
 	SAFE_DELETEA(pGrpTF);
 	SAFE_DELETEA(Grp);
+	Pbr.clear(); // custom: material numbers may have changed, MatMgr applies the records again
+	bHasPbr = false;
 
 	nGrp = oapiMeshGroupCount(hMesh);
 
@@ -844,6 +853,7 @@ int D3D9Mesh::EditGroup(DWORD grp, GROUPEDITSPEC *ges)
 			}
 
 			if (Config->UseNormalMap) UpdateTangentSpace(vtx, idx, g->nVert, g->nFace, g->TexIdx!=0);
+			if (g->bPbrTangents) UpdateTangentSpace(vtx, idx, g->nVert, g->nFace, true); // custom: the PBR maps need UV tangents
 
 			if (g->nVert>0) BoundingBox(vtx, g->nVert, &g->BBox);
 			else D9ZeroAABB(&g->BBox);
@@ -1412,6 +1422,70 @@ void D3D9Mesh::CheckMeshStatus()
 		bIsReflective = true;
 		for (DWORD g = 0; g < nGrp; g++) Grp[g].Shader = SHADER_METALNESS;
 	}
+
+	// custom: PBR groups (design-pbr 4), decided last; the legacy choices above stay as the mesh has them without PBR records
+	bHasPbr = false;
+	bPbrAlphaTest = false;
+	for (DWORD g = 0; g < nGrp; g++) {
+		const PbrMaterial *m = GetPbrMaterial(Grp[g].MtrlIdx);
+		Grp[g].bPbr = (m != NULL);
+		if (!m) continue;
+		bHasPbr = true;
+		if (m->alphaMode != PBR_OPAQUE) bPbrAlphaTest = true;
+		if (m->NeedsTangents() && !Grp[g].bPbrTangents) PbrTangents(g);
+	}
+	if (bHasPbr) bIsReflective = true;
+}
+
+
+// ===========================================================================================
+// custom: PBR materials (design-pbr 4)
+//
+void D3D9Mesh::SetPbrMaterial(DWORD idx, const PbrMaterial &m)
+{
+	if (idx >= nMtrl) return;
+	if (Pbr.size() < nMtrl) Pbr.resize(nMtrl);
+	Pbr[idx] = std::make_unique<PbrMaterial>(m);
+	bMtrlModidied = true;
+}
+
+void D3D9Mesh::ClearPbrMaterials()
+{
+	if (Pbr.empty()) return;
+	Pbr.clear();
+	bMtrlModidied = true;
+}
+
+const PbrMaterial *D3D9Mesh::GetPbrMaterial(DWORD idx) const
+{
+	if (idx == SPEC_DEFAULT || idx >= Pbr.size() || idx >= nMtrl) return NULL;
+	const PbrMaterial *m = Pbr[idx].get();
+	return (m && m->enabled) ? m : NULL;
+}
+
+bool D3D9Mesh::HasPbrTransparent(bool *bTransmission) const
+{
+	bool any = false;
+	if (bTransmission) *bTransmission = false;
+	if (!bHasPbr) return false;
+	for (DWORD g = 0; g < nGrp; g++) {
+		if (!IsPbrGroup(g)) continue;
+		const PbrMaterial *m = GetPbrMaterial(Grp[g].MtrlIdx);
+		if (!m || !m->Transparent()) continue;
+		any = true;
+		if (bTransmission && m->transmission > 0) *bTransmission = true;
+	}
+	return any;
+}
+
+// UV tangents for a group's PBR maps; a mesh sharing its template's buffer gets its own copy first (as EditGroup)
+void D3D9Mesh::PbrTangents(DWORD g)
+{
+	if (!pBuf || g >= nGrp || Grp[g].nVert == 0) return;
+	if (pBuf->IsLocalTo(this) == false) pBuf = new MeshBuffer(pBuf, this);
+	UpdateTangentSpace(pBuf->pVBSys + Grp[g].VertOff, pBuf->pIBSys + Grp[g].IdexOff, Grp[g].nVert, Grp[g].nFace, true);
+	pBuf->MustRemap(MAPMODE_CURRENT);
+	Grp[g].bPbrTangents = true;
 }
 
 
@@ -1443,7 +1517,10 @@ void D3D9Mesh::Render(const LPD3DXMATRIX pW, int iTech, VkTex **pEnv, int nEnv)
 	if (bMtrlModidied) {
 		CheckMeshStatus();
 		bMtrlModidied = false;
+		if (bHasPbr) pBuf->Map(pDev); // custom: PBR tangents may have changed the vertices
 	}
+
+	pPbrEnvA = (nEnv >= 1) ? pEnv[0] : NULL; // custom: the PBR groups' fallback environment
 
 	if (DebugControls::IsActive() == false) {
 		if (bCanRenderFast && vClass != VCLASS_XR2) {
@@ -1605,6 +1682,8 @@ void D3D9Mesh::Render(const LPD3DXMATRIX pW, int iTech, VkTex **pEnv, int nEnv)
 
 	for (DWORD g=0; g<nGrp; g++) {
 
+		if (IsPbrGroup(g)) continue; // custom: drawn by RenderPbr
+		if (PbrRender::GetPhase() == PbrRender::PHASE_TRANSPARENT) continue; // custom: the deferred pass draws PBR groups only
 
 		bool bHUD = (Grp[g].MFDScreenId == 0x100);
 
@@ -1958,7 +2037,9 @@ void D3D9Mesh::Render(const LPD3DXMATRIX pW, int iTech, VkTex **pEnv, int nEnv)
 
 	HR(FX->End());
 
-	if (flags&(DBG_FLAGS_BOXES|DBG_FLAGS_SPHERES)) RenderBoundingBox(pW);
+	if (bHasPbr) RenderPbr(pW, mWorldMesh, iTech, bGroupCull, mWorldView, Field, { flags, selmsh, selgrp, displ, bActiveVisual }); // custom
+
+	if (flags&(DBG_FLAGS_BOXES|DBG_FLAGS_SPHERES)) if (PbrRender::GetPhase() != PbrRender::PHASE_TRANSPARENT) RenderBoundingBox(pW);
 	FX->SetVector(eColor, ptr(D3DXVECTOR4(0, 0, 0, 0)));
 	if (flags&DBG_FLAGS_DUALSIDED) pDev->SetCullMode(VK_CULL_MODE_BACK_BIT);
 }
@@ -2371,6 +2452,9 @@ void D3D9Mesh::RenderFast(const LPD3DXMATRIX pW, int iTech)
 
 	for (DWORD g = 0; g<nGrp; g++) {
 
+		if (IsPbrGroup(g)) continue; // custom: drawn by RenderPbr
+		if (PbrRender::GetPhase() == PbrRender::PHASE_TRANSPARENT) continue; // custom: the deferred pass draws PBR groups only
+
 		// This mesh group must be skipped by user orders
 		if ((Grp[g].UsrFlag & 0x2) && (Grp[g].MFDScreenId != 0x100)) continue;
 
@@ -2548,9 +2632,133 @@ void D3D9Mesh::RenderFast(const LPD3DXMATRIX pW, int iTech)
 	HR(FX->EndPass());
 	HR(FX->End());
 
-	if (flags&(DBG_FLAGS_BOXES | DBG_FLAGS_SPHERES)) RenderBoundingBox(pW);
+	if (bHasPbr) RenderPbr(pW, mWorldMesh, iTech, bGroupCull, mWorldView, Field, { flags, selmsh, selgrp, displ, bActiveVisual }); // custom
+
+	if (flags&(DBG_FLAGS_BOXES | DBG_FLAGS_SPHERES)) if (PbrRender::GetPhase() != PbrRender::PHASE_TRANSPARENT) RenderBoundingBox(pW);
 	FX->SetVector(eColor, ptr(D3DXVECTOR4(0, 0, 0, 0)));
 	if (flags&DBG_FLAGS_DUALSIDED) pDev->SetCullMode(VK_CULL_MODE_BACK_BIT);
+}
+
+
+// ================================================================================================
+// custom: PBR groups with PbrMesh.fx (design-pbr 4, 6, 8); opaque groups first, then transmission and blend groups far to near
+//
+void D3D9Mesh::RenderPbr(const LPD3DXMATRIX pW, const D3DXMATRIX &mWorldMesh, int iTech, bool bGroupCull, const D3DXMATRIX &mWorldView, const D3DXVECTOR4 &Field, const PbrDebug &dbg)
+{
+	const PbrRender::Phase phase = PbrRender::GetPhase();
+	struct Item { DWORD g; const PbrMaterial *m; float dist; unsigned f; };
+	std::vector<Item> solid, glass;
+
+	for (DWORD g = 0; g < nGrp; g++) {
+		if (!IsPbrGroup(g)) continue;
+		if (Grp[g].UsrFlag & 0x2) continue;
+		if (Grp[g].TexIdx == 0 && Grp[g].TexIdxEx[0] != 0) continue;
+		const PbrMaterial *m = GetPbrMaterial(Grp[g].MtrlIdx);
+		if (!m) continue;
+		bool tr = m->Transparent();
+		if (tr && phase == PbrRender::PHASE_OPAQUE) continue;
+		if (!tr && phase == PbrRender::PHASE_TRANSPARENT) continue;
+		if (bGroupCull && !D9IsBSVisible(&Grp[g].BBox, (LPD3DXMATRIX)&mWorldView, (LPD3DXVECTOR4)&Field)) continue;
+		if (dbg.active && dbg.displ == 3 && g != dbg.selgrp) continue;
+		D3DXVECTOR3 c;
+		D3DXVec3TransformCoord(&c, ptr(D3DXVECTOR3f4(Grp[g].BBox.bs)), (LPD3DXMATRIX)&mWorldView);
+		(tr ? glass : solid).push_back({ g, m, D3DXVec3Length(&c), m->Features() });
+	}
+	if (solid.empty() && glass.empty()) return;
+
+	std::stable_sort(solid.begin(), solid.end(), [](const Item &a, const Item &b) { return a.f < b.f; });
+	std::stable_sort(glass.begin(), glass.end(), [](const Item &a, const Item &b) {
+		bool ba = (a.m->alphaMode == PBR_BLEND), bb = (b.m->alphaMode == PBR_BLEND);
+		if (ba != bb) return !ba;
+		return a.dist > b.dist;
+	});
+
+	pDev->SetVertexDecl(pMeshVertexDecl);
+	pDev->SetStreamSource(0, pBuf->pVB, 0, sizeof(NMVERTEX));
+	pDev->SetIndices(pBuf->pIB);
+
+	PbrVariant *cur = NULL;
+	int curPass = -1;
+	D3DXMATRIX q;
+
+	auto draw = [&](const Item &it) {
+		DWORD g = it.g;
+		const PbrMaterial *m = it.m;
+		PbrVariant *v = PbrRender::Variant(it.f);
+		if (!v) return;
+		if (v != cur) {
+			if (cur) { if (curPass >= 0) cur->fx->EndPass(); cur->fx->End(); }
+			cur = v;
+			curPass = -1;
+			PbrRender::BeginVariant(v, pPbrEnvA);
+			v->fx->SetTechnique(v->tech);
+			UINT n = 0;
+			v->fx->Begin(&n, 0); // state saved, End restores it for the legacy draws
+		}
+		int pass = (m->alphaMode == PBR_BLEND) ? 1 : 0;
+		if (pass != curPass) {
+			if (curPass >= 0) cur->fx->EndPass();
+			curPass = -1;
+			if (cur->fx->BeginPass(pass) < 0) return;
+			curPass = pass;
+			if (iTech == RENDER_BASEBS) pDev->SetDepthTest(false);
+		}
+
+		const D3DXMATRIX *w = &mWorldMesh;
+		if (Grp[g].bTransform) w = D3DXMatrixMultiply(&q, &pGrpTF[g], pW);
+		cur->fx->SetMatrix(cur->hW, w);
+		cur->fx->SetFloat(cur->hWorldScale, sqrtf(w->_11 * w->_11 + w->_12 * w->_12 + w->_13 * w->_13));
+
+		PbrMtrlGPU gpu;
+		PbrToGPU(*m, gpu);
+		VkTex *base = m->map[PBR_BASECOLOR].get();
+		if (!base && Grp[g].TexIdx && Tex[Grp[g].TexIdx] && Tex[Grp[g].TexIdx]->GetTexture()) {
+			base = Tex[Grp[g].TexIdx]->GetTexture();
+			gpu.texMask |= 1 << PBR_BASECOLOR;
+			gpu.flags |= PBRM_BASEGAMMA;
+		}
+		if (Grp[g].UsrFlag & 0x4) gpu.flags |= PBRM_FULLYLIT;
+		if (Grp[g].UsrFlag & 0x10) gpu.flags |= PBRM_NOCOLOR;
+		cur->fx->SetValue(cur->hMtrl, &gpu, sizeof(gpu));
+		for (int s = 0; s < PBR_SLOT_COUNT; s++) cur->fx->SetTexture(cur->hSlot[s], s == PBR_BASECOLOR ? base : m->map[s].get());
+
+		D3DXVECTOR4 col(0, 0, 0, 0);
+		if (dbg.active) {
+			if ((dbg.flags & DBG_FLAGS_HLMESH) && uCurrentMesh == dbg.selmsh) col = D3DXVECTOR4(0.0f, 0.0f, 0.5f, 0.5f);
+			if ((dbg.flags & DBG_FLAGS_HLGROUP) && g == dbg.selgrp && uCurrentMesh == dbg.selmsh) col = D3DXVECTOR4(0.0f, 0.5f, 0.0f, 0.5f);
+		}
+		cur->fx->SetVector(cur->hColor, &col);
+
+		bool dual = m->doubleSided || (dbg.flags & DBG_FLAGS_DUALSIDED);
+		pDev->SetCullMode(dual ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
+		cur->fx->CommitChanges();
+		pDev->DrawIndexedPrimitive(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, Grp[g].VertOff, Grp[g].IdexOff, VkPrimVerts(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, Grp[g].nFace));
+
+		Grp[g].bRendered = true;
+		D3D9Stats.Mesh.Vertices += Grp[g].nVert;
+		D3D9Stats.Mesh.MeshGrps++;
+
+		if (dbg.active && g == dbg.selgrp && uCurrentMesh == dbg.selmsh) {
+			static const char *Alpha[3] = { "OPAQUE", "MASK", "BLEND" };
+			DebugControls::Append("MeshIdx = %d, GrpIdx = %d\n", uCurrentMesh, g);
+			DebugControls::Append("MtrlIdx = %d, TexIdx = %d\n", Grp[g].MtrlIdx, Grp[g].TexIdx);
+			DebugControls::Append("FaceCnt = %d, VtxCnt = %d\n", Grp[g].nFace, Grp[g].nVert);
+			DebugControls::Append("GroupFlags.. = 0x%X\n", Grp[g].UsrFlag);
+			DebugControls::Append("Shader...... = PBR-MAT (variant 0x%X)\n", it.f);
+			DebugControls::Append("Alpha mode.. = %s\n", Alpha[std::clamp(m->alphaMode, 0, 2)]);
+			DebugControls::Append("TextureMaps = [ ");
+			for (int s = 0; s < PBR_SLOT_COUNT; s++) if (gpu.texMask & (1 << s)) DebugControls::Append("%s ", PbrSlotName(s));
+			DebugControls::Append("]\n");
+			DebugControls::Refresh();
+		}
+	};
+
+	for (auto &it : solid) draw(it);
+	for (auto &it : glass) draw(it);
+	if (cur) {
+		if (curPass >= 0) cur->fx->EndPass();
+		cur->fx->End();
+	}
 }
 
 
@@ -2750,7 +2958,7 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 		pShader->Setup(pMeshVertexDecl, true, 0);
 	}
 	else {
-		if (Flags & 0x20) {
+		if ((Flags & 0x20) || bPbrAlphaTest) { // custom: or a PBR group with an alpha mode
 			// Regular shadowmap with OIT support
 			pDev->SetStreamSource(0, pBuf->pSB, 0, sizeof(SMVERTEX));
 			pShader = s_pShader[SHADER_SHADOWMAP_OIT];
@@ -2774,6 +2982,24 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 		if (Grp[g].UsrFlag & 0x2) continue;
 		if (Grp[g].UsrFlag & 0x1) continue;
 		
+		MeshShader::ps_bools.fCutoff = 0.75f; // custom: the legacy alpha test level
+		MeshShader::ps_bools.bClip = FALSE;
+
+		if (Grp[g].bPbr) { // custom: PBR groups cast by their alpha mode (design-pbr 5)
+			const PbrMaterial *m = GetPbrMaterial(Grp[g].MtrlIdx);
+			if (!m || m->transmission > 0) continue;
+			bool test = (m->alphaMode != PBR_OPAQUE);
+			float cut = (m->alphaMode == PBR_MASK ? m->alphaCutoff : 0.5f) / std::max(m->baseColor[3], 0.001f);
+			VkTex *t = m->map[PBR_BASECOLOR].get();
+			if (!t && Grp[g].TexIdx && Tex[Grp[g].TexIdx]) t = Tex[Grp[g].TexIdx]->GetTexture();
+			if (test && !t && cut > 1.0f) continue; // the factor alone is below the cutoff
+			MeshShader::ps_bools.bOIT = (test && t);
+			MeshShader::ps_bools.fCutoff = cut;
+			MeshShader::ps_bools.bClip = TRUE;
+			if (MeshShader::ps_bools.bOIT) pShader->SetTexture(pShader->hPST[0], t, IPF_WRAP | IPF_POINT);
+		}
+		else {
+
 		MeshShader::ps_bools.bOIT = (Grp[g].UsrFlag & 0x20) != 0;
 
 		if (MeshShader::ps_bools.bOIT) {
@@ -2785,6 +3011,8 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 			}
 			else MeshShader::ps_bools.bOIT = false;
 		}
+
+		} // custom: legacy groups
 
 		if (Grp[g].bTransform) {
 			D3DXMatrixMultiply(MeshShader::vs_const.mW, &pGrpTF[g], pW);		// Apply Animations to instance matrices
@@ -2839,6 +3067,7 @@ void D3D9Mesh::RenderStencilShadows(float alpha, const LPD3DXMATRIX pP, const LP
 
 		if (Grp[g].UsrFlag & 0x2) continue;
 		if ((Grp[g].UsrFlag & 0x1) && (bShadowMap == false)) continue;
+		if (Grp[g].bPbr) { const PbrMaterial *m = GetPbrMaterial(Grp[g].MtrlIdx); if (m && m->transmission > 0) continue; } // custom: glass casts no ground shadow
 
 		bool bOIT = (Grp[g].UsrFlag & 0x20) != 0;
 		

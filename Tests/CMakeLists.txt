@@ -159,6 +159,9 @@ if (TARGET LauncherQml)
 	target_link_libraries(LauncherQml.Test Qt6::Quick Qt6::QuickWidgets Qt6::Qml Qt6::Network)
 	set_tests_properties(LauncherQml.Test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 120)
 endif()
+# custom: VulkanClient PBR material records and their config text
+add_unit_test(PbrMaterial.Test ${ORBITER_SOURCE_ROOT_DIR}/OVP/VulkanClient/PbrMaterial.cpp)
+target_include_directories(PbrMaterial.Test PRIVATE ${ORBITER_SOURCE_ROOT_DIR}/OVP/VulkanClient)
 
 if (BUILD_ORBITER_SERVER)
 

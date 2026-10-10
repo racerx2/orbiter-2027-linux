@@ -355,6 +355,7 @@ bool ImageProcessing::Execute(DWORD blendop, bool bInScene, gcIPInterface::ipite
 		sd.mag = filter;
 		sd.min = filter;
 		sd.noMip = true; // D3DSAMP_MIPFILTER D3DTEXF_NONE
+		if (flags & IPF_MIPMAP_NATIVE) { sd.noMip = false; sd.mip = VK_SAMPLER_MIPMAP_MODE_LINEAR; } // custom: PBR prefilters
 
 		pCB->SetTexture(idx + VkDev::NUBOS, pTextures[idx].hTex, sd); // SetTexture(idx, ...)
 	}

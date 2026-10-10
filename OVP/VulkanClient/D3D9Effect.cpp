@@ -292,25 +292,12 @@ void D3D9Effect::ShutDown()
 
 
 // ===========================================================================================
+// custom: the macros of D3D9Client.fx, also used by the PBR effects (design-pbr 6)
 //
-void D3D9Effect::D3D9TechInit(D3D9Client *_gc, VkDev *_pDev, const char *folder)
+VkMacros D3D9Effect::BaseMacros()
 {
-	char name[256];
-
-	pDev = _pDev;
-	gc = _gc;
-
-	gc->OutputLoadStatus("D3D9Client.fx",1);
-	
-	LogAlw("Starting to initialize D3D9Client.fx a rendering technique...");
-	
-	// Create the Effect from a .fx file.
 	VkMacros macro; // D3DXMACRO[18]
 	char def[32];
-
-	snprintf(name,256,"Modules/VulkanClient/D3D9Client.fx");
-
-	if (Config->ShadowMapMode == 0) Config->ShadowFilter = -1;
 
 	// ------------------------------------------------------------------------------
 	snprintf(def, 32, "%d", max(2,Config->Anisotrophy));
@@ -339,6 +326,29 @@ void D3D9Effect::D3D9TechInit(D3D9Client *_gc, VkDev *_pDev, const char *folder)
 	if (Config->EnvMapMode) macro.push_back({ "_ENVMAP", "" }); 
 	if (Config->PostProcess == PP_DEFAULT) macro.push_back({ "_LIGHTGLOW", "" });
 	if (Config->bIrradiance && Config->EnvMapMode) macro.push_back({ "_IRRADIANCE", "" });
+	return macro;
+}
+
+
+// ===========================================================================================
+//
+void D3D9Effect::D3D9TechInit(D3D9Client *_gc, VkDev *_pDev, const char *folder)
+{
+	char name[256];
+
+	pDev = _pDev;
+	gc = _gc;
+
+	gc->OutputLoadStatus("D3D9Client.fx",1);
+	
+	LogAlw("Starting to initialize D3D9Client.fx a rendering technique...");
+	
+	// Create the Effect from a .fx file.
+	snprintf(name,256,"Modules/VulkanClient/D3D9Client.fx");
+
+	if (Config->ShadowMapMode == 0) Config->ShadowFilter = -1;
+
+	VkMacros macro = BaseMacros(); // D3DXMACRO[18]; custom: built in BaseMacros, shared with the PBR effects
 	
 	
 	FX = VkEffect::Create(pDev, name, macro); // D3DXSHADER_NO_PRESHADER|D3DXSHADER_PREFER_FLOW_CONTROL: no GLSL counterpart
