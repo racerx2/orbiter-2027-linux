@@ -23,6 +23,7 @@
 #include "IProcess.h"
 #include "VectorHelpers.h"
 #include "D3D9Frame.h" // not upstream: GetDepthFormat
+#include "PbrRender.h" // custom: PBR materials (design-pbr 7, 8)
 #include <algorithm>
 #include <sstream>
 #include <vector>
@@ -132,6 +133,8 @@ Scene::Scene(D3D9Client *_gc, DWORD w, DWORD h)
 	pVisDepth = NULL;
 	pLocalResults = NULL;
 	pLocalResultsSL = NULL;
+	pPbrCopy = NULL; // custom: PBR scene copy
+	smapSerial = 0;
 
 	fDisplayScale = float(viewH) / 1080.0f;
 
@@ -211,6 +214,8 @@ Scene::Scene(D3D9Client *_gc, DWORD w, DWORD h)
 	fs.close();
 
 	CreateSunGlare();
+
+	PbrRender::GlobalInit(pDevice); // custom: PBR lookup texture (design-pbr 7)
 
 
 	// ------------------------------------------------------------------------------
@@ -403,6 +408,9 @@ Scene::~Scene ()
 	ExitGDIResources();
 
 	FreePooledSketchpads();
+
+	SAFE_DELETE(pPbrCopy); // custom: PBR materials, after the visuals that use them
+	PbrRender::GlobalExit();
 }
 
 
@@ -1468,6 +1476,9 @@ void Scene::RenderMainScene()
 
 	RenderFlags = 0xFFFFFFFF; // Not used for main scene, set to 0xFFFFFFFF 
 
+	PbrRender::SetPhase(PbrRender::PHASE_ALL); // custom: PBR draw phase (design-pbr 8)
+	pbrDeferred.clear();
+
 	// Push main render target and depth surfaces
 	//
 	gc->PushRenderTarget(pBackBuffer, gc->GetDepthStencil(), RENDERPASS_MAINSCENE);	// Main Scene
@@ -1809,6 +1820,8 @@ void Scene::RenderMainScene()
 
 	auto RenderMarkers = RenderList;
 
+	PbrRender::SetPhase(PbrRender::PHASE_OPAQUE); // custom: transparent PBR groups wait for RenderPbrDeferred
+
 	// Render the vessels inside the shadows
 	//
 	if (Config->ShadowMapMode >= 1) {
@@ -1893,6 +1906,8 @@ void Scene::RenderMainScene()
 		RenderList.pop_front();
 	}
 
+	PbrRender::SetPhase(PbrRender::PHASE_ALL); // custom
+
 	D3D9Pad* pSketch = GetPooledSketchpad(SKETCHPAD_LABELS);
 	if (pSketch) {
 		m_celSphere->EnsureMarkerDrawingContext((oapi::Sketchpad**)&pSketch, 0, m_celSphere->MarkerColor(0), m_celSphere->MarkerPen(0));
@@ -1944,6 +1959,8 @@ void Scene::RenderMainScene()
 	// render exhaust particle system
 	//
 	for (DWORD n = 0; n < nstream; n++) pstream[n]->Render(pDevice);
+
+	RenderPbrDeferred(false); // custom: transparent PBR groups of the exterior, over the opaque scene copy (design-pbr 8)
 
 
 	// -------------------------------------------------------------------------------------------------------
@@ -2002,7 +2019,10 @@ void Scene::RenderMainScene()
 		if (znear>1.0)  znear=1.0;
 		OBJHANDLE hFocus = oapiGetFocusObject();
 		SetCameraFrustumLimits(znear, oapiGetSize(hFocus)*2.0);
+		PbrRender::SetPhase(PbrRender::PHASE_OPAQUE); // custom: cockpit glass after the cockpit's opaque parts
 		vFocus->Render(pDevice, true);
+		PbrRender::SetPhase(PbrRender::PHASE_ALL);
+		RenderPbrDeferred(true);
 	}
 
 	pDevice->SetFillMode(VK_POLYGON_MODE_FILL);
@@ -2582,8 +2602,70 @@ int Scene::RenderShadowMap(D3DXVECTOR3 &pos, D3DXVECTOR3 &ld, float rad, bool bI
 	gc->PopRenderTargets();
 
 	smap.pShadowMap = ptShmRT[smap.lod];
+	smapSerial++; // custom: deferred PBR visuals check whether their map is still this one
 
 	return smap.lod;
+}
+
+
+// ===========================================================================================
+// custom: a visual with transparent PBR groups, drawn again by RenderPbrDeferred (design-pbr 8)
+//
+void Scene::DeferPbr(vVessel *vV, bool bInternal, bool bTransmission)
+{
+	pbrDeferred.push_back({ vV, bInternal, bTransmission, smap, smapSerial });
+}
+
+
+// ===========================================================================================
+// custom: transparent PBR groups after the opaque scene, far to near, over a copy of it (design-pbr 8)
+//
+void Scene::RenderPbrDeferred(bool bInternal)
+{
+	std::vector<PbrDefer> list;
+	for (auto it = pbrDeferred.begin(); it != pbrDeferred.end();) {
+		if (it->bInternal == bInternal) { list.push_back(*it); it = pbrDeferred.erase(it); }
+		else ++it;
+	}
+	if (list.empty()) return;
+
+	bool bTrans = false;
+	for (auto &d : list) bTrans |= d.bTransmission;
+
+	VkTex *pCopy = NULL;
+	VkSurf *rt = pDevice->GetRenderTarget();
+	if (bTrans && rt) {
+		if (pPbrCopy && (pPbrCopy->w != rt->w || pPbrCopy->h != rt->h)) SAFE_DELETE(pPbrCopy);
+		if (!pPbrCopy) {
+			pPbrCopy = CreateTex(pDevice, rt->w, rt->h, 0, VK_FORMAT_R16G16B16A16_SFLOAT, RTUsage);
+			if (pPbrCopy) pPbrCopy->autoGenMips = true;
+		}
+		if (pPbrCopy) {
+			VkSurf dst(pPbrCopy, 0);
+			pDevice->StretchRect(rt, NULL, &dst, NULL, VK_FILTER_LINEAR);
+			pCopy = pPbrCopy;
+		}
+	}
+	PbrRender::SetSceneCopy(pCopy);
+
+	std::sort(list.begin(), list.end(), [](const PbrDefer &a, const PbrDefer &b) { return a.vV->CamDist() > b.vV->CamDist(); });
+
+	SHADOWMAPPARAM keep = smap;
+	for (auto &d : list) {
+		if (!d.vV->IsActive()) continue;
+		if (!d.smap.pShadowMap) smap.pShadowMap = NULL;
+		else if (d.serial == smapSerial) smap = d.smap;
+		else {
+			D3DXVECTOR3 pos = d.smap.pos, ld = d.smap.ld;
+			if (RenderShadowMap(pos, ld, d.smap.rad / 1.02f, bInternal) < 0) smap.pShadowMap = NULL;
+		}
+		pCurrentVisual = d.vV;
+		PbrRender::SetPhase(PbrRender::PHASE_TRANSPARENT);
+		d.vV->Render(pDevice, bInternal);
+		PbrRender::SetPhase(PbrRender::PHASE_ALL);
+	}
+	smap = keep;
+	PbrRender::SetSceneCopy(NULL);
 }
 
 

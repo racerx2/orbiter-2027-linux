@@ -169,6 +169,8 @@ UINT VkFormatBlockSize (VkFormat fmt, UINT *blockW)
 		return 16;
 	case VK_FORMAT_BC1_RGB_UNORM_BLOCK:
 	case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
+	case VK_FORMAT_BC1_RGB_SRGB_BLOCK:  // custom: PBR colour maps
+	case VK_FORMAT_BC1_RGBA_SRGB_BLOCK: // custom: PBR colour maps
 	case VK_FORMAT_BC4_UNORM_BLOCK:
 		if (blockW) *blockW = 4;
 		return 8;
@@ -176,6 +178,9 @@ UINT VkFormatBlockSize (VkFormat fmt, UINT *blockW)
 	case VK_FORMAT_BC3_UNORM_BLOCK:
 	case VK_FORMAT_BC5_UNORM_BLOCK:
 	case VK_FORMAT_BC7_UNORM_BLOCK:
+	case VK_FORMAT_BC2_SRGB_BLOCK:      // custom: PBR colour maps
+	case VK_FORMAT_BC3_SRGB_BLOCK:      // custom: PBR colour maps
+	case VK_FORMAT_BC7_SRGB_BLOCK:      // custom: PBR colour maps
 		if (blockW) *blockW = 4;
 		return 16;
 	default:

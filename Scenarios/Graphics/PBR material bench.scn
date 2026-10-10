@@ -1,0 +1,29 @@
+BEGIN_DESC
+PBR material bench (custom branch test data): one sphere per glTF material feature, rows of four from the top: 1 base colour, 2 alpha mask, 3 alpha blend, 4 metal smooth, 5 metal rough, 6 normal map, 7 emission, 8 occlusion, 9 ior specular, 10 transmission volume, 11 clearcoat, 12 sheen, 13 anisotropy, 14 iridescence, 15 legacy reference, 16 double-sided plate.
+END_DESC
+
+BEGIN_ENVIRONMENT
+  System Sol
+  Date MJD 51982.5
+END_ENVIRONMENT
+
+BEGIN_FOCUS
+  Ship Bench
+END_FOCUS
+
+BEGIN_CAMERA
+  TARGET Bench
+  MODE Extern
+  POS 2.60 90.00 0.00
+  TRACKMODE TargetRelative
+  FOV 40.00
+END_CAMERA
+
+BEGIN_SHIPS
+Bench:PbrBench
+  STATUS Orbiting Earth
+  RPOS 6778137.000 0 0
+  RVEL 0 0 7668.558158
+  AROT 0 0 0
+END
+END_SHIPS

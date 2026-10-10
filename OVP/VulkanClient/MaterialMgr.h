@@ -77,6 +77,7 @@ private:
 	struct MESHREC {
 		WORD shader;
 		map<int, D3D9MatExt> material;
+		map<int, PbrMaterial> pbr;		// custom: PBR_* keys of the MATERIAL blocks (design-pbr 9)
 	};
 
 	std::map<string, MESHREC> MeshConfig;

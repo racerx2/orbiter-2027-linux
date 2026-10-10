@@ -110,6 +110,9 @@ public:
 	int SetSamplerState (VkFxHandle sampler, const VkSamplerDesc *desc); // SetSamplerState on an effect sampler; NULL restores its sampler_state
 	int GetFloat (VkFxHandle h, float *f);
 	int GetMatrix (VkFxHandle h, D3DXMATRIX *m);
+	int GetValue (VkFxHandle h, void *data, UINT bytes);   // custom: PBR effects copy the legacy effect's shared values
+	VkTex *GetTexture (VkFxHandle h);                       // custom: the texture bound to a sampler or texture parameter
+	bool CompileCheck ();                                   // custom: every pass to SPIR-V, no shader objects; false if one fails
 
 	struct Pass {
 		std::string vs, ps, vsArgs, psArgs;  // entry functions and their uniform arguments

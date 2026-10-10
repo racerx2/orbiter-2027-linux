@@ -458,6 +458,7 @@ VkEffect::VkEffect (VkDev *_dev) : dev(_dev), cb(_dev)
 
 VkEffect::~VkEffect ()
 {
+	if (dev->GetConstantSource () == &cb) dev->SetConstantSource (NULL, NULL); // custom: the device must not push a deleted buffer (PBR variants go with the scene)
 	VkDevice d = dev->dev;
 	for (auto &t : tech) for (auto &p : t.pass) {
 		VkShaderEXT vs = p.vsObj, ps = p.psObj;
@@ -890,4 +891,34 @@ int VkEffect::GetMatrix (VkFxHandle h, D3DXMATRIX *m)
 {
 	cb.GetValue ((VkConstHandle)h, m, 64);
 	return h ? 0 : -1;
+}
+
+int VkEffect::GetValue (VkFxHandle h, void *data, UINT bytes)
+{
+	cb.GetValue ((VkConstHandle)h, data, bytes);
+	return h ? 0 : -1;
+}
+
+VkTex *VkEffect::GetTexture (VkFxHandle h)
+{
+	VkConstHandle e = (VkConstHandle)h;
+	if (!e || !e->sampler) return NULL;
+	for (auto &s : samp) {
+		if (e->binding < 0 ? s.texture == e->name : s.binding == e->binding) return cb.GetTexture (s.binding);
+	}
+	return NULL;
+}
+
+bool VkEffect::CompileCheck ()
+{
+	bool ok = true;
+	for (auto &t : tech) for (auto &p : t.pass) {
+		VkMacros m = macros;
+		m.push_back ({ "VS_ARGS", p.vsArgs.empty() ? std::string() : ", " + p.vsArgs });
+		m.push_back ({ "PS_ARGS", p.psArgs.empty() ? std::string() : ", " + p.psArgs });
+		std::vector<uint32_t> spv;
+		if (!VkCompileGLSL (file.c_str(), src, p.vs.c_str(), VK_SHADER_STAGE_VERTEX_BIT, m, spv, NULL)) ok = false;
+		if (!VkCompileGLSL (file.c_str(), src, p.ps.c_str(), VK_SHADER_STAGE_FRAGMENT_BIT, m, spv, NULL)) ok = false;
+	}
+	return ok;
 }

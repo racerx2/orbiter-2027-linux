@@ -21,6 +21,8 @@ struct PSConst {
 
 struct PSBools {
 	BOOL bOIT;		// Enable order independent transparency
+	float fCutoff;	// custom: alpha test level (0.75 legacy, the material's for PBR mask groups)
+	BOOL bClip;		// custom: below the cutoff the shadow map pixel is dropped (PBR), not written as an occluder (legacy)
 };
 
 // uniform extern struct X {...} x: the structs in blocks (vertex binding 0, pixel binding 1), set by name as the whole struct
@@ -157,7 +159,12 @@ vec4 ShdMapOIT_PS(ShadowTexVS frg)
 {
 	if (ps_bools.bOIT) {
 		float alpha = texture(tDiff, frg.tex0.xy).a;
-		if (alpha < 0.75f) return vec4(1.0f);
+		if (alpha < ps_bools.fCutoff) {
+#ifdef STAGE_PS
+			if (ps_bools.bClip) discard; // custom
+#endif
+			return vec4(1.0f);
+		}
 	}
 	return vec4(1 - (frg.tex0.z / frg.tex0.w));
 }
@@ -199,7 +206,7 @@ void main() { oVS = NormalDepth_VS(MESH_VERTEX(iPosL, iNrmL, iTanL, iTex0)); gl_
 vec4 NormalDepth_PS(NormalTexVS frg)
 {
 	if (ps_bools.bOIT) {
-		if (texture(tDiff, frg.tex0.xy).a < 0.75f) discard; // clip(-1)
+		if (texture(tDiff, frg.tex0.xy).a < ps_bools.fCutoff) discard; // clip(-1)
 	}
 	//if (dot(frg.nrmW, ps_const.Cam_Z) > 0) clip(-1);
 

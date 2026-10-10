@@ -147,6 +147,11 @@ coll_scenario_test(Coll.HvC.Stock VISUAL SCN gen:hvc FRAMES 200 TIMEOUT 900 CHEC
 	RUNS "h|headless|on||||TESTRNGPROBE 50" "cf|client|on|client-first|||TESTRNGPROBE 50" "af|client|on|addon-first|||TESTRNGPROBE 50")
 coll_scenario_test(Scn.Visual.Smoke VISUAL SCN gen:pair:g0=20 FRAMES 70 TIMEOUT 600 CHECK visualsmoke
 	RUNS "a|client|off||||LUASHOT 60 smoke" "b|client|off||||LUASHOT 60 smoke")
+# not upstream: the VulkanClient PBR materials (design-pbr 9): bench with PBR and with ORBITER_PBR_DISABLE, Smack! and the DG pair against Tests/Pbr/baseline
+coll_scenario_test(Pbr.Visual.Bench VISUAL SCN gen:pair:g0=20,A=DeltaGlider,B=DeltaGlider FRAMES 70 TIMEOUT 600 CHECK pbrbench
+	RUNS "pbr|client|off||@env:ORBITER_PBR_PRECOMPILE=1 '@scn=Graphics/PBR material bench'||LUASHOT 60 shot"
+	"legacy|client|off||@env:ORBITER_PBR_DISABLE=1 '@scn=Graphics/PBR material bench'||LUASHOT 60 shot"
+	"smack|client|off||'@scn=Delta-glider/Smack!'||LUASHOT 60 shot" "dg|client|off||||LUASHOT 60 shot")
 
 # T0.9 guards and close paths (design-C-T 2.5, 3.5; E4 7.10); the build-running skip is proven by Scn.RunnerGuard
 coll_scenario_test(Scn.Timeout TIMING SCN gen:pair:g0=1000 FRAMES 60 TIMEOUT 20 CHECK timeout RUNS "main|headless|off||@nolimit @expect=TIMEOUT||")

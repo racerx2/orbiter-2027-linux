@@ -21,6 +21,8 @@
 #include "D3D9Effect.h"
 #include "AABBUtil.h"
 #include "D3DXMath.h" // d3d9.h/d3dx9.h
+#include "PbrMaterial.h" // custom: PBR materials (design-pbr 4)
+#include <memory>
 #include <vector>
 
 const DWORD SPEC_DEFAULT = (DWORD)(-1); // "default" material/texture flag
@@ -86,6 +88,8 @@ public:
 
 	static struct PSBools {
 		BOOL bOIT;		// Enable order independent transparency
+		float fCutoff;	// custom: alpha test level (NewMesh.glsl)
+		BOOL bClip;		// custom: drop shadow map pixels below the cutoff (PBR groups)
 	} ps_bools;
 
 
@@ -184,6 +188,8 @@ public:
 		bool  bDualSided;
 		bool  bDeleted;			// This entry is deleted by DelGroup()
 		bool  bRendered;
+		bool  bPbr;				// custom: the material has a PBR record (drawn by RenderPbr unless an MFD screen)
+		bool  bPbrTangents;		// custom: UV tangents made for the PBR normal/anisotropy maps
 		D3DXMATRIX  Transform;	// Group specific transformation matrix
 		D9BBox BBox;
 		DWORD TexIdxEx[MAXTEX];
@@ -252,6 +258,13 @@ public:
 	int				GetMaterialEx(DWORD idx, MatProp mid, FVECTOR4* out);
 	bool			GetTexTune(D3D9Tune *pT, DWORD idx) const;
 	void			SetTexTune(const D3D9Tune *pT, DWORD idx);
+
+	// custom: PBR materials (design-pbr 4); a material with a record draws its groups with PbrMesh.fx
+	void			SetPbrMaterial(DWORD idx, const PbrMaterial &m);
+	void			ClearPbrMaterials();
+	const PbrMaterial *GetPbrMaterial(DWORD idx) const;
+	bool			HasPbr() const { return bHasPbr; }
+	bool			HasPbrTransparent(bool *bTransmission = NULL) const;
 
 	DWORD			GetGroupCount() const { return nGrp; }
 	DWORD			GetMaterialCount() const { return nMtrl; }
@@ -339,6 +352,16 @@ private:
 	void			Null(const char *meshName = NULL);
 	void			UpdateFlags();
 	void			ConfigureAtmo();
+
+	// custom: PBR groups (design-pbr 4, 5)
+	struct PbrDebug { DWORD flags, selmsh, selgrp, displ; bool active; };
+	bool			IsPbrGroup(DWORD g) const { return Grp[g].bPbr && Grp[g].MFDScreenId == 0; }
+	void			PbrTangents(DWORD g);
+	void			RenderPbr(const LPD3DXMATRIX pW, const D3DXMATRIX &mWorldMesh, int iTech, bool bGroupCull, const D3DXMATRIX &mWorldView, const D3DXVECTOR4 &Field, const PbrDebug &dbg);
+	std::vector<std::unique_ptr<PbrMaterial>> Pbr;	// by material index
+	bool bHasPbr;
+	bool bPbrAlphaTest;		// a PBR group needs the alpha-tested shadow path
+	VkTex *pPbrEnvA;		// legacy env map of the current Render call
 
 	WORD	DefShader;
 	DWORD	MaxVert;

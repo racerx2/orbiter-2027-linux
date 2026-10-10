@@ -38,6 +38,7 @@ class D3D9Effect {
 
 public:
 	static void D3D9TechInit(D3D9Client *gc, VkDev *pDev, const char *folder);
+	static VkMacros BaseMacros(); // custom: D3D9Client.fx macros, shared with the PBR effects
 
 	/**
 	 * \brief Release global parameters

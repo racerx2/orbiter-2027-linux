@@ -33,6 +33,8 @@
 #define IPF_PYRAMIDAL	0x0080
 #define IPF_GAUSSIAN	0x0100*/
 
+#define IPF_MIPMAP_NATIVE 0x40000000 // custom: SetTextureNative only, the sampler reads the texture's mips (PBR prefilters)
+
 
 class ImageProcessing {
 

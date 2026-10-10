@@ -82,6 +82,8 @@ set(SourceFiles
 	VkCore.cpp # not upstream: Vulkan device, buffers, textures
 	VkShader.cpp # not upstream: GLSL compiler, constant tables, effects
 	VkTexFile.cpp # not upstream: texture files, pixel formats, readbacks
+	PbrMaterial.cpp # custom: PBR material records
+	PbrRender.cpp # custom: PBR variants, environment, LUT
 )
 
 set(IncludeFiles
@@ -137,6 +139,8 @@ set(IncludeFiles
 	VkCore.h # not upstream
 	VkShader.h # not upstream
 	VkTexFile.h # not upstream
+	PbrMaterial.h # custom
+	PbrRender.h # custom
 )
 
 set(APIHeaders
@@ -168,6 +172,9 @@ set(ShaderFiles
 	${ShaderDir}/SceneTech.fx
 	${ShaderDir}/Sketchpad.fx
 	${ShaderDir}/Vessel.fx
+	${ShaderDir}/PbrBRDF.glsl # custom
+	${ShaderDir}/PbrIBL.glsl # custom
+	${ShaderDir}/PbrMesh.fx # custom
 )
 
 source_group(Shaders FILES ${ShaderFiles})

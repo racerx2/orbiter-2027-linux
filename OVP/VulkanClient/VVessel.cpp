@@ -711,6 +711,10 @@ bool vVessel::Render(VkDev *dev, bool internalpass)
 
 	HR(D3D9Effect::FX->SetTexture(D3D9Effect::eIrradMap, pIrrad));
 
+	// custom: PBR groups of this visual read its prefiltered environment (design-pbr 7, 8)
+	struct PbrEnvScope { explicit PbrEnvScope(const PbrEnv *e) { PbrRender::SetEnvironment(e); } ~PbrEnvScope() { PbrRender::SetEnvironment(NULL); } } pbrEnvScope(&pbrEnv);
+	bool bPbrDefer = false, bPbrTransmission = false;
+
 	// Check VC MFD screen resolutions ------------------------------------------------
 	//
 	if (bVC && internalpass) {
@@ -793,6 +797,13 @@ bool vVessel::Render(VkDev *dev, bool internalpass)
 		else {
 			if (internalpass) meshlist[i].mesh->Render(pWT, RENDER_VC, NULL, 0);
 			else 			  meshlist[i].mesh->Render(pWT, RENDER_VESSEL, pEnv, nEnv);
+
+			// custom: transparent PBR groups wait for the scene's deferred pass (design-pbr 8)
+			if (PbrRender::GetPhase() == PbrRender::PHASE_OPAQUE) {
+				bool t = false;
+				if (meshlist[i].mesh->HasPbrTransparent(&t)) bPbrDefer = true;
+				bPbrTransmission |= t;
+			}
 		}
 
 
@@ -810,7 +821,9 @@ bool vVessel::Render(VkDev *dev, bool internalpass)
 	// Shutdown shadows to prevent from causing problems
 	HR(D3D9Effect::FX->SetBool(D3D9Effect::eShadowToggle, false));
 
-	if (scn->GetRenderPass() == RENDERPASS_MAINSCENE) {
+	if (bPbrDefer) scn->DeferPbr(this, internalpass, bPbrTransmission); // custom
+
+	if (scn->GetRenderPass() == RENDERPASS_MAINSCENE && PbrRender::GetPhase() != PbrRender::PHASE_TRANSPARENT) { // custom: once per frame, not again in the deferred pass
 		if (DebugControls::IsActive()) {
 			if (flags&DBG_FLAGS_SELVISONLY && this != DebugControls::GetVisual()) return true;
 			if (flags&DBG_FLAGS_BOXES && !internalpass) {
@@ -1126,6 +1139,16 @@ void vVessel::RenderGroundShadow(VkDev *dev, OBJHANDLE hPlanet, float alpha)
 }
 
 // ============================================================================================
+// custom: a mesh of this visual has PBR materials
+//
+bool vVessel::HasPbr() const
+{
+	if (meshlist) for (DWORD i = 0; i < nmesh; i++) if (meshlist[i].mesh && meshlist[i].mesh->HasPbr()) return true;
+	return false;
+}
+
+
+// ============================================================================================
 // Return true if it's time to move to a next vessel
 // false, if more rendereing is required here.
 //
@@ -1174,6 +1197,7 @@ bool vVessel::RenderENVMap(VkDev *pDev, DWORD cnt, DWORD flags)
 	if (eFace >= 6) {
 		eFace = 0;
 		scn->RenderBlurredMap(pDev, pEnv[ENVMAP_MAIN]);
+		if (HasPbr()) PbrRender::PrefilterEnv(pDev, pEnv[ENVMAP_MAIN], pbrEnv); // custom: PBR environment cubes (design-pbr 7)
 		return true;
 	}
 

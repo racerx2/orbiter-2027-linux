@@ -12,6 +12,7 @@
 #include "VObject.h"
 #include "Mesh.h"
 #include "gcCore.h"
+#include "PbrRender.h" // custom: PBR environment (design-pbr 7)
 #include <unordered_set>
 #include <vector>
 
@@ -133,6 +134,7 @@ public:
 	VkTex *GetEnvMap(int idx);
 	VkTex *GetIrradEnv() { return pIrdEnv; }
 	VkTex *GetIrradianceMap() { return pIrrad; }
+	bool HasPbr() const; // custom: a mesh has PBR materials
 
 	float GetExhaustLength() const { return ExhaustLength; }
 
@@ -205,6 +207,7 @@ private:
 
 	VkTex *pEnv[4], *pIrdEnv;
 	VkTex *pIrrad;
+	PbrEnv pbrEnv;			// custom: prefiltered environment of the PBR materials (design-pbr 7)
 
 	int nEnv;				// Number of environmental maps
 	int iFace;				// EnvMap Face index that is to be rendered next
