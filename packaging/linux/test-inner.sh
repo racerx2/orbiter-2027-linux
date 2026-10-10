@@ -6,18 +6,22 @@ PKG=/pkg.tar.xz; CLIENT=${CLIENT:-0}
 . /etc/os-release
 echo "== $PRETTY_NAME"
 fail=0; ok() { echo "PASS $*"; }; bad() { echo "FAIL $*"; fail=1; }
-XD=$((200 + RANDOM % 600)) # own display number: with the host network, X's abstract sockets are shared between containers
-xrun() { # Xvfb started once (EL9 has no xvfb-run)
-	[ -e /tmp/.X11-unix/X$XD ] || { mkdir -p -m 1777 /tmp/.X11-unix; Xvfb :$XD -screen 0 1280x800x24 >/tmp/xvfb.out 2>&1 & sleep 2; }
+XD=0
+xrun() { # Xvfb started once on a free display (EL9 has no xvfb-run; with the host network, X's abstract sockets are shared between containers)
+	for _ in 1 2 3 4 5; do [ -e /tmp/.X11-unix/X$XD ] && break
+		XD=$((200 + RANDOM % 600)); mkdir -p -m 1777 /tmp/.X11-unix
+		Xvfb :$XD -screen 0 1280x800x24 >/tmp/xvfb.out 2>&1 & xp=$!
+		for _ in $(seq 60); do [ -e /tmp/.X11-unix/X$XD ] || ! kill -0 $xp 2>/dev/null && break; sleep 0.5; done # slow start under load
+	done
 	DISPLAY=:$XD "$@"
 }
 if command -v apt-get >/dev/null; then PM=apt; elif command -v dnf >/dev/null; then PM=dnf; elif command -v zypper >/dev/null; then PM=zypper; else PM=pacman; fi
 case $PM in
 	apt) export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null
-		apt-get install -y -qq tar xz-utils binutils xvfb xauth mesa-vulkan-drivers libgl1-mesa-dri weston >/dev/null 2>&1 || apt-get install -y -qq tar xz-utils binutils xvfb xauth mesa-vulkan-drivers libgl1-mesa-dri >/dev/null ;;
-	dnf) dnf -y -q install tar xz binutils findutils xorg-x11-server-Xvfb xorg-x11-xauth mesa-vulkan-drivers mesa-dri-drivers weston >/dev/null 2>&1 ;;
-	zypper) zypper -q -n install tar xz binutils findutils xvfb-run xorg-x11-server-Xvfb Mesa-vulkan-device-select libvulkan_lvp Mesa-dri weston >/dev/null 2>&1 ;;
-	pacman) pacman -Sy -q --noconfirm --needed tar xz binutils findutils xorg-server-xvfb xorg-xauth vulkan-swrast mesa weston >/dev/null 2>&1 ;;
+		apt-get install -y -qq tar xz-utils binutils xvfb xauth mesa-vulkan-drivers libgl1-mesa-dri >/dev/null; apt-get install -y -qq weston >/dev/null 2>&1 ;;
+	dnf) dnf -y -q install tar xz binutils findutils xorg-x11-server-Xvfb xorg-x11-xauth mesa-vulkan-drivers mesa-dri-drivers >/dev/null; dnf -y -q install weston >/dev/null 2>&1 ;; # EL9 has no weston
+	zypper) zypper -q -n install tar xz gawk binutils findutils xvfb-run xorg-x11-server-Xvfb Mesa-vulkan-device-select libvulkan_lvp Mesa-dri >/dev/null; zypper -q -n install weston >/dev/null 2>&1 ;;
+	pacman) pacman -Sy -q --noconfirm --needed tar xz gawk binutils findutils xorg-server-xvfb xorg-xauth vulkan-swrast mesa >/dev/null; pacman -S -q --noconfirm --needed weston >/dev/null 2>&1 ;;
 esac
 mkdir -p /t && tar -xf "$PKG" -C /t && R=$(ls -d /t/Orbiter2027-*) || { echo "FAIL unpack"; exit 1; }
 cd "$R"
@@ -62,7 +66,7 @@ if [ "$CLIENT" = 1 ]; then
 		VK_SHADER_OBJECT_FORCE_ENABLE=$force VK_DRIVER_FILES=$icd VK_ICD_FILENAMES=$icd QT_QPA_PLATFORM=xcb xrun timeout 240 ./Orbiter "--scenariox=Delta-glider/Smack!" --fixedstep=0.02 --maxframes=120 >/tmp/c.out 2>&1; rc=$?
 		if [ $rc = 0 ] && grep -q 'Shader-object layer available' Orbiter.log && ! grep -qE '\[ERROR\]|need ' Orbiter.log; then ok "client on lavapipe, layer forced=$force"; else bad "client force=$force rc=$rc: $(grep -E 'ERROR|need |layer|Vulkan' Orbiter.log | head -5)"; fi
 	done
-	if command -v weston >/dev/null; then
+	if command -v weston >/dev/null || { echo "note: no weston package, Wayland run skipped"; false; }; then
 		b=headless; weston --help 2>&1 | grep -q 'headless-backend.so' && b=headless-backend.so # weston 9/10 name the module
 		weston --backend=$b --socket=wl-test --width=1280 --height=800 >/tmp/w.out 2>&1 & wp=$!; sleep 3
 		[ -S "$XDG_RUNTIME_DIR/wl-test" ] || echo "note: weston did not start: $(tail -2 /tmp/w.out)"
