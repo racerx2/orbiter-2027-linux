@@ -468,6 +468,7 @@ Some of the standard modules distributed with Orbiter are:
 \item \textbf{Framerate:} A graphical simulation frame rate (FPS) display. If this module is active, the frame rate window can be selected from the \textit{Custom Functions} list (\Ctrl\keystroke{F4}).
 \item \textbf{LuaConsole:} Provides a console window for interactive processing of script commands. Can be opened via the \textit{Custom Functions} list (\Ctrl\keystroke{F4}).
 \item \textbf{LuaMFD:} Adds a new MFD mode for script input via a console MFD.
+\item \textbf{Collision:} Vessels collide with each other, with base buildings and with the ground, and take damage. Collisions are on as soon as the module is active. See section \ref{sec:collisions} for details.
 \end{itemize}
 
 \noindent
@@ -526,11 +527,49 @@ Click on an item to see a short description of its purpose to the right of the l
 \item \textbf{Celestial body configuration:} Parameters to define particular characteristics of planetary bodies. Currently this section contains configuration options for the atmospheric models of some planets.
 \item \textbf{Debugging options:} Miscellaneous settings, including the way Orbiter shuts down a simulation session and the option to enforce fixed time steps, which can be useful for debugging or trajectory generation.
 \item \textbf{Visualisation parameters:} This section contains advanced rendering and texture load options for planetary bodies.
+\item \textbf{Launchpad skin:} Chooses how the Launchpad looks. See section \ref{ssec:launchpad_skins}.
 \end{itemize}
 
 
+\subsection{Launchpad skins}
+\label{ssec:launchpad_skins}
+A skin changes how the Launchpad looks without changing what it does. Skins are folders in Orbiter's Skins folder. Orbiter comes with three:
+
+\begin{itemize}
+\item \textbf{Dark:} a dark style sheet for the classic Launchpad.
+\item \textbf{Horizon:} a complete new launcher with the selected scenario up front: where the focus vessel is, the date, the briefing and one \textit{Launch} button. It is made as a Qt Designer form.
+\item \textbf{Planetary Defense:} a mission-control launcher with an orbit diagram of the inner solar system at the scenario's date, with the asteroids Apophis, Bennu and Didymos and the Apophis 2029 fly-by clock. It is also made as a Qt Designer form.
+\end{itemize}
+
+\begin{figure}[H]
+	\centering
+	\subfigure{\includegraphics[width=0.75\textwidth]{launchpad_skin_horizon.jpg}}
+	\caption{The Horizon skin.}
+\end{figure}
+
+\noindent
+\textbf{Choosing a skin:} Open the \textit{Extra} tab, select \textit{Launchpad skin} and press \textit{Edit} (Horizon also has the list on its Settings page). The dialog lists \textit{Classic} (the original Launchpad) and every skin found in the Skins folder, with its author, version, kind and description. Select one and press \textit{Apply}. A skin that cannot be used (for example one that needs a newer launcher version) is shown greyed out, with the reason.\\
+Launchers made in Qt Designer or QML still use the classic Launchpad's pages for anything they do not show themselves: their buttons open the classic \textit{Options}, \textit{Modules}, \textit{Video} and \textit{Extra} pages with a \textit{Back} button that returns to the skin.\\
+\\
+\textbf{Back to the classic Launchpad:} \Ctrl\Shift\keystroke{L} in the Launchpad window always switches back to the classic Launchpad and keeps it chosen. The window title shows this key while a skin is active. To start Orbiter once with the classic Launchpad, whatever skin is chosen, start it with the environment variable \texttt{ORBITER\_LAUNCHER\_SKIN=classic}; the variable can also name a skin folder.\\
+\\
+\textbf{Making your own:} The buttons below the list make skins:
+
+\begin{itemize}
+\item \textit{Copy...} copies the selected skin's folder under a new name. Change your copy rather than the skins that come with Orbiter: an update of Orbiter replaces their files.
+\item \textit{New layout...} writes a new skin with the classic Launchpad's 32 windows as Qt Designer forms, optionally with the colours of another skin. Move, resize, restyle or hide the controls in Qt Designer; Orbiter applies the forms the next time it starts.
+\item \textit{Open in Qt Designer} opens the selected skin's form in Qt 6 Designer (on Ubuntu in the package qt6-tools-dev-tools). For a skin that comes with Orbiter, it offers a copy first. While the skin is active, the launcher picks up a saved form about half a second later.
+\end{itemize}
+
+\noindent
+How to make style sheets, layouts and launchers is described in "Launchpad skins" in the Orbiter Developer Manual, and in short in Skins/README.md.\\
+The chosen skin, the recent scenarios and the favourites are kept in Launcher.cfg in the Orbiter folder.
+
+\alertbox{A launcher skin made in QML or Qt Designer contains code (QML or JavaScript) that runs inside Orbiter with your rights, like an add-on module. Install skins you trust, as you would add-ons.}
+
+
 \subsection{About Orbiter tab}
-The \textit{About Orbiter} tab contains version and build information, as well as links to the Terms of Use, credits and the Orbiter home page and forum.
+The \textit{About Orbiter} tab contains version and build information, the addresses of the GitHub repository of the Linux edition (\url{https://github.com/racerx2/orbiter-2027-linux}), the Orbiter forum and Orbiter's YouTube channel, and buttons for the Terms of Use, the credits and the Orbiter web site. The credits box in the Launchpad's main window shows the same address.
 
 \begin{figure}[H]
 	\centering

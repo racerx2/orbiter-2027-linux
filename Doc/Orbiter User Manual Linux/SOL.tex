@@ -2,6 +2,7 @@
 \begin{document}
 
 \section{The solar system neighbourhood}
+\label{sec:solsys}
 Orbiter's playground is our solar system. The basic installation includes its major bodies (the Sun and planets) and a subset of minor bodies (moons and asteroids), providing a variety of mission targets. Planning and executing a trip that is efficient both in duration and fuel consumption offers different challenge levels. Additional objects may be downloaded as add-ons.
 
 \begin{figure}[H]
@@ -253,6 +254,32 @@ Orbiter's playground is our solar system. The basic installation includes its ma
 	\end{tabularx}
 \end{table}
 
+\begin{table}[H]
+	\begin{tabularx}{\textwidth}{ |lX| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Pluto} &\\
+	\hline\rule{0pt}{2ex}
+	\adjustbox{valign=t}{
+		\begin{tabular}{ c }
+		\includegraphics[width=0.6\textwidth, margin=-10pt 1ex -10pt 1ex, valign=m]{solsys_pluto.jpg}\\
+			\adjustbox{valign=t}{
+			\begin{tabular}{ ll }
+			\includegraphics[width=0.285\textwidth, margin=-20pt 1ex 0pt 1ex, valign=m]{solsys_charon.jpg} &\\
+			\end{tabular}
+			}
+		\end{tabular}
+		}
+	& \vfill
+	Pluto is a dwarf planet of the Kuiper belt and the largest known body beyond Neptune. Its eccentric orbit, inclined by 17° to the ecliptic, takes it between 30 and 49 AU from the Sun in 248 years, in a 2:3 resonance with Neptune.\newline
+	Pluto has a thin nitrogen atmosphere of about 1 Pa at the surface, with a blue haze that shows at the limb when Pluto is seen against the Sun. Its surface of nitrogen, methane and carbon monoxide ices ranges from bright plains to dark, reddish highlands.\newline
+	Charon, half Pluto's size, orbits the common centre of mass in 6.4 days, and both bodies always turn the same face to each other. The four small moons Styx, Nix, Kerberos and Hydra orbit farther out.\newline
+	\newline
+	\textit{The Pluto system is new in the Linux edition. Pluto and Charon textures are based on the New Horizons LORRI and MVIC global mosaics. Nix and Hydra are drawn as shape models from the New Horizons images, Kerberos and Styx as shapes of their measured sizes.}\\
+	\hline
+	\end{tabularx}
+\end{table}
+
+
 \subsection{Selected constants and parameters}
 These data may be useful when planning missions across the solar system.
 
@@ -468,7 +495,7 @@ The tables contain mean orbit solutions from a 250 yr. least squares fit of the 
 %\end{table}
 
 \noindent
-All values from \cite{yoder1995} except Pluto data from \cite{seidelmann1992p706}. Mercury to Neptune masses derived from standard gravitational parameter (GM) data in \cite{yoder1995}.\\
+All values from \cite{yoder1995} except Pluto data from \cite{seidelmann1992p706}. Orbiter's Pluto uses the New Horizons mean radius of 1188.3 km and a mass of 0.13028 $\times$ 10$^{23}$ kg (from JPL's plu060 ephemeris). Mercury to Neptune masses derived from standard gravitational parameter (GM) data in \cite{yoder1995}.\\
 ** Orbiter uses 23.93447 h (=23 h 56 m 4.09 s) which gives better long-term stability.
 
 \end{document}

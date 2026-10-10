@@ -1,0 +1,393 @@
+\documentclass[Orbiter Developer Manual.tex]{subfiles}
+\begin{document}
+
+\section{Launchpad skins}
+\label{sec:launchpad_skins}
+\begin{sloppypar}
+A skin changes how the Launchpad looks without changing what it does. Users choose a skin under \textit{Extra} > \textit{Launchpad skin} (see "Launchpad skins" in the Orbiter User Manual). This section describes how to make one. Skins/README.md in the Orbiter folder is a short version of it.\\
+\\
+\Ctrl\Shift\keystroke{L} in the Launchpad window always switches back to the classic Launchpad and keeps it chosen; the window title shows the key while a skin is active. It also works when a skin shows nothing or hides its text. On keyboards without a Latin layout the key may not arrive; there, start Orbiter with the environment variable \textit{ORBITER\_LAUNCHER\_SKIN=classic}, which overrides the chosen skin for that run (it can also name a skin folder). A reset with \Ctrl\Shift\keystroke{L} stores Classic even when the variable chose the skin; the variable still wins at the next start.\\
+\\
+Under a skin's style sheet every Launchpad control keeps the dialog font, which Orbiter sets on each control, also in windows opened later.
+
+
+\subsection{Kinds of skins}
+A skin can combine these kinds, but it has at most one launcher (QML or Qt Designer):
+
+\begin{itemize}
+\item \textbf{Style sheet (QSS):} a Qt style sheet, in CSS syntax, applied to the classic Launchpad. Example: Dark.
+\item \textbf{Qt Designer launcher:} a new front end made as one Qt Designer form with a little JavaScript, edited in Qt Designer. The classic Launchpad keeps working underneath; the skin reads and drives it through the \textit{Launcher} object (section \ref{ssec:launcher_api}). Examples: Horizon, PlanetaryDefense.
+\item \textbf{QML launcher:} the same, written in QML.
+\item \textbf{Layout:} the classic Launchpad's windows as Qt Designer forms, edited in Qt Designer. \textit{New layout...} in the skin list makes one.
+\end{itemize}
+
+\noindent
+\textit{Copy...} in the skin list copies a skin's folder under a new name. Change your own copy: building or updating Orbiter replaces the files of the skins that come with it (Dark, Horizon, PlanetaryDefense), and \textit{Open in Qt Designer} on one of those offers a copy first. A copy takes at most 4000 files, folders and links and 64 MiB; links inside the skin stay links, links out of it are left out and listed. A copy that fails leaves no folder behind.
+
+
+\subsection{The skin folder}
+Each folder in Skins/ is a skin; the folder name is its id. The file skin.cfg in the folder describes it:
+
+\begin{lstlisting}[language=OSFS]
+; comment lines start with ; or #
+Name = My skin
+Author = me
+Version = 1.0
+Description = One or two sentences for the skin list.
+Api = 1
+Qml = qml/Main.qml
+Forms = forms/Main.ui
+Qss = style.qss
+Ui = ui
+MinWidth = 1100
+MinHeight = 680
+Width = 1400
+Height = 860
+\end{lstlisting}
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.2\textwidth}|p{0.72\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Item} & \textbf{Description}\\
+	\hline\rule{0pt}{2ex}
+	Name, Author, Version, Description & Shown in the skin list.\\
+	\hline\rule{0pt}{2ex}
+	Api & The launcher API version the skin needs (this version of Orbiter: 1). A skin that needs a newer one is listed but cannot be chosen.\\
+	\hline\rule{0pt}{2ex}
+	Qml & Entry file of a QML launcher.\\
+	\hline\rule{0pt}{2ex}
+	Forms & The Qt Designer form of a Qt Designer launcher. Qml and Forms cannot both be given.\\
+	\hline\rule{0pt}{2ex}
+	Qss & Style sheet for the classic Launchpad.\\
+	\hline\rule{0pt}{2ex}
+	Ui & Folder of Qt Designer forms of a layout.\\
+	\hline\rule{0pt}{2ex}
+	MinWidth, MinHeight, Width, Height & For QML and Qt Designer launchers: the smallest and the preferred size of the Launchpad window while the skin is shown.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+Qml, Forms, Qss and Ui are optional, but at least one is needed. Paths are relative to the skin folder and must stay inside it: no ".." parts, no absolute paths and no links out of the folder. Comments cannot follow a value on the same line: \# and ; inside a value are part of it.
+
+
+\subsection{Style sheets}
+\begin{itemize}
+\item Change colours, borders and backgrounds. Do not change the font sizes, font families or padding of labels: the classic layout is sized from the dialog font, so bigger text gets clipped.
+\item Controls are named after their resource ids: \textit{QPushButton\#IDLAUNCH}, \textit{QWidget\#IDC\_BLACKBOX}, \textit{\#IDC\_SCN\_LIST}. The \textit{Back to skin} button of QML and Qt Designer launchers is \textit{QPushButton\#customSkinBack}.
+\item \textit{\$\{SKIN\}} is replaced by the skin folder's path; write \textit{url("\$\{SKIN\}/image.svg")} with the quotes.
+\item In a skin with Forms, every \textit{url()} of the Qss file must name a file inside the skin folder. A relative name is looked up from Orbiter's folder first (\textit{url(Skins/My/bg.png)}), then from the skin folder (\textit{url(bg.png)}); any other file becomes \textit{url("")} with a line in Orbiter.log.
+\item The style sheet also reaches windows opened from the Launchpad (help, add-on dialogs), but not message boxes opened without a parent.
+\end{itemize}
+
+
+\subsection{Layouts}
+\textbf{Making one:} \textit{New layout...} in the skin list asks for a name and, optionally, a skin whose colours to copy. It writes Skins/<name>/ with skin.cfg, ui/<dialog>.ui for the 32 Launchpad windows (IDD\_MAIN the main window, IDD\_PAGE\_* its pages, IDD\_OPTIONS\_* the Options pages, IDD\_EXTRA\_* the Extra dialogs, IDD\_SAVESCN, IDD\_MSG), the stock pictures in ui/images/ and a README.txt. \textit{Open in Qt Designer} opens the main window and its pages in Qt 6 Designer (/usr/lib/qt6/bin/designer; /usr/bin/designer is often Qt 5's).\\
+\\
+\textbf{What edits do:} Orbiter builds each window as before, then applies its form before the classic code sets the window up, so the classic code works from the new places.
+
+\begin{itemize}
+\item Controls can be moved and resized, also into group boxes, frames and splitters; Orbiter keeps them where they were put.
+\item Text, title, tool tip, font, style sheet, alignment, word wrap and flat buttons are applied. Texts are shown as typed, not as rich text; a longer text needs a wider control, as Designer shows.
+\item The form's own font reaches every control without a font of its own, and its style sheet applies to that window (the main window's comes before a skin's style sheet). A window's title is applied; the main window keeps its own title for the skin hints.
+\item A picture's \textit{pixmap} can be any file inside the skin folder, up to 4096 $\times$ 4096 pixels (paths are relative to the form). A label shows a picture or a text: remove the \textit{pixmap} to show a text.
+\item Deleting a control hides it. Launch, Exit, the six page buttons, the page area, the Extra list and its Edit button, and the Options list and page area cannot be deleted.
+\item The tab order (Edit > Edit Tab Order) is applied.
+\item Added QLabels (texts and pictures), QFrames, lines and QGroupBoxes are decorations. Everything is stacked as Designer paints the form; decorations let clicks through and stay where they are. A dynamic string property \textit{anchor} with \textit{right} and/or \textit{bottom} keeps a decoration at its distance from that edge. Other added widgets do nothing and are left out.
+\item Anything else (class, names, enabled state, the font sizes of the classic text measure) stays the classic code's.
+\end{itemize}
+
+\noindent
+\textbf{Rules:} Use absolute positions only: a form with a Designer layout is refused (Form > Break Layout). Orbiter finds its controls by the dynamic properties \textit{orbiterCtl}, \textit{orbiterFp}, \textit{orbiterControls} and \textit{orbiterFps}, not by name, so keep them; copies of a control are ignored. Framed boxes with \textit{orbiterStandIn} are areas Orbiter draws itself: only their place and size count. A changed control must stay on the form and be at least 8 $\times$ 8 pixels (the page area 100 $\times$ 100). The form's size is the window's starting size; IDD\_MAIN cannot be smaller than 550 $\times$ 350. \textit{\$\{SKIN\}} in a style sheet is the skin folder; other relative \textit{url()}s resolve against Orbiter's folder. Options pages have no scroll bar in the Launchpad: a page taller than its area is cut off. Labels whose text Orbiter sets are measured with the dialog's font, so they may not fit a font you enlarged.\\
+\\
+\textbf{What Orbiter places itself} (at the start and whenever the window is resized; the forms note it in their \textit{orbiterNote} property):
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.2\textwidth}|p{0.72\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Window} & \textbf{Placed by Orbiter}\\
+	\hline\rule{0pt}{2ex}
+	IDD\_MAIN & Launch, Help, Exit: their top follows the bottom edge, height as Exit's; Help and Exit move right with the width; in a window narrower than the layout's minimum the three shrink into a row from Launch. Black box: the width grows. Shadow bar: the full window width. Page area: grows. Version: follows the bottom edge. Banner: resized to the black box's height when their heights differ.\\
+	\hline\rule{0pt}{2ex}
+	IDD\_PAGE\_SCN & List, description and HTML description: inside the splitter (its place and height; the split at the list's width). Save, Clear quicksaves and Info follow the bottom edge; Clear quicksaves has Save's width; Info is at the description's right edge. Start paused follows the right edge.\\
+	\hline\rule{0pt}{2ex}
+	IDD\_PAGE\_MOD, IDD\_PAGE\_EXT & The list and text inside the splitter; the buttons follow the bottom edge.\\
+	\hline\rule{0pt}{2ex}
+	IDD\_PAGE\_OPT & The split keeps its place and is sized to the page; the page list is 120 pixels wide.\\
+	\hline\rule{0pt}{2ex}
+	IDD\_PAGE\_DEV, IDD\_PAGE\_ABT & Centred in the page area, cut off if larger.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+\textbf{When it shows:} the main window, its pages and the Options pages change when Orbiter starts again; the other windows at their next opening. Choosing a skin with another layout changes colours and QML at once and the layout at the next start (while ORBITER\_LAUNCHER\_SKIN is set, it chooses the next start's skin). Orbiter.cfg's saved list widths start again from the layout whenever the layout changes, also for a one-off classic run. Problems are written to Orbiter.log (lines starting with \textit{Launcher layout:}); a window whose form cannot be used stays stock, and one message at the start counts them.\\
+\Ctrl\Shift\keystroke{L} with a layout undoes its looks at once (decorations, texts, fonts, style sheets, pictures; deleted controls come back, except those the classic code shows and hides itself: the Scenarios description and Info button, the Video page and the Options pages, which come back at the next start). The places stay until the next start, which uses the stock layout; the window title says so.
+
+
+\subsection{Launchers made in Qt Designer}
+A Qt Designer launcher is one form, forms/Main.ui, that Orbiter builds as widgets, with JavaScript files for its logic. It uses the same \textit{Launcher} object as QML launchers (section \ref{ssec:launcher_api}). Horizon is laid out like this:
+
+\begin{lstlisting}[language=OSFS]
+Skins/Horizon/
+  skin.cfg     Forms = forms/Main.ui, Qss = style.qss
+  style.qss    the classic pages' colours
+  forms/
+    Main.ui    background, top bar, a QStackedWidget with one
+               page per tab, footer, toast
+    skin.qrc   the pictures, so Designer shows them
+    Format.js  texts for the scenario facts
+    Logic.js   the logic, and update(): the names every binding sees
+    images/    icons, toggle pictures, previews of painted widgets
+\end{lstlisting}
+
+\noindent
+\textbf{Editing:} \textit{Open in Qt Designer} opens forms/Main.ui in Qt 6 Designer (for a skin that comes with Orbiter, after offering a copy; apply the copy to see it). While the skin is active, a form saved in Designer is built again about half a second later; a form that cannot be used keeps the old one and says why in Orbiter.log and in the launcher.
+
+\begin{itemize}
+\item Pages: the page area is a QStackedWidget; right-click it > Page n, or use the arrows at its top right. Each page has a dynamic property \textit{page} with its name.
+\item Lists show one card, row or chip: the template, edited in place. Orbiter repeats it for each element.
+\item Bindings, actions and the like are dynamic properties: Property Editor > Dynamic Properties, the green +.
+\item Pictures: names of skin.qrc (\textit{:/horizon/images/...}) in \textit{pixmap}, \textit{icon} and style sheet \textit{url()}. Orbiter reads them from the skin folder; files outside it are refused. Pictures can be up to 4096 $\times$ 4096 pixels.
+\item The look is the root widget's \textit{styleSheet}. It begins with a reset, because the classic pages' style sheet reaches these widgets too. Rules pick widgets by the dynamic property \textit{role} (\textit{QLabel[role="h1"]}) and by states set from bindings (\textit{QFrame[role="card"][current="true"]}).
+\item The painted widgets (stars, planet, thumbnails, orbit diagram) are QLabels promoted to their class; Designer shows a preview picture. Designer does not show letter spacing, line height, elision, glows, live data or animation.
+\item Layouts work as in Designer. A widget in a parent without a layout keeps its place; \textit{anchor} keeps its distance to edges of the parent.
+\item Widget classes: QWidget, QFrame, Line, QLabel, QPushButton, QToolButton, QCheckBox, QRadioButton, QLineEdit, QStackedWidget, QScrollArea, QGroupBox, QTabWidget, QProgressBar and the painted classes. A widget promoted to another class is built as the class it was promoted from, with a warning; other classes stop the load.
+\end{itemize}
+
+\noindent
+\textbf{JavaScript:} the root widget's string list \textit{scripts} names the script files (in forms/, at most 16 of 1 MiB each), which run in that order. Expressions in the properties are JavaScript too. These names are available:
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.2\textwidth}|p{0.72\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Name} & \textbf{Description}\\
+	\hline\rule{0pt}{2ex}
+	Launcher & The Launcher API 1 object.\\
+	\hline\rule{0pt}{2ex}
+	update() & Your function: each refresh calls it first; each key of the object it returns is a name for that refresh.\\
+	\hline\rule{0pt}{2ex}
+	ui & An object for the skin's own state (search text, filters).\\
+	\hline\rule{0pt}{2ex}
+	view & \textit{width}, \textit{height}, \textit{revision} (counts Launcher changes, for caches), \textit{toast(text)}, \textit{hasFocus(name)}, \textit{focus(name)}.\\
+	\hline\rule{0pt}{2ex}
+	toast(text) & Shows a short message in the widget named \textit{toast}.\\
+	\hline\rule{0pt}{2ex}
+	w & The script objects of painted widgets by name: \textit{w.diagram.flow}, \textit{w.diagram.reset()}.\\
+	\hline\rule{0pt}{2ex}
+	Orbits & Planet and asteroid positions and the Apophis clock of Planetary Defense: \textit{countdown(ms)}, \textit{epochText(mjd)}, \textit{dayText(mjd)}, \textit{mjdOfMs(ms)}, \textit{pad(v, n)}, \textit{planet(name, mjd)}, \textit{neo(name, mjd)}, \textit{neoSet(name, mjd)}, \textit{neoSets(name)}, \textit{planetNames}, \textit{neoNames}, \textit{MJD\_MIN}, \textit{MJD\_MAX}, \textit{NEO\_YEARS}.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+A refresh runs after every Launcher change, action, edit, resize and focus change: \textit{update()} first, then the bindings of the widgets shown (hidden pages wait until they are shown). A script error stops the load; an error in a binding is written to Orbiter.log once and leaves the widget as it was. A call that runs longer than 2 s is stopped.\\
+\\
+\textbf{Dynamic properties:} inside a template, \textit{item} and \textit{index} are the list element and its position.
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.2\textwidth}|p{0.25\textwidth}|p{0.45\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Property} & \textbf{On} & \textbf{Description}\\
+	\hline\rule{0pt}{2ex}
+	bind & QLabel, buttons (text), checkable buttons and QCheckBox (checked), QStackedWidget (page name or number), QProgressBar, QLineEdit, QGroupBox (title) & The main value.\\
+	\hline\rule{0pt}{2ex}
+	bind\_<name> & any & Sets <name>: a Qt property (toolTip, maximumHeight), a dynamic property for style sheet rules, a property of this table, or fixedWidth, fixedHeight, layoutMargins ([l, t, r, b]), layoutSpacing.\\
+	\hline\rule{0pt}{2ex}
+	showIf, enableIf & any & Shown, enabled while true.\\
+	\hline\rule{0pt}{2ex}
+	model & QLineEdit & Two-way: shows the value and assigns what is typed (\textit{ui.query}); Escape clears it.\\
+	\hline\rule{0pt}{2ex}
+	action, doubleAction & any & Statements run on click, double click. Checkable buttons do not toggle themselves; the binding shows the state.\\
+	\hline\rule{0pt}{2ex}
+	key\_<Key> & any & Statements for that key (key\_Return, key\_Up) when the focused widget does not use it; not while Ctrl, Alt or Meta is held.\\
+	\hline\rule{0pt}{2ex}
+	list & a container with a layout & An array; the container's template children are repeated for each element.\\
+	\hline\rule{0pt}{2ex}
+	template, templateIf & children of a list container & A template; templateIf picks among several.\\
+	\hline\rule{0pt}{2ex}
+	maxItems, fit & the list container & At most N; only the clones that fit whole.\\
+	\hline\rule{0pt}{2ex}
+	cellWidth, columns & a list container with a grid layout & Columns from the width, or a number.\\
+	\hline\rule{0pt}{2ex}
+	cellWidth, cellHeight & a list container that is a QScrollArea's content, without a layout & A grid that makes only the rows in view (thousands of scenarios).\\
+	\hline\rule{0pt}{2ex}
+	flow & a container with a box layout & Wraps its items to new rows.\\
+	\hline\rule{0pt}{2ex}
+	tick & any & Runs the widget's bindings every N ms while the Launchpad is active (clocks).\\
+	\hline\rule{0pt}{2ex}
+	fade & any with showIf & Fades in and out over N ms.\\
+	\hline\rule{0pt}{2ex}
+	disabledOpacity & any & Drawn at that opacity while disabled.\\
+	\hline\rule{0pt}{2ex}
+	anchor & a child of a parent without layout & left, right, top, bottom, hcenter, vcenter, fill.\\
+	\hline\rule{0pt}{2ex}
+	letterSpacing, lineHeight, maxLines, elide, autoSize & QLabel (letterSpacing any text) & Letter spacing in pixels; line height factor; at most N lines with "\ldots"; one line with "\ldots"; size to the text.\\
+	\hline\rule{0pt}{2ex}
+	fitContent & QScrollArea & As tall as its content, up to the room it has.\\
+	\hline\rule{0pt}{2ex}
+	hover, clickThrough & any & :hover in style sheets; mouse clicks pass through.\\
+	\hline\rule{0pt}{2ex}
+	glowColor, glowRings, glowStep, glowWidth, glowRadius, glowAlpha, glowHoverAlpha, glowFade & any & Soft rings around the widget.\\
+	\hline\rule{0pt}{2ex}
+	page & pages of a QStackedWidget & The page's name.\\
+	\hline\rule{0pt}{2ex}
+	scripts & the root & The JavaScript files.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+\textbf{Painted widgets:}
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.2\textwidth}|p{0.72\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Class} & \textbf{Properties}\\
+	\hline\rule{0pt}{2ex}
+	Starfield & seed, count, alpha, drift (pixels), driftPeriod (ms)\\
+	\hline\rule{0pt}{2ex}
+	Planet & glare, pulse (Horizon's Earth and Sun)\\
+	\hline\rule{0pt}{2ex}
+	ScenarioThumb & kind, seed, corner (Horizon's card pictures)\\
+	\hline\rule{0pt}{2ex}
+	GridBackdrop & step (Planetary Defense's grid)\\
+	\hline\rule{0pt}{2ex}
+	MiniOrbit & kind, seed, corner (Planetary Defense's card pictures)\\
+	\hline\rule{0pt}{2ex}
+	OrbitDiagram & baseMjd, fromScenario, focusBody, system; script object with flow, offset, mjd, baseMjd, focusPlanet, hiddenNeos, epochOutside, reset()\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+\textbf{Safety:} a Qt Designer launcher runs JavaScript inside Orbiter with the user's rights. The JavaScript has no file or network access, and the form loads pictures and scripts only from its skin folder; \textit{Launcher.openUrl} is the way out. Rich text in labels and tool tips shows pictures from the skin only; \textit{<link>} style sheets are removed, and so are styles with \& or @ and style elements broken up by comments. \textit{openExternalLinks} stays off, Markdown labels show plain text, and style sheets cannot set text, toolTip, styleSheet and the like through \textit{qproperty-}. The skin's Qss file gets the same style sheet checks.
+
+
+\subsection{QML launchers}
+A QML launcher imports the API with \textit{import Orbiter.Launcher 1.0} and uses the \textit{Launcher} object. Only QtQuick and QtQml (with QtQuick.Window, QtQuick.Layouts, QtQuick.Shapes, QtQuick.Effects and QtQuick.Particles) are available; other modules fail to import. The QML files of the skin folder can import each other as usual (a qmldir for singletons is fine, \textit{plugin} lines are not allowed).
+
+\begin{itemize}
+\item Stop animations and timers while \textit{Launcher.active} is false (Launchpad hidden or in the background).
+\item Use \textit{Launcher.launch()}, \textit{Launcher.quit()} and \textit{Launcher.openUrl()} rather than \textit{Qt.quit()} or \textit{Qt.openUrlExternally()}.
+\item A skin that fails to load falls back to the classic Launchpad; the errors are in Orbiter.log.
+\item The root object of the entry file must be an Item (or a type based on it), not a Window. Make it a FocusScope when items inside take keyboard focus: Orbiter gives the root the focus whenever the view is shown or activated.
+\item \Ctrl\Shift\keystroke{L} is reserved: a skin does not receive it, and its \textit{Launcher.setSkin} calls are ignored until the switch to Classic has run. After the first key of a two-key Shortcut in the skin, Qt may give the key to that shortcut, so offer your own way to the classic pages too (\textit{Launcher.showClassic}).
+\end{itemize}
+
+\noindent
+A minimal QML launcher:
+
+\begin{lstlisting}
+import QtQuick
+import QtQuick.Layouts
+import Orbiter.Launcher 1.0
+
+FocusScope {
+    ColumnLayout {
+        anchors.centerIn: parent
+        Text { text: Launcher.currentScenario }
+        Rectangle {
+            width: 120; height: 32
+            color: Launcher.canLaunch ? "#2a6" : "#555"
+            Text { anchors.centerIn: parent; text: "Launch" }
+            MouseArea { anchors.fill: parent; onClicked: Launcher.launch () }
+        }
+    }
+}
+\end{lstlisting}
+
+\noindent
+\textbf{Safety:} a QML launcher is code that runs inside Orbiter with the user's rights, like an add-on module. Orbiter keeps skins from using the network and from loading files outside their folder in the usual ways, but this is not a sandbox: \textit{Qt.openUrlExternally}, images inside rich text and \textit{Canvas.loadImage} can still reach local files. Users should install skins they trust, as they would add-ons.
+
+
+\subsection{Launcher API 1}
+\label{ssec:launcher_api}
+Scenario paths are the classic ones: folder names and the scenario name joined by "/", without .scn.
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.22\textwidth}|p{0.16\textwidth}|p{0.52\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Property} & \textbf{Type} & \textbf{Description}\\
+	\hline\rule{0pt}{2ex}
+	apiVersion & int & 1\\
+	\hline\rule{0pt}{2ex}
+	version, build & string & Orbiter's version and build text.\\
+	\hline\rule{0pt}{2ex}
+	skin, skinUrl & string, url & The active skin's id; its folder as a file: URL ending in "/".\\
+	\hline\rule{0pt}{2ex}
+	skins & list & \{id, name, author, version, description, kind, layout, compatible, reason\}; kind is qml, qml+qss, forms, forms+qss, qss or ui (a layout only); layout: the skin has a layout.\\
+	\hline\rule{0pt}{2ex}
+	scenarios & list & The scenario tree in order: \{path, name, folder, isFolder, depth\}.\\
+	\hline\rule{0pt}{2ex}
+	currentScenario & string, writable & The selected scenario or folder.\\
+	\hline\rule{0pt}{2ex}
+	currentIsScenario & bool & The selection is a scenario.\\
+	\hline\rule{0pt}{2ex}
+	currentDescription & string & The selection's description as plain text.\\
+	\hline\rule{0pt}{2ex}
+	canLaunch & bool & The selection can be launched.\\
+	\hline\rule{0pt}{2ex}
+	startPaused & bool, writable & The \textit{Start paused} option.\\
+	\hline\rule{0pt}{2ex}
+	recent, favourites & list of paths & Recently launched scenarios, and those marked with toggleFavourite.\\
+	\hline\rule{0pt}{2ex}
+	modules & list & Plugin modules: \{name, category, info, active, locked\}.\\
+	\hline\rule{0pt}{2ex}
+	setup & map & \{graphicsClient, device, fullscreen, width, height, activeModules, nonsphericalGravity, radiationPressure, distributedMass, atmWind\}; graphicsClient is the Video tab's text, "Console mode (no engine loaded)" without a client.\\
+	\hline\rule{0pt}{2ex}
+	active & bool & The skin is shown and the Launchpad is the active window.\\
+	\hline\rule{0pt}{2ex}
+	page & string, writable & Kept for the skin while its view is rebuilt after a flight.\\
+	\hline\rule{0pt}{2ex}
+	state & map, writable & The same, for up to 64 KiB of data.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.32\textwidth}|p{0.6\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Method} & \textbf{Description}\\
+	\hline\rule{0pt}{2ex}
+	scenarioInfo(path) & Facts from the scenario file: \{name, folder, isFolder, description, system, focus, focusClass, focusStatus, focusBody, focusBase, focusPad, vesselCount, vessels, mjd, date\}.\\
+	\hline\rule{0pt}{2ex}
+	launch(path) & Launches path (or the selection).\\
+	\hline\rule{0pt}{2ex}
+	showClassic(page) & Shows the classic Launchpad on scenarios, parameters, modules, video, extra or about, with a Back button.\\
+	\hline\rule{0pt}{2ex}
+	help(page) & The help of that classic page.\\
+	\hline\rule{0pt}{2ex}
+	setModuleActive(name, on), deactivateAllModules() & As the classic Modules page.\\
+	\hline\rule{0pt}{2ex}
+	saveCurrentState(), clearQuicksaves() & As the classic Scenarios page.\\
+	\hline\rule{0pt}{2ex}
+	toggleFavourite(path) & Returns whether the scenario is a favourite now.\\
+	\hline\rule{0pt}{2ex}
+	setSkin(id) & Switches skin ("" for Classic).\\
+	\hline\rule{0pt}{2ex}
+	refreshSetup() & Reads setup again.\\
+	\hline\rule{0pt}{2ex}
+	openUrl(url) & Opens an http, https or mailto URL in the browser.\\
+	\hline\rule{0pt}{2ex}
+	quit() & Closes Orbiter.\\
+	\hline\rule{0pt}{2ex}
+	log(text) & Writes a line to Orbiter.log.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+Each property has its ...Changed signal; \textit{returnedFromClassic()} fires when the user comes back from the classic pages. Writing currentScenario or startPaused takes effect at once; every method that opens a dialog or launches runs after the current QML call returns.\\
+\textit{date} is the scenario's simulation date as YYYY-MM-DD HH:MM; scenarios without a date start at the current time and have no mjd or date.
+
+\end{sloppypar}
+
+\end{document}

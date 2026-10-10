@@ -3,6 +3,34 @@
 
 \section{What is new}
 
+\subsection{Orbiter 2027}
+These features are new in the Linux edition and are not part of the Windows version.\\
+\\
+\textbf{Planets and moons}\\
+$\blacktriangleright$ The Pluto system: Pluto, Charon, Styx, Nix, Kerberos and Hydra, which Orbiter never had (see section \ref{sec:solsys})\\
+$\blacktriangleright$ New ephemeris modules for Phobos, Deimos, Miranda, Ariel, Umbriel, Titania, Oberon and Triton (the Windows version has them only as 32-bit binaries), and better orbits for Hyperion, Proteus, Nereid and Vesta\\
+$\blacktriangleright$ VSOP87 and ELP82 evaluated at Earth's precision for Mercury, Venus, Mars and the Moon\\
+$\blacktriangleright$ Spin axes and prime meridians of the Sun, Jupiter, Uranus, Neptune, Vesta and 17 moons from the IAU rotation model, with librations\\
+$\blacktriangleright$ Every planet and moon on the tile renderer, with new maps for Mercury, Saturn, Uranus, Triton, Pluto and Charon; Nix, Hydra, Kerberos and Styx drawn as shaped meshes\\
+$\blacktriangleright$ Planet textures are a separate download, which the Launchpad offers to install when a scenario needs them (section \ref{sec:installation})\\
+$\blacktriangleright$ Measured atmospheres for every body that has one (Jupiter, Saturn, Uranus, Neptune, Titan, Io, Triton and Pluto are new), so drag, aerobraking and aerocapture follow the real density\\
+$\blacktriangleright$ The solar system tour scenario visits the Pluto system\\
+\\
+\textbf{Launchpad}\\
+$\blacktriangleright$ Launchpad skins: style sheets, complete new launchers made in Qt Designer or QML (Horizon, Planetary Defense) and layouts of the classic Launchpad edited in Qt Designer (section \ref{ssec:launchpad_skins})\\
+$\blacktriangleright$ The Orbiter 2027 banner; the credits box and the About tab link the GitHub repository of the Linux edition\\
+\\
+\textbf{Collisions and damage}\\
+$\blacktriangleright$ The Collision module: vessels collide with each other, with base buildings and with the ground, using colliders made from each vessel's own mesh (section \ref{sec:collisions})\\
+$\blacktriangleright$ Dents where vessels hit, parts that tear off, breaking glass, debris and live structural fracture (NVIDIA Blast)\\
+$\blacktriangleright$ Damage is saved with the scenario and shown again in flight recorder playback\\
+\\
+\textbf{Installation}\\
+$\blacktriangleright$ One download for the common Linux distributions (Ubuntu 22.04 or newer, Debian 12 or newer, Fedora 36 or newer, RHEL, AlmaLinux and Rocky Linux 9 or newer, openSUSE Tumbleweed, Arch Linux, Manjaro and SteamOS 3), with Qt and the other libraries that differ between distributions included\\
+$\blacktriangleright$ The Khronos shader-object layer is included, so Vulkan drivers without VK\_EXT\_shader\_object work\\
+\\
+The next subsection lists what the Linux version itself changed.
+
 \subsection{Linux version}
 $\blacktriangleright$ Orbiter runs natively on 64-bit Linux, built from the same source code as the Windows version\\
 $\blacktriangleright$ VulkanClient: the D3D9 graphics client ported to Vulkan\\

@@ -9,17 +9,17 @@ Below are instructions on how to download and setup and environment to build Orb
 
 
 \subsection{Setup}
-Get the source repository of the Linux version of Orbiter from GitHub (\url{https://github.com/racerx2/orbiter-linux})
+Get the source repository of the Linux version of Orbiter from GitHub (\url{https://github.com/racerx2/orbiter-2027-linux}). The branch Custom holds Orbiter 2027 with the features of the Linux edition; main holds the line-by-line port of the Windows version
 
 \begin{lstlisting}
-git clone git@github.com:racerx2/orbiter-linux.git
+git clone -b Custom git@github.com:racerx2/orbiter-2027-linux.git
 \end{lstlisting}
 
 \noindent
 or
 
 \begin{lstlisting}
-git clone https://github.com/racerx2/orbiter-linux.git
+git clone -b Custom https://github.com/racerx2/orbiter-2027-linux.git
 \end{lstlisting}
 
 \noindent
@@ -46,9 +46,31 @@ If you want to build the documentation (CMake option ORBITER\_MAKE\_DOC), you ne
 If the documentation build fails, try limiting the build to a single thread; some of the document compilers are not thread-safe.
 
 
+\subsection{The release package}
+The download of Orbiter 2027 for Linux is a portable package that runs on the common x86-64 distributions with glibc 2.34 or newer. The scripts that build it are in packaging/linux in the Orbiter sources:
+
+\begin{itemize}
+\item Dockerfile: the build environment, AlmaLinux 9 (glibc 2.34) with GCC 14 (gcc-toolset-14), CMake, Ninja and Qt 6.8 LTS. deps.sh builds Vulkan-Headers, glslang and Khronos' shader-object layer (VK\_LAYER\_KHRONOS\_shader\_object) into it.
+\item build.sh <source> <out> <version> [manuals folder]: configures, builds and installs Orbiter from a copy of the source (without the high-resolution texture archives), copies the manuals, runs collect.py and packs Orbiter2027-Linux-x86\_64-<version>.tar.xz with its .sha256 file.
+\item collect.py: copies Qt (with its plugins and the QML modules the Launchpad skins use) and every library outside the system set into lib/, sets each file's RUNPATH relative to lib/, writes qt.conf, and writes deps.list with only the system libraries, by package name for apt, dnf, zypper and pacman, which the OpenOrbiter launcher offers to install. It stops if a file needs a newer glibc (2.34) or libstdc++ (GLIBCXX 3.4.29, CXXABI 1.3.13) than the baseline.
+\item test.sh <package> [images]: checks a package in containers of other distributions: the launcher's package names install, every library resolves, the launcher's checks pass, a scenario runs headless, the Launchpad loads a QML skin (offscreen and X11), and the VulkanClient renders on Mesa's software Vulkan driver (lavapipe), with and without the shader-object layer and under a headless Wayland compositor (weston).
+\end{itemize}
+
+\begin{lstlisting}
+docker build -t orbiter-portable-build packaging/linux
+docker run --rm -v $PWD:/src -v $PWD/out/portable:/out \
+    orbiter-portable-build \
+    /src/packaging/linux/build.sh /src /out <version>
+packaging/linux/test.sh out/portable/Orbiter2027-Linux-x86_64-<version>.tar.xz
+\end{lstlisting}
+
+\noindent
+The VulkanClient finds the shader-object layer in lib/vulkan of the package: it adds that folder to VK\_LAYER\_PATH (with the loader's own folders) before its first Vulkan call and enables the layer when it is there. The layer stays inactive on drivers that have VK\_EXT\_shader\_object themselves.
+
+
 \subsection{Contribute}
 You can contribute to the development of Orbiter, either by fixing a bug or by adding a new feature. You'll need to create your own fork of Orbiter in GitHub, put your changes in a branch, and then create a "Pull Request" (PR) so that you changes can be analysed by others, before they are merged into Orbiter.\\
-If you find an issue in the Linux version of Orbiter, but you don't know how to fix it, you can open a ticket (\url{https://github.com/racerx2/orbiter-linux/issues}) to allow others to fix it.
+If you find an issue in the Linux version of Orbiter, but you don't know how to fix it, you can open a ticket (\url{https://github.com/racerx2/orbiter-2027-linux/issues}) to allow others to fix it.
 
 
 \end{document}
