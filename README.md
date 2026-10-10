@@ -95,9 +95,20 @@ Hardware requirements needed by Orbiter:
 
 The Vulkan driver also needs the extensions listed in [COMPILE.md](./COMPILE.md).
 
+### Download a build
+
+Ready-to-run builds for 64-bit PCs are on the [Releases](https://github.com/racerx2/orbiter-2027-linux/releases) page
+(`Orbiter2027-Linux-x86_64-<version>.tar.xz`). One download runs on Ubuntu 22.04 or newer (and Linux Mint, Pop!_OS,
+Zorin OS), Debian 12 or newer, Fedora 36 or newer, RHEL / AlmaLinux / Rocky Linux 9 or newer, openSUSE Tumbleweed,
+Arch Linux, Manjaro and SteamOS. Unpack it into a folder you own and start `OpenOrbiter`; it checks the few system
+libraries Orbiter uses and offers to install any that are missing. Qt and the other libraries that differ between
+distributions come with the download. How it is built: [packaging/linux](./packaging/linux/README.md).
+
+### Build from source
+
 Get the port repository from github
 ```bash
-git clone https://github.com/racerx2/orbiter-linux.git
+git clone -b Custom https://github.com/racerx2/orbiter-2027-linux.git
 ```
 
 To configure and build you need CMake 3.28 or later, Ninja and GCC with C++20.

@@ -45,7 +45,11 @@ void AxisStop (void*, wl_pointer*, uint32_t, uint32_t) {}
 void AxisDiscrete (void*, wl_pointer*, uint32_t, int32_t) {}
 void AxisValue120 (void*, wl_pointer*, uint32_t, int32_t) {}
 void AxisRelDir (void*, wl_pointer*, uint32_t, uint32_t) {}
-const wl_pointer_listener pointerListener = { Enter, Leave, Motion, Button, Axis, Frame, AxisSource, AxisStop, AxisDiscrete, AxisValue120, AxisRelDir };
+struct PointerListener { // every wl_pointer event up to version 9, also with older headers (wayland 1.21 lacks the last two): the seat Qt binds may send them
+	decltype (&Enter) enter; decltype (&Leave) leave; decltype (&Motion) motion; decltype (&Button) button; decltype (&Axis) axis; decltype (&Frame) frame;
+	decltype (&AxisSource) axisSource; decltype (&AxisStop) axisStop; decltype (&AxisDiscrete) axisDiscrete; decltype (&AxisValue120) axisValue120; decltype (&AxisRelDir) axisRelDir;
+};
+const PointerListener pointerListener = { Enter, Leave, Motion, Button, Axis, Frame, AxisSource, AxisStop, AxisDiscrete, AxisValue120, AxisRelDir };
 
 void RelMotion (void*, zwp_relative_pointer_v1*, uint32_t, uint32_t, wl_fixed_t dx, wl_fixed_t dy, wl_fixed_t, wl_fixed_t)
 {
@@ -87,7 +91,7 @@ void WlPointerAttach ()
 	wl_proxy_set_queue ((wl_proxy*)seat, queue);
 	pointer = wl_seat_get_pointer (seat);
 	wl_proxy_wrapper_destroy (seat);
-	wl_pointer_add_listener (pointer, &pointerListener, nullptr);
+	wl_proxy_add_listener ((wl_proxy*)pointer, (void (**)(void))&pointerListener, nullptr);
 	wl_display_flush (display);
 }
 
