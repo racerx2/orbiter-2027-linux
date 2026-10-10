@@ -3530,3 +3530,121 @@ TEST_CASE ("blast fix: classification by rest position; K rows and events keep 3
 	REQUIRE (DentMath::ParseBondsEvent (pay[0].c_str (), slot, got, more));
 	CHECK (got == b); CHECK (!more);
 }
+
+// custom-fix B (design-custom-fix B1, B4, D2)
+TEST_CASE ("custom-fix B1: B row impactor token after the mass; long names hash; old B rows load as before", "[dent][dmg3]")
+{
+	auto bline = [] (const std::vector<std::string> &ls) { for (auto &x : ls) if (x.find ("XDMGM B ") != std::string::npos) return x; return std::string (); };
+	auto fnv = [] (const std::string &s) { return DentMath::Fnv1a (s.data (), s.size ()); };
+	DentVesselText v;
+	v.eabs = 5e5;
+	DentDebris d; d.id = 3, d.slot = 0, d.key = 5, d.ngrp = 300, d.nvtx = 4000, d.simt = 101.125, d.name = "PB-A_D1";
+	DentDebrisPose q; q.grp = { 1, 2 }; d.pose.push_back (q);
+	v.debris.push_back (d);
+	std::vector<std::string> l = Format (v);                         // the old layout: no impactor
+	CHECK (bline (l) == "  XDMGM B 3 0 00000005 300 4000 101.125 PB-A_D1");
+	DentVesselText w = ParseVessel (l);
+	REQUIRE (w.debris.size () == 1);
+	CHECK (w.debris[0].other.empty ()); CHECK (w.debris[0].mass == 0); CHECK (w.debris[0].name == "PB-A_D1");
+	std::vector<std::string> old = { "  XDMG 1 500000 0", "  XDMG 2 0 00000000 500000", "  XDMGM B 3 0 00000005 300 4000 101.125 PB-A_D1 1234.5", "  XDMGM Q 3 0 0 0 0 0 0 1 1,2" }; // an old save
+	w = ParseVessel (old);
+	REQUIRE (w.debris.size () == 1);
+	CHECK (w.debris[0].mass == 1234.5); CHECK (w.debris[0].other.empty ()); CHECK (w.debris[0].pose.size () == 1);
+	v.debris[0].mass = 1234.5; v.debris[0].other = "PB B";
+	l = Format (v);
+	CHECK (bline (l) == "  XDMGM B 3 0 00000005 300 4000 101.125 PB-A_D1 1234.5 O=PB%20B"); // t[9] stays the mass for old readers
+	w = ParseVessel (l);
+	CHECK (w.debris[0].other == "PB B"); CHECK (w.debris[0].mass == 1234.5);
+	v.debris[0].mass = 0;
+	w = ParseVessel (Format (v));
+	CHECK (w.debris[0].other == "PB B"); CHECK (w.debris[0].mass == 0);  // without a mass O= is not read as one
+	const std::string ln (190, 'n'), lo (190, 'o');
+	uint32_t h = 0;
+	v.debris[0].name = ln; v.debris[0].other = "B";                  // a long name: its hash, the impactor kept
+	l = Format (v);
+	for (auto &x : l) CHECK (x.size () <= (size_t)DENT_LINE_MAX);
+	w = ParseVessel (l);
+	CHECK (DentMath::NameHash (w.debris[0].name, h)); CHECK (h == fnv (ln)); CHECK (w.debris[0].other == "B");
+	v.debris[0].name = "PB-A_D1"; v.debris[0].other = lo;             // a long impactor: its hash, the name kept
+	l = Format (v);
+	for (auto &x : l) CHECK (x.size () <= (size_t)DENT_LINE_MAX);
+	w = ParseVessel (l);
+	CHECK (w.debris[0].name == "PB-A_D1"); CHECK (DentMath::NameHash (w.debris[0].other, h)); CHECK (h == fnv (lo));
+	v.debris[0].name = ln;                                           // both long: both hashes
+	l = Format (v);
+	for (auto &x : l) CHECK (x.size () <= (size_t)DENT_LINE_MAX);
+	w = ParseVessel (l);
+	CHECK (DentMath::NameHash (w.debris[0].name, h)); CHECK (DentMath::NameHash (w.debris[0].other, h));
+	CHECK (!DentMath::NameHash ("#1234567", h)); CHECK (!DentMath::NameHash ("#1234567g", h)); CHECK (!DentMath::NameHash ("x1234567a", h));
+	CHECK (DentMath::NameHash ("#0000Abcd", h)); CHECK (h == 0xabcdu);
+}
+
+TEST_CASE ("custom-fix D2: a T row whose name would pass the line takes the #fnv8 name, saved and recorded; old T rows load as before", "[dent][dmg3]")
+{
+	DentVesselText v;
+	v.eabs = 1234.5;
+	DentTorn t;
+	t.kind = 0, t.slot = 2, t.key = 5, t.ngrp = 300, t.nvtx = 4000, t.simt = 12.0625, t.debris = std::string (190, 'd') + " x";
+	for (int g = 0; g < 80; g++) t.grp.push_back ((uint16_t)(g * 3));
+	v.torn.push_back (t);
+	std::vector<std::string> l = Format (v);
+	for (const std::string &x : l) CHECK (x.size () <= (size_t)DENT_LINE_MAX);
+	int sk = -1;
+	DentVesselText w = ParseVessel (l, &sk);
+	CHECK (sk == 0);
+	REQUIRE (w.torn.size () == 1);                                   // continuation lines joined: the same head
+	CHECK (w.torn[0].grp == t.grp);
+	uint32_t h = 0;
+	CHECK (DentMath::NameHash (w.torn[0].debris, h));
+	CHECK (h == DentMath::Fnv1a (t.debris.data (), t.debris.size ()));
+	CHECK (Format (w) == l);
+	t.kin = true, t.dv = Vector (-1.23456789e-05, 7.125, 1e-3), t.dw = Vector (0.25, -1.23456789e-05, -6.2831), t.mass = 2345.5;
+	std::vector<std::string> pay;
+	DentMath::FormatTornEvent (t, pay);                              // the recorder: within its payload
+	std::vector<uint16_t> all;
+	for (auto &x : pay) {
+		CHECK (x.size () <= (size_t)DENT_EVENT_MAX);
+		DentTorn o; bool more = false;
+		REQUIRE (DentMath::ParseTornEvent (x.c_str (), o, more));
+		CHECK (DentMath::NameHash (o.debris, h));
+		all.insert (all.end (), o.grp.begin (), o.grp.end ());
+	}
+	CHECK (all == t.grp);
+	std::vector<std::string> old = { "  XDMG 1 1234.5 0", "  XDMG 2 0 00000000 1234.5", "  XDMGM T 0 2 00000005 300 4000 12.0625 PB%20debris 3,6,", "  XDMGM T 0 2 00000005 300 4000 12.0625 PB%20debris 9" }; // an old save
+	w = ParseVessel (old, &sk);
+	CHECK (sk == 0);
+	REQUIRE (w.torn.size () == 1);
+	CHECK (w.torn[0].debris == "PB debris"); CHECK (w.torn[0].grp == std::vector<uint16_t> { 3, 6, 9 });
+	DentTorn s = t; s.debris = "PB-A_D1"; s.grp = { 4, 5 }; s.kin = false; // a short name stays as it is
+	std::vector<std::string> sl;
+	DentMath::FormatTornEvent (s, sl);
+	REQUIRE (sl.size () == 1);
+	CHECK (sl[0] == "0 2 00000005 300 4000 12.0625 PB-A_D1 4,5");
+}
+
+TEST_CASE ("custom-fix B4: recorder T rows of blast cell debris carry cells, pieces, centroid and crushed after K; old T events parse as before", "[dent][blast]")
+{
+	DentTorn t;
+	t.kind = 5, t.slot = 1, t.key = 0x1234, t.ngrp = 6, t.nvtx = 294, t.simt = 3.25, t.debris = "PB-A_D2";
+	t.kin = true, t.dv = Vector (0.5, -0.25, 7), t.dw = Vector (0, 0.125, -1), t.mass = 81.0234375;
+	t.cells = { 3, 17, 40 }, t.pieces = { 2 }, t.c = Vector (1.5, -0.375, 2.0625), t.crushed = true;
+	std::vector<std::string> pay;
+	DentMath::FormatTornEvent (t, pay);
+	REQUIRE (pay.size () == 1);
+	CHECK (pay[0].size () <= (size_t)DENT_EVENT_MAX);
+	CHECK (pay[0] == "5 1 00001234 6 294 3.25 PB-A_D2 * K 0.5 -0.25 7 0 0.125 -1 81.0234375 C=3,17,40 P=2 X=1.5,-0.375,2.0625 F=1");
+	DentTorn o; bool more = true;
+	REQUIRE (DentMath::ParseTornEvent (pay[0].c_str (), o, more));
+	CHECK (!more);
+	CHECK (o.kind == 5); CHECK (o.grp.empty ()); CHECK (o.kin); CHECK (o.mass == t.mass);
+	CHECK (o.cells == t.cells); CHECK (o.pieces == t.pieces); CHECK (o.crushed);
+	CHECK (o.c.x == 1.5); CHECK (o.c.y == -0.375); CHECK (o.c.z == 2.0625);
+	DentTorn k;                                                      // an old T event: K only
+	REQUIRE (DentMath::ParseTornEvent ("0 0 00001234 120 9000 12.5 PB-A_D2 1,2 K 7.125 -0.5 0.001 0.25 0 -6.2831 2345.5", k, more));
+	CHECK (k.kin); CHECK (k.mass == 2345.5); CHECK (k.cells.empty ()); CHECK (k.pieces.empty ()); CHECK (!k.crushed); CHECK (k.grp == std::vector<uint16_t> { 1, 2 });
+	REQUIRE (DentMath::ParseTornEvent ("0 0 00001234 120 9000 12.5 PB-A_D2 1,2", k, more)); // and without K
+	CHECK (!k.kin);
+	DentTorn b;                                                      // bad tokens after K are skipped, the row stays
+	REQUIRE (DentMath::ParseTornEvent ("5 1 00001234 6 294 3.25 PB-A_D2 * K 0 0 0 0 0 0 9 C=3,x X=1,2 Q=7", b, more));
+	CHECK (b.kin); CHECK (b.cells.empty ()); CHECK (b.c.length () == 0);
+}

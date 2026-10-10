@@ -26,7 +26,7 @@ struct CollDamageHit {                                   // one vessel side of a
 	double simt = 0; bool playback = false;
 	const DentMaterial *mat = nullptr;
 };
-enum : int { CBRK_PART = 0, CBRK_GLASS = 1, CBRK_INTERIOR = 2, CBRK_SECTION = 3, CBRK_RESTHIDDEN = 4 };
+enum : int { CBRK_PART = 0, CBRK_GLASS = 1, CBRK_INTERIOR = 2, CBRK_SECTION = 3, CBRK_RESTHIDDEN = 4, CBRK_CELL = 5 }; // CBRK_CELL: blast cell debris, recorder T rows only
 enum : uint32_t { CBRK_FN_TD = 1, CBRK_FN_THR = 2, CBRK_FN_DOCK = 4, CBRK_FN_GEAR = 8 }; // dmg3 tear: CollPieceA::functional bits
 struct CollBlastBreak {                                  // blast: one actor that separated from the main structure of a vessel slot (design-CA-blast 2, 4)
 	uint32_t id = 0, slot = 0, other = 0;                // vessel, mesh slot, impactor id (0 none)
@@ -34,6 +34,7 @@ struct CollBlastBreak {                                  // blast: one actor tha
 	std::vector<uint32_t> pieces;                        // animated pieces (CollBreakA piece indices of the slot)
 	double mass = 0;                                     // [kg]
 	Vector centroid, dv, dw;                             // vessel frame: centre of mass; separation velocity and spin relative to the parent
+	Vector n;                                            // vessel frame: unit outward direction of the split
 	Vector inertia;                                      // vessel frame: point-mass inertia diagonal of the chunks about the vessel origin [kg m^2]
 	bool crushed = false;                                // torn off by the crush: the debris keeps no crush record
 	double simt = 0;

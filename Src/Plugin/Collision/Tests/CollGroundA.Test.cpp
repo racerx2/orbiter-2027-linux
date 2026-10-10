@@ -561,3 +561,16 @@ TEST_CASE ("ground: an attached child's root takes the impulse, with the root's 
 	CHECK (std::fabs (e.meff - CollGroundMeff (9000, Vector (5, 6, 7), pt, tmul (R, up))) <= 1e-6 * e.meff); // up to the local normal over the box
 	CHECK (std::fabs (((root->rd.v - vr0) & up) * 9000 - e.Jn) <= 1e-6 * e.Jn); // the root takes Jn
 }
+
+TEST_CASE ("ground B6: the refine gate uses the approach speed, not the full speed: a wingtip over a ditch at 80 m/s makes none", "[ground]")
+{
+	Rig r ({ Box (Vector (0.5, 0.5, 4)) });
+	double rp = r.earth->size;
+	r.Place (IMatrix (), 0.05, Vector (0, 80, 0), Vector (0, 2, 0)); // the +z end sinks at 8 m/s, everything slides at 80 m/s
+	REQUIRE (r.Frame (0.05) == 1);                                   // flat ground: one event at the +z end
+	CHECK (r.ev[0].s[0].c.z == 4);
+	Rig q ({ Box (Vector (0.5, 0.5, 4)) });
+	q.sdk.elevG = [rp] (double lng, double) { double z = lng * rp; return z > 3.9 && z < 4.03 ? -2.0 : 0.0; }; // a 2 m ditch under that end only
+	q.Place (IMatrix (), 0.05, Vector (0, 80, 0), Vector (0, 2, 0));
+	CHECK (q.Frame (0.05) == 0);                                     // 2 m above its own terrain: no event (|v| hz + 0.1 = 4.1 m let it through)
+}

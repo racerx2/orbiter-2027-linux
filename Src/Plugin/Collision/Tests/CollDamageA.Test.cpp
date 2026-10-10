@@ -1948,3 +1948,56 @@ TEST_CASE ("ground: a ground event dents the vessel side with the block material
 	CHECK (r.sdk.Logged ("Collision dent t="));
 	CHECK_FALSE (r.sdk.Logged ("Collision building"));
 }
+
+TEST_CASE ("custom-fix B4: blast cell debris rows are recorded only; playback hands them to P and never saves them", "[blast]")
+{
+	auto dir = std::filesystem::temp_directory_path () / "collD_cellrow";
+	std::filesystem::remove_all (dir);
+	std::vector<std::string> playScn, saved;
+	DentTorn tr;
+	tr.kind = CBRK_CELL, tr.slot = 0, tr.key = DentMath::MeshKey ("plate"), tr.ngrp = 1, tr.nvtx = 441, tr.simt = 1.5, tr.debris = "PB-A_D1";
+	tr.kin = true, tr.dv = Vector (0.5, 0, -1), tr.dw = Vector (0, 0.25, 0), tr.mass = 12.5, tr.cells = { 3, 7 }, tr.pieces = {}, tr.c = Vector (0.5, -0.25, 1), tr.crushed = true;
+	{
+		Rig r;
+		r.s.sideDir = dir.string ();
+		r.cfg.testRecId = "CELL1";
+		std::vector<std::string> order;
+		r.s.brk.reset (new SinkLog ("brk", &order));
+		uint32_t a = r.Add ("PB-A");
+		r.Begin ();
+		r.Frame ();
+		r.B (a).v->recording = true;
+		r.s.SaveLines (playScn);
+		r.s.RecordTorn (a, tr);
+		CHECK ((!r.s.Damage (a) || r.s.Damage (a)->d.torn.empty ()));  // not a saved row
+		r.s.SaveLines (saved);
+		for (auto &l : saved) CHECK (l.find ("XDMGM T ") == std::string::npos);
+		r.s.End ();
+	}
+	REQUIRE (std::filesystem::exists (dir / "CELL1.txt"));
+	{
+		std::ifstream f (dir / "CELL1.txt");
+		std::stringstream ss;
+		ss << f.rdbuf ();
+		CHECK (ss.str ().find (" T ") != std::string::npos);
+		CHECK (ss.str ().find (" C=3,7 ") != std::string::npos);
+	}
+	Rig p;
+	std::vector<std::string> order2;
+	auto *bk = new SinkLog ("brk", &order2);
+	p.s.brk.reset (bk);
+	p.s.sideDir = dir.string ();
+	uint32_t a = p.Add ("PB-A");
+	p.B (a).v->playback = true;
+	CollStoreBlock blk;
+	size_t pos = 0;
+	REQUIRE (CollStore::Parse ([&] (std::string &l) { if (pos >= playScn.size ()) return false; l = playScn[pos++]; return true; }, blk));
+	p.Begin (std::move (blk));
+	for (int k = 0; k < 6; k++) p.Frame ();
+	REQUIRE (bk->torn.size () == 1);                                    // to P
+	const DentTorn &o = bk->torn[0];
+	CHECK (o.kind == CBRK_CELL); CHECK (o.debris == "PB-A_D1"); CHECK (o.kin); CHECK (o.mass == 12.5);
+	CHECK (o.cells == tr.cells); CHECK (o.crushed); CHECK (o.c.x == 0.5); CHECK (o.c.y == -0.25); CHECK (o.c.z == 1);
+	CHECK ((!p.s.Damage (a) || p.s.Damage (a)->d.torn.empty ()));      // never a saved row
+	std::filesystem::remove_all (dir);
+}

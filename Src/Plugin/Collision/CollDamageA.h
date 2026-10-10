@@ -99,6 +99,7 @@ public:
 	std::unique_ptr<CollDmgSink> brk, fx;
 	std::map<std::pair<uint32_t, uint32_t>, double> noPair;                  // vessel ids (low, high) -> simt the filter was set
 	void AddTorn (uint32_t id, const DentTorn &t);                           // P: record a torn row (saved, recorder T event)
+	void RecordTorn (uint32_t id, const DentTorn &t);                        // P: recorder T event only (blast cell debris), not saved
 	void SetDebris (uint32_t id, const std::vector<DentDebris> &d);          // P: the vessel's live debris rows (saved)
 	// blast (design-CA-blast 3)
 	void SetSites (uint32_t id, const DentSites &s);                         // store or replace the slot's sites (saved, recorder S event)

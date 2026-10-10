@@ -659,8 +659,8 @@ void PutExtFields (std::string &s, const DentParams &p)
 std::string NameTok (const std::string &n);
 std::string NameUntok (const Tok &t);
 
-// "<kind> <slot> <key8> <ngrp> <nvtx> <simt> <debris>"
-std::string TornHead (const DentTorn &t)
+// "<kind> <slot> <key8> <ngrp> <nvtx> <simt> <debris>"; room: the line left for the head, its first group and the ',' mark
+std::string TornHead (const DentTorn &t, size_t room)
 {
 	std::string s;
 	PutInt (s, (unsigned)t.kind); s += ' ';
@@ -669,8 +669,40 @@ std::string TornHead (const DentTorn &t)
 	s += ' '; PutInt (s, (unsigned)t.ngrp);
 	s += ' '; PutInt (s, t.nvtx);
 	s += ' '; Put17 (s, t.simt);
-	s += ' '; s += NameTok (Clean (t.debris, false)); // dmg3 m4: %-escaped, round-trips blanks
+	std::string nm = NameTok (Clean (t.debris, false)), g0 = "*"; // dmg3 m4: %-escaped, round-trips blanks
+	if (!t.grp.empty ()) g0.clear (), PutInt (g0, (unsigned)t.grp[0]);
+	if (t.debris != "-" && s.size () + 1 + nm.size () + 1 + g0.size () + 1 > room) { nm = "#"; PutHex8 (nm, DentMath::Fnv1a (t.debris.data (), t.debris.size ())); } // as FormatDebris
+	s += ' '; s += nm;
 	return s;
+}
+
+// blast: "3,17,40"
+void PutList (std::string &s, const std::vector<uint32_t> &v)
+{
+	for (size_t i = 0; i < v.size (); i++) { if (i) s += ','; PutInt (s, v[i]); }
+}
+
+// blast: cell debris tokens after K: C=<cells> P=<pieces> X=<cx>,<cy>,<cz> F=<crushed>; others skipped
+void ParseCellTok (const Tok &t, DentTorn &r)
+{
+	if (t.n < 3 || t.p[1] != '=') return;
+	Tok v { t.p + 2, t.n - 2 };
+	char k = Lower (t.p[0]);
+	bool more = false;
+	std::vector<uint32_t> l;
+	if (k == 'c' || k == 'p') { if (ParseBondTok (v, l, more) && !more && l.size () <= 65536) (k == 'c' ? r.cells : r.pieces) = l; }
+	else if (k == 'x') {
+		double c[3];
+		const char *s = v.p, *e = v.p + v.n;
+		int n = 0;
+		while (n < 3 && s <= e) {
+			const char *x = s;
+			while (x < e && *x != ',') x++;
+			if (!ParseD (Tok { s, (size_t)(x - s) }, c[n]) || !(std::fabs (c[n]) <= DENT_LIM_POS)) return;
+			n++; s = x + 1;
+		}
+		if (n == 3 && s > e) r.c = Vector (c[0], c[1], c[2]);
+	} else if (k == 'f') { uint32_t f; if (ParseInt (v, f)) r.crushed = f != 0; }
 }
 
 bool ParseTornTok (const std::vector<Tok> &t, size_t i, DentTorn &o, bool &more)
@@ -687,6 +719,7 @@ bool ParseTornTok (const std::vector<Tok> &t, size_t i, DentTorn &o, bool &more)
 		bool ok = true;
 		for (int j = 0; j < 7 && ok; j++) ok = ParseD (t[i+9+j], kv[j]) && std::fabs (kv[j]) <= 1e9;
 		if (ok) r.kin = true, r.dv = Vector (kv[0], kv[1], kv[2]), r.dw = Vector (kv[3], kv[4], kv[5]), r.mass = kv[6];
+		if (ok) for (size_t j = i + 16; j < t.size (); j++) ParseCellTok (t[j], r);
 	}
 	o = r;
 	return true;
@@ -1549,15 +1582,23 @@ bool DentMath::ParseExtEvent (const char *payload, uint32_t &recidx, uint32_t &h
 
 void DentMath::FormatTornEvent (const DentTorn &t, std::vector<std::string> &payload)
 {
+	const size_t lim = (size_t)DENT_EVENT_MAX;
 	if (t.kin) { // dmg3 tear: live debris kinematics after the groups of the last payload
 		std::string k = " K";
 		const double v[7] = { t.dv.x, t.dv.y, t.dv.z, t.dw.x, t.dw.y, t.dw.z, t.mass };
 		for (double x : v) PutNumArg (k, Clamp (x, -1e9, 1e9));
-		GroupLines (TornHead (t), t.grp, (size_t)DENT_EVENT_MAX - k.size (), payload);
+		if (!t.cells.empty () || !t.pieces.empty ()) { // blast: cell debris (recorder only): cells, pieces, centroid, crushed
+			if (!t.cells.empty ()) k += " C=", PutList (k, t.cells);
+			if (!t.pieces.empty ()) k += " P=", PutList (k, t.pieces);
+			k += " X="; PutNum (k, Clamp (t.c.x, -DENT_LIM_POS, DENT_LIM_POS)); k += ','; PutNum (k, Clamp (t.c.y, -DENT_LIM_POS, DENT_LIM_POS)); k += ','; PutNum (k, Clamp (t.c.z, -DENT_LIM_POS, DENT_LIM_POS));
+			if (t.crushed) k += " F=1";
+		}
+		size_t room = k.size () < lim ? lim - k.size () : 0;
+		GroupLines (TornHead (t, room), t.grp, room, payload);
 		payload.back () += k;
 		return;
 	}
-	GroupLines (TornHead (t), t.grp, (size_t)DENT_EVENT_MAX, payload);
+	GroupLines (TornHead (t, lim), t.grp, lim, payload);
 }
 
 bool DentMath::ParseTornEvent (const char *payload, DentTorn &t, bool &more)
@@ -1948,6 +1989,13 @@ uint32_t DentMath::MeshKey (const char *name)
 	return Fnv1a (s.data (), s.size ());
 }
 
+bool DentMath::NameHash (const std::string &name, uint32_t &h)
+{
+	if (name.size () != 9 || name[0] != '#') return false;
+	for (size_t i = 1; i < 9; i++) { char c = Lower (name[i]); if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false; }
+	return ParseInt (name.data () + 1, name.data () + 9, h, 16);
+}
+
 void DentMath::FormatVessel (const DentVesselText &v, const char *indent, std::vector<std::string> &lines)
 {
 	std::string ind (indent ? indent : "");
@@ -2021,7 +2069,7 @@ void DentMath::FormatVessel (const DentVesselText &v, const char *indent, std::v
 		PutExtFields (s, p);
 		lines.push_back (s);
 	}
-	for (const DentTorn &t : v.torn) GroupLines (ind + "XDMGM T " + TornHead (t), t.grp, lim, lines);
+	for (const DentTorn &t : v.torn) { std::string th = ind + "XDMGM T "; GroupLines (th + TornHead (t, lim - th.size ()), t.grp, lim, lines); }
 	for (const DentDebris &d : v.debris) FormatDebris (d, ind, lines);
 	for (const DentSites &x : v.sites) FormatSites (x, ind, lines);
 	for (const auto &b : v.brokenBonds) FormatBonds (b.first, b.second, ind, lines);
@@ -2102,10 +2150,20 @@ void DentMath::FormatDebris (const DentDebris &d, const std::string &ind, std::v
 	s += ' '; PutInt (s, (unsigned)d.ngrp);
 	s += ' '; PutInt (s, d.nvtx);
 	s += ' '; Put17 (s, d.simt);
-	std::string nm = NameTok (Clean (d.name, false));
-	if (s.size () + 1 + nm.size () + (d.mass > 0.0 ? 17 : 0) > lim) { nm = "#"; PutHex8 (nm, Fnv1a (d.name.data (), d.name.size ())); }
+	std::string nm = NameTok (Clean (d.name, false)), ot;
+	size_t ms = d.mass > 0.0 ? 17 : 0;
+	if (!d.other.empty ()) ot = " O=" + NameTok (Clean (d.other, false)); // the impactor: its pair filter comes back on load
+	std::string hn = "#", ho = " O=#";
+	PutHex8 (hn, Fnv1a (d.name.data (), d.name.size ())); PutHex8 (ho, Fnv1a (d.other.data (), d.other.size ()));
+	auto fits = [&] (const std::string &n, const std::string &o) { return s.size () + 1 + n.size () + ms + o.size () <= lim; };
+	if (!fits (nm, ot)) { // too long: the impactor's hash, else the name's, else both
+		if (!ot.empty () && fits (nm, ho)) ot = ho;
+		else if (fits (hn, ot)) nm = hn;
+		else { nm = hn; if (!ot.empty ()) ot = ho; }
+	}
 	s += " " + nm;
 	if (d.mass > 0.0) PutNumArg (s, d.mass); // dmg3 tear: section mass, reused on reload
+	s += ot;
 	lines.push_back (s);
 	for (const DentDebrisPose &q : d.pose) {
 		std::string h = ind + "XDMGM Q ";
@@ -2438,6 +2496,7 @@ void DentVesselParser::V2 (const std::string &line)
 			n.ngrp = (uint16_t)ngrp, n.name = NameUntok (t[8]);
 			double ms;
 			if (t.size () >= 10 && ParseD (t[9], ms) && ms > 0.0 && ms < 1e12) n.mass = Q9 (ms);
+			for (size_t k = 9; k < t.size (); k++) if (t[k].n > 2 && Lower (t[k].p[0]) == 'o' && t[k].p[1] == '=') n.other = NameUntok (Tok { t[k].p + 2, t[k].n - 2 }); // optional impactor
 			m_debris.push_back (n);
 			return;
 		}

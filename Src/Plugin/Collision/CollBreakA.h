@@ -49,7 +49,7 @@ struct CollSlotA {                                        // rest geometry of on
 	std::vector<int> tier; std::vector<uint32_t> cls;     // dmg3 tear: per group tier and pose class
 	uint32_t staticCls = 0;                               // dmg3 tear: pose class of the hull (largest piece)
 };
-struct CollDebrisA { uint32_t id = ~0u, parent = 0, other = 0, event = 0; CollH h = nullptr, mesh = nullptr; double birth = 0; DentDebris row; uint32_t fnv = 0; };
+struct CollDebrisA { uint32_t id = ~0u, parent = 0, other = 0, event = 0; CollH h = nullptr, mesh = nullptr; double birth = 0; DentDebris row; uint32_t fnv = 0; bool restored = false; }; // restored: rebuilt on load, its pairs count as apart (no stuck delete)
 struct CollSpawnA { uint32_t parent = 0, other = 0, event = 0; std::string mesh; DentDebris row; Vector cv, dv, dw; double mass = 0; CollSdk::DebrisCaps caps; bool blast = false; }; // blast: the parent takes the opposite impulse
 struct CollCutPlan { bool ok = false; DentRecord rec; std::vector<uint16_t> front, straddle; double d = 0, f = 0, area = 0; const char *why = ""; }; // dmg3 tear: planned cut
 struct CollFreeA { CollH mesh = nullptr, h = nullptr; bool dropped = false; };
@@ -63,6 +63,8 @@ struct CollBlastSlotA {                                   // blast: one vessel s
 	bool full = false;                                    // record limit reached, logged
 	std::vector<uint32_t> weak;                           // weakened bonds already stored (W rows)
 	bool rebuild = false;                                 // a held piece split off: rebuild from the stored state after the pass
+	std::set<uint32_t> held;                              // chunk keys of held pieces: a split of these alone needs no rebuild
+	std::map<uint32_t, uint32_t> heldW;                   // W rows of held bonds broken in the actor: pair -> health x 1e6
 };
 bool CollPieceHeld (const CollPieceA &p, const CollDamageHit &h); // blast: dmg3 part gates for an actor of animated pieces only (approach speed, dock pin)
 struct CollParentA { bool read = false; CollVesselRead rd {}; Vector rp, rv, J, H; double M = 0; std::vector<std::pair<Vector, Vector>> jf; }; // pre-step: one read and one write per parent; jf: impulse and point of each debris (stacks)
@@ -95,10 +97,13 @@ public:
 	uint64_t tears = 0;
 	void SpawnCells (const CollBlastBreak &b);            // blast: cell cuts, torn rows, one debris with KEEP VCUT copies, parent impulse
 	CollBlastA *Blast (uint32_t id, uint32_t mesh) { auto it = blast.find ({ id, mesh }); return it == blast.end () ? nullptr : it->second.b.get (); }
-	uint64_t blastBreaks = 0, blastSteps = 0; double blastMs = 0; std::vector<CollKickA> kicks;
+	const CollBlastSlotA *BlastState (uint32_t id, uint32_t mesh) const { auto it = blast.find ({ id, mesh }); return it == blast.end () ? nullptr : &it->second; }
+	uint64_t blastBreaks = 0, blastSteps = 0, blastRebuilds = 0; double blastMs = 0; std::vector<CollKickA> kicks;
 	struct MassCutA { double m0 = 0, cut = 0; Vector pmi0, icut; }; // blast: empty mass and PMI before cuts, mass and inertia removed
 	double MassCut (uint32_t id) const { auto it = massCut.find (id); return it == massCut.end () ? 0 : it->second.cut; } // blast: empty mass removed [kg]
 	static std::vector<DentVtx> PieceVertices (const std::vector<DentVtx> &rest, uint16_t g, const DentDebrisPose &p, const std::vector<DentRecord> &rec, const DentSites *sites = nullptr); // A(q) (rest + records with the slot's sites) + p
+	static CollSdk::DebrisCaps Caps (const std::vector<std::pair<std::vector<DentVtx>, std::vector<uint16_t>>> &geo, double mass, uint32_t *fnv); // uniform shell: exact triangle second moments
+	double CutMass (uint32_t id, CollH vh, double m, const Vector &icut); // blast: lower the parent's empty mass and PMI (total mass M); returns the mass removed
 private:
 	struct VesB { std::vector<DentTorn> rows; size_t adopted = 0; CollShape *sh = nullptr; bool seen = false; CollDamageHit last; bool haveLast = false; };
 	void Assert (uint32_t id, VesB &b);                   // visual flags of hidden groups
@@ -108,6 +113,9 @@ private:
 	void Spawn (CollSpawnA &sp, double simt, std::map<uint32_t, CollParentA> &pc);
 	void Kill (size_t i, const char *why);
 	void SyncRows (uint32_t parent);
+	void AddPairs (const CollDebrisA &d, double simt);   // pair filters of a debris with an id: parent, impactor, other debris (apart already when restored)
+	std::string IdName (uint32_t id);                     // vessel name of a session id, "" none
+	uint32_t NameId (const std::string &name);            // session id of a vessel by name or "#<fnv8>", 0 none
 	void PairCheck (double simt);
 	void Tear (uint32_t id, CollH h, const CollDamageHit &hit, const CollSlotA &sl, const std::vector<int> &pk, uint32_t event, bool playback);
 	bool BuildMesh (CollH mesh, const DentDebris &d, std::vector<std::pair<std::vector<DentVtx>, std::vector<uint16_t>>> &geo, uint32_t parent); // flags and piece vertices of a private copy
@@ -116,14 +124,14 @@ private:
 	std::vector<CollAffine> Poses (uint32_t id, uint32_t mesh, size_t ng);
 	static CollAffine StaticPose (const CollSlotA &sl, const std::vector<CollAffine> &F); // dmg3 tear: pose of the static class
 	bool MakeSpawn (uint32_t id, CollH vh, const CollDamageHit &hit, const CollSlotA &sl, const std::vector<int> &pk, uint32_t event, CollSpawnA &sp);
-	static CollSdk::DebrisCaps Caps (const std::vector<std::pair<std::vector<DentVtx>, std::vector<uint16_t>>> &geo, double mass, uint32_t *fnv);
 	double Mass (uint32_t parent, const CollSlotA &sl, const std::vector<int> &pk);
 	std::string NewName (const std::string &parent);
 	uint32_t FindId (CollH h);
 	void Log (const char *fmt, ...);
 	CollBlastSlotA *BlastSlot (uint32_t id, uint32_t mesh, CollH vh, const CollSlotA &sl); // blast: lazy build, restore from the session
 	void BlastHit (const CollDamageHit &h, CollH vh, const CollSlotA &sl);
-	void BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, CollH vh);
+	void BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, CollH vh, bool hit); // hit: a hit this frame, else spin loads only
+	static std::vector<uint16_t> StatGroups (const CollSlotA &sl); // blast: groups of the static class that form cells
 	bool MakeCellSpawn (const CollBlastBreak &bk, const CollSlotA &sl, CollH vh, const std::vector<Vector> &site, const std::vector<uint16_t> &stat, uint32_t event, CollSpawnA &sp);
 	CollSdk &sdk; CollDmgSession &s; const CollCfgValues &cfg;
 	std::map<uint32_t, VesB> ves;
@@ -135,10 +143,11 @@ private:
 	double postDt = 0, preDt = 0;                                  // blast: last post-step frame [s]
 	std::map<uint32_t, MassCutA> massCut;                 // blast: per vessel
 	std::set<uint32_t> massPending;                       // blast: loaded vessels whose saved cut is not applied yet
-	void CutMass (uint32_t id, CollH vh, double m, const Vector &icut); // blast: lower the parent's empty mass and PMI
 	void LoadMass ();                                     // blast: after load, cut mass from the saved cells
 	double BlastMass (uint32_t id, uint32_t mesh, CollH vh); // blast: the slot's share of the empty mass before cuts
 	void BlastRebuild ();                                 // blast: slots whose held pieces split off, rebuilt from records, K and W rows
+	struct PlayedA { size_t idx = 0; std::vector<int> pk; bool cell = false; };
+	std::map<std::pair<uint32_t, std::string>, PlayedA> played; // playback: queued spawns by parent and recorded debris name, until the pre-step
 	std::vector<CollFreeA> freeMesh;                      // meshes of deleted debris, freed at the Post after OnDeleteVessel, or at End
 	uint32_t maxId = 0, events = 0, debrisSeq = 0;
 	int cfgOk = -1;                                       // CollDebris.cfg probe: -1 not yet

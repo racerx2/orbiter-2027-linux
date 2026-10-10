@@ -174,7 +174,6 @@ int CollGroundA::Vessel (const CollGroundVessel &x, double simt, double simdt, C
 		// refine at the vertex: its own terrain height, the terrain normal from samples a few metres east and north
 		Vector lb = tmul (Rp, q.g - pp);
 		double rlb = lb.length (), lv = std::atan2 (lb.z, lb.x), av = Lat (lb, rlb), hv = sdk.Elevation (sr, lv, av);
-		if (rlb - rp - hv > q.vr.length () * hz + COLL_GROUND_REFINE) continue;
 		double rv = rp + hv, cv = std::cos (av);
 		Vector uv = mul (Rp, Equ (lv, av)), nL = uv;
 		Vector east = mul (Rp, Vector (-std::sin (lv), 0, std::cos (lv))), north = mul (Rp, Vector (-std::sin (av) * std::cos (lv), std::cos (av), -std::sin (av) * std::sin (lv)));
@@ -183,6 +182,7 @@ int CollGroundA::Vessel (const CollGroundVessel &x, double simt, double simdt, C
 			nL = (uv - east * se - north * sn).unit ();
 		}
 		double vn = -dotp (q.vr, nL);
+		if (rlb - rp - hv > std::max (0.0, vn) * hz + COLL_GROUND_REFINE) continue; // the approach speed: sliding fast over a ditch reaches nothing
 		if (!(vn >= cfg.groundMinSpeed)) continue;
 		// the event: vessel side in the hit part's rest frame, ground side in the planet frame
 		const CollPart &P = sh.Part (q.part);

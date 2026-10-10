@@ -120,6 +120,17 @@ void CollDmgSession::AddTorn (uint32_t id, const DentTorn &t)
 	if (rec.active && h && !sdk.Playback (h)) { std::vector<std::string> l; CollSide::Torn (sdk.SimTime () - rec.t0, Alias (v, h), t, l); for (auto &x : l) Side (x); }
 }
 
+void CollDmgSession::RecordTorn (uint32_t id, const DentTorn &t)
+{
+	if (inDent && !later.empty ()) { later.push_back ([this, id, t] () { RecordTorn (id, t); }); return; } // in order with AddTorn
+	CollH h = host.Vessel (id);
+	if (!rec.active || !h || sdk.Playback (h)) return;
+	VesselDamageA &v = Get (id);
+	std::vector<std::string> l;
+	CollSide::Torn (sdk.SimTime () - rec.t0, Alias (v, h), t, l);
+	for (auto &x : l) Side (x);
+}
+
 void CollDmgSession::EmitHit (const CollDamageHit &hit)
 {
 	if (brk) brk->Hit (hit);
@@ -1461,7 +1472,7 @@ void CollDmgSession::Playback (double simt)
 		if (e.kind == 'V') { SetSites (v.id, e.sites); continue; } // blast
 		if (e.kind == 'K') { AddBrokenBonds (v.id, e.slot, e.bonds); continue; }
 		if (e.kind == 'T') { // dmg3: torn groups, applied by P
-			v.d.torn.push_back (e.torn);
+			if (e.torn.kind != CBRK_CELL) v.d.torn.push_back (e.torn); // blast cell debris: spawn only, never a saved row
 			if (brk) brk->Torn (v.id, e.torn);
 			continue;
 		}

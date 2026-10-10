@@ -13,6 +13,7 @@
 #include "CollBreakA.h"
 #include "CollDamageA.h"
 #include "CollShape.h"
+#include "CollAnimTest.h"
 
 namespace {
 
@@ -339,7 +340,7 @@ TEST_CASE ("P7 debris: spawn in post, template flags, vertices, kick, cap, mesh 
 	r.B ().PreStep (0, 0.01); r.B ().Post (0, 0.01);
 	REQUIRE (r.sdk.Calls ("VesselCreate") == 1);
 	REQUIRE (r.B ().Debris ().size () == 1);
-	const CollDebrisA &d = r.B ().Debris ()[0];
+	const CollDebrisA d = r.B ().Debris ()[0];                        // a copy: the cap below erases it from the list
 	BFake::V *dv = BFake::X (d.h);
 	CHECK (dv->name == "A_D1"); CHECK (dv->cls == "CollDebris");
 	MeshT *m = r.sdk.debrisMesh[dv];
@@ -1037,4 +1038,387 @@ TEST_CASE ("spawn queue: a save between the post-step that queued debris and the
 	CHECK (q.B ().Debris ()[0].row.name == "A_D1");
 	CHECK (q.sdk.Logged ("without its vessel spawned again"));
 	REQUIRE (q.S ().Damage (a)->d.debris.size () == 1);
+}
+
+// custom-fix B (design-custom-fix B1-B9, D1)
+namespace {
+typedef std::vector<std::pair<std::vector<DentVtx>, std::vector<uint16_t>>> GeoT;
+void Rect (GeoT &geo, const Vector &o, const Vector &u, const Vector &v, int n, double bulge = 0) // n x n quads from o along u and v; bulge: a dish along u x v
+{
+	geo.emplace_back ();
+	auto &G = geo.back ();
+	Vector nn = crossp (u, v); nn = nn / nn.length ();
+	for (int j = 0; j <= n; j++) for (int i = 0; i <= n; i++) {
+		double s = (double)i / n - 0.5, t = (double)j / n - 0.5;
+		Vector p = o + u * ((double)i / n) + v * ((double)j / n) + nn * (bulge * (s * s + t * t));
+		DentVtx x {}; x.x = (float)p.x, x.y = (float)p.y, x.z = (float)p.z;
+		G.first.push_back (x);
+	}
+	for (int j = 0; j < n; j++) for (int i = 0; i < n; i++) {
+		uint16_t a = (uint16_t)(j * (n + 1) + i), b = (uint16_t)(a + 1), c = (uint16_t)(a + n + 1), d = (uint16_t)(c + 1);
+		G.second.insert (G.second.end (), { a, b, d, a, d, c });
+	}
+}
+Vector OldPmi (const GeoT &geo) // the rule before B9: each triangle as a point at its centroid
+{
+	Vector J; double A = 0;
+	for (auto &g : geo) for (size_t t = 0; t + 2 < g.second.size (); t += 3) {
+		const DentVtx &x = g.first[g.second[t]], &y = g.first[g.second[t + 1]], &z = g.first[g.second[t + 2]];
+		Vector pa (x.x, x.y, x.z), pb (y.x, y.y, y.z), pd (z.x, z.y, z.z);
+		double ar = 0.5 * crossp (pb - pa, pd - pa).length ();
+		Vector m = (pa + pb + pd) / 3.0;
+		J += Vector (m.y * m.y + m.z * m.z, m.x * m.x + m.z * m.z, m.x * m.x + m.y * m.y) * ar; A += ar;
+	}
+	return A > 0 ? J / A : Vector ();
+}
+bool Rel (double a, double b, double tol) { return std::fabs (a - b) <= tol * std::max (1.0, std::fabs (b)); }
+}
+
+TEST_CASE ("B9 debris PMI: exact triangle second moments; square panel and box shell analytic; 2 or 32 triangles the same", "[dmg3P][caps]")
+{
+	for (int n : { 1, 4 }) { // 2 and 32 triangles of a 1 m square in z = 0, centred: (1/12, 1/12, 1/6)
+		GeoT g; Rect (g, Vector (-0.5, -0.5, 0), Vector (1, 0, 0), Vector (0, 1, 0), n);
+		CollSdk::DebrisCaps c = CollBreakA::Caps (g, 10, nullptr);
+		INFO ("n " << n);
+		CHECK (Rel (c.pmi.x, 1.0 / 12, 1e-12)); CHECK (Rel (c.pmi.y, 1.0 / 12, 1e-12)); CHECK (Rel (c.pmi.z, 1.0 / 6, 1e-12));
+	}
+	const double a = 2, b = 3, c = 5; // box shell a x b x c, centred
+	GeoT box;
+	Rect (box, Vector (-1, -1.5, -2.5), Vector (2, 0, 0), Vector (0, 3, 0), 2); Rect (box, Vector (-1, -1.5, 2.5), Vector (2, 0, 0), Vector (0, 3, 0), 2);
+	Rect (box, Vector (-1, -1.5, -2.5), Vector (2, 0, 0), Vector (0, 0, 5), 2); Rect (box, Vector (-1, 1.5, -2.5), Vector (2, 0, 0), Vector (0, 0, 5), 2);
+	Rect (box, Vector (-1, -1.5, -2.5), Vector (0, 3, 0), Vector (0, 0, 5), 2); Rect (box, Vector (1, -1.5, -2.5), Vector (0, 3, 0), Vector (0, 0, 5), 2);
+	double Sxx = 2 * (b * a * a * a / 12 + c * a * a * a / 12 + b * c * a * a / 4), Syy = 2 * (a * b * b * b / 12 + c * b * b * b / 12 + a * c * b * b / 4);
+	double Szz = 2 * (a * c * c * c / 12 + b * c * c * c / 12 + a * b * c * c / 4), A = 2 * (a * b + a * c + b * c);
+	CollSdk::DebrisCaps bc = CollBreakA::Caps (box, 100, nullptr);
+	CHECK (Rel (bc.pmi.x, (Syy + Szz) / A, 1e-12)); CHECK (Rel (bc.pmi.y, (Sxx + Szz) / A, 1e-12)); CHECK (Rel (bc.pmi.z, (Sxx + Syy) / A, 1e-12));
+	GeoT p2, p32; // an off-centre tilted panel: triangulation invariant
+	Rect (p2, Vector (0.25, -0.5, 0.75), Vector (0.5, 0.25, 0), Vector (0, 0.25, 0.5), 1);
+	Rect (p32, Vector (0.25, -0.5, 0.75), Vector (0.5, 0.25, 0), Vector (0, 0.25, 0.5), 4);
+	Vector q2 = CollBreakA::Caps (p2, 1, nullptr).pmi, q32 = CollBreakA::Caps (p32, 1, nullptr).pmi;
+	CHECK (Rel (q2.x, q32.x, 1e-12)); CHECK (Rel (q2.y, q32.y, 1e-12)); CHECK (Rel (q2.z, q32.z, 1e-12));
+	Vector o2 = OldPmi (p2), o32 = OldPmi (p32);
+	CHECK (!Rel (o2.y, o32.y, 1e-3));                                // the old rule was not
+	for (int n : { 1, 2, 4, 16 }) { // cell-like panel near HB_D2 (0.56 x 0.38 m, 0.03 m dish): old and new PMI
+		GeoT g; Rect (g, Vector (-0.28, 0, -0.19), Vector (0.56, 0, 0), Vector (0, 0, 0.38), n, 0.12);
+		Vector o = OldPmi (g), w = CollBreakA::Caps (g, 11.38, nullptr).pmi;
+		printf ("B9 cell-like panel 0.56 x 0.38 m, %3zu triangles: old pmi (%.4g %.4g %.4g), new pmi (%.4g %.4g %.4g); HB_D2 measured (0.0149 0.0383 0.029)\n", g[0].second.size () / 3, o.x, o.y, o.z, w.x, w.y, w.z);
+	}
+}
+
+TEST_CASE ("B9 blast cell debris: old and new PMI of the debris a 70 m/s hit makes", "[dmg3P][caps]")
+{
+	BlastRig r; r.Ship ("A");
+	r.B ().Hit (r.K (70));
+	r.sdk.simt = 0.02; r.B ().PreStep (0.02, 0.02); r.B ().Post (0.02, 0.02);
+	REQUIRE (!r.B ().Debris ().empty ());
+	for (auto &d : r.B ().Debris ()) {
+		const BFake::V *dv = (const BFake::V *)d.h;
+		const MeshT *dm = r.sdk.debrisMesh[dv];
+		REQUIRE (dm);
+		GeoT geo;
+		for (auto &ps : d.row.pose) for (uint16_t g : ps.grp) {
+			std::vector<DentVtx> v (dm->grp[g].vtx.size ());
+			std::memcpy (v.data (), dm->grp[g].vtx.data (), v.size () * sizeof (DentVtx));
+			geo.emplace_back (v, dm->grp[g].idx);
+		}
+		Vector o = OldPmi (geo), w = CollBreakA::Caps (geo, d.row.mass, nullptr).pmi, c = r.sdk.caps[dv].pmi;
+		CHECK (c.x == w.x); CHECK (c.y == w.y); CHECK (c.z == w.z);
+		printf ("B9 blast debris '%s' %.4g kg: old pmi (%.4g %.4g %.4g), new pmi (%.4g %.4g %.4g)\n", d.row.name.c_str (), d.row.mass, o.x, o.y, o.z, w.x, w.y, w.z);
+	}
+}
+
+TEST_CASE ("B1 D1: a long debris name saved as #fnv8 finds its live debris on load; restored debris keep their pair filters, impactor too", "[dmg3P]")
+{
+	std::string pn (180, 'x'); pn[0] = 'A';
+	const std::string dn = pn + "_D1";
+	std::vector<DentDebris> rows; std::vector<DentTorn> torn;
+	{
+		Rig r; uint32_t a = r.Add (pn), b = r.Add ("B");
+		CollDamageHit h = r.H (a, 1, 70, 0.9); h.other = b; h.vt = 0;
+		r.B ().Hit (h); r.B ().PreStep (0, 0.01); r.B ().Post (0, 0.01);
+		REQUIRE (r.B ().Debris ().size () == 1);
+		const VesselDamageA *vd = r.S ().Damage (a);
+		REQUIRE (vd->d.debris.size () == 1);
+		CHECK (vd->d.debris[0].other == "B");                       // B1: the impactor rides on the B row
+		std::vector<std::string> lines; DentMath::FormatVessel (vd->d, "  ", lines);
+		for (auto &l : lines) CHECK (l.size () <= (size_t)DENT_LINE_MAX);
+		DentVesselParser p; for (auto &l : lines) p.Line (l.c_str ());
+		DentVesselText o; p.Finish (o);
+		REQUIRE (o.debris.size () == 1);
+		uint32_t hv = 0;
+		CHECK (DentMath::NameHash (o.debris[0].name, hv));
+		CHECK (hv == DentMath::Fnv1a (dn.data (), dn.size ()));
+		CHECK (o.debris[0].other == "B");
+		REQUIRE (o.torn.size () == 1);
+		CHECK (DentMath::NameHash (o.torn[0].debris, hv));           // D2: the T row too
+		rows = o.debris; torn = o.torn;
+	}
+	Rig q; uint32_t a = q.Add (pn), b = q.Add ("B");
+	BFake::V *dv = q.sdk.Add (dn, "CollDebris"); uint32_t did = q.host.IdOf (dv);
+	for (auto &t : torn) q.S ().AddTorn (a, t);
+	q.S ().SetDebris (a, rows);
+	q.B ().PreStep (3, 0.01); q.B ().Post (3, 0.01);
+	REQUIRE (q.B ().Debris ().size () == 1);
+	CHECK (q.B ().Debris ()[0].h == dv);                              // D1: the hash finds it
+	CHECK (dv->alive);
+	CHECK (q.sdk.Calls ("VesselCreate") == 0);
+	CHECK (q.B ().Debris ()[0].row.name == dn);
+	REQUIRE (q.S ().Damage (a)->d.debris.size () == 1);
+	CHECK (q.S ().Damage (a)->d.debris[0].name == dn);
+	CHECK (q.B ().Debris ()[0].other == b);
+	CHECK (q.S ().noPair.count ({ std::min (a, did), std::max (a, did) }));   // B1: parent
+	CHECK (q.S ().noPair.count ({ std::min (b, did), std::max (b, did) }));   // and impactor filters back
+	q.sdk.simt = 14; q.B ().PreStep (14, 0.01); q.B ().Post (14, 0.01); // restored pairs count as apart: no stuck delete after load
+	CHECK (dv->alive); CHECK (!q.sdk.Logged ("still overlapping"));
+	Rig z; uint32_t za = z.Add (pn);                                 // no live debris for the hash: spawned again under a real name
+	z.S ().SetDebris (za, rows);
+	z.B ().PreStep (3, 0.01); z.B ().Post (3, 0.01);
+	REQUIRE (z.sdk.Calls ("VesselCreate") == 1);
+	REQUIRE (z.B ().Debris ().size () == 1);
+	CHECK (z.B ().Debris ()[0].row.name == dn);
+	CHECK (BFake::X (z.B ().Debris ()[0].h)->name == dn);
+}
+
+TEST_CASE ("B1: restored blast debris are filtered against their parent and each other again", "[dmg3P][blast]")
+{
+	std::vector<DentDebris> rows; DentSites ds;
+	{
+		BlastRig r; uint32_t a = r.Ship ("A");
+		r.B ().Hit (r.K (70));
+		r.sdk.simt = 0.02; r.B ().PreStep (0.02, 0.02); r.B ().Post (0.02, 0.02);
+		REQUIRE (r.B ().Debris ().size () >= 2);
+		rows = r.S ().Damage (a)->d.debris; ds = *r.S ().Sites (a, 0);
+	}
+	BlastRig q; uint32_t a = q.Ship ("A");
+	q.S ().SetSites (a, ds);
+	std::vector<uint32_t> ids;
+	for (auto &row : rows) ids.push_back (q.host.IdOf (q.sdk.Add (row.name, "CollDebris")));
+	q.S ().SetDebris (a, rows);
+	q.B ().PreStep (0, 0.02); q.B ().Post (0, 0.02);
+	REQUIRE (q.B ().Debris ().size () == rows.size ());
+	CHECK (q.sdk.Calls ("VesselCreate") == 0);
+	for (size_t i = 0; i < ids.size (); i++) {
+		CHECK (q.S ().noPair.count ({ std::min (a, ids[i]), std::max (a, ids[i]) }));
+		for (size_t j = i + 1; j < ids.size (); j++) CHECK (q.S ().noPair.count ({ std::min (ids[i], ids[j]), std::max (ids[i], ids[j]) }));
+	}
+	CHECK (q.B ().Pairs ().size () == ids.size () * (ids.size () + 1) / 2);
+}
+
+TEST_CASE ("B2: a spawn that fails drops its queued row", "[dmg3P]")
+{
+	Rig r; uint32_t a = r.Add ("A");
+	r.B ().Hit (r.H (a, 1, 70, 0.9));
+	REQUIRE (r.B ().Pending () == 1);
+	REQUIRE (r.S ().Damage (a)->d.debris.size () == 1);
+	r.sdk.mesh.front ().name = "gone";                               // the slot's template has no file now
+	r.B ().PreStep (0, 0.01); r.B ().Post (0, 0.01);
+	CHECK (r.sdk.Logged ("not loaded, no debris"));
+	CHECK (r.sdk.Calls ("VesselCreate") == 0);
+	CHECK (r.S ().Damage (a)->d.debris.empty ());
+	CHECK (r.B ().Hidden (a, 0, 1));                                 // the part stays torn off
+}
+
+TEST_CASE ("B3: the mass cut scales the PMI with the total mass; repair restores it, also past the floor", "[dmg3P][blast]")
+{
+	BlastRig r; uint32_t a = r.Ship ("A");
+	BFake::V *v = r.body.front ().v;
+	v->empty = 10000; v->rd.m = 20000; v->rd.pmi = Vector (10, 10, 10); // 10 t of fuel
+	Vector ic = Vector (0, 64, 64) * 1000;                           // 1 t at 8 m along x
+	CHECK (r.B ().CutMass (a, v, 1000, ic) == 1000);
+	CHECK (v->empty == 9000); CHECK (v->rd.m == 19000);
+	CHECK (Rel (v->rd.pmi.x, 200000.0 / 19000, 1e-12));
+	CHECK (Rel (v->rd.pmi.y, 136000.0 / 19000, 1e-12));              // 7.16, not the 4.0 of the empty mass
+	CHECK (Rel (v->rd.pmi.z, 136000.0 / 19000, 1e-12));
+	r.B ().Repair (a);
+	CHECK (v->empty == 10000); CHECK (v->rd.m == 20000);
+	for (double c : { v->rd.pmi.x, v->rd.pmi.y, v->rd.pmi.z }) CHECK (Rel (c, 10, 1e-12));
+	CHECK (r.B ().CutMass (a, v, 1000, Vector (0, 1e7, 0)) == 1000); // past the 0.1 pmi0 floor
+	CHECK (v->rd.pmi.y == 1.0);
+	CHECK (r.sdk.Logged ("Collision blast 'A' PMI floor"));
+	r.B ().Repair (a);
+	for (double c : { v->rd.pmi.x, v->rd.pmi.y, v->rd.pmi.z }) CHECK (Rel (c, 10, 1e-12)); // the inertia really removed comes back
+}
+
+TEST_CASE ("B8: blast debris take the mass the parent lost; at the cap no debris and a mass cap line", "[dmg3P][blast]")
+{
+	for (double left : { 10.0, 1.0 }) {
+		INFO ("left " << left);
+		BlastRig r; uint32_t a = r.Ship ("A");
+		BFake::V *v = r.body.front ().v;
+		REQUIRE (r.B ().CutMass (a, v, BLAST_MASS_CUT * 5000 - left, Vector ()) > 0);
+		r.B ().Hit (r.K (70));
+		REQUIRE (r.B ().blastBreaks >= 1);
+		CHECK (std::fabs (r.B ().MassCut (a) - BLAST_MASS_CUT * 5000) < 1e-9);
+		r.sdk.simt = 0.02; r.B ().PreStep (0.02, 0.02); r.B ().Post (0.02, 0.02);
+		CHECK (r.sdk.Logged ("Collision blast 'A' mass cap"));
+		double m = 0;
+		for (auto &d : r.B ().Debris ()) { m += d.row.mass; CHECK (d.row.mass == r.sdk.caps[(const BFake::V *)d.h].mass); }
+		CHECK (m <= left + 1e-9);                                    // no mass made
+		if (left == 10.0) { REQUIRE (r.B ().Debris ().size () == 1); CHECK (r.B ().Debris ()[0].row.mass == 10.0); }
+		else CHECK (r.B ().Debris ().empty ());
+	}
+}
+
+TEST_CASE ("B4: playback spawns blast cell debris from its recorded row: same vertices, the recorded kick and mass, no parent write", "[dmg3P][blast]")
+{
+	BlastRig r; uint32_t a = r.Ship ("A");
+	r.B ().Hit (r.K (70));
+	r.sdk.simt = 0.02; r.B ().PreStep (0.02, 0.02); r.B ().Post (0.02, 0.02);
+	REQUIRE (!r.B ().Debris ().empty ());
+	const CollDebrisA &d = r.B ().Debris ()[0];
+	const BFake::V *dv = (const BFake::V *)d.h;
+	DentTorn t;
+	t.kind = CBRK_CELL; t.slot = 0; t.key = DentMath::MeshKey ("ship"); t.ngrp = 6; t.nvtx = 6 * 49; t.simt = 0; t.debris = d.row.name; t.kin = true;
+	for (auto &rc : d.row.rec) if (rc.p.mode == DENTM_VCUT) t.cells.push_back ((uint32_t)rc.p.P);
+	t.c = r.sdk.created[dv].rpos; t.dv = r.sdk.created[dv].rvel; t.dw = r.sdk.spins[dv]; t.mass = r.sdk.caps[dv].mass;
+	std::vector<std::string> pay; DentMath::FormatTornEvent (t, pay);
+	REQUIRE (pay.size () == 1);
+	DentTorn u; bool more = true;
+	REQUIRE (DentMath::ParseTornEvent (pay[0].c_str (), u, more));
+	CHECK (u.cells == t.cells);
+	DentSites ds = *r.S ().Sites (a, 0);
+	BlastRig q; uint32_t b = q.Ship ("A");
+	q.body.front ().v->playback = true;
+	q.S ().SetSites (b, ds);
+	q.B ().Torn (b, u);
+	for (uint32_t g = 0; g < 6; g++) CHECK (!q.B ().Hidden (b, 0, g));  // no hidden groups
+	q.B ().PreStep (0, 0.02); q.B ().Post (0, 0.02);
+	REQUIRE (q.sdk.Calls ("VesselCreate") == 1);
+	REQUIRE (q.B ().Debris ().size () == 1);
+	const CollDebrisA &e = q.B ().Debris ()[0];
+	const BFake::V *ev = (const BFake::V *)e.h;
+	REQUIRE (e.row.pose.size () == d.row.pose.size ());
+	const MeshT *lm = r.sdk.debrisMesh[dv], *pm = q.sdk.debrisMesh[ev];
+	for (auto &ps : d.row.pose) for (uint16_t g : ps.grp) CHECK (std::memcmp (lm->grp[g].vtx.data (), pm->grp[g].vtx.data (), lm->grp[g].vtx.size () * sizeof (CollVtx)) == 0);
+	CHECK ((q.sdk.created[ev].rpos - t.c).length () < 1e-6);
+	CHECK ((q.sdk.created[ev].rvel - t.dv).length () < 1e-6);
+	CHECK ((q.sdk.spins[ev] - t.dw).length () < 1e-6);
+	CHECK (q.sdk.caps[ev].mass == t.mass);
+	for (auto &x : q.sdk.states) CHECK (x.first != q.body.front ().v); // the recording moves the parent
+	CHECK (q.B ().kicks.empty ());
+}
+
+TEST_CASE ("B4: playback part rows use their recorded kick and mass; rows of one debris make one", "[dmg3P]")
+{
+	Rig r; uint32_t a = r.Add ("A");
+	r.body.front ().v->playback = true;
+	DentTorn t; t.kind = CBRK_PART; t.slot = 0; t.key = DentMath::MeshKey ("ship"); t.ngrp = 4; t.debris = "A_D1"; t.grp = { 1 };
+	t.kin = true; t.dv = Vector (0.5, -2, 3); t.dw = Vector (0, 0.25, 0); t.mass = 17;
+	r.B ().Torn (a, t);
+	DentTorn t2 = t; t2.simt = 0.5;                                   // a second row of the same debris: one spawn
+	r.B ().Torn (a, t2);
+	r.B ().PreStep (0, 0.01); r.B ().Post (0, 0.01);
+	REQUIRE (r.sdk.Calls ("VesselCreate") == 1);
+	const BFake::V *dv = BFake::X (r.B ().Debris ()[0].h);
+	CHECK ((r.sdk.created[dv].rvel - t.dv).length () < 1e-9);
+	CHECK ((r.sdk.spins[dv] - t.dw).length () < 1e-9);
+	CHECK (r.sdk.caps[dv].mass == 17);
+}
+
+
+namespace { // B7: the box hull with an animated 1.33 m panel (group 6) welded onto its +z face
+struct HeldRig : BlastRig {
+	TestVessel tv; TestModule mod; CollAnim ca;
+	HeldRig ()
+	{
+		CollGroupData g;
+		const double s = 4.0 / 6;
+		for (int j = 0; j <= 2; j++) for (int i = 0; i <= 2; i++) g.vtx.push_back (CollVtx { (float)(s * i), (float)(s * j), 2.0f, 0, 0, 1, 0, 0 });
+		for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) { uint16_t a = (uint16_t)(j * 3 + i), b = (uint16_t)(a + 1), c = (uint16_t)(a + 3), d = (uint16_t)(c + 1); g.idx.insert (g.idx.end (), { a, b, d, a, d, c }); }
+		sdk.mesh.front ().grp.push_back (g);
+	}
+	uint32_t ShipA (const std::string &name)
+	{
+		tv.coll = &ca; tv.meshGrp = { 7 };
+		UINT an = tv.CreateAnimation (0);
+		tv.AddAnimationComponent (an, 0, 1, mod.Rot (0, mod.Grp ({ 6 }), 1, _V (0, 0, 2), _V (1, 0, 0), (float)(PI / 2)));
+		tv.Step ();
+		uint32_t a = Ship (name);
+		Body &b = body.back ();
+		b.sh.reset (new CollShape ());
+		b.sh->Update (&b.mi, 1, ca, tv.anim, tv.nanim, cache);
+		host.shape[b.id] = b.sh.get ();
+		S ().brk->Shapes (b.id, b.sh.get ());
+		return a;
+	}
+	CollDamageHit P (double vn, double eSpec, double R = 1.2) { CollDamageHit h = K (vn, R); h.c = Vector (0.67, 0.67, 2); h.grp = 6; h.eSpec = eSpec; h.Jn = 0; return h; }
+};
+}
+
+TEST_CASE ("B5: a split under spin loads only gets no kick: the debris keeps the parent's rotation velocity at its centroid", "[dmg3P][blast]")
+{
+	static const DentMaterial weak { "weak", 1e4, 0.01, 1, 0, 0, 0.5, false };
+	BlastRig r; r.Ship ("A");
+	CollDamageHit h = r.K (5, 0.5); h.mat = &weak;
+	r.B ().Hit (h);
+	r.sdk.simt = 0.02; r.B ().PreStep (0.02, 0.02); r.B ().Post (0.02, 0.02); // the hit's own debris, if any
+	size_t n0 = r.B ().Debris ().size ();
+	uint64_t b0 = r.B ().blastBreaks;
+	const Vector w (0, 0, 60);
+	r.body.front ().v->rd.w = w;
+	r.sdk.simt = 0.5; r.B ().PreStep (0.5, 0.02); r.B ().Post (0.5, 0.02); // no hit this frame: spin loads only
+	REQUIRE (r.B ().blastBreaks > b0);
+	r.sdk.simt = 0.52; r.B ().PreStep (0.52, 0.02);
+	REQUIRE (r.B ().Debris ().size () > n0);
+	for (size_t i = n0; i < r.B ().Debris ().size (); i++) {
+		const BFake::V *dv = (const BFake::V *)r.B ().Debris ()[i].h;
+		Vector cv = r.sdk.created[dv].rpos, vr = crossp (cv, w);
+		CHECK ((r.sdk.created[dv].rvel - vr).length () <= 1e-12 * std::max (1.0, vr.length ())); // no kick from the old hit
+		CHECK ((r.sdk.spins[dv] - w).length () <= 1e-12 * w.length ());
+	}
+}
+
+TEST_CASE ("B7: a held piece keeps its bonds' health from before the step as W rows; the same held set again needs no rebuild", "[dmg3P][blast]")
+{
+	HeldRig r; uint32_t a = r.ShipA ("A");
+	r.B ().Hit (r.P (15, 100, 0.3));                                 // weakens the panel's bonds
+	for (int k = 0; k < 4; k++) { r.sdk.simt += 0.1; CollDamageHit h = r.P (15, 0, 0.3); h.Jn = 1e5; r.B ().Hit (h); } // pushes break some
+	CollBlastA *x = r.B ().Blast (a, 0);
+	REQUIRE (x);
+	int pc = x->ChunkOfPiece (1);
+	REQUIRE (pc >= 0);
+	uint32_t key = x->ChunkKey ((uint32_t)pc);
+	std::map<uint32_t, double> pre;                                  // the panel's intact bonds: pair -> health share
+	for (uint32_t i = 0; i < x->bond.size (); i++) if ((x->bond[i].a == (uint32_t)pc || x->bond[i].b == (uint32_t)pc) && x->Health (i) > 0) {
+		uint32_t u = x->ChunkKey (x->bond[i].a), v = x->ChunkKey (x->bond[i].b);
+		pre[std::min (u, v) * 65536u + std::max (u, v)] = x->Health (i) / x->bond[i].area;
+	}
+	REQUIRE (pre.size () >= 2);
+	for (auto &p : pre) REQUIRE (p.second < 0.999);                 // weakened: W rows
+	CHECK (r.B ().blastBreaks == 0);
+	CHECK (r.sdk.Logs ("piece chunks held") == 0);
+	r.sdk.simt += 0.1;
+	r.B ().Hit (r.P (15, 300, 0.5));                                 // the panel splits off at 15 m/s: held
+	CHECK (r.B ().blastBreaks == 0);
+	CHECK (r.sdk.Logs ("piece chunks held") == 1);
+	CHECK (r.B ().blastRebuilds == 1);
+	const std::vector<uint32_t> *wb = r.S ().WeakBonds (a, 0), *kb = r.S ().BrokenBonds (a, 0);
+	REQUIRE (wb); REQUIRE (kb);
+	std::map<uint32_t, uint32_t> W;
+	for (size_t k = 0; k + 1 < wb->size (); k += 2) W[(*wb)[k]] = (*wb)[k + 1];
+	for (auto &p : pre) {
+		INFO ("pair " << p.first / 65536 << "/" << p.first % 65536);
+		REQUIRE (W.count (p.first));                                 // kept as a W row
+		CHECK (std::fabs (W[p.first] * 1e-6 - p.second) < 2e-6);     // at its health before the step
+		CHECK (!std::binary_search (kb->begin (), kb->end (), p.first)); // never a K row
+	}
+	x = r.B ().Blast (a, 0);                                         // rebuilt: the panel back on at that health, not new
+	REQUIRE (x);
+	pc = x->ChunkOfPiece (1);
+	for (uint32_t i = 0; i < x->bond.size (); i++) if (x->bond[i].a == (uint32_t)pc || x->bond[i].b == (uint32_t)pc) {
+		uint32_t u = x->ChunkKey (x->bond[i].a), v = x->ChunkKey (x->bond[i].b), p = std::min (u, v) * 65536u + std::max (u, v);
+		if (pre.count (p)) CHECK (std::fabs (x->Health (i) / x->bond[i].area - pre[p]) < 2e-6);
+	}
+	CHECK (key == x->ChunkKey ((uint32_t)pc));
+	auto held = [&] () { std::map<uint32_t, uint32_t> m; const std::vector<uint32_t> *w = r.S ().WeakBonds (a, 0); if (w) for (size_t k = 0; k + 1 < w->size (); k += 2) if (pre.count ((*w)[k])) m[(*w)[k]] = (*w)[k + 1]; return m; };
+	std::map<uint32_t, uint32_t> w1 = held ();
+	CHECK (w1.size () == pre.size ());
+	r.sdk.simt += 0.1;
+	r.B ().Hit (r.P (15, 300, 0.5));                                 // the same held set again: no rebuild, its W rows stay
+	CHECK (r.B ().blastRebuilds == 1);
+	CHECK (r.sdk.Logs ("piece chunks held") == 1);
+	CHECK (held () == w1);
+	r.sdk.simt += 0.1;
+	r.B ().PreStep (r.sdk.simt, 0.02); r.B ().Post (r.sdk.simt, 0.02); // and through the next steps
+	CHECK (held () == w1);
 }
