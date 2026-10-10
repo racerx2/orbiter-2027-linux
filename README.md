@@ -16,7 +16,7 @@ a try. Orbiter is free, so you don’t need to invest more than a bit of your
 spare time.
 
 This tree is the Linux-only code of a line-by-line port of [orbitersim/orbiter](https://github.com/orbitersim/orbiter)
-(commits in `UPSTREAM`, via [racerx2/orbiter64-Linux](https://github.com/racerx2/orbiter64-Linux)) to native Linux: no Wine, no DXVK, graphics on Vulkan 1.3,
+(commits in `UPSTREAM`, via [racerx2/orbiter64-Linux](https://github.com/racerx2/orbiter-2027-linux/tree/main)) to native Linux: no Wine, no DXVK, graphics on Vulkan 1.3,
 windows and dialogs on Qt 6, sound on PipeWire. It holds no Windows code; Orbiter for
 Windows is [orbitersim/orbiter](https://github.com/orbitersim/orbiter).
 
