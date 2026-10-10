@@ -734,6 +734,7 @@ bool ParseTornTok (const std::vector<Tok> &t, size_t i, DentTorn &o, bool &more)
 		|| !ParseInt (t[i+4], r.nvtx) || !ParseD (t[i+5], r.simt) || !ParseGroups (t[i+7], r.grp, more)) return false;
 	r.kind = (uint8_t)kind, r.ngrp = (uint16_t)ngrp;
 	r.debris = NameUntok (t[i+6]);
+	if (r.debris.empty ()) r.debris = "-"; // the no-debris marker survives the recorder
 	double kv[7];
 	size_t c0 = i + 8; // blast: cell tokens after K, or after the groups of a cell payload
 	if (!more && t.size () >= i + 16 && IEq (t[i+8].p, t[i+8].n, "K")) { // dmg3 tear: kinematics

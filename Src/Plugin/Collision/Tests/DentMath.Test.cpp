@@ -2640,7 +2640,7 @@ TEST_CASE("dmg3 recorder X and T payloads", "[dent][dmg3]")
 		all.insert (all.end (), b.grp.begin (), b.grp.end ());
 		if (!i) a = b;
 	}
-	CHECK ((a.kind == 2 && a.slot == 3 && a.key == 0xdeadbeef && a.ngrp == 200 && a.nvtx == 9000 && a.simt == t.simt && a.debris.empty () && all == t.grp));
+	CHECK ((a.kind == 2 && a.slot == 3 && a.key == 0xdeadbeef && a.ngrp == 200 && a.nvtx == 9000 && a.simt == t.simt && a.debris == "-" && all == t.grp));
 }
 
 namespace {
