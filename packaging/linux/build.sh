@@ -19,6 +19,6 @@ python3 "$SRC/packaging/linux/collect.py" --root "$R" --qt "$QTDIR" --deps "$DEP
 install -m 644 "$SRC/packaging/linux/README-LINUX.txt" "$R/README-LINUX.txt"
 touch "$R/portable"
 find "$R" -name 'Archive' -path '*Textures*' -prune -exec rm -rf {} + # never the high-res planet archives
-( cd "$STAGE" && tar -cf - "$NAME" | xz -T0 -6 > "$OUT/$NAME.tar.xz" )
+( cd "$STAGE" && tar -cf - "$NAME" | xz -T0 -6 > "$OUT/$NAME.tar.xz.part" ) && mv -f "$OUT/$NAME.tar.xz.part" "$OUT/$NAME.tar.xz"
 ( cd "$OUT" && sha256sum "$NAME.tar.xz" > "$NAME.tar.xz.sha256" )
 ls -l "$OUT/$NAME.tar.xz"
