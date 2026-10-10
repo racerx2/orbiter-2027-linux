@@ -932,7 +932,7 @@ void CollAddonFrame::Impl::Deliver (int i, const Plan &in, const CollOrbState &c
 		r.fPn = std::max (0.0, r.eP.length () - nP)/sP;
 		r.fL = std::max (0.0, r.eL.length () - nL)/sL;
 		r.f = r.fPn + r.fL;
-		r.ok = std::isfinite (r.f) && Finite (c.s.pos) && Finite (c.s.omega);
+		r.ok = std::isfinite (r.f) && std::isfinite (r.fP) && Finite (c.s.pos) && Finite (c.s.vel) && Finite (c.s.omega); // max (0, NaN) is 0: the velocity is checked itself
 		return r.ok;
 	};
 	It cur;
