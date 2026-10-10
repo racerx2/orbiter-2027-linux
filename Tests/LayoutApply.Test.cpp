@@ -922,7 +922,7 @@ TEST_CASE("Undo: looks back, texts the code set kept, managed controls stay hidd
 	QWidget *abt = oapiResDlgItem (b.dlg, IDC_SHADOW);
 	CHECK(abt->isHidden ());
 	QLabel *logo = static_cast<QLabel*> (oapiResDlgItem (b.dlg, IDC_LOGO)), *box = static_cast<QLabel*> (oapiResDlgItem (b.dlg, IDC_BLACKBOX));
-	const QString boxText = "\norbit.medphys.ucl.ac.uk\n(c) 2000-2016\nMartin Schweiger";
+	const QString boxText = "\ngithub.com/racerx2/orbiter-2027-linux\n(c) 2000-2016\nMartin Schweiger";
 	CHECK(logo->text () == "LOGO TEXT");
 	CHECK(!box->pixmap ().isNull ());
 
