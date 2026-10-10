@@ -13,7 +13,7 @@ class CheckFail(Exception):  # exit 1, one short line
     pass
 
 
-class Skip(Exception):  # exit 77 from a check (golden header mismatch, golden missing)
+class Skip(Exception):  # exit 77 from a check (golden missing, or golden header and content both differ)
     pass
 
 
@@ -231,7 +231,7 @@ def golden_write(ctx, r, name):
     return p
 
 
-def golden_compare(ctx, r, name):  # T 4.5: header mismatch skips, missing golden skips, body bitwise
+def golden_compare(ctx, r, name):  # T 4.5: body bitwise; missing golden skips, a header mismatch skips only when the body differs
     p = golden_path(ctx, name)
     if os.environ.get('COLL_GOLDEN_WRITE') == '1' and r.spec.addon == 'off':  # goldens come from addon-off runs only (addon: none)
         golden_write(ctx, r, name)
@@ -241,9 +241,14 @@ def golden_compare(ctx, r, name):  # T 4.5: header mismatch skips, missing golde
     with gzip.open(p, 'rb') as f:
         text = f.read().decode('latin-1')
     head = text.split('\n', 1)[0]
-    if head != ctx.golden_header:
-        raise Skip('golden header differs: %s | this build: %s' % (head, ctx.golden_header))
-    same_dumps(Dump(text.split('\n', 1)[1]), r.dump, 'run %s vs golden %s' % (r.spec.id, name))
+    gold = Dump(text.split('\n', 1)[1] if '\n' in text else '')
+    if head == ctx.golden_header:
+        same_dumps(gold, r.dump, 'run %s vs golden %s' % (r.spec.id, name))
+        return
+    d = first_diff(gold.body_lines(), r.dump.body_lines())
+    if d:
+        raise Skip('golden header differs (%s | this build: %s) and run %s differs at line %d: %s | %s' % (head, ctx.golden_header, r.spec.id, d[0], d[1][:160], d[2][:160]))
+    print('golden %s: header differs (%s | this build: %s), run %s content matches' % (name, head, ctx.golden_header, r.spec.id))
 
 
 def quiet(r):  # G5 family: A1 pinned, writes=0, notices=0, no Collision t= line (E4 7.6 item 7)

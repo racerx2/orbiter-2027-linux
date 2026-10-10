@@ -188,14 +188,18 @@ def check_golden(work):  # the run checks of the golden tests run on every machi
     off = lambda text=None: FakeRun(text or pair_dump(), [], addon='off')
     bumped = pair_dump().replace('v=0,0,0.5 ', 'v=0,0,%s ' % g(math.nextafter(0.5, 1.0)), 1)
     for what, name, runs, head, body, want in (
-            ('G5 header mismatch, notices=1', 'G5.Smack', [('c1', on(noisy))], other, pair_dump(), 1),
-            ('G5 header mismatch, clean', 'G5.Smack', [('c1', on())], other, pair_dump(), runner.SKIP),
-            ('G5 no golden, a contact line', 'G5.Surface', [('c1', on([A1, QUIET, 'Collision t=1 PB-A PB-B']))], None, None, 1),
+            ('G5 header mismatch, notices=1', 'G5.Smack', [('c0', off()), ('c1', on(noisy))], other, pair_dump(), 1),
+            ('G5 header mismatch, clean, same content', 'G5.Smack', [('c0', off()), ('c1', on())], other, pair_dump(), 0),
+            ('G5 no golden, a contact line', 'G5.Surface', [('c0', off()), ('c1', on([A1, QUIET, 'Collision t=1 PB-A PB-B']))], None, None, 1),
+            ('G5 no golden, clean', 'G5.Surface', [('c0', off()), ('c1', on())], None, None, runner.SKIP),
             ('G5.Far header mismatch, off and on differ', 'G5.Far', [('c0', off()), ('c1', on(text=bumped))], other, pair_dump(), 1),
-            ('G5.Far header mismatch, off equals on', 'G5.Far', [('c0', off()), ('c1', on())], other, pair_dump(), runner.SKIP),
+            ('G5.Far header mismatch, off equals on, golden differs', 'G5.Far', [('c0', off()), ('c1', on())], other, bumped, runner.SKIP),
             ('G5.Far golden equal', 'G5.Far', [('c0', off()), ('c1', on())], None, pair_dump(), 0),
             ('golden off run differs by 1 ulp', 'Coll.Off.Golden.Pair', [('c0', off(bumped))], None, pair_dump(), 1),
-            ('golden off run, header mismatch', 'Coll.Off.Golden.Pair', [('c0', off())], other, pair_dump(), runner.SKIP)):
+            ('golden header match, content differs', 'Coll.Off.Golden.Pair', [('c0', off())], None, bumped, 1),
+            ('golden header mismatch, same content', 'Coll.Off.Golden.Pair', [('c0', off())], other, pair_dump(), 0),
+            ('golden header mismatch, content differs', 'Coll.Off.Golden.Pair', [('c0', off())], other, bumped, runner.SKIP),
+            ('golden header mismatch, golden shorter', 'Coll.Off.Golden.Pair', [('c0', off())], other, pair_dump(frames=2), runner.SKIP)):
         got = golden_case(work, name, runs, head, body)
         if got != want:
             print('selftest: golden %s: exit %d, %d expected' % (what, got, want))
