@@ -57,6 +57,7 @@ public:
 	void Crush (const Vector &c, const Vector &n, double P, double R, double ratio); // crush plane P behind c (outward n) within R: chunks with >= ratio of their depth in front of it fracture off
 	std::vector<uint32_t> Crushed (const Vector &c, const Vector &n, double P, double R, double ratio) const; // main-actor chunks the crush takes
 	std::vector<CollBlastSplit> Step ();                    // impact, stress update, fracture, split: actors that left the main one
+	bool Reset ();                                          // the cached asset's first actor again: every bond whole, no chunk gone, material kept
 	void Restore (const std::vector<uint32_t> &bonds, const std::vector<uint32_t> &removed, const std::vector<uint32_t> &weak = {}); // load: broken bonds, removed chunks, weakened bonds (W rows), split, no reports
 	std::vector<uint32_t> WeakPairs () const;               // W rows: chunk key pair, remaining health x 1e6 (1..999999), sorted by pair
 	std::vector<uint32_t> Broken () const;                  // broken bond indices (ours), sorted
@@ -79,6 +80,7 @@ public:
 private:
 	struct Buf { std::vector<unsigned char> b; void *Get (size_t n); };
 	void Release ();
+	bool Family ();                                         // family, first actor (health = bond area) and stress solver of the asset
 	void Split (std::vector<CollBlastSplit> *out);
 	std::vector<uint32_t> Chunks (const NvBlastActor *a) const;
 	Buf assetMem, familyMem, scratch;
@@ -93,5 +95,6 @@ private:
 	Vector impC; double impR = 0, impD = 0;
 	Vector crC, crN; double crP = 0, crR = 0, crRatio = 1;
 	Vector cg;
+	double sigY = BLAST_SIGMA_Y, sigU = BLAST_SIGMA_U;      // the last Material
 };
 #endif

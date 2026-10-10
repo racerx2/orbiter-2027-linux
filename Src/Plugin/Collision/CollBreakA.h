@@ -62,9 +62,7 @@ struct CollBlastSlotA {                                   // blast: one vessel s
 	std::vector<uint32_t> cut;                            // chunks gone at build (load)
 	bool full = false;                                    // record limit reached, logged
 	std::vector<uint32_t> weak;                           // weakened bonds already stored (W rows)
-	bool rebuild = false;                                 // a held piece split off: rebuild from the stored state after the pass
-	std::set<uint32_t> held;                              // chunk keys of held pieces: a split of these alone needs no rebuild
-	std::map<uint32_t, uint32_t> heldW;                   // W rows of held bonds broken in the actor: pair -> health x 1e6
+	std::set<uint32_t> held;                              // chunk keys of held pieces already logged
 };
 bool CollPieceHeld (const CollPieceA &p, const CollDamageHit &h); // blast: dmg3 part gates for an actor of animated pieces only (approach speed, dock pin)
 struct CollParentA { bool read = false; CollVesselRead rd {}; Vector rp, rv, J, H; double M = 0; std::vector<std::pair<Vector, Vector>> jf; }; // pre-step: one read and one write per parent; jf: impulse and point of each debris (stacks)
@@ -145,9 +143,8 @@ private:
 	std::set<uint32_t> massPending;                       // blast: loaded vessels whose saved cut is not applied yet
 	void LoadMass ();                                     // blast: after load, cut mass from the saved cells
 	double BlastMass (uint32_t id, uint32_t mesh, CollH vh); // blast: the slot's share of the empty mass before cuts
-	void BlastRebuild ();                                 // blast: slots whose held pieces split off, rebuilt from records, K and W rows
-	struct PlayedA { size_t idx = 0; std::vector<int> pk; bool cell = false; };
-	std::map<std::pair<uint32_t, std::string>, PlayedA> played; // playback: queued spawns by parent and recorded debris name, until the pre-step
+	struct PlayedA { size_t idx = SIZE_MAX; std::vector<int> pk; bool cell = false; DentTorn row; }; // row: the merged payloads of a cell debris (kick, cells, pieces)
+	std::map<std::pair<uint32_t, uint32_t>, PlayedA> played; // playback: queued spawns by parent and debris name hash (a #fnv8 name is its hash), until the pre-step
 	std::vector<CollFreeA> freeMesh;                      // meshes of deleted debris, freed at the Post after OnDeleteVessel, or at End
 	uint32_t maxId = 0, events = 0, debrisSeq = 0;
 	int cfgOk = -1;                                       // CollDebris.cfg probe: -1 not yet

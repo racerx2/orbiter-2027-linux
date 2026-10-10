@@ -230,32 +230,51 @@ bool CollBlastA::Build (const CollBlastInput &in, const std::vector<Vector> *giv
 		if (na >= g.nodeCount) continue;
 		for (uint32_t k = g.adjacencyPartition[na]; k < g.adjacencyPartition[na + 1]; k++) if (g.adjacentNodeIndices[k] == nb) b.asset = g.adjacentBondIndices[k];
 	}
+	sigY = BLAST_SIGMA_Y; sigU = BLAST_SIGMA_U;
+	if (!Family ()) { Release (); return false; }
+	meanMass = 0;
+	for (auto &c : chunk) meanMass += c.area * t * BLAST_RHO;
+	meanMass /= (double)chunk.size ();
+	accel = NvBlastExtDamageAcceleratorCreate (asset, 1);
+	return true;
+}
+
+bool CollBlastA::Family ()
+{
 	family = NvBlastAssetCreateFamily (familyMem.Get (NvBlastAssetGetFamilyMemorySize (asset, BlastLog)), asset, BlastLog);
-	if (!family) { Release (); return false; }
+	if (!family) return false;
 	std::vector<float> health (std::max<size_t> (1, NvBlastAssetGetBondCount (asset, BlastLog)), 1.0f); // the stress solver reads bond health as the remaining area [m^2]
 	for (auto &b : bond) if (b.asset != UINT32_MAX && b.asset < health.size ()) health[b.asset] = (float)b.area;
 	NvBlastActorDesc acd;
 	acd.uniformInitialBondHealth = 1.0f; acd.initialBondHealths = health.data (); acd.uniformInitialLowerSupportChunkHealth = 1.0f; acd.initialSupportChunkHealths = nullptr;
-	sc = scratch.Get (NvBlastFamilyGetRequiredScratchForCreateFirstActor (family, BlastLog));
+	void *sc = scratch.Get (NvBlastFamilyGetRequiredScratchForCreateFirstActor (family, BlastLog));
 	main = NvBlastFamilyCreateFirstActor (family, &acd, sc, BlastLog);
-	if (!main) { Release (); return false; }
+	if (!main) return false;
 	Nv::Blast::ExtStressSolverSettings st;
 	st.maxSolverIterationsPerFrame = BLAST_ITER; st.graphReductionLevel = 0;
 	solver = Nv::Blast::ExtStressSolver::create (*family, st);
-	if (!solver) { Release (); return false; }
+	if (!solver) return false;
 	solver->setAllNodesInfoFromLL ((float)BLAST_RHO);           // chunk volume = area * t: node mass = the skin mass
-	meanMass = 0;
-	for (auto &c : chunk) meanMass += c.area * t * BLAST_RHO;
-	meanMass /= (double)chunk.size ();
-	Material (BLAST_SIGMA_Y, BLAST_SIGMA_U);
+	Material (sigY, sigU);
 	solver->notifyActorCreated (*main);
-	accel = NvBlastExtDamageAcceleratorCreate (asset, 1);
 	gone.assign (chunk.size (), 0);
 	return true;
 }
 
+bool CollBlastA::Reset ()
+{
+	if (!asset) return false;
+	if (solver) solver->release ();
+	solver = nullptr; main = nullptr; family = nullptr;
+	force.clear (); spin = false; impD = 0; crP = 0;
+	if (Family ()) return true;
+	Release ();
+	return false;
+}
+
 void CollBlastA::Material (double sy, double su)
 {
+	sigY = sy; sigU = su;
 	if (!solver) return;
 	Nv::Blast::ExtStressSolverSettings st = solver->getSettings ();
 	st.compressionElasticLimit = (float)sy; st.compressionFatalLimit = (float)su;

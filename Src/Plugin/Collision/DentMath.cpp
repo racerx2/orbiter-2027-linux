@@ -676,13 +676,33 @@ std::string TornHead (const DentTorn &t, size_t room)
 	return s;
 }
 
-// blast: "3,17,40"
-void PutList (std::string &s, const std::vector<uint32_t> &v)
+// blast: cell debris payloads after the K one: the head without groups, C= and P= entries as they fit, X= and F= on each
+void CellLines (const DentTorn &t, size_t lim, std::vector<std::string> &out)
 {
-	for (size_t i = 0; i < v.size (); i++) { if (i) s += ','; PutInt (s, v[i]); }
+	std::string x = " X=";
+	PutNum (x, Clamp (t.c.x, -DENT_LIM_POS, DENT_LIM_POS)); x += ','; PutNum (x, Clamp (t.c.y, -DENT_LIM_POS, DENT_LIM_POS)); x += ','; PutNum (x, Clamp (t.c.z, -DENT_LIM_POS, DENT_LIM_POS));
+	if (t.crushed) x += " F=1";
+	DentTorn h = t;
+	h.grp.clear ();
+	const std::string head = TornHead (h, lim - x.size () - 14) + " *"; // 14: room for one " C=" entry
+	size_t ci = 0, pi = 0;
+	while (ci < t.cells.size () || pi < t.pieces.size ()) {
+		std::string l = head;
+		auto put = [&] (const char *tag, const std::vector<uint32_t> &v, size_t &i) {
+			for (bool any = false; i < v.size (); i++, any = true) {
+				std::string n;
+				PutInt (n, v[i]);
+				if (l.size () + (any ? 1 : std::strlen (tag)) + n.size () + x.size () > lim && l.size () > head.size ()) break; // a fresh line takes one entry
+				l += any ? "," : tag; l += n;
+			}
+		};
+		put (" C=", t.cells, ci);
+		put (" P=", t.pieces, pi);
+		out.push_back (l + x);
+	}
 }
 
-// blast: cell debris tokens after K: C=<cells> P=<pieces> X=<cx>,<cy>,<cz> F=<crushed>; others skipped
+// blast: cell debris tokens after K or the groups: C=<cells> P=<pieces> X=<cx>,<cy>,<cz> F=<crushed>; others skipped
 void ParseCellTok (const Tok &t, DentTorn &r)
 {
 	if (t.n < 3 || t.p[1] != '=') return;
@@ -715,12 +735,14 @@ bool ParseTornTok (const std::vector<Tok> &t, size_t i, DentTorn &o, bool &more)
 	r.kind = (uint8_t)kind, r.ngrp = (uint16_t)ngrp;
 	r.debris = NameUntok (t[i+6]);
 	double kv[7];
+	size_t c0 = i + 8; // blast: cell tokens after K, or after the groups of a cell payload
 	if (!more && t.size () >= i + 16 && IEq (t[i+8].p, t[i+8].n, "K")) { // dmg3 tear: kinematics
 		bool ok = true;
 		for (int j = 0; j < 7 && ok; j++) ok = ParseD (t[i+9+j], kv[j]) && std::fabs (kv[j]) <= 1e9;
 		if (ok) r.kin = true, r.dv = Vector (kv[0], kv[1], kv[2]), r.dw = Vector (kv[3], kv[4], kv[5]), r.mass = kv[6];
-		if (ok) for (size_t j = i + 16; j < t.size (); j++) ParseCellTok (t[j], r);
+		c0 = ok ? i + 16 : t.size ();
 	}
+	if (!more) for (size_t j = c0; j < t.size (); j++) ParseCellTok (t[j], r);
 	o = r;
 	return true;
 }
@@ -1587,15 +1609,10 @@ void DentMath::FormatTornEvent (const DentTorn &t, std::vector<std::string> &pay
 		std::string k = " K";
 		const double v[7] = { t.dv.x, t.dv.y, t.dv.z, t.dw.x, t.dw.y, t.dw.z, t.mass };
 		for (double x : v) PutNumArg (k, Clamp (x, -1e9, 1e9));
-		if (!t.cells.empty () || !t.pieces.empty ()) { // blast: cell debris (recorder only): cells, pieces, centroid, crushed
-			if (!t.cells.empty ()) k += " C=", PutList (k, t.cells);
-			if (!t.pieces.empty ()) k += " P=", PutList (k, t.pieces);
-			k += " X="; PutNum (k, Clamp (t.c.x, -DENT_LIM_POS, DENT_LIM_POS)); k += ','; PutNum (k, Clamp (t.c.y, -DENT_LIM_POS, DENT_LIM_POS)); k += ','; PutNum (k, Clamp (t.c.z, -DENT_LIM_POS, DENT_LIM_POS));
-			if (t.crushed) k += " F=1";
-		}
-		size_t room = k.size () < lim ? lim - k.size () : 0;
+		size_t room = lim - k.size ();
 		GroupLines (TornHead (t, room), t.grp, room, payload);
 		payload.back () += k;
+		if (!t.cells.empty () || !t.pieces.empty ()) CellLines (t, lim, payload); // blast: cell debris (recorder only) in its own payloads
 		return;
 	}
 	GroupLines (TornHead (t, lim), t.grp, lim, payload);

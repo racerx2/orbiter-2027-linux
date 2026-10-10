@@ -1994,10 +1994,11 @@ TEST_CASE ("custom-fix B4: blast cell debris rows are recorded only; playback ha
 	REQUIRE (CollStore::Parse ([&] (std::string &l) { if (pos >= playScn.size ()) return false; l = playScn[pos++]; return true; }, blk));
 	p.Begin (std::move (blk));
 	for (int k = 0; k < 6; k++) p.Frame ();
-	REQUIRE (bk->torn.size () == 1);                                    // to P
-	const DentTorn &o = bk->torn[0];
-	CHECK (o.kind == CBRK_CELL); CHECK (o.debris == "PB-A_D1"); CHECK (o.kin); CHECK (o.mass == 12.5);
-	CHECK (o.cells == tr.cells); CHECK (o.crushed); CHECK (o.c.x == 0.5); CHECK (o.c.y == -0.25); CHECK (o.c.z == 1);
+	REQUIRE (bk->torn.size () == 2);                                    // to P: the K payload, then the cells
+	const DentTorn &o = bk->torn[0], &c = bk->torn[1];
+	CHECK (o.kind == CBRK_CELL); CHECK (o.debris == "PB-A_D1"); CHECK (o.kin); CHECK (o.mass == 12.5); CHECK (o.cells.empty ());
+	CHECK (c.kind == CBRK_CELL); CHECK (c.debris == "PB-A_D1"); CHECK (!c.kin);
+	CHECK (c.cells == tr.cells); CHECK (c.crushed); CHECK (c.c.x == 0.5); CHECK (c.c.y == -0.25); CHECK (c.c.z == 1);
 	CHECK ((!p.s.Damage (a) || p.s.Damage (a)->d.torn.empty ()));      // never a saved row
 	std::filesystem::remove_all (dir);
 }

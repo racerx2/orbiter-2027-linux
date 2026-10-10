@@ -126,7 +126,7 @@ enum { DENT_OK = 0, DENT_SMALL = 1, DENT_NOSURFACE = 2, DENT_FLOOR_CAP = 3 }; //
 // one vessel's damage as the text format sees it (9.2)
 // one torn-off, broken or hidden group set of a vessel slot (dmg3 area P rows, area S line format)
 struct DentTorn { uint8_t kind = 0; uint32_t slot = 0, key = 0; uint16_t ngrp = 0; uint32_t nvtx = 0; double simt = 0; std::string debris; std::vector<uint16_t> grp; bool kin = false; Vector dv, dw; double mass = 0;
-	std::vector<uint32_t> cells, pieces; Vector c; bool crushed = false; }; // kin: dmg3 tear debris dv, dw, mass (recorder T); cells .. crushed: blast cell debris (recorder T tokens after K)
+	std::vector<uint32_t> cells, pieces; Vector c; bool crushed = false; }; // kin: dmg3 tear debris dv, dw, mass (recorder T); cells .. crushed: blast cell debris (recorder T cell payloads after the K one)
 // one debris piece spawned from a vessel slot (dmg3 area P meaning, area S rows XDMGM B/Q and XDMGD B)
 struct DentDebrisPose { Vector p; double q[4] = { 0, 0, 0, 1 }; std::vector<uint16_t> grp; }; // piece origin and rotation (x y z w) in the parent mesh frame
 struct DentDebris { uint32_t id = 0, slot = 0, key = 0; uint16_t ngrp = 0; uint32_t nvtx = 0; double simt = 0, mass = 0; std::string name; std::vector<DentDebrisPose> pose; std::vector<DentRecord> rec; std::string other; }; // other: impactor name (B row O= token)

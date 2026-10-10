@@ -13,6 +13,7 @@
 #include "CollBreakA.h"
 #include "CollDamageA.h"
 #include "CollShape.h"
+#include "CollStore.h"
 #include "CollAnimTest.h"
 
 namespace {
@@ -1272,15 +1273,19 @@ TEST_CASE ("B4: playback spawns blast cell debris from its recorded row: same ve
 	for (auto &rc : d.row.rec) if (rc.p.mode == DENTM_VCUT) t.cells.push_back ((uint32_t)rc.p.P);
 	t.c = r.sdk.created[dv].rpos; t.dv = r.sdk.created[dv].rvel; t.dw = r.sdk.spins[dv]; t.mass = r.sdk.caps[dv].mass;
 	std::vector<std::string> pay; DentMath::FormatTornEvent (t, pay);
-	REQUIRE (pay.size () == 1);
-	DentTorn u; bool more = true;
-	REQUIRE (DentMath::ParseTornEvent (pay[0].c_str (), u, more));
-	CHECK (u.cells == t.cells);
+	REQUIRE (pay.size () == 2);                                      // the K payload, then the cells
+	std::vector<DentTorn> u (2); bool more = true;
+	for (size_t i = 0; i < 2; i++) REQUIRE (DentMath::ParseTornEvent (pay[i].c_str (), u[i], more));
+	CHECK (u[0].kin); CHECK (u[0].cells.empty ());
+	CHECK (u[1].cells == t.cells);
 	DentSites ds = *r.S ().Sites (a, 0);
 	BlastRig q; uint32_t b = q.Ship ("A");
 	q.body.front ().v->playback = true;
 	q.S ().SetSites (b, ds);
-	q.B ().Torn (b, u);
+	q.B ().Torn (b, u[0]);
+	CHECK (q.B ().Pending () == 0);                                  // the kick alone waits for its cells
+	q.B ().Torn (b, u[1]);
+	CHECK (q.B ().Pending () == 1);
 	for (uint32_t g = 0; g < 6; g++) CHECK (!q.B ().Hidden (b, 0, g));  // no hidden groups
 	q.B ().PreStep (0, 0.02); q.B ().Post (0, 0.02);
 	REQUIRE (q.sdk.Calls ("VesselCreate") == 1);
@@ -1368,7 +1373,7 @@ TEST_CASE ("B5: a split under spin loads only gets no kick: the debris keeps the
 	}
 }
 
-TEST_CASE ("B7: a held piece keeps its bonds' health from before the step as W rows; the same held set again needs no rebuild", "[dmg3P][blast]")
+TEST_CASE ("B7: a held piece keeps its bonds' health from before the step as W rows; the same held set again is rebuilt the same", "[dmg3P][blast]")
 {
 	HeldRig r; uint32_t a = r.ShipA ("A");
 	r.B ().Hit (r.P (15, 100, 0.3));                                 // weakens the panel's bonds
@@ -1410,15 +1415,155 @@ TEST_CASE ("B7: a held piece keeps its bonds' health from before the step as W r
 		if (pre.count (p)) CHECK (std::fabs (x->Health (i) / x->bond[i].area - pre[p]) < 2e-6);
 	}
 	CHECK (key == x->ChunkKey ((uint32_t)pc));
+	CHECK (!x->gone[pc]);
 	auto held = [&] () { std::map<uint32_t, uint32_t> m; const std::vector<uint32_t> *w = r.S ().WeakBonds (a, 0); if (w) for (size_t k = 0; k + 1 < w->size (); k += 2) if (pre.count ((*w)[k])) m[(*w)[k]] = (*w)[k + 1]; return m; };
 	std::map<uint32_t, uint32_t> w1 = held ();
 	CHECK (w1.size () == pre.size ());
 	r.sdk.simt += 0.1;
-	r.B ().Hit (r.P (15, 300, 0.5));                                 // the same held set again: no rebuild, its W rows stay
-	CHECK (r.B ().blastRebuilds == 1);
+	r.B ().Hit (r.P (15, 300, 0.5));                                 // the same held set again: rebuilt again, one log line, its W rows stay
+	CHECK (r.B ().blastRebuilds == 2);
 	CHECK (r.sdk.Logs ("piece chunks held") == 1);
 	CHECK (held () == w1);
+	CHECK (!r.B ().Blast (a, 0)->gone[pc]);
 	r.sdk.simt += 0.1;
 	r.B ().PreStep (r.sdk.simt, 0.02); r.B ().Post (r.sdk.simt, 0.02); // and through the next steps
 	CHECK (held () == w1);
+}
+
+TEST_CASE ("custom-fix2 B7: two 15 m/s hits leave the panel in the structure at the 1 % floor, a load restores the same bonds, a 40 m/s hit tears it off", "[dmg3P][blast]")
+{
+	HeldRig r; uint32_t a = r.ShipA ("A");
+	auto panelPairs = [] (const CollBlastA *x) { std::set<uint32_t> s; int pc = x->ChunkOfPiece (1); for (auto &b : x->bond) if (b.a == (uint32_t)pc || b.b == (uint32_t)pc) { uint32_t u = x->ChunkKey (b.a), v = x->ChunkKey (b.b); s.insert (std::min (u, v) * 65536u + std::max (u, v)); } return s; };
+	for (int k = 0; k < 2; k++) {
+		INFO ("hit " << k);
+		r.sdk.simt += 0.1;
+		r.B ().Hit (r.P (15, 300, 0.5));                             // the panel splits off at 15 m/s: held, from full health in one step
+		CHECK (r.B ().blastRebuilds == (uint64_t)k + 1);              // every held split: the panel goes back into the structure
+		CollBlastA *x = r.B ().Blast (a, 0);
+		REQUIRE (x);
+		int pc = x->ChunkOfPiece (1);
+		REQUIRE (pc >= 0);
+		CHECK (!x->gone[pc]);
+		std::vector<uint32_t> mc = x->MainChunks ();
+		CHECK (std::binary_search (mc.begin (), mc.end (), (uint32_t)pc));
+		const std::vector<uint32_t> *wb = r.S ().WeakBonds (a, 0), *kb = r.S ().BrokenBonds (a, 0);
+		REQUIRE (wb);
+		std::map<uint32_t, uint32_t> W;
+		for (size_t j = 0; j + 1 < wb->size (); j += 2) W[(*wb)[j]] = (*wb)[j + 1];
+		size_t floor = 0;
+		for (uint32_t p : panelPairs (x)) {
+			if (kb) CHECK (!std::binary_search (kb->begin (), kb->end (), p)); // never a K row
+			if (W.count (p) && W[p] == 10000u) floor++;
+		}
+		CHECK (floor >= 1);                                          // broken from full health: stored at 1 % of the area
+		for (uint32_t i = 0; i < x->bond.size (); i++) if ((x->bond[i].a == (uint32_t)pc || x->bond[i].b == (uint32_t)pc)) CHECK (x->Health (i) > 0); // and live: weak, not broken
+	}
+	CHECK (r.B ().blastBreaks == 0);
+	CHECK (r.sdk.Logs ("piece chunks held") == 1);
+	CollBlastA *x = r.B ().Blast (a, 0);
+	const DentVesselText &vt = r.S ().Damage (a)->d;                 // save and load in between: the same bonds
+	std::vector<std::string> lines; DentMath::FormatVessel (vt, "", lines);
+	DentVesselParser p; for (auto &l : lines) p.Line (l.c_str ());
+	DentVesselText o; p.Finish (o);
+	REQUIRE (o.sites.size () == 1);
+	HeldRig q; uint32_t b = q.ShipA ("A");
+	q.S ().SetSites (b, o.sites[0]);
+	for (auto &k : o.brokenBonds) q.S ().AddBrokenBonds (b, k.first, k.second);
+	for (auto &w : o.weakBonds) q.S ().SetWeakBonds (b, w.first, w.second);
+	for (auto &rc : o.rec) if (rc.p.mode == DENTM_VCUT) REQUIRE (q.S ().AddCut (b, rc, true));
+	q.B ().PreStep (0, 0.02); q.B ().Post (0, 0.02);
+	CollBlastA *y = q.B ().Blast (b, 0);
+	REQUIRE (y);
+	REQUIRE (y->bond.size () == x->bond.size ());
+	for (uint32_t i = 0; i < x->bond.size (); i++) CHECK (std::fabs (y->Health (i) - x->Health (i)) <= 2e-6 * x->bond[i].area + 1e-9);
+	CHECK (y->Partition () == x->Partition ());
+	CHECK (y->BrokenPairs () == x->BrokenPairs ());
+	CHECK (y->WeakPairs () == x->WeakPairs ());
+	CHECK (y->MainChunks () == x->MainChunks ());
+	for (HeldRig *z : { &r, &q }) {                                  // live and loaded: a 40 m/s hit tears the panel off
+		uint32_t id = z == &r ? a : b;
+		z->sdk.simt += 0.1;
+		CollDamageHit h = z->P (40, 800, 0.5); h.id = id; h.h = z->host.Vessel (id);
+		z->B ().Hit (h);
+		CHECK (z->B ().Hidden (id, 0, 6));
+		CollBlastA *w = z->B ().Blast (id, 0);
+		REQUIRE (w);
+		CHECK (w->gone[w->ChunkOfPiece (1)]);
+		const std::vector<uint32_t> *kb = z->S ().BrokenBonds (id, 0);
+		REQUIRE (kb);
+		size_t k = 0;
+		for (uint32_t pp : panelPairs (w)) if (std::binary_search (kb->begin (), kb->end (), pp)) k++;
+		CHECK (k >= 1);                                              // now K rows
+		CHECK (z->B ().Pending () >= 1);
+	}
+}
+
+TEST_CASE ("custom-fix2 B4 D2: a 3-cell row with a normal kick and a long parent name round-trips through the side file; its K and cell payloads and the part row play back one debris", "[dmg3P][blast]")
+{
+	for (int variant = 0; variant < 2; variant++) {                  // 0: every row keeps the name; 1: longer, the K and part rows write its #fnv8
+		const std::string parent = std::string (variant ? "A-very-long-parent-vessel-name-for-the-recorder-rows-of-blast-debris-1234567" : "A-very-long-parent-vessel-name-for-the-recorder-rows-of-blast-debris");
+		INFO ("variant " << variant << " parent " << parent.size () << " chars");
+		DentSites ds;
+		{
+			HeldRig r; r.ShipA (parent);
+			r.B ().Hit (r.P (1, 0, 0.1));                            // builds the slot: its sites
+			REQUIRE (r.S ().Sites (r.a, 0));
+			ds = *r.S ().Sites (r.a, 0);
+		}
+		REQUIRE (ds.s.size () >= 3);
+		DentTorn t;                                                  // as SpawnCells records it: the cell row, then the piece's part row
+		t.kind = CBRK_CELL; t.slot = 0; t.key = DentMath::MeshKey ("ship"); t.ngrp = 7; t.nvtx = 6 * 49 + 9; t.simt = 0.30000000000000004; t.debris = parent + "_D1";
+		t.kin = true; t.dv = Vector (0.812345678, -2.50000001, 3.75); t.dw = Vector (0.0123456789, -0.25, 1.5); t.mass = 91.2345678;
+		std::vector<uint32_t> near;
+		for (uint32_t c = 0; c < ds.s.size (); c++) near.push_back (c);
+		std::sort (near.begin (), near.end (), [&] (uint32_t i, uint32_t j) { return (ds.s[i] - Vector (0.67, 0.67, 2)).length2 () < (ds.s[j] - Vector (0.67, 0.67, 2)).length2 (); });
+		t.cells = { near[0], near[1], near[2] }; std::sort (t.cells.begin (), t.cells.end ());
+		t.pieces = { 1 }; t.c = Vector (0.712345678, 0.698765432, 2.0123456); t.crushed = false;
+		DentTorn u = t;
+		u.kind = CBRK_PART; u.grp = { 6 }; u.cells.clear (); u.pieces.clear (); u.c = Vector ();
+		std::vector<std::string> l;
+		CollSide::Torn (0.3, 0, t, l);
+		CollSide::Torn (0.3, 0, u, l);
+		CHECK (l.size () >= 3);                                      // K payload, cell payload, part row
+		std::string text = CollSide::Header ("X") + "\n" + CollSide::Vdef (0, 0, parent, "ShuttlePB") + "\n";
+		for (auto &x : l) {
+			INFO (x);
+			size_t p3 = 0; for (int k = 0; k < 3; k++) p3 = x.find (' ', p3) + 1; // payload after "<t> T <alias> "
+			CHECK (x.size () - p3 <= (size_t)DENT_EVENT_MAX);
+			text += x + "\n";
+		}
+		CollSideFile f;
+		REQUIRE (CollSide::Parse (text, f));
+		REQUIRE (f.ev.size () == l.size ());
+		size_t hashed = 0, plain = 0, kin = 0;
+		DentTorn cells;
+		for (auto &e : f.ev) {
+			REQUIRE (e.kind == 'T');
+			uint32_t h = 0;
+			if (DentMath::NameHash (e.torn.debris, h)) { CHECK (h == DentMath::Fnv1a (t.debris.data (), t.debris.size ())); hashed++; } else { CHECK (e.torn.debris == t.debris); plain++; }
+			if (e.torn.kind == CBRK_CELL && e.torn.kin) { kin++; CHECK (e.torn.cells.empty ()); CHECK (e.torn.mass == t.mass); CHECK (e.torn.dv.x == t.dv.x); CHECK (e.torn.dw.z == t.dw.z); }
+			if (e.torn.kind == CBRK_CELL && !e.torn.kin) { cells.cells.insert (cells.cells.end (), e.torn.cells.begin (), e.torn.cells.end ()); cells.pieces.insert (cells.pieces.end (), e.torn.pieces.begin (), e.torn.pieces.end ()); cells.c = e.torn.c; }
+		}
+		CHECK (kin == 1);
+		CHECK (cells.cells == t.cells); CHECK (cells.pieces == t.pieces); // round trip
+		CHECK (cells.c.x == t.c.x); CHECK (cells.c.y == t.c.y); CHECK (cells.c.z == t.c.z);
+		if (variant == 0) CHECK (hashed == 0);                       // the head keeps its room
+		else { CHECK (hashed >= 1); CHECK (plain >= 1); }            // rows of one debris with both name forms
+		HeldRig q; uint32_t b = q.ShipA (parent);
+		q.body.front ().v->playback = true;
+		q.S ().SetSites (b, ds);
+		for (auto &e : f.ev) q.B ().Torn (b, e.torn);
+		CHECK (q.B ().Hidden (b, 0, 6));
+		q.sdk.simt = 0.3; q.B ().PreStep (0.3, 0.02); q.B ().Post (0.3, 0.02);
+		REQUIRE (q.sdk.Calls ("VesselCreate") == 1);                 // one debris
+		REQUIRE (q.B ().Debris ().size () == 1);
+		const CollDebrisA &d = q.B ().Debris ()[0];
+		const BFake::V *dv = (const BFake::V *)d.h;
+		CHECK (q.sdk.caps[dv].mass == t.mass);
+		CHECK ((q.sdk.created[dv].rvel - t.dv).length () < 1e-6);
+		size_t keep = 0; bool panel = false;
+		for (auto &rc : d.row.rec) if (rc.p.mode == DENTM_VCUT && (rc.p.bits & DENTC_KEEP)) keep++;
+		for (auto &ps : d.row.pose) for (uint16_t g : ps.grp) if (g == 6) panel = true;
+		CHECK (keep == 3); CHECK (panel);                             // the cells and the panel in one
+	}
 }

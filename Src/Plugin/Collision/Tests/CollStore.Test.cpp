@@ -510,3 +510,43 @@ TEST_CASE ("blast fix m10: K events keep 32-bit chunk pairs a * 65536 + b", "[bl
 	REQUIRE (f.ev.size () == 1);
 	CHECK (f.ev[0].kind == 'K'); CHECK (f.ev[0].slot == 7); CHECK (f.ev[0].bonds == b);
 }
+
+TEST_CASE ("custom-fix2 B4 D2: a blast cell debris row in the side file: its K payload, then cell payloads, each a whole T event within the payload limit")
+{
+	DentTorn t;
+	t.kind = 5, t.slot = 0, t.key = 0x1234, t.ngrp = 7, t.nvtx = 303, t.simt = 0.30000000000000004, t.debris = "A-long-parent-vessel-name-of-the-recording_D1";
+	t.kin = true, t.dv = Vector (0.812345678, -2.50000001, 3.75), t.dw = Vector (0.0123456789, -0.25, 1.5), t.mass = 91.2345678;
+	for (uint32_t c = 0; c < 64; c += 2) t.cells.push_back (c);
+	t.pieces = { 1 }, t.c = Vector (0.712345678, 0.698765432, 2.0123456), t.crushed = true;
+	DentTorn p = t;                                                  // the part row of the same debris after it
+	p.kind = 0, p.grp = { 6 }, p.cells.clear (), p.pieces.clear (), p.crushed = false;
+	std::string text = CollSide::Header ("X") + "\n" + CollSide::Vdef (0, 0, "A-long-parent-vessel-name-of-the-recording", "ShuttlePB") + "\n";
+	std::vector<std::string> l;
+	CollSide::Torn (0.3, 0, t, l);
+	size_t nCell = l.size ();
+	CollSide::Torn (0.3, 0, p, l);
+	REQUIRE (nCell >= 3);                                            // K, then the cells over more than one payload
+	for (auto &s : l) {
+		INFO (s);
+		std::string pre = CollSide::Fmt17 (0.3) + " T 0 ";
+		REQUIRE (s.compare (0, pre.size (), pre) == 0);
+		CHECK (s.size () - pre.size () <= (size_t)DENT_EVENT_MAX);
+		text += s + "\n";
+	}
+	CollSideFile f;
+	REQUIRE (CollSide::Parse (text, f));
+	CHECK (f.skipped == 0);
+	REQUIRE (f.ev.size () == l.size ());                             // whole events: never joined as a continuation
+	std::vector<uint32_t> cells, pieces;
+	for (size_t i = 0; i < f.ev.size (); i++) {
+		const DentTorn &o = f.ev[i].torn;
+		CHECK (f.ev[i].kind == 'T');
+		CHECK (o.debris == t.debris);
+		CHECK (o.kind == (i < nCell ? 5 : 0));                        // CBRK_CELL, then CBRK_PART
+		CHECK (o.kin == (i == 0 || i == nCell));
+		if (i > 0 && i < nCell) { CHECK (o.crushed); CHECK (o.c.x == t.c.x); CHECK (o.c.y == t.c.y); CHECK (o.c.z == t.c.z); cells.insert (cells.end (), o.cells.begin (), o.cells.end ()); pieces.insert (pieces.end (), o.pieces.begin (), o.pieces.end ()); }
+	}
+	CHECK (f.ev[0].torn.mass == t.mass); CHECK (f.ev[0].torn.dv.y == t.dv.y); CHECK (f.ev[0].torn.dw.x == t.dw.x);
+	CHECK (cells == t.cells); CHECK (pieces == t.pieces);
+	CHECK (f.ev[nCell].torn.grp == p.grp); CHECK (f.ev[nCell].torn.mass == t.mass);
+}

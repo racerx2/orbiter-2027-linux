@@ -56,6 +56,8 @@ Vector Disp (const std::vector<const DentRecord *> &rec, uint16_t g, const Vecto
 
 Vector Unit (const Vector &v) { double l = v.length (); return l > 0 ? v / l : v; }
 
+uint32_t DebrisKey (const std::string &n) { uint32_t h = 0; return DentMath::NameHash (n, h) ? h : DentMath::Fnv1a (n.data (), n.size ()); } // playback: a row's debris, by name or by the #fnv8 written for a long one
+
 uint32_t Hash (uint32_t a, uint32_t b) { uint32_t h = a * 0x9E3779B1u ^ (b + 0x7F4A7C15u + (a << 6) + (a >> 2)); h ^= h >> 16; h *= 0x85EBCA6Bu; h ^= h >> 13; return h; }
 
 void ParseKeep (const std::string &text, std::set<uint16_t> &keep) // ";@KEEPFLAGS 0-27 111" lines
@@ -937,24 +939,34 @@ void CollBreakA::Torn (uint32_t id, const DentTorn &t)
 {
 	if (quiet) return;
 	VesB &b = ves[id];
-	if (t.kind == CBRK_CELL) { // blast cell debris (recorder only): no hidden groups; playback spawns it with the recorded kick and mass
+	if (t.kind == CBRK_CELL) { // blast cell debris (recorder only): no hidden groups; its K and cell payloads make one spawn with the recorded kick and mass
 		CollH vh = s.VesselHandle (id);
-		if (!vh || !sdk.Playback (vh) || !t.kin || t.debris == "-" || (t.cells.empty () && t.pieces.empty ()) || !cfg.debrisPlayback || !cfg.visuals || s.vis.Mode () == CollVisualA::MODE_OFF) return;
+		if (!vh || !sdk.Playback (vh) || t.debris.empty () || t.debris == "-" || !cfg.debrisPlayback || !cfg.visuals || s.vis.Mode () == CollVisualA::MODE_OFF) return;
 		const CollSlotA *sl = Slot (id, t.slot);
 		if (!sl || !sl->ok || sl->key != t.key) return;
 		if (cfgOk < 0) cfgOk = sdk.DebrisClassExists () ? 1 : 0;
 		if (!cfgOk) return;
+		PlayedA &pl = played[{ id, DebrisKey (t.debris) }];
+		DentTorn &m = pl.row;
+		pl.cell = true;
+		if (t.kin) m.kin = true, m.dv = t.dv, m.dw = t.dw, m.mass = t.mass;
+		if (!t.cells.empty () || !t.pieces.empty ()) {
+			m.cells.insert (m.cells.end (), t.cells.begin (), t.cells.end ()); m.pieces.insert (m.pieces.end (), t.pieces.begin (), t.pieces.end ());
+			std::sort (m.cells.begin (), m.cells.end ()); m.cells.erase (std::unique (m.cells.begin (), m.cells.end ()), m.cells.end ());
+			std::sort (m.pieces.begin (), m.pieces.end ()); m.pieces.erase (std::unique (m.pieces.begin (), m.pieces.end ()), m.pieces.end ());
+			m.c = t.c; m.crushed = t.crushed;
+		}
+		if (!m.kin || (m.cells.empty () && m.pieces.empty ())) return; // the rest of its payloads follow in this frame
 		std::vector<Vector> site;
 		if (const DentSites *ds = s.Sites (id, t.slot)) site = ds->s;
 		CollBlastBreak bk;
 		bk.id = id; bk.slot = t.slot; bk.other = b.haveLast ? b.last.other : 0; bk.simt = sdk.SimTime ();
-		bk.cells = t.cells; bk.pieces = t.pieces; bk.mass = t.mass; bk.centroid = t.c; bk.dv = t.dv; bk.dw = t.dw; bk.crushed = t.crushed;
+		bk.cells = m.cells; bk.pieces = m.pieces; bk.mass = m.mass; bk.centroid = m.c; bk.dv = m.dv; bk.dw = m.dw; bk.crushed = m.crushed;
 		CollSpawnA sp;
 		if (!MakeCellSpawn (bk, *sl, vh, site, StatGroups (*sl), ++events, sp)) return;
 		sp.blast = false; // the recording moves the parent
-		sp.row.name = NewName (sdk.Name (vh));
-		played[{ id, t.debris }] = PlayedA { spawn.size (), {}, true };
-		spawn.push_back (sp);
+		if (pl.idx < spawn.size ()) { sp.row.name = spawn[pl.idx].row.name; spawn[pl.idx] = sp; } // more cells of a queued one
+		else { sp.row.name = NewName (sdk.Name (vh)); pl.idx = spawn.size (); spawn.push_back (sp); }
 		SyncRows (sp.parent);
 		return;
 	}
@@ -992,7 +1004,7 @@ void CollBreakA::Torn (uint32_t id, const DentTorn &t)
 	if (!cfg.debrisPlayback || t.debris == "-" || t.kind != CBRK_PART || pk.empty () || !cfg.visuals || s.vis.Mode () == CollVisualA::MODE_OFF) return;
 	if (cfgOk < 0) cfgOk = sdk.DebrisClassExists () ? 1 : 0;
 	if (!cfgOk) return;
-	auto pl = played.find ({ id, t.debris });
+	auto pl = played.find ({ id, DebrisKey (t.debris) });
 	if (pl != played.end () && (pl->second.cell || pl->second.idx >= spawn.size ())) return; // its cell row spawned it
 	std::vector<int> all = pk;
 	if (pl != played.end ()) for (int k : pl->second.pk) if (std::find (all.begin (), all.end (), k) == all.end ()) all.push_back (k); // rows of one debris: one spawn
@@ -1002,7 +1014,7 @@ void CollBreakA::Torn (uint32_t id, const DentTorn &t)
 	if (pl != played.end ()) { sp.row.name = spawn[pl->second.idx].row.name; spawn[pl->second.idx] = sp; pl->second.pk = all; }
 	else {
 		sp.row.name = NewName (sdk.Name (vh));
-		played[{ id, t.debris }] = PlayedA { spawn.size (), all, false };
+		played[{ id, DebrisKey (t.debris) }] = PlayedA { spawn.size (), all, false, {} };
 		spawn.push_back (sp);
 	}
 	SyncRows (sp.parent);
@@ -1182,7 +1194,6 @@ void CollBreakA::Post (double simt, double simdt)
 		if (!vh || sdk.Playback (vh)) continue;
 		BlastStep (kv.first.first, kv.first.second, bs, vh, false);
 	}
-	BlastRebuild ();
 	for (size_t i = freeMesh.size (); i-- > 0;) if (freeMesh[i].dropped) { if (freeMesh[i].mesh) sdk.MeshFree (freeMesh[i].mesh); freeMesh.erase (freeMesh.begin () + (long)i); }
 	for (auto &kv : ves) Assert (kv.first, kv.second);
 	PairCheck (simt);
@@ -1390,32 +1401,12 @@ void CollBreakA::BlastHit (const CollDamageHit &h, CollH vh, const CollSlotA &sl
 	}
 	bs->hit = h; bs->haveHit = true; bs->lastHit = h.simt;
 	BlastStep (h.id, h.mesh, *bs, vh, true);
-	BlastRebuild ();
 }
 
 bool CollPieceHeld (const CollPieceA &p, const CollDamageHit &h)
 {
 	if (h.vn < BRK_VN_PART) return true;                            // parts need the approach speed of the dmg3 part gate
 	return (p.functional & CBRK_FN_DOCK) && h.eSpec < BRK_TEAR_E;   // the dock pin holds below the tear threshold
-}
-
-void CollBreakA::BlastRebuild ()
-{
-	std::vector<std::pair<uint32_t, uint32_t>> keys;
-	for (auto &kv : blast) if (kv.second.rebuild) keys.push_back (kv.first);
-	for (auto &k : keys) {
-		CollBlastSlotA &old = blast[k];
-		CollDamageHit hit = old.hit;
-		bool haveHit = old.haveHit;
-		double lastHit = old.lastHit;
-		std::set<uint32_t> held = old.held;
-		blast.erase (k);
-		blastRebuilds++;
-		CollH vh = s.VesselHandle (k.first);
-		const CollSlotA *sl = vh ? Slot (k.first, k.second) : nullptr;
-		if (!sl || !sl->ok) continue;
-		if (CollBlastSlotA *bs = BlastSlot (k.first, k.second, vh, *sl)) bs->hit = hit, bs->haveHit = haveHit, bs->lastHit = lastHit, bs->held = held;
-	}
 }
 
 void CollBreakA::BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, CollH vh, bool hitNow)
@@ -1437,41 +1428,33 @@ void CollBreakA::BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, Coll
 	std::vector<uint32_t> w0 = bs.b->WeakPairs (), b0 = bs.b->BrokenPairs (); // before the step: held bonds keep this health
 	std::vector<CollBlastSplit> sp = bs.b->Step ();
 	std::vector<uint8_t> held (sp.size (), 0);
-	std::set<uint32_t> hk; // chunk keys of held actors
+	std::set<uint32_t> hk, lost; // chunk keys of held actors and of actors torn off for good
 	for (size_t i = 0; i < sp.size (); i++) {
 		bool cells = false, hold = false;
 		for (uint32_t c : sp[i].chunks) { const CollBlastChunk &ch = bs.b->chunk[c]; if (ch.cell >= 0) cells = true; else if (bs.haveHit && ch.piece >= 0 && (size_t)ch.piece < sl->piece.size () && CollPieceHeld (sl->piece[ch.piece], bs.hit)) hold = true; }
-		if (cells || !hold) { for (uint32_t c : sp[i].chunks) bs.held.erase (bs.b->ChunkKey (c)); continue; } // torn off for good
-		held[i] = 1;
-		for (uint32_t c : sp[i].chunks) hk.insert (bs.b->ChunkKey (c));
+		held[i] = !cells && hold;
+		for (uint32_t c : sp[i].chunks) (held[i] ? hk : lost).insert (bs.b->ChunkKey (c));
 	}
-	bool fresh = false;
-	for (uint32_t k : hk) if (!bs.held.count (k)) fresh = true;
-	bs.held.insert (hk.begin (), hk.end ());
-	auto isHeld = [&] (uint32_t p) { return bs.held.count (p / 65536u) || bs.held.count (p % 65536u); };
 	std::vector<uint32_t> br = bs.b->BrokenPairs (), nb;
-	if (!bs.held.empty ()) { // held pieces stay: their bonds are not stored as broken
+	std::map<uint32_t, uint32_t> hw; // held bonds broken in this step: W rows at the pre-step health, at least 1 % of the area
+	if (!hk.empty ()) {
 		std::map<uint32_t, uint32_t> pre;
 		for (size_t k = 0; k + 1 < w0.size (); k += 2) pre[w0[k]] = w0[k + 1];
-		for (uint32_t p : br) if (isHeld (p) && !std::binary_search (b0.begin (), b0.end (), p)) { // broke in this step: the pre-step health, at least 1 % of the area
+		for (uint32_t p : br) {
+			uint32_t u = p / 65536u, v = p % 65536u;
+			if (!(hk.count (u) || hk.count (v)) || lost.count (u) || lost.count (v) || std::binary_search (b0.begin (), b0.end (), p)) continue;
 			auto it = pre.find (p);
-			uint32_t q = std::max<uint32_t> (it == pre.end () ? 1000000u : it->second, 10000u);
-			if (q < 1000000u) bs.heldW[p] = q; else bs.heldW.erase (p);
+			hw[p] = std::max<uint32_t> (it == pre.end () ? 0u : it->second, 10000u); // broken from full health: the 1 % floor
 		}
-		br.erase (std::remove_if (br.begin (), br.end (), isHeld), br.end ());
-	}
-	for (auto it = bs.heldW.begin (); it != bs.heldW.end ();) if (isHeld (it->first)) ++it; else it = bs.heldW.erase (it);
-	if (fresh) { // a new held set: the slot is rebuilt from the stored state; the same set again stays split until then
-		bs.rebuild = true;
-		Log ("Collision blast '%s' slot=%u: %zu piece chunks held (vn=%.4g eSpec=%.4g)", sdk.Name (vh).c_str (), mesh, hk.size (), bs.hit.vn, bs.hit.eSpec);
+		br.erase (std::remove_if (br.begin (), br.end (), [&] (uint32_t p) { return hw.count (p) > 0; }), br.end ());
 	}
 	std::set_difference (br.begin (), br.end (), bs.recorded.begin (), bs.recorded.end (), std::back_inserter (nb));
 	if (!nb.empty ()) { s.AddBrokenBonds (id, mesh, nb); bs.recorded = br; }
 	std::vector<uint32_t> wk = bs.b->WeakPairs ();
-	if (!bs.heldW.empty ()) { // held bonds as W rows, by pair
+	if (!hw.empty ()) { // held bonds as W rows, by pair
 		std::map<uint32_t, uint32_t> m;
 		for (size_t k = 0; k + 1 < wk.size (); k += 2) m[wk[k]] = wk[k + 1];
-		for (auto &x : bs.heldW) m[x.first] = x.second;
+		for (auto &x : hw) m[x.first] = x.second;
 		wk.clear ();
 		for (auto &x : m) wk.push_back (x.first), wk.push_back (x.second);
 	}
@@ -1504,6 +1487,17 @@ void CollBreakA::BlastStep (uint32_t id, uint32_t mesh, CollBlastSlotA &bs, Coll
 			bk.dw = dw;
 		}
 		SpawnCells (bk);
+	}
+	if (!hk.empty ()) { // held pieces stay on: the cached asset restarts with the live state as stored, so later hits can still tear them off
+		std::vector<uint32_t> rm, kb = bs.b->BondsOfPairs (br);
+		for (uint32_t c = 0; c < bs.b->chunk.size (); c++) if (bs.b->gone[c] && !hk.count (bs.b->ChunkKey (c))) rm.push_back (c);
+		if (!bs.b->Reset ()) { bs.b.reset (); return; } // rebuilt from the records at the next hit
+		bs.b->Restore (kb, rm, bs.weak);
+		bs.recorded = bs.b->BrokenPairs (); bs.weak = bs.b->WeakPairs ();
+		blastRebuilds++;
+		bool fresh = false;
+		for (uint32_t k : hk) if (bs.held.insert (k).second) fresh = true;
+		if (fresh) Log ("Collision blast '%s' slot=%u: %zu piece chunks held (vn=%.4g eSpec=%.4g)", sdk.Name (vh).c_str (), mesh, hk.size (), bs.hit.vn, bs.hit.eSpec);
 	}
 }
 

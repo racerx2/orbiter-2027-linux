@@ -204,3 +204,46 @@ TEST_CASE ("blast 6: a crush plane tears off the chunks with >= 0.6 of their dep
 	CHECK (a.Crushed (c, n, 1.5, 10, 0.6).empty ());                 // nothing left to crush
 	CHECK (a.Step ().empty ());                                       // the crush is one-shot
 }
+
+TEST_CASE ("custom-fix2 B7: Reset gives the cached asset's first actor again, material kept; Restore then rebuilds the live state", "[blast]")
+{
+	CollBlastInput in = Box (4, 6, 5000, 10);
+	CollBlastA a;
+	REQUIRE (a.Build (in));
+	Vector c (0.3, 0.2, 2);
+	a.Force (c, Vector (0, 0, -kJ70 / kDt));
+	a.Impact (c, 1.5, 0.6);
+	std::vector<CollBlastSplit> sp = a.Step ();
+	REQUIRE (!sp.empty ());
+	auto part = a.Partition ();
+	std::vector<uint32_t> broken = a.Broken (), weak = a.WeakPairs (), mainCh = a.MainChunks ();
+	REQUIRE (!weak.empty ());
+	std::vector<uint32_t> gone;
+	for (uint32_t k = 0; k < a.chunk.size (); k++) if (a.gone[k]) gone.push_back (k);
+	std::vector<double> h (a.bond.size ());
+	for (uint32_t i = 0; i < a.bond.size (); i++) h[i] = a.Health (i);
+	const CollBlastBond *b0 = a.bond.data ();
+	size_t nb = a.bond.size ();
+	REQUIRE (a.Reset ());
+	CHECK (a.Ok ());
+	CHECK (a.bond.data () == b0); CHECK (a.bond.size () == nb);       // the cached asset: no new cells or bonds
+	CHECK (a.Partition ().size () == 1);
+	CHECK (a.Broken ().empty ()); CHECK (a.WeakPairs ().empty ());
+	for (uint8_t g : a.gone) CHECK (g == 0);
+	for (uint32_t i = 0; i < a.bond.size (); i++) CHECK (a.Health (i) == (double)(float)a.bond[i].area);
+	a.Restore (broken, gone, weak);                                  // the state as stored
+	CHECK (a.Partition () == part);
+	CHECK (a.Broken () == broken);
+	CHECK (a.WeakPairs () == weak);
+	CHECK (a.MainChunks () == mainCh);
+	for (uint32_t i = 0; i < a.bond.size (); i++) CHECK (std::fabs (a.Health (i) - h[i]) <= 2e-6 * a.bond[i].area + 1e-9);
+	CollBlastA w, m;                                                 // a weak material: a reset keeps it
+	REQUIRE (w.Build (in)); REQUIRE (m.Build (in));
+	w.Material (1e5, 2e5); m.Material (1e5, 2e5);
+	REQUIRE (m.Reset ());
+	for (CollBlastA *x : { &w, &m }) { x->Force (Vector (2, 0, 0), Vector (-2e5, 0, 0)); x->Step (); }
+	CHECK (!w.Broken ().empty ());
+	CHECK (m.Broken () == w.Broken ());
+	CHECK (m.Partition () == w.Partition ());
+	CHECK (CollBlastA::logErrors == 0);
+}

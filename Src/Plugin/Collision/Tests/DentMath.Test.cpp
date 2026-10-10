@@ -3622,7 +3622,7 @@ TEST_CASE ("custom-fix D2: a T row whose name would pass the line takes the #fnv
 	CHECK (sl[0] == "0 2 00000005 300 4000 12.0625 PB-A_D1 4,5");
 }
 
-TEST_CASE ("custom-fix B4: recorder T rows of blast cell debris carry cells, pieces, centroid and crushed after K; old T events parse as before", "[dent][blast]")
+TEST_CASE ("custom-fix B4: recorder T rows of blast cell debris carry cells, pieces, centroid and crushed in their own payload after K; old T events parse as before", "[dent][blast]")
 {
 	DentTorn t;
 	t.kind = 5, t.slot = 1, t.key = 0x1234, t.ngrp = 6, t.nvtx = 294, t.simt = 3.25, t.debris = "PB-A_D2";
@@ -3630,15 +3630,21 @@ TEST_CASE ("custom-fix B4: recorder T rows of blast cell debris carry cells, pie
 	t.cells = { 3, 17, 40 }, t.pieces = { 2 }, t.c = Vector (1.5, -0.375, 2.0625), t.crushed = true;
 	std::vector<std::string> pay;
 	DentMath::FormatTornEvent (t, pay);
-	REQUIRE (pay.size () == 1);
-	CHECK (pay[0].size () <= (size_t)DENT_EVENT_MAX);
-	CHECK (pay[0] == "5 1 00001234 6 294 3.25 PB-A_D2 * K 0.5 -0.25 7 0 0.125 -1 81.0234375 C=3,17,40 P=2 X=1.5,-0.375,2.0625 F=1");
+	REQUIRE (pay.size () == 2);
+	for (auto &x : pay) CHECK (x.size () <= (size_t)DENT_EVENT_MAX);
+	CHECK (pay[0] == "5 1 00001234 6 294 3.25 PB-A_D2 * K 0.5 -0.25 7 0 0.125 -1 81.0234375");
+	CHECK (pay[1] == "5 1 00001234 6 294 3.25 PB-A_D2 * C=3,17,40 P=2 X=1.5,-0.375,2.0625 F=1");
 	DentTorn o; bool more = true;
 	REQUIRE (DentMath::ParseTornEvent (pay[0].c_str (), o, more));
 	CHECK (!more);
-	CHECK (o.kind == 5); CHECK (o.grp.empty ()); CHECK (o.kin); CHECK (o.mass == t.mass);
+	CHECK (o.kind == 5); CHECK (o.grp.empty ()); CHECK (o.kin); CHECK (o.mass == t.mass); CHECK (o.cells.empty ()); CHECK (o.pieces.empty ());
+	REQUIRE (DentMath::ParseTornEvent (pay[1].c_str (), o, more));
+	CHECK (!more);
+	CHECK (o.kind == 5); CHECK (o.grp.empty ()); CHECK (!o.kin); CHECK (o.debris == "PB-A_D2");
 	CHECK (o.cells == t.cells); CHECK (o.pieces == t.pieces); CHECK (o.crushed);
 	CHECK (o.c.x == 1.5); CHECK (o.c.y == -0.375); CHECK (o.c.z == 2.0625);
+	REQUIRE (DentMath::ParseTornEvent ("5 1 00001234 6 294 3.25 PB-A_D2 * K 0.5 -0.25 7 0 0.125 -1 81.0234375 C=3,17,40 P=2 X=1.5,-0.375,2.0625 F=1", o, more)); // the first fix's one-line event
+	CHECK (o.kin); CHECK (o.mass == t.mass); CHECK (o.cells == t.cells); CHECK (o.pieces == t.pieces); CHECK (o.crushed); CHECK (o.c.z == 2.0625);
 	DentTorn k;                                                      // an old T event: K only
 	REQUIRE (DentMath::ParseTornEvent ("0 0 00001234 120 9000 12.5 PB-A_D2 1,2 K 7.125 -0.5 0.001 0.25 0 -6.2831 2345.5", k, more));
 	CHECK (k.kin); CHECK (k.mass == 2345.5); CHECK (k.cells.empty ()); CHECK (k.pieces.empty ()); CHECK (!k.crushed); CHECK (k.grp == std::vector<uint16_t> { 1, 2 });
@@ -3647,4 +3653,48 @@ TEST_CASE ("custom-fix B4: recorder T rows of blast cell debris carry cells, pie
 	DentTorn b;                                                      // bad tokens after K are skipped, the row stays
 	REQUIRE (DentMath::ParseTornEvent ("5 1 00001234 6 294 3.25 PB-A_D2 * K 0 0 0 0 0 0 9 C=3,x X=1,2 Q=7", b, more));
 	CHECK (b.kin); CHECK (b.cells.empty ()); CHECK (b.c.length () == 0);
+}
+
+TEST_CASE ("custom-fix2 D2: a cell debris row keeps its head room: the K payload holds the name the part rows hold; many cells split over payloads, none past DENT_EVENT_MAX", "[dent][blast]")
+{
+	DentTorn t;                                                      // the review's case: 3 cells, a normal kick, a 17-digit time
+	t.kind = 5, t.slot = 2, t.key = 0xb1cff395u, t.ngrp = 312, t.nvtx = 48213, t.simt = 1234.5678901234567, t.debris = "DeltaGlider1_D3";
+	t.kin = true, t.dv = Vector (-1.23456789, 0.987654321, -7.12345678), t.dw = Vector (0.123456789, -0.0123456789, 1.23456789), t.mass = 81.0234375;
+	t.cells = { 17, 103, 211 }, t.c = Vector (-3.21098765, 1.23456789, -12.3456789);
+	DentTorn part = t;                                               // its part row
+	part.kind = 0, part.grp = { 214 }, part.cells.clear (), part.c = Vector ();
+	std::vector<std::string> pay, pp;
+	DentMath::FormatTornEvent (t, pay);
+	DentMath::FormatTornEvent (part, pp);
+	REQUIRE (pay.size () == 2); REQUIRE (pp.size () == 1);
+	for (auto &x : pay) { INFO (x); CHECK (x.size () <= (size_t)DENT_EVENT_MAX); CHECK (x.find (" DeltaGlider1_D3 ") != std::string::npos); }
+	DentTorn k, c, q; bool more = true;
+	REQUIRE (DentMath::ParseTornEvent (pay[0].c_str (), k, more)); REQUIRE (DentMath::ParseTornEvent (pay[1].c_str (), c, more)); REQUIRE (DentMath::ParseTornEvent (pp[0].c_str (), q, more));
+	CHECK (k.debris == q.debris); CHECK (c.debris == q.debris);      // one debris name on every row
+	CHECK (k.kin); CHECK (k.dv.x == t.dv.x); CHECK (k.dw.y == t.dw.y); CHECK (k.mass == t.mass);
+	CHECK (c.cells == t.cells); CHECK (c.c.x == t.c.x); CHECK (c.c.z == t.c.z); CHECK (!c.crushed);
+	DentTorn w = t;                                                  // the widest K numbers and a long name: the head still has room, the name written as its hash
+	w.dv = Vector (-1.23456789e-05, -0.000123456789, -9.87654321e-07), w.dw = w.dv, w.mass = -1.23456789e-05;
+	w.debris = std::string (120, 'n');
+	for (uint32_t i = 0; i < 256; i++) w.cells.push_back (i);
+	std::sort (w.cells.begin (), w.cells.end ()); w.cells.erase (std::unique (w.cells.begin (), w.cells.end ()), w.cells.end ());
+	for (uint32_t i = 0; i < 40; i++) w.pieces.push_back (1000 + i);
+	w.crushed = true;
+	pay.clear ();
+	DentMath::FormatTornEvent (w, pay);
+	REQUIRE (pay.size () >= 3);
+	DentTorn u; std::vector<uint32_t> cells, pieces; size_t kin = 0;
+	uint32_t hv = 0;
+	for (auto &x : pay) {
+		INFO (x);
+		CHECK (x.size () <= (size_t)DENT_EVENT_MAX);
+		REQUIRE (DentMath::ParseTornEvent (x.c_str (), u, more));
+		CHECK (!more);
+		CHECK (DentMath::NameHash (u.debris, hv)); CHECK (hv == DentMath::Fnv1a (w.debris.data (), w.debris.size ()));
+		if (u.kin) { kin++; CHECK (u.dv.x == w.dv.x); CHECK (u.mass == w.mass); continue; }
+		CHECK (u.crushed); CHECK (u.c.y == w.c.y);
+		cells.insert (cells.end (), u.cells.begin (), u.cells.end ()); pieces.insert (pieces.end (), u.pieces.begin (), u.pieces.end ());
+	}
+	CHECK (kin == 1);
+	CHECK (cells == w.cells); CHECK (pieces == w.pieces);            // every cell and piece once, in order
 }
