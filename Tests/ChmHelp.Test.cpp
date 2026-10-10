@@ -1,10 +1,15 @@
 // not upstream: help viewer (ChmHelp.cpp): .chm (zip) pages and the help window beside modal dialogs, offscreen
 #include <catch2/catch_test_macros.hpp>
 #include <QApplication>
+#include <QColor>
 #include <QDialog>
 #include <QPointer>
+#include <QPalette>
 #include <QTest>
+#include <QTextBlock>
 #include <QTextBrowser>
+#include <QTextDocument>
+#include <QTextFrame>
 #include <QTimer>
 #include <QWindow>
 #include <cstdlib>
@@ -162,4 +167,66 @@ TEST_CASE("the help window is owned by the render window and closes with it", "[
 	delete rw2; // its owner does
 	QCoreApplication::sendPostedEvents (nullptr, QEvent::DeferredDelete);
 	REQUIRE(!help);
+}
+
+TEST_CASE("pages lose their own colours and keep everything else", "[chmhelp]")
+{
+	const QString page = "<html><head><style type=\"text/css\">h1 { color: #000080; background-color: #E6E6FF; border-color: red; font-size: 150% }</style></head>"
+		"<body BGCOLOR=#FFFFFF TEXT=#000000 link=\"#0000ff\" vlink='#800080'><p style=\"color: red; margin: 2px\">red text=color</p>"
+		"<font color=\"#0000ff\" face=Arial>blue</font><input type=text title=\"a color=x\"><table bgcolor=#E0E0E0><tr><td style='background: white; font-family:\"Arial\"'>c</td></tr></table></body></html>";
+	const QString out = ThemeHtml (page);
+	CHECK(!out.contains ("BGCOLOR", Qt::CaseInsensitive));
+	CHECK(!out.contains ("TEXT=#000000"));
+	CHECK(!out.contains ("link=", Qt::CaseInsensitive));
+	CHECK(!out.contains ("#0000ff", Qt::CaseInsensitive));
+	CHECK(!out.contains ("#E6E6FF", Qt::CaseInsensitive));
+	CHECK(out.contains ("<p style=\"margin: 2px\">")); // the colour went from the style attribute
+	CHECK(!out.contains ("background: white"));
+	CHECK(out.contains ("border-color: red")); // other colour properties stay
+	CHECK(out.contains ("font-size: 150%"));
+	CHECK(out.contains ("margin: 2px"));
+	CHECK(out.contains ("face=Arial"));
+	CHECK(out.contains ("red text=color")); // page text is never touched
+	CHECK(out.contains ("type=text"));
+	CHECK(out.contains ("title=\"a color=x\""));
+	CHECK(out.contains ("style='font-family:\"Arial\"'")); // the value keeps its quotes
+	CHECK(ThemeCss ("body { font-family: Arial; color: #000 } h1{color:blue;background-color:#E0E0FF;padding:0.1em}") == "body { font-family: Arial; } h1{padding:0.1em}");
+}
+
+static QPalette Dark ()
+{
+	QPalette p;
+	p.setColor (QPalette::Base, QColor (0x20, 0x22, 0x25));
+	p.setColor (QPalette::Text, QColor (0xfc, 0xfc, 0xfc));
+	p.setColor (QPalette::AlternateBase, QColor (0x29, 0x2c, 0x30));
+	p.setColor (QPalette::Link, QColor (0x1d, 0x99, 0xf3));
+	return p;
+}
+
+TEST_CASE("pages show in the browser's palette and follow a theme change", "[chmhelp]")
+{
+	App();
+	ChmBrowser b;
+	b.setPalette (Dark());
+	b.SetPageHtml ("<body BGCOLOR=#FFFFFF TEXT=#000000><h1>Title</h1><p>Text <font color=\"#000000\">black</font> <a href=\"x.htm\">link</a></p></body>");
+	QTextDocument *doc = b.document();
+	CHECK(!doc->rootFrame()->frameFormat().hasProperty (QTextFormat::BackgroundBrush)); // no page background of its own: the palette's Base
+	bool heading = false, link = false;
+	for (QTextBlock blk = doc->begin(); blk.isValid(); blk = blk.next()) {
+		if (blk.text() == "Title") heading = blk.blockFormat().background().color() == QColor (0x29, 0x2c, 0x30);
+		for (auto it = blk.begin(); !it.atEnd(); ++it) {
+			QTextCharFormat f = it.fragment().charFormat();
+			if (f.isAnchor()) link = f.foreground().color() == QColor (0x1d, 0x99, 0xf3);
+			else CHECK(!f.hasProperty (QTextFormat::ForegroundBrush)); // text in the palette's Text
+		}
+	}
+	CHECK(heading);
+	CHECK(link);
+	QPalette light = Dark();
+	light.setColor (QPalette::AlternateBase, QColor (0xf0, 0xf0, 0xf0));
+	b.setPalette (light); // a theme change re-renders the page in the new colours
+	heading = false;
+	for (QTextBlock blk = b.document()->begin(); blk.isValid(); blk = blk.next())
+		if (blk.text() == "Title") heading = blk.blockFormat().background().color() == QColor (0xf0, 0xf0, 0xf0);
+	CHECK(heading);
 }
