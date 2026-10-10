@@ -1,4 +1,4 @@
-// not upstream: collision addon E1 6.1, line-by-line mirror of Orbiter's step (Rigidbody.cpp:165-262, BodyIntegrator.cpp:59-425)
+// not upstream: collision addon E1 6.1, line-by-line mirror of Orbiter's step (Rigidbody.cpp:165-294, BodyIntegrator.cpp:59-425)
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -6,6 +6,7 @@
 #include <vector>
 #include "CollOrbMirror.h"
 #include "CollGeom.h"
+#include "CollSolve.h"
 
 namespace {
 
@@ -271,7 +272,7 @@ void CollOrbMirror::Choose (double H, double wlen, bool ground, int &lv, int &ns
 	ns = d >= 1.0 ? (int)d : 1;
 }
 
-void CollOrbMirror::Step (CollOrbState &o, double H, int forceLv, int forceN) const
+void CollOrbMirror::Step (CollOrbState &o, double H, int forceLv, int forceN, bool clampW) const
 {
 	Choose (H, o.s.omega.length (), o.ground, o.lv, o.nsub);
 	if (forceLv >= 0) { o.lv = std::min (forceLv, nLevel - 1); o.nsub = std::max (1, forceN); }
@@ -286,6 +287,11 @@ void CollOrbMirror::Step (CollOrbState &o, double H, int forceLv, int forceN) co
 		o.s.R.Set (o.s.Q);
 		Moments (o, o.s, o.acc, tau);
 		o.arot = o.EulerInv (tau, o.s.omega);
+	}
+	double vmag = o.s.omega.length ();                    // Rigidbody.cpp:276-294 after every free-flight step, ground contact included; LANDED and playback are never stepped here
+	if (clampW && vmag > COLL_OMEGA_MAX) {
+		o.s.omega *= COLL_OMEGA_MAX/vmag;
+		o.arot = Vector ();
 	}
 	o.Fadd = o.Madd = Vector ();                          // Vessel.cpp:4937-4940
 }

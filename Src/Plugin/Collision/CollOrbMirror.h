@@ -39,7 +39,7 @@ public:
 	CollOrbMirror ();                         // Config.cpp:55-62 defaults
 	void ReadCfg (const std::function<bool (const char *key, std::string &val)> &str); // Config.cpp:596-619 semantics on Orbiter.cfg strings
 	void Choose (double H, double wlen, bool ground, int &lv, int &ns) const; // Rigidbody.cpp:165-178, Vesselbase.cpp:387-397
-	void Step (CollOrbState &o, double H, int forceLv = -1, int forceN = 0) const; // one Orbiter step; forced level for a re-run (2.5)
+	void Step (CollOrbState &o, double H, int forceLv = -1, int forceN = 0, bool clampW = true) const; // one Orbiter step; forced level for a re-run (2.5); clampW false: without the end spin clamp
 	bool Encke (const Vector &r, const Vector &v, double H) const; // Rigidbody.cpp:197, :214-217 with the share taken as met
 	double HRest (double g = 9.81, double tol = 0.004) const;     // 7.4: largest step whose 1 g first-stage miss moves a body by at most tol
 	std::string Describe () const;            // `Collision prop:` line content

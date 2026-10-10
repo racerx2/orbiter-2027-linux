@@ -6,6 +6,7 @@
 #include <vector>
 #include "CollOrbMirror.h"
 #include "CollGeom.h"
+#include "CollSolve.h"
 
 namespace {
 CollOrbState Body (const Vector &a)
@@ -158,4 +159,36 @@ TEST_CASE ("P4 PropSubsampling below 1: one substep on ground contact, logged on
 		REQUIRE (std::fabs (o.s.vel.y - (-2.0 - 9.81*0.04)) < 1e-12);
 		REQUIRE (n == 1);
 	}
+}
+
+TEST_CASE ("P1 spin clamp (Rigidbody.cpp:276-294): above 100 pi the end spin is scaled to it and arot zeroed, on ground contact too; below, or clampW false, the step is unchanged", "[CollOrbMirror]")
+{
+	CollOrbMirror mir;
+	for (bool ground : { false, true })
+		for (double wz : { 400.0, 250.0 }) {
+			CollOrbState o = Body (Vector (0, -9.81, 0));
+			o.ground = ground;
+			o.s.omega = Vector (5, 3, wz);
+			o.arot = o.EulerInv (Vector (), o.s.omega);
+			o.AddForce (Vector (0, 0, 50), Vector (1, 0, 0));
+			CollOrbState u = o;
+			mir.Step (o, 0.02); mir.Step (u, 0.02, -1, 0, false);
+			const double vu = u.s.omega.length ();
+			CAPTURE (ground, wz, vu, o.s.omega.length ());
+			REQUIRE ((o.s.pos.x == u.s.pos.x && o.s.pos.y == u.s.pos.y && o.s.pos.z == u.s.pos.z && o.s.vel.y == u.s.vel.y && o.s.Q.qs == u.s.Q.qs && o.s.Q.qvz == u.s.Q.qvz));
+			REQUIRE (o.Madd.length () == 0.0);
+			if (wz < COLL_OMEGA_MAX) {
+				REQUIRE (vu < COLL_OMEGA_MAX);
+				REQUIRE ((o.s.omega.x == u.s.omega.x && o.s.omega.y == u.s.omega.y && o.s.omega.z == u.s.omega.z));
+				REQUIRE ((o.arot.x == u.arot.x && o.arot.y == u.arot.y && o.arot.z == u.arot.z));
+				REQUIRE (o.arot.length () > 0.0);
+				continue;
+			}
+			REQUIRE (vu > COLL_OMEGA_MAX);
+			const Vector ws = u.s.omega*(COLL_OMEGA_MAX/vu);
+			REQUIRE ((o.s.omega.x == ws.x && o.s.omega.y == ws.y && o.s.omega.z == ws.z));
+			REQUIRE (std::fabs (o.s.omega.length () - COLL_OMEGA_MAX) <= 1e-14*COLL_OMEGA_MAX);
+			REQUIRE ((o.arot.x == 0.0 && o.arot.y == 0.0 && o.arot.z == 0.0));
+			REQUIRE (u.arot.length () > 0.0);
+		}
 }

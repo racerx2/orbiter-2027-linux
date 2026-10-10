@@ -92,6 +92,7 @@ struct Wk {                                              // one body of this fra
 	Vector x1, v1, w1; Quaternion q1;                    // predicted end
 	CollOrbState o;                                      // Orbiter's state of the body now; configured by the delivery
 	Vector Fprev, Mprev;
+	Vector Mc;                                           // own torque in Orbiter's cached arot: Mprev, none after the spin clamp zeroed it
 	bool posChanged = false, past = false, entry = false, jump = false, noRec = false, woke = false, bad = false;
 	Vector xs, vs, ws; Quaternion qs;                    // physical start of the last step; free start after a rollback
 	int det = -1, ver = -1;
@@ -110,7 +111,7 @@ struct Feat { bool ok = false; uint16_t pa, pb; uint32_t ta, tb; };
 struct RapItem { CollAPairRec p; int a, b; double h; Feat f; double ut, tauT; Vector nt; };
 struct Plan { Vector vNew, wNew, F, M, dxc, dthc; bool any = false; };
 struct Woken { int i; Vector dv, dwg; };               // a body woken by WakePass and its share of the kinematic solve (global)
-struct Dlv { bool ok = false, write = false; double e = 0, eFloor = 0, f = 0; Quaternion qw, qa; Vector wW, vW, xW, vWr, wWr; }; // one delivery's result
+struct Dlv { bool ok = false, write = false; double e = 0, eFloor = 0, f = 0, eL = 0; Quaternion qw, qa; Vector wW, vW, xW, vWr, wWr; }; // one delivery's result
 
 } // namespace
 
@@ -276,17 +277,19 @@ bool CollAddonFrame::Impl::InitDyn (int i, bool woken)
 	if (fresh) { m = CollAMem (); m.memberHash = B.memberHash; }
 	m.seen = true;
 	k.Fprev = m.Fprev; k.Mprev = m.Mprev;
+	const bool clamped = !woken && B.arot.x == 0.0 && B.arot.y == 0.0 && B.arot.z == 0.0 && std::fabs (B.wb.length () - COLL_OMEGA_MAX) <= 1e-9*COLL_OMEGA_MAX; // Rigidbody.cpp:283-292 ended the last step
+	k.Mc = clamped ? Vector () : k.Mprev;
 	Matrix R = QM (B.q);
 	if (B.stack && m.hasP && m.hPrev > 0) k.aFree = (B.v - m.vw)/m.hPrev - mul (R, k.Fprev/B.m);
 	else k.aFree = B.aTot - mul (R, k.Fprev/B.m);
-	k.alFree = B.arot - Divc (k.Mprev/B.m, B.pmi);
+	k.alFree = B.arot - Divc (k.Mc/B.m, B.pmi);
 	CollOrbState &o = k.o;
 	o.s.pos = B.x; o.s.vel = B.v; o.s.Q = B.q; o.s.R = R; o.s.omega = B.wb;
 	o.acc = B.aTot; o.arot = B.arot; o.m = B.m; o.pmi = B.pmi;
 	o.Fadd = o.Madd = Vector ();
 	o.aC = k.aFree;
 	Vector tauTot (B.arot.x*B.pmi.x + (B.pmi.y - B.pmi.z)*B.wb.y*B.wb.z, B.arot.y*B.pmi.y + (B.pmi.z - B.pmi.x)*B.wb.z*B.wb.x, B.arot.z*B.pmi.z + (B.pmi.x - B.pmi.y)*B.wb.x*B.wb.y);
-	o.tauU = tauTot - k.Mprev/B.m;
+	o.tauU = clamped ? (m.hasP ? m.Pw.tauU : Vector ()) : tauTot - k.Mprev/B.m;   // a zeroed arot holds no torque: the last estimate persists (W6)
 	o.gReset = B.gEst; o.ground = B.ground; o.stack = B.stack;
 	return fresh;
 }
@@ -852,16 +855,16 @@ void CollAddonFrame::Impl::Deliver (int i, const Plan &in, const CollOrbState &c
 		base.s.pos = B.X; base.s.vel = v; base.s.Q = q; base.s.R = QM (q); base.s.omega = wv;
 		base.ground = o.ground && !write;
 		base.acc = base.aC; base.Fadd = base.Madd = Vector ();
-		base.arot = base.arot - Divc (B.Mprev/m, o.pmi);
+		base.arot = base.arot - Divc (B.Mc/m, o.pmi);
 		CollOrbState o0 = base;
-		mir.Step (o0, h);
+		mir.Step (o0, h, -1, 0, false);                   // the delivery solves the step before Orbiter's spin clamp; the clamp acts on the result alone
 		Vector L0 = o0.SpinL ();
 		for (int c = 0; c < 3; c++) {
 			Vector e; e.data[c] = 1.0;
-			CollOrbState o1 = base; o1.acc += mul (QM (q), e/m); o1.Fadd = e; mir.Step (o1, h);
+			CollOrbState o1 = base; o1.acc += mul (QM (q), e/m); o1.Fadd = e; mir.Step (o1, h, -1, 0, false);
 			Vector dv = (o1.s.vel - o0.s.vel)*m;
 			Ml(0,c) = dv.x; Ml(1,c) = dv.y; Ml(2,c) = dv.z;
-			CollOrbState o2 = base; o2.arot += Divc (e/m, o2.pmi); o2.Madd = e; mir.Step (o2, h);
+			CollOrbState o2 = base; o2.arot += Divc (e/m, o2.pmi); o2.Madd = e; mir.Step (o2, h, -1, 0, false);
 			Vector dL = o2.SpinL () - L0;
 			Ma(0,c) = dL.x; Ma(1,c) = dL.y; Ma(2,c) = dL.z;
 		}
@@ -873,7 +876,7 @@ void CollAddonFrame::Impl::Deliver (int i, const Plan &in, const CollOrbState &c
 		probe (qa, write ? in.vNew : o.s.vel, wa);
 		wr.Fb = Fe.length () > 0 ? mul (InvM (Ml), Fe*h) : Vector ();
 		wr.Mb = M.length () > 0 ? mul (InvM (Ma), M*h) : Vector ();
-		dAl = Divc ((wr.Mb - B.Mprev)/m, o.pmi);
+		dAl = Divc ((wr.Mb - B.Mc)/m, o.pmi);
 		wr.cdth = dAl*(cx*k*k);
 		if (wr.cdth.length ()*rmax <= COLLA_E_COMP) wr.cdth = Vector ();
 		qa = qw;
@@ -899,20 +902,27 @@ void CollAddonFrame::Impl::Deliver (int i, const Plan &in, const CollOrbState &c
 		c.AddForce (write ? wr.Fb : u, Vector ()); Couple (c, wr.Mb);
 		return c;
 	};
-	struct It { Vector u, w, eP, eL; double f = 1e300, fP = 1e300, fPn = 1e300; bool ok = false; }; // merit, relative P residual, P term above its rounding floor
+	struct It { Vector u, w, eP, eL; double f = 1e300, fP = 1e300, fPn = 1e300, fL = 1e300; bool ok = false; }; // merit, relative P residual, P and L terms above their rounding floors
 	int lvF = -1, nF = 0;                                 // integrator level and substeps of the first configured step, held for the loop (M7)
 	CollOrbState cs;                                      // Orbiter's own step at the held level
 	const double sP = tgtP.length () + m*1e-3, sL = tgtL.length () + 1e-3;
+	auto lerr = [&] (const CollOrbState &c) {             // L residual; an end L above the spin clamp at some attitude is aimed just past it at every one: Orbiter's clamp then leaves it parallel to the plan's
+		Vector Lt = cs.SpinL () + tgtL;
+		double mu = COLL_OMEGA_MAX*(1.0 + 1e-9)*m*std::max (o.pmi.x, std::max (o.pmi.y, o.pmi.z))/Lt.length ();
+		if (!(mu < 1.0)) return Vector (tgtL - (c.SpinL () - cs.SpinL ()));
+		return Vector (Lt*mu - c.SpinL ());
+	};
 	auto eval = [&] (const Vector &u, const Vector &wv, It &r, CollOrbState &c) {
-		c = conf (u, wv); mir.Step (c, h, lvF, nF);
-		if (lvF < 0) { lvF = c.lv; nF = c.nsub; cs = cf; mir.Step (cs, h, lvF, nF); }
+		c = conf (u, wv); mir.Step (c, h, lvF, nF, false);
+		if (lvF < 0) { lvF = c.lv; nF = c.nsub; cs = cf; mir.Step (cs, h, lvF, nF, false); }
 		r.u = u; r.w = wv;
 		r.eP = tgtP - (c.s.vel - cs.s.vel)*m;
-		r.eL = tgtL - (c.SpinL () - cs.SpinL ());
+		r.eL = lerr (c);
 		double nP = 4096.0*DBL_EPSILON*m*c.s.vel.length (), nL = 4096.0*DBL_EPSILON*(c.SpinL ().length () + cs.SpinL ().length ()); // rounding floors
 		r.fP = r.eP.length ()/sP;
 		r.fPn = std::max (0.0, r.eP.length () - nP)/sP;
-		r.f = r.fPn + std::max (0.0, r.eL.length () - nL)/sL;
+		r.fL = std::max (0.0, r.eL.length () - nL)/sL;
+		r.f = r.fPn + r.fL;
 		r.ok = std::isfinite (r.f) && Finite (c.s.pos) && Finite (c.s.omega);
 		return r.ok;
 	};
@@ -920,7 +930,7 @@ void CollAddonFrame::Impl::Deliver (int i, const Plan &in, const CollOrbState &c
 	CollOrbState c;
 	Vector u0 = write ? vW + aMissW*(g0*k) : wr.Fb, w0 = wa;
 	for (int pass = 0; pass < 2; pass++) {                // second pass only when Orbiter's own Choose on the final state picks another level (M7)
-		if (lvF >= 0) { cs = cf; mir.Step (cs, h, lvF, nF); }   // a new level: the residuals and the best iterate start over from the last best
+		if (lvF >= 0) { cs = cf; mir.Step (cs, h, lvF, nF, false); }   // a new level: the residuals and the best iterate start over from the last best
 		if (!eval (u0, w0, cur, c)) break;
 		for (int it = 0; it < 8; it++) {
 			if (!(cur.f > 0.0) || (cur.eP.length () <= 1e-14*sP && cur.eL.length () <= 1e-14*sL)) break;
@@ -931,7 +941,7 @@ void CollAddonFrame::Impl::Deliver (int i, const Plan &in, const CollOrbState &c
 				double s = q < 3 ? 1.0 : 1e-6*(1.0 + cur.w.length ());
 				e.data[q % 3] = s;
 				if (q < 3) uu += e; else ww += e;
-				CollOrbState c1 = conf (uu, ww); mir.Step (c1, h, lvF, nF);
+				CollOrbState c1 = conf (uu, ww); mir.Step (c1, h, lvF, nF, false);
 				Vector dP = (c1.s.vel - c.s.vel)*(m/s), dL = (c1.SpinL () - c.SpinL ())/s;
 				for (int p = 0; p < 3; p++) { J[p][q] = dP.data[p]; J[p + 3][q] = dL.data[p]; }
 			}
@@ -960,7 +970,7 @@ void CollAddonFrame::Impl::Deliver (int i, const Plan &in, const CollOrbState &c
 			for (int q = 0; q < 3; q++) {
 				Vector e;
 				e.data[q] = 1.0;
-				CollOrbState c1 = conf (cur.u + e, cur.w); mir.Step (c1, h, lvF, nF);
+				CollOrbState c1 = conf (cur.u + e, cur.w); mir.Step (c1, h, lvF, nF, false);
 				Vector dP = (c1.s.vel - c.s.vel)*m;
 				A(0,q) = dP.x; A(1,q) = dP.y; A(2,q) = dP.z;
 			}
@@ -986,7 +996,7 @@ void CollAddonFrame::Impl::Deliver (int i, const Plan &in, const CollOrbState &c
 	if (!cur.ok) return;
 	d.ok = true;
 	d.write = write;
-	d.e = cur.fP; d.f = cur.f;
+	d.e = cur.fP; d.f = cur.f; d.eL = cur.fL;
 	d.eFloor = 4096.0*DBL_EPSILON*m*c.s.vel.length ()/sP; // rounding floor of heliocentric velocities (30 km/s)
 	if (!write) wr.Fb = cur.u;
 	d.qw = qw; d.qa = qa; d.wW = wW; d.vW = vW; d.xW = xW;
@@ -1004,7 +1014,7 @@ CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vecto
 	B.bad = false;
 	CollOrbState cf = o;                                 // Orbiter's own step without the addon: cache without the own force
 	cf.acc -= mul (o.s.R, B.Fprev/m);
-	cf.arot -= Divc (B.Mprev/m, o.pmi);
+	cf.arot -= Divc (B.Mc/m, o.pmi);
 	cf.Fadd = cf.Madd = Vector ();
 	Vector Lnew = SpinL (i, B.Q, in.wNew);
 	Vector tgtP = (in.vNew - o.s.vel)*m + in.F*h;
@@ -1018,13 +1028,19 @@ CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vecto
 	wr.body = i;
 	Dlv d;
 	bool fin = Finite (tgtP) && Finite (tgtL) && Finite (in.dxc) && Finite (in.dthc) && Finite (in.F) && Finite (in.M) && Finite (B.X) && Finite (B.Fprev) && Finite (B.Mprev);
-	if (fin) Deliver (i, in, cf, tgtP, tgtL, write, count, wr, d);
-	if (fin && !write && (!d.ok || (!d.write && d.e > std::max (1e-12, d.eFloor)))) {   // the force path does not deliver the plan: write the state
+	Plan pw = in;                                        // the plan for a state write; one ending above 100 pi has its torque written as spin, scaled as Deliver's L target
+	const Vector Le = Lnew + in.M*h;
+	if (in.M.length () > 0 && OmegaOf (i, B.Q, Le).length () > COLL_OMEGA_MAX) {
+		pw.wNew = OmegaOf (i, B.Q, Le*std::min (1.0, COLL_OMEGA_MAX*(1.0 + 1e-9)*m*std::max (o.pmi.x, std::max (o.pmi.y, o.pmi.z))/Le.length ()));
+		pw.M = Vector ();
+	}
+	if (fin) Deliver (i, write ? pw : in, cf, tgtP, tgtL, write, count, wr, d);
+	if (fin && !write && (!d.ok || (!d.write && (d.e > std::max (1e-12, d.eFloor) || d.eL > 1e-12)))) {   // the force path does not deliver the plan (P or L): write the state
 		CollAWrite w2 {};
 		Dlv d2;
-		Deliver (i, in, cf, tgtP, tgtL, true, count, w2, d2);
+		Deliver (i, pw, cf, tgtP, tgtL, true, count, w2, d2);
 		if (d2.ok && (!d.ok || d2.f < d.f)) {
-			if (count) { F.st.groundWrites++; CollLog (COLLLOG_INFO, "Collision delivery: body %u force path off by %.3e, state written", b[i].id, d.ok ? d.e : HUGE_VAL); }
+			if (count) { F.st.groundWrites++; CollLog (COLLLOG_INFO, "Collision delivery: body %u force path off by %.3e (P) %.3e (L), state written", b[i].id, d.ok ? d.e : HUGE_VAL, d.ok ? d.eL : HUGE_VAL); }
 			wr = w2; d = d2;
 		}
 	}
@@ -1046,6 +1062,7 @@ CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vecto
 		return wr;
 	}
 	if (F.check && d.e > std::max (1e-12, d.eFloor)) Fail ("delivery", d.e, 1.0);
+	if (count && d.eL > 1e-9) CollLog (COLLLOG_INFO, "Collision delivery: body %u spin off by %.3e", b[i].id, d.eL);
 	const bool wrt = d.write;
 	wr.cdv = d.vWr - d.vW; wr.cdw = d.wWr - d.wW;
 	wr.state = wrt;
@@ -1556,6 +1573,11 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 		if (!inIsl[i]) { pl.vNew = B.V; pl.wNew = B.W; }
 		bool edited = false;
 		if (F.planEdit) for (const CollAPlanEdit &e : *F.planEdit) if (e.id == b[i].id) { pl.vNew += e.dv; pl.wNew += e.dwb; pl.F += e.F; pl.M += e.M; edited = true; }
+		double wl = pl.wNew.length ();
+		if (wl > COLL_OMEGA_MAX) {                           // Orbiter keeps at most 100 pi rad/s (Rigidbody.cpp:279-294), as CollApplyDeltaState
+			CollLog (COLLLOG_INFO, "Collision delivery: body %u spin %g rad/s clamped to %g", b[i].id, wl, COLL_OMEGA_MAX);
+			pl.wNew *= COLL_OMEGA_MAX/wl;
+		}
 		bool needs = edited || inIsl[i] || B.posChanged || (B.V - B.o.s.vel).length () > 0 || (B.W - B.o.s.omega).length () > 0 || B.Fprev.length () > 0 || B.Mprev.length () > 0;
 		CollAMem &mm = F.mem[B.key];
 		if (!needs) {
@@ -1578,6 +1600,8 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 				Plan pf = pl;
 				pf.vNew -= sp.dP1/b[i].m;
 				pf.wNew = OmegaOf (i, Bf.Q, SpinL (i, Bf.Q, pl.wNew) - sp.dL1);
+				double fl = pf.wNew.length ();
+				if (fl > COLL_OMEGA_MAX) pf.wNew *= COLL_OMEGA_MAX/fl;
 				pf.F -= sp.dP2/h; pf.M -= sp.dL2/h;
 				std::swap (w[i], Bf);
 				Apply (i, pf, false);

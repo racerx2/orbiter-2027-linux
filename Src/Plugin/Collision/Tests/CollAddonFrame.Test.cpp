@@ -70,7 +70,7 @@ struct Sim {
 	CollDetect fwd, ver;
 	Host host;
 	Vector g;
-	struct TB { CollOrbState o; std::shared_ptr<Geo> geo; uint32_t id; double rmax; Vector push; bool landed = false, woke = false; Vector split; std::vector<Vector> td; double tdK = 0, tdD = 0, tdMu = 0; };
+	struct TB { CollOrbState o; std::shared_ptr<Geo> geo; uint32_t id; double rmax; Vector push; bool landed = false, woke = false; Vector split; std::vector<Vector> td; double tdK = 0, tdD = 0, tdMu = 0; Vector ft0, mt0; };
 	std::vector<TB> tb;
 	std::shared_ptr<Geo> baseGeo; Vector basePos;
 	int events = 0, writes = 0, lastWrites = 0;
@@ -79,6 +79,8 @@ struct Sim {
 	std::vector<CollImpactEvent> evs;
 	double t = 0;
 	bool jumpNext = false;                               // the next frame follows a time jump: JUMP entry, Orbiter's cache reset to gravity
+	bool touchHold = false;                              // the step keeps the touchdown force of the frame start (the unseen input the addon assumes)
+	std::vector<CollABody> lastB;                        // the bodies of the last Run (dev)
 	Sim () { host.fr = &fr; host.ver = &ver; fr.hRest = mir.HRest (); }
 	void Add (std::shared_ptr<Geo> geo, double m, const Vector &pmi, const Vector &x, const Vector &v, double rmax)
 	{
@@ -110,7 +112,7 @@ struct Sim {
 	}
 	void Frame (double h)
 	{
-		for (TB &b : tb) if (!b.td.empty ()) { Vector f, mb; b.o.ground = Touch (b, f, mb); }
+		for (TB &b : tb) if (!b.td.empty ()) b.o.ground = Touch (b, b.ft0, b.mt0);
 		std::vector<CollABody> bodies;
 		if (baseGeo) {
 			CollABody k;
@@ -147,6 +149,7 @@ struct Sim {
 		std::vector<CollAWrite> out;
 		std::vector<CollImpactEvent> ev;
 		fr.Run (fwd, ver, mir, bodies, {}, h, t, host, out, ev);
+		lastB = bodies;
 		int off = baseGeo ? 1 : 0;
 		std::vector<Vector> gx (bodies.size (), g + gxAdd);
 		lastWrites = 0;
@@ -177,9 +180,8 @@ struct Sim {
 		for (const CollImpactEvent &e : ev) evs.push_back (e);
 		for (TB &b : tb) if (!b.landed) {
 			Vector ft, mt;
-			if (!b.td.empty ()) Touch (b, ft, mt);
-			b.o.aC = g + b.push + ft/b.o.m; b.o.tauU = mt/b.o.m; mir.Step (b.o, h); b.o.aC = g; b.o.tauU = Vector ();
-			if (b.o.s.omega.length () > COLL_OMEGA_MAX) { b.o.s.omega *= COLL_OMEGA_MAX/b.o.s.omega.length (); b.o.arot = Vector (); } // Rigidbody.cpp:279-294
+			if (!b.td.empty ()) { if (touchHold) { ft = b.ft0; mt = b.mt0; } else Touch (b, ft, mt); }
+			b.o.aC = g + b.push + ft/b.o.m; b.o.tauU = mt/b.o.m; mir.Step (b.o, h); b.o.aC = g; b.o.tauU = Vector ();   // the step ends with Orbiter's spin clamp
 		}
 		t += h;
 	}
@@ -700,9 +702,24 @@ void HBD2 (Sim &S, const Vector &w)                    // Blast cell debris HB_D
 	b.tdK = K; b.tdD = 2*0.7*std::sqrt (K*m); b.tdMu = 0.5;
 	b.o.s.omega = w;
 }
+void Settle (Sim &S)                                     // Orbiter's cache after a step under the same touchdown force and no own force
+{
+	Sim::TB &b = S.tb.back ();
+	Vector f, mb;
+	if (!b.td.empty ()) S.Touch (b, f, mb);
+	b.o.acc = S.g + f/b.o.m; b.o.arot = b.o.EulerInv (mb/b.o.m, b.o.s.omega);
+}
+Vector ClampL (const CollOrbState &o, const Vector &L)   // L as Orbiter keeps it at o's attitude: the body spin clamped to 100 pi (Rigidbody.cpp:279-294)
+{
+	Vector w = tmul (o.s.R, L);
+	w = Vector (w.x/(o.m*o.pmi.x), w.y/(o.m*o.pmi.y), w.z/(o.m*o.pmi.z));
+	if (w.length () > COLL_OMEGA_MAX) w *= COLL_OMEGA_MAX/w.length ();
+	return mul (o.s.R, Vector (w.x*o.pmi.x, w.y*o.pmi.y, w.z*o.pmi.z)*o.m);
+}
+double RelL (const CollOrbState &a, const Vector &L) { return (a.SpinL () - L).length ()/L.length (); }
 }
 
-TEST_CASE ("P1 HB_D2: ground debris with a small PMI and a large plan: the delivery converges or writes the state, every value finite", "[CollAddonFrame]")
+TEST_CASE ("P1 HB_D2: ground debris with a small PMI and a large plan: the Sim gets the planned P and the planned L as Orbiter clamps it, the next frame adds nothing", "[CollAddonFrame]")
 {
 	g_collLog = LogSink;
 	const double h = 0.02;
@@ -716,23 +733,76 @@ TEST_CASE ("P1 HB_D2: ground debris with a small PMI and a large plan: the deliv
 	};
 	for (const Case &c : cs) {
 		g_log.clear ();
-		Sim S;
-		HBD2 (S, c.w);
+		Sim S, R;                                            // R: the same body without the plan
+		for (Sim *x : { &S, &R }) { HBD2 (*x, c.w); x->touchHold = true; Settle (*x); }
 		Vector ft, mt;
 		REQUIRE (S.Touch (S.tb[0], ft, mt));                 // on the floor: ground contact, force path (6.6)
 		REQUIRE (S.tb[0].o.s.omega.length () > 29.0);
 		std::vector<CollAPlanEdit> pe { CollAPlanEdit { 1, Vector (), Vector (), c.p.unit ()*(c.P/h), c.l.unit ()*(c.L/h) } };
 		S.fr.planEdit = &pe;
-		S.Frame (h);
+		S.Frame (h); R.Frame (h);
 		S.fr.planEdit = nullptr;
 		const CollOrbState o1 = S.tb[0].o;
 		const int fail1 = S.fr.Stats ().checkFail;
-		S.Frame (h);
-		CAPTURE (c.P, c.L, c.p.x, c.p.y, c.p.z, fail1, S.fr.Stats ().checkFail, S.fr.Stats ().groundWrites, S.fr.Stats ().deliveryIt, o1.s.omega.length (), o1.s.vel.length ());
+		const double eL = RelL (o1, ClampL (o1, R.tb[0].o.SpinL () + c.l.unit ()*c.L)), eP = ((o1.s.vel - R.tb[0].o.s.vel)*o1.m - c.p.unit ()*c.P).length ()/c.P;
+		Sim T;                                               // T: S's state after the step, no addon history
+		HBD2 (T, c.w); T.touchHold = true; T.tb[0].o = o1;
+		S.Frame (h); T.Frame (h);
+		const double eT = RelL (S.tb[0].o, T.tb[0].o.SpinL ());
+		CAPTURE (c.P, c.L, c.p.x, c.p.y, c.p.z, fail1, S.fr.Stats ().checkFail, S.fr.Stats ().groundWrites, S.fr.Stats ().deliveryIt, o1.s.omega.length (), o1.s.vel.length (), eL, eP, eT);
 		REQUIRE (FinState (o1));
+		REQUIRE (FinState (S.tb[0].o));
 		REQUIRE (fail1 == 0);
 		REQUIRE (S.fr.Stats ().checkFail == 0);
 		REQUIRE (LogCount ("delivery-nan") == 0);
+		REQUIRE (std::fabs (o1.s.omega.length () - COLL_OMEGA_MAX) <= 1e-12*COLL_OMEGA_MAX);   // every case plans more than 100 pi: Orbiter keeps the clamp
+		REQUIRE (eL <= 1e-9);
+		REQUIRE (eP <= 1e-9);
+		REQUIRE (eT <= 1e-9);
+	}
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("P1 spin clamp: a plan above 100 pi is clamped and logged, the Sim keeps the clamp, the next frame sees no own torque in the zeroed arot", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	for (double h : { 1.0/60.0, 0.02 }) {
+		g_log.clear ();
+		const double m = 40;
+		const Vector pmi (0.02, 0.03, 0.04), I = pmi*m, w0 (30, -20, 240), dw (100, -80, 300);
+		auto box = std::make_shared<Geo> (BoxMesh (Vector (0.4, 0.3, 0.2)));
+		Sim S, R;                                            // R: the same body without the plan
+		for (Sim *x : { &S, &R }) { x->Add (box, m, pmi, Vector (), Vector (), 0.6); x->tb[0].o.s.omega = w0; Settle (*x); }
+		const CollOrbState o0 = S.tb[0].o;
+		Vector wn = w0 + dw;
+		wn *= COLL_OMEGA_MAX/wn.length ();
+		const Vector L0 = o0.SpinL (), Ln = mul (o0.s.R, Vector (wn.x*I.x, wn.y*I.y, wn.z*I.z));
+		const Vector M = Ln.unit ()*(2.0*COLL_OMEGA_MAX*I.z/h);   // the end spin above the clamp at any attitude
+		std::vector<CollAPlanEdit> pe { CollAPlanEdit { 1, Vector (), dw, Vector (), M } };
+		S.fr.planEdit = &pe;
+		S.Frame (h); R.Frame (h);
+		S.fr.planEdit = nullptr;
+		const CollOrbState o1 = S.tb[0].o;
+		const double eL = RelL (o1, ClampL (o1, R.tb[0].o.SpinL () + (Ln - L0) + M*h));
+		CAPTURE (h, eL, o1.s.omega.length (), R.tb[0].o.s.omega.length (), S.fr.Stats ().checkFail, S.fr.Stats ().deliveryIt);
+		REQUIRE (LogCount ("rad/s clamped") == 1);
+		REQUIRE (FinState (o1));
+		REQUIRE (S.fr.Stats ().checkFail == 0);
+		REQUIRE (LogCount ("delivery-nan") == 0);
+		REQUIRE (R.tb[0].o.s.omega.length () < COLL_OMEGA_MAX);
+		REQUIRE (std::fabs (o1.s.omega.length () - COLL_OMEGA_MAX) <= 1e-12*COLL_OMEGA_MAX);
+		REQUIRE ((o1.arot.x == 0.0 && o1.arot.y == 0.0 && o1.arot.z == 0.0));
+		REQUIRE (eL <= 1e-9);
+		Sim T;                                               // T: S's state after the step, no addon history
+		T.Add (box, m, pmi, Vector (), Vector (), 0.6); T.tb[0].o = o1;
+		S.Frame (h); T.Frame (h);
+		const double eT = RelL (S.tb[0].o, T.tb[0].o.SpinL ());
+		S.Frame (h);
+		CAPTURE (eT, S.lastB[0].dev, S.fr.Stats ().jumps);
+		REQUIRE (FinState (S.tb[0].o));
+		REQUIRE (S.fr.Stats ().checkFail == 0);
+		REQUIRE (eT <= 1e-9);                                // the reference step keeps Orbiter's zeroed arot
+		REQUIRE (S.lastB[0].dev <= 1e-6);                    // the prediction of frame 2 has no spurious torque
 	}
 	g_collLog = nullptr;
 }
