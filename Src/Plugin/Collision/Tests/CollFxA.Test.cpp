@@ -231,13 +231,13 @@ TEST_CASE ("F-4 sparks: yield in the rate, held while refreshed, decays, recreat
 
 TEST_CASE ("F-4b yields: gear only when destroyed or hard, vacuum factor in the rate")
 {
-	CHECK (CollFxA::Yield (&mGear, false) == 0);
-	CHECK (CollFxA::Yield (&mGear, true) == Approx (0.6));
-	CHECK (CollFxA::Yield (&mSteel, false) == 1);
-	CHECK (CollFxA::Yield (&mAl, false) == Approx (0.25));
-	CHECK (CollFxA::Yield (&mConc, false) == Approx (0.15));
-	CHECK (CollFxA::Yield (&mGlass, false) == 0);
-	CHECK (CollFxA::Yield (nullptr, true) == 0);
+	CHECK (CollFxA::SparkYield (&mGear, false) == 0);
+	CHECK (CollFxA::SparkYield (&mGear, true) == Approx (0.6));
+	CHECK (CollFxA::SparkYield (&mSteel, false) == 1);
+	CHECK (CollFxA::SparkYield (&mAl, false) == Approx (0.25));
+	CHECK (CollFxA::SparkYield (&mConc, false) == Approx (0.15));
+	CHECK (CollFxA::SparkYield (&mGlass, false) == 0);
+	CHECK (CollFxA::SparkYield (nullptr, true) == 0);
 	Env e;
 	e.Add (1, "A");
 	e.fx->Contact (e.Scrape (1, 10, 100, &mGear, nullptr));

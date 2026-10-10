@@ -22,7 +22,7 @@ bool Pre (const DentMaterial *m, const char *p) { return m && m->id && std::strn
 
 CollFxA::CollFxA (CollSdk &s, const CollCfgValues &c, CollFxWorld wv) : sdk (s), cfg (c), w (std::move (wv)) {}
 
-double CollFxA::Yield (const DentMaterial *m, bool gearOk)
+double CollFxA::SparkYield (const DentMaterial *m, bool gearOk)
 {
 	if (Pre (m, "steel_")) return 1.0;
 	if (Is (m, "gear")) return gearOk ? 0.6 : 0;
@@ -272,7 +272,7 @@ void CollFxA::Contact (const CollFxContact &x)
 	if ((cfg.fxMask & 4) && x.vt >= 3 && x.dt > 0) {
 		double P = std::fabs (x.Jt) * x.vt / x.dt;
 		bool gearOk = x.vn > 3 || (w.destroyed && w.destroyed (x.id));
-		double y = std::max (Yield (x.mat, gearOk), Yield (x.matOther, gearOk));
+		double y = std::max (SparkYield (x.mat, gearOk), SparkYield (x.matOther, gearOk));
 		if (P >= 5000 && y > 0) {
 			double L = Inten () * Clamp (0.3 + 0.5 * std::log10 (P / 5000), 0, 1);
 			if (L >= CFX_LVL_MIN) {

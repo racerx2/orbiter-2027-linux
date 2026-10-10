@@ -49,7 +49,7 @@ public:
 	const std::array<CollFxSlot, CFX_SLOTS> &Slots () const { return slot; }
 	int Live () const;
 	int Find (CollH h, uint8_t kind) const;
-	static double Yield (const DentMaterial *m, bool gearOk); // spark yield of a material
+	static double SparkYield (const DentMaterial *m, bool gearOk); // spark yield of a material
 private:
 	struct Req { uint8_t kind = 0; uint32_t id = 0; CollH h = nullptr; Vector pos, dir; CollSdk::FxSpec s; double lvl = 0, L0 = 0, tau = 0, hold = 0, t0 = 0, power = 0; bool held = false; };
 	struct Ground { bool was = false; double vd = 0; };
