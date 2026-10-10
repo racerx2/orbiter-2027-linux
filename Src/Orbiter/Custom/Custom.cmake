@@ -11,6 +11,7 @@ target_sources(Orbiter PRIVATE
 	Custom/LayoutApply.cpp
 	Custom/LayoutSkin.cpp
 	Custom/SkinCopy.cpp
+	Custom/SkinStyle.cpp
 )
 
 add_custom_target(CopySkins ALL

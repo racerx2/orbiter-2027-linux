@@ -4,6 +4,7 @@
 #include "FormRuntime.h"
 #include "FormsView.h"
 #include "Orbits.h"
+#include "SkinStyle.h"
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -473,6 +474,42 @@ TEST_CASE ("Planetary Defense: time flow moves the diagram's epoch; reset brings
 	QTest::qWait (300);
 	CHECK (s.rt ()->Engine ()->evaluate ("w.diagram.offset").toNumber () == 0.0);
 	CHECK (info->text ().toStdString () == "EPOCH 14 MAR 2001 12:00 · SCENARIO");
+	CHECK (s.rt ()->Warnings () == 0);
+}
+
+TEST_CASE ("Forms: the shipped forms skins' Qss files pass the style sheet checks unchanged")
+{
+	App ();
+	for (const char *id : {"Horizon", "PlanetaryDefense"}) {
+		INFO (id);
+		QFile f (SKINS + "/" + id + "/style.qss");
+		REQUIRE (f.open (QIODevice::ReadOnly));
+		const QString raw = QString::fromUtf8 (f.readAll ());
+		QStringList warned;
+		CHECK (custom::SkinStyleSheet (SKINS + "/" + id, raw, true, [&warned](const QString &w) { warned << w; }) == raw);
+		CHECK (warned.isEmpty ());
+	}
+}
+
+TEST_CASE ("Forms: the script objects have no deleteLater and can't be destroyed from a skin")
+{
+	Skin s ("PlanetaryDefense");
+	REQUIRE (s.ok);
+	QJSEngine *e = s.rt ()->Engine ();
+	for (const char *x : {"Launcher", "Orbits", "view", "w.diagram"}) {
+		INFO (x);
+		CHECK (e->evaluate (QString ("typeof %1").arg (x)).toString () == "object");
+		CHECK (e->evaluate (QString ("typeof %1.deleteLater").arg (x)).toString () == "undefined");
+		CHECK (e->evaluate (QString ("(function () { try { %1.deleteLater (); return false; } catch (e) { return true; } }) ()").arg (x)).toBool ());
+		CHECK (e->evaluate (QString ("(function () { try { %1.destroy (); return false; } catch (e) { return true; } }) ()").arg (x)).toBool ());
+	}
+	QCoreApplication::sendPostedEvents (nullptr, QEvent::DeferredDelete);
+	Settle ();
+	CHECK (e->evaluate ("Launcher.version").toString () == "Orbiter test");
+	CHECK (e->evaluate ("w.diagram.offset").toNumber () == 0.0);
+	s.api.setPage ("MISSIONS");
+	Settle ();
+	CHECK (s.view->findChild<QStackedWidget*> ("pages")->currentWidget ()->property ("page").toString () == "MISSIONS");
 	CHECK (s.rt ()->Warnings () == 0);
 }
 

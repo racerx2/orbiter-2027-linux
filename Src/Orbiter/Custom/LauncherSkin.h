@@ -32,7 +32,7 @@ namespace custom {
 		orbiter::LaunchpadDialog *Launchpad () const { return lp; }
 		QWidget *Dialog () const { return dlg; }
 
-		void ScanSkins ();
+		void ScanSkins (const QString &next = QString ()); // next: the skin an Apply right after needs, kept past the cap
 		const std::vector<SkinManifest> &Skins () const { return skins; }
 		const SkinManifest *ActiveManifest () const;
 		QString ActiveSkin () const { return activeId; }

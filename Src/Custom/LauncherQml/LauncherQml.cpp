@@ -8,6 +8,7 @@
 #include <QLibraryInfo>
 #include <QNetworkAccessManager>
 #include <QNetworkRequest>
+#include <QPointer>
 #include <QQmlAbstractUrlInterceptor>
 #include <QQmlEngine>
 #include <QQmlError>
@@ -27,7 +28,7 @@
 namespace {
 
 	void (*g_log) (const char *line) = nullptr;
-	QObject *g_api = nullptr;
+	QPointer<QObject> g_api;                   // the API object of the last Create; null once it is gone
 	bool g_registered = false;
 	std::unique_ptr<QTemporaryDir> g_allowDir; // the allow-listed Qt QML modules, as symlinks
 	QString g_allowPath;
@@ -156,12 +157,13 @@ extern "C" Q_DECL_EXPORT QWidget *LauncherQml_Create (const LauncherQmlInit *ini
 		return nullptr;
 	}
 	g_log = init->log;
+	g_api = init->api; // every Create: the host may have made a new API object
 	if (!g_registered) {
-		g_api = init->api;
-		// a singleton type is created per engine: every engine of the run gets the one API object
+		// a singleton type is created per engine: each engine gets the API object of its Create
 		qmlRegisterSingletonType<QObject> ("Orbiter.Launcher", 1, 0, "Launcher", [](QQmlEngine*, QJSEngine*) -> QObject* {
-			QJSEngine::setObjectOwnership (g_api, QJSEngine::CppOwnership);
-			return g_api;
+			QObject *api = g_api;
+			if (api) QJSEngine::setObjectOwnership (api, QJSEngine::CppOwnership);
+			return api;
 		});
 		g_registered = true;
 	}

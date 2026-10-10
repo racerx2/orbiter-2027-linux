@@ -4,6 +4,7 @@
 #ifndef __FORMS_FORMBUILD_H
 #define __FORMS_FORMBUILD_H
 
+#include "SkinStyle.h"
 #include "UiForm.h"
 #include <QIcon>
 #include <QPixmap>
@@ -21,6 +22,9 @@ class QLayout;
 
 namespace forms {
 
+	using custom::BuildEnv;
+	using custom::ResolveFile;
+	using custom::RewriteStyle;
 	using custom::UiForm;
 	using custom::UiLayout;
 	using custom::UiLayoutItem;
@@ -29,20 +33,9 @@ namespace forms {
 
 	const int MAX_PICTURE = 4096;
 
-	struct BuildEnv {
-		QString formDir;                  // canonical folder of the form
-		QString skinDir;                  // canonical skin folder
-		std::map<QString, QString> qrc;   // ":/prefix/file" -> canonical file path
-		std::function<void (const QString &)> warn;
-		mutable QSet<QString> warned;     // pictures warned about once
-		void Warn (const QString &s) const { if (warn) warn (s); }
-	};
-
 	bool ReadQrc (const QString &qrcFile, BuildEnv &env, QString &err);
-	QString ResolveFile (const BuildEnv &env, const QString &name);      // canonical path inside the skin, "" if not
 	QPixmap LoadPixmap (const BuildEnv &env, const QString &name);
 	QIcon LoadIcon (const BuildEnv &env, const UiValue &v);
-	QString RewriteStyle (const BuildEnv &env, const QString &qss);       // url() and ${SKIN} to absolute paths
 	QString SafeText (const BuildEnv &env, const QString &richText);     // pictures and style sheets from the skin only
 	QVariant SafeValue (const BuildEnv &env, QObject *w, const QByteArray &prop, const QVariant &v); // every Qt property set
 

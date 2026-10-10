@@ -694,6 +694,201 @@ TEST_CASE("Apply: forms saved by Qt Designer", "[layout]")
 	CHECK(kids.indexOf (panel) < kids.indexOf (oapiResDlgItem (s.dlg, IDC_SCN_PAUSED)));
 }
 
+// a copy of a stock template with labels added, and a stock dialog whose widgets stand for the copy's controls
+struct Changed {
+	struct Add { int at; const char *text; int copyOf; }; // a label before stock index `at`, made like stock control copyOf
+	const RESDIALOG *stock;
+	std::vector<RESCONTROL> ctl;
+	std::vector<int> from; // the stock index of each control, -1 for an added label
+	RESDIALOG d;
+	QWidget *dlg = nullptr;
+	Changed (int resId, const std::vector<Add> &adds)
+	{
+		App ();
+		stock = oapiFindResDialog (nullptr, resId);
+		REQUIRE(stock);
+		for (int i = 0; i <= stock->nctrl; i++) {
+			for (const Add &a : adds)
+				if (a.at == i) {
+					RESCONTROL c = stock->ctrl[a.copyOf];
+					c.text = a.text;
+					ctl.push_back (c);
+					from.push_back (-1);
+				}
+			if (i < stock->nctrl) ctl.push_back (stock->ctrl[i]), from.push_back (i);
+		}
+		d = *stock;
+		d.ctrl = ctl.data ();
+		d.nctrl = (int)ctl.size ();
+		dlg = CreateResDialog (nullptr, resId, nullptr, nullptr, false);
+		REQUIRE(dlg);
+		for (QObject *o : dlg->children ()) {
+			QWidget *x = qobject_cast<QWidget*> (o);
+			QVariant v = (x ? x->property ("resCtl") : QVariant ());
+			if (!v.isValid ()) continue;
+			for (size_t k = 0; k < ctl.size (); k++)
+				if (from[k] >= 0 && (const RESCONTROL*)v.value<void*> () == stock->ctrl + from[k]) x->setProperty ("resCtl", QVariant::fromValue ((void*)&ctl[k]));
+		}
+		for (size_t k = 0; k < ctl.size (); k++)
+			if (from[k] < 0) {
+				QLabel *l = new QLabel (QString::fromUtf8 (ctl[k].text), dlg);
+				l->setGeometry (5, 5 + 20 * (int)k, 80, 16);
+				l->setProperty ("resCtl", QVariant::fromValue ((void*)&ctl[k]));
+			}
+	}
+	~Changed () { delete dlg; }
+	QLabel *At (int k) const
+	{
+		for (QObject *o : dlg->children ())
+			if (QLabel *l = qobject_cast<QLabel*> (o); l && l->property ("resCtl").value<void*> () == (void*)&ctl[k]) return l;
+		return nullptr;
+	}
+	void Twin (int k, int of) // control k becomes a copy of control `of`: same kind, text, picture and style
+	{
+		ctl[k].kind = ctl[of].kind, ctl[k].text = ctl[of].text, ctl[k].imgid = ctl[of].imgid, ctl[k].style = ctl[of].style;
+		At (k)->setText (QString::fromUtf8 (ctl[k].text));
+	}
+};
+
+static bool ApplyTo (Changed &c, const UiForm &form, const QString &skin, QStringList &log)
+{
+	LayoutInfo info;
+	QString err;
+	bool ok = ApplyLayout (c.dlg, &c.d, form, skin, skin + "/ui/x.ui", [&log](const QString &s) { log.append (s); }, info, err);
+	if (!ok) log.append ("ERROR " + err);
+	return ok;
+}
+
+static void DropFingerprints (UiWidget &w)
+{
+	std::erase_if (w.dyn, [](const auto &p) { return p.first == "orbiterFp" || p.first == "orbiterFps"; });
+	for (auto &c : w.children) DropFingerprints (c);
+}
+
+TEST_CASE("Apply: a label added early to the template; IDC_STATIC labels keep their own layout", "[layout]")
+{
+	Built b;
+	Build (b, IDD_SAVESCN);
+	UiWidget *a = Find (b.form.root, "IDC_STATIC"), *n = Find (b.form.root, "IDC_STATIC_2"); // "Scenario name" (3:-1), "Description" (4:-1)
+	REQUIRE(a);
+	REQUIRE(n);
+	CHECK(a->Prop ("text")->str == "Scenario name");
+	const UiValue *fa = a->Dyn ("orbiterFp"), *fn = n->Dyn ("orbiterFp"), *fps = b.form.root.Dyn ("orbiterFps");
+	CHECK((fa && fn && fa->str != fn->str));
+	CHECK((fps && fps->str.split (',').size () == b.form.root.Dyn ("orbiterControls")->str.split (',').size ()));
+	a->SetProp ("text", UiValue::String ("A name"));
+	n->SetProp ("text", UiValue::String ("A description"));
+	Move (a, 3, 0);
+	Move (n, 0, 2);
+
+	Changed c (IDD_SAVESCN, {{0, "Added label", 3}}); // a new IDC_STATIC first: every index moves by one
+	QLabel *name = c.At (4), *desc = c.At (5), *added = c.At (0);
+	REQUIRE(name);
+	REQUIRE(desc);
+	REQUIRE(added);
+	CHECK(name->text () == "Scenario name");
+	const QRect n0 = name->geometry (), d0 = desc->geometry ();
+	QStringList log;
+	REQUIRE(ApplyTo (c, b.form, b.skin, log));
+	{
+		INFO(log.join ("\n").toStdString ());
+		CHECK(name->text () == "A name");
+		CHECK(desc->text () == "A description");
+		CHECK(name->geometry () == n0.translated (3, 0));
+		CHECK(desc->geometry () == d0.translated (0, 2));
+		CHECK(added->text () == "Added label");
+		CHECK(!added->isHidden ());
+		CHECK(Grep (log, "IDC_STATIC: not in this layout").size () == 1);
+		CHECK(Grep (log, "skipped").isEmpty ());
+	}
+
+	UiForm old = b.form; // exported before fingerprints: the moved labels can't be told apart, so they stay stock
+	DropFingerprints (old.root);
+	Changed o (IDD_SAVESCN, {{0, "Added label", 3}});
+	QLabel *oname = o.At (4), *odesc = o.At (5);
+	REQUIRE(oname);
+	REQUIRE(odesc);
+	const QRect on0 = oname->geometry (), od0 = odesc->geometry ();
+	QWidget *edit = oapiResDlgItem (o.dlg, IDC_SAVE_NAME);
+	const QRect e0 = edit->geometry ();
+	Find (old.root, "IDC_SAVE_NAME")->SetProp ("geometry", UiValue::Rect (Geo (Find (old.root, "IDC_SAVE_NAME")).translated (0, 1)));
+	log.clear ();
+	REQUIRE(ApplyTo (o, old, b.skin, log));
+	{
+		INFO(log.join ("\n").toStdString ());
+		CHECK(oname->text () == "Scenario name");
+		CHECK(odesc->text () == "Description");
+		CHECK(oname->geometry () == on0);
+		CHECK(odesc->geometry () == od0);
+		CHECK(!oname->isHidden ());
+		CHECK(!odesc->isHidden ());
+		CHECK(Grep (log, "or Orbiter moved it; skipped").size () == 2);
+		CHECK(edit->geometry () != e0); // a unique id is still found
+	}
+
+	Built u; // an old export on the template it was made from: the labels are found by their index as before
+	Build (u, IDD_SAVESCN);
+	DropFingerprints (u.form.root);
+	Find (u.form.root, "IDC_STATIC_2")->SetProp ("text", UiValue::String ("Old description"));
+	log.clear ();
+	REQUIRE(Apply (u, &log));
+	CHECK(log.isEmpty ());
+	QLabel *ud = nullptr;
+	for (QLabel *l : u.dlg->findChildren<QLabel*> (Qt::FindDirectChildrenOnly))
+		if (l->text () == "Old description") ud = l;
+	REQUIRE(ud);
+	CHECK(ud->property ("resCtl").value<void*> () == (void*)(u.d->ctrl + 4));
+}
+
+TEST_CASE("Apply: identical labels are told apart by their place only while nothing moved before them", "[layout]")
+{
+	Changed e (IDD_SAVESCN, {{0, "Added label", 3}});
+	e.Twin (5, 4); // "Description" becomes a second "Scenario name"
+	std::vector<LayoutImage> images;
+	UiForm form;
+	QString err;
+	REQUIRE(ReadUiForm (WriteUiForm (ExportLayout (e.dlg, &e.d, nullptr, images)), form, err));
+	UiWidget *t0 = nullptr, *t1 = nullptr;
+	std::function<void (UiWidget &)> find = [&](UiWidget &w) {
+		for (auto &c : w.children) {
+			if (const UiValue *v = c.Dyn ("orbiterCtl"); v && v->str == "4:-1") t0 = &c;
+			if (const UiValue *v = c.Dyn ("orbiterCtl"); v && v->str == "5:-1") t1 = &c;
+			find (c);
+		}
+	};
+	find (form.root);
+	REQUIRE(t0);
+	REQUIRE(t1);
+	CHECK((t0->Dyn ("orbiterFp") && t1->Dyn ("orbiterFp") && t0->Dyn ("orbiterFp")->str == t1->Dyn ("orbiterFp")->str));
+	t0->SetProp ("text", UiValue::String ("Twin 0"));
+	t1->SetProp ("text", UiValue::String ("Twin 1"));
+	QTemporaryDir tmp;
+	const QString skin = QDir (tmp.path ()).canonicalPath ();
+
+	Changed same (IDD_SAVESCN, {{0, "Added label", 3}});
+	same.Twin (5, 4);
+	QStringList log;
+	REQUIRE(ApplyTo (same, form, skin, log));
+	{
+		INFO(log.join ("\n").toStdString ());
+		CHECK(log.isEmpty ());
+		CHECK(same.At (4)->text () == "Twin 0");
+		CHECK(same.At (5)->text () == "Twin 1");
+	}
+
+	Changed moved (IDD_SAVESCN, {{0, "Added label", 3}, {0, "Another label", 3}}); // one more label before them
+	moved.Twin (6, 5);
+	log.clear ();
+	REQUIRE(ApplyTo (moved, form, skin, log));
+	{
+		INFO(log.join ("\n").toStdString ());
+		CHECK(moved.At (5)->text () == "Scenario name");
+		CHECK(moved.At (6)->text () == "Scenario name");
+		CHECK(moved.At (0)->text () == "Added label");
+		CHECK(Grep (log, "or Orbiter moved it; skipped").size () == 2);
+	}
+}
+
 // the undo is once per run: the case starts and ends a run of its own
 TEST_CASE("Undo: looks back, texts the code set kept, managed controls stay hidden", "[layout]")
 {

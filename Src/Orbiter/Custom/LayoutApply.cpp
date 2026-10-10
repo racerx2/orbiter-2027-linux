@@ -181,15 +181,67 @@ namespace {
 		return a && b;
 	}
 
-	// the template index an "index:id" pair names now: the index if it still holds that id, else the id if unique
-	int Resolve (const RESDIALOG *d, int idx, int id)
+	// a template control's kind, text, picture and style as 8 hex digits (FNV-1a), stored in the export as orbiterFp
+	QString Fingerprint (const RESCONTROL *c)
 	{
-		if (idx >= 0 && idx < d->nctrl && d->ctrl[idx].id == id) return idx;
-		int found = -1, n = 0;
-		for (int i = 0; i < d->nctrl; i++)
-			if (d->ctrl[i].id == id) found = i, n++;
-		return (n == 1 ? found : -1);
+		const QByteArray b = QByteArray::number (c->kind) + '|' + (c->text ? QByteArray ("t") + c->text : QByteArray ("-")) + '|'
+			+ QByteArray::number (c->imgid) + '|' + QByteArray::number ((qulonglong)c->style);
+		quint32 h = 2166136261u;
+		for (char ch : b) h = (h ^ (unsigned char)ch) * 16777619u;
+		return QString ("%1").arg (h, 8, 16, QChar ('0'));
 	}
+
+	// what an "index:id" pair is resolved against: the template now and the export's orbiterControls (and orbiterFps)
+	struct Pairs {
+		const RESDIALOG *d;
+		const std::vector<QWidget*> &ws;
+		std::vector<QString> fp;                          // the template's fingerprints
+		std::map<int, std::pair<int, QString>> listed;    // the export's list: index -> id, fingerprint
+		bool listFps = false;                             // the export's list has fingerprints
+
+		Pairs (const RESDIALOG *d, const std::vector<QWidget*> &ws, const UiWidget &root): d (d), ws (ws)
+		{
+			for (int i = 0; i < d->nctrl; i++) fp.push_back (Fingerprint (d->ctrl + i));
+			const UiValue *ctl = root.Dyn ("orbiterControls"), *fps = root.Dyn ("orbiterFps");
+			if (!ctl) return;
+			const QStringList p = ctl->str.split (',', Qt::SkipEmptyParts);
+			const QStringList f = (fps ? fps->str.split (',', Qt::SkipEmptyParts) : QStringList ());
+			listFps = (f.size () == p.size ());
+			for (int k = 0; k < p.size (); k++) {
+				int i = -1, id = 0;
+				if (ParsePair (p[k], i, id)) listed[i] = {id, listFps ? f[k].trimmed () : QString ()};
+			}
+		}
+
+		// the export listed the same controls 0..idx as the template has now: nothing was added or removed before idx
+		bool SamePrefix (int idx, bool withFp) const
+		{
+			if (withFp && !listFps) return false;
+			for (int j = 0; j <= idx; j++) {
+				auto it = listed.find (j);
+				if ((it != listed.end ()) != (ws[j] != nullptr)) return false;
+				if (it != listed.end () && (it->second.first != d->ctrl[j].id || (withFp && it->second.second != fp[j]))) return false;
+			}
+			return true;
+		}
+
+		// the template index the pair names now, -1 if none; fpIn "" for an export without fingerprints
+		int Resolve (int idx, int id, const QString &fpIn) const
+		{
+			const QString f = fpIn.trimmed ();
+			int n = 0, found = -1, nf = 0, foundF = -1;
+			for (int i = 0; i < d->nctrl; i++) {
+				if (d->ctrl[i].id != id) continue;
+				n++, found = i;
+				if (!f.isEmpty () && fp[i] == f) nf++, foundF = i;
+			}
+			if (idx >= 0 && idx < d->nctrl && d->ctrl[idx].id == id) {
+				if (f.isEmpty () ? (n == 1 || SamePrefix (idx, false)) : (fp[idx] == f && (nf == 1 || SamePrefix (idx, true)))) return idx;
+			}
+			if (nf == 1) return foundF;
+			return (n == 1 ? found : -1); // a unique id names its control even with another text; a shared one (IDC_STATIC) doesn't
+		}
+	};
 
 	// ---------------------------------------------------------------------------------------------
 	// property values
@@ -633,6 +685,7 @@ bool ApplyLayout (QWidget *dlg, const RESDIALOG *d, const UiForm &form, const QS
 	const QString uiDir = QFileInfo (uiFile).absolutePath ();
 	const std::vector<QWidget*> ws = TemplateWidgets (dlg, d);
 	const UiWidget &root = form.root;
+	const Pairs pairs (d, ws, root);
 	const bool popup = !(d->style & S_WS_CHILD);
 
 	// the user's base units against those of the export
@@ -662,9 +715,10 @@ bool ApplyLayout (QWidget *dlg, const RESDIALOG *d, const UiForm &form, const QS
 			int idx = -1;
 			if (const UiValue *v = c->Dyn ("orbiterCtl")) {
 				int i = -1, id = 0;
-				idx = (ParsePair (v->str, i, id) ? Resolve (d, i, id) : -1);
+				const UiValue *f = c->Dyn ("orbiterFp");
+				idx = (ParsePair (v->str, i, id) ? pairs.Resolve (i, id, f ? f->str : QString ()) : -1);
 				if (idx < 0) {
-					say (c->name + ": no control " + v->str + " in this Orbiter; skipped");
+					say (c->name + ": no control " + v->str + " in this Orbiter, or Orbiter moved it; skipped");
 					idx = -2;
 				} else if (owner[idx] >= 0) {
 					say (c->name + ": a second copy of " + IdName (d->ctrl + idx) + "; skipped");
@@ -680,12 +734,10 @@ bool ApplyLayout (QWidget *dlg, const RESDIALOG *d, const UiForm &form, const QS
 
 	std::vector<char> listed (ws.size (), 0);
 	const UiValue *ctlList = root.Dyn ("orbiterControls");
-	if (ctlList)
-		for (const QString &p : ctlList->str.split (',', Qt::SkipEmptyParts)) {
-			int i = -1, id = 0;
-			int k = (ParsePair (p, i, id) ? Resolve (d, i, id) : -1);
-			if (k >= 0) listed[k] = 1;
-		}
+	for (const auto &[i, e] : pairs.listed) {
+		int k = pairs.Resolve (i, e.first, e.second);
+		if (k >= 0) listed[k] = 1;
+	}
 
 	// the stock controls: geometry, then what they show
 	const QRect area (QPoint (0, 0), ref);
@@ -935,6 +987,7 @@ UiForm ExportLayout (QWidget *dlg, const RESDIALOG *d, void *hModule, std::vecto
 			if (!standIn && !w->styleSheet ().isEmpty ()) u.SetProp ("styleSheet", UiValue::String (w->styleSheet ()));
 			const QString pair = QString ("%1:%2").arg (i).arg (c->id);
 			u.SetDyn ("orbiterCtl", UiValue::String (pair));
+			u.SetDyn ("orbiterFp", UiValue::String (Fingerprint (c)));
 			if (standIn) u.SetDyn ("orbiterStandIn", UiValue::Bool (true));
 			QString note = Note (dname, c);
 			if (!note.isEmpty ()) u.SetDyn ("orbiterNote", UiValue::String (note));
@@ -943,12 +996,14 @@ UiForm ExportLayout (QWidget *dlg, const RESDIALOG *d, void *hModule, std::vecto
 		}
 	};
 	build (root, -1);
+	QStringList fps;
 	for (int i = 0; i < n; i++)
-		if (ws[i]) pairs.append (QString ("%1:%2").arg (i).arg (d->ctrl[i].id));
+		if (ws[i]) pairs.append (QString ("%1:%2").arg (i).arg (d->ctrl[i].id)), fps.append (Fingerprint (d->ctrl + i));
 
 	root.SetDyn ("orbiterBaseX", UiValue::Double (dlg->property ("resBaseX").toDouble ()));
 	root.SetDyn ("orbiterBaseY", UiValue::Number (dlg->property ("resBaseY").toInt ()));
 	root.SetDyn ("orbiterControls", UiValue::String (pairs.join (',')));
+	root.SetDyn ("orbiterFps", UiValue::String (fps.join (','))); // parallel to orbiterControls
 
 	for (QWidget *w : StockTabOrder (d, ws))
 		for (int i = 0; i < n; i++)

@@ -246,7 +246,8 @@ bool FormRuntime::LoadScripts (QString &err)
 {
 	const UiValue *s = form.root.Dyn ("scripts");
 	if (!s) return true;
-	QStringList files = (s->type == UiValue::STRINGLIST ? s->list : s->str.split (QRegularExpression ("[;,\\s]+"), Qt::SkipEmptyParts));
+	QStringList files = (s->type == UiValue::STRINGLIST ? s->list : s->str.split (QRegularExpression ("[;,]"))); // names may have spaces
+	for (QString &f : files) f = f.trimmed ();
 	files.removeAll (QString ());
 	if (files.size () > 16) {
 		err = "more than 16 scripts";

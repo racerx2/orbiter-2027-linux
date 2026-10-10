@@ -150,6 +150,15 @@ if (TARGET LauncherFormsCore)
 	target_link_libraries(FormsPreview LauncherFormsCore)
 	set_target_properties(FormsPreview PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${ORBITER_BINARY_ROOT_DIR}/Tests" EXCLUDE_FROM_ALL ON)
 endif()
+# custom: launcher skins; the QML view module and the Launcher object a QML skin sees, offscreen
+if (TARGET LauncherQml)
+	find_package(Qt6 REQUIRED COMPONENTS Quick QuickWidgets Qml Network)
+	add_unit_test(LauncherQml.Test ${ORBITER_SOURCE_ROOT_DIR}/Src/Custom/LauncherQml/LauncherQml.cpp)
+	set_target_properties(LauncherQml.Test PROPERTIES AUTOMOC ON)
+	target_include_directories(LauncherQml.Test PRIVATE ${ORBITER_SOURCE_DIR}/Custom)
+	target_link_libraries(LauncherQml.Test Qt6::Quick Qt6::QuickWidgets Qt6::Qml Qt6::Network)
+	set_tests_properties(LauncherQml.Test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 120)
+endif()
 
 if (BUILD_ORBITER_SERVER)
 

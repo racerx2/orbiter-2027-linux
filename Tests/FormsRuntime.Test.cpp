@@ -445,6 +445,22 @@ TEST_CASE ("Forms: script errors fail the load; binding errors are warnings")
 	}
 }
 
+TEST_CASE ("Forms: scripts given as a string are split at ; and , only")
+{
+	App ();
+	const QString list = "<stringlist>\n    <string>Logic.js</string>\n   </stringlist>";
+	for (const QString &value : {QString ("My Logic.js"), QString (" My Logic.js ; "), QString ("My Logic.js,")}) {
+		QTemporaryDir tmp;
+		const QString skin = CopySkin (BASIC, tmp);
+		REQUIRE (QFile::rename (skin + "/forms/Logic.js", skin + "/forms/My Logic.js"));
+		Replace (skin + "/forms/Main.ui", list, "<string>" + value + "</string>"); // a dynamic property Designer adds with + is a string
+		Fix f (skin);
+		INFO (value.toStdString () + ": " + f.err.toStdString ());
+		CHECK (f.ok);
+		CHECK ((f.rt () && f.rt ()->Warnings () == 0));
+	}
+}
+
 TEST_CASE ("Forms: a binding that runs forever is stopped")
 {
 	App ();
@@ -677,6 +693,38 @@ TEST_CASE ("Forms: style sheets read pictures from the skin only and set no unch
 	CHECK (SafeValue (s.env, &l, "toolTip", "<img src=\"" + o + "\">").toString () == "<img src=\"\">");
 	QPushButton b;
 	CHECK (SafeValue (s.env, &b, "text", "<img src=x>").toString () == "<img src=x>"); // buttons show plain text
+}
+
+TEST_CASE ("Forms: a forms skin's Qss file gets the checks of the form's style sheets")
+{
+	App ();
+	Sandbox s;
+	const QString o = s.outside;
+	REQUIRE (QFile::copy (s.skin + "/forms/ok.png", s.skin + "/top.png"));
+	const QString qss = "QLabel { qproperty-openExternalLinks: true; qproperty-text: \"<img src='" + o + "'>\"; qproperty-alignment: AlignRight; }\n"
+		"QWidget#a { background-image: url(" + o + "); }\nQWidget#b { image: url(top.png); border-image: url(\"${SKIN}/forms/ok.png\"); }";
+	QStringList warned;
+	const QString f = custom::SkinStyleSheet (s.skin + "/forms/..", qss, true, [&warned](const QString &w) { warned << w; });
+	INFO (f.toStdString ());
+	CHECK (!f.contains ("qproperty-openExternalLinks"));
+	CHECK (!f.contains ("qproperty-text"));
+	CHECK (f.contains ("qproperty-alignment"));
+	CHECK (f.contains ("QWidget#a { background-image: url(\"\"); }"));
+	CHECK (f.contains ("url(\"" + s.skin + "/top.png\")")); // relative to the skin folder
+	CHECK (f.contains ("url(\"" + s.skin + "/forms/ok.png\")"));
+	CHECK (warned.size () == 1);
+	QLabel l ("stock"), raw ("stock");
+	l.setStyleSheet (f);
+	l.ensurePolished ();
+	CHECK (!l.openExternalLinks ());
+	CHECK (l.text () == "stock");
+	CHECK (l.alignment () & Qt::AlignRight);
+	raw.setStyleSheet (qss); // what the Launchpad dialog got before
+	raw.ensurePolished ();
+	CHECK (raw.openExternalLinks ());
+
+	const QString plain = custom::SkinStyleSheet (s.skin, "QWidget { image: url(\"${SKIN}/top.png\"); }", false, nullptr); // a style-sheet skin: as written
+	CHECK (plain == "QWidget { image: url(\"" + s.skin + "/top.png\"); }");
 }
 
 #include "FormsRuntime.Test.moc"

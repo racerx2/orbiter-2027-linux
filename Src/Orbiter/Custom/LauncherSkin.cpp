@@ -6,6 +6,7 @@
 #include "LauncherItem.h"
 #include "LayoutSkin.h"
 #include "ResetKey.h"
+#include "SkinStyle.h"
 #include "Orbiter.h"
 #include "Launchpad.h"
 #include "LpadTab.h"
@@ -37,7 +38,6 @@ namespace {
 	const char *SKIN_DIR = "Skins";
 	const char *MODULE_FILE = "Modules/Launcher/LauncherQml.so";
 	const char *FORMS_MODULE_FILE = "Modules/Launcher/LauncherForms.so"; // custom: forms skins
-	const size_t MAX_SKINS = 200;
 	const char *TITLE_HINT = " — Ctrl+Shift+L: classic Launchpad";
 	const char *UNDONE_HINT = " — restart for the stock layout";
 
@@ -84,7 +84,7 @@ custom::LauncherSkin::LauncherSkin (LaunchpadDialog *lp): QObject (lp->GetTab (0
 
 	const Config *c = lp->Cfg ();
 	const QString id = LayoutSkin::StartSkin (c, cfg); // the same choice the layout was made by
-	ScanSkins ();
+	ScanSkins (id);
 	if (LayoutSkin::InUse ()) {
 		ApplyMinSize (false);
 		QSize ref = LayoutSkin::RefSize ();
@@ -118,22 +118,12 @@ void custom::LauncherSkin::Log (const QString &line) const
 // ---------------------------------------------------------------------------------------------------------
 // skins and Launcher.cfg
 
-void custom::LauncherSkin::ScanSkins ()
+void custom::LauncherSkin::ScanSkins (const QString &next)
 {
 	skins.clear ();
-	std::vector<fs::path> dirs;
-	std::error_code ec;
-	for (fs::directory_iterator it (SKIN_DIR, ec), end; !ec && it != end; it.increment (ec)) {
-		std::error_code ec2;
-		if (!it->is_directory (ec2)) continue;
-		std::string name = it->path ().filename ().string ();
-		if (name.empty () || name[0] == '.') continue;
-		dirs.push_back (it->path ());
-		if (dirs.size () >= MAX_SKINS) break;
-	}
-	std::sort (dirs.begin (), dirs.end ());
-	for (const auto &d : dirs)
-		skins.push_back (ReadSkin (d.string ()));
+	const std::vector<std::string> keep = {next.toStdString (), switchTarget.toStdString (), activeId.toStdString (), cfg.skin};
+	for (const std::string &name : ListSkinFolders (SKIN_DIR, keep))
+		skins.push_back (ReadSkin ((fs::path (SKIN_DIR) / name).string ()));
 	if (api) api->SkinsRescanned ();
 }
 
@@ -353,11 +343,9 @@ bool custom::LauncherSkin::ApplyQss (const SkinManifest &m)
 {
 	QFile f (QString::fromStdString (m.dir) + '/' + QString::fromStdString (m.qss));
 	if (!f.open (QIODevice::ReadOnly) || f.size () > 4 * 1024 * 1024) return false;
-	QString text = QString::fromUtf8 (f.readAll ());
-	QString dir = QString::fromStdString (m.dir);
-	dir.replace ("\\", "\\\\");
-	dir.replace ("\"", "\\\"");
-	text.replace ("${SKIN}", dir);
+	const QString id = QString::fromStdString (m.id);
+	const QString text = SkinStyleSheet (QString::fromStdString (m.dir), QString::fromUtf8 (f.readAll ()), !m.forms.empty (), // custom: forms skins; sandboxed
+		[this, id](const QString &s) { Log (id + ": style sheet: " + s); });
 	const QString root = LayoutRootStyle (); // custom: launcher layouts; the layout's root style first, the skin's after it
 	dlg->setStyleSheet (root.isEmpty () ? text : root + "\n" + text);
 	return true;

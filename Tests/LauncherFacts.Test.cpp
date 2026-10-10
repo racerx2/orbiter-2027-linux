@@ -1,6 +1,8 @@
 // custom: launcher skins; unit tests of the skin.cfg, Launcher.cfg and scenario facts parsers
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -218,6 +220,71 @@ TEST_CASE("Launcher.cfg round trip, recents and favourites", "[launcher]")
 	none.skin = "x";
 	CHECK(!LoadLauncherCfg ((t.root / "missing.cfg").string (), none));
 	CHECK(none.skin.empty ());
+}
+
+TEST_CASE("Launcher.cfg as a symlink: the target is written, the link stays", "[launcher]")
+{
+	TmpDir t;
+	LauncherCfg c;
+	c.skin = "Horizon";
+	auto readSkin = [](const fs::path &p) { LauncherCfg r; LoadLauncherCfg (p.string (), r); return r.skin; };
+
+	fs::create_directories (t.root / "dotfiles" / "orbiter");
+	t.Write ("dotfiles/orbiter/Launcher.cfg", "Skin = Dark\n");
+	fs::create_directories (t.root / "run");
+	fs::create_symlink ("../dotfiles/orbiter/Launcher.cfg", t.root / "run" / "Launcher.cfg"); // relative
+	REQUIRE(SaveLauncherCfg ((t.root / "run" / "Launcher.cfg").string (), c));
+	CHECK(fs::is_symlink (t.root / "run" / "Launcher.cfg"));
+	CHECK(readSkin (t.root / "dotfiles" / "orbiter" / "Launcher.cfg") == "Horizon");
+	CHECK(!fs::exists (t.root / "run" / "Launcher.cfg.tmp"));
+	CHECK(!fs::exists (t.root / "dotfiles" / "orbiter" / "Launcher.cfg.tmp"));
+
+	fs::create_symlink (t.root / "dotfiles" / "new.cfg", t.root / "run" / "Dangling.cfg"); // absolute, its target not there yet
+	c.skin = "PlanetaryDefense";
+	REQUIRE(SaveLauncherCfg ((t.root / "run" / "Dangling.cfg").string (), c));
+	CHECK(fs::is_symlink (t.root / "run" / "Dangling.cfg"));
+	CHECK(fs::is_regular_file (t.root / "dotfiles" / "new.cfg"));
+	CHECK(readSkin (t.root / "run" / "Dangling.cfg") == "PlanetaryDefense");
+
+	fs::create_symlink ("Dangling.cfg", t.root / "run" / "Chain.cfg"); // a link to a link
+	c.skin = "Dark";
+	REQUIRE(SaveLauncherCfg ((t.root / "run" / "Chain.cfg").string (), c));
+	CHECK(fs::is_symlink (t.root / "run" / "Chain.cfg"));
+	CHECK(fs::is_symlink (t.root / "run" / "Dangling.cfg"));
+	CHECK(readSkin (t.root / "dotfiles" / "new.cfg") == "Dark");
+
+	fs::create_symlink ("Loop2.cfg", t.root / "run" / "Loop1.cfg");
+	fs::create_symlink ("Loop1.cfg", t.root / "run" / "Loop2.cfg");
+	CHECK(!SaveLauncherCfg ((t.root / "run" / "Loop1.cfg").string (), c));
+	CHECK(fs::is_symlink (t.root / "run" / "Loop1.cfg"));
+}
+
+TEST_CASE("ListSkinFolders: sorted before the cap, the kept skins always in", "[launcher]")
+{
+	TmpDir t;
+	std::vector<std::string> names;
+	for (int i = 0; i < 230; i++) {
+		char n[16];
+		snprintf (n, sizeof (n), "s%03d", i);
+		names.push_back (n);
+	}
+	for (int i = 229; i >= 0; i -= 2) fs::create_directories (t.root / names[i]); // odd ones first, then even ones
+	for (int i = 228; i >= 0; i -= 2) fs::create_directories (t.root / names[i]);
+	fs::create_directories (t.root / ".copy-x-123");
+	t.Write ("afile", "x");
+	auto l = ListSkinFolders (t.root.string (), {});
+	REQUIRE(l.size () == MAX_SKINS);
+	CHECK(std::equal (l.begin (), l.end (), names.begin ()));
+	l = ListSkinFolders (t.root.string (), {"s229", "", "s005", "missing", "../x", ".copy-x-123"});
+	REQUIRE(l.size () == MAX_SKINS);
+	CHECK(std::is_sorted (l.begin (), l.end ()));
+	CHECK(l.back () == "s229");
+	CHECK(l[l.size () - 2] == "s198");
+	CHECK(std::find (l.begin (), l.end (), "s005") != l.end ());
+	CHECK(std::find (l.begin (), l.end (), "missing") == l.end ());
+	l = ListSkinFolders (t.root.string (), {}, 1000);
+	CHECK(l.size () == 230);
+	CHECK(ListSkinFolders ((t.root / "nothing").string (), {"s001"}).empty ());
 }
 
 TEST_CASE("ReadScenario: synthetic cases", "[launcher]")

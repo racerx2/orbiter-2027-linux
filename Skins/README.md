@@ -94,7 +94,7 @@ so the classic code works from the new places.
 - Anything else (class, names, enabled, sizes of fonts in the classic text measure) is the classic code's.
 
 **Rules.** Absolute positions only: a form with a Designer layout is refused (Form > Break Layout). Orbiter finds
-its controls by the dynamic properties `orbiterCtl` and `orbiterControls`, not by name, so keep them; copies of a
+its controls by the dynamic properties `orbiterCtl`, `orbiterFp`, `orbiterControls` and `orbiterFps`, not by name, so keep them; copies of a
 control are ignored. Framed boxes with `orbiterStandIn` are areas Orbiter draws itself: only their place and size
 count. A changed control must stay on the form and be at least 8 x 8 (the page area 100 x 100). The form's size is
 the window's starting size; `IDD_MAIN` can't be smaller than 550 x 350. `${SKIN}` in a style sheet is the skin
@@ -223,7 +223,7 @@ network access, and the form loads pictures and scripts only from its skin folde
 out. Rich text in labels and tool tips shows pictures from the skin only, `<link>` style sheets are removed, and so
 are styles with `&` or `@` and style elements broken up by comments; `openExternalLinks` stays off, Markdown
 labels show plain text, and style sheets can't set `text`, `toolTip`, `styleSheet` and the like through
-`qproperty-`. Install skins you trust, as you would add-ons.
+`qproperty-`; the skin's `Qss` file gets the same style sheet checks. Install skins you trust, as you would add-ons.
 
 ## QML skins
 

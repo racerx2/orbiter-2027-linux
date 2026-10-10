@@ -14,6 +14,8 @@ namespace custom {
 	const size_t MAX_RECENT = 8;
 	const size_t MAX_FAVOURITES = 200;
 	const size_t MAX_LISTED_VESSELS = 64;
+	const size_t MAX_SKINS = 200;          // skins listed
+	const size_t MAX_SKIN_SCAN = 10000;    // entries of the Skins folder looked at
 
 	struct CfgEntry {
 		std::string key;   // lower case
@@ -39,6 +41,9 @@ namespace custom {
 	// reads and validates <dir>/skin.cfg
 	SkinManifest ReadSkin (const std::string &dir, int supportedApi = LAUNCHER_API);
 
+	// the folders in dir that can be skins (no dot names), sorted; the first cap of them, those in keep always among them
+	std::vector<std::string> ListSkinFolders (const std::string &dir, const std::vector<std::string> &keep, size_t cap = MAX_SKINS);
+
 	struct LauncherCfg {
 		std::string skin;                     // stored skin id, "" = classic
 		std::vector<std::string> recent;      // newest first
@@ -49,7 +54,7 @@ namespace custom {
 	LauncherCfg ReadLauncherCfg (std::istream &is);
 	void WriteLauncherCfg (std::ostream &os, const LauncherCfg &cfg);
 	bool LoadLauncherCfg (const std::string &path, LauncherCfg &cfg); // false if missing or unreadable (cfg reset)
-	bool SaveLauncherCfg (const std::string &path, const LauncherCfg &cfg); // via <path>.tmp and rename
+	bool SaveLauncherCfg (const std::string &path, const LauncherCfg &cfg); // via <path>.tmp and rename; a symlink's target is written
 	void AddRecent (LauncherCfg &cfg, const std::string &scn);
 	bool ToggleFavourite (LauncherCfg &cfg, const std::string &scn); // returns the new state
 

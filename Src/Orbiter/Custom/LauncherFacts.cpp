@@ -249,6 +249,37 @@ SkinManifest ReadSkin (const std::string &dirPath, int supportedApi)
 	return m;
 }
 
+static bool SkinFolderName (const std::string &name)
+{
+	return !name.empty () && name[0] != '.' && name.find ('/') == std::string::npos;
+}
+
+std::vector<std::string> ListSkinFolders (const std::string &dir, const std::vector<std::string> &keep, size_t cap)
+{
+	std::vector<std::string> all;
+	std::error_code ec;
+	size_t seen = 0;
+	for (fs::directory_iterator it (dir, ec), end; !ec && it != end && seen < MAX_SKIN_SCAN; it.increment (ec), seen++) {
+		std::error_code ec2;
+		const std::string name = it->path ().filename ().string ();
+		if (SkinFolderName (name) && it->is_directory (ec2)) all.push_back (name);
+	}
+	auto kept = [&keep](const std::string &n) { return std::find (keep.begin (), keep.end (), n) != keep.end (); };
+	for (const auto &k : keep) { // also past the scan's bound
+		std::error_code ec2;
+		if (SkinFolderName (k) && std::find (all.begin (), all.end (), k) == all.end () && fs::is_directory (fs::path (dir) / k, ec2)) all.push_back (k);
+	}
+	std::sort (all.begin (), all.end ()); // directory order is the file system's: the cap comes after the sort
+	size_t nkept = 0;
+	for (const auto &n : all) nkept += kept (n);
+	size_t room = (cap > nkept ? cap - nkept : 0);
+	std::vector<std::string> out;
+	for (const auto &n : all)
+		if (kept (n)) out.push_back (n);
+		else if (room) out.push_back (n), room--;
+	return out;
+}
+
 // ---------------------------------------------------------------------------------------------------------
 // Launcher.cfg
 
@@ -287,8 +318,26 @@ bool LoadLauncherCfg (const std::string &path, LauncherCfg &cfg)
 	return true;
 }
 
-bool SaveLauncherCfg (const std::string &path, const LauncherCfg &cfg)
+// the file a save replaces: a symlinked Launcher.cfg (dangling too) is followed, so the link stays
+static bool SaveTarget (const std::string &path, std::string &file)
 {
+	fs::path p (path);
+	std::error_code ec;
+	for (int i = 0; fs::is_symlink (p, ec); i++) {
+		if (i >= 40) return false; // a loop of links, as the kernel's ELOOP
+		const fs::path t = fs::read_symlink (p, ec);
+		if (ec) return false;
+		p = fs::weakly_canonical (p.parent_path () / t, ec); // an absolute target replaces the parent
+		if (ec) return false;
+	}
+	file = p.string ();
+	return true;
+}
+
+bool SaveLauncherCfg (const std::string &cfgPath, const LauncherCfg &cfg)
+{
+	std::string path;
+	if (!SaveTarget (cfgPath, path)) return false;
 	std::string tmp = path + ".tmp";
 	{
 		std::ofstream os (tmp, std::ios::out | std::ios::trunc);

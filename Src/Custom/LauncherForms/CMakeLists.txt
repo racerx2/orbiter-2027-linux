@@ -19,6 +19,7 @@ if(ORBITER_BUILD_LAUNCHER_FORMS AND LAUNCHER_FORMS_FOUND)
 		FormsView.cpp
 		Orbits.cpp
 		${ORBITER_SOURCE_ROOT_DIR}/Src/Orbiter/Custom/UiForm.cpp
+		${ORBITER_SOURCE_ROOT_DIR}/Src/Orbiter/Custom/SkinStyle.cpp
 	)
 	target_include_directories(LauncherFormsCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${ORBITER_SOURCE_ROOT_DIR}/Src/Orbiter/Custom)
 	target_link_libraries(LauncherFormsCore PUBLIC Qt6::Widgets Qt6::Qml)
@@ -33,7 +34,7 @@ if(ORBITER_BUILD_LAUNCHER_FORMS AND LAUNCHER_FORMS_FOUND)
 
 	add_library(LauncherForms MODULE LauncherForms.cpp)
 	target_link_libraries(LauncherForms PRIVATE LauncherFormsCore)
-	target_link_options(LauncherForms PRIVATE -Wl,-Bsymbolic-functions) # its own UiForm, not the one Orbiter exports
+	target_link_options(LauncherForms PRIVATE -Wl,-Bsymbolic-functions) # its own UiForm and SkinStyle, not the ones Orbiter exports
 	set_target_properties(LauncherForms PROPERTIES
 		CXX_VISIBILITY_PRESET hidden
 		VISIBILITY_INLINES_HIDDEN ON
