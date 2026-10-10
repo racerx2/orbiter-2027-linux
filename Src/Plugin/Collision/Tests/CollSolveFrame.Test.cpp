@@ -984,3 +984,43 @@ TEST_CASE ("dmg3 L1/L4 through the driver: glancing spheres give the slip direct
 		REQUIRE (std::fabs (dotp (ev[0].s[0].tdir, ev[0].s[0].n)) <= 1e-9);
 	}
 }
+
+TEST_CASE ("P3 a wake is committed only with a solved pass 1: a non-finite wake state drops the island and leaves the body LANDED", "[CollSolveFrame]")
+{
+	Geo hull (BoxMesh (Vector (1, 1, 1)));
+	const double h = 0.05;
+	for (bool bad : { false, true }) {
+		CollDetect det;
+		det.Begin (CollParams (), h);
+		CollBody A = MakeBody (Vector (), Vector (), h, 1, COLLB_LANDED, { MakePart (&hull.geom, 1, 1) });
+		CollBody B = MakeBody (Vector (2.12, 0, 0), Vector (-2, 0, 0), h, 2, COLLB_DYNAMIC, { MakePart (&hull.geom, 2, 1) });
+		REQUIRE (det.AddBody (A) == 0);
+		REQUIRE (det.AddBody (B) == 1);
+		std::vector<CollPairResult> res;
+		CollFrameStats st {};
+		det.Detect (res, st);
+		REQUIRE (!res.empty ());
+		std::vector<CollFrameBody> fb { MakeFB (A, false, 2000, Vector (1, 1, 1)), MakeFB (B, true, 1000, Vector (1, 1, 1)) };
+		fb[0].wakeable = true; fb[0].wakeV1 = bad ? Vector (std::nan (""), 0, 0) : Vector (0.1, 0, 0); fb[0].wakeWb1 = Vector ();
+		Host host; host.det = &det;
+		CollFrameSolver fs;
+		fs.check = true;
+		std::vector<CollBodyDelta> delta;
+		std::vector<CollImpactEvent> ev;
+		LogCapture lc;
+		fs.Run (det, res, fb, h, 0.0, CollSolveParams (), COLL_TOI_ROUNDS, host, delta, ev);
+		CAPTURE (bad, (int)fb[0].woke, delta.size (), ev.size (), lc.Count ("dropped"), lc.Count ("woken"));
+		if (!bad) {
+			REQUIRE (fb[0].woke);
+			REQUIRE (DeltaOf (delta, 0));
+			REQUIRE (lc.Count ("woken") == 1);
+			continue;
+		}
+		REQUIRE (lc.Count ("dropped") >= 1);
+		REQUIRE (!fb[0].woke);
+		REQUIRE (!DeltaOf (delta, 0));
+		REQUIRE (lc.Count ("woken") == 0);
+		for (const CollImpactEvent &e : ev) REQUIRE (!(e.flags & COLLEV_WOKE_LANDED));
+		REQUIRE (det.Body (0).kind == COLLB_LANDED);
+	}
+}

@@ -147,6 +147,11 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 		rs.clear ();
 		std::vector<int> map (nb, -1), member, atRes (nb, -1);
 		std::vector<char> wokeHere (nb, 0);
+		std::vector<Vector> svKeep (nb), swbKeep (nb);
+		auto drop = [&] () {                                 // the wake is committed only with a solved pass 1 (P3)
+			for (int f = 0; f < nb; f++) if (wokeHere[f]) { body[f].woke = false; dyn[f] = 0; sv[f] = svKeep[f]; swb[f] = swbKeep[f]; wokeHere[f] = 0; }
+			return false;
+		};
 		bool resting = false;
 		for (int k : ix) {
 			const CollPairResult &r = cur[k];
@@ -161,7 +166,7 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 			for (int i = 0; i < nb; i++) if (atRes[i] >= 0 && !dyn[i]) member.push_back (i);
 			int o = -1;
 			for (int i : member) if (dyn[i] && (o < 0 || body[i].id < body[o].id)) o = i;
-			if (o < 0) return false;
+			if (o < 0) return drop ();
 			const Vector O = sx[o];                        // island origin: x1 of the dynamic body with the smallest id (3.2)
 			CollIsland isl;
 			isl.tau = tauI; isl.h = h;
@@ -223,7 +228,7 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 			}
 			if (!isl.Solve (p)) {
 				CollLog (COLLLOG_ERROR, "Collision: island at tau %.4f dropped (non-finite response)", tauI);
-				return false;
+				return drop ();
 			}
 			// LANDED wake by impulse share on the kinematic solve (6.6), then one more solve with it dynamic
 			bool woke = false;
@@ -234,8 +239,8 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 					const CollSBody &s = isl.body[j];
 					if ((s.dP1 + s.dP2).length ()/body[f].m > COLL_V_WAKE || InvInertiaMul (s.R1, body[f].pmi*body[f].m, s.dL1 + s.dL2).length () > COLL_W_WAKE) {
 						body[f].woke = true; wokeHere[f] = 1; dyn[f] = 1; woke = true;
+						svKeep[f] = sv[f]; swbKeep[f] = swb[f];
 						sv[f] = body[f].wakeV1; swb[f] = body[f].wakeWb1;
-						CollLog (COLLLOG_INFO, "Collision: LANDED body %u woken", body[f].id);
 					}
 				}
 			if (woke) continue;
@@ -259,7 +264,7 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 				if (!dyn[f] || Zero (d[j])) continue;
 				if (!CollApplyDeltaState (nx[j], nv[j], nq[j], nw[j], body[f].pmi*body[f].m, d[j])) {
 					CollLog (COLLLOG_ERROR, "Collision: island at tau %.4f dropped (write-back)", tauI);
-					return false;
+					return drop ();
 				}
 			}
 			if (check) {                                       // D3 9
@@ -382,9 +387,10 @@ void CollFrameSolver::Run (CollDetect &det, std::vector<CollPairResult> &res, st
 				q.r.c1 = sx[f]; q.r.v1 = sv[f]; q.r.q1.Set (sq[f]); q.r.w1g = mul (QMatrix (sq[f]), swb[f]);
 				rs.push_back (q);
 			}
+			for (int f = 0; f < nb; f++) if (wokeHere[f]) CollLog (COLLLOG_INFO, "Collision: LANDED body %u woken", body[f].id);
 			return true;
 		}
-		return false;
+		return drop ();
 	};
 
 	// TOI rounds (5.4)

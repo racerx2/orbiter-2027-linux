@@ -70,10 +70,12 @@ struct Sim {
 	CollDetect fwd, ver;
 	Host host;
 	Vector g;
-	struct TB { CollOrbState o; std::shared_ptr<Geo> geo; uint32_t id; double rmax; Vector push; bool landed = false, woke = false; Vector split; };
+	struct TB { CollOrbState o; std::shared_ptr<Geo> geo; uint32_t id; double rmax; Vector push; bool landed = false, woke = false; Vector split; std::vector<Vector> td; double tdK = 0, tdD = 0, tdMu = 0; };
 	std::vector<TB> tb;
 	std::shared_ptr<Geo> baseGeo; Vector basePos;
 	int events = 0, writes = 0, lastWrites = 0;
+	Vector gxAdd;                                        // added to the exact gravity Finish gets (tests)
+	std::vector<CollAWrite> lastOut;                     // the writes of the last frame after Finish
 	std::vector<CollImpactEvent> evs;
 	double t = 0;
 	bool jumpNext = false;                               // the next frame follows a time jump: JUMP entry, Orbiter's cache reset to gravity
@@ -89,8 +91,26 @@ struct Sim {
 	}
 	Vector P () const { Vector p; for (const TB &b : tb) p += b.o.s.vel*b.o.m; return p; }
 	double Pscale () const { double s = 0; for (const TB &b : tb) s += b.o.s.vel.length ()*b.o.m; return s; }
+	bool Touch (const TB &b, Vector &F, Vector &Mb) const        // touchdown points on the floor y = 0 from the step start, as a constant force and body torque
+	{
+		F = Mb = Vector ();
+		bool on = false;
+		Vector wg = mul (b.o.s.R, b.o.s.omega);
+		for (const Vector &p : b.td) {
+			Vector r = mul (b.o.s.R, p), x = b.o.s.pos + r, vp = b.o.s.vel + Xc (wg, r);
+			double d = -x.y;
+			if (!(d > 0)) continue;
+			on = true;
+			double fn = std::max (0.0, b.tdK*d - b.tdD*vp.y);
+			Vector f (0, fn, 0), vt (vp.x, 0, vp.z);
+			if (vt.length () > 1e-9) f -= vt*(b.tdMu*fn/vt.length ());
+			F += f; Mb += tmul (b.o.s.R, Xc (r, f));
+		}
+		return on;
+	}
 	void Frame (double h)
 	{
+		for (TB &b : tb) if (!b.td.empty ()) { Vector f, mb; b.o.ground = Touch (b, f, mb); }
 		std::vector<CollABody> bodies;
 		if (baseGeo) {
 			CollABody k;
@@ -107,7 +127,7 @@ struct Sim {
 			k.id = b.id; k.kind = b.landed ? COLLB_LANDED : COLLB_DYNAMIC; k.member = { b.id }; k.memberHash = b.id;
 			k.m = b.o.m; k.pmi = b.o.pmi;
 			k.x = b.o.s.pos; k.v = b.o.s.vel; k.wb = b.o.s.omega; k.q = b.o.s.Q;
-			k.aTot = b.o.acc; k.arot = b.o.arot; k.gEst = g; k.rmax = b.rmax;
+			k.aTot = b.o.acc; k.arot = b.o.arot; k.gEst = g; k.rmax = b.rmax; k.ground = b.o.ground;
 			if (jumpNext) k.entry |= COLLE_JUMP;
 			if (b.woke) k.entry |= COLLE_ACTIVATED;
 			if (b.landed) {                                  // kinematic at rest, wakeable (6.6)
@@ -128,7 +148,7 @@ struct Sim {
 		std::vector<CollImpactEvent> ev;
 		fr.Run (fwd, ver, mir, bodies, {}, h, t, host, out, ev);
 		int off = baseGeo ? 1 : 0;
-		std::vector<Vector> gx (bodies.size (), g);
+		std::vector<Vector> gx (bodies.size (), g + gxAdd);
 		lastWrites = 0;
 		jumpNext = false;
 		for (TB &b : tb) b.woke = false;
@@ -139,6 +159,7 @@ struct Sim {
 			if (w.attitude) { Matrix R; R.Set (w.q); o.SetRotationMatrix (R); }
 		}
 		fr.Finish (mir, bodies, out, gx);
+		lastOut = out;
 		for (const CollAWrite &w : out) {
 			CollOrbState &o = tb[w.body - off].o;
 			if (w.spin) o.SetAngularVel (w.wb);
@@ -154,7 +175,12 @@ struct Sim {
 		writes += lastWrites;
 		events += (int)ev.size ();
 		for (const CollImpactEvent &e : ev) evs.push_back (e);
-		for (TB &b : tb) if (!b.landed) { b.o.aC = g + b.push; mir.Step (b.o, h); b.o.aC = g; }
+		for (TB &b : tb) if (!b.landed) {
+			Vector ft, mt;
+			if (!b.td.empty ()) Touch (b, ft, mt);
+			b.o.aC = g + b.push + ft/b.o.m; b.o.tauU = mt/b.o.m; mir.Step (b.o, h); b.o.aC = g; b.o.tauU = Vector ();
+			if (b.o.s.omega.length () > COLL_OMEGA_MAX) { b.o.s.omega *= COLL_OMEGA_MAX/b.o.s.omega.length (); b.o.arot = Vector (); } // Rigidbody.cpp:279-294
+		}
 		t += h;
 	}
 };
@@ -657,4 +683,177 @@ TEST_CASE ("dmg3 L5: a filtered body pair passes through without contacts or eve
 		if (filt) { REQUIRE (con == 0); REQUIRE (S.events == 0); REQUIRE (S.tb[0].o.s.pos.x > 2.0); }
 		else { REQUIRE (con > 0); REQUIRE (S.events == 1); REQUIRE (S.tb[0].o.s.pos.x < 0.0); }
 	}
+}
+
+namespace {
+bool Fin (const Vector &v) { return std::isfinite (v.x) && std::isfinite (v.y) && std::isfinite (v.z); }
+bool FinState (const CollOrbState &o) { return Fin (o.s.pos) && Fin (o.s.vel) && Fin (o.s.omega) && std::isfinite (o.s.Q.qs) && std::isfinite (o.s.Q.qvx) && std::isfinite (o.s.Q.qvy) && std::isfinite (o.s.Q.qvz) && Fin (o.acc) && Fin (o.arot); }
+void HBD2 (Sim &S, const Vector &w)                    // Blast cell debris HB_D2 of Coll.Base.Hangar: 11.379 kg, the measured PMI, the CollBreakA touchdown set, on the floor
+{
+	S.g = Vector (0, -9.81, 0);
+	const double m = 11.379, K = 4*m*9.81/0.02;
+	const Vector e (0.295, 0.02, 0.211);
+	auto plate = std::make_shared<Geo> (BoxMesh (e));
+	S.Add (plate, m, Vector (0.0149, 0.0383, 0.029), Vector (0, e.y - m*9.81/(4*K), 0), Vector (), e.length ());
+	Sim::TB &b = S.tb.back ();
+	b.td = { Vector (0, -e.y, e.z), Vector (-e.x, -e.y, -e.z), Vector (e.x, -e.y, -e.z), Vector (-e.x, e.y, -e.z), Vector (e.x, e.y, -e.z), Vector (-e.x, e.y, e.z), Vector (e.x, e.y, e.z), Vector (0, e.y, e.z) };
+	b.tdK = K; b.tdD = 2*0.7*std::sqrt (K*m); b.tdMu = 0.5;
+	b.o.s.omega = w;
+}
+}
+
+TEST_CASE ("P1 HB_D2: ground debris with a small PMI and a large plan: the delivery converges or writes the state, every value finite", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	const double h = 0.02;
+	struct Case { Vector p, l, w; double P, L; };
+	const Case cs[] = {                                  // the measured frame (tgtP 207.4 N s, tgtL 159.9 N m s, |w| 29.6) in several directions, then the later 682 N s and a larger spin plan
+		{ Vector (1, 0.3, 0.2), Vector (0.3, 1, 0.5), Vector (12, 25, 10), 207.4, 159.9 },
+		{ Vector (0.2, 1, -0.4), Vector (1, 0.2, -0.3), Vector (-20, 5, 21), 207.4, 159.9 },
+		{ Vector (-0.6, 0.5, 1), Vector (0.1, -0.4, 1), Vector (3, -29, 4), 207.4, 159.9 },
+		{ Vector (0.7, -0.2, 0.6), Vector (-0.5, 0.8, 0.3), Vector (16, -9, 23), 682.0, 159.9 },
+		{ Vector (-0.3, 0.4, -0.9), Vector (0.6, 0.6, -0.5), Vector (-7, 27, -9), 207.4, 400.0 },
+	};
+	for (const Case &c : cs) {
+		g_log.clear ();
+		Sim S;
+		HBD2 (S, c.w);
+		Vector ft, mt;
+		REQUIRE (S.Touch (S.tb[0], ft, mt));                 // on the floor: ground contact, force path (6.6)
+		REQUIRE (S.tb[0].o.s.omega.length () > 29.0);
+		std::vector<CollAPlanEdit> pe { CollAPlanEdit { 1, Vector (), Vector (), c.p.unit ()*(c.P/h), c.l.unit ()*(c.L/h) } };
+		S.fr.planEdit = &pe;
+		S.Frame (h);
+		S.fr.planEdit = nullptr;
+		const CollOrbState o1 = S.tb[0].o;
+		const int fail1 = S.fr.Stats ().checkFail;
+		S.Frame (h);
+		CAPTURE (c.P, c.L, c.p.x, c.p.y, c.p.z, fail1, S.fr.Stats ().checkFail, S.fr.Stats ().groundWrites, S.fr.Stats ().deliveryIt, o1.s.omega.length (), o1.s.vel.length ());
+		REQUIRE (FinState (o1));
+		REQUIRE (fail1 == 0);
+		REQUIRE (S.fr.Stats ().checkFail == 0);
+		REQUIRE (LogCount ("delivery-nan") == 0);
+	}
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("P1 write fallback: a ground body turning once per step cannot carry a horizontal plan by a body-frame force; the state is written", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	const double h = 0.02;
+	for (double turns : { 1.0, 2.0 }) {
+		g_log.clear ();
+		Sim S;
+		S.mir.subMax = 1000;                                 // PropSubsampling 1000: the force path's mean rotation is singular to rounding
+		HBD2 (S, Vector (0, turns*2.0*3.14159265358979323846/h, 0));
+		S.tb[0].o.pmi = Vector (0.03, 0.03, 0.03);
+		std::vector<CollAPlanEdit> pe { CollAPlanEdit { 1, Vector (), Vector (), Vector (207.4/h, 0, 0), Vector () } };
+		S.fr.planEdit = &pe;
+		S.Frame (h);
+		CAPTURE (turns, S.fr.Stats ().checkFail, S.fr.Stats ().groundWrites, S.writes, S.fr.Stats ().forceWrites);
+		REQUIRE (FinState (S.tb[0].o));
+		REQUIRE (S.fr.Stats ().checkFail == 0);
+		REQUIRE (S.fr.Stats ().groundWrites == 1);
+		REQUIRE (S.writes == 1);
+		REQUIRE (LogCount ("state written") == 1);
+	}
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("P1 non-finite plan: nothing is written, Orbiter's own step stands, the next frame is finite", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	const double h = 0.02, nan = std::nan ("");
+	for (int k = 0; k < 3; k++) {
+		g_log.clear ();
+		Sim S, R;                                            // R: the same body without the plan
+		HBD2 (S, Vector (12, 25, 10));
+		HBD2 (R, Vector (12, 25, 10));
+		CollAPlanEdit e { 1, Vector (), Vector (), Vector (100, 0, 0), Vector (0, 50, 0) };
+		if (k == 0) e.F.x = nan;
+		else if (k == 1) e.M.z = nan;
+		else e.dwb.y = nan;
+		std::vector<CollAPlanEdit> pe { e };
+		S.fr.planEdit = &pe;
+		S.Frame (h); R.Frame (h);
+		S.fr.planEdit = nullptr;
+		CAPTURE (k, S.fr.Stats ().checkFail, S.writes);
+		REQUIRE (S.fr.Stats ().checkFail == 1);
+		REQUIRE (LogCount ("delivery-nan") == 1);
+		REQUIRE (S.writes == 0);
+		REQUIRE (FinState (S.tb[0].o));
+		REQUIRE (S.tb[0].o.s.pos.x == R.tb[0].o.s.pos.x); REQUIRE (S.tb[0].o.s.pos.y == R.tb[0].o.s.pos.y); REQUIRE (S.tb[0].o.s.pos.z == R.tb[0].o.s.pos.z);
+		REQUIRE (S.tb[0].o.s.vel.x == R.tb[0].o.s.vel.x); REQUIRE (S.tb[0].o.s.omega.y == R.tb[0].o.s.omega.y);
+		for (int f = 0; f < 3; f++) { S.Frame (h); R.Frame (h); }
+		REQUIRE (FinState (S.tb[0].o));
+		REQUIRE (S.fr.Stats ().checkFail == 1);
+		REQUIRE ((S.tb[0].o.s.pos - R.tb[0].o.s.pos).length () == 0.0);
+	}
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("P1 Finish: a non-finite exact gravity keeps Apply's force; momentum exact, no NaN", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	g_log.clear ();
+	Sim S;
+	S.mir.mode[0] = COLLM_RK4;                           // the cached acceleration enters the velocity stages
+	S.gxAdd = Vector (std::nan (""), 0, 0);
+	auto sph = std::make_shared<Geo> (SphereMesh (1.0, 12, 24));
+	S.Add (sph, 1000, Vector (0.4, 0.4, 0.4), Vector (-1.05 - 2.5, 0, 0), Vector (5, 0, 0), 1.05);
+	S.Add (sph, 3000, Vector (0.4, 0.4, 0.4), Vector (1.05 + 2.5, 0, 0), Vector (-5, 0, 0), 1.05);
+	const Vector P0 = S.P ();
+	int weighed = 0;
+	for (int f = 0; f < 60; f++) {
+		S.Frame (1.0/60.0);
+		CAPTURE (f);
+		for (const CollAWrite &w : S.lastOut) { weighed += w.weight ? 1 : 0; REQUIRE (Fin (w.Fb)); REQUIRE (Fin (w.Mb)); }
+		REQUIRE (FinState (S.tb[0].o));
+		REQUIRE (FinState (S.tb[1].o));
+		REQUIRE ((S.P () - P0).length () <= 1e-12*S.Pscale ());
+	}
+	CAPTURE (S.events, S.writes, weighed);
+	REQUIRE (weighed > 0);
+	REQUIRE (S.events == 1);
+	REQUIRE (S.fr.Stats ().checkFail == 0);
+	g_collLog = nullptr;
+}
+
+TEST_CASE ("P2 LANDED body on a pad hit from above keeps its pad contact: no sinking, no pad event the next frames", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	for (double h : { 1.0/60.0, 0.05 })
+		for (double u : { 2.0, 6.0 }) {
+			g_log.clear ();
+			Sim S;
+			S.g = Vector (0, -9.81, 0);
+			S.baseGeo = std::make_shared<Geo> (BoxMesh (Vector (20, 1, 20)));
+			S.basePos = Vector (0, -1, 0);
+			auto box = std::make_shared<Geo> (BoxMesh (Vector (1, 0.5, 1)));
+			const Vector pmi ((0.25 + 1)/3, 2.0/3, (1 + 0.25)/3);
+			const double y0 = 0.5 + 2*COLL_SKIN_DEFAULT;
+			S.Add (box, 2000, pmi, Vector (0, y0, 0), Vector (), 1.6);
+			S.Add (box, 1000, pmi, Vector (0.3, y0 + 1.0 + 2*COLL_SKIN_DEFAULT + 1.5*u*h, 0), Vector (0, -u, 0), 1.6);
+			S.tb[0].landed = true;
+			int wokeAt = -1, padEv = 0, woke = 0;
+			double ymin = 1e9;
+			for (int f = 0; f*h < 1.0; f++) {
+				size_t e0 = S.evs.size ();
+				S.Frame (h);
+				if (wokeAt < 0 && !S.tb[0].landed) wokeAt = f;
+				for (size_t k = e0; k < S.evs.size (); k++) {
+					if (S.evs[k].s[0].owner.vesselId == 0 || S.evs[k].s[1].owner.vesselId == 0) padEv++;
+					if (S.evs[k].flags & COLLEV_WOKE_LANDED) woke++;
+				}
+				if (wokeAt >= 0) ymin = std::min (ymin, S.tb[0].o.s.pos.y);
+			}
+			CAPTURE (h, u, wokeAt, padEv, woke, S.events, ymin, y0, LogCount ("GRACE"));
+			REQUIRE (wokeAt >= 0);
+			REQUIRE (woke == 1);
+			REQUIRE (padEv == 0);
+			REQUIRE (ymin >= y0 - COLL_SLOP);
+			REQUIRE (LogCount ("GRACE") == 0);
+			REQUIRE (S.fr.Stats ().checkFail == 0);
+		}
+	g_collLog = nullptr;
 }

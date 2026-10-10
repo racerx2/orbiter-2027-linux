@@ -52,6 +52,38 @@ Matrix InvM (const Matrix &M)
 	return inv (M);
 }
 int Root (std::vector<int> &u, int i) { while (u[i] != i) { u[i] = u[u[i]]; i = u[i]; } return i; }
+bool Finite (const Vector &v) { return std::isfinite (v.x) && std::isfinite (v.y) && std::isfinite (v.z); }
+bool FiniteQ (const Quaternion &q) { return std::isfinite (q.qs) && std::isfinite (q.qvx) && std::isfinite (q.qvy) && std::isfinite (q.qvz); }
+bool FiniteO (const CollOrbState &o) { return Finite (o.s.pos) && Finite (o.s.vel) && Finite (o.s.omega) && FiniteQ (o.s.Q) && Finite (o.acc) && Finite (o.arot); }
+bool Solve6 (double A[6][6], double b[6], double x[6])  // row-scaled Gauss with partial pivoting; a zero row holds its unknown; false when singular or not finite
+{
+	for (int r = 0; r < 6; r++) {
+		double s = 0;
+		for (int c = 0; c < 6; c++) s = std::max (s, std::fabs (A[r][c]));
+		if (!std::isfinite (s) || !std::isfinite (b[r])) return false;
+		if (!(s > 0)) { A[r][r] = 1.0; b[r] = 0.0; continue; }
+		for (int c = 0; c < 6; c++) A[r][c] /= s;
+		b[r] /= s;
+	}
+	for (int k = 0; k < 6; k++) {
+		int p = k;
+		for (int r = k + 1; r < 6; r++) if (std::fabs (A[r][k]) > std::fabs (A[p][k])) p = r;
+		if (!(std::fabs (A[p][k]) > 1e-300)) return false;
+		if (p != k) { for (int c = 0; c < 6; c++) std::swap (A[p][c], A[k][c]); std::swap (b[p], b[k]); }
+		for (int r = k + 1; r < 6; r++) {
+			double f = A[r][k]/A[k][k];
+			for (int c = k; c < 6; c++) A[r][c] -= f*A[k][c];
+			b[r] -= f*b[k];
+		}
+	}
+	for (int k = 5; k >= 0; k--) {
+		double v = b[k];
+		for (int c = k + 1; c < 6; c++) v -= A[k][c]*x[c];
+		x[k] = v/A[k][k];
+		if (!std::isfinite (x[k])) return false;
+	}
+	return true;
+}
 
 struct Wk {                                              // one body of this frame, working state at t0
 	bool dyn = false;
@@ -60,7 +92,7 @@ struct Wk {                                              // one body of this fra
 	Vector x1, v1, w1; Quaternion q1;                    // predicted end
 	CollOrbState o;                                      // Orbiter's state of the body now; configured by the delivery
 	Vector Fprev, Mprev;
-	bool posChanged = false, past = false, entry = false, jump = false, noRec = false, woke = false;
+	bool posChanged = false, past = false, entry = false, jump = false, noRec = false, woke = false, bad = false;
 	Vector xs, vs, ws; Quaternion qs;                    // physical start of the last step; free start after a rollback
 	int det = -1, ver = -1;
 	uint64_t key = 0;
@@ -77,6 +109,8 @@ struct APt {                                             // one contact point of
 struct Feat { bool ok = false; uint16_t pa, pb; uint32_t ta, tb; };
 struct RapItem { CollAPairRec p; int a, b; double h; Feat f; double ut, tauT; Vector nt; };
 struct Plan { Vector vNew, wNew, F, M, dxc, dthc; bool any = false; };
+struct Woken { int i; Vector dv, dwg; };               // a body woken by WakePass and its share of the kinematic solve (global)
+struct Dlv { bool ok = false, write = false; double e = 0, eFloor = 0, f = 0; Quaternion qw, qa; Vector wW, vW, xW, vWr, wWr; }; // one delivery's result
 
 } // namespace
 
@@ -217,7 +251,7 @@ struct CollAddonFrame::Impl {
 	void PastFlags ();
 	void Build (CollIsland &is, bool withSpec, std::vector<int> &map, const std::vector<int> &memb, const std::vector<int> &pidx,
 		const std::vector<APt> &pts, const std::vector<CollPairResult> &res, const Vector &O);
-	void WakePass (const std::vector<APt> &pts, const std::vector<CollPairResult> &res);
+	void WakePass (const std::vector<APt> &pts, const std::vector<CollPairResult> &res, std::vector<Woken> &woken);
 	void Snapshot ();
 	void Decide (std::vector<RapItem> &rap);
 	void Reconcile ();
@@ -226,6 +260,7 @@ struct CollAddonFrame::Impl {
 	bool KinTouch (const CollAIslandRec &I, const CollAPairRec &pr, int ia, int ib, RapItem &it);
 	void Reapply (const std::vector<RapItem> &rap, const std::vector<APt> &pts);
 	void Convert (const std::vector<CollPairResult> &res, std::vector<APt> &pts);
+	void Deliver (int i, const Plan &in, const CollOrbState &cf, const Vector &tgtP, const Vector &tgtL, bool write, bool count, CollAWrite &wr, Dlv &d);
 	CollAWrite Apply (int i, const Plan &pl, bool count, Vector *tgtPOut = nullptr, CollOrbState *cfOut = nullptr);
 };
 
@@ -237,7 +272,7 @@ bool CollAddonFrame::Impl::InitDyn (int i, bool woken)
 	k.dyn = true;
 	k.X = B.x; k.V = woken ? B.wakeV : B.v; k.W = woken ? B.wakeWb : B.wb; k.Q = B.q;
 	CollAMem &m = F.mem[k.key];
-	bool fresh = woken || !m.seen || m.memberHash != B.memberHash;
+	bool fresh = woken || !m.seen || m.memberHash != B.memberHash || !Finite (m.Fprev) || !Finite (m.Mprev) || (m.hasP && (!FiniteO (m.P) || !FiniteO (m.Pw)));
 	if (fresh) { m = CollAMem (); m.memberHash = B.memberHash; }
 	m.seen = true;
 	k.Fprev = m.Fprev; k.Mprev = m.Mprev;
@@ -793,29 +828,20 @@ void CollAddonFrame::Impl::Convert (const std::vector<CollPairResult> &res, std:
 	}
 }
 
-// 6.2: the plan delivered on the mirror for this body's integrator; the written state absorbs or the force channel carries
-CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vector *tgtPOut, CollOrbState *cfOut)
+// 6.2: one delivery of the plan on the mirror; write: the state written (exact velocity, ground off in the mirror), else the force channel carries
+void CollAddonFrame::Impl::Deliver (int i, const Plan &in, const CollOrbState &cf, const Vector &tgtP, const Vector &tgtL, bool write, bool count, CollAWrite &wr, Dlv &d)
 {
 	Wk &B = w[i];
-	CollOrbState &o = B.o;
+	const CollOrbState &o = B.o;
 	const double m = o.m, rmax = b[i].rmax;
-	CollAWrite wr {};
+	wr = CollAWrite {};
 	wr.body = i;
+	d = Dlv {};
 	Vector Fv = in.F, M = in.M;
-	CollOrbState cf = o;                                 // Orbiter's own step without the addon: cache without the own force
-	cf.acc -= mul (o.s.R, B.Fprev/m);
-	cf.arot -= Divc (B.Mprev/m, o.pmi);
-	cf.Fadd = cf.Madd = Vector ();
-	Vector Lnew = SpinL (i, B.Q, in.wNew);
-	Vector tgtP = (in.vNew - o.s.vel)*m + Fv*h;
-	Vector tgtL = (Lnew - o.SpinL ()) + M*h;
-	bool posw = B.posChanged || in.dxc.length () > 0 || in.dthc.length () > 0;
-	bool write = posw || B.woke || (in.vNew - o.s.vel).length () > COLLA_V_WRITE;
-	if (b[i].ground && !posw && !B.woke && (in.vNew - o.s.vel).length () <= COLL_V_WAKE) write = false; // no DefSetStateEx on ground contact (6.6)
 	Vector Fe = write ? Fv : Fv + (in.vNew - o.s.vel)*(m/h);
 	Quaternion qw (B.Q);
 	if (in.dthc.length () > 0) CollRotate (qw, in.dthc);
-	Vector wW = OmegaOf (i, qw, Lnew);
+	Vector wW = OmegaOf (i, qw, SpinL (i, B.Q, in.wNew));
 	int lv = 0, n = 1, meth = COLLM_RK2;
 	double k = h, g0 = 0, cx = 0.5;
 	Quaternion qa (qw);
@@ -842,6 +868,7 @@ CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vecto
 	};
 	for (int it = 0; it < 3; it++) {
 		mir.Choose (h, wa.length (), o.ground && !write, lv, n);
+		n = std::max (1, n);
 		meth = mir.mode[lv]; k = h/n; g0 = CollOrbMirror::Gamma0 (meth); cx = CollOrbMirror::DxCoef (meth);
 		probe (qa, write ? in.vNew : o.s.vel, wa);
 		wr.Fb = Fe.length () > 0 ? mul (InvM (Ml), Fe*h) : Vector ();
@@ -861,80 +888,187 @@ CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vecto
 	}
 	Vector aMissW = o.stack ? mul (QM (qa), (wr.Fb - B.Fprev)/m) : (o.aC - o.gReset) + mul (QM (qa), wr.Fb/m);
 	wr.cdx = write ? aMissW*(cx*k*k) : Vector ();
-	Vector xW = B.X + in.dxc + wr.cdx;
-	Vector vW = write ? in.vNew : o.s.vel;
-	Vector vWr = write ? vW + aMissW*(g0*k) : vW;
-	Vector wWr = wa;
-	auto configure = [&] (bool wrt, const Vector &x, const Vector &v, const Quaternion &q, const Vector &wv, const Vector &Fb, const Vector &Mb) {
+	const Vector xW = B.X + in.dxc + wr.cdx;
+	const Vector vW = write ? in.vNew : o.s.vel;
+	// coupled Newton on (u, w): u the written velocity (write) or the force (force path), w the written spin; one base, joint line search, best evaluated iterate kept
+	auto conf = [&] (const Vector &u, const Vector &wv) {
 		CollOrbState c = o;
-		if (wrt) c.DefSetStateEx (x, v, wv);
-		c.SetRotationMatrix (QM (q)); c.SetAngularVel (wv);
+		if (write) c.DefSetStateEx (xW, u, wv);
+		c.SetRotationMatrix (QM (qa)); c.SetAngularVel (wv);
 		c.Fadd = c.Madd = Vector ();
-		c.AddForce (Fb, Vector ()); Couple (c, Mb);
+		c.AddForce (write ? wr.Fb : u, Vector ()); Couple (c, wr.Mb);
 		return c;
 	};
-	Matrix Js = Ml;
-	double eLast = 0, eFloor = 0;
-	int lvF = -1, nF = 0;                                    // integrator level and substeps of the first configured step, held for the loop (M7)
-	for (int pass = 0; pass < 2; pass++) {                  // second pass only when Orbiter's own Choose on the final state picks another level (M7)
+	struct It { Vector u, w, eP, eL; double f = 1e300, fP = 1e300, fPn = 1e300; bool ok = false; }; // merit, relative P residual, P term above its rounding floor
+	int lvF = -1, nF = 0;                                 // integrator level and substeps of the first configured step, held for the loop (M7)
+	CollOrbState cs;                                      // Orbiter's own step at the held level
+	const double sP = tgtP.length () + m*1e-3, sL = tgtL.length () + 1e-3;
+	auto eval = [&] (const Vector &u, const Vector &wv, It &r, CollOrbState &c) {
+		c = conf (u, wv); mir.Step (c, h, lvF, nF);
+		if (lvF < 0) { lvF = c.lv; nF = c.nsub; cs = cf; mir.Step (cs, h, lvF, nF); }
+		r.u = u; r.w = wv;
+		r.eP = tgtP - (c.s.vel - cs.s.vel)*m;
+		r.eL = tgtL - (c.SpinL () - cs.SpinL ());
+		double nP = 4096.0*DBL_EPSILON*m*c.s.vel.length (), nL = 4096.0*DBL_EPSILON*(c.SpinL ().length () + cs.SpinL ().length ()); // rounding floors
+		r.fP = r.eP.length ()/sP;
+		r.fPn = std::max (0.0, r.eP.length () - nP)/sP;
+		r.f = r.fPn + std::max (0.0, r.eL.length () - nL)/sL;
+		r.ok = std::isfinite (r.f) && Finite (c.s.pos) && Finite (c.s.omega);
+		return r.ok;
+	};
+	It cur;
+	CollOrbState c;
+	Vector u0 = write ? vW + aMissW*(g0*k) : wr.Fb, w0 = wa;
+	for (int pass = 0; pass < 2; pass++) {                // second pass only when Orbiter's own Choose on the final state picks another level (M7)
+		if (lvF >= 0) { cs = cf; mir.Step (cs, h, lvF, nF); }   // a new level: the residuals and the best iterate start over from the last best
+		if (!eval (u0, w0, cur, c)) break;
 		for (int it = 0; it < 8; it++) {
-			CollOrbState c = configure (write, xW, vWr, qa, wWr, wr.Fb, wr.Mb); mir.Step (c, h, lvF, nF);
-			if (lvF < 0) lvF = c.lv, nF = c.nsub;
-			CollOrbState cs = cf; mir.Step (cs, h, lvF, nF);
-			Vector eP = tgtP - (c.s.vel - cs.s.vel)*m;
-			Vector eL = tgtL - (c.SpinL () - cs.SpinL ());
-			eLast = eP.length ()/(tgtP.length () + m*1e-3);
-			eFloor = 4096.0*DBL_EPSILON*m*c.s.vel.length ()/(tgtP.length () + m*1e-3); // rounding floor of heliocentric velocities (30 km/s)
-			if (eP.length () <= 1e-14*(tgtP.length () + m*1e-3) && eL.length () <= 1e-14*(tgtL.length () + 1e-3)) break;
-			if (write) vWr += eP/m;
-			else {
-				CollOrbState c0 = configure (false, xW, vWr, qa, wWr, wr.Fb, wr.Mb), c0s = c0; mir.Step (c0s, h, lvF, nF);
-				for (int cc = 0; cc < 3; cc++) {
-					Vector e; e.data[cc] = 1.0;
-					CollOrbState c1 = c0; c1.AddForce (e, Vector ()); mir.Step (c1, h, lvF, nF);
-					Vector dv = (c1.s.vel - c0s.s.vel)*m;
-					Js(0,cc) = dv.x; Js(1,cc) = dv.y; Js(2,cc) = dv.z;
+			if (!(cur.f > 0.0) || (cur.eP.length () <= 1e-14*sP && cur.eL.length () <= 1e-14*sL)) break;
+			double J[6][6], r[6], x[6];
+			for (int q = 0; q < 6; q++) {                     // 3 force probes (a written velocity: dP = m du exactly) and 3 spin probes from the base c
+				if (q < 3 && write) { for (int p = 0; p < 6; p++) J[p][q] = p == q ? m : 0.0; continue; }
+				Vector e, uu = cur.u, ww = cur.w;
+				double s = q < 3 ? 1.0 : 1e-6*(1.0 + cur.w.length ());
+				e.data[q % 3] = s;
+				if (q < 3) uu += e; else ww += e;
+				CollOrbState c1 = conf (uu, ww); mir.Step (c1, h, lvF, nF);
+				Vector dP = (c1.s.vel - c.s.vel)*(m/s), dL = (c1.SpinL () - c.SpinL ())/s;
+				for (int p = 0; p < 3; p++) { J[p][q] = dP.data[p]; J[p + 3][q] = dL.data[p]; }
+			}
+			Matrix A;
+			for (int p = 0; p < 3; p++) for (int q = 0; q < 3; q++) A(p,q) = J[p][q];
+			for (int p = 0; p < 3; p++) { r[p] = cur.eP.data[p]; r[p + 3] = cur.eL.data[p]; }
+			bool acc = false;
+			for (int dir = 0; dir < 2 && !acc; dir++) {        // the coupled step, else the P-only step at the held spin
+				Vector du, dw;
+				if (dir == 0) {
+					if (!Solve6 (J, r, x)) continue;
+					du = Vector (x[0], x[1], x[2]); dw = Vector (x[3], x[4], x[5]);
+				} else du = mul (InvM (A), cur.eP);
+				if (!Finite (du) || !Finite (dw) || !(du.length () + dw.length () > 0)) continue;
+				double s = 1.0;
+				for (int ls = 0; ls <= 6 && !acc; ls++, s *= 0.5) {
+					It t; CollOrbState ct;
+					if (eval (cur.u + du*s, cur.w + dw*s, t, ct) && t.f < cur.f) { cur = t; c = ct; acc = true; }
 				}
-				wr.Fb += mul (InvM (Js), eP);
 			}
-			Matrix Jw;
-			Vector L0 = c.SpinL ();
-			for (int k2 = 0; k2 < 3; k2++) {
-				Vector e; e.data[k2] = 1e-6*(1.0 + wWr.length ());
-				CollOrbState c2 = configure (write, xW, vWr, qa, wWr + e, wr.Fb, wr.Mb); mir.Step (c2, h, lvF, nF);
-				Vector d = (c2.SpinL () - L0)/e.data[k2];
-				Jw(0,k2) = d.x; Jw(1,k2) = d.y; Jw(2,k2) = d.z;
-			}
-			wWr += mul (InvM (Jw), eL);
 			if (count) F.st.deliveryIt++;
+			if (!acc) break;
 		}
-		CollOrbState cfin = configure (write, xW, vWr, qa, wWr, wr.Fb, wr.Mb);
+		for (int it = 0; it < 3 && cur.fPn > 0.0 && cur.eP.length () > 1e-14*sP; it++) {   // P is linear in u at a held spin: P-only steps at the best spin
+			Matrix A;
+			for (int q = 0; q < 3; q++) {
+				Vector e;
+				e.data[q] = 1.0;
+				CollOrbState c1 = conf (cur.u + e, cur.w); mir.Step (c1, h, lvF, nF);
+				Vector dP = (c1.s.vel - c.s.vel)*m;
+				A(0,q) = dP.x; A(1,q) = dP.y; A(2,q) = dP.z;
+			}
+			Vector du = mul (InvM (A), cur.eP);
+			if (!Finite (du) || !(du.length () > 0)) break;
+			bool acc = false;
+			double s = 1.0;
+			for (int ls = 0; ls <= 6 && !acc; ls++, s *= 0.5) {
+				It t; CollOrbState ct;
+				if (eval (cur.u + du*s, cur.w, t, ct) && t.f < cur.f) { cur = t; c = ct; acc = true; }
+			}
+			if (count) F.st.deliveryIt++;
+			if (!acc) break;
+		}
+		u0 = cur.u; w0 = cur.w;
+		CollOrbState cfin = conf (u0, w0);
 		int lvO, nO;
 		mir.Choose (h, cfin.s.omega.length (), cfin.ground, lvO, nO);
 		if ((lvO == lvF && nO == nF) || pass == 1) break;
 		lvF = lvO; nF = nO;
 		if (count) F.st.deliveryRelevel++;
 	}
-	if (F.check && eLast > std::max (1e-12, eFloor)) Fail ("delivery", eLast, 1.0);
-	wr.cdv = vWr - vW; wr.cdw = wWr - wW;
-	wr.state = write;
-	wr.attitude = !QEq (qa, o.s.Q);
-	wr.spin = (wWr - o.s.omega).length ()*rmax > COLLA_SPIN_TOL;
-	wr.force = wr.Fb.length () > 0 || wr.Mb.length () > 0;
-	wr.weight = write && !o.stack;
-	wr.x = xW; wr.v = vWr; wr.wb = wr.spin ? wWr : o.s.omega; wr.q = qa;
+	if (!cur.ok) return;
+	d.ok = true;
+	d.write = write;
+	d.e = cur.fP; d.f = cur.f;
+	d.eFloor = 4096.0*DBL_EPSILON*m*c.s.vel.length ()/sP; // rounding floor of heliocentric velocities (30 km/s)
+	if (!write) wr.Fb = cur.u;
+	d.qw = qw; d.qa = qa; d.wW = wW; d.vW = vW; d.xW = xW;
+	d.vWr = write ? cur.u : vW; d.wWr = cur.w;
+	d.ok = Finite (wr.Fb) && Finite (wr.Mb) && Finite (wr.cdth) && Finite (wr.cdx) && Finite (d.vWr) && Finite (d.wWr) && Finite (xW) &&
+		std::isfinite (qa.qs) && std::isfinite (qa.qvx) && std::isfinite (qa.qvy) && std::isfinite (qa.qvz);
+}
+
+// 6.2: the plan delivered on the mirror for this body's integrator; a force path above the check tolerance is redone with a state write; a non-finite delivery writes nothing
+CollAWrite CollAddonFrame::Impl::Apply (int i, const Plan &in, bool count, Vector *tgtPOut, CollOrbState *cfOut)
+{
+	Wk &B = w[i];
+	CollOrbState &o = B.o;
+	const double m = o.m, rmax = b[i].rmax;
+	B.bad = false;
+	CollOrbState cf = o;                                 // Orbiter's own step without the addon: cache without the own force
+	cf.acc -= mul (o.s.R, B.Fprev/m);
+	cf.arot -= Divc (B.Mprev/m, o.pmi);
+	cf.Fadd = cf.Madd = Vector ();
+	Vector Lnew = SpinL (i, B.Q, in.wNew);
+	Vector tgtP = (in.vNew - o.s.vel)*m + in.F*h;
+	Vector tgtL = (Lnew - o.SpinL ()) + in.M*h;
 	if (tgtPOut) *tgtPOut = tgtP;
 	if (cfOut) *cfOut = cf;
+	bool posw = B.posChanged || in.dxc.length () > 0 || in.dthc.length () > 0;
+	bool write = posw || B.woke || (in.vNew - o.s.vel).length () > COLLA_V_WRITE;
+	if (b[i].ground && !posw && !B.woke && (in.vNew - o.s.vel).length () <= COLL_V_WAKE) write = false; // no DefSetStateEx on ground contact (6.6)
+	CollAWrite wr {};
+	wr.body = i;
+	Dlv d;
+	bool fin = Finite (tgtP) && Finite (tgtL) && Finite (in.dxc) && Finite (in.dthc) && Finite (in.F) && Finite (in.M) && Finite (B.X) && Finite (B.Fprev) && Finite (B.Mprev);
+	if (fin) Deliver (i, in, cf, tgtP, tgtL, write, count, wr, d);
+	if (fin && !write && (!d.ok || (!d.write && d.e > std::max (1e-12, d.eFloor)))) {   // the force path does not deliver the plan: write the state
+		CollAWrite w2 {};
+		Dlv d2;
+		Deliver (i, in, cf, tgtP, tgtL, true, count, w2, d2);
+		if (d2.ok && (!d.ok || d2.f < d.f)) {
+			if (count) { F.st.groundWrites++; CollLog (COLLLOG_INFO, "Collision delivery: body %u force path off by %.3e, state written", b[i].id, d.ok ? d.e : HUGE_VAL); }
+			wr = w2; d = d2;
+		}
+	}
+	if (!d.ok) {                                         // non-finite: Orbiter's own step stands, no history (P1)
+		if (count) {
+			CollLog (COLLLOG_INFO, "Collision delivery: body %u %s not finite, nothing written", b[i].id, fin ? "delivery" : "plan");
+			Fail ("delivery-nan", d.e, 1.0);
+		}
+		B.bad = true;
+		o = cf;
+		B.xs = o.s.pos; B.vs = o.s.vel; B.ws = o.s.omega; B.qs = o.s.Q;
+		if (count) {
+			CollAMem &mm = F.mem[B.key];
+			mm.xs = B.xs; mm.vs = mm.vw = B.vs; mm.ws = B.ws; mm.qs = B.qs;
+			mm.Fprev = mm.Mprev = Vector ();
+		}
+		wr = CollAWrite {};
+		wr.body = i;
+		return wr;
+	}
+	if (F.check && d.e > std::max (1e-12, d.eFloor)) Fail ("delivery", d.e, 1.0);
+	const bool wrt = d.write;
+	wr.cdv = d.vWr - d.vW; wr.cdw = d.wWr - d.wW;
+	wr.state = wrt;
+	wr.attitude = !QEq (d.qa, o.s.Q);
+	wr.spin = (d.wWr - o.s.omega).length ()*rmax > COLLA_SPIN_TOL;
+	wr.force = wr.Fb.length () > 0 || wr.Mb.length () > 0;
+	wr.weight = wrt && !o.stack;
+	wr.x = d.xW; wr.v = d.vWr; wr.wb = wr.spin ? d.wWr : o.s.omega; wr.q = d.qa;
 	// the configured state is what Orbiter steps from; physical start without the compensation (3.1)
-	o = configure (write, xW, vWr, qa, wr.wb, wr.Fb, wr.Mb);
+	CollOrbState c = o;
+	if (wrt) c.DefSetStateEx (d.xW, d.vWr, wr.wb);
+	c.SetRotationMatrix (QM (d.qa)); c.SetAngularVel (wr.wb);
+	c.Fadd = c.Madd = Vector ();
+	c.AddForce (wr.Fb, Vector ()); Couple (c, wr.Mb);
+	o = c;
 	if (count) {
-		if (write) F.st.writes++;
+		if (wrt) F.st.writes++;
 		if (wr.attitude) F.st.attWrites++;
 		CollAMem &mm = F.mem[B.key];
-		mm.xs = xW - wr.cdx; mm.vs = vW; mm.ws = wW; mm.qs = qw; mm.vw = vWr;
+		mm.xs = d.xW - wr.cdx; mm.vs = d.vW; mm.ws = d.wW; mm.qs = d.qw; mm.vw = d.vWr;
 		mm.Fprev = wr.Fb; mm.Mprev = wr.Mb;
 	}
-	B.xs = xW - wr.cdx; B.vs = vW; B.ws = wW; B.qs = qw;
+	B.xs = d.xW - wr.cdx; B.vs = d.vW; B.ws = d.wW; B.qs = d.qw;
 	return wr;
 }
 
@@ -973,16 +1107,17 @@ void CollAddonFrame::Impl::PastFlags ()
 }
 
 // 6.6: a LANDED partner wakes when its share of a solve over its island's real points, with it kinematic, exceeds v_wake or w_wake
-void CollAddonFrame::Impl::WakePass (const std::vector<APt> &pts, const std::vector<CollPairResult> &res)
+void CollAddonFrame::Impl::WakePass (const std::vector<APt> &pts, const std::vector<CollPairResult> &res, std::vector<Woken> &woken)
 {
 	const int nb = (int)w.size ();
+	woken.clear ();
 	bool cand = false;
 	for (const APt &q : pts) for (int s : { q.a, q.b }) cand = cand || (q.real && !w[s].dyn && b[s].wakeable && b[s].m > 0.0);
 	if (!cand) return;
 	std::vector<int> u (nb);
 	std::iota (u.begin (), u.end (), 0);
 	for (const APt &q : pts) if (w[q.a].dyn && w[q.b].dyn) { int x = Root (u, q.a), y = Root (u, q.b); if (x != y) u[std::max (x, y)] = std::min (x, y); }
-	std::vector<int> wake;
+	std::vector<Woken> wake;
 	for (int root = 0; root < nb; root++) {
 		if (!w[root].dyn || Root (u, root) != root) continue;
 		std::vector<int> pidx, memb;
@@ -1006,10 +1141,10 @@ void CollAddonFrame::Impl::WakePass (const std::vector<APt> &pts, const std::vec
 			if (w[s].dyn || !b[s].wakeable || !(b[s].m > 0.0)) continue;
 			const CollSBody &sb = ro.body[j];
 			Vector dv = (sb.dP1 + sb.dP2)/b[s].m, dw = Divc (tmul (sb.Rt, sb.dL1 + sb.dL2), Ib (s));
-			if (dv.length () > COLL_V_WAKE || dw.length () > COLL_W_WAKE) wake.push_back (s);
+			if (dv.length () > COLL_V_WAKE || dw.length () > COLL_W_WAKE) wake.push_back (Woken { s, dv, mul (sb.Rt, dw) });
 		}
 	}
-	for (int s : wake) if (!w[s].dyn) { Wake (s); Predict (s); }
+	for (const Woken &k : wake) if (!w[k.i].dyn) { Wake (k.i); Predict (k.i); woken.push_back (k); }
 }
 
 // 9: one island at t0 from its members (dynamic first) and points; kinematic partners carry their velocity field (5.4)
@@ -1103,6 +1238,10 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 		for (const CollPairResult &x : o2) keep.push_back (x);
 		res.swap (keep);
 	};
+	auto touchT = [&] () {                                     // event time of a TOUCH path: the touch (5.6)
+		for (APt &q : pts) for (const RapItem &it : rap)
+			if (q.real && ((q.a == it.a && q.b == it.b) || (q.a == it.b && q.b == it.a)) && it.tauT < 1.0) q.t = simt0 - it.h + it.tauT*it.h;
+	};
 	// 7: re-apply (2.3), predict again, re-sweep the changed bodies
 	if (!rap.empty ()) {
 		std::vector<Vector> V0 (nb), W0 (nb);
@@ -1115,11 +1254,24 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 				resweep (i, w[i].V, mul (QM (w[i].Q), w[i].W), w[i].x1, w[i].v1, w[i].q1, mul (QM (w[i].q1), w[i].w1));
 		}
 		Convert (res, pts);
-		for (APt &q : pts) for (const RapItem &it : rap)      // event time of a TOUCH path: the touch (5.6)
-			if (q.real && ((q.a == it.a && q.b == it.b) || (q.a == it.b && q.b == it.a)) && it.tauT < 1.0) q.t = simt0 - it.h + it.tauT*it.h;
+		touchT ();
 	}
-	// 8b: LANDED wake on real contacts (6.6), before the islands so a woken body joins them dynamic
-	WakePass (pts, res);
+	// 8b: LANDED wake on real contacts (6.6), before the islands so a woken body joins them dynamic; re-swept so its own support contacts join too
+	std::vector<Woken> woken;
+	WakePass (pts, res, woken);
+	for (const Woken &k : woken) {                              // swept with its share as the approach, as a Restart at tau 0: a pressed support is reported touching
+		const Wk &x = w[k.i];
+		resweep (k.i, x.V + k.dv, mul (QM (x.Q), x.W) + k.dwg, x.x1 + k.dv*h, x.v1 + k.dv, x.q1, mul (QM (x.q1), x.w1) + k.dwg);
+	}
+	if (!woken.empty ()) {
+		for (CollPairResult &r : res)                            // contacts a woken body held while LANDED are not new (1.5)
+			for (const Woken &k : woken) {
+				int a = fwdOf[r.bodyA], c = fwdOf[r.bodyB];
+				if ((a == k.i && !w[c].dyn) || (c == k.i && !w[a].dyn)) for (int q = 0; q < r.npt; q++) r.pt[q].flags &= (uint8_t)~COLLP_FIRST;
+			}
+		Convert (res, pts);
+		touchT ();
+	}
 	// 9: islands over dynamic bodies; a plan reaching a dynamic body outside its island merges the two and starts over (M3)
 	std::vector<int> u (nb);
 	std::vector<Plan> plan;
@@ -1398,10 +1550,13 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 		if (!w[i].dyn) continue;
 		Wk &B = w[i];
 		CollABodyRec *br = nullptr;
-		for (CollAIslandRec &R : newIsl) for (CollABodyRec &x : R.b) if (x.key == B.key) br = &x;
+		CollAIslandRec *bi = nullptr;
+		for (CollAIslandRec &R : newIsl) for (CollABodyRec &x : R.b) if (x.key == B.key) br = &x, bi = &R;
 		Plan pl = plan[i];
 		if (!inIsl[i]) { pl.vNew = B.V; pl.wNew = B.W; }
-		bool needs = inIsl[i] || B.posChanged || (B.V - B.o.s.vel).length () > 0 || (B.W - B.o.s.omega).length () > 0 || B.Fprev.length () > 0 || B.Mprev.length () > 0;
+		bool edited = false;
+		if (F.planEdit) for (const CollAPlanEdit &e : *F.planEdit) if (e.id == b[i].id) { pl.vNew += e.dv; pl.wNew += e.dwb; pl.F += e.F; pl.M += e.M; edited = true; }
+		bool needs = edited || inIsl[i] || B.posChanged || (B.V - B.o.s.vel).length () > 0 || (B.W - B.o.s.omega).length () > 0 || B.Fprev.length () > 0 || B.Mprev.length () > 0;
 		CollAMem &mm = F.mem[B.key];
 		if (!needs) {
 			mm.xs = B.X; mm.vs = B.V; mm.ws = B.W; mm.qs = B.Q; mm.vw = B.V; mm.Fprev = mm.Mprev = Vector ();
@@ -1412,25 +1567,42 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 		Vector tgtP;
 		CollOrbState cf;
 		CollAWrite wr = Apply (i, pl, true, &tgtP, &cf);
-		if (wr.state || wr.attitude || wr.spin || wr.force) out.push_back (wr);
-		if (wr.weight) F.pend.push_back (Pend { B.key, i, B.o, cf, tgtP, h });
-		if (br) {
-			const SpecB &sp = spec[i];
-			Plan pf = pl;
-			pf.vNew -= sp.dP1/b[i].m;
-			pf.wNew = OmegaOf (i, Bf.Q, SpinL (i, Bf.Q, pl.wNew) - sp.dL1);
-			pf.F -= sp.dP2/h; pf.M -= sp.dL2/h;
-			std::swap (w[i], Bf);
-			Apply (i, pf, false);
-			std::swap (w[i], Bf);
-			CollOrbState a = B.o, f = Bf.o;
-			br->aw = a; br->fw = f;
-			mir.Step (a, h); mir.Step (f, h);
-			br->dx = a.s.pos - f.s.pos; br->dv = a.s.vel - f.s.vel; br->dLs = a.SpinL () - f.SpinL (); br->dth = TurnOf (f.s.Q, a.s.Q);
-			br->xs = Bf.xs; br->vs = Bf.vs; br->ws = Bf.ws; br->qs = Bf.qs;
-			br->zero = br->dx.length () == 0 && br->dv.length () == 0 && br->dth.length () == 0 && br->dLs.length () == 0;
+		if (!B.bad) {
+			if (wr.state || wr.attitude || wr.spin || wr.force) out.push_back (wr);
+			if (wr.weight) F.pend.push_back (Pend { B.key, i, B.o, cf, tgtP, h });
 		}
-		mm.Pw = B.o; mm.P = mm.Pw; mir.Step (mm.P, h); mm.hasP = true; mm.hPrev = h;
+		if (br) {
+			bool none = B.bad;
+			if (!B.bad) {
+				const SpecB &sp = spec[i];
+				Plan pf = pl;
+				pf.vNew -= sp.dP1/b[i].m;
+				pf.wNew = OmegaOf (i, Bf.Q, SpinL (i, Bf.Q, pl.wNew) - sp.dL1);
+				pf.F -= sp.dP2/h; pf.M -= sp.dL2/h;
+				std::swap (w[i], Bf);
+				Apply (i, pf, false);
+				std::swap (w[i], Bf);
+				none = Bf.bad;
+			}
+			if (!none) {
+				CollOrbState a = B.o, f = Bf.o;
+				br->aw = a; br->fw = f;
+				mir.Step (a, h); mir.Step (f, h);
+				br->dx = a.s.pos - f.s.pos; br->dv = a.s.vel - f.s.vel; br->dLs = a.SpinL () - f.SpinL (); br->dth = TurnOf (f.s.Q, a.s.Q);
+				br->xs = Bf.xs; br->vs = Bf.vs; br->ws = Bf.ws; br->qs = Bf.qs;
+				br->zero = br->dx.length () == 0 && br->dv.length () == 0 && br->dth.length () == 0 && br->dLs.length () == 0;
+			} else {                                        // a non-finite delivery: the record carries no speculative effect (P1)
+				br->aw = br->fw = B.o;
+				br->dx = br->dv = br->dLs = br->dth = Vector ();
+				br->xs = B.xs; br->vs = B.vs; br->ws = B.ws; br->qs = B.qs;
+				br->zero = true;
+			}
+			if (B.bad) for (CollAContactRec &c : bi->c) {   // impulses never delivered to it: a TOUCH undo takes them from the partner only
+				if (c.ka == B.key) c = CollAContactRec { c.kb, ~0ull, c.rb, c.rb, -c.J };
+				else if (c.kb == B.key) c.kb = ~0ull;
+			}
+		}
+		mm.Pw = B.o; mm.P = mm.Pw; mir.Step (mm.P, h); mm.hasP = !B.bad; mm.hPrev = h;
 	}
 	F.isl.swap (newIsl);
 	// 16: warp inputs (9, 7.4)
@@ -1467,36 +1639,53 @@ void CollAddonFrame::Run (CollDetect &fwd, CollDetect &ver, const CollOrbMirror 
 	im.Run (out, ev, zones);
 }
 
-// 6.3 step 4: the force of each single body written with SetState absorbs the gravity-estimate residual
+// 6.3 step 4: the force of each single body written with SetState absorbs the gravity-estimate residual; finite descent only, else Apply's force stays
 void CollAddonFrame::Finish (const CollOrbMirror &mir, std::vector<CollABody> &b, std::vector<CollAWrite> &out, const std::vector<Vector> &gExact)
 {
 	for (Pend &p : pend) {
 		if (p.body < 0 || p.body >= (int)gExact.size ()) continue;
 		CollAWrite *wr = nullptr;
 		for (CollAWrite &x : out) if (x.body == p.body) wr = &x;
-		if (!wr) continue;
+		if (!wr || !Finite (gExact[p.body])) continue;           // no exact gravity: Apply's force and records stand
 		CollOrbState c0 = p.conf;
 		c0.acc = gExact[p.body]; c0.gReset = gExact[p.body];
 		const double m = c0.m, h = p.h;
-		for (int it = 0; it < 8; it++) {
-			CollOrbState c = c0; c.Fadd = Vector (); c.Madd = p.conf.Madd; c.AddForce (wr->Fb, Vector ());
-			CollOrbState cs = c; mir.Step (cs, h);
+		auto conf = [&] (const Vector &Fb) { CollOrbState c = c0; c.Fadd = Vector (); c.Madd = p.conf.Madd; c.AddForce (Fb, Vector ()); return c; };
+		auto resid = [&] (const Vector &Fb, CollOrbState &cs) {
+			cs = conf (Fb); mir.Step (cs, h);
 			CollOrbState cfs = p.cf; mir.Step (cfs, h, cs.lv, cs.nsub);
-			Vector eP = p.tgtP - (cs.s.vel - cfs.s.vel)*m;
-			if (eP.length () <= 1e-14*(p.tgtP.length () + m*1e-3)) break;
+			return p.tgtP - (cs.s.vel - cfs.s.vel)*m;
+		};
+		Vector Fb = wr->Fb;
+		CollOrbState cs;
+		Vector eP = resid (Fb, cs);
+		double e = Finite (eP) ? eP.length () : HUGE_VAL;
+		for (int it = 0; it < 8; it++) {
+			if (!(e > 1e-14*(p.tgtP.length () + m*1e-3))) break;
 			Matrix Js;
+			CollOrbState c = conf (Fb);
 			for (int k = 0; k < 3; k++) {
-				Vector e; e.data[k] = 1.0;
-				CollOrbState c1 = c; c1.AddForce (e, Vector ()); mir.Step (c1, h);
+				Vector e1; e1.data[k] = 1.0;
+				CollOrbState c1 = c; c1.AddForce (e1, Vector ()); mir.Step (c1, h);
 				Vector dv = (c1.s.vel - cs.s.vel)*m;
 				Js(0,k) = dv.x; Js(1,k) = dv.y; Js(2,k) = dv.z;
 			}
-			wr->Fb += mul (InvM (Js), eP);
+			Vector dF = mul (InvM (Js), eP);
+			if (!Finite (dF) || !(dF.length () > 0)) break;
+			bool acc = false;
+			double s = 1.0;
+			for (int ls = 0; ls <= 6 && !acc; ls++, s *= 0.5) {
+				CollOrbState ct;
+				Vector Ft = Fb + dF*s, et = resid (Ft, ct);
+				if (Finite (Ft) && Finite (et) && et.length () < e) { Fb = Ft; eP = et; e = et.length (); cs = ct; acc = true; }
+			}
+			if (!acc) break;
 		}
+		if (Finite (Fb)) wr->Fb = Fb;
 		wr->force = wr->Fb.length () > 0 || wr->Mb.length () > 0;
 		auto it = mem.find (p.key);
 		if (it != mem.end ()) {
-			CollOrbState c = c0; c.Fadd = Vector (); c.Madd = p.conf.Madd; c.AddForce (wr->Fb, Vector ());
+			CollOrbState c = conf (wr->Fb);
 			it->second.Fprev = wr->Fb;
 			it->second.Pw = c; it->second.P = c; mir.Step (it->second.P, h);
 		}

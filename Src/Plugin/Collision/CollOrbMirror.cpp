@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <vector>
 #include "CollOrbMirror.h"
+#include "CollGeom.h"
 
 namespace {
 
@@ -249,12 +250,15 @@ void CollOrbMirror::ReadCfg (const std::function<bool (const char *key, std::str
 		if (n >= 5 && std::fabs (al - def.alim[k]) > 1e-6) alim[k] = al;
 	}
 	tlim[nLevel - 1] = 1e10; alim[nLevel - 1] = 1e10;
-	if (str ("PropSubsampling", v) && std::sscanf (v.c_str (), "%d", &i) == 1) subMax = i;
+	if (str ("PropSubsampling", v) && std::sscanf (v.c_str (), "%d", &i) == 1) {
+		if (i < 1) CollLog (COLLLOG_WARN, "Collision prop: PropSubsampling %d is invalid (below 1), 1 used", i);
+		subMax = std::max (1, i);                             // the core's min (PropSubMax, n) would take no substep (P4)
+	}
 }
 
 void CollOrbMirror::Choose (double H, double wlen, bool ground, int &lv, int &ns) const
 {
-	if (ground) { lv = nLevel - 1; ns = subMax; return; }   // VesselBase::SetPropagator while bSurfaceContact
+	if (ground) { lv = nLevel - 1; ns = std::max (1, subMax); return; }   // VesselBase::SetPropagator while bSurfaceContact
 	for (lv = 0; lv < nLevel - 1; lv++) if (H < tlim[lv]) break;
 	double astep = wlen*H;
 	for (; lv < nLevel - 1; lv++) if (astep < alim[lv]) break;

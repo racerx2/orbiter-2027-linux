@@ -42,7 +42,7 @@ struct CollAWrite {                                // what CollWorldA does throu
 	Vector Fb, Mb;                                 // AddForce at the CG and couple, body frame
 	Vector cdx, cdv, cdth, cdw;                    // compensation terms (written minus physical, 3.1)
 };
-struct CollAStats { int spec, real, touchPath, freePath, past, missed, reapply, writes, forceWrites, attWrites, deliveryIt, rounds, rec, recPos, turnFree, featFree, jumps, retries, clampE, checkFail, deliveryRelevel; };
+struct CollAStats { int spec, real, touchPath, freePath, past, missed, reapply, writes, forceWrites, attWrites, deliveryIt, rounds, rec, recPos, turnFree, featFree, jumps, retries, clampE, checkFail, deliveryRelevel, groundWrites; };
 struct CollAContactRec { uint64_t ka, kb; Vector ra, rb, J; };        // body keys (kind << 32 | id); points in each body's frame at t0; J on a, global
 struct CollAPairRec { uint64_t ka, kb; Vector ra, rb, n; double g0, u0; }; // one speculative pair: smallest-gap point, normal, gap and approach at t0
 struct CollABodyRec {
@@ -54,6 +54,7 @@ struct CollABodyRec {
 };
 struct CollAIslandRec { std::vector<CollAContactRec> c; std::vector<CollAPairRec> p; std::vector<CollABodyRec> b; double h; };
 struct CollASupRow { uint64_t ka, kb; Vector ra, rb, nb; double J2n; }; // resting row (7.5): points and partner normal in the body frames
+struct CollAPlanEdit { uint32_t id; Vector dv, dwb, F, M; };                 // tests: added to body id's plan before its delivery
 struct CollAMembersChange { uint32_t assembly; };  // 2.5: a body whose members changed (its records are dropped)
 struct CollAMem {                                  // per solver body, kept across frames
 	uint64_t memberHash = 0;
@@ -83,6 +84,7 @@ public:
 	double hRest = 0.1;                            // 7.4 load cap for bodies with engines engaged, from the mirror
 	const CollDetect *FeatDet () const { return featDet; } // the detector whose results the host is asked about now, else NULL
 	std::vector<CollSContact> *conProbe = nullptr; // tests: every contact the island builder made
+	const std::vector<CollAPlanEdit> *planEdit = nullptr; // tests: plan changes of the next Run's delivery
 	std::vector<CollContactRec> contacts;          // dmg3 L4: owner pairs that exchanged impulse in the last Run, slides included
 	static uint64_t Key (uint8_t kind, uint32_t id) { return ((uint64_t)(kind == COLLB_BASE ? 1 : 0) << 32) | id; }
 private:

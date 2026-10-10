@@ -3,7 +3,9 @@
 #include <cmath>
 #include <map>
 #include <string>
+#include <vector>
 #include "CollOrbMirror.h"
+#include "CollGeom.h"
 
 namespace {
 CollOrbState Body (const Vector &a)
@@ -123,4 +125,37 @@ TEST_CASE ("fix2: substeps computed in double, targets <= 0 ignored, clamped to 
 	REQUIRE (ns >= 1); REQUIRE (ns <= 10);
 	mir.Choose (0.05, HUGE_VAL, false, lv, ns);
 	REQUIRE (ns == 10);
+}
+
+namespace {
+std::vector<std::string> g_mlog;
+void MLog (int, const char *msg) { g_mlog.push_back (msg); }
+}
+
+TEST_CASE ("P4 PropSubsampling below 1: one substep on ground contact, logged once, the step finite", "[CollOrbMirror]")
+{
+	for (const char *val : { "0", "-3" }) {
+		g_mlog.clear ();
+		g_collLog = MLog;
+		CollOrbMirror mir;
+		std::map<std::string, std::string> cfg { { "PropSubsampling", val } };
+		mir.ReadCfg ([&] (const char *k, std::string &v) { auto it = cfg.find (k); if (it == cfg.end ()) return false; v = it->second; return true; });
+		int lv = -1, ns = -1;
+		mir.Choose (0.02, 1.0, true, lv, ns);
+		CollOrbState o = Body (Vector (0, -9.81, 0));
+		o.ground = true;
+		mir.Step (o, 0.02);
+		mir.Step (o, 0.02);
+		g_collLog = nullptr;
+		int n = 0;
+		for (const std::string &l : g_mlog) if (l.find ("PropSubsampling") != std::string::npos) n++;
+		CAPTURE (val, mir.subMax, lv, ns, o.nsub, n);
+		REQUIRE (mir.subMax == 1);
+		REQUIRE (ns == 1);
+		REQUIRE (o.nsub == 1);
+		REQUIRE (std::isfinite (o.s.pos.y));
+		REQUIRE (std::isfinite (o.s.vel.y));
+		REQUIRE (std::fabs (o.s.vel.y - (-2.0 - 9.81*0.04)) < 1e-12);
+		REQUIRE (n == 1);
+	}
 }
