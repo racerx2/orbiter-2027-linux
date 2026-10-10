@@ -466,8 +466,9 @@ static void ShaderObjectLayer(QByteArrayList &layers)
 	QVulkanInstance probe;
 	const QVersionNumber v = probe.supportedApiVersion();
 	if (qEnvironmentVariableIsEmpty("VK_LAYER_PATH") && v.microVersion() < 234 && v < QVersionNumber(1, 4)) qputenv("VK_LAYER_PATH", d); // older loaders know only VK_LAYER_PATH
-	layers << "VK_LAYER_KHRONOS_shader_object";
-	oapiWriteLogV("[D3D9] Shader-object layer folder %s (loader %s)", d.constData(), v.toString().toUtf8().constData());
+	const bool found = probe.supportedLayers().contains(QByteArrayLiteral("VK_LAYER_KHRONOS_shader_object"));
+	if (found) layers << "VK_LAYER_KHRONOS_shader_object";
+	oapiWriteLogV("[D3D9] Shader-object layer %s in %s (loader %s)", found ? "available" : "NOT found", d.constData(), v.toString().toUtf8().constData());
 }
 
 // ==============================================================

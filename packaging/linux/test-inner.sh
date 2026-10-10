@@ -54,7 +54,7 @@ if [ "$CLIENT" = 1 ]; then
 	printf 'StartPaused = FALSE\nFullscreen = FALSE\nWindowWidth = 1280\nWindowHeight = 720\nDeviceIndex = 0\nACTIVE_MODULES\nVulkanClient\nEND_MODULES\n' > Orbiter.cfg
 	for force in false true; do
 		VK_SHADER_OBJECT_FORCE_ENABLE=$force VK_DRIVER_FILES=$icd VK_ICD_FILENAMES=$icd QT_QPA_PLATFORM=xcb timeout 240 xvfb-run -a -s '-screen 0 1280x800x24' ./Orbiter "--scenariox=Delta-glider/Smack!" --fixedstep=0.02 --maxframes=120 >/tmp/c.out 2>&1; rc=$?
-		if [ $rc = 0 ] && grep -q 'Shader-object layer folder' Orbiter.log && ! grep -qE '\[ERROR\]|need ' Orbiter.log; then ok "client on lavapipe, layer forced=$force"; else bad "client force=$force rc=$rc: $(grep -E 'ERROR|need |layer|Vulkan' Orbiter.log | head -5)"; fi
+		if [ $rc = 0 ] && grep -qE 'Shader-object layer (available|folder)' Orbiter.log && ! grep -qE '\[ERROR\]|need ' Orbiter.log; then ok "client on lavapipe, layer forced=$force"; else bad "client force=$force rc=$rc: $(grep -E 'ERROR|need |layer|Vulkan' Orbiter.log | head -5)"; fi
 	done
 	if command -v weston >/dev/null; then
 		b=headless; weston --help 2>&1 | grep -q 'headless-backend.so' && b=headless-backend.so # weston 9/10 name the module
