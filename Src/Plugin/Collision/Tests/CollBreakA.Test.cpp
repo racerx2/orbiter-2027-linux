@@ -1567,3 +1567,32 @@ TEST_CASE ("custom-fix2 B4 D2: a 3-cell row with a normal kick and a long parent
 		CHECK (keep == 3); CHECK (panel);                             // the cells and the panel in one
 	}
 }
+
+TEST_CASE ("custom-fix3 B4: a cell debris whose cell payloads are lost still spawns from its part row", "[dmg3P][blast]")
+{
+	const std::string parent = "ShipWithLostCells";
+	DentSites ds;
+	{
+		HeldRig r; r.ShipA (parent);
+		r.B ().Hit (r.P (1, 0, 0.1));
+		REQUIRE (r.S ().Sites (r.a, 0));
+		ds = *r.S ().Sites (r.a, 0);
+	}
+	DentTorn t;                                                  // the K payload only: kick and mass, no cells
+	t.kind = CBRK_CELL; t.slot = 0; t.key = DentMath::MeshKey ("ship"); t.ngrp = 7; t.nvtx = 6 * 49 + 9; t.simt = 0.3; t.debris = parent + "_D1";
+	t.kin = true; t.dv = Vector (0.5, -2.0, 3.0); t.dw = Vector (0.01, -0.2, 1.0); t.mass = 50.0;
+	DentTorn u = t;                                              // the piece's part row of the same debris
+	u.kind = CBRK_PART; u.grp = { 6 };
+	HeldRig q; uint32_t b = q.ShipA (parent);
+	q.body.front ().v->playback = true;
+	q.S ().SetSites (b, ds);
+	q.B ().Torn (b, t);
+	q.B ().Torn (b, u);
+	CHECK (q.B ().Hidden (b, 0, 6));
+	q.sdk.simt = 0.3; q.B ().PreStep (0.3, 0.02); q.B ().Post (0.3, 0.02);
+	REQUIRE (q.sdk.Calls ("VesselCreate") == 1);                 // the part row spawned the piece
+	REQUIRE (q.B ().Debris ().size () == 1);
+	bool panel = false;
+	for (auto &ps : q.B ().Debris ()[0].row.pose) for (uint16_t g : ps.grp) if (g == 6) panel = true;
+	CHECK (panel);
+}

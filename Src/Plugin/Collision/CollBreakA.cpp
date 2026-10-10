@@ -948,7 +948,6 @@ void CollBreakA::Torn (uint32_t id, const DentTorn &t)
 		if (!cfgOk) return;
 		PlayedA &pl = played[{ id, DebrisKey (t.debris) }];
 		DentTorn &m = pl.row;
-		pl.cell = true;
 		if (t.kin) m.kin = true, m.dv = t.dv, m.dw = t.dw, m.mass = t.mass;
 		if (!t.cells.empty () || !t.pieces.empty ()) {
 			m.cells.insert (m.cells.end (), t.cells.begin (), t.cells.end ()); m.pieces.insert (m.pieces.end (), t.pieces.begin (), t.pieces.end ());
@@ -964,6 +963,7 @@ void CollBreakA::Torn (uint32_t id, const DentTorn &t)
 		bk.cells = m.cells; bk.pieces = m.pieces; bk.mass = m.mass; bk.centroid = m.c; bk.dv = m.dv; bk.dw = m.dw; bk.crushed = m.crushed;
 		CollSpawnA sp;
 		if (!MakeCellSpawn (bk, *sl, vh, site, StatGroups (*sl), ++events, sp)) return;
+		pl.cell = true; // only a cell spawn that happened stops its part rows
 		sp.blast = false; // the recording moves the parent
 		if (pl.idx < spawn.size ()) { sp.row.name = spawn[pl.idx].row.name; spawn[pl.idx] = sp; } // more cells of a queued one
 		else { sp.row.name = NewName (sdk.Name (vh)); pl.idx = spawn.size (); spawn.push_back (sp); }
@@ -1005,16 +1005,17 @@ void CollBreakA::Torn (uint32_t id, const DentTorn &t)
 	if (cfgOk < 0) cfgOk = sdk.DebrisClassExists () ? 1 : 0;
 	if (!cfgOk) return;
 	auto pl = played.find ({ id, DebrisKey (t.debris) });
-	if (pl != played.end () && (pl->second.cell || pl->second.idx >= spawn.size ())) return; // its cell row spawned it
+	if (pl != played.end () && (pl->second.cell || (pl->second.idx != SIZE_MAX && pl->second.idx >= spawn.size ()))) return; // its cell row spawned it
 	std::vector<int> all = pk;
 	if (pl != played.end ()) for (int k : pl->second.pk) if (std::find (all.begin (), all.end (), k) == all.end ()) all.push_back (k); // rows of one debris: one spawn
 	CollSpawnA sp;
 	if (!MakeSpawn (id, vh, hit, *sl, all, ++events, sp) && !(t.kin && !sp.row.pose.empty ())) return; // with its kick recorded the live run made it
 	if (t.kin) sp.dv = t.dv, sp.dw = t.dw, sp.mass = sp.row.mass = t.mass; // the recorded kick and mass
-	if (pl != played.end ()) { sp.row.name = spawn[pl->second.idx].row.name; spawn[pl->second.idx] = sp; pl->second.pk = all; }
-	else {
+	if (pl != played.end () && pl->second.idx < spawn.size ()) { sp.row.name = spawn[pl->second.idx].row.name; spawn[pl->second.idx] = sp; pl->second.pk = all; }
+	else { // a partial cell payload without a spawn keeps its merged row
 		sp.row.name = NewName (sdk.Name (vh));
-		played[{ id, DebrisKey (t.debris) }] = PlayedA { spawn.size (), all, false, {} };
+		PlayedA &e = played[{ id, DebrisKey (t.debris) }];
+		e.idx = spawn.size (); e.pk = all; e.cell = false;
 		spawn.push_back (sp);
 	}
 	SyncRows (sp.parent);
