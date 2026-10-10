@@ -923,6 +923,38 @@ TEST_CASE ("P1 non-finite plan: nothing is written, Orbiter's own step stands, t
 	g_collLog = nullptr;
 }
 
+TEST_CASE ("P1 non-finite delivery: a finite plan whose mirror steps go non-finite in Deliver and its write fallback writes nothing; the next frame is finite", "[CollAddonFrame]")
+{
+	g_collLog = LogSink;
+	const double h = 0.02;
+	for (int left : { 0, 1 }) {                          // 0: every evaluation non-finite; 1: the first finite, later ones non-finite
+		g_log.clear ();
+		Sim S, R;
+		HBD2 (S, Vector (12, 25, 10));
+		HBD2 (R, Vector (12, 25, 10));
+		std::vector<CollAPlanEdit> pe { CollAPlanEdit { 1, Vector (), Vector (), Vector (100, 0, 0), Vector (0, 50, 0) } };
+		int n = left;
+		S.fr.planEdit = &pe; S.fr.dlvNaN = &n;
+		S.Frame (h); R.Frame (h);
+		S.fr.planEdit = nullptr; S.fr.dlvNaN = nullptr;
+		CAPTURE (left, n, S.fr.Stats ().checkFail, S.writes, S.fr.Stats ().groundWrites);
+		REQUIRE (n < left);
+		REQUIRE (LogCount ("plan not finite") == 0);
+		REQUIRE (FinState (S.tb[0].o));
+		if (left == 0) {
+			REQUIRE (LogCount ("delivery not finite") == 1);
+			REQUIRE (LogCount ("delivery-nan") == 1);
+			REQUIRE (S.writes == 0);
+			REQUIRE (S.tb[0].o.s.pos.x == R.tb[0].o.s.pos.x); REQUIRE (S.tb[0].o.s.pos.y == R.tb[0].o.s.pos.y); REQUIRE (S.tb[0].o.s.pos.z == R.tb[0].o.s.pos.z);
+			REQUIRE (S.tb[0].o.s.vel.x == R.tb[0].o.s.vel.x); REQUIRE (S.tb[0].o.s.omega.y == R.tb[0].o.s.omega.y);
+		} else REQUIRE (LogCount ("not finite") == 0);
+		for (int f = 0; f < 3; f++) { S.Frame (h); R.Frame (h); }
+		REQUIRE (FinState (S.tb[0].o));
+		REQUIRE (LogCount ("not finite") == (left == 0 ? 1 : 0));
+	}
+	g_collLog = nullptr;
+}
+
 TEST_CASE ("P1 Finish: a non-finite exact gravity keeps Apply's force; momentum exact, no NaN", "[CollAddonFrame]")
 {
 	g_collLog = LogSink;

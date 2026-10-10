@@ -922,6 +922,7 @@ void CollAddonFrame::Impl::Deliver (int i, const Plan &in, const CollOrbState &c
 	};
 	auto eval = [&] (const Vector &u, const Vector &wv, It &r, CollOrbState &c) {
 		c = conf (u, wv); mir.Step (c, h, lvF, nF, false);
+		if (F.dlvNaN && (*F.dlvNaN)-- <= 0) c.s.pos = c.s.vel = c.s.omega = Vector (std::nan (""), 0, 0);
 		if (lvF < 0) { lvF = c.lv; nF = c.nsub; cs = cf; mir.Step (cs, h, lvF, nF, false); }
 		r.u = u; r.w = wv;
 		r.eP = tgtP - (c.s.vel - cs.s.vel)*m;

@@ -86,6 +86,7 @@ public:
 	const CollDetect *FeatDet () const { return featDet; } // the detector whose results the host is asked about now, else NULL
 	std::vector<CollSContact> *conProbe = nullptr; // tests: every contact the island builder made
 	const std::vector<CollAPlanEdit> *planEdit = nullptr; // tests: plan changes of the next Run's delivery
+	int *dlvNaN = nullptr;                         // tests: Deliver evaluations left finite; later ones get a non-finite mirror step
 	std::vector<CollContactRec> contacts;          // dmg3 L4: owner pairs that exchanged impulse in the last Run, slides included
 	static uint64_t Key (uint8_t kind, uint32_t id) { return ((uint64_t)(kind == COLLB_BASE ? 1 : 0) << 32) | id; }
 private:
