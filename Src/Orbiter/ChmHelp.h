@@ -22,19 +22,27 @@ QUrl ChmUrl (const QString &chmfile, const QString &topic);
 // "its:" / "ms-its:" / "mk:@MSITStore:" URLs ("its:Html\\Scenarios\\x.chm::/y.htm") -> ChmUrl, invalid if not a help page
 QUrl ChmUrlFromIts (const QString &its);
 
-// text browser that also shows the pages of help files
+// page HTML and style sheets without their own colours, so the palette (the desktop theme) shows them
+QString ThemeHtml (const QString &html);
+QString ThemeCss (const QString &css);
+
+// text browser that also shows the pages of help files, in the desktop theme
 class ChmBrowser: public QTextBrowser {
 public:
-	using QTextBrowser::QTextBrowser;
+	explicit ChmBrowser (QWidget *parent = nullptr);
 	QVariant loadResource (int type, const QUrl &name) override;
 	void SetPageHtml (const QString &html); // setHtml, with percentage image widths as the browser object sized them
 
 protected:
 	void doSetSource (const QUrl &name, QTextDocument::ResourceType type) override;
 	void resizeEvent (QResizeEvent *e) override;
+	void changeEvent (QEvent *e) override; // palette or style change: the page again in the new colours
 
 private:
 	QVariant LoadPage (int type, const QUrl &name);
+	void ThemeStyle (); // the document's default style sheet from the palette
+	QString pageHtml;   // the last SetPageHtml page, for a re-render
+	bool rerender = false;
 	int PageWidth () const;
 	QString PercentImages (const QString &html);
 	void FitPercentImages ();

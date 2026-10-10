@@ -102,7 +102,7 @@ if mjd < 57457.66028 then
 	oapi.set_cameramode({mode='track',trackmode='global',reldist=17.857, phi=-2.210, tht=-1.057})
 	oapi.set_cameraaperture(RAD*15)
 	-- oapi.set_cameramode({mode='track',trackmode='relative',reldist=14.468, phi=0.001, tht=-0.168})
-	h:set_text('>>> Check out the latest news and updates at the Orbiter home page orbit.medphys.ucl.ac.uk')
+	h:set_text('>>> Check out the latest news and updates at github.com/racerx2/orbiter-2027-linux')
 	
 	while t1 < 78 do
 		tstep()

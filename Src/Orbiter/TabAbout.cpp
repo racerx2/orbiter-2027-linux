@@ -59,7 +59,7 @@ BOOL orbiter::AboutTab::OnInitDialog(QWidget *hWnd)
 {
 	// WM_COMMAND
 	QObject::connect (DlgItem<QPushButton> (hWnd, IDC_ABT_WEB), &QPushButton::clicked, hWnd, []() {
-		QDesktopServices::openUrl (QUrl ("http://orbit.medphys.ucl.ac.uk/"));
+		QDesktopServices::openUrl (QUrl ("https://github.com/racerx2/orbiter-2027-linux")); // not upstream: the old Orbiter site is gone
 	});
 	QObject::connect (DlgItem<QPushButton> (hWnd, IDC_ABT_DISCLAIM), &QPushButton::clicked, hWnd, [this]() {
 		QDialog *dlg = qobject_cast<QDialog*> (oapiCreateResDialog (AppInstance(), IDD_MSG, LaunchpadWnd()));

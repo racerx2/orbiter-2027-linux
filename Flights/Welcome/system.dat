@@ -88,5 +88,5 @@
 260 CAMERA SET Track:STS-104:40.00:GLOBAL 249263.812 1.755 -0.164
 260 NOTE Orbiter can be expanded with hundreds of addons - from new spacecraft, to instrumentation, bases, planets and moons, and high resolution textures.
 270 NOTE Visit the online forum at www.orbiter-forum.com, and the addon repository at www.orbiter-forum.com/resources.
-280 NOTE Orbiter - orbit.medphys.ucl.ac.uk
+280 NOTE Orbiter - github.com/racerx2/orbiter-2027-linux
 290 ENDSESSION

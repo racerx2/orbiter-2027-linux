@@ -4,16 +4,19 @@
 #include "OrbiterAPI.h"
 #include <QApplication>
 #include <QDesktopServices>
+#include <QEvent>
 #include <QFile>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHash>
+#include <QPalette>
 #include <QPointer>
 #include <QRegularExpression>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QSplitter>
 #include <QStringDecoder>
+#include <QStringList>
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -168,6 +171,78 @@ QUrl ChmUrlFromIts (const QString &its)
 	return ItsUrl (its, QString());
 }
 
+// colour declarations go from style sheets: the property names color, background and background-color, not border-color and the like
+QString ThemeCss (const QString &css)
+{
+	static const QRegularExpression decl ("(?<![\\w-])(?:color|background|background-color)\\s*:[^;}]*;?", QRegularExpression::CaseInsensitiveOption);
+	QString out = css;
+	return out.remove (decl);
+}
+
+// colour attributes go from every tag, colour declarations from style attributes and style blocks; quoted values are read whole
+QString ThemeHtml (const QString &html)
+{
+	static const QRegularExpression block ("(<style\\b[^>]*>)(.*?)(</style\\s*>)", QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption);
+	static const QRegularExpression tag ("<([A-Za-z][A-Za-z0-9]*)((?:\"[^\"]*\"|'[^']*'|[^\"'>])*)>");
+	static const QRegularExpression attr ("(\\s+)([^\\s=/>\"']+)(?:(\\s*=\\s*)(\"[^\"]*\"|'[^']*'|[^\\s\"'>]+))?");
+	static const QStringList drop = {"bgcolor", "background", "text", "link", "vlink", "alink", "color"};
+	QString in, out;
+	qsizetype pos = 0;
+	for (auto it = block.globalMatch (html); it.hasNext();) {
+		QRegularExpressionMatch m = it.next();
+		in += html.mid (pos, m.capturedStart() - pos) + m.captured (1) + ThemeCss (m.captured (2)) + m.captured (3);
+		pos = m.capturedEnd();
+	}
+	in += html.mid (pos);
+	pos = 0;
+	for (auto it = tag.globalMatch (in); it.hasNext();) {
+		QRegularExpressionMatch m = it.next();
+		const QString attrs = m.captured (2);
+		if (attrs.contains ('<')) { out += in.mid (pos, m.capturedEnd() - pos); pos = m.capturedEnd(); continue; } // an unbalanced quote ran past the tag: left as it is
+		QString t = "<" + m.captured (1);
+		qsizetype ap = 0;
+		for (auto at = attr.globalMatch (attrs); at.hasNext();) {
+			QRegularExpressionMatch a = at.next();
+			t += attrs.mid (ap, a.capturedStart() - ap);
+			ap = a.capturedEnd();
+			const QString name = a.captured (2).toLower();
+			if (drop.contains (name)) continue;
+			QString v = a.captured (4);
+			if (name == "style" && v.size() >= 2 && (v[0] == '"' || v[0] == '\'')) // the value keeps its quotes
+				v = v[0] + ThemeCss (v.mid (1, v.size() - 2)).trimmed() + v[0];
+			t += a.captured (1) + a.captured (2) + a.captured (3) + v;
+		}
+		t += attrs.mid (ap) + ">";
+		out += in.mid (pos, m.capturedStart() - pos) + t;
+		pos = m.capturedEnd();
+	}
+	return out + in.mid (pos);
+}
+
+ChmBrowser::ChmBrowser (QWidget *parent): QTextBrowser (parent)
+{
+	ThemeStyle();
+}
+
+// accents of the pages in the palette's colours: links, the banded headings, table headers
+void ChmBrowser::ThemeStyle ()
+{
+	const QPalette &p = palette();
+	document()->setDefaultStyleSheet (QString ("a { color: %1; } h1, h2 { background-color: %2; } th { background-color: %3; color: %4; }")
+		.arg (p.color (QPalette::Link).name(), p.color (QPalette::AlternateBase).name(), p.color (QPalette::Button).name(), p.color (QPalette::ButtonText).name()));
+}
+
+void ChmBrowser::changeEvent (QEvent *e)
+{
+	QTextBrowser::changeEvent (e);
+	if ((e->type() != QEvent::PaletteChange && e->type() != QEvent::StyleChange) || rerender) return;
+	rerender = true;
+	ThemeStyle();
+	if (!pageHtml.isEmpty()) SetPageHtml (pageHtml); // a string shown after a page leaves the page's source set
+	else if (!source().isEmpty()) reload();
+	rerender = false;
+}
+
 // Internet Explorer sizes <img width="N%"> to N% of its containing block; QTextBrowser takes pixel widths only
 QString ChmBrowser::PercentImages (const QString &html)
 {
@@ -238,12 +313,14 @@ void ChmBrowser::FitPercentImages ()
 
 void ChmBrowser::SetPageHtml (const QString &html)
 {
-	setHtml (PercentImages (html));
+	pageHtml = html;
+	setHtml (PercentImages (ThemeHtml (html)));
 	FitPercentImages();
 }
 
 void ChmBrowser::doSetSource (const QUrl &name, QTextDocument::ResourceType type)
 {
+	pageHtml.clear(); // a page from now on, not the last string
 	QTextBrowser::doSetSource (name, type);
 	FitPercentImages();
 }
@@ -257,7 +334,9 @@ void ChmBrowser::resizeEvent (QResizeEvent *e)
 QVariant ChmBrowser::loadResource (int type, const QUrl &name)
 {
 	QVariant v = LoadPage (type, name);
-	if (type != QTextDocument::HtmlResource || v.isNull()) return v;
+	if (v.isNull() || (type != QTextDocument::HtmlResource && type != QTextDocument::StyleSheetResource)) return v;
+	if (type == QTextDocument::StyleSheetResource)
+		return ThemeCss (v.userType() == QMetaType::QString ? v.toString() : QString::fromUtf8 (v.toByteArray()));
 	QString s;
 	if (v.userType() == QMetaType::QString) s = v.toString();
 	else {
@@ -267,7 +346,7 @@ QVariant ChmBrowser::loadResource (int type, const QUrl &name)
 		s = dec (b);
 		if (dec.hasError()) s = QString::fromLatin1 (b); // Windows-era pages
 	}
-	return PercentImages (s);
+	return PercentImages (ThemeHtml (s));
 }
 
 QVariant ChmBrowser::LoadPage (int type, const QUrl &name)
