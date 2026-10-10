@@ -1,6 +1,7 @@
 // custom: launcher skins; Modules/Launcher/LauncherQml.so, the QML view of a launcher skin (loaded only for QML skins)
 
 #include "LauncherQmlAbi.h"
+#include <QLibrary>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -84,8 +85,10 @@ namespace {
 				err = "can't create " + dst;
 				return false;
 			}
-			for (const QFileInfo &fi : src.entryInfoList (QDir::Files)) // files only: sub-modules are allowed one by one
+			for (const QFileInfo &fi : src.entryInfoList (QDir::Files)) { // files only: sub-modules are allowed one by one
+				if (fi.suffix () == "so") QLibrary (fi.canonicalFilePath ()).load (); // its $ORIGIN from the real file: the link below would point RUNPATH at the runtime folder (portable package)
 				QFile::link (fi.absoluteFilePath (), dst + '/' + fi.fileName ());
+			}
 			g_realDirs.insert (QFileInfo (src.absolutePath ()).canonicalFilePath ());
 		}
 		g_allowPath = QDir::cleanPath (dir->path ());

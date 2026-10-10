@@ -134,11 +134,17 @@ missing_packages() {
     local want
     case $PM in
         apt)
-            want=$(list apt)
-            # shellcheck disable=SC2086
-            dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' $want 2>/dev/null |
-                awk '$1 == "ii" { print $2 }' |
-                awk 'FILENAME == "-" { have[$0]; next } !($0 in have)' - <(printf '%s\n' $want) ;;
+            local alt a have
+            for want in $(list apt); do # a|b: the portable package names both spellings of a t64 rename
+                have=0
+                for a in ${want//|/ }; do
+                    [ "$(dpkg-query -W -f='${db:Status-Abbrev}' "$a" 2>/dev/null)" = "ii " ] && have=1 && break
+                done
+                [ "$have" = 1 ] && continue
+                alt=""
+                for a in ${want//|/ }; do apt-cache show --no-all-versions "$a" >/dev/null 2>&1 && alt=$a && break; done
+                echo "${alt:-${want%%|*}}"
+            done ;;
         dnf | zypper)
             for want in $(list rpm) $(list "$PM"); do
                 rpm -q --whatprovides "$want" >/dev/null 2>&1 || echo "$want"

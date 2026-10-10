@@ -45,6 +45,9 @@
 // imgui_impl_win32.h left out: the core's imgui_impl_qt is the platform backend
 #include "OrbiterResource.h"
 #include "VkTexFile.h"
+#include <QCoreApplication>
+#include <QFileInfo>
+#include <QFile>
 #include <QVulkanInstance>
 #include <QGuiApplication>
 #include <QVersionNumber>
@@ -452,6 +455,21 @@ const void *D3D9Client::GetConfigParam (DWORD paramtype) const
 }
 
 
+// not upstream: lib/vulkan of the portable package holds Khronos' shader-object layer; it stays out of the way on drivers with VK_EXT_shader_object
+static void ShaderObjectLayer(QByteArrayList &layers)
+{
+	const QString dir = QCoreApplication::applicationDirPath() + "/lib/vulkan";
+	if (!QFileInfo::exists(dir + "/VkLayer_khronos_shader_object.json")) return;
+	const QByteArray d = QFile::encodeName(dir);
+	QByteArray add = qgetenv("VK_ADD_LAYER_PATH");
+	qputenv("VK_ADD_LAYER_PATH", add.isEmpty() ? d : add + ':' + d); // loaders 1.3.234 and newer
+	QVulkanInstance probe;
+	const QVersionNumber v = probe.supportedApiVersion();
+	if (qEnvironmentVariableIsEmpty("VK_LAYER_PATH") && v.microVersion() < 234 && v < QVersionNumber(1, 4)) qputenv("VK_LAYER_PATH", d); // older loaders know only VK_LAYER_PATH
+	layers << "VK_LAYER_KHRONOS_shader_object";
+	oapiWriteLogV("[D3D9] Shader-object layer folder %s (loader %s)", d.constData(), v.toString().toUtf8().constData());
+}
+
 // ==============================================================
 // This is called only once when the launchpad will appear
 // This callback will initialize the Video tab only
@@ -465,9 +483,12 @@ bool D3D9Client::clbkInitialise()
 	// D3D9ON12_ARGS and Direct3DCreate9On12 left out: D3D9on12 is a Windows layer, the native interface is the only one
 	g_pD3DObject = new QVulkanInstance(); // Direct3DCreate9(D3D_SDK_VERSION)
 	g_pD3DObject->setApiVersion(QVersionNumber(1, 4));
+	QByteArrayList layers;
 #ifdef _DEBUG
-	g_pD3DObject->setLayers(QByteArrayList() << "VK_LAYER_KHRONOS_validation"); // not upstream: Vulkan validation in debug builds
+	layers << "VK_LAYER_KHRONOS_validation"; // not upstream: Vulkan validation in debug builds
 #endif
+	ShaderObjectLayer(layers); // not upstream: Khronos' shader-object layer of the portable package, for drivers without VK_EXT_shader_object
+	g_pD3DObject->setLayers(layers);
 	if (!g_pD3DObject->create()) SAFE_DELETE(g_pD3DObject);
 	oapiWriteLog("[D3D9] Native Interface");
 
