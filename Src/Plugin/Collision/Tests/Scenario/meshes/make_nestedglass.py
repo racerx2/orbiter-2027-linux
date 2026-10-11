@@ -1,5 +1,6 @@
 # not upstream: writes GltfTest/nestedglass.glb for Gltf.Visual.NestedGlass (claude/design-pbr-nested-glass.md 7)
-# a transmission box (canopy) holding a green transmission HUD in front of an emissive backdrop; a reference quad outside
+# a transmission box (canopy) holding a green transmission HUD in front of an emissive backdrop, a red BLEND decal on its front,
+# the same box and HUD with alpha BLEND on the left, and a reference quad outside
 import json, os, struct
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -45,11 +46,18 @@ parts = [
     ('hud', front(-0.2, 0.2, -0.15, 0.15, 0.0), 1),
     ('backdrop', front(-0.45, 0.45, -0.40, 0.40, 0.3), 2),
     ('reference', front(-0.3, 0.3, 0.75, 1.0, 0.0), 2),
+    ('decal', front(0.3, 0.5, -0.35, -0.2, -0.602), 5),
+    ('canopy2', box((-2.2, -0.45, -1.4), (-1.0, 0.45, 0.6)), 3),
+    ('hud2', front(-1.8, -1.4, -0.15, 0.15, 0.0), 4),
+    ('backdrop2', front(-2.05, -1.15, -0.40, 0.40, 0.3), 2),
 ]
 materials = [
     {'name': 'canopy', 'pbrMetallicRoughness': {'baseColorFactor': [0.3, 0.3, 0.3, 1], 'metallicFactor': 0, 'roughnessFactor': 0}, 'extensions': GLASS},
     {'name': 'hud', 'pbrMetallicRoughness': {'baseColorFactor': [0.002, 1, 0, 1], 'metallicFactor': 0, 'roughnessFactor': 0}, 'extensions': GLASS},
     {'name': 'emissive', 'pbrMetallicRoughness': {'baseColorFactor': [0, 0, 0, 1], 'metallicFactor': 0, 'roughnessFactor': 1}, 'emissiveFactor': [1, 1, 1], 'extensions': NOREFL},
+    {'name': 'canopy2', 'alphaMode': 'BLEND', 'pbrMetallicRoughness': {'baseColorFactor': [0.3, 0.3, 0.3, 0.8], 'metallicFactor': 0, 'roughnessFactor': 0}, 'extensions': GLASS},
+    {'name': 'hud2', 'alphaMode': 'BLEND', 'pbrMetallicRoughness': {'baseColorFactor': [0.002, 1, 0, 0.9], 'metallicFactor': 0, 'roughnessFactor': 0}, 'extensions': GLASS},
+    {'name': 'decal', 'alphaMode': 'BLEND', 'pbrMetallicRoughness': {'baseColorFactor': [0, 0, 0, 0.8], 'metallicFactor': 0, 'roughnessFactor': 1}, 'emissiveFactor': [1, 0, 0], 'extensions': NOREFL},
 ]
 
 bin_, views, accs, meshes, nodes = b'', [], [], [], []

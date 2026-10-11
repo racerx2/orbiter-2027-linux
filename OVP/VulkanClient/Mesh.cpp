@@ -2739,25 +2739,35 @@ void D3D9Mesh::RenderPbr(const LPD3DXMATRIX pW, const D3DXMATRIX &mWorldMesh, in
 		D3DXVECTOR3 cam(0, 0, 0), o(0, 0, 0);
 		bool camOk = D3DXMatrixInverse(&inv, NULL, &mWorldView) != NULL;
 		if (camOk) D3DXVec3TransformCoord(&cam, &o, &inv);
+		auto boxOk = [&](const Item &a) { return !bGlobalTF && !Grp[a.g].bTransform; }; // min/max are untransformed vertex bounds
 		auto inside = [](const D9BBox &b, float x, float y, float z) { return x >= b.min.x && x <= b.max.x && y >= b.min.y && y <= b.max.y && z >= b.min.z && z <= b.max.z; };
-		auto overlap = [](const D9BBox &a, const D9BBox &b) { return a.min.x <= b.max.x && b.min.x <= a.max.x && a.min.y <= b.max.y && b.min.y <= a.max.y && a.min.z <= b.max.z && b.min.z <= a.max.z; };
+		auto overlap = [](const D9BBox &a, const D9BBox &b, float e) {
+			return a.min.x - e <= b.max.x && b.min.x - e <= a.max.x && a.min.y - e <= b.max.y && b.min.y - e <= a.max.y && a.min.z - e <= b.max.z && b.min.z - e <= a.max.z;
+		};
 		auto holds = [&](const Item &a, const Item &b) {
 			const D9BBox &A = Grp[a.g].BBox, &B = Grp[b.g].BBox;
-			return a.g != b.g && B.bs.w < A.bs.w && inside(A, B.bs.x, B.bs.y, B.bs.z);
+			return a.g != b.g && boxOk(a) && boxOk(b) && B.bs.w < A.bs.w && inside(A, B.bs.x, B.bs.y, B.bs.z);
 		};
-		for (auto &it : glass) {
-			float r = Grp[it.g].BBox.bs.w * ws;
-			it.key = it.dist;
-			if (camOk && inside(Grp[it.g].BBox, cam.x, cam.y, cam.z)) it.key = it.dist + r; // around the camera: drawn first
-			else for (const auto &b : glass) if (holds(it, b)) { it.key = it.dist - r; break; } // after the glass it holds
+		auto overlay = [](const Item &a) { return a.m->alphaMode == PBR_BLEND && a.m->transmission <= 0; }; // decals, frames: not glass
+		auto below = [](float k) { return k - std::max(1e-3f, std::fabs(k) * 1e-6f); };
+		std::vector<Item *> byRadius;
+		for (auto &it : glass) byRadius.push_back(&it);
+		std::stable_sort(byRadius.begin(), byRadius.end(), [&](const Item *a, const Item *b) { return Grp[a->g].BBox.bs.w < Grp[b->g].BBox.bs.w; });
+		for (Item *it : byRadius) { // held groups (smaller) get their keys first
+			it->key = it->dist;
+			if (camOk && boxOk(*it) && inside(Grp[it->g].BBox, cam.x, cam.y, cam.z)) { it->key = it->dist + Grp[it->g].BBox.bs.w * ws; continue; } // around the camera: drawn first
+			for (const auto &b : glass) if (holds(*it, b)) it->key = std::min(it->key, below(b.key)); // just after the glass it holds
 		}
 		for (auto &b : glass) {
-			if (b.m->alphaMode != PBR_BLEND) continue;
-			for (const auto &t : glass) // a BLEND overlay touching a pane stays on top of it
-				if (t.m->alphaMode != PBR_BLEND && t.m->transmission > 0 && overlap(Grp[b.g].BBox, Grp[t.g].BBox) && !holds(b, t) && !holds(t, b))
-					b.key = std::min(b.key, t.key - 1e-3f);
+			if (!overlay(b) || !boxOk(b)) continue;
+			for (const auto &t : glass) // an overlay touching a transmission pane stays on top of it
+				if (!overlay(t) && t.m->alphaMode != PBR_BLEND && t.m->transmission > 0 && boxOk(t) && overlap(Grp[b.g].BBox, Grp[t.g].BBox, std::max(0.005f, 0.01f * Grp[t.g].BBox.bs.w)))
+					b.key = std::min(b.key, below(t.key));
 		}
-		std::stable_sort(glass.begin(), glass.end(), [](const Item &a, const Item &b) { return a.key > b.key; });
+		std::stable_sort(glass.begin(), glass.end(), [&](const Item &a, const Item &b) {
+			if (a.key != b.key) return a.key > b.key;
+			return !overlay(a) && overlay(b);
+		});
 	}
 
 	pDev->SetVertexDecl(pMeshVertexDecl);
