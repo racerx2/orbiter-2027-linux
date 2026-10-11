@@ -3,7 +3,7 @@
 # TEST_DOCKER_ARGS: extra docker run options (network, a /prelude.sh for proxies); CLIENT=0 skips the lavapipe client runs
 PKG=$(readlink -f "$1"); shift
 H=$(dirname "$(readlink -f "$0")")
-IMAGES=${*:-ubuntu:22.04 ubuntu:24.04 ubuntu:26.04 debian:12 debian:13 fedora:42 almalinux:9 opensuse/tumbleweed archlinux:latest}
+IMAGES=${*:-ubuntu:22.04 ubuntu:24.04 ubuntu:26.04 debian:12 debian:13 fedora:42 almalinux:9 opensuse/tumbleweed archlinux:latest cachyos/cachyos-v3:latest}
 rc=0
 for img in $IMAGES; do
 	# shellcheck disable=SC2086
