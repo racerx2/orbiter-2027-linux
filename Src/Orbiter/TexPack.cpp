@@ -12,6 +12,7 @@
 #include <QUrl>
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -73,8 +74,33 @@ bool TexPackRead (const std::string &cfgfile, TexPackList &list, std::string &er
 			err = "line " + std::to_string (ln) + ": bad pack";
 			return false;
 		}
+		size_t dot = p.zip.rfind ('.');
+		std::string base = (dot == std::string::npos ? "" : p.zip.substr (0, dot));
+		if (base.size() > 5 && !base.compare (base.size() - 5, 5, ".tree")) { // archive part <Body>_<Layer>.tree.NN
+			TexPack *a = (!list.pack.empty() && list.pack.back().zip == base ? &list.pack.back() : nullptr);
+			if (!a) {
+				list.pack.push_back (TexPack());
+				a = &list.pack.back();
+				a->zip = base;
+				a->body = p.body;
+				a->layer = p.layer;
+				a->rawsize = p.rawsize;
+				a->files = p.files;
+			}
+			int n = atoi (p.zip.c_str() + dot + 1);
+			if (a->body != p.body || a->layer != p.layer || a->rawsize != p.rawsize || a->files != p.files ||
+				n != (int)a->parts.size() + 1 || !p.zipsize) {
+				err = "line " + std::to_string (ln) + ": bad part";
+				return false;
+			}
+			a->parts.push_back ({p.zip, p.md5, p.zipsize});
+			a->zipsize += p.zipsize;
+			continue;
+		}
 		list.pack.push_back (p);
 	}
+	for (const TexPack &p : list.pack)
+		if (!p.parts.empty() && (p.parts.size() != p.files || p.zipsize != p.rawsize)) { err = p.zip + ": parts missing"; return false; }
 	if (list.url.empty()) { err = "no URL in " + cfgfile; return false; }
 	return true;
 }
@@ -87,12 +113,55 @@ bool TexPackPresent (const std::string &texdir, const std::string &body, const s
 	return fs::is_regular_file (Resolve (Join (Join (b, "Archive"), layer + ".tree")), ec); // ZTreeMgr archive
 }
 
+static std::string ArchiveFile (const std::string &texdir, const TexPack &p, const std::string &name)
+{
+	return Resolve (Join (Join (Join (texdir, p.body), "Archive"), name));
+}
+
+static std::string TreeFile (const std::string &texdir, const TexPack &p)
+{
+	return ArchiveFile (texdir, p, p.layer + ".tree");
+}
+
+// hidden, named by the first part's md5 so a different release starts over
+static std::string PartialFile (const std::string &texdir, const TexPack &p)
+{
+	return ArchiveFile (texdir, p, "." + p.layer + ".tree." + p.parts[0].md5.substr (0, 8) + ".partial");
+}
+
+bool TexPackPresent (const std::string &texdir, const TexPack &p)
+{
+	if (p.parts.empty()) return TexPackPresent (texdir, p.body, p.layer);
+	std::error_code ec;
+	return fs::exists (fs::symlink_status (TreeFile (texdir, p), ec)); // loose tile folders don't count for an archive
+}
+
 std::vector<TexPack> TexPackMissing (const TexPackList &list, const std::string &texdir)
 {
 	std::vector<TexPack> v;
 	for (const TexPack &p : list.pack)
-		if (!TexPackPresent (texdir, p.body, p.layer)) v.push_back (p);
+		if (!TexPackPresent (texdir, p)) v.push_back (p);
 	return v;
+}
+
+uint64_t TexPackResume (const std::string &texdir, const TexPack &p)
+{
+	if (p.parts.empty()) return 0;
+	std::error_code ec;
+	uint64_t have = fs::file_size (PartialFile (texdir, p), ec), ofs = 0;
+	if (ec) return 0;
+	for (const TexPart &t : p.parts) {
+		if (ofs + t.size > have) break;
+		ofs += t.size;
+	}
+	return ofs;
+}
+
+uint64_t TexPackSpare (const TexPack &p)
+{
+	uint64_t m = 0;
+	for (const TexPart &t : p.parts) m = std::max (m, t.size);
+	return p.parts.empty() ? p.zipsize : m;
 }
 
 std::string TexPackWorkDir (const std::string &texdir)
@@ -330,9 +399,74 @@ bool TexPackDownload (const std::string &url, const std::string &file, const Tex
 	return ok;
 }
 
+static bool Append (const std::string &from, const std::string &to, std::string &err)
+{
+	FILE *i = fopen (from.c_str(), "rb"), *o = (i ? fopen (to.c_str(), "ab") : nullptr);
+	bool ok = (i && o);
+	std::vector<char> buf (1 << 20);
+	size_t n;
+	while (ok && (n = fread (buf.data(), 1, buf.size(), i)) > 0)
+		ok = (fwrite (buf.data(), 1, n, o) == n);
+	if (ok && ferror (i)) ok = false;
+	if (i) fclose (i);
+	if (o && fclose (o)) ok = false;
+	if (!ok) err = "cannot write " + to;
+	return ok;
+}
+
+// parts download one at a time, md5-checked, onto the partial file, renamed to <Layer>.tree after the last; a failed try keeps the whole parts
+static bool InstallTree (const TexPackList &list, const TexPack &p, const std::string &texdir, const TexPackProgress &download, std::string &err)
+{
+	std::error_code ec;
+	std::string target = TreeFile (texdir, p), partial = PartialFile (texdir, p);
+	if (fs::exists (fs::symlink_status (target, ec))) { err = target + " is in the way"; return false; }
+	std::string arch = fs::path (target).parent_path().string();
+	fs::create_directories (arch, ec);
+	if (ec) { err = "cannot create " + arch + ": " + ec.message(); return false; }
+	std::string stale = "." + p.layer + ".tree.", mine = fs::path (partial).filename().string();
+	for (fs::directory_iterator it (arch, ec), end; !ec && it != end; it.increment (ec)) { // partials of another release
+		std::string n = it->path().filename().string();
+		if (n != mine && !n.compare (0, stale.size(), stale) && n.size() > 8 && !n.compare (n.size() - 8, 8, ".partial")) {
+			std::error_code rc;
+			fs::remove (it->path(), rc);
+		}
+	}
+	ec.clear();
+	uint64_t ofs = TexPackResume (texdir, p);
+	size_t k = 0;
+	for (uint64_t s = 0; k < p.parts.size() && s < ofs; k++) s += p.parts[k].size;
+	if (fs::exists (partial, ec)) fs::resize_file (partial, ofs, ec); // a part cut off midway is dropped
+	else std::ofstream (partial, std::ios::binary);
+	if (ec || !fs::exists (partial, ec)) { err = "cannot write " + partial; return false; }
+	std::string work = TexPackWorkDir (texdir);
+	fs::create_directories (work, ec);
+	if (ec) { err = "cannot create " + work + ": " + ec.message(); return false; }
+	bool ok = true;
+	for (; ok && k < p.parts.size(); k++) {
+		const TexPart &t = p.parts[k];
+		std::string part = Join (work, t.name + ".part"), md5;
+		uint64_t base = ofs;
+		ok = TexPackDownload (list.url + "/" + t.name, part, [&](uint64_t d) { return !download || download (base + d); }, err);
+		if (ok && fs::file_size (part, ec) != t.size) { err = t.name + ": wrong size"; ok = false; }
+		if (ok && (!TexPackMd5 (part, md5) || md5 != t.md5)) { err = t.name + ": md5 mismatch"; ok = false; }
+		if (ok) ok = Append (part, partial, err);
+		fs::remove (part, ec);
+		if (ok) ofs += t.size;
+	}
+	fs::remove (work, ec); // only when empty
+	if (!ok) {
+		fs::resize_file (partial, ofs, ec); // whole parts only
+		return false;
+	}
+	fs::rename (partial, target, ec);
+	if (ec) { err = "cannot move into " + target + ": " + ec.message(); return false; }
+	return true;
+}
+
 bool TexPackInstall (const TexPackList &list, const TexPack &p, const std::string &texdir,
 	const TexPackProgress &download, const TexPackProgress &unpack, std::string &err)
 {
+	if (!p.parts.empty()) return InstallTree (list, p, texdir, download, err);
 	std::error_code ec;
 	std::string work = TexPackWorkDir (texdir);
 	fs::create_directories (work, ec);
