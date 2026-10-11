@@ -156,6 +156,9 @@ coll_scenario_test(Pbr.Visual.Bench VISUAL SCN gen:pair:g0=20,A=DeltaGlider,B=De
 coll_scenario_test(Gltf.Visual.DGTest VISUAL SCN gen:pair:g0=20,A=DGTest,B=DeltaGlider FRAMES 70 TIMEOUT 600 CHECK gltfdg
 	RUNS "scn|client|on||'@scn=Delta-glider/DG and DG-S and DGTest'||LUASHOT 60 shot" "gltf|client|off||||LUASHOT 60 shot"
 	"msh|client|off||@scn=gen:pair:g0=20,A=DeltaGlider,B=DeltaGlider||LUASHOT 60 shot")
+# not upstream: glass seen through glass (claude/design-pbr-nested-glass.md 7): a green HUD inside a tinted canopy, test-only mesh from meshes/
+coll_scenario_test(Gltf.Visual.NestedGlass VISUAL SCN gen:pair:A=GltfNestedGlass FRAMES 70 TIMEOUT 600 CHECK nestedglass
+	RUNS "glass|client|off||||LUASHOT 60 shot")
 
 # T0.9 guards and close paths (design-C-T 2.5, 3.5; E4 7.10); the build-running skip is proven by Scn.RunnerGuard
 coll_scenario_test(Scn.Timeout TIMING SCN gen:pair:g0=1000 FRAMES 60 TIMEOUT 20 CHECK timeout RUNS "main|headless|off||@nolimit @expect=TIMEOUT||")

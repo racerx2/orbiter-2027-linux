@@ -293,6 +293,10 @@ def main(argv=None):
     if not up or up[1] >= 360:
         print('selftest: camera up axis %r' % (up,))
         e += 1
+    rt = scnlib.camera_project((1.0, 0.0, 0.0), 4.0, 0.0, 0.0, 1.0, 40)
+    if not rt or rt[0] <= 640 or abs(rt[1] - 360) > 1e-6:
+        print('selftest: camera right axis %r' % (rt,))
+        e += 1
 
     e += check_placebase()
     e += check_dmg3()
