@@ -70,6 +70,38 @@ An add-on that makes ships collide with each other, with base buildings and with
 
 Turn it on in the Launchpad's **Modules** tab (Collision). Settings are in `Config/Collision.cfg`.
 
+### glTF models and PBR materials
+
+![A Delta Glider exported from Blender as a .glb with PBR materials, next to the stock Delta Glider GL-01](./.github/readme/gltf-pbr.jpg)
+
+*A Delta Glider exported from Blender as a .glb, with PBR materials, next to the stock Delta Glider (GL-01).*
+
+Ships no longer have to be converted to Orbiter's `.msh` format:
+
+- **Straight from Blender**: export glTF Binary (`.glb`, +Y Up on) or `.gltf`, put it in a folder under `Meshes`
+  and name it in the vessel's cfg, for example `MeshName = MyShip\myship.glb`. A `.glb` carries its textures
+  inside, so there is no converter, no texture folder and no material file to write. In Blender the nose points
+  along +Y and the top along +Z.
+- **Every glTF PBR material feature**: base colour and alpha (opaque, cut-out, transparent), metallic and
+  roughness, normal maps, emission with strength, ambient occlusion, IOR and specular, transmission and volume
+  (tinted glass), clearcoat (car paint), sheen (fabric), anisotropy (brushed metal) and iridescence (thin-film
+  colours).
+- **Lit by the simulation**: the sun with shadows, the ship's own lights, and reflections of its surroundings.
+- **Glass seen through glass**: a HUD behind the canopy, a visor inside a helmet, or another ship's windows
+  behind your own now show through, tinted by the glass in front. Glass shows what is behind it by bending a
+  copy of the screen. That copy used to be taken once, before any glass was drawn, so glass behind other glass
+  was missing from it, and a canopy around the HUD was drawn first and hid it completely. Glass is now drawn in
+  the right order, and the copy is refreshed whenever glass already drawn lies behind the next pane.
+- **Old models unchanged**: `.msh` meshes look exactly as before. They can get PBR materials too, through
+  `PBR` lines in their `Config/GC` material file.
+- **Collisions**: with the collision add-on, glTF ships collide on their real shape.
+
+Not supported yet: animations, skeletons, morph targets, a second UV set, texture transforms, and Draco or
+KTX2 compression.
+
+Try it with the **Delta-glider > DG and DG-S and DGTest** scenario, and **Graphics > PBR material bench**,
+which shows every material on its own sphere.
+
 ### Multiplayer
 
 ![Multiplayer](./.github/readme/multiplayer.png)
