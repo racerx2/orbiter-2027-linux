@@ -1108,14 +1108,15 @@ const Mesh *MeshManager::LoadMesh (const char *fname, bool *firstload)
 	}
 	// not found, so load from file
 	Mesh *mesh = new Mesh; TRACENEW
-	if (GltfIsName (fname)) LoadGltfMesh (fname, *mesh); // not upstream: glTF meshes
+	bool gltf = GltfIsName (fname); // not upstream: glTF meshes
+	if (gltf) LoadGltfMesh (fname, *mesh);
 	else {
 		ifstream ifs (oapiResolvePath(g_pOrbiter->MeshPath (fname)), ios::in);
 		ifs >> *mesh;
 	}
 	if (!mesh->nGroup()) { // load error
 		if (!fname[0]) LOGOUT_ERR ("Mesh file name not provided");
-		else LOGOUT_ERR ("Mesh not found: %s", g_pOrbiter->MeshPath (fname));
+		else if (!gltf) LOGOUT_ERR ("Mesh not found: %s", g_pOrbiter->MeshPath (fname)); // glTF errors are logged by LoadGltfMesh
 		//g_pOrbiter->TerminateOnError ();
 		delete mesh;
 		return 0;
