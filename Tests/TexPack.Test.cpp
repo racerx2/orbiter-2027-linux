@@ -139,14 +139,20 @@ TEST_CASE ("The shipped package list names every layer once, in our release", "[
 	std::string err;
 	REQUIRE (TexPackRead ("Config/TexturePacks.cfg", list, err));
 	CHECK (list.url.find ("https://github.com/racerx2/Orbiter-linux-orbital-bodies-textures/releases/download/") == 0);
-	CHECK (list.pack.size() == 46);
-	std::set<std::string> seen;
+	CHECK (list.pack.size() == 47);
+	std::set<std::string> seen, earth;
 	for (const TexPack &p : list.pack) {
-		CHECK (p.zip == p.body + "_" + p.layer + ".zip");
+		CHECK (p.zip == p.body + "_" + p.layer + (p.parts.empty() ? ".zip" : ".tree"));
 		CHECK (seen.insert (p.body + "/" + p.layer).second);
 		CHECK (p.zipsize > 0);
 		CHECK (p.rawsize > 0);
+		for (const TexPart &t : p.parts) CHECK (t.size <= 1073741824); // GitHub takes release files under 2 GiB
+		if (p.body == "Earth") {
+			CHECK_FALSE (p.parts.empty()); // the 2016 high-res archives
+			earth.insert (p.layer);
+		}
 	}
+	CHECK (earth == std::set<std::string> {"Surf", "Mask", "Elev", "Elev_mod", "Cloud"});
 }
 
 TEST_CASE ("A layer is present when its folder has files or its archive tree exists", "[TexPack]")
@@ -287,4 +293,139 @@ TEST_CASE ("A pack downloads, is checked and installs", "[TexPack]")
 	CHECK (put == p.rawsize);
 	CHECK_FALSE (fs::exists (t.tex / ".texinstall")); // zip and work folder gone
 	CHECK (TexPackMissing (list, t.texdir).empty());
+}
+
+TEST_CASE ("Archive parts in the package list form one pack", "[TexPack]")
+{
+	Tmp t;
+	std::string cfg = (t.root / "packs.cfg").string(), m (32, 'a');
+	TexPackList list;
+	std::string err;
+
+	Write (cfg, "URL = u\nA_Surf.zip A Surf 10 20 3 " + m + "\nE_Surf.tree.01 E Surf 4 10 3 " + m +
+		"\nE_Surf.tree.02 E Surf 4 10 3 " + m + "\nE_Surf.tree.03 E Surf 2 10 3 " + m + "\n");
+	REQUIRE (TexPackRead (cfg, list, err));
+	REQUIRE (list.pack.size() == 2);
+	const TexPack &a = list.pack[1];
+	CHECK (a.zip == "E_Surf.tree");
+	CHECK (a.body == "E");
+	CHECK (a.layer == "Surf");
+	CHECK (a.zipsize == 10);
+	CHECK (a.rawsize == 10);
+	REQUIRE (a.parts.size() == 3);
+	CHECK (a.parts[2].name == "E_Surf.tree.03");
+	CHECK (a.parts[2].size == 2);
+	CHECK (TexPackSpare (a) == 4);
+	CHECK (list.pack[0].parts.empty());
+
+	Write (cfg, "URL = u\nE_Surf.tree.01 E Surf 4 10 3 " + m + "\nE_Surf.tree.02 E Surf 4 10 3 " + m + "\n");
+	CHECK_FALSE (TexPackRead (cfg, list, err));
+	CHECK (err == "E_Surf.tree: parts missing");
+	Write (cfg, "URL = u\nE_Surf.tree.01 E Surf 4 10 3 " + m + "\nE_Surf.tree.03 E Surf 4 10 3 " + m + "\n");
+	CHECK_FALSE (TexPackRead (cfg, list, err));
+	CHECK (err == "line 3: bad part");
+	Write (cfg, "URL = u\nE_Surf.tree.01 E Surf 4 10 3 " + m + "\nE_Surf.tree.02 E Surf 4 10 3 " + m +
+		"\nE_Surf.tree.03 E Surf 3 10 3 " + m + "\n");
+	CHECK_FALSE (TexPackRead (cfg, list, err));
+	Write (cfg, "URL = u\nE_Surf.tree.01 E Surf 4 10 2 " + m + "\nE_Surf.tree.02 E Elev 6 10 2 " + m + "\n");
+	CHECK_FALSE (TexPackRead (cfg, list, err));
+}
+
+// an archive pack of data cut into parts, served from srv
+static TexPack Archive (const fs::path &srv, const std::string &body, const std::string &layer, const std::string &data, const std::vector<size_t> &sizes)
+{
+	TexPack p;
+	p.zip = body + "_" + layer + ".tree";
+	p.body = body;
+	p.layer = layer;
+	p.rawsize = p.zipsize = data.size();
+	p.files = sizes.size();
+	size_t ofs = 0;
+	for (size_t i = 0; i < sizes.size(); i++) {
+		TexPart t;
+		t.name = p.zip + (i < 9 ? ".0" : ".") + std::to_string (i + 1);
+		t.size = sizes[i];
+		Write (srv / t.name, data.substr (ofs, sizes[i]));
+		REQUIRE (TexPackMd5 ((srv / t.name).string(), t.md5));
+		p.parts.push_back (t);
+		ofs += sizes[i];
+	}
+	return p;
+}
+
+TEST_CASE ("An archive pack downloads in parts into <Body>/Archive/<Layer>.tree and resumes", "[TexPack]")
+{
+	int argc = 1;
+	char arg0[] = "TexPack.Test", *argv[] = {arg0, nullptr};
+	QCoreApplication app (argc, argv);
+
+	Tmp t;
+	fs::path srv = t.root / "srv", tree = t.tex / "Earth" / "Archive" / "Surf.tree";
+	std::string data = Pattern (700000), err;
+	TexPack p = Archive (srv, "Earth", "Surf", data, {300000, 300000, 100000});
+	TexPackList list;
+	list.url = QUrl::fromLocalFile (QString::fromStdString (srv.string())).toString().toStdString();
+	list.pack = {p};
+
+	Write (t.tex / "Earth" / "Surf" / "01" / "000000" / "000000.dds", "low res"); // loose tiles don't count for an archive
+	CHECK_FALSE (TexPackPresent (t.texdir, p));
+	CHECK (TexPackMissing (list, t.texdir).size() == 1);
+
+	TexPack bad = p;
+	bad.parts[1].md5 = std::string (32, '0');
+	CHECK_FALSE (TexPackInstall (list, bad, t.texdir, nullptr, nullptr, err));
+	CHECK (err == "Earth_Surf.tree.02: md5 mismatch");
+	CHECK_FALSE (fs::exists (tree));
+	CHECK (TexPackResume (t.texdir, p) == 300000); // part 1 kept
+	CHECK_FALSE (fs::exists (t.tex / ".texinstall"));
+
+	CHECK_FALSE (TexPackInstall (list, p, t.texdir, [](uint64_t d) { return d < 450000; }, nullptr, err));
+	CHECK (err == "cancelled");
+	CHECK (TexPackResume (t.texdir, p) == 300000);
+
+	Write (t.tex / "Earth" / "Archive" / ".Surf.tree.0123abcd.partial", "older release");
+	Write (t.tex / "Earth" / "Archive" / ".Mask.tree.0123abcd.partial", "another layer");
+	fs::remove (srv / "Earth_Surf.tree.01"); // a resumed install doesn't fetch it again
+	uint64_t first = 0, last = 0;
+	REQUIRE (TexPackInstall (list, p, t.texdir, [&](uint64_t d) { if (!first) first = d; last = d; return true; }, nullptr, err));
+	CHECK (Read (tree) == data);
+	CHECK (first > 300000);
+	CHECK (last == data.size());
+	CHECK (TexPackResume (t.texdir, p) == 0);
+	CHECK (TexPackPresent (t.texdir, p));
+	CHECK (TexPackMissing (list, t.texdir).empty());
+	CHECK_FALSE (fs::exists (t.tex / ".texinstall"));
+	CHECK_FALSE (fs::exists (t.tex / "Earth" / "Archive" / ".Surf.tree.0123abcd.partial")); // older release's partial cleared
+	CHECK (fs::exists (t.tex / "Earth" / "Archive" / ".Mask.tree.0123abcd.partial")); // another layer's left alone
+	fs::remove (t.tex / "Earth" / "Archive" / ".Mask.tree.0123abcd.partial");
+	size_t n = 0;
+	for (auto &e : fs::directory_iterator (t.tex / "Earth" / "Archive")) { (void)e; n++; }
+	CHECK (n == 1); // no partial left
+
+	CHECK_FALSE (TexPackInstall (list, p, t.texdir, nullptr, nullptr, err)); // an existing archive is never replaced
+	CHECK (err.find ("is in the way") != std::string::npos);
+	CHECK (Read (tree) == data);
+}
+
+TEST_CASE ("A part cut off midway is dropped from the partial archive", "[TexPack]")
+{
+	int argc = 1;
+	char arg0[] = "TexPack.Test", *argv[] = {arg0, nullptr};
+	QCoreApplication app (argc, argv);
+
+	Tmp t;
+	fs::path srv = t.root / "srv";
+	std::string data = Pattern (500000), err;
+	TexPack p = Archive (srv, "Moon", "Elev", data, {200000, 200000, 100000});
+	TexPackList list;
+	list.url = QUrl::fromLocalFile (QString::fromStdString (srv.string())).toString().toStdString();
+	list.pack = {p};
+
+	CHECK_FALSE (TexPackInstall (list, p, t.texdir, [](uint64_t d) { return d < 250000; }, nullptr, err));
+	REQUIRE (TexPackResume (t.texdir, p) == 200000);
+	for (auto &e : fs::directory_iterator (t.tex / "Moon" / "Archive"))
+		std::ofstream (e.path(), std::ios::binary | std::ios::app) << std::string (5000, 'x'); // half a part, as after a crash
+	CHECK (TexPackResume (t.texdir, p) == 200000);
+	REQUIRE (TexPackInstall (list, p, t.texdir, nullptr, nullptr, err));
+	CHECK (Read (t.tex / "Moon" / "Archive" / "Elev.tree") == data);
 }
