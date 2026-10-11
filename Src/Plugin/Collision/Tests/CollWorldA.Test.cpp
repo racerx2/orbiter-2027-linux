@@ -398,3 +398,32 @@ TEST_CASE ("dmg3 L5: a vessel pair filter maps to the docked body, both detector
 		else REQUIRE (con > 0);
 	}
 }
+
+static std::vector<std::string> g_wlog;
+static void WLogSink (int, const char *msg) { g_wlog.push_back (msg); }
+
+TEST_CASE ("etsep: an undock makes a split pair for both detectors; never docked, no split", "[CollWorldA]")
+{
+	for (int docked : { 1, 0 }) {
+		World W;
+		W.Add ("A", Vector (-1.0, 0, 0), Vector ());
+		W.Add ("B", Vector (1.02, 0, 0), Vector ());
+		if (docked) {
+			CollPhysAsm a; a.member = { 1, 2 }; a.root = 1; a.memberHash = 12;
+			W.geom.asmb = { a };
+			for (int f = 0; f < 3; f++) W.Frame (0.05);
+			W.geom.asmb.clear ();
+		}
+		W.v[0]->rd.v = Vector (-0.1, 0, 0); W.v[1]->rd.v = Vector (0.1, 0, 0); // the undock push
+		g_wlog.clear ();
+		g_collLog = WLogSink;
+		int con = 0;
+		for (int f = 0; f < 4; f++) { W.Frame (0.05); con += (int)W.ps->Contacts ().size (); }
+		g_collLog = nullptr;
+		int starts = 0;
+		for (const std::string &l : g_wlog) if (l.find ("split scope start") != std::string::npos) starts++;
+		CAPTURE (docked, con, starts);
+		REQUIRE ((docked ? starts >= 1 : starts == 0));
+		if (docked) REQUIRE (con == 0);
+	}
+}

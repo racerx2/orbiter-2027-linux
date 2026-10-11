@@ -225,6 +225,27 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 		if (fa && fb && ba != bb) np.push_back ({ ba, bb });
 	}
 	fwd.SetNoPair (np); ver.SetNoPair (np);
+	std::vector<std::pair<uint32_t, uint32_t>> sp;                 // etsep: bodies whose members were one body last frame (undock, detach, stage separation)
+	auto lastOf = [&] (uint32_t vid) -> int {
+		for (size_t i = 0; i < last.size (); i++) if (std::find (last[i].member.begin (), last[i].member.end (), vid) != last[i].member.end ()) return (int)i;
+		return -1; };
+	for (size_t i = 0; i < body.size (); i++) {
+		const CollABody &A = body[i];
+		if (A.kind == COLLB_BASE || !(A.entry & (COLLE_NEW | COLLE_MEMBERS))) continue;
+		for (size_t j = i + 1; j < body.size (); j++) {
+			const CollABody &C = body[j];
+			if (C.kind == COLLB_BASE || !(C.entry & (COLLE_NEW | COLLE_MEMBERS))) continue;
+			bool shared = false;
+			for (uint32_t a : A.member) {
+				int la = lastOf (a);
+				if (la < 0) continue;
+				for (uint32_t c : C.member) if (lastOf (c) == la) { shared = true; break; }
+				if (shared) break;
+			}
+			if (shared) sp.push_back ({ A.id, C.id });
+		}
+	}
+	fwd.SetSplit (sp); ver.SetSplit (sp);
 	frame.Run (fwd, ver, mirror, body, zones, simdt, simt, host, wr, ev);
 	for (const CollContactRec &r : frame.contacts)                 // dmg3 L4: vessel sides in the vessel frame
 		for (int side = 0; side < 2; side++) {
@@ -249,7 +270,7 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 			fxc.push_back (c);
 		}
 	last.clear ();
-	for (const CollABody &B : body) if (B.kind != COLLB_BASE) last.push_back (Last { B.id, B.kind, B.memberHash, B.ground });
+	for (const CollABody &B : body) if (B.kind != COLLB_BASE) last.push_back (Last { B.id, B.kind, B.memberHash, B.ground, B.member });
 	queuedNew.clear (); jumped.clear ();
 	if (!cfg.response) { frame.OnTimeJump (); return; }       // detect and log only (1.1)
 	WriteBack (wr);
