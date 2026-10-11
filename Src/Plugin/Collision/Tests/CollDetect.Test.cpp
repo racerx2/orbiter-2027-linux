@@ -862,44 +862,131 @@ TEST_CASE("U13 entry events, GRACE scopes and supports", "[colldetect][U13]")
 		CHECK (partial >= 1);
 		CHECK (prev.empty ());
 	}
-	SECTION("etsep: a split pair runs no query while it separates at the joint; clear ends it, so does a CG distance that stops growing") {
-		for (int mode : { 0, 1, 2 }) {                             // 0 separating, 1 not separating, 2 a landed side (no split scope)
+	SECTION("etsep: split and spawn scopes: pushed (also with a landed side), unpushed joint scope in free fall, nothing otherwise") {
+		auto Pair = [&] (std::vector<CollBody> &bs, uint8_t kindA, double v) {
+			bs.clear ();
+			bs.push_back (Still (1, Vector (), h, kindA)); AddPart (bs.back (), box, VKey (1));
+			bs.push_back (Lin (2, Vector (0, 0, 1.02), Vector (0, 0, v), h)); AddPart (bs.back (), box, VKey (2));
+		};
+		auto Points = [] (const std::vector<CollPairResult> &res) { int n = 0; for (const CollPairResult &r : res) n += r.npt; return n; };
+		// pushed, flying or with a landed side: no query until clear
+		for (uint8_t kindA : { (uint8_t)COLLB_DYNAMIC, (uint8_t)COLLB_LANDED }) {
 			CollDetect d;
 			std::vector<CollBody> bs;
-			bs.push_back (Still (1, Vector (), h, mode == 2 ? COLLB_LANDED : COLLB_DYNAMIC)); AddPart (bs.back (), box, VKey (1));
-			bs.push_back (Still (2, Vector (0, 0, 1.02), h)); AddPart (bs.back (), box, VKey (2));
-			if (mode == 0) bs[1].m.c1 = Vector (0, 0, 1.025);
+			Pair (bs, kindA, 0.25);
 			bs[0].entry = COLLE_MEMBERS; bs[1].entry = COLLE_NEW;
-			d.SetSplit ({ { 2u, 1u } });
+			d.SetSplit ({ CollSplit { 2u, 1u, {} } });
 			std::vector<CollPairResult> res;
 			Frame (d, CollParams (), h, bs, res);
 			const CollPairEntry *e = d.Pairs ().Find (VKey (1), VKey (2));
-			int pts = 0;
-			for (const CollPairResult &r : res) pts += r.npt;
-			CAPTURE (mode, pts, res.size ());
-			if (mode != 0) {                                       // as before: touching pair RESTING
-				REQUIRE (res.size () == 1);
-				CHECK (res[0].kind == COLL_RESTING);
-				CHECK ((!e || !e->split));
-				continue;
-			}
+			CAPTURE ((int)kindA);
 			REQUIRE (e);
 			CHECK (e->split);
-			CHECK (pts == 0);
+			CHECK (Points (res) == 0);
 			d.SetSplit ({});
 			bs[0].entry = bs[1].entry = 0;
-			double z = 1.025;
-			int f = 0;
-			for (; f < 40 && e->split; f++) {
+			double z = bs[1].m.c1.z;
+			for (int f = 0; f < 40 && e->split; f++) {
 				bs[1].m.c0 = Vector (0, 0, z); z += 0.005; bs[1].m.c1 = Vector (0, 0, z);
 				Frame (d, CollParams (), h, bs, res);
-				for (const CollPairResult &r : res) CHECK (r.npt == 0);
+				CHECK (Points (res) == 0);
 				e = d.Pairs ().Find (VKey (1), VKey (2));
 				REQUIRE (e);
 				if (!e->split) CHECK (z - 1.0 - 2.0*COLL_SKIN_DEFAULT >= COLL_S_REL - 1e-9);   // ends once clear at t1
-				else CHECK (z - 1.0 - 2.0*COLL_SKIN_DEFAULT < COLL_S_REL + 0.005 + 1e-9);
 			}
 			CHECK (!e->split);
+		}
+		// unpushed without a joint point: as before, RESTING
+		{
+			CollDetect d;
+			std::vector<CollBody> bs;
+			Pair (bs, COLLB_DYNAMIC, 0.0);
+			bs[0].entry = COLLE_MEMBERS; bs[1].entry = COLLE_NEW;
+			d.SetSplit ({ CollSplit { 1u, 2u, {} } });
+			std::vector<CollPairResult> res;
+			Frame (d, CollParams (), h, bs, res);
+			const CollPairEntry *e = d.Pairs ().Find (VKey (1), VKey (2));
+			REQUIRE (res.size () == 1);
+			CHECK (res[0].kind == COLL_RESTING);
+			CHECK ((!e || (!e->split && e->joint.empty ())));
+		}
+		// unpushed with a joint point at the contact: in free fall a joint scope that ends 0.5 m apart; a landed side or a relative acceleration: RESTING
+		for (int variant : { 0, 1, 2 }) {
+			CollDetect d;
+			std::vector<CollBody> bs;
+			Pair (bs, variant == 1 ? COLLB_LANDED : COLLB_DYNAMIC, 0.0);
+			if (variant == 2) { bs[1].m.a0 = Vector (0, 0, 1.0); bs[1].m.a1 = Vector (0, 0, 1.0); }
+			bs[0].entry = COLLE_MEMBERS; bs[1].entry = COLLE_NEW;
+			d.SetSplit ({ CollSplit { 1u, 2u, { Vector (0, 0, 0.51) } } });
+			std::vector<CollPairResult> res;
+			Frame (d, CollParams (), h, bs, res);
+			const CollPairEntry *e = d.Pairs ().Find (VKey (1), VKey (2));
+			CAPTURE (variant);
+			if (variant) {
+				REQUIRE (res.size () == 1);
+				CHECK (res[0].kind == COLL_RESTING);
+				CHECK ((!e || e->joint.empty ()));
+				continue;
+			}
+			REQUIRE (e);
+			CHECK (!e->joint.empty ());
+			CHECK (!e->split);
+			CHECK (Points (res) == 0);
+			d.SetSplit ({});
+			bs[0].entry = bs[1].entry = 0;
+			double z = 1.02;
+			for (int f = 0; f < 80 && !e->joint.empty (); f++) {
+				z += 0.01; bs[1].m.c0 = Vector (0, 0, z); bs[1].m.c1 = Vector (0, 0, z);
+				Frame (d, CollParams (), h, bs, res);
+				e = d.Pairs ().Find (VKey (1), VKey (2));
+				REQUIRE (e);
+				if (e->joint.empty ()) CHECK (z - 1.0 - 2.0*COLL_SKIN_DEFAULT >= COLL_JOINT_REL - 1e-9);
+				else CHECK (z - 1.0 - 2.0*COLL_SKIN_DEFAULT < COLL_JOINT_REL + 0.01 + 1e-9);
+			}
+			CHECK (e->joint.empty ());
+		}
+		// the joint scope covers the joint region only: a contact 5 m from the joint point still collides
+		{
+			CollDetect d;
+			std::vector<CollBody> bs;
+			Pair (bs, COLLB_DYNAMIC, 0.0);
+			bs[0].entry = COLLE_MEMBERS; bs[1].entry = COLLE_NEW;
+			d.SetSplit ({ CollSplit { 1u, 2u, { Vector (5, 0, 0) } } });
+			std::vector<CollPairResult> res;
+			Frame (d, CollParams (), h, bs, res);
+			const CollPairEntry *e = d.Pairs ().Find (VKey (1), VKey (2));
+			REQUIRE (res.size () == 1);
+			CHECK (res[0].kind == COLL_RESTING);
+			CHECK (Points (res) > 0);
+			CHECK ((!e || e->joint.empty ()));
+		}
+		// spawned touching another body: pushed -> split scope, unpushed -> joint scope at the touching points; 0.5 m away -> nothing
+		for (double v : { 0.25, 0.0 }) {
+			CollDetect d;
+			std::vector<CollBody> bs;
+			Pair (bs, COLLB_DYNAMIC, v);
+			bs[1].entry = COLLE_NEW;
+			d.SetSplit ({}, { 2u });
+			std::vector<CollPairResult> res;
+			Frame (d, CollParams (), h, bs, res);
+			const CollPairEntry *e = d.Pairs ().Find (VKey (1), VKey (2));
+			CAPTURE (v);
+			REQUIRE (e);
+			if (v > 0) CHECK (e->split);
+			else CHECK (!e->joint.empty ());
+			CHECK (Points (res) == 0);
+		}
+		{
+			CollDetect d;
+			std::vector<CollBody> bs;
+			Pair (bs, COLLB_DYNAMIC, 0.0);
+			bs[1].m.c0 = bs[1].m.c1 = Vector (0, 0, 1.5);
+			bs[1].entry = COLLE_NEW;
+			d.SetSplit ({}, { 2u });
+			std::vector<CollPairResult> res;
+			Frame (d, CollParams (), h, bs, res);
+			const CollPairEntry *e = d.Pairs ().Find (VKey (1), VKey (2));
+			CHECK ((!e || (!e->split && e->joint.empty ())));
 		}
 	}
 	SECTION("supports: no GRACE, SUPPORT and INTERSECT, stored normal, SupportDist, wildcard, clear") {

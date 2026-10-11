@@ -30,6 +30,11 @@ constexpr double COLL_SPIN_PATH     = 0.5;    // spin path when a body turns mor
 constexpr double COLL_JUMP_MIN      = 1e-3;   // geometry jump threshold [m] (1.7)
 constexpr double COLL_GRACE_LOG_AGE = 60.0;   // a GRACE scope older than this gets one log line [s]
 constexpr int    COLL_GRACE_RELEASE_TRI = 16; // triangle pairs checked per scoped leaf pair at release
+constexpr double COLL_SPLIT_VPUSH = 0.01;  // etsep: radial separation speed of a pushed split [m/s]
+constexpr double COLL_SPLIT_AFREE = 0.05;  // etsep: relative acceleration below which an unpushed split is in free fall [m/s^2]
+constexpr double COLL_JOINT_R     = 1.0;   // etsep: joint scope radius around a joint point [m]
+constexpr double COLL_JOINT_REL   = 0.5;   // etsep: a joint scope ends when every leaf pair is this far apart [m]
+constexpr size_t COLL_JOINT_MAX   = 20000; // etsep: joint scope leaf pairs at most
 constexpr size_t COLL_ENTRY_RAW_MAX = 4096; // raw intersections kept per part pair at an entry check
 constexpr double COLL_DEGEN_DIST    = 1e-6;   // fallback normal when d_tri is at most this [m] (5.5)
 constexpr double COLL_DEGEN_SPEED   = 1e-6;   // relative-velocity fallback needs this speed [m/s] (5.5)
@@ -120,6 +125,7 @@ struct CollRestart {
 struct CollParams { double deltaToi = COLL_DELTA_TOI, deltaCt = COLL_DELTA_CT, kappaCore = COLL_KAPPA_CORE, sRel = COLL_S_REL, sTouch = COLL_S_TOUCH, eTol = COLL_E_TOL, eMax = COLL_E_MAX, thetaMax = COLL_THETA_MAX, vPartMax = COLL_V_PART_MAX, mFront = COLL_M_FRONT; int nCa = COLL_N_CA, nTt = COLL_N_TT, sapThreshold = COLL_SAP_THRESHOLD; };
 // one active zone, spheres in the two body frames (3.3, 3.4)
 struct CollZone { int bodyA, bodyB; CollOwnerKey ownerA, ownerB; Vector ca, cb; double ra, rb; };
+struct CollSplit { uint32_t a, b; std::vector<Vector> joint; }; // etsep: bodies that were one assembly last frame, joint points (global, frame start)
 // corrected t1 state of one body for the look-ahead (7.2)
 struct CollEnd { Vector c1, v1, a1; double rmax, disp; };
 // smallest caps of the frame and the pair that set each; hLoad from CollWorld, rest by LookAhead
@@ -197,6 +203,7 @@ struct CollPairEntry {
 	bool split = false;                      // etsep: parts of one assembly until a split; no part pair is queried while they separate and touch
 	uint32_t splitFrame = 0;                 // etsep: frame the split scope was last checked
 	double splitAge = 0;                     // etsep: sim time since the split [s]
+	std::vector<CollLeafPair> joint;         // etsep: joint scope of an unpushed split, sorted; released all at once at COLL_JOINT_REL
 };
 class CollPairStore {
 public:
@@ -242,7 +249,7 @@ public:
 	const CollBody &Body (int i) const;                                  // as stored by AddBody, motion included (chosen here; D3 phase 2 kinematic fields)
 	bool Embedded (const CollEmbedQuery &q);                             // 3.4 step 3 (chosen here)
 	void SetNoPair (const std::vector<std::pair<uint32_t, uint32_t>> &p); // dmg3 L5: non-base body id pairs (low, high) the broadphase skips; kept until set again
-	void SetSplit (const std::vector<std::pair<uint32_t, uint32_t>> &p);  // etsep: body id pairs that were one assembly last frame (undock, detach); set every frame
+	void SetSplit (const std::vector<CollSplit> &p, const std::vector<uint32_t> &spawned = {}); // etsep: splits and bodies spawned this frame; set every frame
 private:
 	struct Impl;                                                         // query machinery (CollDetect.cpp)
 	struct PartIdx { CollOwnerKey owner; uint32_t partKey; int body, part; }; // owner part -> body part, sorted
@@ -264,7 +271,8 @@ private:
 	std::vector<OwnerPair> m_warnPrev, m_warnCur;                        // owner pairs warned for raw intersection (rate limit), sorted
 	std::vector<FrontPose> m_front;                                      // sorted by (a, b)
 	std::vector<std::pair<uint32_t, uint32_t>> m_noPair;                 // dmg3 L5: sorted, unique
-	std::vector<std::pair<uint32_t, uint32_t>> m_split;                  // etsep: split pairs of this frame (low, high), sorted, unique
+	std::vector<CollSplit> m_split;                                      // etsep: splits of this frame (a < b), sorted
+	std::vector<uint32_t> m_spawned;                                     // etsep: bodies new this frame and in no body last frame, sorted
 	std::vector<std::pair<uint32_t, double>> m_supDist;                  // assembly id -> smallest raw support distance of this frame
 	std::vector<Vector> m_vx; std::vector<uint32_t> m_vs; uint32_t m_stamp = 0; // transformed-vertex cache of the current query pose
 	double m_simt = 0;                                                   // sum of frame steps (log rate limits)

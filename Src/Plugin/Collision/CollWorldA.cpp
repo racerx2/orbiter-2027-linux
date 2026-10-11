@@ -225,27 +225,37 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 		if (fa && fb && ba != bb) np.push_back ({ ba, bb });
 	}
 	fwd.SetNoPair (np); ver.SetNoPair (np);
-	std::vector<std::pair<uint32_t, uint32_t>> sp;                 // etsep: bodies whose members were one body last frame (undock, detach, stage separation)
+	std::vector<CollSplit> sp;                                     // etsep: bodies whose members were one body last frame (undock, detach, stage separation)
+	std::vector<uint32_t> spawned;                                 // etsep: bodies new this frame whose members were in no body last frame
 	auto lastOf = [&] (uint32_t vid) -> int {
 		for (size_t i = 0; i < last.size (); i++) if (std::find (last[i].member.begin (), last[i].member.end (), vid) != last[i].member.end ()) return (int)i;
 		return -1; };
+	auto has = [] (const CollABody &B, uint32_t v) { return std::find (B.member.begin (), B.member.end (), v) != B.member.end (); };
 	for (size_t i = 0; i < body.size (); i++) {
 		const CollABody &A = body[i];
 		if (A.kind == COLLB_BASE || !(A.entry & (COLLE_NEW | COLLE_MEMBERS))) continue;
+		if (!last.empty () && (A.entry & COLLE_NEW) && std::all_of (A.member.begin (), A.member.end (), [&] (uint32_t v) { return lastOf (v) < 0; })) spawned.push_back (A.id);
 		for (size_t j = i + 1; j < body.size (); j++) {
 			const CollABody &C = body[j];
 			if (C.kind == COLLB_BASE || !(C.entry & (COLLE_NEW | COLLE_MEMBERS))) continue;
-			bool shared = false;
+			int shared = -1;
 			for (uint32_t a : A.member) {
 				int la = lastOf (a);
 				if (la < 0) continue;
-				for (uint32_t c : C.member) if (lastOf (c) == la) { shared = true; break; }
-				if (shared) break;
+				for (uint32_t c : C.member) if (lastOf (c) == la) { shared = la; break; }
+				if (shared >= 0) break;
 			}
-			if (shared) sp.push_back ({ A.id, C.id });
+			if (shared < 0) continue;
+			CollSplit s { A.id, C.id, {} };
+			for (const Joint &jt : last[shared].joint) {               // the ports and attachment points that held the two, placed with this frame's state
+				if (!((has (A, jt.va) && has (C, jt.vb)) || (has (C, jt.va) && has (A, jt.vb)))) continue;
+				const Snap *x = SnapOf (jt.va);
+				if (x) s.joint.push_back (x->rd.x + mul (x->rd.R, jt.pa));
+			}
+			sp.push_back (s);
 		}
 	}
-	fwd.SetSplit (sp); ver.SetSplit (sp);
+	fwd.SetSplit (sp, spawned); ver.SetSplit (sp, spawned);
 	frame.Run (fwd, ver, mirror, body, zones, simdt, simt, host, wr, ev);
 	for (const CollContactRec &r : frame.contacts)                 // dmg3 L4: vessel sides in the vessel frame
 		for (int side = 0; side < 2; side++) {
@@ -270,7 +280,24 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 			fxc.push_back (c);
 		}
 	last.clear ();
-	for (const CollABody &B : body) if (B.kind != COLLB_BASE) last.push_back (Last { B.id, B.kind, B.memberHash, B.ground, B.member });
+	for (const CollABody &B : body) {
+		if (B.kind == COLLB_BASE) continue;
+		Last L { B.id, B.kind, B.memberHash, B.ground, B.member, {} };
+		for (uint32_t v : B.member) {                                // etsep: dock ports and attachment points that hold the members together
+			if (B.member.size () < 2) break;
+			const Snap *x = SnapOf (v);
+			if (!x) continue;
+			auto idOf = [&] (CollH h) -> uint32_t { for (const Snap &s : snap) if (s.h == h) return s.id; return 0; };
+			auto mine = [&] (uint32_t m) { return m && std::find (B.member.begin (), B.member.end (), m) != B.member.end (); };
+			CollPortInfo pi;
+			for (uint32_t i = 0, n = sdk.DockCount (x->h); i < n; i++)
+				if (sdk.Dock (x->h, i, pi) && pi.mate && mine (idOf (pi.mate))) L.joint.push_back (Joint { v, idOf (pi.mate), pi.pos });
+			CollAttInfo ai;
+			for (uint32_t i = 0, n = sdk.AttachCount (x->h, false); i < n; i++)
+				if (sdk.Attach (x->h, false, i, ai) && ai.mate && mine (idOf (ai.mate))) L.joint.push_back (Joint { v, idOf (ai.mate), ai.pos });
+		}
+		last.push_back (L);
+	}
 	queuedNew.clear (); jumped.clear ();
 	if (!cfg.response) { frame.OnTimeJump (); return; }       // detect and log only (1.1)
 	WriteBack (wr);
