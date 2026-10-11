@@ -43,6 +43,7 @@ bool CollItemBool (const std::string &text, const char *label, bool &val);
 
 // MeshDir + name + ext, "" if it does not fit 256 bytes (Config.cpp:1393-1417)
 std::string CollMeshPath (const CollDirs &d, const std::string &name, const char *ext);
+bool CollIsGltfName (const std::string &name); // not upstream: .glb or .gltf, any case
 std::string CollCfgPath (const CollDirs &d, const std::string &name, const char *ext);
 std::string CollLower (const std::string &s);
 uint64_t CollFnv (const void *data, size_t n, uint64_t h = 1469598103934665603ull);

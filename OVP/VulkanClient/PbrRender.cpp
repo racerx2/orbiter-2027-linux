@@ -166,18 +166,22 @@ static bool IsHdrFormat (VkFormat f)
 
 static std::shared_ptr<VkTex> LoadTex (VkDev *dev, const std::string &name, bool srgb)
 {
-	char path[MAX_PATH];
-	if (!g_client->TexturePath (name.c_str(), path)) {
-		LogErr ("PBR texture not found: %s", name.c_str());
-		return nullptr;
+	std::string full = name; // an "@gltf:" image of a glTF mesh is read from its file as it is (claude/design-gltf-loader.md 4)
+	bool gltf = VkIsGltfImage (name.c_str());
+	if (!gltf) {
+		char path[MAX_PATH];
+		if (!g_client->TexturePath (name.c_str(), path)) {
+			LogErr ("PBR texture not found: %s", name.c_str());
+			return nullptr;
+		}
+		full = oapiResolvePath (path);
 	}
-	std::string full = oapiResolvePath (path);
 	auto key = std::make_pair (full, srgb);
 	auto it = texCache.find (key);
 	if (it != texCache.end()) if (auto t = it->second.lock ()) return t;
 
 	VkPixels px;
-	if (!VkLoadPixels (full.c_str(), px) || px.data.empty() || px.depth > 1 || px.layers != 1) {
+	if (!(gltf ? VkLoadGltfImage (full.c_str(), px) : VkLoadPixels (full.c_str(), px)) || px.data.empty() || px.depth > 1 || px.layers != 1) {
 		LogErr ("PBR texture %s: not a 2D image this client reads", full.c_str());
 		return nullptr;
 	}

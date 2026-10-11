@@ -353,6 +353,7 @@ D3D9Mesh::D3D9Mesh(MESHHANDLE hMesh, const D3D9Mesh &hTemp)
 	if (nMtrl) Mtrl = new D3D9MatExt[nMtrl];
 	for (DWORD i = 0; i<nMtrl; i++)	SetMaterial((const D3DMATERIAL9*)oapiMeshMaterial(hMesh, i), i, false);
 	for (auto &p : hTemp.Pbr) Pbr.push_back(p ? std::make_unique<PbrMaterial>(*p) : nullptr); // custom: PBR records of the template
+	PbrFile = hTemp.PbrFile; // custom: and its glTF records
 
 	pGrpTF = new D3DXMATRIX[nGrp];
 
@@ -394,6 +395,7 @@ void D3D9Mesh::Release()
 	SAFE_DELETEA(pGrpTF);
 	SAFE_DELETEA(pTune);
 	Pbr.clear(); // custom: PBR records and their textures
+	PbrFile.clear();
 
 	if (pBuf) if (pBuf->IsLocalTo(this)) delete pBuf;
 }
@@ -414,6 +416,7 @@ void D3D9Mesh::ReLoadMeshFromHandle(MESHHANDLE hMesh)
 	SAFE_DELETEA(pGrpTF);
 	SAFE_DELETEA(Grp);
 	Pbr.clear(); // custom: material numbers may have changed, MatMgr applies the records again
+	PbrFile.clear();
 	bHasPbr = false;
 
 	nGrp = oapiMeshGroupCount(hMesh);
@@ -447,6 +450,7 @@ void D3D9Mesh::ReLoadMeshFromHandle(MESHHANDLE hMesh)
 	nMtrl = oapiMeshMaterialCount(hMesh);
 	if (nMtrl) Mtrl = new D3D9MatExt[nMtrl];
 	for (DWORD i = 0; i<nMtrl; i++)	SetMaterial((const D3DMATERIAL9*)oapiMeshMaterial(hMesh, i), i, false);
+	PbrFromHandle(hMesh); // custom: glTF materials
 	// -----------------------------------------------------------------------
 
 	ProcessInherit();
@@ -494,6 +498,7 @@ void D3D9Mesh::LoadMeshFromHandle(MESHHANDLE hMesh, D3DXVECTOR3 *reorig, float *
 	nMtrl = oapiMeshMaterialCount(hMesh);
 	if (nMtrl) Mtrl = new D3D9MatExt[nMtrl];
 	for (DWORD i = 0; i<nMtrl; i++)	SetMaterial((const D3DMATERIAL9*)oapiMeshMaterial(hMesh, i), i, false);
+	PbrFromHandle(hMesh); // custom: glTF materials
 
 	ProcessInherit();
 
@@ -1454,9 +1459,35 @@ void D3D9Mesh::SetPbrMaterial(DWORD idx, const PbrMaterial &m)
 
 void D3D9Mesh::ClearPbrMaterials()
 {
-	if (Pbr.empty()) return;
+	if (Pbr.empty() && PbrFile.empty()) return;
 	Pbr.clear();
+	for (DWORD i = 0; i < PbrFile.size(); i++) if (PbrFile[i].enabled) SetPbrMaterial(i, PbrFile[i]); // back to the glTF records
 	bMtrlModidied = true;
+}
+
+// glTF materials: the core mesh's PBR lines (oapiMeshMaterialPbr) as records with their textures (design-gltf-loader 4)
+void D3D9Mesh::PbrFromHandle(MESHHANDLE hMesh)
+{
+	PbrFile.clear();
+	if (PbrRender::Disabled()) return;
+	bool any = false;
+	for (DWORD i = 0; i < nMtrl; i++) {
+		PbrMaterial m;
+		if (const char *t = oapiMeshMaterialPbr(hMesh, i)) {
+			std::string s(t), line;
+			for (size_t a = 0; a <= s.size(); a++) {
+				if (a < s.size() && s[a] != '\n') { line += s[a]; continue; }
+				std::string err;
+				if (!line.empty() && !PbrParseLine(line.c_str(), m, &err)) LogErr("glTF mesh %s material %u: %s (%s)", name, i, line.c_str(), err.c_str());
+				line.clear();
+			}
+			PbrRender::LoadTextures(m);
+			any = true;
+		}
+		PbrFile.push_back(m);
+	}
+	if (!any) { PbrFile.clear(); return; }
+	for (DWORD i = 0; i < nMtrl; i++) if (PbrFile[i].enabled) SetPbrMaterial(i, PbrFile[i]);
 }
 
 const PbrMaterial *D3D9Mesh::GetPbrMaterial(DWORD idx) const

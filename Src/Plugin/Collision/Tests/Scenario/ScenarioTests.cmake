@@ -152,6 +152,10 @@ coll_scenario_test(Pbr.Visual.Bench VISUAL SCN gen:pair:g0=20,A=DeltaGlider,B=De
 	RUNS "pbr|client|off||@env:ORBITER_PBR_PRECOMPILE=1 '@scn=Graphics/PBR material bench'||LUASHOT 60 shot"
 	"legacy|client|off||@env:ORBITER_PBR_DISABLE=1 '@scn=Graphics/PBR material bench'||LUASHOT 60 shot"
 	"smack|client|off||'@scn=Delta-glider/Smack!'||LUASHOT 60 shot" "dg|client|off||||LUASHOT 60 shot")
+# not upstream: glTF meshes (claude/design-gltf-loader.md 6): the DGTest scenario with the addon, and the glTF DG against the .msh DG in orbit
+coll_scenario_test(Gltf.Visual.DGTest VISUAL SCN gen:pair:g0=20,A=DGTest,B=DeltaGlider FRAMES 70 TIMEOUT 600 CHECK gltfdg
+	RUNS "scn|client|on||'@scn=Delta-glider/DG and DG-S and DGTest'||LUASHOT 60 shot" "gltf|client|off||||LUASHOT 60 shot"
+	"msh|client|off||@scn=gen:pair:g0=20,A=DeltaGlider,B=DeltaGlider||LUASHOT 60 shot")
 
 # T0.9 guards and close paths (design-C-T 2.5, 3.5; E4 7.10); the build-running skip is proven by Scn.RunnerGuard
 coll_scenario_test(Scn.Timeout TIMING SCN gen:pair:g0=1000 FRAMES 60 TIMEOUT 20 CHECK timeout RUNS "main|headless|off||@nolimit @expect=TIMEOUT||")

@@ -358,6 +358,8 @@ private:
 	bool			IsPbrGroup(DWORD g) const { return Grp[g].bPbr && Grp[g].MFDScreenId == 0; }
 	void			PbrTangents(DWORD g);
 	void			PbrVerify();
+	void			PbrFromHandle(MESHHANDLE hMesh);	// glTF materials of the core mesh (design-gltf-loader 4)
+	std::vector<PbrMaterial> PbrFile;	// the mesh file's records, ClearPbrMaterials returns to them
 	void			RenderPbr(const LPD3DXMATRIX pW, const D3DXMATRIX &mWorldMesh, int iTech, bool bGroupCull, const D3DXMATRIX &mWorldView, const D3DXVECTOR4 &Field, const PbrDebug &dbg);
 	std::vector<std::unique_ptr<PbrMaterial>> Pbr;	// by material index
 	bool bHasPbr;

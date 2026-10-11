@@ -18,6 +18,7 @@
 #include "Log.h"
 #include "VectorMap.h"
 #include "GraphicsAPI.h"
+#include "GltfLoader.h" // not upstream: glTF mesh names
 #include "resource.h"
 #include <QGuiApplication> // primary screen size (GetDesktopWindow counterpart)
 #include <QScreen>
@@ -1417,7 +1418,7 @@ char *Config::ConfigPathNoext (const char *name)
 
 char *Config::MeshPath (const char *name)
 {
-	return MemberPath (mshpath, sizeof mshpath, mshlen, name, ".msh"); // not upstream: bounded
+	return MemberPath (mshpath, sizeof mshpath, mshlen, name, GltfIsName (name) ? "" : ".msh"); // not upstream: bounded; glTF names keep their extension
 }
 
 char *Config::TexPath (const char *name, const char *ext)

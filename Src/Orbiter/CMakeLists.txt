@@ -21,6 +21,7 @@ set(common_src
 	Keymap.cpp
 	LightEmitter.cpp
 	Mesh.cpp
+	GltfLoader.cpp # not upstream: glTF meshes
 	Nav.cpp
 	Orbiter.cpp
 	PlaybackEd.cpp

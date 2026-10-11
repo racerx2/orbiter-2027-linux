@@ -4823,6 +4823,11 @@ OAPIFUNC DWORD oapiMeshMaterialCount (MESHHANDLE hMesh);
 OAPIFUNC MATERIAL *oapiMeshMaterial (MESHHANDLE hMesh, DWORD idx);
 
 	/**
+	 * \brief not upstream: PBR settings of a material of a glTF mesh, as graphics config lines (PBR, PBR_*), NULL if none
+	 */
+OAPIFUNC const char *oapiMeshMaterialPbr (MESHHANDLE hMesh, DWORD idx);
+
+	/**
 	 * \brief Retrieve properties of a device mesh material.
 	 * \param hMesh device mesh handle
 	 * \param idx material index (>= 0)
