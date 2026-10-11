@@ -307,30 +307,33 @@ class Sandbox:
             if not os.path.lexists(os.path.join(src, b)) and not os.path.exists(os.path.join(src, b + '.tex')):
                 ensure_dir(os.path.join(dst, b))
 
-    def mirror_meshes(self):
+    def mirror_meshes(self):  # addon .col files and test-only meshes of <data>/meshes over the root's Meshes (design-pbr-nested-glass 7)
         src, dst = os.path.join(self.root, 'Meshes'), self.path('Meshes')
-        cols = []
-        if self.a.addon_src:
-            md = os.path.join(self.a.addon_src, 'Meshes')
-            for base, _, files in os.walk(md):
-                for f in files:
-                    if f.endswith('.col'):
-                        cols.append(os.path.relpath(os.path.join(base, f), md))
-        if not cols:
+        roots = []
+        if self.a.addon_src:  # scenario tests; the runner's own self-tests keep the whole-folder link
+            roots = [(os.path.join(os.path.realpath(self.a.addon_src), 'Meshes'), lambda f: f.endswith('.col')),
+                     (os.path.join(os.path.realpath(self.a.data), 'meshes'), lambda f: not f.endswith(('.py', '.pyc')))]
+        files = {}
+        for md, keep in roots:
+            for base, _, names in os.walk(md):
+                for f in names:
+                    if keep(f):
+                        files[os.path.relpath(os.path.join(base, f), md)] = md
+        if not files:
             ensure_link(dst, src)
             return
         dirs = {''}
-        for c in cols:
+        for c in files:
             p = os.path.dirname(c)
             while p:
                 dirs.add(p)
                 p = os.path.dirname(p)
         for rel in sorted(dirs, key=len):
             s, d = os.path.join(src, rel), os.path.join(dst, rel)
-            skip = {e for e in (os.listdir(s) if os.path.isdir(s) else []) if os.path.join(rel, e) in dirs or os.path.join(rel, e) in cols}
+            skip = {e for e in (os.listdir(s) if os.path.isdir(s) else []) if os.path.join(rel, e) in dirs or os.path.join(rel, e) in files}
             link_entries(s, d, skip=skip) if os.path.isdir(s) else ensure_dir(d)
-        for c in cols:
-            ensure_link(os.path.join(dst, c), os.path.join(os.path.realpath(self.a.addon_src), 'Meshes', c))
+        for c, md in sorted(files.items()):
+            ensure_link(os.path.join(dst, c), os.path.join(md, c))
 
 
 # ---- the clear of E4 7.5 (the only deletion the runner makes)

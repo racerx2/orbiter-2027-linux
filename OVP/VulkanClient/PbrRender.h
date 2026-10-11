@@ -56,7 +56,10 @@ public:
 
 	static void SetPhase (Phase p) { phase = p; }
 	static Phase GetPhase () { return phase; }
-	static void SetSceneCopy (VkTex *t) { sceneCopy = t; }
+	static void SetSceneCopy (VkTex *t, VkSurf *src = NULL); // the copy of src for transmission; resets the refresh state
+	static void NoteGlassDrawn (const float rect[4]);  // design-pbr-nested-glass 3: NDC rect of glass drawn since the copy
+	static bool WantRefresh (const float rect[4]);     // the copy misses glass drawn over rect
+	static void RefreshSceneCopy ();                   // copy src again
 
 private:
 	static bool InitIBL (VkDev *dev);
@@ -66,6 +69,10 @@ private:
 	static const PbrEnv *curEnv;
 	static Phase phase;
 	static VkTex *sceneCopy;
+	static VkSurf *copySrc;
+	static float dirty[4];
+	static bool dirtyAny;
+	static int refreshes;
 	static VkTex *lut;
 	static bool lutOk;
 	static ImageProcessing *ipDecode, *ipFilter, *ipLut;

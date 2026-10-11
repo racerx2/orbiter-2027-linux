@@ -32,6 +32,11 @@ PbrVariant PbrRender::variants[PBRF_COUNT];
 const PbrEnv *PbrRender::curEnv = NULL;
 PbrRender::Phase PbrRender::phase = PbrRender::PHASE_ALL;
 VkTex *PbrRender::sceneCopy = NULL;
+VkSurf *PbrRender::copySrc = NULL;
+float PbrRender::dirty[4] = { 0, 0, 0, 0 };
+bool PbrRender::dirtyAny = false;
+int PbrRender::refreshes = 0;
+static const int MaxRefresh = 8; // per deferred pass (design-pbr-nested-glass 3)
 VkTex *PbrRender::lut = NULL;
 bool PbrRender::lutOk = false;
 ImageProcessing *PbrRender::ipDecode = NULL;
@@ -74,7 +79,7 @@ void PbrRender::GlobalInit (VkDev *_dev)
 	dev = _dev;
 	phase = PHASE_ALL;
 	curEnv = NULL;
-	sceneCopy = NULL;
+	SetSceneCopy (NULL);
 
 	if (!ipLut) ipLut = new ImageProcessing (dev, IblFile, "PSLut");
 	if (!lut) lut = new VkTex (dev, 128, 128, 1, VK_FORMAT_R16G16B16A16_SFLOAT, RTUsage);
@@ -125,8 +130,52 @@ void PbrRender::GlobalExit ()
 	lutOk = false;
 	texCache.clear ();
 	curEnv = NULL;
-	sceneCopy = NULL;
+	SetSceneCopy (NULL);
 	phase = PHASE_ALL;
+}
+
+// ===========================================================================================
+// design-pbr-nested-glass 3: the copy is taken again when glass drawn since it overlaps the next transmission group
+//
+void PbrRender::SetSceneCopy (VkTex *t, VkSurf *src)
+{
+	sceneCopy = t;
+	copySrc = t ? src : NULL;
+	dirtyAny = false;
+	refreshes = 0;
+}
+
+void PbrRender::NoteGlassDrawn (const float r[4])
+{
+	if (!sceneCopy) return;
+	if (!dirtyAny) {
+		std::copy (r, r + 4, dirty);
+		dirtyAny = true;
+		return;
+	}
+	dirty[0] = std::min (dirty[0], r[0]);
+	dirty[1] = std::min (dirty[1], r[1]);
+	dirty[2] = std::max (dirty[2], r[2]);
+	dirty[3] = std::max (dirty[3], r[3]);
+}
+
+bool PbrRender::WantRefresh (const float r[4])
+{
+	return phase == PHASE_TRANSPARENT && sceneCopy && copySrc && dirtyAny && refreshes < MaxRefresh
+		&& r[0] < dirty[2] && dirty[0] < r[2] && r[1] < dirty[3] && dirty[1] < r[3];
+}
+
+void PbrRender::RefreshSceneCopy ()
+{
+	VkSurf *rt = dev ? dev->GetRenderTarget () : NULL;
+	if (!sceneCopy || !rt || rt != copySrc || rt->w != sceneCopy->w || rt->h != sceneCopy->h) {
+		refreshes = MaxRefresh; // not the target the copy came from: stop trying this pass
+		return;
+	}
+	VkSurf dst (sceneCopy, 0);
+	dev->StretchRect (rt, NULL, &dst, NULL, VK_FILTER_LINEAR);
+	dirtyAny = false;
+	refreshes++;
 }
 
 // ===========================================================================================

@@ -435,9 +435,9 @@ def camera_project(pt, r, phi, theta, size, fov, width=1280, height=720):  # pix
     cam = scale(u, r * size)
     fwd = scale(u, -1.0)
     up0 = (0.0, 1.0, 0.0) if abs(fwd[1]) < 0.99 else (0.0, 0.0, 1.0)
-    right = cross(fwd, up0)
+    right = cross(up0, fwd)  # left-handed: screen right is (cos phi, 0, sin phi) (Camera.cpp:706-713)
     right = scale(right, 1 / norm3(right))
-    up = cross(right, fwd)
+    up = cross(fwd, right)
     v = sub(pt, cam)
     z = dot(v, fwd)
     if z <= 0:

@@ -2646,7 +2646,7 @@ void Scene::RenderPbrDeferred(bool bInternal)
 			pCopy = pPbrCopy;
 		}
 	}
-	PbrRender::SetSceneCopy(pCopy);
+	PbrRender::SetSceneCopy(pCopy, rt); // custom: rt for the refreshes (design-pbr-nested-glass 3)
 
 	std::sort(list.begin(), list.end(), [](const PbrDefer &a, const PbrDefer &b) { return a.vV->CamDist() > b.vV->CamDist(); });
 

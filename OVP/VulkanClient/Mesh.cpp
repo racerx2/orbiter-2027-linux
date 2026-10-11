@@ -2683,13 +2683,32 @@ void D3D9Mesh::RenderFast(const LPD3DXMATRIX pW, int iTech)
 
 
 // ================================================================================================
-// custom: PBR groups with PbrMesh.fx (design-pbr 4, 6, 8); opaque groups first, then transmission and blend groups far to near
+// custom: NDC rect of a view-space sphere, whole screen if it reaches the camera plane (design-pbr-nested-glass 3)
+//
+static void PbrSphereRect(const D3DXVECTOR3 &c, float r, const D3DXMATRIX &P, float out[4])
+{
+	out[0] = out[1] = -1.0f; out[2] = out[3] = 1.0f;
+	if (c.z - r <= 0.01f) return;
+	float x0 = 1e30f, x1 = -1e30f, y0 = 1e30f, y1 = -1e30f;
+	for (int i = 0; i < 4; i++) {
+		float z = c.z + ((i & 1) ? r : -r), d = (i & 2) ? r : -r;
+		x0 = std::min(x0, (c.x + d) / z); x1 = std::max(x1, (c.x + d) / z);
+		y0 = std::min(y0, (c.y + d) / z); y1 = std::max(y1, (c.y + d) / z);
+	}
+	out[0] = x0 * P._11; out[2] = x1 * P._11; out[1] = y0 * P._22; out[3] = y1 * P._22;
+}
+
+
+// ================================================================================================
+// custom: PBR groups with PbrMesh.fx (design-pbr 4, 6, 8); opaque groups first, then glass far to near (design-pbr-nested-glass 2)
 //
 void D3D9Mesh::RenderPbr(const LPD3DXMATRIX pW, const D3DXMATRIX &mWorldMesh, int iTech, bool bGroupCull, const D3DXMATRIX &mWorldView, const D3DXVECTOR4 &Field, const PbrDebug &dbg)
 {
 	const PbrRender::Phase phase = PbrRender::GetPhase();
-	struct Item { DWORD g; const PbrMaterial *m; float dist; unsigned f; };
+	struct Item { DWORD g; const PbrMaterial *m; float dist; unsigned f; float key; float rect[4]; };
 	std::vector<Item> solid, glass;
+	const D3DXMATRIX *P = gc->GetScene()->GetProjectionMatrix();
+	float ws = sqrtf(mWorldView._11 * mWorldView._11 + mWorldView._12 * mWorldView._12 + mWorldView._13 * mWorldView._13);
 
 	for (DWORD g = 0; g < nGrp; g++) {
 		if (!IsPbrGroup(g)) continue;
@@ -2708,16 +2727,38 @@ void D3D9Mesh::RenderPbr(const LPD3DXMATRIX pW, const D3DXMATRIX &mWorldMesh, in
 		}
 		D3DXVECTOR3 c;
 		D3DXVec3TransformCoord(&c, ptr(D3DXVECTOR3f4(Grp[g].BBox.bs)), (LPD3DXMATRIX)&mWorldView);
-		(tr ? glass : solid).push_back({ g, m, D3DXVec3Length(&c), m->Features() });
+		Item it = { g, m, D3DXVec3Length(&c), m->Features(), 0.0f, { -1.0f, -1.0f, 1.0f, 1.0f } };
+		if (tr) PbrSphereRect(c, Grp[g].BBox.bs.w * ws, *P, it.rect);
+		(tr ? glass : solid).push_back(it);
 	}
 	if (solid.empty() && glass.empty()) return;
 
 	std::stable_sort(solid.begin(), solid.end(), [](const Item &a, const Item &b) { return a.f < b.f; });
-	std::stable_sort(glass.begin(), glass.end(), [](const Item &a, const Item &b) {
-		bool ba = (a.m->alphaMode == PBR_BLEND), bb = (b.m->alphaMode == PBR_BLEND);
-		if (ba != bb) return !ba;
-		return a.dist > b.dist;
-	});
+	if (!glass.empty()) { // custom: glass order keys (design-pbr-nested-glass 2)
+		D3DXMATRIX inv;
+		D3DXVECTOR3 cam(0, 0, 0), o(0, 0, 0);
+		bool camOk = D3DXMatrixInverse(&inv, NULL, &mWorldView) != NULL;
+		if (camOk) D3DXVec3TransformCoord(&cam, &o, &inv);
+		auto inside = [](const D9BBox &b, float x, float y, float z) { return x >= b.min.x && x <= b.max.x && y >= b.min.y && y <= b.max.y && z >= b.min.z && z <= b.max.z; };
+		auto overlap = [](const D9BBox &a, const D9BBox &b) { return a.min.x <= b.max.x && b.min.x <= a.max.x && a.min.y <= b.max.y && b.min.y <= a.max.y && a.min.z <= b.max.z && b.min.z <= a.max.z; };
+		auto holds = [&](const Item &a, const Item &b) {
+			const D9BBox &A = Grp[a.g].BBox, &B = Grp[b.g].BBox;
+			return a.g != b.g && B.bs.w < A.bs.w && inside(A, B.bs.x, B.bs.y, B.bs.z);
+		};
+		for (auto &it : glass) {
+			float r = Grp[it.g].BBox.bs.w * ws;
+			it.key = it.dist;
+			if (camOk && inside(Grp[it.g].BBox, cam.x, cam.y, cam.z)) it.key = it.dist + r; // around the camera: drawn first
+			else for (const auto &b : glass) if (holds(it, b)) { it.key = it.dist - r; break; } // after the glass it holds
+		}
+		for (auto &b : glass) {
+			if (b.m->alphaMode != PBR_BLEND) continue;
+			for (const auto &t : glass) // a BLEND overlay touching a pane stays on top of it
+				if (t.m->alphaMode != PBR_BLEND && t.m->transmission > 0 && overlap(Grp[b.g].BBox, Grp[t.g].BBox) && !holds(b, t) && !holds(t, b))
+					b.key = std::min(b.key, t.key - 1e-3f);
+		}
+		std::stable_sort(glass.begin(), glass.end(), [](const Item &a, const Item &b) { return a.key > b.key; });
+	}
 
 	pDev->SetVertexDecl(pMeshVertexDecl);
 	pDev->SetStreamSource(0, pBuf->pVB, 0, sizeof(NMVERTEX));
@@ -2732,6 +2773,12 @@ void D3D9Mesh::RenderPbr(const LPD3DXMATRIX pW, const D3DXMATRIX &mWorldMesh, in
 		const PbrMaterial *m = it.m;
 		PbrVariant *v = PbrRender::Variant(it.f);
 		if (!v) return;
+		if (phase == PbrRender::PHASE_TRANSPARENT && m->transmission > 0 && PbrRender::WantRefresh(it.rect)) { // custom: the copy gets the glass drawn behind (design-pbr-nested-glass 3)
+			if (cur) { if (curPass >= 0) cur->fx->EndPass(); cur->fx->End(); }
+			cur = NULL;
+			curPass = -1;
+			PbrRender::RefreshSceneCopy();
+		}
 		if (v != cur) {
 			if (cur) { if (curPass >= 0) cur->fx->EndPass(); cur->fx->End(); }
 			cur = v;
@@ -2782,6 +2829,7 @@ void D3D9Mesh::RenderPbr(const LPD3DXMATRIX pW, const D3DXMATRIX &mWorldMesh, in
 		pDev->SetCullMode(dual ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
 		cur->fx->CommitChanges();
 		pDev->DrawIndexedPrimitive(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, Grp[g].VertOff, Grp[g].IdexOff, VkPrimVerts(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, Grp[g].nFace));
+		if (phase == PbrRender::PHASE_TRANSPARENT) PbrRender::NoteGlassDrawn(it.rect); // custom
 
 		Grp[g].bRendered = true;
 		D3D9Stats.Mesh.Vertices += Grp[g].nVert;
