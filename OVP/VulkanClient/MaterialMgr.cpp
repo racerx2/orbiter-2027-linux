@@ -152,6 +152,7 @@ void MatMgr::ApplyConfiguration(D3D9Mesh *pMesh)
 					continue;
 				}
 				PbrMaterial m = x.second;
+				if (pMesh->HasPbrFile(x.first)) LogBlu("PBR material %d of the GC config replaces the glTF material of mesh (%s)", x.first, name); // a GC record is a whole material
 				PbrRender::LoadTextures(m);
 				pMesh->SetPbrMaterial(x.first, m);
 				LogBlu("PBR material %d applied to mesh (%s) features=0x%X", x.first, name, m.Features());

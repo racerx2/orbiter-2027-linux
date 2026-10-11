@@ -1,4 +1,4 @@
-# not upstream: Gltf.Visual.DGTest, the glTF test DG (claude/design-gltf-loader.md 6): loads clean, lands in its scenario, and matches the .msh DG in the same pose
+# not upstream: Gltf.Visual.DGTest, the glTF test DG (claude/design-gltf-loader.md 6): loads clean in its scenario with the collision addon on, and matches the .msh DG in the same pose
 import re
 from scnlib import fail, read_text
 from pbrbench import box, shot
@@ -15,11 +15,20 @@ def log_ok(r, rid):
     bad = [l for l in text.splitlines() if ('glTF' in l and LOADED not in l) or '@gltf:' in l]
     if bad:
         fail('run %s: glTF warnings or errors: %s' % (rid, bad[:3]))
+    return text
+
+
+def collision_ok(text, rid):
+    if 'Collision: session 1 created' not in text:
+        fail('run %s: the collision addon did not start' % rid)
+    bad = [l for l in text.splitlines() if 'Collision' in l and re.search(r'error|fail|missed=[1-9]', l, re.I)]
+    if bad:
+        fail('run %s: collision errors: %s' % (rid, bad[:3]))
 
 
 def check(ctx):
     img = {rid: shot(ctx.runs[rid], rid) for rid in ('scn', 'gltf', 'msh')}
-    log_ok(ctx.runs['scn'], 'scn')
+    collision_ok(log_ok(ctx.runs['scn'], 'scn'), 'scn')
     log_ok(ctx.runs['gltf'], 'gltf')
     w, ch, pix = img['scn']
     lo = [min(pix[c::ch]) for c in range(3)]

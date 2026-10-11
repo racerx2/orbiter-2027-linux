@@ -167,6 +167,7 @@ target_compile_definitions(GltfLoader.Test PRIVATE GLTF_TEST_ROOT="${ORBITER_SOU
 # custom: VulkanClient PBR material records and their config text
 add_unit_test(PbrMaterial.Test ${ORBITER_SOURCE_ROOT_DIR}/OVP/VulkanClient/PbrMaterial.cpp)
 target_include_directories(PbrMaterial.Test PRIVATE ${ORBITER_SOURCE_ROOT_DIR}/OVP/VulkanClient)
+target_link_libraries(PbrMaterial.Test Qt6::Core) # VkGltfImage.h
 
 if (BUILD_ORBITER_SERVER)
 

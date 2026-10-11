@@ -80,8 +80,8 @@ static std::vector<std::string> Tokens (const char *line, std::string *rest2 = N
 {
 	std::vector<std::string> t;
 	std::string s (line);
-	size_t sc = s.find (';');
-	if (sc != std::string::npos) s.erase (sc);
+	size_t sc = s.find (';'), g = s.find ("@gltf:"); // glTF image refs are generated, their paths may hold ';'
+	if (sc != std::string::npos && (g == std::string::npos || sc < g)) s.erase (sc);
 	size_t i = 0;
 	while (i < s.size()) {
 		while (i < s.size() && isspace ((unsigned char)s[i])) i++;

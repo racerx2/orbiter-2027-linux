@@ -295,3 +295,54 @@ TEST_CASE ("glTF DGTest model", "[gltf]")
 	for (auto &mt : m.materials) if (mt.pbr.find ("PBR_TRANSMISSION 1") != std::string::npos) glass++;
 	CHECK (glass == 3);
 }
+
+// a triangle GLB with the nodes and accessors given; view 0 positions, view 1 three u32 indices
+static std::string TriGlb2 (const std::string &name, const std::string &nodes, const std::string &acc0, const std::string &acc1)
+{
+	Glb g;
+	g.Add (Tri, sizeof Tri);
+	unsigned idx[3] = { 0, 1, 2 };
+	g.Add (idx, sizeof idx);
+	std::string j = "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[" + nodes + "],"
+		"\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}],"
+		"\"buffers\":[{\"byteLength\":" + std::to_string (g.bin.size ()) + "}],"
+		"\"bufferViews\":[{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},{\"buffer\":0,\"byteOffset\":36,\"byteLength\":12}],"
+		"\"accessors\":[" + acc0 + "," + acc1 + "]}";
+	return g.Write (name, j);
+}
+
+static const std::string AccP = "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}";
+static const std::string AccI = "{\"bufferView\":1,\"componentType\":5125,\"count\":3,\"type\":\"SCALAR\"}";
+
+TEST_CASE ("glTF review fixes: accessors, indices, depth, alpha", "[gltf]")
+{
+	GltfModel m;
+	std::string err;
+	REQUIRE (GltfRead (TriGlb2 ("r0.glb", "{\"mesh\":0}", AccP, AccI), m, err));
+	CHECK (m.groups[0].idx.size () == 3);
+
+	// float indices refused
+	CHECK_FALSE (GltfRead (TriGlb2 ("r1.glb", "{\"mesh\":0}", AccP, "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"SCALAR\"}"), m, err));
+	CHECK (err.find ("unsigned") != std::string::npos);
+
+	// a huge accessor without a bufferView is refused before it is allocated
+	CHECK_FALSE (GltfRead (TriGlb2 ("r2.glb", "{\"mesh\":0}", "{\"componentType\":5126,\"count\":50000000,\"type\":\"VEC3\"}", AccI), m, err));
+	CHECK (err.find ("too large") != std::string::npos);
+
+	// sparse indices must be unsigned integers
+	CHECK_FALSE (GltfRead (TriGlb2 ("r3.glb", "{\"mesh\":0}",
+		"{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\",\"sparse\":{\"count\":1,\"indices\":{\"bufferView\":1,\"componentType\":5126},\"values\":{\"bufferView\":0}}}", AccI), m, err));
+	CHECK (err.find ("bad sparse") != std::string::npos);
+
+	// node depth limit
+	auto chain = [](int n) { std::string s; for (int i = 0; i < n; i++) s += "{\"children\":[" + std::to_string (i + 1) + "]},"; return s + "{\"mesh\":0}"; };
+	CHECK (GltfRead (TriGlb2 ("r4.glb", chain (100), AccP, AccI), m, err));
+	CHECK_FALSE (GltfRead (TriGlb2 ("r5.glb", chain (300), AccP, AccI), m, err));
+	CHECK (err.find ("too deep") != std::string::npos);
+
+	// legacy alpha: OPAQUE ignores the base alpha, BLEND keeps it
+	REQUIRE (GltfRead (TriGlb ("r6.glb", "{\"mesh\":0}", "{\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,1,1,0.5]}}"), m, err));
+	CHECK (m.materials[0].mat.diffuse.a == 1.0f);
+	REQUIRE (GltfRead (TriGlb ("r7.glb", "{\"mesh\":0}", "{\"alphaMode\":\"BLEND\",\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,1,1,0.5]}}"), m, err));
+	CHECK (m.materials[0].mat.diffuse.a == 0.5f);
+}

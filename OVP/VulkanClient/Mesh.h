@@ -262,6 +262,7 @@ public:
 	// custom: PBR materials (design-pbr 4); a material with a record draws its groups with PbrMesh.fx
 	void			SetPbrMaterial(DWORD idx, const PbrMaterial &m);
 	void			ClearPbrMaterials();
+	bool			HasPbrFile(DWORD idx) const { return idx < PbrFile.size() && PbrFile[idx].enabled; } // custom: glTF record
 	const PbrMaterial *GetPbrMaterial(DWORD idx) const;
 	bool			HasPbr() const { return bHasPbr; }
 	bool			HasPbrTransparent(bool *bTransmission = NULL) const;

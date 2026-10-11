@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include "PbrMaterial.h"
+#include "VkGltfImage.h"
 #include <cstdio>
 #include <sstream>
 #include <string>
@@ -118,6 +119,8 @@ TEST_CASE ("PBR lines set every field", "[pbr]")
 	CHECK (m.iridThickMax == 600.0f);
 	CHECK (m.tex[PBR_BASECOLOR] == "Dir\\My File.dds");
 	CHECK (m.tex[PBR_CLEARCOATNORMAL] == "cc_n.dds");
+	REQUIRE (PbrParseLine ("PBR_TEX NORMAL @gltf:10:20:0:0:0:/home/a;b/x.glb", m));
+	CHECK (m.tex[PBR_NORMAL] == "@gltf:10:20:0:0:0:/home/a;b/x.glb");
 	CHECK (m.Features () == (PBRF_CLEARCOAT | PBRF_SHEEN | PBRF_TRANSMISSION | PBRF_ANISOTROPY | PBRF_IRIDESCENCE));
 	CHECK (m.Transparent ());
 	CHECK (m.NeedsTangents ());
@@ -194,4 +197,34 @@ TEST_CASE ("PBR GPU block", "[pbr]")
 	CHECK (g.iridIor == 1.4f);
 	CHECK (g.iridThickMin == 50.0f);
 	CHECK (g.iridThickMax == 500.0f);
+}
+
+TEST_CASE ("glTF image refs in the client", "[pbr]")
+{
+	VkGltfRef r;
+	REQUIRE (VkParseGltfRef ("@gltf:12:34:1:5:6:/x/a;b c.gltf", r));
+	CHECK (r.off == 12);
+	CHECK (r.len == 34);
+	CHECK (r.b64 == 1);
+	CHECK (r.sliceOff == 5);
+	CHECK (r.sliceLen == 6);
+	CHECK (std::string (r.file) == "/x/a;b c.gltf");
+	CHECK_FALSE (VkParseGltfRef ("@gltf:12:34:1:5:6:", r));
+	CHECK_FALSE (VkParseGltfRef ("hull.dds", r));
+	REQUIRE (VkParseGltfRef ("@gltf:12:34:1:5:6:/x/a;b c.gltf", r));
+
+	// standard, JSON-escaped and url-safe base64 of the same bytes, sliced to "pixels"
+	const char *enc[] = { "+//+++9waXhlbHM=", "+\\/\\/+++9waXhlbHM=", "-__---9waXhlbHM=", " +//+ ++9w\naXhlbHM=" };
+	for (const char *e : enc) {
+		QByteArray b (e);
+		REQUIRE (VkGltfImageBytes (r, b));
+		CHECK (b == QByteArray ("pixels"));
+	}
+	QByteArray whole ("+//+++9waXhlbHM=");
+	r.sliceOff = 0; r.sliceLen = 0;
+	REQUIRE (VkGltfImageBytes (r, whole));
+	CHECK (whole.size () == 11);
+	QByteArray raw ("0123456789");
+	r.b64 = 0; r.sliceOff = 8; r.sliceLen = 3;
+	CHECK_FALSE (VkGltfImageBytes (r, raw)); // slice past the range
 }

@@ -16,6 +16,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <new>
 #include <set>
 #include <strings.h>
 
@@ -318,7 +319,6 @@ bool ReadAccessor (Ctx &c, int ai, std::vector<double> &out, size_t &count, int 
 	bool norm = a["normalized"].toBool (false);
 	if (!cs || !comps || cnt < 0 || cnt > 1e8) return c.Fail ("accessor " + std::to_string (ai) + " is malformed");
 	count = (size_t)cnt;
-	out.assign (count * comps, 0.0);
 	size_t es = (size_t)cs * comps;
 	if (a.contains ("bufferView")) {
 		const unsigned char *p; size_t len, stride;
@@ -326,16 +326,24 @@ bool ReadAccessor (Ctx &c, int ai, std::vector<double> &out, size_t &count, int 
 		if (!stride) stride = es;
 		double off = a["byteOffset"].toDouble (0);
 		if (off < 0 || stride < es || (count && off + (double)stride * (count - 1) + es > (double)len)) return c.Fail ("accessor " + std::to_string (ai) + " runs past its bufferView");
+		out.assign (count * comps, 0.0);
 		for (size_t i = 0; i < count; i++)
 			for (int k = 0; k < comps; k++)
 				out[i * comps + k] = ReadComp (p + (size_t)off + i * stride + (size_t)k * cs, ct, norm);
+	} else {
+		// zero filled; bounded by the loaded data so a bad count can't exhaust memory
+		double total = 0;
+		for (const auto &b : c.buffers) total += (double)b.data.size();
+		if ((double)count * es > total + 1048576.0) return c.Fail ("accessor " + std::to_string (ai) + " is too large for its data");
+		out.assign (count * comps, 0.0);
 	}
 	if (a.contains ("sparse")) {
 		QJsonObject s = a["sparse"].toObject (), si = s["indices"].toObject (), sv = s["values"].toObject ();
 		double n = s["count"].toDouble (-1);
 		int ict = si["componentType"].toInt (0), ics = CompSize (ict);
+		if (ict != 5121 && ict != 5123 && ict != 5125) ics = 0;
 		const unsigned char *ip, *vp; size_t il, vl, is, vs;
-		if (n < 1 || !ics || !ViewRange (c, si["bufferView"].toInt (-1), ip, il, is) || !ViewRange (c, sv["bufferView"].toInt (-1), vp, vl, vs)) return c.Fail ("accessor " + std::to_string (ai) + ": bad sparse");
+		if (n < 1 || n > (double)count || !ics || !ViewRange (c, si["bufferView"].toInt (-1), ip, il, is) || !ViewRange (c, sv["bufferView"].toInt (-1), vp, vl, vs)) return c.Fail ("accessor " + std::to_string (ai) + ": bad sparse");
 		double io = si["byteOffset"].toDouble (0), vo = sv["byteOffset"].toDouble (0);
 		size_t ns = (size_t)n;
 		if (io < 0 || vo < 0 || io + (double)ns * ics > (double)il || vo + (double)ns * es > (double)vl) return c.Fail ("accessor " + std::to_string (ai) + ": sparse runs past its bufferView");
@@ -520,8 +528,9 @@ GltfMaterial MakeMaterial (Ctx &c, const QJsonObject &m, const std::string &labe
 	}
 
 	memset (&g.mat, 0, sizeof g.mat);
-	g.mat.diffuse = { (float)base[0], (float)base[1], (float)base[2], (float)base[3] };
-	g.mat.ambient = { (float)base[0], (float)base[1], (float)base[2], (float)base[3] };
+	float alpha = (am == "MASK" || am == "BLEND") ? (float)base[3] : 1.0f; // OPAQUE ignores alpha
+	g.mat.diffuse = { (float)base[0], (float)base[1], (float)base[2], alpha };
+	g.mat.ambient = { (float)base[0], (float)base[1], (float)base[2], alpha };
 	g.mat.specular = { 0.0f, 0.0f, 0.0f, 1.0f };
 	g.mat.emissive = { (float)std::min (1.0, em[0] * es), (float)std::min (1.0, em[1] * es), (float)std::min (1.0, em[2] * es), 1.0f };
 	g.mat.power = 0.0f;
@@ -573,7 +582,11 @@ bool AddPrimitive (Ctx &c, const QJsonObject &p, const Mat4 world, DWORD defMtrl
 	if (hasUV && (!ReadAccessor (c, at["TEXCOORD_0"].toInt (-1), uv, nu, cu) || cu != 2 || nu != np)) return c.Fail (label + ": bad TEXCOORD_0");
 	std::vector<uint32_t> idx;
 	if (p.contains ("indices")) {
-		if (!ReadAccessor (c, p["indices"].toInt (-1), ind, ni, ci) || ci != 1) return c.Fail (label + ": bad indices");
+		int ia = p["indices"].toInt (-1);
+		if (!ReadAccessor (c, ia, ind, ni, ci) || ci != 1) return c.Fail (label + ": bad indices");
+		QJsonObject ao = c.root["accessors"].toArray ().at (ia).toObject ();
+		int ict = ao["componentType"].toInt (0);
+		if ((ict != 5121 && ict != 5123 && ict != 5125) || ao["normalized"].toBool (false)) return c.Fail (label + ": indices are not unsigned integers");
 		idx.resize (ni);
 		for (size_t i = 0; i < ni; i++) idx[i] = (uint32_t)ind[i];
 	} else {
@@ -664,10 +677,11 @@ bool AddPrimitive (Ctx &c, const QJsonObject &p, const Mat4 world, DWORD defMtrl
 	return true;
 }
 
-bool WalkNode (Ctx &c, int ni, const Mat4 parent, std::vector<char> &state, DWORD defMtrl, const std::vector<int> &mtrlTex)
+bool WalkNode (Ctx &c, int ni, const Mat4 parent, std::vector<char> &state, DWORD defMtrl, const std::vector<int> &mtrlTex, int depth = 0)
 {
 	QJsonArray nodes = c.root["nodes"].toArray ();
 	if (ni < 0 || ni >= nodes.size()) return c.Fail ("node index out of range");
+	if (depth > 256) return c.Fail ("node hierarchy is too deep");
 	if (state[ni] == 1) return c.Fail ("node hierarchy has a cycle");
 	if (state[ni] == 2) { c.Warn ("node " + std::to_string (ni) + " is used twice, drawn once"); return true; }
 	state[ni] = 1;
@@ -690,7 +704,7 @@ bool WalkNode (Ctx &c, int ni, const Mat4 parent, std::vector<char> &state, DWOR
 		}
 	}
 	QJsonArray ch = n["children"].toArray ();
-	for (int k = 0; k < ch.size(); k++) if (!WalkNode (c, ch[k].toInt (-1), world, state, defMtrl, mtrlTex)) return false;
+	for (int k = 0; k < ch.size(); k++) if (!WalkNode (c, ch[k].toInt (-1), world, state, defMtrl, mtrlTex, depth + 1)) return false;
 	state[ni] = 2;
 	return true;
 }
@@ -699,7 +713,7 @@ bool WalkNode (Ctx &c, int ni, const Mat4 parent, std::vector<char> &state, DWOR
 
 // ----------------------------------------------------------------------------------------------
 
-bool GltfRead (const std::string &path, GltfModel &out, std::string &err)
+static bool ReadModel (const std::string &path, GltfModel &out, std::string &err)
 {
 	static const char *Supported[] = { "KHR_materials_emissive_strength", "KHR_materials_ior", "KHR_materials_specular", "KHR_materials_transmission",
 		"KHR_materials_volume", "KHR_materials_clearcoat", "KHR_materials_sheen", "KHR_materials_anisotropy", "KHR_materials_iridescence" };
@@ -761,4 +775,10 @@ bool GltfRead (const std::string &path, GltfModel &out, std::string &err)
 	}
 	if (out.groups.empty()) { c.Fail ("no triangles in the default scene"); return fail (); }
 	return true;
+}
+
+bool GltfRead (const std::string &path, GltfModel &out, std::string &err)
+{
+	try { return ReadModel (path, out, err); }
+	catch (const std::bad_alloc &) { out = GltfModel (); err = "out of memory"; return false; }
 }
