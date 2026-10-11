@@ -62,7 +62,8 @@ public:
 	CollDetect fwd, ver;
 private:
 	struct Snap { uint32_t id; CollH h; CollVesselRead rd; };
-	struct Last { uint32_t id; uint8_t kind; uint64_t hash; bool ground; std::vector<uint32_t> member; }; // member: etsep split pairs
+	struct Joint { uint32_t va, vb; Vector pa; };              // etsep: a dock port or attachment point of va holding vb, in va's frame
+	struct Last { uint32_t id; uint8_t kind; uint64_t hash; bool ground; std::vector<uint32_t> member; std::vector<Joint> joint; }; // member, joint: etsep splits
 	CollSdk &sdk;
 	CollPhysGeom &geom;
 	CollCfgValues cfg;

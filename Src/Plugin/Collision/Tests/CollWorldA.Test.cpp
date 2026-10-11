@@ -427,3 +427,45 @@ TEST_CASE ("etsep: an undock makes a split pair for both detectors; never docked
 		if (docked) REQUIRE (con == 0);
 	}
 }
+
+TEST_CASE ("etsep: an undock without a push gets a joint scope at the dock ports; a vessel spawned against another gets one too", "[CollWorldA]")
+{
+	{
+		World W;
+		CollFakeSdk::Ves *A = W.Add ("A", Vector (-1.0, 0, 0), Vector ()), *B = W.Add ("B", Vector (1.02, 0, 0), Vector ());
+		A->dock.push_back (CollPortInfo { Vector (1.0, 0, 0), Vector (1, 0, 0), Vector (0, 1, 0), B });
+		B->dock.push_back (CollPortInfo { Vector (-1.01, 0, 0), Vector (-1, 0, 0), Vector (0, 1, 0), A });
+		CollPhysAsm a; a.member = { 1, 2 }; a.root = 1; a.memberHash = 12;
+		W.geom.asmb = { a };
+		for (int f = 0; f < 3; f++) W.Frame (0.05);
+		W.geom.asmb.clear ();
+		A->dock[0].mate = nullptr; B->dock[0].mate = nullptr;
+		A->rd.v = Vector (0.02, 0, 0); B->rd.v = Vector (-0.02, 0, 0); // no push; drifting together at the ports
+		g_wlog.clear ();
+		g_collLog = WLogSink;
+		int con = 0;
+		for (int f = 0; f < 4; f++) { W.Frame (0.05); con += (int)W.ps->Contacts ().size (); }
+		g_collLog = nullptr;
+		int joint = 0;
+		for (const std::string &l : g_wlog) if (l.find ("joint scope start (unpushed") != std::string::npos) joint++;
+		CAPTURE (con, joint);
+		REQUIRE (joint >= 1);
+		REQUIRE (con == 0);
+	}
+	{
+		World W;
+		W.Add ("A", Vector (-1.0, 0, 0), Vector ());
+		for (int f = 0; f < 3; f++) W.Frame (0.05);
+		W.Add ("B", Vector (1.02, 0, 0), Vector (-0.02, 0, 0));    // a stage spawned against A
+		g_wlog.clear ();
+		g_collLog = WLogSink;
+		int con = 0;
+		for (int f = 0; f < 4; f++) { W.Frame (0.05); con += (int)W.ps->Contacts ().size (); }
+		g_collLog = nullptr;
+		int joint = 0;
+		for (const std::string &l : g_wlog) if (l.find ("joint scope start (spawned") != std::string::npos) joint++;
+		CAPTURE (con, joint);
+		REQUIRE (joint >= 1);
+		REQUIRE (con == 0);
+	}
+}

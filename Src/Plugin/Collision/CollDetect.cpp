@@ -466,6 +466,7 @@ struct CollDetect::Impl {
 		bool culled;                 // part spheres apart over the interval (2.5)
 		bool support; Vector supN;   // support pair (Y10), stored normal in the base frame (0 = none)
 		const std::vector<CollLeafPair> *grace;
+		const std::vector<CollLeafPair> *joint; // etsep: joint scope
 		const std::vector<CollLeafPair> *front;
 		std::vector<int> zones;      // indices into Ctx::zl
 	};
@@ -601,7 +602,7 @@ struct CollDetect::Impl {
 					const CollSupport *s = as == cx.A ? SupportOf (d, *as, ob) : SupportOf (d, *as, oa);
 					if (s) { q.support = true; q.supN = s->n; }
 				}
-				q.grace = nullptr; q.front = nullptr;
+				q.grace = nullptr; q.joint = nullptr; q.front = nullptr;
 				for (size_t z = 0; z < cx.zl.size (); z++)
 					if (cx.zl[z].oa == oa && cx.zl[z].ob == ob) q.zones.push_back ((int)z);
 				cx.pp.push_back (q);
@@ -640,6 +641,8 @@ struct CollDetect::Impl {
 			CollPairEntry *e = d.m_store.Find (q.key.first, q.key.second);
 			if (e && e->split) q.culled = true;                     // etsep: a split pair still at its joint runs no query
 			q.grace = (e && !e->grace.empty ()) ? &e->grace : nullptr;
+			q.joint = (e && !e->joint.empty ()) ? &e->joint : nullptr;
+			if (q.joint) cx.flags |= COLLF_GRACE;
 			q.front = nullptr;
 			if (q.grace) cx.flags |= COLLF_GRACE;
 		}
@@ -915,8 +918,9 @@ struct CollDetect::Impl {
 
 	static bool Scoped (const Ctx &cx, const PP &q, uint32_t la, uint32_t lb)
 	{
-		if (!q.grace) return false;
-		return std::binary_search (q.grace->begin (), q.grace->end (), LeafKey (cx, q, la, lb));
+		if (!q.grace && !q.joint) return false;
+		CollLeafPair k = LeafKey (cx, q, la, lb);
+		return (q.grace && std::binary_search (q.grace->begin (), q.grace->end (), k)) || (q.joint && std::binary_search (q.joint->begin (), q.joint->end (), k));
 	}
 
 	// cached leaf pairs of part pair q, in this pair's orientation
@@ -1708,11 +1712,102 @@ struct CollDetect::Impl {
 		}
 	}
 
-	// etsep: two dynamic bodies that were one assembly last frame; their joint surfaces touch, cross and interlock
-	static bool SplitPair (const CollDetect &d, const CollBody &A, const CollBody &B)
+	// etsep: bodies that can get a split scope: flying or landed, not a base, playback or frozen
+	static bool SplitKind (const CollBody &b) { return b.kind == COLLB_DYNAMIC || b.kind == COLLB_LANDED; }
+
+	// etsep: the split of two bodies that were one assembly last frame (their joint surfaces touch, cross and interlock), or null
+	static const CollSplit *FindSplit (const CollDetect &d, const CollBody &A, const CollBody &B)
 	{
-		if (d.m_split.empty () || A.kind != COLLB_DYNAMIC || B.kind != COLLB_DYNAMIC) return false;
-		return std::binary_search (d.m_split.begin (), d.m_split.end (), std::make_pair (std::min (A.id, B.id), std::max (A.id, B.id)));
+		if (d.m_split.empty () || !SplitKind (A) || !SplitKind (B)) return nullptr;
+		uint32_t a = std::min (A.id, B.id), b = std::max (A.id, B.id);
+		auto it = std::lower_bound (d.m_split.begin (), d.m_split.end (), std::make_pair (a, b), [] (const CollSplit &s, const std::pair<uint32_t, uint32_t> &k) {
+			return s.a != k.first ? s.a < k.first : s.b < k.second; });
+		return (it != d.m_split.end () && it->a == a && it->b == b) ? &*it : nullptr;
+	}
+
+	static bool Spawned (const CollDetect &d, uint32_t id) { return std::binary_search (d.m_spawned.begin (), d.m_spawned.end (), id); }
+
+	// etsep: leaf pairs whose two leaves lie within COLL_JOINT_R of a joint point (query frame), by owner pair; false: more than COLL_JOINT_MAX
+	static bool JointLeaves (Ctx &cx, const std::vector<Vector> &joint, std::vector<std::pair<OwnerPair, CollLeafPair>> &out)
+	{
+		auto nearLeaves = [&] (const Placed &p, std::vector<uint32_t> &lv) {
+			lv.clear ();
+			if (!p.g) return;
+			for (uint32_t i = 0; i < p.g->node.size (); i++) {
+				const CollNode &n = p.g->node[i];
+				if (!n.count) continue;
+				Box b;
+				MakeBox (p, n, b);
+				double r = BoxRad (b) + COLL_JOINT_R;
+				for (const Vector &j : joint) if ((b.g - j).length2 () <= r*r) { lv.push_back (i); break; }
+			}
+		};
+		std::vector<uint32_t> la, lb;
+		for (size_t k = 0; k < cx.pp.size (); k++) {
+			const PP &q = cx.pp[k];
+			if (q.support) continue;
+			nearLeaves (cx.pa[q.a], la);
+			if (la.empty ()) continue;
+			nearLeaves (cx.pb[q.b], lb);
+			if (lb.empty ()) continue;
+			if (out.size () + la.size ()*lb.size () > COLL_JOINT_MAX) return false;
+			for (uint32_t i : la) for (uint32_t j : lb) out.push_back ({ q.key, LeafKey (cx, q, i, j) });
+		}
+		return true;
+	}
+
+	// etsep: start of a split or of a spawn touching another body (t0 pose set). Pushed (radial relative speed above COLL_SPLIT_VPUSH):
+	// a split scope on every owner pair (SplitUpdate ends it); unpushed in free fall: a joint scope around the joint points; else nothing
+	static void SplitStart (Ctx &cx, const CollSplit *sp)
+	{
+		CollDetect &d = *cx.d;
+		const CollMotion &ma = cx.A->m, &mb = cx.B->m;
+		Vector off = mb.c0 - ma.c0;
+		double l = off.length (), vrad = l > 0.0 ? dotp (mb.v0 - ma.v0, off)/l : 0.0;
+		bool pushed = vrad > COLL_SPLIT_VPUSH;
+		std::vector<Vector> joint;                                      // query frame: global axes, origin at A's CG at t0
+		if (sp) for (const Vector &j : sp->joint) joint.push_back (j - ma.c0);
+		else {                                                          // spawned: midpoints of the touching triangle pairs, at most 8, 0.5 m apart
+			std::vector<Raw> raws;
+			for (size_t k = 0; k < cx.pp.size (); k++)
+				if (!cx.pp[k].culled && !cx.pp[k].support) Cutoff (cx, k, d.m_prm.sRel, 0, raws, raws.size () + 256, nullptr);
+			if (raws.empty ()) return;                                  // not touching: a new vessel as before
+			for (const Raw &w : raws) {
+				Vector m = (w.pa + w.pb)*0.5;
+				bool nearOne = false;
+				for (const Vector &j : joint) if ((j - m).length () < 0.5) { nearOne = true; break; }
+				if (!nearOne && joint.size () < 8) joint.push_back (m);
+			}
+		}
+		bool freeFall = cx.A->kind == COLLB_DYNAMIC && cx.B->kind == COLLB_DYNAMIC && (mb.a0 - ma.a0).length () < COLL_SPLIT_AFREE;
+		std::vector<std::pair<OwnerPair, CollLeafPair>> jl;
+		bool useJoint = !pushed && freeFall && !joint.empty ();
+		if (useJoint && !JointLeaves (cx, joint, jl)) {
+			CollLog (COLLLOG_INFO, "Collision: joint scope over %u leaf pairs, bodies %u - %u: no scope", (unsigned)COLL_JOINT_MAX, cx.A->id, cx.B->id);
+			useJoint = false;
+		}
+		if (!pushed && !useJoint) return;                               // crossing pairs only, as before (EntryCheck)
+		std::sort (jl.begin (), jl.end (), [] (const std::pair<OwnerPair, CollLeafPair> &x, const std::pair<OwnerPair, CollLeafPair> &y) {
+			if (!(x.first == y.first)) return x.first < y.first;
+			return x.second < y.second; });
+		for (size_t g = 0; g + 1 < cx.grp.size (); g++) {
+			const OwnerPair &key = cx.pp[cx.ord[cx.grp[g]]].key;
+			CollPairEntry &e = d.m_store.Get (key.first, key.second);
+			if (pushed) {
+				if (e.split) continue;
+				e.split = true; e.splitFrame = d.m_frame; e.splitAge = 0.0;
+				CollLog (COLLLOG_INFO, "Collision: split scope start (%s, %.3g m/s), owners %u/%d.%d.%d - %u/%d.%d.%d (entry 0x%x)", sp ? "pushed" : "spawned, pushed", vrad,
+					e.a.id, e.a.planet, e.a.base, e.a.obj, e.b.id, e.b.planet, e.b.base, e.b.obj, (unsigned)(cx.A->entry | cx.B->entry));
+				continue;
+			}
+			size_t n0 = e.joint.size ();
+			for (const auto &x : jl) if (x.first == key) e.joint.push_back (x.second);
+			if (e.joint.size () == n0) continue;
+			std::sort (e.joint.begin (), e.joint.end ());
+			e.joint.erase (std::unique (e.joint.begin (), e.joint.end ()), e.joint.end ());
+			CollLog (COLLLOG_INFO, "Collision: joint scope start (%s), owners %u/%d.%d.%d - %u/%d.%d.%d, %u leaf pairs, %u joint points", sp ? "unpushed" : "spawned, unpushed",
+				e.a.id, e.a.planet, e.a.base, e.a.obj, e.b.id, e.b.planet, e.b.base, e.b.obj, (unsigned)e.joint.size (), (unsigned)joint.size ());
+		}
 	}
 
 	// crossing leaf pairs of owner group g at the current pose join its GRACE scope
@@ -1767,15 +1862,9 @@ struct CollDetect::Impl {
 	{
 		CollDetect &d = *cx.d;
 		SetPose (cx, mode, mode == POSE_T1 ? 1.0 : 0.0);
-		if (SplitPair (d, *cx.A, *cx.B))
-			for (size_t g = 0; g + 1 < cx.grp.size (); g++) {
-				const OwnerPair &key = cx.pp[cx.ord[cx.grp[g]]].key;
-				CollPairEntry &e = d.m_store.Get (key.first, key.second);
-				if (e.split) continue;
-				e.split = true; e.splitFrame = d.m_frame; e.splitAge = 0.0;
-				CollLog (COLLLOG_INFO, "Collision: split scope start, owners %u/%d.%d.%d - %u/%d.%d.%d (entry 0x%x)",
-					e.a.id, e.a.planet, e.a.base, e.a.obj, e.b.id, e.b.planet, e.b.base, e.b.obj, (unsigned)(cx.A->entry | cx.B->entry));
-			}
+		const CollSplit *sp = FindSplit (d, *cx.A, *cx.B);
+		if (sp || (SplitKind (*cx.A) && SplitKind (*cx.B) && (((cx.A->entry & COLLE_NEW) && Spawned (d, cx.A->id)) || ((cx.B->entry & COLLE_NEW) && Spawned (d, cx.B->id)))))
+			SplitStart (cx, sp);
 		std::vector<Raw> raws;
 		for (size_t k = 0; k < cx.pp.size (); k++)
 			if (!cx.pp[k].culled && !cx.pp[k].support) Cutoff (cx, k, 0.0, Q_RAWX, raws, raws.size () + COLL_ENTRY_RAW_MAX, nullptr);
@@ -1814,6 +1903,10 @@ struct CollDetect::Impl {
 						e.a.id, e.a.planet, e.a.base, e.a.obj, e.b.id, e.b.planet, e.b.base, e.b.obj, e.splitAge);
 				}
 			}
+			if (!e.joint.empty () && std::all_of (e.joint.begin (), e.joint.end (), [&] (const CollLeafPair &l) { return Released (d, e, l, COLL_JOINT_REL); })) {
+				e.joint.clear ();
+				CollLog (COLLLOG_INFO, "Collision: joint scope end, owners %u/%d.%d.%d - %u/%d.%d.%d", e.a.id, e.a.planet, e.a.base, e.a.obj, e.b.id, e.b.planet, e.b.base, e.b.obj);
+			}
 			if (e.grace.empty ()) continue;
 			e.graceAge += d.m_h;
 			if (e.graceAge > COLL_GRACE_LOG_AGE && !e.graceLogged) {
@@ -1821,7 +1914,7 @@ struct CollDetect::Impl {
 				CollLog (COLLLOG_WARN, "Collision: GRACE scope older than %g s, owners %u/%d.%d.%d - %u/%d.%d.%d, %u leaf pairs", COLL_GRACE_LOG_AGE,
 					e.a.id, e.a.planet, e.a.base, e.a.obj, e.b.id, e.b.planet, e.b.base, e.b.obj, (unsigned)e.grace.size ());
 			}
-			e.grace.erase (std::remove_if (e.grace.begin (), e.grace.end (), [&] (const CollLeafPair &l) { return Released (d, e, l); }), e.grace.end ());
+			e.grace.erase (std::remove_if (e.grace.begin (), e.grace.end (), [&] (const CollLeafPair &l) { return Released (d, e, l, d.m_prm.sRel); }), e.grace.end ());
 			if (e.grace.empty ()) {
 				e.graceAge = 0.0; e.graceLogged = false;
 				CollLog (COLLLOG_INFO, "Collision: GRACE end, owners %u/%d.%d.%d - %u/%d.%d.%d", e.a.id, e.a.planet, e.a.base, e.a.obj, e.b.id, e.b.planet, e.b.base, e.b.obj);
@@ -1830,8 +1923,9 @@ struct CollDetect::Impl {
 	}
 
 	// conservative leaf separation: bounding spheres of the two leaf AABBs, radii scaled by the Frobenius norm of the affine part
-	static bool LeafSpheresApart (const CollDetect &d, const CollAffine &XA, const CollAffine &XB, const CollNode &na, const CollNode &nb, double skin)
+	static bool LeafSpheresApart (const CollDetect &d, const CollAffine &XA, const CollAffine &XB, const CollNode &na, const CollNode &nb, double skin, double rel)
 	{
+		(void)d;
 		auto sphere = [] (const CollAffine &X, const CollNode &nd, double &r) {
 			Vector c ((nd.mn[0] + nd.mx[0])*0.5, (nd.mn[1] + nd.mx[1])*0.5, (nd.mn[2] + nd.mx[2])*0.5);
 			Vector hd ((nd.mx[0] - nd.mn[0])*0.5, (nd.mx[1] - nd.mn[1])*0.5, (nd.mx[2] - nd.mn[2])*0.5);
@@ -1842,10 +1936,10 @@ struct CollDetect::Impl {
 		};
 		double rA, rB;
 		Vector cA = sphere (XA, na, rA), cB = sphere (XB, nb, rB);
-		return (cA - cB).length () - rA - rB - skin >= d.m_prm.sRel;
+		return (cA - cB).length () - rA - rB - skin >= rel;
 	}
 
-	static bool Released (const CollDetect &d, const CollPairEntry &e, const CollLeafPair &l)
+	static bool Released (const CollDetect &d, const CollPairEntry &e, const CollLeafPair &l, double rel)
 	{
 		bool sa, sb;
 		const PartIdx *pa = FindPart (d, e.a, l.partKeyA, sa), *pb = FindPart (d, e.b, l.partKeyB, sb);
@@ -1869,14 +1963,14 @@ struct CollDetect::Impl {
 			for (uint32_t y = nb.first; y < nb.first + nb.count; y++) {
 				const CollTri &tb = rb.geom->tri[rb.geom->perm[y]];
 				if (rb.mask && rb.mask[tb.src]) continue;
-				if (n >= COLL_GRACE_RELEASE_TRI) return LeafSpheresApart (d, XA, XB, na, nb, ra.skin + rb.skin);  // too big to judge per triangle: release only on bounding sphere separation
+				if (n >= COLL_GRACE_RELEASE_TRI) return LeafSpheresApart (d, XA, XB, na, nb, ra.skin + rb.skin, rel);  // too big to judge per triangle: release only on bounding sphere separation
 				Vector vb[3] = { CollApply (XB, rb.geom->vtx[tb.v[0]]), CollApply (XB, rb.geom->vtx[tb.v[1]]), CollApply (XB, rb.geom->vtx[tb.v[2]]) };
 				Vector pa2, pb2;
 				dmin = std::min (dmin, CollTriTriDistance (va, vb, pa2, pb2));
 				n++;
 			}
 		}
-		return dmin - ra.skin - rb.skin >= d.m_prm.sRel;
+		return dmin - ra.skin - rb.skin >= rel;
 	}
 
 	// first pass of one candidate pair (3.2, 5.7)
@@ -2272,12 +2366,14 @@ bool CollDetect::Embedded (const CollEmbedQuery &q)
 	return hit;
 }
 
-void CollDetect::SetSplit (const std::vector<std::pair<uint32_t, uint32_t>> &p)
+void CollDetect::SetSplit (const std::vector<CollSplit> &p, const std::vector<uint32_t> &spawned)
 {
-	m_split.clear ();
-	for (const auto &x : p) m_split.push_back ({ std::min (x.first, x.second), std::max (x.first, x.second) });
-	std::sort (m_split.begin (), m_split.end ());
-	m_split.erase (std::unique (m_split.begin (), m_split.end ()), m_split.end ());
+	m_split = p;
+	for (CollSplit &x : m_split) if (x.a > x.b) std::swap (x.a, x.b);
+	std::sort (m_split.begin (), m_split.end (), [] (const CollSplit &x, const CollSplit &y) { return x.a != y.a ? x.a < y.a : x.b < y.b; });
+	m_spawned = spawned;
+	std::sort (m_spawned.begin (), m_spawned.end ());
+	m_spawned.erase (std::unique (m_spawned.begin (), m_spawned.end ()), m_spawned.end ());
 }
 
 void CollDetect::SetNoPair (const std::vector<std::pair<uint32_t, uint32_t>> &p)
