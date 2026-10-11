@@ -32,7 +32,9 @@ case $PM in # the system libraries deps.list names, as the launcher asks for the
 		dpkg --add-architecture i386 && apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq libx11-6:i386 >/dev/null 2>&1 || echo "note: no i386 packages" ;; # multi-arch: the launcher's installed check sees one line per architecture
 	dnf) dnf -y -q install $(want rpm) >/dev/null 2>&1 && ok "dnf installs the deps.list sonames" || bad "dnf install" ;;
 	zypper) zypper -q -n install $(want rpm) >/dev/null 2>&1 && ok "zypper installs the deps.list sonames" || bad "zypper install" ;;
-	pacman) pacman -S -q --noconfirm --needed $(want pacman) >/dev/null 2>&1 && ok "pacman installs the deps.list names" || bad "pacman install" ;;
+	pacman) m=$(pacman -T $(want pacman)) # as the launcher: only what is missing (CachyOS's zlib-ng-compat provides zlib and conflicts with the zlib package)
+		{ [ -z "$m" ] || pacman -S -q --noconfirm --needed $m >/dev/null 2>&1; } && ok "pacman installs what pacman -T reports missing" || bad "pacman install: $m"
+		pacman -S -q --noconfirm --needed apt >/dev/null 2>&1 && echo "note: Arch's apt and dpkg installed, as on some Arch systems" || echo "note: no apt package here" ;;
 esac
 nf=$(find . -type f \( -name '*.so*' -o -perm -u+x \) -exec sh -c 'head -c4 "$1" | grep -q ELF && LC_ALL=C ldd "$1" 2>&1 | sed "s|^|$1: |"' _ {} \; | awk '/not found/' | sort -u)
 [ -z "$nf" ] && ok "every library resolves" || bad "unresolved: $(echo "$nf" | head -5)"
