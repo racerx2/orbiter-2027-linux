@@ -505,6 +505,49 @@ static void SetFill (QWidget *w, const QColor &col)
 }
 
 // creates one control; r is its rectangle in pixels (may be adjusted), prev the control created before it
+// not upstream: the bundled Qt has no desktop style, so it draws with Fusion, whose check box and radio frame (Window darker 140) vanishes into Base on a dark palette
+static bool DrawVisibleIndicator (const QStyle *base, QStyle::PrimitiveElement pe, const QStyleOption *opt, QPainter *p, const QWidget *w)
+{
+	if (pe != QStyle::PE_IndicatorCheckBox && pe != QStyle::PE_IndicatorRadioButton) return false;
+	if (!base || base->name().compare ("fusion", Qt::CaseInsensitive) || opt->palette.color (QPalette::Window).lightness() >= 128) return false;
+	QColor t = opt->palette.color (QPalette::Text), b = opt->palette.color (QPalette::Base);
+	QColor frame = QColor ((t.red() + b.red()) / 2, (t.green() + b.green()) / 2, (t.blue() + b.blue()) / 2).lighter (140); // Fusion darkens it by 140: mid-grey
+	if (const QStyleOptionButton *bo = qstyleoption_cast<const QStyleOptionButton*> (opt)) {
+		QStyleOptionButton o (*bo);
+		o.palette.setColor (QPalette::Window, frame);
+		base->drawPrimitive (pe, &o, p, w);
+	} else {
+		QStyleOption o (*opt);
+		o.palette.setColor (QPalette::Window, frame);
+		base->drawPrimitive (pe, &o, p, w);
+	}
+	return true;
+}
+
+// not upstream: the application style when Qt runs on Fusion
+class IndicatorStyle: public QProxyStyle {
+public:
+	using QProxyStyle::QProxyStyle;
+	void drawPrimitive (PrimitiveElement pe, const QStyleOption *opt, QPainter *p, const QWidget *w) const override
+	{
+		if (!DrawVisibleIndicator (baseStyle(), pe, opt, p, w)) QProxyStyle::drawPrimitive (pe, opt, p, w);
+	}
+};
+
+void UseVisibleIndicators ()
+{
+	if (dynamic_cast<IndicatorStyle*> (QApplication::style()) || QApplication::style()->name().compare ("fusion", Qt::CaseInsensitive)) return;
+	QApplication::setStyle (new IndicatorStyle (QStyleFactory::create ("fusion")));
+}
+
+// the QStyleFactory key of the application style (a proxy has no name of its own)
+static QString AppStyleKey ()
+{
+	QStyle *s = QApplication::style();
+	const QProxyStyle *ps = qobject_cast<const QProxyStyle*> (s);
+	return (ps && s->name().isEmpty() && ps->baseStyle() ? ps->baseStyle()->name() : s->name());
+}
+
 // a Win32 tree view without TVS_FULLROWSELECT highlights the selected item's label only, not its icon or indent
 class TreeLabelStyle: public QProxyStyle {
 public:
@@ -516,6 +559,7 @@ public:
 	}
 	void drawPrimitive (PrimitiveElement pe, const QStyleOption *opt, QPainter *p, const QWidget *w) const override
 	{
+		if (DrawVisibleIndicator (baseStyle(), pe, opt, p, w)) return;
 		const QStyleOptionViewItem *vo = qstyleoption_cast<const QStyleOptionViewItem*> (opt);
 		if (pe != PE_PanelItemViewItem || !vo || !(vo->state & State_Selected)) {
 			QProxyStyle::drawPrimitive (pe, opt, p, w);
@@ -699,7 +743,7 @@ static QWidget *CreateControl (const RESCONTROL *c, QWidget *dlg, void *hModule,
 			tv->setHorizontalScrollMode (QAbstractItemView::ScrollPerPixel);
 		}
 		if (!(st & TVS_FULLROWSELECT)) {
-			QProxyStyle *ls = new TreeLabelStyle (QStyleFactory::create (QApplication::style()->name()));
+			QProxyStyle *ls = new TreeLabelStyle (QStyleFactory::create (AppStyleKey()));
 			ls->setParent (tv);
 			tv->setStyle (ls);
 		}

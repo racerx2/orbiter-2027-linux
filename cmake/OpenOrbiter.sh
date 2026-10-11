@@ -122,6 +122,13 @@ as_root() {
 }
 
 PM="${OB_LAUNCHER_PM:-}"
+if [ -z "$PM" ]; then # the one whose database has the C library: Arch's repositories also ship apt and dpkg
+    if command -v dpkg-query >/dev/null && command -v apt-get >/dev/null && dpkg-query -W -f='${db:Status-Abbrev}' libc6 2>/dev/null | grep -q '^ii'; then PM=apt
+    elif command -v rpm >/dev/null && rpm -q glibc >/dev/null 2>&1 && command -v dnf >/dev/null; then PM=dnf
+    elif command -v rpm >/dev/null && rpm -q glibc >/dev/null 2>&1 && command -v zypper >/dev/null; then PM=zypper
+    elif command -v pacman >/dev/null && pacman -Q glibc >/dev/null 2>&1; then PM=pacman
+    fi
+fi
 if [ -z "$PM" ]; then
     if command -v apt-get >/dev/null && command -v dpkg-query >/dev/null; then PM=apt
     elif command -v dnf >/dev/null; then PM=dnf
