@@ -862,6 +862,46 @@ TEST_CASE("U13 entry events, GRACE scopes and supports", "[colldetect][U13]")
 		CHECK (partial >= 1);
 		CHECK (prev.empty ());
 	}
+	SECTION("etsep: a split pair runs no query while it separates at the joint; clear ends it, so does a CG distance that stops growing") {
+		for (int mode : { 0, 1, 2 }) {                             // 0 separating, 1 not separating, 2 a landed side (no split scope)
+			CollDetect d;
+			std::vector<CollBody> bs;
+			bs.push_back (Still (1, Vector (), h, mode == 2 ? COLLB_LANDED : COLLB_DYNAMIC)); AddPart (bs.back (), box, VKey (1));
+			bs.push_back (Still (2, Vector (0, 0, 1.02), h)); AddPart (bs.back (), box, VKey (2));
+			if (mode == 0) bs[1].m.c1 = Vector (0, 0, 1.025);
+			bs[0].entry = COLLE_MEMBERS; bs[1].entry = COLLE_NEW;
+			d.SetSplit ({ { 2u, 1u } });
+			std::vector<CollPairResult> res;
+			Frame (d, CollParams (), h, bs, res);
+			const CollPairEntry *e = d.Pairs ().Find (VKey (1), VKey (2));
+			int pts = 0;
+			for (const CollPairResult &r : res) pts += r.npt;
+			CAPTURE (mode, pts, res.size ());
+			if (mode != 0) {                                       // as before: touching pair RESTING
+				REQUIRE (res.size () == 1);
+				CHECK (res[0].kind == COLL_RESTING);
+				CHECK ((!e || !e->split));
+				continue;
+			}
+			REQUIRE (e);
+			CHECK (e->split);
+			CHECK (pts == 0);
+			d.SetSplit ({});
+			bs[0].entry = bs[1].entry = 0;
+			double z = 1.025;
+			int f = 0;
+			for (; f < 40 && e->split; f++) {
+				bs[1].m.c0 = Vector (0, 0, z); z += 0.005; bs[1].m.c1 = Vector (0, 0, z);
+				Frame (d, CollParams (), h, bs, res);
+				for (const CollPairResult &r : res) CHECK (r.npt == 0);
+				e = d.Pairs ().Find (VKey (1), VKey (2));
+				REQUIRE (e);
+				if (!e->split) CHECK (z - 1.0 - 2.0*COLL_SKIN_DEFAULT >= COLL_S_REL - 1e-9);   // ends once clear at t1
+				else CHECK (z - 1.0 - 2.0*COLL_SKIN_DEFAULT < COLL_S_REL + 0.005 + 1e-9);
+			}
+			CHECK (!e->split);
+		}
+	}
 	SECTION("supports: no GRACE, SUPPORT and INTERSECT, stored normal, SupportDist, wildcard, clear") {
 		const CollGeom *roof = Geom (BoxM (Vector (3, 3, 0.5)));
 		auto Scene = [&] (double z, uint16_t ev, std::vector<CollBody> &bs) {

@@ -638,6 +638,7 @@ struct CollDetect::Impl {
 		CollDetect &d = *cx.d;
 		for (PP &q : cx.pp) {
 			CollPairEntry *e = d.m_store.Find (q.key.first, q.key.second);
+			if (e && e->split) q.culled = true;                     // etsep: a split pair still at its joint runs no query
 			q.grace = (e && !e->grace.empty ()) ? &e->grace : nullptr;
 			q.front = nullptr;
 			if (q.grace) cx.flags |= COLLF_GRACE;
@@ -1707,11 +1708,74 @@ struct CollDetect::Impl {
 		}
 	}
 
+	// etsep: two dynamic bodies that were one assembly last frame; their joint surfaces touch, cross and interlock
+	static bool SplitPair (const CollDetect &d, const CollBody &A, const CollBody &B)
+	{
+		if (d.m_split.empty () || A.kind != COLLB_DYNAMIC || B.kind != COLLB_DYNAMIC) return false;
+		return std::binary_search (d.m_split.begin (), d.m_split.end (), std::make_pair (std::min (A.id, B.id), std::max (A.id, B.id)));
+	}
+
+	// crossing leaf pairs of owner group g at the current pose join its GRACE scope
+	static void ScopeRaw (Ctx &cx, size_t g, CollPairEntry &e)
+	{
+		std::vector<Raw> raws;
+		for (size_t k = cx.grp[g]; k < cx.grp[g + 1]; k++) {
+			size_t i = cx.ord[k];
+			if (!cx.pp[i].culled && !cx.pp[i].support) Cutoff (cx, i, 0.0, Q_RAWX, raws, raws.size () + COLL_ENTRY_RAW_MAX, nullptr);
+		}
+		if (raws.empty ()) return;
+		bool fresh = e.grace.empty ();
+		for (const Raw &w : raws) e.grace.push_back (LeafKey (cx, cx.pp[w.k], w.la, w.lb));
+		std::sort (e.grace.begin (), e.grace.end ());
+		e.grace.erase (std::unique (e.grace.begin (), e.grace.end ()), e.grace.end ());
+		if (fresh) { e.graceAge = 0.0; e.graceLogged = false; }
+	}
+
+	// etsep: a split owner pair stays out of every query while the CG distance grows and a triangle pair is within skins + s_rel at t1;
+	// clear ends it; a CG distance that stops growing ends it too, and the crossing leaf pairs then get a GRACE scope
+	static void SplitUpdate (Ctx &cx)
+	{
+		CollDetect &d = *cx.d;
+		double d0 = (cx.B->m.c0 - cx.A->m.c0).length (), d1 = (cx.B->m.c1 - cx.A->m.c1).length ();
+		std::vector<Raw> raws;
+		for (size_t g = 0; g + 1 < cx.grp.size (); g++) {
+			const OwnerPair &key = cx.pp[cx.ord[cx.grp[g]]].key;
+			CollPairEntry *e = d.m_store.Find (key.first, key.second);
+			if (!e || !e->split) continue;
+			e->splitFrame = d.m_frame;
+			bool clear = true;
+			SetPose (cx, POSE_T1, 1.0);
+			for (size_t k = cx.grp[g]; k < cx.grp[g + 1] && clear; k++) {
+				size_t i = cx.ord[k];
+				if (cx.pp[i].culled || cx.pp[i].support) continue;
+				raws.clear ();
+				Cutoff (cx, i, d.m_prm.sRel, Q_FIRST, raws, 1, nullptr);
+				if (!raws.empty ()) clear = false;
+			}
+			if (!clear && d1 > d0) continue;
+			e->split = false;
+			CollLog (COLLLOG_INFO, "Collision: split scope end (%s), owners %u/%d.%d.%d - %u/%d.%d.%d after %.3g s", clear ? "clear" : "not separating",
+				e->a.id, e->a.planet, e->a.base, e->a.obj, e->b.id, e->b.planet, e->b.base, e->b.obj, e->splitAge);
+			if (clear) continue;
+			SetPose (cx, POSE_T0, 0.0);
+			ScopeRaw (cx, g, *e);
+		}
+	}
+
 	// entry check (3.2): raw intersection at the reference pose starts or extends GRACE; not supports
 	static void EntryCheck (Ctx &cx, int mode)
 	{
 		CollDetect &d = *cx.d;
 		SetPose (cx, mode, mode == POSE_T1 ? 1.0 : 0.0);
+		if (SplitPair (d, *cx.A, *cx.B))
+			for (size_t g = 0; g + 1 < cx.grp.size (); g++) {
+				const OwnerPair &key = cx.pp[cx.ord[cx.grp[g]]].key;
+				CollPairEntry &e = d.m_store.Get (key.first, key.second);
+				if (e.split) continue;
+				e.split = true; e.splitFrame = d.m_frame; e.splitAge = 0.0;
+				CollLog (COLLLOG_INFO, "Collision: split scope start, owners %u/%d.%d.%d - %u/%d.%d.%d (entry 0x%x)",
+					e.a.id, e.a.planet, e.a.base, e.a.obj, e.b.id, e.b.planet, e.b.base, e.b.obj, (unsigned)(cx.A->entry | cx.B->entry));
+			}
 		std::vector<Raw> raws;
 		for (size_t k = 0; k < cx.pp.size (); k++)
 			if (!cx.pp[k].culled && !cx.pp[k].support) Cutoff (cx, k, 0.0, Q_RAWX, raws, raws.size () + COLL_ENTRY_RAW_MAX, nullptr);
@@ -1741,6 +1805,15 @@ struct CollDetect::Impl {
 	{
 		for (size_t ei = 0; ei < d.m_store.Size (); ei++) {
 			CollPairEntry &e = EntryAt (d.m_store, ei);
+			if (e.split) {                                          // etsep: not a candidate this frame (apart), or too old
+				e.splitAge += d.m_h;
+				bool apart = e.splitFrame != d.m_frame, old = e.splitAge > COLL_GRACE_LOG_AGE;
+				if (apart || old) {
+					e.split = false;
+					CollLog (old ? COLLLOG_WARN : COLLLOG_INFO, "Collision: split scope end (%s), owners %u/%d.%d.%d - %u/%d.%d.%d after %.3g s", apart ? "apart" : "too old",
+						e.a.id, e.a.planet, e.a.base, e.a.obj, e.b.id, e.b.planet, e.b.base, e.b.obj, e.splitAge);
+				}
+			}
 			if (e.grace.empty ()) continue;
 			e.graceAge += d.m_h;
 			if (e.graceAge > COLL_GRACE_LOG_AGE && !e.graceLogged) {
@@ -1817,6 +1890,7 @@ struct CollDetect::Impl {
 		bool jump = cx.A->jump1 || cx.B->jump1;
 		if ((cx.A->entry | cx.B->entry) || jump) EntryCheck (cx, jump ? POSE_T1 : POSE_T0);
 		if (jump || cx.pp.empty ()) { st.bvPairs += (int)cx.bv; st.triPairs += (int)cx.tt; return; }
+		SplitUpdate (cx);
 		Bind (cx, true);
 		SetPose (cx, POSE_T0, 0.0);
 		// touching test at the exact t0 poses (5.7 step 1), with front caches (5.6)
@@ -2196,6 +2270,14 @@ bool CollDetect::Embedded (const CollEmbedQuery &q)
 	auto it = std::lower_bound (e.embed.begin (), e.embed.end (), q.key, [] (const std::pair<uint64_t, uint8_t> &x, uint64_t k) { return x.first < k; });
 	e.embed.insert (it, { q.key, (uint8_t)(hit ? 1 : 0) });
 	return hit;
+}
+
+void CollDetect::SetSplit (const std::vector<std::pair<uint32_t, uint32_t>> &p)
+{
+	m_split.clear ();
+	for (const auto &x : p) m_split.push_back ({ std::min (x.first, x.second), std::max (x.first, x.second) });
+	std::sort (m_split.begin (), m_split.end ());
+	m_split.erase (std::unique (m_split.begin (), m_split.end ()), m_split.end ());
 }
 
 void CollDetect::SetNoPair (const std::vector<std::pair<uint32_t, uint32_t>> &p)
