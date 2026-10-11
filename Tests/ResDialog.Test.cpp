@@ -15,6 +15,9 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QToolButton>
+#include <QProxyStyle>
+#include <QStyleFactory>
+#include <QTreeWidget>
 #include <QKeyEvent>
 #include <QPlainTextEdit>
 #include <cmath>
@@ -45,6 +48,72 @@ static QApplication &App ()
 	if (qEnvironmentVariableIsEmpty ("QT_QPA_PLATFORM")) qputenv ("QT_QPA_PLATFORM", "offscreen");
 	static QApplication app (argc, argv);
 	return app;
+}
+
+// the largest lightness difference from Base in a widget without text: the indicator's frame, if it shows
+static int FrameContrast (QWidget *w, const QColor &base)
+{
+	w->resize (w->sizeHint().expandedTo (QSize (24, 24)));
+	QImage img = w->grab().toImage();
+	int best = 0;
+	for (int y = 0; y < img.height(); y++)
+		for (int x = 0; x < img.width(); x++)
+			best = std::max (best, std::abs (QColor (img.pixel (x, y)).lightness() - base.lightness()));
+	return best;
+}
+
+static QPalette DarkPalette ()
+{
+	QPalette p; // Breeze Dark
+	p.setColor (QPalette::Window, QColor ("#202326")); p.setColor (QPalette::WindowText, QColor ("#fcfcfc"));
+	p.setColor (QPalette::Base, QColor ("#141618")); p.setColor (QPalette::Text, QColor ("#fcfcfc"));
+	p.setColor (QPalette::Button, QColor ("#292c30")); p.setColor (QPalette::ButtonText, QColor ("#fcfcfc"));
+	return p;
+}
+
+TEST_CASE("check boxes and radio buttons keep a visible frame on Fusion with a dark palette", "[resdialog]")
+{
+	App();
+	QString key = QApplication::style()->name();
+	QPalette dark = DarkPalette(), light = QApplication::style()->standardPalette();
+	auto contrast = [&](QWidget *w, const QPalette &pal) { w->setPalette (pal); int c = FrameContrast (w, pal.color (QPalette::Base)); delete w; return c; };
+	auto image = [&](QWidget *w, const QPalette &pal) { w->setPalette (pal); w->resize (24, 24); QImage i = w->grab().toImage(); delete w; return i; };
+	QApplication::setStyle ("fusion");
+	int cbBefore = contrast (new QCheckBox, dark), rbBefore = contrast (new QRadioButton, dark);
+	QImage lightBefore = image (new QCheckBox, light);
+	UseVisibleIndicators();
+	QStyle *proxy = QApplication::style();
+	REQUIRE(qobject_cast<QProxyStyle*> (proxy));
+	UseVisibleIndicators(); // once only
+	REQUIRE(QApplication::style() == proxy);
+	int cbAfter = contrast (new QCheckBox, dark), rbAfter = contrast (new QRadioButton, dark);
+	QImage lightAfter = image (new QCheckBox, light);
+	INFO("check box " << cbBefore << " -> " << cbAfter << ", radio " << rbBefore << " -> " << rbAfter);
+	REQUIRE(cbAfter > 60); // Qt 6.8 Fusion: about 10 before
+	REQUIRE(cbAfter >= cbBefore);
+	REQUIRE(rbAfter > 60);
+	REQUIRE(lightAfter == lightBefore); // light palettes draw as before
+
+	// the Modules tab tree (TVS_CHECKBOXES, its own TreeLabelStyle): an unchecked module shows its box
+	QWidget *page = oapiCreateResDialog (nullptr, IDD_PAGE_MOD, nullptr);
+	REQUIRE(page);
+	QTreeWidget *tree = DlgItem<QTreeWidget> (page, IDC_MOD_TREE);
+	REQUIRE(tree);
+	REQUIRE(tree->style() != QApplication::style()); // TreeLabelStyle, made from the proxy's base style
+	page->setPalette (dark);
+	QTreeWidgetItem *it = new QTreeWidgetItem (tree);
+	it->setFlags (it->flags() | Qt::ItemIsUserCheckable);
+	it->setCheckState (0, Qt::Unchecked);
+	tree->resize (120, 60);
+	QImage img = tree->viewport()->grab().toImage();
+	QRect r = tree->visualItemRect (it).intersected (img.rect());
+	int best = 0;
+	for (int y = r.top(); y <= r.bottom(); y++)
+		for (int x = r.left(); x <= r.right(); x++)
+			best = std::max (best, std::abs (QColor (img.pixel (x, y)).lightness() - dark.color (QPalette::Base).lightness()));
+	REQUIRE(best > 60);
+	delete page;
+	QApplication::setStyle (QStyleFactory::create (key));
 }
 
 TEST_CASE("Orbiter.rc compiles to a resource table", "[resdialog]")

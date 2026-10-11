@@ -182,6 +182,7 @@ extern "C" __attribute__((visibility("default"))) double acos (double x) noexcep
 int main (int argc, char *argv[])
 {
 	QApplication app (argc, argv); // the Launchpad and the dialogs are Qt widgets
+	UseVisibleIndicators (); // not upstream: the bundled Qt draws with Fusion
 	app.setQuitOnLastWindowClosed (false); // WM_QUIT comes only from the Launchpad (PostQuitMessage)
 	setlocale (LC_ALL, "C"); // QApplication took the environment's locale; Orbiter parses numbers in the C locale, like the MSVC CRT
 
