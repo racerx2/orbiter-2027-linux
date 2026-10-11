@@ -33,8 +33,8 @@ const PbrEnv *PbrRender::curEnv = NULL;
 PbrRender::Phase PbrRender::phase = PbrRender::PHASE_ALL;
 VkTex *PbrRender::sceneCopy = NULL;
 VkSurf *PbrRender::copySrc = NULL;
-float PbrRender::dirty[4] = { 0, 0, 0, 0 };
-bool PbrRender::dirtyAny = false;
+float PbrRender::dirty[4][4] = {};
+int PbrRender::nDirty = 0;
 int PbrRender::refreshes = 0;
 static const int MaxRefresh = 8; // per deferred pass (design-pbr-nested-glass 3)
 VkTex *PbrRender::lut = NULL;
@@ -141,28 +141,37 @@ void PbrRender::SetSceneCopy (VkTex *t, VkSurf *src)
 {
 	sceneCopy = t;
 	copySrc = t ? src : NULL;
-	dirtyAny = false;
+	nDirty = 0;
 	refreshes = 0;
 }
 
 void PbrRender::NoteGlassDrawn (const float r[4])
 {
 	if (!sceneCopy) return;
-	if (!dirtyAny) {
-		std::copy (r, r + 4, dirty);
-		dirtyAny = true;
+	if (nDirty < 4) { // up to 4 rects; then r joins the one that grows least
+		std::copy (r, r + 4, dirty[nDirty++]);
 		return;
 	}
-	dirty[0] = std::min (dirty[0], r[0]);
-	dirty[1] = std::min (dirty[1], r[1]);
-	dirty[2] = std::max (dirty[2], r[2]);
-	dirty[3] = std::max (dirty[3], r[3]);
+	int best = 0;
+	float grow = 1e30f;
+	for (int i = 0; i < 4; i++) {
+		const float *d = dirty[i];
+		float u = (std::max (d[2], r[2]) - std::min (d[0], r[0])) * (std::max (d[3], r[3]) - std::min (d[1], r[1])) - (d[2] - d[0]) * (d[3] - d[1]);
+		if (u < grow) { grow = u; best = i; }
+	}
+	float *d = dirty[best];
+	d[0] = std::min (d[0], r[0]); d[1] = std::min (d[1], r[1]);
+	d[2] = std::max (d[2], r[2]); d[3] = std::max (d[3], r[3]);
 }
 
 bool PbrRender::WantRefresh (const float r[4])
 {
-	return phase == PHASE_TRANSPARENT && sceneCopy && copySrc && dirtyAny && refreshes < MaxRefresh
-		&& r[0] < dirty[2] && dirty[0] < r[2] && r[1] < dirty[3] && dirty[1] < r[3];
+	if (phase != PHASE_TRANSPARENT || !sceneCopy || !copySrc || refreshes >= MaxRefresh) return false;
+	for (int i = 0; i < nDirty; i++) {
+		const float *d = dirty[i];
+		if (r[0] < d[2] && d[0] < r[2] && r[1] < d[3] && d[1] < r[3]) return true;
+	}
+	return false;
 }
 
 void PbrRender::RefreshSceneCopy ()
@@ -173,8 +182,8 @@ void PbrRender::RefreshSceneCopy ()
 		return;
 	}
 	VkSurf dst (sceneCopy, 0);
-	dev->StretchRect (rt, NULL, &dst, NULL, VK_FILTER_LINEAR);
-	dirtyAny = false;
+	dev->StretchRect (rt, NULL, &dst, NULL, VK_FILTER_LINEAR); // whole target: the copy matches it again, not only the noted rects
+	nDirty = 0;
 	refreshes++;
 }
 

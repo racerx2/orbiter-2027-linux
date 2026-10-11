@@ -70,8 +70,8 @@ private:
 	static Phase phase;
 	static VkTex *sceneCopy;
 	static VkSurf *copySrc;
-	static float dirty[4];
-	static bool dirtyAny;
+	static float dirty[4][4];
+	static int nDirty;
 	static int refreshes;
 	static VkTex *lut;
 	static bool lutOk;
