@@ -21,6 +21,7 @@
 
 static QString MB (uint64_t b)
 {
+	if (b >= 1073741824) return QString::number (b / 1073741824.0, 'f', 1) + " GB";
 	return QString::number (b / 1048576.0, 'f', b < 10485760 ? 1 : 0) + " MB";
 }
 
@@ -57,7 +58,7 @@ bool TexInstallCheck (QWidget *parent, Config *cfg)
 	for (const std::string &b : bodies) {
 		QStringList layers;
 		uint64_t sz = 0;
-		for (const TexPack *p : by[b]) { layers << QString::fromStdString (p->layer); sz += p->zipsize; }
+		for (const TexPack *p : by[b]) { layers << QString::fromStdString (p->layer); sz += p->zipsize - TexPackResume (texdir, *p); }
 		QCheckBox *c = new QCheckBox (QString ("%1: %2 (%3)").arg (QString::fromStdString (b), layers.join (", "), MB (sz)), box);
 		c->setChecked (true);
 		bl->addWidget (c);
@@ -85,20 +86,26 @@ bool TexInstallCheck (QWidget *parent, Config *cfg)
 			if (c.first->isChecked()) v.insert (v.end(), by[c.second].begin(), by[c.second].end());
 		return v;
 	};
-	uint64_t need = 0, avail = 0; // disk: every unpacked layer plus the largest zip
+	uint64_t need = 0, avail = 0; // disk: every unpacked layer plus the largest download held at once
 	bool known = false;
 	auto update = [&]() {
-		uint64_t zs = 0, rs = 0, zmax = 0;
-		for (const TexPack *p : selected()) { zs += p->zipsize; rs += p->rawsize; zmax = std::max (zmax, p->zipsize); }
+		uint64_t zs = 0, rs = 0, spare = 0;
+		std::vector<const TexPack*> sel = selected();
+		for (const TexPack *p : sel) {
+			uint64_t kept = TexPackResume (texdir, *p);
+			zs += p->zipsize - kept;
+			rs += p->rawsize - kept;
+			spare = std::max (spare, TexPackSpare (*p));
+		}
 		std::error_code ec;
 		std::filesystem::space_info sp = std::filesystem::space (oapiResolvePath (texdir.c_str()), ec);
-		need = rs + zmax;
+		need = rs + spare;
 		known = !ec;
 		avail = known ? sp.available : 0;
 		QString t = QString ("Download: %1, disk space needed: %2").arg (MB (zs), MB (need));
 		if (known) t += QString (", free: %1").arg (MB (avail));
 		info->setText (t);
-		dl->setEnabled (zs > 0);
+		dl->setEnabled (!sel.empty());
 	};
 	for (auto &c : checks) QObject::connect (c.first, &QCheckBox::toggled, update);
 	update ();
@@ -127,7 +134,12 @@ bool TexInstallCheck (QWidget *parent, Config *cfg)
 	}
 
 	uint64_t total = 0, base = 0;
-	for (const TexPack *p : todo) total += p->zipsize + p->rawsize;
+	std::vector<uint64_t> kept; // archive bytes from an earlier try
+	for (const TexPack *p : todo) {
+		kept.push_back (TexPackResume (texdir, *p));
+		total += p->zipsize - kept.back() + (p->parts.empty() ? p->rawsize : 0);
+	}
+	total = std::max<uint64_t> (total, 1);
 	QProgressDialog pd ("", "Cancel", 0, 1000, parent);
 	pd.setWindowTitle ("Installing planet textures");
 	pd.setWindowModality (Qt::WindowModal);
@@ -139,20 +151,22 @@ bool TexInstallCheck (QWidget *parent, Config *cfg)
 	QStringList failed;
 	int n = 0, installed = 0;
 	bool cancelled = false;
-	for (const TexPack *p : todo) {
+	for (size_t i = 0; i < todo.size(); i++) {
+		const TexPack *p = todo[i];
 		n++;
 		QString name = QString::fromStdString (p->zip);
-		auto prog = [&](const char *what, uint64_t ofs, uint64_t done, uint64_t size) {
-			pd.setLabelText (QString ("%1 %2 (%3 of %4)").arg (what, name).arg (n).arg (todo.size()));
+		uint64_t k0 = kept[i], dsize = p->zipsize - k0;
+		auto prog = [&](const char *what, uint64_t ofs, uint64_t done, uint64_t size, uint64_t shown, uint64_t of) {
+			pd.setLabelText (QString ("%1 %2 (%3 of %4)\n%5 of %6").arg (what, name).arg (n).arg (todo.size()).arg (MB (shown), MB (of)));
 			pd.setValue ((int)((base + ofs + std::min (done, size)) * 1000 / total));
 			QCoreApplication::processEvents ();
 			return !pd.wasCanceled ();
 		};
 		std::string perr;
 		bool ok = TexPackInstall (list, *p, texdir,
-			[&](uint64_t d) { return prog ("Downloading", 0, d, p->zipsize); },
-			[&](uint64_t d) { return prog ("Installing", p->zipsize, d, p->rawsize); }, perr);
-		base += p->zipsize + p->rawsize;
+			[&](uint64_t d) { return prog ("Downloading", 0, d > k0 ? d - k0 : 0, dsize, d, p->zipsize); },
+			[&](uint64_t d) { return prog ("Installing", dsize, d, p->rawsize, d, p->rawsize); }, perr);
+		base += dsize + (p->parts.empty() ? p->rawsize : 0);
 		if (ok) {
 			installed++;
 			LOGOUT ("Installed planet textures %s", p->zip.c_str());
@@ -164,7 +178,7 @@ bool TexInstallCheck (QWidget *parent, Config *cfg)
 	}
 	pd.close ();
 	if (cancelled) {
-		QMessageBox::information (parent, "Planet textures", QString ("Installation cancelled.\n%1 of %2 packs were installed.")
+		QMessageBox::information (parent, "Planet textures", QString ("Installation cancelled.\n%1 of %2 packs were installed.\nA cancelled archive download carries on where it stopped next time.")
 			.arg (installed).arg (todo.size()));
 		return false;
 	}
