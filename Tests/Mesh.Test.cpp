@@ -12,6 +12,8 @@ Orbiter *g_pOrbiter = nullptr;
 char *Config::MeshPath (const char *name) { static char p[256]; strncpy (p, name, 255); return p; }
 DWORDLONG Str2Crc (const char *str) { return 0; }
 void LogOut_Error (const char *func, const char *file, int line, const char *msg, ...) {}
+void LogOut_Warning (const char *func, const char *file, int line, const char *msg, ...) {} // glTF meshes
+void LogOut (const char *msg, ...) {}
 
 static const char *tri3 =
 	"0 0 0 0 0 1 0 0\n"

@@ -1347,6 +1347,7 @@ bool CollBaseObjGeometry (CollBaseObjDef &o, CollSdk &sdk, const CollDirs &dirs,
 	Vector rel (o.pos.x, o.pos.y + yofs, o.pos.z);
 	if (!strcasecmp (o.type.c_str (), "MESH")) {
 		CollRestMesh m;
+		if (CollIsGltfName (o.meshFile)) { warn.push_back ("MESH " + o.meshFile + ": glTF base objects have no collision geometry"); return false; } // not upstream
 		std::string text, path = CollMeshPath (dirs, o.meshFile, ".msh");
 		if (path.empty () || !sdk.ReadText (sdk.Resolve (path), text) || !CollParseMsh (text, o.meshFile.c_str (), m)) { warn.push_back ("MESH file not found: " + o.meshFile); return false; }
 		Vector mn (1e30, 1e30, 1e30), mx (-1e30, -1e30, -1e30);

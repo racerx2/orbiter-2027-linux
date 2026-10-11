@@ -108,6 +108,17 @@ SURFHANDLE NatLoadSurface(const char* file, DWORD flags, bool bPath)
 
 	NatCheckFlags(flags);
 
+	if (VkIsGltfImage(file)) { // not upstream: an image inside a glTF mesh (claude/design-gltf-loader.md 4)
+		VkPixels px;
+		if (!VkLoadGltfImage(file, px)) { oapiWriteLogV("FAILED: NatLoadSurface(%s)", file); return NULL; }
+		if (Config->TextureMips != 0 && px.levels == 1) { VkPixels cv; if (VkConvertPixels(px, cv, px.fmt, px.swz, 0, 0, 0)) px = std::move(cv); }
+		if (!(pTex = VkCreateTexture(g_client->GetDevice(), px, NatUsageBase))) { oapiWriteLogV("FAILED: NatLoadSurface(%s)", file); return NULL; }
+		pNat = new SurfNative(pTex, flags);
+		pNat->SetName(file);
+		LogBlu("TextureLoaded [%s] GLTF Mips=%u (%u,%u) Flags=0x%X, %s", file, pTex->levels, pTex->w, pTex->h, flags, _PTR(pNat));
+		return SURFHANDLE(pNat);
+	}
+
 	char path[MAX_PATH];
 
 	if (bPath) strcpy(path, file);
@@ -960,6 +971,7 @@ bool SurfNative::DeClone()
 void SurfNative::Reload()
 {	
 	if (IsClone() || (Flags & ~(OAPISURFACE_SHARED | OAPISURFACE_MAPS)) != OAPISURFACE_TEXTURE) return; // not upstream: file textures only (upstream's == test missed SHARED, MAPS)
+	if (VkIsGltfImage(name)) return; // not upstream: an image inside a glTF mesh has no texture file
 
 	char path[MAX_PATH];
 

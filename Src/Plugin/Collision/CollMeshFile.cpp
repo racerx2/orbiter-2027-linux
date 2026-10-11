@@ -389,6 +389,12 @@ bool CollItemBool (const std::string &text, const char *label, bool &val)
 	return false;
 }
 
+bool CollIsGltfName (const std::string &name)
+{
+	auto ends = [&](const char *e) { size_t n = strlen (e); return name.size () > n && !strcasecmp (name.c_str () + name.size () - n, e); };
+	return ends (".glb") || ends (".gltf");
+}
+
 std::string CollMeshPath (const CollDirs &d, const std::string &name, const char *ext)
 {
 	std::string p = d.meshDir + name + ext;
@@ -437,6 +443,11 @@ CollMeshCache::NameMesh CollMeshCache::ByName (CollSdk &sdk, const CollDirs &d, 
 	if (it != rest.end ())
 		if (auto sp = it->second.lock ()) { r.rest = sp; r.present = presentOf[r.key]; return r; }
 	if (missing.count (r.key)) return r;
+	if (CollIsGltfName (name)) { // not upstream: the core reads glTF meshes; by name they get no collision geometry here (templates do)
+		missing.insert (r.key);
+		sdk.Log (1, ("Collision: glTF mesh loaded by name, no collision geometry: " + name).c_str ());
+		return r;
+	}
 	std::string path = CollMeshPath (d, name, ".msh");
 	std::string text;
 	if (path.empty () || !sdk.ReadText (sdk.Resolve (path), text)) {

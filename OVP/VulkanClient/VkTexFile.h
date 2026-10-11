@@ -45,6 +45,10 @@ bool VkGetImageInfoFromFile (const char *path, VkImageInfo *info);
 bool VkLoadPixels (const char *path, VkPixels &px);         // DDS as stored; other files as B8G8R8A8
 bool VkLoadPixelsFromMemory (const BYTE *buf, size_t n, VkPixels &px);
 
+// not upstream: image of a glTF mesh, "@gltf:<off>:<len>:<b64>:<sliceoff>:<slicelen>:<file>" (Src/Orbiter/GltfLoader.h)
+bool VkIsGltfImage (const char *name);
+bool VkLoadGltfImage (const char *name, VkPixels &px);
+
 // format, size and mip chain changes on the CPU (BCn decoded/encoded); w/h 0 keep the size, levels 0 = full chain
 bool VkConvertPixels (const VkPixels &in, VkPixels &out, VkFormat fmt, VkSwz swz, UINT w, UINT h, UINT levels);
 

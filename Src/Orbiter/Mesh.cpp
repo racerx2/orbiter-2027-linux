@@ -2,6 +2,7 @@
 // Licensed under the MIT License
 
 #include "Mesh.h"
+#include "GltfLoader.h" // not upstream
 #include <stdio.h>
 #include "D3dmath.h"
 #include "Orbiter.h"
@@ -118,6 +119,7 @@ void Mesh::Set (const Mesh &mesh)
 	}
 	SetName(mesh.GetName());
 	bModulateMatAlpha = mesh.bModulateMatAlpha;
+	pbr = mesh.pbr; // not upstream
 }
 
 Mesh::~Mesh ()
@@ -434,7 +436,20 @@ bool Mesh::DeleteMaterial (DWORD matidx)
 	delete []Mtrl;
 	Mtrl = tmp_Mtrl;
 	nMtrl--;
+	if (matidx < pbr.size()) pbr.erase (pbr.begin() + matidx); // not upstream
 	return true;
+}
+
+const char *Mesh::GetPbr (DWORD matidx) const
+{
+	return (matidx < nMtrl && matidx < pbr.size() && !pbr[matidx].empty()) ? pbr[matidx].c_str() : NULL;
+}
+
+void Mesh::SetPbr (DWORD matidx, const std::string &text)
+{
+	if (matidx >= nMtrl) return;
+	if (pbr.size() <= matidx) pbr.resize (matidx + 1);
+	pbr[matidx] = text;
 }
 
 void Mesh::Clear ()
@@ -456,6 +471,7 @@ void Mesh::Clear ()
 		Mtrl = NULL;
 		nMtrl = 0;
 	}
+	pbr.clear (); // not upstream
 	if (GrpVis) {
 		delete []GrpCnt;
 		GrpCnt = NULL;
@@ -1091,9 +1107,12 @@ const Mesh *MeshManager::LoadMesh (const char *fname, bool *firstload)
 		}
 	}
 	// not found, so load from file
-	ifstream ifs (oapiResolvePath(g_pOrbiter->MeshPath (fname)), ios::in);
 	Mesh *mesh = new Mesh; TRACENEW
-	ifs >> *mesh;
+	if (GltfIsName (fname)) LoadGltfMesh (fname, *mesh); // not upstream: glTF meshes
+	else {
+		ifstream ifs (oapiResolvePath(g_pOrbiter->MeshPath (fname)), ios::in);
+		ifs >> *mesh;
+	}
 	if (!mesh->nGroup()) { // load error
 		if (!fname[0]) LOGOUT_ERR ("Mesh file name not provided");
 		else LOGOUT_ERR ("Mesh not found: %s", g_pOrbiter->MeshPath (fname));
@@ -1124,6 +1143,11 @@ const Mesh *MeshManager::LoadMesh (const char *fname, bool *firstload)
 
 bool LoadMesh (const char *meshname, Mesh &mesh)
 {
+	if (GltfIsName (meshname)) { // not upstream: glTF meshes
+		if (!LoadGltfMesh (meshname, mesh)) return false;
+		mesh.SetName (meshname);
+		return true;
+	}
 	ifstream ifs (oapiResolvePath(g_pOrbiter->MeshPath (meshname)), ios::in);
 	ifs >> mesh;
 	if (ifs.good()) {
@@ -1134,6 +1158,42 @@ bool LoadMesh (const char *meshname, Mesh &mesh)
 		//g_pOrbiter->TerminateOnError ();
 		return false;
 	}
+}
+
+// not upstream: groups, materials, PBR lines and base colour textures of a glTF file (claude/design-gltf-loader.md 2, 3)
+bool LoadGltfMesh (const char *meshname, Mesh &mesh)
+{
+	mesh.Clear ();
+	std::string path = oapiResolvePath (g_pOrbiter->MeshPath (meshname));
+	GltfModel m;
+	std::string err;
+	if (!GltfRead (path, m, err)) {
+		LOGOUT_ERR ("glTF mesh %s: %s", meshname, err.c_str());
+		return false;
+	}
+	for (const auto &w : m.warnings) LOGOUT_WARN ("glTF mesh %s: %s", meshname, w.c_str());
+	for (auto &mt : m.materials) {
+		int i = mesh.AddMaterial (mt.mat);
+		mesh.SetPbr (i, mt.pbr);
+	}
+	oapi::GraphicsClient *gc = g_pOrbiter->GetGraphicsClient ();
+	std::vector<DWORD> tex (m.textures.size(), SPEC_DEFAULT);
+	for (size_t i = 0; i < m.textures.size(); i++) {
+		if (!gc) break;
+		SURFHANDLE h = gc->clbkLoadTexture (m.textures[i].c_str(), 8);
+		if (h) tex[i] = mesh.AddTexture (h);
+		else LOGOUT_WARN ("glTF mesh %s: image %d not loaded", meshname, (int)i);
+	}
+	for (const auto &g : m.groups) {
+		NTVERTEX *vtx = new NTVERTEX[g.vtx.size()]; TRACENEW
+		memcpy (vtx, g.vtx.data(), g.vtx.size() * sizeof (NTVERTEX));
+		WORD *idx = new WORD[g.idx.size()]; TRACENEW
+		memcpy (idx, g.idx.data(), g.idx.size() * sizeof (WORD));
+		mesh.AddGroup (vtx, (DWORD)g.vtx.size(), idx, (DWORD)g.idx.size(), g.mtrl, g.tex >= 0 ? tex[g.tex] : SPEC_DEFAULT);
+	}
+	mesh.Setup ();
+	LOGOUT ("glTF mesh %s: %d groups, %d materials, %d textures", meshname, (int)mesh.nGroup(), (int)mesh.nMaterial(), (int)mesh.nTexture());
+	return true;
 }
 
 

@@ -650,6 +650,26 @@ bool VkLoadPixels (const char *path, VkPixels &px)
 	return VkLoadPixelsFromMemory ((const BYTE *)b.constData(), b.size(), px);
 }
 
+bool VkIsGltfImage (const char *name)
+{
+	return name && !strncmp (name, "@gltf:", 6);
+}
+
+bool VkLoadGltfImage (const char *name, VkPixels &px)
+{
+	unsigned long long off, len, so, sl;
+	int b64 = 0, used = 0;
+	if (!VkIsGltfImage (name) || sscanf (name + 6, "%llu:%llu:%d:%llu:%llu:%n", &off, &len, &b64, &so, &sl, &used) != 5 || !used || !name[6 + used]) return false;
+	QFile f (QString::fromUtf8 (name + 6 + used));
+	if (!f.open (QIODevice::ReadOnly) || (unsigned long long)f.size() < off + len || !f.seek ((qint64)off)) return false;
+	QByteArray b = f.read ((qint64)len);
+	if ((unsigned long long)b.size() != len) return false;
+	if (b64) b = QByteArray::fromBase64 (b.replace ('\\', QByteArray ()), QByteArray::Base64Encoding); // JSON may write '/' as "\/"
+	if (so > (unsigned long long)b.size() || (sl && so + sl > (unsigned long long)b.size())) return false;
+	b = b.mid ((qsizetype)so, sl ? (qsizetype)sl : -1);
+	return VkLoadPixelsFromMemory ((const BYTE *)b.constData(), b.size(), px);
+}
+
 bool VkGetImageInfoFromFile (const char *path, VkImageInfo *info)
 {
 	QFile f (QString::fromUtf8 (path));

@@ -21,6 +21,7 @@
 #include "Dialogs.h"
 #include "resource.h"
 #include "Mesh.h"
+#include "GltfLoader.h" // not upstream: glTF meshes
 #include "MenuInfoBar.h"
 #include <zlib.h>
 #include "DrawAPI.h"
@@ -1381,8 +1382,12 @@ DLLEXPORT VISHANDLE *oapiObjectVisualPtr (OBJHANDLE hObject)
 
 DLLEXPORT MESHHANDLE oapiLoadMesh (const char *fname)
 {
-	ifstream ifs(oapiResolvePath(g_pOrbiter->MeshPath(fname)));
 	Mesh *mesh = new Mesh; TRACENEW
+	if (GltfIsName (fname)) { // not upstream: glTF meshes
+		if (LoadGltfMesh (fname, *mesh)) mesh->SetName (fname);
+		return (MESHHANDLE)mesh;
+	}
+	ifstream ifs(oapiResolvePath(g_pOrbiter->MeshPath(fname)));
 	ifs >> *mesh;
 	return (MESHHANDLE)mesh;
 }
@@ -1559,6 +1564,11 @@ DLLEXPORT DWORD oapiMeshMaterialCount (MESHHANDLE hMesh)
 DLLEXPORT MATERIAL *oapiMeshMaterial (MESHHANDLE hMesh, DWORD idx)
 {
 	return (MATERIAL*)(((Mesh*)hMesh)->GetMaterial (idx));
+}
+
+DLLEXPORT const char *oapiMeshMaterialPbr (MESHHANDLE hMesh, DWORD idx) // not upstream: glTF materials (design-gltf-loader 3)
+{
+	return hMesh ? ((Mesh*)hMesh)->GetPbr (idx) : NULL;
 }
 
 DLLEXPORT int oapiMeshMaterial (DEVMESHHANDLE hMesh, DWORD matidx, MATERIAL *mat)

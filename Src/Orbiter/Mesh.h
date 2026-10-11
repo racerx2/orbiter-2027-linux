@@ -12,6 +12,8 @@
 #define OAPI_IMPLEMENTATION
 // d3d.h/d3dtypes.h left out: the Direct3D 7 data types become the SDK's own (MATERIAL, FMATRIX4, float)
 #include <iostream>
+#include <string>
+#include <vector>
 #include "OrbiterAPI.h"
 #include "DrawAPI.h"
 
@@ -146,6 +148,10 @@ public:
 	// using that material are reset to material 0. Any group material
 	// indices > matidx are decremented to account for changed list
 
+	const char *GetPbr (DWORD matidx) const;
+	void SetPbr (DWORD matidx, const std::string &text);
+	// not upstream: a material's PBR config lines (glTF meshes), NULL if none
+
 	int AddTexture (SURFHANDLE tex);
 	// Add new texture to the mesh and return its list index
 	// If the texture exists already, it is not added again, but the index
@@ -212,6 +218,7 @@ private:
 
 	DWORD nMtrl;        // number of materials
 	MATERIAL *Mtrl;     // list of materials used by the mesh
+	std::vector<std::string> pbr; // not upstream: PBR config lines by material index (glTF meshes)
 
 	DWORD nTex;         // number of textures
 	SURFHANDLE *Tex;    // list of textures used by the mesh
@@ -262,6 +269,9 @@ bool LoadMesh (const char *meshname, Mesh &mesh);
 // Load an unmanaged mesh (caller is responsible for deleting after use)
 // meshname is relative to MeshPath directory.
 // Returns true if mesh was loaded, false if not found.
+
+bool LoadGltfMesh (const char *meshname, Mesh &mesh);
+// not upstream: a .glb/.gltf mesh (meshname relative to the MeshPath directory, with its extension)
 
 void CreateSpherePatch (Mesh &mesh, int nlng, int nlat, int ilat, int res,
 	int bseg = -1, bool reduce = true, bool outside = true);
