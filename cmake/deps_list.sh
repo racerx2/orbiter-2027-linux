@@ -30,7 +30,7 @@ owner() {
 # loaded at run time by Qt, so no NEEDED names them
 QT=$(dirname "$(path_of libQt6Core.so.6)")/qt6/plugins
 RUNTIME=$(ls "$QT"/platforms/libqxcb.so "$QT"/platforms/libqwayland*.so "$QT"/wayland-shell-integration/libxdg-shell.so \
-	"$QT"/imageformats/libqjpeg.so "$QT"/imageformats/libqico.so 2>/dev/null)
+	"$QT"/imageformats/libqjpeg.so "$QT"/imageformats/libqico.so "$QT"/tls/libqopensslbackend.so 2>/dev/null) # TLS: texture downloads, Earth tile stream
 # loaded with dlopen (XRSound's PipeWire), so no NEEDED names them either
 DLOPEN="libpipewire-0.3.so.0"
 dl_path() { PATH=$PATH:/usr/sbin:/sbin ldconfig -p | awk -v n="$1" '$1 == n && /x86-64/ { print $NF; exit }'; }

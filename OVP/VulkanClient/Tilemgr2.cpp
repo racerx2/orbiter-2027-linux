@@ -1104,6 +1104,7 @@ TileManager2Base::TileManager2Base (vPlanet *vplanet, int _maxres, int _gridres)
 	char path[MAX_PATH]; // not upstream: the PlanetTexturePath contract is MAX_PATH
 	gc->PlanetTexturePath(cbody_name, path);
 	m_dataRootDir = path;
+	bStream = (cprm.tileLoadFlags & 0x0001) && oapiTileStreamEnabled(obj); // not upstream: streamed tiles are loose files
 }
 
 // -----------------------------------------------------------------------
@@ -1112,6 +1113,17 @@ TileManager2Base::~TileManager2Base ()
 {
 	LogAlw("Deleting TileManagerBase %s ...", _PTR(this));
 	if (loader) loader->Unqueue(this);
+	for (StreamLoad &s : streamKeys) { delete s.surf; delete s.mask; } // not upstream
+}
+
+// -----------------------------------------------------------------------
+// not upstream: a tile the core's tile stream has written, swapped in by TileManager2<SurfTile>::StreamApply
+
+void TileManager2Base::StreamQueue (int L, int ilat, int ilng)
+{
+	for (const StreamLoad &s : streamKeys)
+		if (s.L == L && s.ilat == ilat && s.ilng == ilng) return;
+	streamKeys.push_back({L, ilat, ilng, NULL, NULL});
 }
 
 // -----------------------------------------------------------------------

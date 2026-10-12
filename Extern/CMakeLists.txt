@@ -28,3 +28,13 @@ add_custom_target(CopyLDoc ALL
 	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/ldoc/ ${ORBITER_BINARY_ROOT_DIR}/packages/ldoc
 	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/Penlight/lua/ ${ORBITER_BINARY_ROOT_DIR}/
 )
+
+# not upstream: DXT1 block encoder of the planet tile stream (Src/Orbiter/TileStreamImg.cpp), public domain or MIT, pinned
+FetchContent_Declare(stb_dxt
+	URL https://raw.githubusercontent.com/nothings/stb/2c980bb59875b0d32144a71867fbdebb2f77cd20/stb_dxt.h
+	URL_HASH SHA256=807667ef98e0fd749cdb65cca0c2d980bc148109d2fed6f1873c81ae0f449933
+	DOWNLOAD_NO_EXTRACT TRUE
+)
+FetchContent_MakeAvailable(stb_dxt)
+add_library(stb_dxt INTERFACE)
+target_include_directories(stb_dxt INTERFACE ${stb_dxt_SOURCE_DIR})

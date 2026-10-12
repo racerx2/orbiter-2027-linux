@@ -59,6 +59,7 @@
 #include "WlPointer.h"
 #include "WlShortcuts.h"
 #include "SleepWatch.h"
+#include "TileStream.h" // not upstream
 #include <filesystem>
 
 #include "Tracy.hpp"
@@ -316,6 +317,8 @@ Orbiter::Orbiter ()
 	hBk             = NULL;
 	hScnInterp      = NULL;
 	snote_playback  = NULL;
+	snote_stream    = NULL; // not upstream
+	m_pTileStream   = NULL; // not upstream
 	nsnote          = 0;
 	bVisible        = false;
 	bAllowInput     = false;
@@ -789,6 +792,7 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 		return 0;
 	}
 	LOGOUT("Finished initialising world");
+	StartTileStream (); // not upstream: before the planet visuals check their tile folders
 	time_prev = std::chrono::steady_clock::now() - std::chrono::milliseconds(1); // make sure SimDT > 0 for first frame
 
 	g_psys->InitState (ScnPath (scenario));
@@ -929,6 +933,7 @@ void Orbiter::CloseSession ()
 		m_pLaunchpad->ShowWaitPage (true, simheapsize);
 		if (gclient) {
 			gclient->clbkCloseSession (false);
+			StopTileStream (); // not upstream: the client's tile loader has stopped
 			Base::DestroyStaticDeviceObjects ();
 		}
 		if (snote_playback) delete snote_playback;
@@ -962,6 +967,7 @@ void Orbiter::CloseSession ()
 		if (pDlgMgr)  { delete pDlgMgr; pDlgMgr = 0; }
 		if (gclient) {
 			gclient->clbkCloseSession (true);
+			StopTileStream (); // not upstream
 			gclient->clbkDestroyRenderWindow (true);
 		}
 
@@ -1773,7 +1779,54 @@ VOID Orbiter::Output2DData ()
 		for (DWORD i = 0; i < nsnote; i++)
 			snote[i]->Render();
 		if (snote_playback && pConfig->CfgRecPlayPrm.bShowNotes) snote_playback->Render();
+		if (snote_stream && m_pTileStream) { // not upstream: tile stream credits while the camera is at a streamed body
+			const Planet *p = g_camera->ProxyPlanet();
+			if (p && m_pTileStream->Enabled (p->Name())) {
+				if (snote_stream_body != p->Name()) {
+					snote_stream_body = p->Name();
+					std::string t = m_pTileStream->Credit (snote_stream_body);
+					std::vector<char> buf (t.begin(), t.end());
+					buf.push_back ('\0');
+					snote_stream->SetText (buf.data());
+				}
+				snote_stream->Render();
+			}
+		}
 	}
+}
+
+//-----------------------------------------------------------------------------
+// not upstream: the planet tile stream fills Textures/<Body>/Surf and Mask while the sim runs (TileStream.cpp)
+//-----------------------------------------------------------------------------
+void Orbiter::StartTileStream ()
+{
+	if (!gclient || !pConfig->bTileStream || m_pTileStream) return;
+	TileStream::Options o;
+	o.cfgfile = oapiResolvePath (ConfigPath ("TileStream"));
+	for (size_t i = 0; i < g_psys->nPlanet(); i++) o.bodies.push_back (g_psys->GetPlanet ((int)i)->Name());
+	Config *cfg = pConfig;
+	o.bodyDir = [cfg] (const std::string &name) {
+		char p[512];
+		return cfg->PTexPath (p, sizeof p, name.c_str()) ? oapiResolvePath (p) : std::string();
+	};
+	o.capMB = (uint64_t)std::max (0, pConfig->TileStreamCacheMB);
+	o.offline = pConfig->bTileStreamOffline;
+	o.userAgent = "OrbiterLinux/" + std::to_string (oapiGetOrbiterVersion()) + " (+https://github.com/racerx2/orbiter-2027-linux)";
+	o.log = [] (const std::string &s) { LOGOUT ("%s", s.c_str()); };
+	m_pTileStream = new TileStream (o);
+	snote_stream = gclient->clbkCreateAnnotation ();
+	if (snote_stream) {
+		snote_stream->SetPosition (0.01, 0.93, 0.85, 0.995);
+		snote_stream->SetSize (0.6);
+		snote_stream->SetColour (_V(0.85, 0.85, 0.85));
+	}
+	snote_stream_body.clear();
+}
+
+void Orbiter::StopTileStream ()
+{
+	if (snote_stream) { delete snote_stream; snote_stream = NULL; }
+	if (m_pTileStream) { delete m_pTileStream; m_pTileStream = NULL; }
 }
 
 //-----------------------------------------------------------------------------

@@ -69,6 +69,18 @@ This path can also be set using ORBITER_PLANET_TEXTURE_INSTALL_DIR environment v
 Alternatively, you can configure the texture directory after building Orbiter
 by setting the `PlanetTexDir` entry in `Orbiter.cfg`.
 
+## Earth imagery
+
+Earth is not part of the texture download. While Orbiter runs, the tiles it
+draws stream in from free servers and are kept in `Textures/Earth`
+(`Config/TileStream.cfg`; `TileStream`, `TileStreamOffline` and
+`TileStreamCacheMB` in `Orbiter.cfg`).
+
+- Imagery: EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH
+  (Contains modified Copernicus Sentinel data 2016 & 2017), CC BY 4.0
+- Night lights: NASA GIBS / ESDIS (VIIRS Black Marble 2016)
+- Water mask: © OpenStreetMap contributors (ODbL), via NASA GIBS
+
 ## Help
 
 Help files are located in the Doc subfolder (if you built them with `-DORBITER_MAKE_DOC=ON`).

@@ -6330,6 +6330,13 @@ OAPIFUNC void       oapiCloseFile (FILEHANDLE file, FileAccessMode mode);
 // not upstream: on-disk spelling of a '\'-separated, any-case path; an unmatched tail is kept so new files work too
 OAPIFUNC std::string oapiResolvePath (const char *path);
 
+// not upstream: the planet tile stream (TileStream.cpp) fills Textures/<body>/Surf and Mask while the sim runs
+OAPIFUNC bool oapiTileStreamEnabled (OBJHANDLE hBody);
+// lvl: file level; flags 1: the file failed to load, 2: loaded from the cache; returns 1 file there, 0 wanted, -1 never
+OAPIFUNC int  oapiTileStreamWant (OBJHANDLE hBody, int lvl, int ilat, int ilng, int flags);
+// finished tiles as (lvl, ilat, ilng) triples, keys holds 3*nmax; returns the count
+OAPIFUNC int  oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax);
+
 	/**
 	* \brief Writes the current simulation state to a scenario file.
 	* \param fname scenario file name

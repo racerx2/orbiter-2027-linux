@@ -76,6 +76,7 @@ SurfTile::SurfTile (TileManager2Base *_mgr, int _lvl, int _ilat, int _ilng)
 {
 	smgr = static_cast<TileManager2<SurfTile>* > (_mgr);
 	node = 0;
+	streamWait = false; // not upstream
 	elev = NULL;
 	ggelev = NULL;
 	elev_file = NULL;
@@ -127,6 +128,7 @@ void SurfTile::PreLoad()
 	if (smgr->DoLoadIndividualFiles(0)) { // try loading from individual tile file
 		snprintf(path, MAX_PATH, "%s\\Surf\\%02d\\%06d\\%06d.dds", mgr->DataRootDir().c_str(), lvl + 4, ilat, ilng);
 		LoadTextureFile(path, &pSysSrf);
+		if (pSysSrf && smgr->bStream && lvl >= 0) oapiTileStreamWant(mgr->Cbody(), lvl + 4, ilat, ilng, 2); // not upstream: in use, the size cap takes it later
 	}
 	if (!pSysSrf && smgr->ZTreeManager(0)) { // try loading from compressed archive
 		BYTE *buf;
@@ -135,6 +137,15 @@ void SurfTile::PreLoad()
 			LoadTextureFromMemory(buf, ndata, &pSysSrf);
 			smgr->ZTreeManager(0)->ReleaseData(buf);
 		}
+	}
+	if (!pSysSrf && smgr->bStream && lvl >= 0) { // not upstream: the core's tile stream writes this tile into the tile folder
+		int r = oapiTileStreamWant(mgr->Cbody(), lvl + 4, ilat, ilng, 0);
+		if (r > 0) { // arrived since the read above
+			snprintf(path, MAX_PATH, "%s\\Surf\\%02d\\%06d\\%06d.dds", mgr->DataRootDir().c_str(), lvl + 4, ilat, ilng);
+			LoadTextureFile(path, &pSysSrf);
+			if (!pSysSrf) r = oapiTileStreamWant(mgr->Cbody(), lvl + 4, ilat, ilng, 1);
+		}
+		streamWait = (r >= 0 && !pSysSrf);
 	}
 	
 	if (CreateTexture(pDev, pSysSrf, &tex) != true) {
@@ -781,6 +792,20 @@ void SurfTile::Render ()
 {
 	Tile::Render();
 
+	if (smgr->bStream) { // not upstream: keep the tile stream's wants fresh for this tile and the ancestors whose texture it borrows
+		DWORD pass = mgr->GetScene()->GetRenderPass();
+		if (pass == RENDERPASS_MAINSCENE || pass == RENDERPASS_CUSTOMCAM) {
+			for (SurfTile *t = this; t; t = t->getSurfParent()) {
+				if (t->streamWait) {
+					int r = oapiTileStreamWant(mgr->Cbody(), t->lvl + 4, t->ilat, t->ilng, 0);
+					if (r > 0) smgr->StreamQueue(t->lvl + 4, t->ilat, t->ilng);
+					else if (r < 0) t->streamWait = false;
+				}
+				if (t->owntex) break;
+			}
+		}
+	}
+
 	if (!mesh) return; // DEBUG : TEMPORARY
 
 	VkDev *pDev = mgr->Dev();
@@ -1372,6 +1397,102 @@ void SurfTile::RenderLabels(D3D9Pad *skp, oapi::Font **labelfont, int *fontidx)
 
 
 // =======================================================================
+// not upstream: tiles the core's tile stream has written (TileStream.cpp) replace the ancestor texture a tile shows
+
+static QuadTreeNode<SurfTile> *StreamNode (QuadTreeNode<SurfTile> *tree, int L, int ilat, int ilng)
+{
+	int lvl = L - 4;
+	if (lvl < 0 || (ilng >> lvl) > 1) return NULL;
+	QuadTreeNode<SurfTile> *n = &tree[ilng >> lvl];
+	for (int d = 1; n && d <= lvl; d++)
+		n = n->Child(((ilat >> (lvl - d)) & 1) * 2 + ((ilng >> (lvl - d)) & 1)); // LoadChildNode's index
+	return n && n->Entry() ? n : NULL;
+}
+
+// render thread, outside the loader mutex: the disk reads
+template<>
+void TileManager2<SurfTile>::StreamRead ()
+{
+	int k[3 * 16];
+	int n = oapiTileStreamDone(Cbody(), k, 16);
+	for (int i = 0; i < n; i++) StreamQueue(k[3 * i], k[3 * i + 1], k[3 * i + 2]);
+	SurfTile *t0 = tiletree[0].Entry(); // a root always exists; LoadTextureFile only reads its mipmap flag
+	bool mask = cprm.bSpecular || cprm.bLights;
+	char path[MAX_PATH];
+	int taken = 0;
+	for (StreamLoad &s : streamKeys) {
+		if (s.surf) continue;
+		if (taken == 4) break;
+		if (!StreamNode(tiletree, s.L, s.ilat, s.ilng)) { s.L = 0; continue; } // the tree only changes on this thread
+		snprintf(path, MAX_PATH, "%s\\Surf\\%02d\\%06d\\%06d.dds", DataRootDir().c_str(), s.L, s.ilat, s.ilng);
+		t0->LoadTextureFile(path, &s.surf);
+		if (!s.surf) {
+			oapiTileStreamWant(Cbody(), s.L, s.ilat, s.ilng, 1);
+			s.L = 0;
+			continue;
+		}
+		if (mask) {
+			snprintf(path, MAX_PATH, "%s\\Mask\\%02d\\%06d\\%06d.dds", DataRootDir().c_str(), s.L, s.ilat, s.ilng);
+			t0->LoadTextureFile(path, &s.mask);
+		}
+		taken++;
+	}
+	streamKeys.erase(std::remove_if(streamKeys.begin(), streamKeys.end(), [](const StreamLoad &s) { return s.L == 0; }), streamKeys.end());
+}
+
+// under the loader mutex: swap the texture in, and point the descendants that borrowed the old one at it
+template<>
+void TileManager2<SurfTile>::StreamApply ()
+{
+	static const TEXCRDRANGE2 full = {0, 1, 0, 1};
+	std::vector<StreamLoad> keep;
+	for (StreamLoad &s : streamKeys) {
+		if (!s.surf) { keep.push_back(s); continue; }
+		QuadTreeNode<SurfTile> *node = StreamNode(tiletree, s.L, s.ilat, s.ilng);
+		SurfTile *t = node ? node->Entry() : NULL;
+		bool use = t && (t->state & TILE_VALID) && t->streamWait; // others read the file in their own PreLoad
+		std::vector<QuadTreeNode<SurfTile>*> set;
+		if (use) {
+			set.push_back(node);
+			for (size_t i = 0; i < set.size(); i++)
+				for (int c = 0; c < 4; c++) {
+					QuadTreeNode<SurfTile> *ch = set[i]->Child(c);
+					SurfTile *e = ch ? ch->Entry() : NULL;
+					if (e && (e->state & TILE_VALID) && !e->owntex) set.push_back(ch);
+				}
+			bool busy = false; // a loading child reads its parent's texture without the mutex
+			for (QuadTreeNode<SurfTile> *m : set)
+				for (int c = 0; c < 4; c++) {
+					QuadTreeNode<SurfTile> *ch = m->Child(c);
+					if (ch && ch->Entry() && ch->Entry()->state == Tile::Loading) busy = true;
+				}
+			if (busy) { keep.push_back(s); continue; }
+		}
+		VkTex *nt = NULL, *nl = NULL;
+		if (use && t->CreateTexture(Dev(), s.surf, &nt)) {
+			if (s.mask) t->CreateTexture(Dev(), s.mask, &nl);
+			if (t->owntex) {
+				if (t->tex) g_pTexmgr_tt->Free(t->tex);
+				if (t->ltex) g_pTexmgr_tt->Free(t->ltex);
+			}
+			t->tex = nt;
+			t->ltex = nl;
+			t->owntex = true;
+			t->texrange = full;
+			t->streamWait = false;
+			for (size_t i = 1; i < set.size(); i++) {
+				SurfTile *e = set[i]->Entry(), *p = e->getSurfParent();
+				e->tex = p->tex;
+				e->ltex = p->ltex;
+				e->GetParentSubTexRange(&e->texrange);
+			}
+		}
+		delete s.surf;
+		delete s.mask;
+	}
+	streamKeys.swap(keep);
+}
+
 // =======================================================================
 
 template<>
@@ -1478,7 +1599,12 @@ void TileManager2<SurfTile>::Render (MATRIX4 &dwmat, bool use_zbuf, const vPlane
 	// ------------------------------------------------------------------
 	// TODO: render full sphere for levels < 4
 
+	bool bStreamPass = bStream && scene->GetRenderPass() == RENDERPASS_MAINSCENE; // not upstream
+	if (bStreamPass) StreamRead(); // not upstream
+
 	loader->WaitForMutex();
+
+	if (bStreamPass) StreamApply(); // not upstream
 
 	// update the tree
 	for (i = 0; i < 2; i++)

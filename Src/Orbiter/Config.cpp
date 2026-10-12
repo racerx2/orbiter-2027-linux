@@ -775,6 +775,9 @@ bool Config::Load(const char *fname)
 			&rLaunchpad.right, &rLaunchpad.bottom);
 	}
 	GetBool (ifs, "PlanetTexCheck", bPlanetTexCheck); // not upstream
+	GetBool (ifs, "TileStream", bTileStream); // not upstream
+	GetBool (ifs, "TileStreamOffline", bTileStreamOffline); // not upstream
+	if (GetInt (ifs, "TileStreamCacheMB", i)) TileStreamCacheMB = std::max (0, i); // not upstream
 
 	if (GetString (ifs, "DlgMapPos", cbuf))
 		sscanf (cbuf, "%d%d%d%d", &CfgWindowPos.DlgMap.left, &CfgWindowPos.DlgMap.top,
@@ -840,6 +843,9 @@ void Config::SetDefaults ()
 	bEchoAll = bEchoAll_default;
 	memset (&rLaunchpad, 0, sizeof(RECT));
 	bPlanetTexCheck = true; // not upstream
+	bTileStream = true; // not upstream
+	bTileStreamOffline = false; // not upstream
+	TileStreamCacheMB = 2048; // not upstream
 
 	if (QScreen *scr = QGuiApplication::primaryScreen()) { // no screen before the QGuiApplication exists: keep 800x600
 		QRect r = scr->geometry();
@@ -972,6 +978,12 @@ BOOL Config::Write (const char *fname) const
 			<< ' ' << rLaunchpad.right << ' ' << rLaunchpad.bottom << '\n';
 	if (!bPlanetTexCheck || bEchoAll) // not upstream
 		ofs << "PlanetTexCheck = " << BoolStr (bPlanetTexCheck) << '\n';
+	if (!bTileStream || bEchoAll) // not upstream
+		ofs << "TileStream = " << BoolStr (bTileStream) << '\n';
+	if (bTileStreamOffline || bEchoAll) // not upstream
+		ofs << "TileStreamOffline = " << BoolStr (bTileStreamOffline) << '\n';
+	if (TileStreamCacheMB != 2048 || bEchoAll) // not upstream
+		ofs << "TileStreamCacheMB = " << TileStreamCacheMB << '\n';
 
 	if (strcmp (CfgDirPrm.ConfigDir, CfgDirPrm_default.ConfigDir) || 
 		strcmp (CfgDirPrm.MeshDir, CfgDirPrm_default.MeshDir) ||

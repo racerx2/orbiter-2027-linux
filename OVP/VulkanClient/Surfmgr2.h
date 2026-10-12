@@ -61,6 +61,7 @@ protected:
 
 	TileManager2<SurfTile> *smgr;	// surface tile manager interface
 	QuadTreeNode<SurfTile> *node;	// my node in the quad tree, if I'm part of a tree
+	bool streamWait;				// not upstream: asked the tile stream, shows an ancestor meanwhile
 
 	void FixCorner (const SurfTile *nbr);
 	// Match corner elevation to neighbour

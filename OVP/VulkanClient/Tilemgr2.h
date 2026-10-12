@@ -400,7 +400,12 @@ public:
 	/// \brief Return the root directory containing the body's texture data (surface, elevation, mask, cloud tiles)
 	inline const std::string& DataRootDir() const { return m_dataRootDir; }
 
+	bool bStream; // not upstream: the tile stream fills this body's tile folders (TileStream.cpp in the core)
+	void StreamQueue (int L, int ilat, int ilng); // not upstream: a streamed tile to swap in
+
 protected:
+	struct StreamLoad { int L, ilat, ilng; VkPixels *surf, *mask; }; // not upstream
+	std::vector<StreamLoad> streamKeys; // not upstream: tiles to swap in, pixels read once taken
 	MATRIX4 WorldMatrix (int ilng, int nlng, int ilat, int nlat);
 	MATRIX4 WorldMatrix(Tile *tile);
 
@@ -501,6 +506,9 @@ protected:
 	void LoadZTrees();
 	void InitHasIndividualFiles();
 	Tile *SearchTileSub (const QuadTreeNode<TileType> *node, double lng, double lat, int maxlvl, bool bOwntex) const;
+
+	void StreamRead ();  // not upstream: read the next streamed tiles' files, outside the loader mutex
+	void StreamApply (); // not upstream: swap them in, under the loader mutex
 };
 
 #endif // !__TILEMGR2_H

@@ -36,6 +36,8 @@ std::vector<TexPack> TexPackMissing (const TexPackList &list, const std::string 
 uint64_t TexPackResume (const std::string &texdir, const TexPack &p); // archive bytes kept from an earlier try
 uint64_t TexPackSpare (const TexPack &p); // temporary disk space while installing
 std::string TexPackWorkDir (const std::string &texdir);
+// partial archives of packs no longer listed, and what an earlier install left in the work folder; returns what went
+std::vector<std::string> TexPackClean (const TexPackList &list, const std::string &texdir);
 bool TexPackMd5 (const std::string &file, std::string &md5);
 bool TexPackUnzip (const std::string &zipfile, const TexPack &p, const std::string &texdir, const TexPackProgress &progress, std::string &err);
 bool TexPackDownload (const std::string &url, const std::string &file, const TexPackProgress &progress, std::string &err);
