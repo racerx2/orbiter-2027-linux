@@ -352,8 +352,7 @@ bool vBase::Update (bool bMainScene)
 	if (fabs(simt-Tlghtchk)>0.1 || oapiGetPause()) {
 		VECTOR3 rpos = gpos - vP->GlobalPos();
 		sunLight = vP->GetObjectAtmoParams(rpos);
-		terrainSun = vP->TerrainSunVisibility(gpos, tsCache); // not upstream: a base behind a mountain is in its shadow
-		sunLight.Color *= terrainSun;
+		terrainSun = vP->TerrainSunVisibility(gpos, tsCache); // not upstream: structures above shadows only, the ground meshes match the terrain
 		Tlghtchk = simt;
 	}
 

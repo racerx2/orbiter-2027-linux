@@ -1477,7 +1477,7 @@ bool vVessel::ModLighting()
 
 	// we only test the closest celestial body for shadowing
 	OBJHANDLE hP = vessel->GetSurfaceRef();
-	if (hP==NULL) {	LogErr("Vessel's surface reference is NULL"); return false;	}
+	if (hP==NULL) {	terrainSun = 1.0f; LogErr("Vessel's surface reference is NULL"); return false;	} // not upstream: terrainSun
 
 	vObject *vO = GetScene()->GetVisObject(hP);
 
@@ -1493,6 +1493,7 @@ bool vVessel::ModLighting()
 		}
 	}
 	
+	terrainSun = 1.0f; // not upstream: no planet under it, no terrain in the way
 	DWORD ambient = *(DWORD*)gc->GetConfigParam(CFGPRM_AMBIENTLEVEL);
 	sunLight.Ambient = float(ambient) * 0.0039f;
 	sunLight.Transmission = 1.0f;
