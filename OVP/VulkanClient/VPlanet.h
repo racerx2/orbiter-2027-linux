@@ -266,7 +266,7 @@ public:
 	VECTOR3			ReferencePoint();
 	void			SetMicroTexture(VkTex *pSrc, int slot);
 	int				GetElevation(double lng, double lat, double *elv, FVECTOR3 *nrm = NULL) const;
-	float			TerrainSunVisibility(const VECTOR3 &gpos, TerrainSunCache &tc); // not upstream: share of the sun's disc above the terrain from gpos
+	float			TerrainSunVisibility(const VECTOR3 &gpos, TerrainSunCache &tc, int *left = nullptr); // not upstream: share of the sun's disc above the terrain from gpos; left, marches the caller allows
 	SurfTile *		FindTile(double lng, double lat, int maxres);
 	void 			PickSurface(D3DXVECTOR3 &vRay, TILEPICK *pPick);
 	DWORD			GetPhysicsPatchRes() const { return physics_patchres; }

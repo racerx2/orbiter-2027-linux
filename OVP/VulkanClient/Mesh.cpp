@@ -847,6 +847,7 @@ int D3D9Mesh::EditGroup(DWORD grp, GROUPEDITSPEC *ges)
 
 			if (g->nVert>0) BoundingBox(vtx, g->nVert, &g->BBox);
 			else D9ZeroAABB(&g->BBox);
+			g->bUpdate = true; // not upstream: the group's bounding sphere follows the moved vertices
 		}
 	}
 
