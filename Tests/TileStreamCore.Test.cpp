@@ -9,10 +9,17 @@
 #include <QImage>
 #include <QImageReader>
 #include <arpa/inet.h>
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <fcntl.h>
+#include <set>
+#include <sstream>
+#include <sys/file.h>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -212,7 +219,9 @@ TEST_CASE ("A second Orbiter on the folder streams offline and writes nothing; B
 		CHECK (ts.Want ("Earth", 9, 0, 0, 2) == 1);
 		ts.Evict();
 		CHECK (fs::exists (tex / "Surf" / Rel (9, 0, 0)));
-		CHECK (TileStream::Clear (tex.string(), false) == 0);
+		bool refused = false;
+		CHECK (TileStream::Clear (tex.string(), false, &refused) == 0);
+		CHECK (refused); // told apart from nothing to clear
 		CHECK (fs::exists (tex / "Surf" / Rel (9, 0, 0)));
 		TileStream::Progress p;
 		std::atomic<bool> cancel {false};
@@ -237,8 +246,13 @@ TEST_CASE ("A second Orbiter on the folder streams offline and writes nothing; B
 		CHECK (TileStream::Clear (tex.string(), false) == 0);
 	}
 	CHECK_FALSE (TileStream::Busy (tex.string()));
-	CHECK (TileStream::Clear (tex.string(), false) == 1);
+	bool refused = true;
+	CHECK (TileStream::Clear (tex.string(), false, &refused) == 1);
+	CHECK_FALSE (refused);
 	CHECK_FALSE (fs::exists (tex / "Surf" / Rel (9, 0, 0)));
+	refused = true;
+	CHECK (TileStream::Clear (tex.string(), false, &refused) == 0); // nothing left: not a refusal
+	CHECK_FALSE (refused);
 }
 
 TEST_CASE ("A tile that keeps failing is held after its tries, not made again each frame, and counts as failed in a region download", "[TileStreamCore]")
@@ -626,6 +640,9 @@ TEST_CASE ("A layer folder on another disk is written through a .part beside the
 struct Http {
 	int fd = -1, port = 0;
 	std::vector<std::string> replies;
+	std::mutex m;
+	std::vector<std::string> requests; // what each connection sent, under m
+	std::atomic<int> dripMs {0};       // > 0: the reply goes out a byte at a time
 	std::thread th;
 	explicit Http (std::vector<std::string> r): replies (std::move (r))
 	{
@@ -651,7 +668,16 @@ struct Http {
 					if (n <= 0) break;
 					req.append (buf, (size_t)n);
 				}
-				send (c, rep.data(), rep.size(), MSG_NOSIGNAL);
+				{
+					std::lock_guard<std::mutex> l (m);
+					requests.push_back (req);
+				}
+				if (dripMs > 0) {
+					for (char ch : rep) {
+						if (send (c, &ch, 1, MSG_NOSIGNAL) != 1) break;
+						std::this_thread::sleep_for (std::chrono::milliseconds (dripMs.load()));
+					}
+				} else send (c, rep.data(), rep.size(), MSG_NOSIGNAL);
 				shutdown (c, SHUT_WR);
 				while (recv (c, buf, sizeof buf, 0) > 0) {}
 				close (c);
@@ -721,4 +747,201 @@ TEST_CASE ("Answers past the size caps fail, and a range answer must be the rang
 	CHECK (get (h.Url(), -1, 0, b) == 0);
 	CHECK (get (h.Url(), -1, 0, b) == 200);
 	CHECK (b.size() == 500);
+}
+
+TEST_CASE ("A stream that throws while it starts leaves the folder free, and a hostile archive TOC is refused before any allocation", "[TileStreamCore]")
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	fs::path tex = t.root / "Earth";
+	Base (tex);
+	std::string cfg = s.Cfg (t.root / "ts.cfg", s.url + "/eox");
+	TileStream::Options o = Opt (cfg, tex);
+	o.offline = true;
+	o.log = [] (const std::string &l) { if (l.find ("tiles go to") != std::string::npos) throw std::runtime_error ("test"); }; // after the lock is taken
+	CHECK_THROWS_AS (TileStream (o), std::runtime_error);
+	CHECK_FALSE (TileStream::Busy (tex.string()));
+	TileStream::Progress p;
+	std::atomic<bool> cancel {false};
+	CHECK (TileStream::Prefetch (o, "Earth", {{1, 0, 0}}, p, cancel, 5.0) == 5); // the region download's stream throws the same way
+	CHECK_FALSE (TileStream::Busy (tex.string()));
+	Put (tex / "Surf" / Rel (9, 0, 0), 100);
+	std::ofstream (tex / "TileStream" / "written.idx") << "9 0 0\n";
+	bool refused = true;
+	CHECK (TileStream::Clear (tex.string(), false, &refused) == 1);
+	CHECK_FALSE (refused);
+
+	// node counts past the TOC's room, past the sanity cap, and a data offset past the end, in sparse files
+	struct Bad { uint32_t nodes, dataOfs; uint64_t size; };
+	const uint32_t big = (1u << 26) + 1;
+	for (const Bad &b : {Bad {0xFFFFFFFFu, 48, (uint64_t)128 << 30}, Bad {big, 48 + big * 32u, 48 + (uint64_t)big * 32}, Bad {10, 48 + 320, 48 + 100}}) {
+		fs::path tree = tex / "Archive" / "Surf.tree";
+		fs::create_directories (tree.parent_path());
+		struct { char magic[4]; uint32_t size, flags, dataOfs; int64_t dataLength; uint32_t nodeCount, root[5]; } h {};
+		memcpy (h.magic, "TX\1\0", 4);
+		h.size = sizeof h;
+		h.dataOfs = b.dataOfs;
+		h.nodeCount = b.nodes;
+		{
+			std::ofstream f (tree, std::ios::binary | std::ios::trunc);
+			f.write ((const char *)&h, sizeof h);
+		}
+		std::error_code ec;
+		fs::resize_file (tree, b.size, ec);
+		if (ec) fs::resize_file (tree, std::min<uint64_t> (b.size, (uint64_t)1 << 30), ec); // no sparse files that big here
+		Log log;
+		TileStream::Options q = Opt (cfg, tex);
+		q.offline = true;
+		q.log = log.Fn();
+		auto t0 = Clock::now();
+		{
+			TileStream a (q);
+			CHECK (a.Enabled ("Earth"));
+		}
+		CHECK (log.Count ("installed archives") == 0);
+		CHECK (std::chrono::duration<double> (Clock::now() - t0).count() < 5.0);
+		CHECK_FALSE (TileStream::Busy (tex.string()));
+		fs::remove (tree);
+	}
+}
+
+namespace {
+std::atomic<int> flockErr {0};
+bool nfs = false; // as NFS: an exclusive flock on a file open read-only fails with EBADF
+int FakeFlock (int fd, int op)
+{
+	if (flockErr) { errno = flockErr; return -1; }
+	if (nfs && (op & LOCK_EX) && (fcntl (fd, F_GETFL) & O_ACCMODE) == O_RDONLY) { errno = EBADF; return -1; }
+	return flock (fd, op);
+}
+struct FakeLocks {
+	FakeLocks () { TsFlock = FakeFlock; }
+	~FakeLocks () { TsFlock = flock; flockErr = 0; nfs = false; }
+};
+}
+
+TEST_CASE ("Only EWOULDBLOCK means another Orbiter: no working locks, the stream writes and Busy is false; on NFS Busy still sees a holder", "[TileStreamCore]")
+{
+	App app;
+	FakeLocks fake;
+	Tmp t;
+	Srv s (t.root);
+	fs::path tex = t.root / "Earth";
+	std::string cfg = s.Cfg (t.root / "ts.cfg", s.url + "/eox");
+	TileStream::Options o = Opt (cfg, tex);
+	o.maxActive = 0;
+	for (int e : {ENOLCK, EOPNOTSUPP, EINVAL}) {
+		flockErr = e;
+		Log log;
+		o.log = log.Fn();
+		{
+			TileStream a (o);
+			CHECK (log.Count ("has no working file lock") == 1);
+			CHECK (log.Count ("in use by another Orbiter") == 0);
+			CHECK (log.Count ("(offline)") == 0);
+			CHECK (a.Pending() == 5); // the writer: its required tiles are queued
+			CHECK (TileStream::Busy (tex.string())); // this process's stream
+		}
+		CHECK_FALSE (TileStream::Busy (tex.string())); // nobody can hold a lock here
+		bool refused = true;
+		TileStream::Clear (tex.string(), false, &refused);
+		CHECK_FALSE (refused);
+	}
+	flockErr = EWOULDBLOCK; // held elsewhere
+	CHECK (TileStream::Busy (tex.string()));
+	{
+		Log log;
+		o.log = log.Fn();
+		TileStream a (o);
+		CHECK (log.Count ("in use by another Orbiter") == 1);
+		CHECK (a.Pending() == 0);
+	}
+	bool refused = false;
+	CHECK (TileStream::Clear (tex.string(), false, &refused) == 0);
+	CHECK (refused);
+	flockErr = 0;
+	nfs = true;
+	CHECK_FALSE (TileStream::Busy (tex.string())); // the probe opens the file for writing
+	int other = open ((tex / "TileStream" / "lock").c_str(), O_RDWR | O_CLOEXEC);
+	REQUIRE (other >= 0);
+	REQUIRE (flock (other, LOCK_EX | LOCK_NB) == 0); // another Orbiter's lock
+	CHECK (TileStream::Busy (tex.string()));
+	refused = false;
+	CHECK (TileStream::Clear (tex.string(), false, &refused) == 0);
+	CHECK (refused);
+	close (other);
+	CHECK_FALSE (TileStream::Busy (tex.string()));
+}
+
+TEST_CASE ("Evict counts and removes our Elev whose Surf is gone, never at L8 and below", "[TileStreamCore]")
+{
+	Tmp t;
+	fs::path tex = t.root / "Earth", ts = tex / "TileStream";
+	auto now = fs::file_time_type::clock::now();
+	auto put = [&] (const fs::path &p, size_t n, int hoursAgo) { Put (p, n); fs::last_write_time (p, now - std::chrono::hours (hoursAgo)); };
+	put (tex / "Elev" / Rel (9, 0, 5, "elv"), 1280 << 10, 10); // ours, its Surf gone
+	put (tex / "Elev" / Rel (7, 0, 0, "elv"), 512 << 10, 20);  // ours, alone, a base level
+	put (tex / "Surf" / Rel (9, 0, 6), 256 << 10, 1);
+	put (tex / "Mask" / Rel (9, 0, 6), 256 << 10, 1);
+	fs::create_directories (ts);
+	std::ofstream (ts / "written.idx") << "9 0 6\n";
+	std::ofstream (ts / "elev.idx") << "9 0 5\n7 0 0\n";
+	TileStream::Options o = Opt ((t.root / "none.cfg").string(), tex);
+	std::ofstream (o.cfgfile) << "BODY Earth\nSURF eox file:///none/{z}/{row}/{col} 1 16\nLIGHTS gibs file:///none/{n}/{row}/{col} 7\nWATER gibs file:///none/{n}/{row}/{col} 8\nEND\n";
+	o.offline = true;
+	o.capMB = 2; // 2.25 MB on disk: the alone Elev goes first, then 1 MB is under the cap
+	{
+		TileStream a (o);
+		REQUIRE (WaitFor ([&] { return !fs::exists (tex / "Elev" / Rel (9, 0, 5, "elv")); }, 10.0));
+		REQUIRE (WaitFor ([&] { return Read (ts / "elev.idx").find ("9 0 5") == std::string::npos; }, 5.0));
+	}
+	CHECK (fs::exists (tex / "Elev" / Rel (7, 0, 0, "elv")));
+	CHECK (fs::exists (tex / "Surf" / Rel (9, 0, 6)));
+	CHECK (Read (ts / "elev.idx").find ("7 0 0") != std::string::npos);
+	CHECK (Read (ts / "written.idx") == "9 0 6\n");
+}
+
+TEST_CASE ("A request sends only the headers the manual lists, no cookies, and fails past the total time cap however slowly it moves", "[TileStreamCore]")
+{
+	App app;
+	for (const char *v : {"http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"}) unsetenv (v);
+	TsNet net ("OrbiterLinux/test", 1000, 200, 1500);
+	auto get = [&] (const std::string &url, QByteArray &body) {
+		std::atomic<int> st {-1};
+		net.Get (url, [&] (int s, QByteArray got, int) { body = got; st = s; });
+		WaitFor ([&] { return st >= 0; }, 20.0);
+		return st.load();
+	};
+	Http h ({Reply ("200 OK", "Set-Cookie: id=42; Path=/\r\n", "ok"), Reply ("200 OK", "", "ok"), Reply ("200 OK", "", std::string (300, 'x'))});
+	QByteArray b;
+	CHECK (get (h.Url(), b) == 200);
+	CHECK (get (h.Url(), b) == 200);
+	std::vector<std::string> req;
+	{
+		std::lock_guard<std::mutex> l (h.m);
+		req = h.requests;
+	}
+	REQUIRE (req.size() == 2);
+	for (const std::string &r : req) {
+		CAPTURE (r);
+		std::set<std::string> names;
+		std::istringstream in (r);
+		std::string line;
+		std::getline (in, line); // GET /f HTTP/1.1
+		while (std::getline (in, line) && line != "\r") {
+			std::string n = line.substr (0, line.find (':'));
+			std::transform (n.begin(), n.end(), n.begin(), [] (unsigned char c) { return (char)std::tolower (c); });
+			names.insert (n);
+		}
+		CHECK (names == std::set<std::string> {"host", "user-agent", "accept-language", "accept-encoding", "connection"});
+		CHECK (r.find ("User-Agent: OrbiterLinux/test\r\n") != std::string::npos);
+		CHECK (r.find ("Accept-Language: en\r\n") != std::string::npos);
+	}
+	h.dripMs = 40; // about 340 bytes at one per 40 ms: 14 s, each byte well inside the 30 s stall timeout
+	auto t0 = Clock::now();
+	CHECK (get (h.Url(), b) == 0);
+	double sec = std::chrono::duration<double> (Clock::now() - t0).count();
+	CHECK (sec >= 1.0);
+	CHECK (sec < 8.0);
 }

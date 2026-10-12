@@ -33,6 +33,8 @@
 namespace fs = std::filesystem;
 using Clock = TileStream::Clock;
 
+int (*TsFlock) (int, int) = flock;
+
 namespace {
 
 enum { EOX, GIBS, TERR, WC, BLDG, NHOST };
@@ -116,11 +118,17 @@ bool ReadToc (const std::string &file, Toc &t)
 	struct { char magic[4]; uint32_t size, flags, dataOfs; int64_t dataLength; uint32_t nodeCount, root[5]; } h;
 	static_assert (sizeof h == sizeof (TreeFileHeader), "the .tree header");
 	struct stat st;
+	const uint32_t maxNodes = 1u << 26; // a sane archive's TOC is far smaller
 	bool ok = fread (&h, sizeof h, 1, f) == 1 && !memcmp (h.magic, "TX\1\0", 4) && h.size == sizeof h && !fstat (fileno (f), &st)
-		&& (int64_t)h.nodeCount <= ((int64_t)st.st_size - (int64_t)sizeof h) / (int64_t)sizeof (TreeNode);
+		&& h.dataOfs >= h.size && (int64_t)h.dataOfs <= (int64_t)st.st_size && h.nodeCount <= maxNodes
+		&& (uint64_t)h.nodeCount <= (uint64_t)(h.dataOfs - h.size) / sizeof (TreeNode); // the TOC lies between the header and the data
 	if (ok) {
-		t.node.resize (h.nodeCount);
-		ok = fread (t.node.data(), sizeof (TreeNode), h.nodeCount, f) == h.nodeCount;
+		try {
+			t.node.resize (h.nodeCount);
+			ok = fread (t.node.data(), sizeof (TreeNode), h.nodeCount, f) == h.nodeCount;
+		} catch (const std::bad_alloc &) {
+			ok = false;
+		}
 		memcpy (t.root, h.root, sizeof t.root);
 	}
 	fclose (f);
@@ -140,8 +148,17 @@ std::string LockKey (const std::string &dir)
 	return ec ? dir : p.string();
 }
 
+// flock that retries an interrupted call; errno kept
+int TryFlock (int fd)
+{
+	int r;
+	while ((r = TsFlock (fd, LOCK_EX | LOCK_NB)) != 0 && errno == EINTR) {}
+	return r;
+}
+
 // 1 taken, 0 held by another process (or by this one for sole), -1 the lock file can't be made
-int TakeLock (const std::string &key, bool sole)
+// a file system without working locks: taken as the only Orbiter on it, flock's errno in *err
+int TakeLock (const std::string &key, bool sole, int *err = nullptr)
 {
 	std::lock_guard<std::mutex> lk (lockMx);
 	auto it = locks.find (key);
@@ -150,13 +167,21 @@ int TakeLock (const std::string &key, bool sole)
 		it->second.refs++;
 		return 1;
 	}
+	Lock &l = locks[key]; // made before the file, so nothing below throws with it open
 	int fd = open ((key + "/TileStream/lock").c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-	if (fd < 0) return -1;
-	if (flock (fd, LOCK_EX | LOCK_NB)) {
-		close (fd);
-		return 0;
+	if (fd < 0) {
+		locks.erase (key);
+		return -1;
 	}
-	Lock &l = locks[key];
+	if (TryFlock (fd)) {
+		int e = errno;
+		if (e == EWOULDBLOCK) {
+			close (fd);
+			locks.erase (key);
+			return 0;
+		}
+		if (err) *err = e;
+	}
 	l.fd = fd;
 	l.refs = 1;
 	l.sole = sole;
@@ -297,6 +322,7 @@ struct TileStream::Impl {
 	std::mutex imx;
 	std::list<std::pair<uint64_t, QImage>> imgs;
 	int tmpSeq = 0;
+	std::unordered_set<std::string> crossDirs; // layer folders on another disk than TileStream/tmp, under imx
 	std::condition_variable scv; // a worker's WorldCover range reads
 	std::unordered_map<std::string, int> syncWait;
 	std::unordered_map<std::string, std::pair<int, std::shared_ptr<const QByteArray>>> syncRes;
@@ -309,6 +335,8 @@ struct TileStream::Impl {
 
 	explicit Impl (const Options &o);
 	~Impl ();
+	void Init ();
+	void Shutdown ();
 
 	void Log (const std::string &s) { if (opt.log) opt.log (s); }
 
@@ -448,11 +476,25 @@ TileStream::Impl::Impl (const Options &o)
 		bodies.push_back (std::move (b));
 	}
 	if (bodies.empty()) return;
+	try {
+		Init ();
+	} catch (...) { // ~Impl never runs when the constructor throws: the locks and threads go here
+		Shutdown ();
+		throw;
+	}
+}
+
+// the folder locks, indexes, archives, net, clouds and threads
+void TileStream::Impl::Init ()
+{
+	lockKeys.reserve (bodies.size());
 	for (auto &b : bodies) { // one writer per folder: a second Orbiter streams offline and writes nothing
 		std::string key = LockKey (b->dir);
-		int r = TakeLock (key, false);
+		int e = 0;
+		int r = TakeLock (key, false, &e);
 		if (r > 0) {
 			lockKeys.push_back (key);
+			if (e) Log ("TileStream: " + b->dir + " has no working file lock (" + std::error_code (e, std::generic_category()).message() + "), streaming as the only Orbiter on it");
 			continue;
 		}
 		ro = true;
@@ -485,11 +527,18 @@ TileStream::Impl::Impl (const Options &o)
 				if (B.written.count (k)) B.refetchQueue.push_back (k);
 		}
 	}
+	workers.reserve (4);
 	for (int i = 0; i < 4; i++) workers.emplace_back ([this] { Work (); }); // WorldCover reads and the cloud bake wait in a worker
 	ctl = std::thread ([this] { Run (); });
 }
 
 TileStream::Impl::~Impl ()
+{
+	Shutdown ();
+}
+
+// the threads stopped and joined, the net gone, the folder locks dropped
+void TileStream::Impl::Shutdown ()
 {
 	{
 		std::lock_guard<std::mutex> lk (mx);
@@ -500,9 +549,11 @@ TileStream::Impl::~Impl ()
 	wcv.notify_all();
 	scv.notify_all();
 	if (ctl.joinable()) ctl.join();
-	for (std::thread &t : workers) t.join();
+	for (std::thread &t : workers)
+		if (t.joinable()) t.join();
 	net.reset();
 	for (const std::string &k : lockKeys) DropLock (k);
+	lockKeys.clear();
 }
 
 int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, int flags)
@@ -1223,10 +1274,14 @@ bool TileStream::Impl::Write (const Body &B, const std::string &path, const std:
 	if (ro) return false;
 	std::error_code ec;
 	fs::create_directories (fs::path (path).parent_path(), ec);
+	size_t sl = path.compare (0, B.dir.size() + 1, B.dir + "/") ? std::string::npos : path.find ('/', B.dir.size() + 1);
+	std::string layer = sl == std::string::npos ? fs::path (path).parent_path().string() : path.substr (0, sl); // Textures/<Body>/<Layer>
 	int seq;
+	bool cross;
 	{
 		std::lock_guard<std::mutex> lk (imx);
 		seq = ++tmpSeq;
+		cross = crossDirs.count (layer) > 0;
 	}
 	std::string tmp = B.dir + "/TileStream/tmp/" + std::to_string (getpid()) + "." + std::to_string (seq) + ".tmp";
 	auto put = [&bytes] (const std::string &f) {
@@ -1236,11 +1291,16 @@ bool TileStream::Impl::Write (const Body &B, const std::string &path, const std:
 		return !o.fail();
 	};
 	std::error_code rc;
-	if (!put (tmp)) ec = std::make_error_code (std::errc::io_error);
+	if (cross) ec = std::make_error_code (std::errc::cross_device_link); // known to be on another disk: straight to .part
+	else if (!put (tmp)) ec = std::make_error_code (std::errc::io_error);
 	else if (opt.crossDisk) ec = std::make_error_code (std::errc::cross_device_link);
 	else fs::rename (tmp, path, ec);
 	if (!ec) return true;
-	fs::remove (tmp, rc);
+	if (!cross) fs::remove (tmp, rc);
+	if (!cross && ec == std::errc::cross_device_link) {
+		std::lock_guard<std::mutex> lk (imx);
+		crossDirs.insert (layer);
+	}
 	std::string part = path + ".part"; // another disk: written beside the target, then renamed there
 	std::error_code pc;
 	if (put (part)) {
@@ -1366,14 +1426,15 @@ void TileStream::Impl::Evict ()
 	for (auto &bp : bodies) {
 		Body &B = *bp;
 		std::vector<std::pair<uint64_t, bool>> keys; // with: its Elev is ours
-		std::vector<uint64_t> bkeys;
+		std::vector<uint64_t> bkeys, ekeys;
 		{
 			std::lock_guard<std::mutex> lk (mx);
 			if (B.bytesKnown && B.bytes <= cap) continue; // the running total: no scan below the cap
 			for (uint64_t k : B.written) keys.push_back ({k, B.elev.count (k) > 0});
+			for (uint64_t k : B.elev) if (!B.written.count (k)) ekeys.push_back (k); // our Elev whose Surf went
 			bkeys.assign (B.bldg.begin(), B.bldg.end());
 		}
-		struct E { fs::file_time_type t; uint64_t k, size; bool bldg, elev; };
+		struct E { fs::file_time_type t; uint64_t k, size; bool bldg, elev, alone; };
 		std::vector<E> v;
 		std::vector<uint64_t> gone, bgone, egone;
 		uint64_t total = 0;
@@ -1384,7 +1445,16 @@ void TileStream::Impl::Evict ()
 			uint64_t size = fs::file_size (s, e1);
 			if (e1) { bgone.push_back (k); continue; }
 			total += size;
-			v.push_back ({fs::last_write_time (s, e1), k, size, true, false});
+			v.push_back ({fs::last_write_time (s, e1), k, size, true, false, false});
+		}
+		for (uint64_t k : ekeys) {
+			if (quit) return;
+			std::error_code e1;
+			std::string s = Tile (B.dir, "Elev", k);
+			uint64_t size = fs::file_size (s, e1);
+			if (e1) { egone.push_back (k); continue; }
+			total += size;
+			if (KL (k) > 8) v.push_back ({fs::last_write_time (s, e1), k, size, false, true, true});
 		}
 		for (auto &p : keys) {
 			if (quit) return;
@@ -1399,13 +1469,14 @@ void TileStream::Impl::Evict ()
 				if (!e2) size += n;
 			}
 			total += size;
-			if (KL (k) > 8) v.push_back ({fs::last_write_time (s, e1), k, size, false, p.second});
+			if (KL (k) > 8) v.push_back ({fs::last_write_time (s, e1), k, size, false, p.second, false});
 		}
 		if (total > cap) {
 			std::sort (v.begin(), v.end(), [] (const E &a, const E &b) { return a.t < b.t; });
 			for (const E &e : v) {
 				if (total <= cap / 10 * 9) break;
 				std::error_code ec;
+				if (e.alone && fs::exists (Tile (B.dir, "Surf", e.k), ec)) continue; // its tile made again since the scan
 				total -= e.size;
 				if (e.bldg) {
 					fs::remove (BldgFile (B.dir, e.k), ec);
@@ -1413,12 +1484,12 @@ void TileStream::Impl::Evict ()
 					continue;
 				}
 				for (const char *layer : {"Surf", "Mask", "Elev", "Class"}) {
-					if (!e.elev && !strcmp (layer, "Elev")) continue;
+					if ((!e.elev && !strcmp (layer, "Elev")) || (e.alone && strcmp (layer, "Elev"))) continue;
 					std::string f = Tile (B.dir, layer, e.k);
 					fs::remove (f, ec);
 					fs::remove (f + ".part", ec);
 				}
-				gone.push_back (e.k);
+				if (!e.alone) gone.push_back (e.k);
 				if (e.elev) egone.push_back (e.k);
 			}
 		}
@@ -1481,10 +1552,12 @@ void TileStream::Impl::Prune ()
 				else if (layer[0] == 'E') egone.push_back (p.first);
 			}
 		}
-		for (uint64_t k : ekeys) {
+		for (uint64_t k : ekeys) { // our Elev whose Surf went: counted as Evict counts it
 			if (quit) return;
 			std::error_code ec;
-			if (!fs::exists (Tile (B.dir, "Elev", k), ec)) egone.push_back (k);
+			uint64_t n = fs::file_size (Tile (B.dir, "Elev", k), ec);
+			if (ec) egone.push_back (k);
+			else total += n;
 		}
 		for (uint64_t k : bkeys) {
 			if (quit) return;
@@ -1777,15 +1850,6 @@ std::string TileStream::BldgPath (const std::string &body, int x, int y) const
 {
 	int b = d->FindBody (body);
 	return b < 0 || x < 0 || y < 0 ? std::string() : BldgFile (d->bodies[b]->dir, Key (14, x, y));
-}
-
-std::string TileStream::Credit (const std::string &body) const
-{
-	int b = d->FindBody (body);
-	if (b < 0) return std::string();
-	std::string s;
-	for (const std::string &c : d->bodies[b]->cfg.credit) s += (s.empty() ? "" : "\n") + c;
-	return s;
 }
 
 size_t TileStream::Pending () const
@@ -2247,13 +2311,18 @@ uint64_t TileStream::CacheBytes (const std::string &bodyDir, uint64_t *total, si
 }
 
 // files first, then the indexes: a failed rewrite only lists files that are gone
-size_t TileStream::Clear (const std::string &bodyDir, bool keepBase)
+size_t TileStream::Clear (const std::string &bodyDir, bool keepBase, bool *refused)
 {
 	std::string dir = CleanDir (bodyDir), ts = dir + "/TileStream/";
 	std::error_code ec;
+	if (refused) *refused = false;
 	if (!fs::is_directory (ts, ec)) return 0;
 	std::string key = LockKey (dir);
-	if (TakeLock (key, true) <= 0) return 0; // a stream or another Orbiter has the folder: nothing removed
+	int lock = TakeLock (key, true); // no lock file to be had: cleared unless someone holds it
+	if (!lock || (lock < 0 && Busy (dir))) { // a stream or another Orbiter has the folder: nothing removed
+		if (refused) *refused = true;
+		return 0;
+	}
 	std::vector<uint64_t> kept, w = ReadIdx (dir, "written"), el = ElevIdx (dir), elKept;
 	size_t n = 0;
 	bool had = fs::exists (ts + "written.idx", ec);
@@ -2294,18 +2363,19 @@ size_t TileStream::Clear (const std::string &bodyDir, bool keepBase)
 		std::error_code rc;
 		fs::remove (it->path(), rc);
 	}
-	DropLock (key);
+	if (lock > 0) DropLock (key);
 	return n;
 }
 
 bool TileStream::Busy (const std::string &bodyDir)
 {
-	std::string key = LockKey (CleanDir (bodyDir));
+	std::string key = LockKey (CleanDir (bodyDir)), file = key + "/TileStream/lock";
 	std::lock_guard<std::mutex> lk (lockMx);
 	if (locks.count (key)) return true; // a stream or a Clear of this process
-	int fd = open ((key + "/TileStream/lock").c_str(), O_RDONLY | O_CLOEXEC);
+	int fd = open (file.c_str(), O_RDWR | O_CLOEXEC); // NFS takes an exclusive flock only on a file open for writing
+	if (fd < 0) fd = open (file.c_str(), O_RDONLY | O_CLOEXEC);
 	if (fd < 0) return false; // never locked
-	bool busy = flock (fd, LOCK_EX | LOCK_NB) != 0;
+	bool busy = TryFlock (fd) && errno == EWOULDBLOCK; // any other error: no working locks, nobody can hold it
 	close (fd);
 	return busy;
 }

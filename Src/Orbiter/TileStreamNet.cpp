@@ -7,6 +7,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QThread>
+#include <QTimer>
 #include <QUrl>
 #include <cstdio>
 #include <cstdlib>
@@ -27,8 +28,8 @@ bool RangeOk (const QByteArray &cr, int64_t off, int64_t len, int64_t got)
 
 }
 
-TsNet::TsNet (const std::string &userAgent, int64_t maxBytes, int64_t maxRange)
-: nam(nullptr), ua(QByteArray::fromStdString (userAgent)), cap(maxBytes), rangeCap(maxRange)
+TsNet::TsNet (const std::string &userAgent, int64_t maxBytes, int64_t maxRange, int maxMs)
+: nam(nullptr), ua(QByteArray::fromStdString (userAgent)), cap(maxBytes), rangeCap(maxRange), totalMs(maxMs)
 {
 	thread = new QThread;
 	thread->setObjectName ("TileStreamNet");
@@ -50,7 +51,8 @@ TsNet::~TsNet ()
 void TsNet::Get (const std::string &url, Reply done, int64_t off, int64_t len)
 {
 	int64_t most = off >= 0 ? rangeCap : cap;
-	QMetaObject::invokeMethod (ctx, [this, url, done, off, len, most] {
+	int maxMs = totalMs;
+	QMetaObject::invokeMethod (ctx, [this, url, done, off, len, most, maxMs] {
 		bool called = false;
 		auto reply = [&] (int st, QByteArray body) { called = true; done (st, std::move (body), 0); };
 		try {
@@ -66,6 +68,9 @@ void TsNet::Get (const std::string &url, Reply done, int64_t off, int64_t len)
 			}
 			QNetworkRequest rq (qu);
 			rq.setRawHeader ("User-Agent", ua);
+			rq.setRawHeader ("Accept-Language", "en"); // else Qt sends the system locale
+			rq.setAttribute (QNetworkRequest::CookieLoadControlAttribute, QNetworkRequest::Manual); // no cookies sent or kept
+			rq.setAttribute (QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::Manual);
 			if (off >= 0) rq.setRawHeader ("Range", QByteArray ("bytes=") + QByteArray::number ((qlonglong)off) + "-" + QByteArray::number ((qlonglong)(off + len - 1)));
 			rq.setTransferTimeout (StallMs); // reset by every byte: a stall, not a total time
 			QNetworkReply *r = nam->get (rq);
@@ -74,6 +79,11 @@ void TsNet::Get (const std::string &url, Reply done, int64_t off, int64_t len)
 			QObject::connect (r, &QNetworkReply::downloadProgress, ctx, [r, most, s] (qint64 got, qint64 total) {
 				if (s->over || (got <= most && total <= most)) return;
 				s->over = true; // past the cap: aborted, and the request fails
+				r->abort();
+			});
+			QTimer::singleShot (maxMs, r, [r, s] { // the total time cap, gone with the reply
+				if (s->over || s->fired) return;
+				s->over = true;
 				r->abort();
 			});
 			QObject::connect (r, &QNetworkReply::finished, ctx, [r, done, off, len, most, s] {

@@ -36,7 +36,7 @@ protected:
 	BOOL OnInitDialog(QWidget *hPage);
 
 private:
-	struct Size { std::atomic<bool> ready {false}; bool clear = false, shown = false; uint64_t streamed = 0, total = 0; size_t tiles = 0; long cleared = -1; std::string error; };
+	struct Size { std::atomic<bool> ready {false}; bool clear = false, shown = false, refused = false; uint64_t streamed = 0, total = 0; size_t tiles = 0; long cleared = -1; std::string error; };
 	struct Fetch { std::atomic<bool> cancel {false}, finished {false}; std::atomic<int> result {-1}; TileStream::Progress p; std::string error; };
 	std::string BodyDir() const;
 	std::string CfgFile() const;
@@ -44,6 +44,7 @@ private:
 	void Layout(QWidget *hPage);
 	void StartScan();
 	void StartClear(bool keep);
+	void NotCleared();
 	void Tick();
 	void Estimate();
 	bool Refused(StreamAct a);

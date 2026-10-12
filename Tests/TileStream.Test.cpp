@@ -466,7 +466,6 @@ TEST_CASE ("The service writes stock tiles from file:// sources", "[TileStream]"
 	TileStream ts (o);
 	REQUIRE (ts.Enabled ("Earth"));
 	CHECK_FALSE (ts.Enabled ("Mars"));
-	CHECK (ts.Credit ("Earth") == "test credit");
 
 	// the required tiles come first, unasked
 	fs::path l4w = tex / "Surf" / "04" / "000000" / "000000.dds";

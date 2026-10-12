@@ -625,6 +625,23 @@ TEST_CASE ("The shipped FLOOR boxes hold the depressions and none of the sea nea
 	CHECK (at (27.10, 29.60) == -133.0); // Qattara
 	CHECK (at (89.27, 42.65) == -154.0); // Turpan, Lake Ayding
 	CHECK (at (40.30, 14.24) == -125.0); // Danakil, Dallol
+	// below 0 m just past the old box edges (Terrain Tiles): inside a box now, no straight cliff
+	CHECK (at (41.233, 12.944) == -125.0); // Danakil south, -108 m south-east of its old corner
+	CHECK (at (41.15, 12.70) == -125.0);
+	CHECK (at (41.43, 13.10) == -125.0);   // its east arm
+	CHECK (at (40.06, 14.72) == -125.0);   // Danakil north, -30 m above its old top
+	CHECK (at (138.293, -28.128) == -15.0); // Lake Eyre's east edge, -90 m
+	CHECK (at (138.33, -28.05) == -15.0);
+	CHECK (at (26.738, 28.698) == -133.0); // Qattara's south edge
+	CHECK (at (26.45, 28.66) == -133.0);
+	CHECK (at (30.461, 28.99) == -43.0);   // Fayum's south edge
+	CHECK (at (35.789, 32.751) == -430.0); // Yarmouk, -67 m, between the Dead Sea and Galilee boxes
+	CHECK (at (35.76, 32.78) == -430.0);
+	CHECK (at (55.53, 46.10) == -28.0);    // the Caspian lowland past its box's east edge
+	for (auto k : std::vector<std::pair<double, double>> {{51.60, 43.45}, {51.77, 43.375}, {51.35, 43.72}, {51.65, 43.86}, {51.90, 43.23}, {51.60, 43.35}, {51.66, 43.31}})
+		CHECK (at (k.first, k.second) == -132.0); // Karagiye, inside the Caspian box: listed before it
+	for (auto k : std::vector<std::pair<double, double>> {{51.20, 43.45}, {51.62, 43.17}, {51.30, 43.45}, {51.50, 43.25}, {51.20, 43.76}})
+		CHECK (at (k.first, k.second) == -28.0); // the Caspian off Aktau and Kuryk, the shore, and the depressions beside Karagiye
 	for (auto sea : std::vector<std::pair<double, double>> {{34.80, 32.30}, {35.03, 32.84}, {34.95, 29.50}, {42.65, 11.55}, {43.00, 11.70}, {41.45, 14.40}, {40.80, 14.78},
 		{39.80, 15.30}, {-114.70, 31.60}, {-117.40, 32.90}, {28.90, 31.00}, {25.20, 31.70}, {137.80, -33.20}, {38.00, 43.00}, {50.50, 27.00}})
 		CHECK (at (sea.first, sea.second) == 0.0); // Mediterranean, Haifa Bay, Aqaba, Ghoubbet, Tadjoura, Red Sea, Zula, Gulf of California, Pacific, ...
