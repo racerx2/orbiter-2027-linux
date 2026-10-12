@@ -142,6 +142,7 @@ public:
 		int cloudWait = 15;                                        // seconds for the small cloud image at startup
 		bool buildings = true;                                     // BLDG lines are used
 		bool sky = true;                                           // clouds and base flattening at startup
+		bool crossDisk = false;                                    // tests: the rename out of TileStream/tmp fails as across disks
 	};
 
 	explicit TileStream (const Options &opt);
@@ -151,10 +152,10 @@ public:
 
 	bool Enabled (const std::string &body) const;
 	// flags 1: the file failed to load, 2: the client loaded it from the cache
-	// 1: the Surf file is there, 0: wanted, -1: never
+	// 1: the Surf file is there, 0: wanted, -1: never (an installed archive's tile included)
 	int Want (const std::string &body, int L, int ilat, int ilng, int flags);
 	int Done (const std::string &body, int *keys, int nmax); // (L, ilat, ilng) triples
-	std::string Credit (const std::string &body) const;
+	std::string Credit (const std::string &body) const;      // the CREDIT lines, one per line (the Launchpad page)
 	// z14 building tiles: 1 the file is there, 0 wanted, -1 never
 	int WantBldg (const std::string &body, int x, int y);
 	std::string BldgPath (const std::string &body, int x, int y) const;
@@ -168,18 +169,21 @@ public:
 
 	// not upstream: Launchpad cache controls and region prefetch (TabStream.cpp)
 	struct TileKey { int L, ilat, ilng; };
-	struct Progress { std::atomic<int> total {0}, done {0}, have {0}, none {0}; std::atomic<uint64_t> bytes {0}; };
-	// bytes of the tiles listed in written.idx; total: every loose file in Surf, Mask and Elev
+	struct Progress { std::atomic<int> total {0}, done {0}, have {0}, none {0}, failed {0}; std::atomic<uint64_t> bytes {0}; }; // failed: given up on after its tries
+	// bytes of the files the stream wrote (written.idx tiles, its Elev, buildings, Elev_mod, clouds, .part leftovers); total: every file under the layer folders
 	static uint64_t CacheBytes (const std::string &bodyDir, uint64_t *total = nullptr, size_t *tiles = nullptr);
-	// deletes the files of written.idx (L <= 8 kept with keepBase) and rewrites the indexes; tiles removed
+	// deletes the files the stream wrote (L <= 8 kept with keepBase) and rewrites the indexes; tiles removed, 0 and nothing removed while Busy
 	static size_t Clear (const std::string &bodyDir, bool keepBase);
+	// a stream (this process or another Orbiter) or a Clear has the folder
+	static bool Busy (const std::string &bodyDir);
 	// tiles within radiusKm of (lat, lng) degrees, L1..maxL, coarse to fine
 	static std::vector<TileKey> RegionKeys (double lat, double lng, double radiusKm, int maxL);
-	// a headless stream fetching keys coarse to fine; 0 done, 1 cancelled, 2 no progress for stallSec, 3 no stream
+	// a headless stream fetching keys coarse to fine; 0 done, 1 cancelled, 2 no progress for stallSec, 3 no stream, 4 the folder is Busy, 5 an error
 	static int Prefetch (Options opt, const std::string &body, const std::vector<TileKey> &keys, Progress &p, const std::atomic<bool> &cancel, double stallSec = 120.0);
 
 	struct Impl;
 private:
+	static int PrefetchKeys (Options opt, const std::string &body, const std::vector<TileKey> &keys, Progress &p, const std::atomic<bool> &cancel, double stallSec);
 	std::unique_ptr<Impl> d;
 };
 
