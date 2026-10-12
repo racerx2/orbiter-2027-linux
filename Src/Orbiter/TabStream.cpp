@@ -17,6 +17,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStringList>
@@ -97,7 +98,16 @@ std::string OptionsPage_Stream::CfgFile() const
 
 BOOL OptionsPage_Stream::OnInitDialog(QWidget *hPage)
 {
-	auto *top = new QVBoxLayout (hPage);
+	auto *outer = new QVBoxLayout (hPage); // the Launchpad's Options tab has no scroll bar: the page scrolls itself
+	outer->setContentsMargins (0, 0, 0, 0);
+	auto *scroll = new QScrollArea (hPage);
+	scroll->setFrameShape (QFrame::NoFrame);
+	scroll->setWidgetResizable (true);
+	scroll->setHorizontalScrollBarPolicy (Qt::ScrollBarAlwaysOff);
+	auto *body = new QWidget (scroll);
+	scroll->setWidget (body);
+	outer->addWidget (scroll);
+	auto *top = new QVBoxLayout (body);
 	top->setContentsMargins (6, 6, 6, 6);
 
 	auto *gs = new QGroupBox ("Streaming", hPage);
@@ -123,6 +133,7 @@ BOOL OptionsPage_Stream::OnInitDialog(QWidget *hPage)
 	auto *lc = new QGridLayout (gc);
 	m_size = new QLabel ("Counting...", gc);
 	m_size->setWordWrap (true);
+	m_size->setMinimumHeight (2 * m_size->fontMetrics().lineSpacing()); // the buttons below never move under the mouse
 	m_refresh = new QPushButton ("Refresh", gc);
 	m_clear = new QPushButton ("Clear streamed tiles...", gc);
 	m_base = new QCheckBox ("including base levels (8 and below)", gc);
@@ -286,9 +297,7 @@ void OptionsPage_Stream::UpdateControls(QWidget *hPage)
 
 void OptionsPage_Stream::Layout(QWidget *hPage)
 {
-	int w = std::max (HParent()->width(), hPage->minimumSizeHint().width());
-	QLayout *l = hPage->layout();
-	hPage->resize (w, l && l->hasHeightForWidth() ? l->totalHeightForWidth (w) : hPage->sizeHint().height());
+	hPage->resize (HParent()->size()); // fills the pane; its scroll area takes the rest
 }
 
 void OptionsPage_Stream::UpdateConfig(QWidget *hPage)
@@ -362,7 +371,7 @@ void OptionsPage_Stream::Tick()
 {
 	QWidget *hPage = HPage();
 	bool shows = hPage && hPage->isVisible();
-	if (shows && hPage->width() < HParent()->width()) Layout (hPage);
+	if (shows && hPage->size() != HParent()->size()) Layout (hPage);
 	if (m_sz && m_sz->ready && !m_sz->shown) { // also a result whose thread StopPrefetch joined
 		if (m_sizeThread.joinable()) m_sizeThread.join();
 		m_sz->shown = true;
