@@ -1113,7 +1113,7 @@ TileManager2Base::~TileManager2Base ()
 {
 	LogAlw("Deleting TileManagerBase %s ...", _PTR(this));
 	if (loader) loader->Unqueue(this);
-	for (StreamLoad &s : streamKeys) { delete s.surf; delete s.mask; } // not upstream
+	for (StreamLoad &s : streamKeys) { delete s.surf; delete s.mask; delete s.cls; } // not upstream
 }
 
 // -----------------------------------------------------------------------
@@ -1123,7 +1123,7 @@ void TileManager2Base::StreamQueue (int L, int ilat, int ilng)
 {
 	for (const StreamLoad &s : streamKeys)
 		if (s.L == L && s.ilat == ilat && s.ilng == ilng) return;
-	streamKeys.push_back({L, ilat, ilng, NULL, NULL});
+	streamKeys.push_back({L, ilat, ilng, NULL, NULL, NULL});
 }
 
 // -----------------------------------------------------------------------

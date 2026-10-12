@@ -18,7 +18,7 @@ public:
 
 	explicit TsNet (const std::string &userAgent);
 	~TsNet ();
-	void Get (const std::string &url, Reply done);
+	void Get (const std::string &url, Reply done, int64_t off = -1, int64_t len = 0); // off >= 0: those bytes only, status 200
 
 private:
 	QThread *thread;

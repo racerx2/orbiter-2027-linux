@@ -25,6 +25,7 @@ struct TsSource {
 struct TsBodyCfg {
 	std::string name;
 	TsSource surf, fallback, lights, water, elev;
+	TsSource cover; // worldcover: land classes and the water bit from level lmin
 	double elevScale = 0.5;    // metres per .elv step
 	int black[3] = {0, 0, 0};  // night light background taken off
 	double waterGrey = 101.5;  // water at or above this grey
@@ -81,6 +82,21 @@ namespace TsImg {
 	std::string Dds (const QImage &img, bool alpha);   // DXT1, full mip chain
 	QImage DdsImage (const QByteArray &dds);             // level 0 of a DXT1 DDS
 	std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QImage> &tiles, double scale); // .elv, header only (dtype 0) at sea level
+}
+
+// Cloud-Optimized GeoTIFF reads: ESA WorldCover 3 degree cells (TileStreamCog.cpp)
+namespace TsCog {
+	struct Ifd { uint32_t w = 0, h = 0, tw = 0, th = 0, bps = 8, spp = 1, comp = 1, pred = 1, planar = 1; std::vector<uint64_t> off, cnt; };
+	struct Req { std::string url; uint64_t off = 0, len = 0; int status = 0; std::shared_ptr<const QByteArray> data; };
+	using Fetch = std::function<void (std::vector<Req> &)>;          // fills status (200, 404, else failed) and data
+	int64_t Parse (const QByteArray &head, std::vector<Ifd> &ifds);   // 0 parsed, > 0 bytes of the file start needed, -1 no tiled TIFF
+	bool Decode (const Ifd &f, const QByteArray &data, std::vector<uint8_t> &out); // one tile, tw*th*spp bytes
+	std::string CellName (int lat0, int lng0);                        // N27W081
+	// class per pixel over an Orbiter tile, n x n: 0 open sea, 255 outside WorldCover; false when a read failed
+	bool Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const Fetch &fetch, std::vector<uint8_t> &out);
+	bool IsWater (uint8_t c);
+	QImage Water (const std::vector<uint8_t> &cls, int n, const QImage &gibs); // grey 255 water; gibs where outside
+	QImage ClassImage (const std::vector<uint8_t> &cls, int n, int size);      // RGB weights for the client's micro detail
 }
 
 class TileStream {

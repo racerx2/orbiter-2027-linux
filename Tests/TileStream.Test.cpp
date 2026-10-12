@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include "TileStream.h"
+#include "TileStreamNet.h"
 #include <QBuffer>
 #include <QColor>
 #include <QCoreApplication>
@@ -295,7 +296,12 @@ TEST_CASE ("The tile stream config reads its body and rejects bad lines", "[Tile
 	CHECK (b[0].elev.nmax == 15);
 	CHECK (b[0].elev.lmax == 16);
 	CHECK (b[0].elevScale == 0.5);
-	REQUIRE (b[0].credit.size() == 4);
+	CHECK (b[0].cover.kind == "worldcover");
+	CHECK (b[0].cover.lmin == 12);
+	CHECK (b[0].cover.url.find ("{tile}") != std::string::npos);
+	REQUIRE (b[0].credit.size() == 5);
+	CHECK (b[0].credit[3] == "Clouds: NASA Visible Earth");
+	CHECK (b[0].credit[4] == "Water/land cover: ESA WorldCover 2021 (CC-BY 4.0)");
 	CHECK (b[0].credit[2] == "Elevation: Terrain Tiles on AWS (Mapzen, with SRTM, GMTED2010, ETOPO1 and others)");
 	CHECK (b[0].credit[3] == "Clouds: NASA Visible Earth");
 	CHECK (b[0].cloudSmall.find ("cloud_combined_2048.jpg") != std::string::npos);
@@ -316,6 +322,7 @@ TEST_CASE ("The tile stream config reads its body and rejects bad lines", "[Tile
 	bad ("BODY X\nSURF eox u 1 16\nEND\n", "needs SURF, LIGHTS and WATER");
 	bad ("BODY X\nLIGHTS eox u 7\nEND\n", "bad LIGHTS");
 	bad ("BODY X\nFOO 1\nEND\n", "unknown FOO");
+	bad ("BODY X\nCOVER gibs u 12\nEND\n", "bad COVER");
 	bad ("BODY X\nSURF eox u 1 16\n", "has no END");
 	CHECK_FALSE (TsReadCfg ((t.root / "none.cfg").string(), b, err));
 }
@@ -883,4 +890,209 @@ TEST_CASE ("Cloud tiles are white DXT5 with the image's density in alpha", "[Til
 	for (int s = 128; s >= 1; s /= 2) sz += (size_t)std::max (1, s / 4) * std::max (1, s / 4) * 16;
 	CHECK (d.size() == sz);
 	CHECK ((uchar)d[128] > 200); // the north half's first block: alpha endpoints high
+}
+
+// a tiled 8-bit TIFF, one IFD per level (the first full size, the rest overviews), deflate and predictor 2
+struct CogLevel { int size; std::vector<uint8_t> px; };
+
+static QByteArray Cog (const std::vector<CogLevel> &lv, int tile, bool big)
+{
+	QByteArray out;
+	auto put = [&] (uint64_t v, int n) { for (int i = 0; i < n; i++) out.append ((char)(v >> (8 * i))); };
+	auto at = [&] (size_t pos, uint64_t v, int n) { for (int i = 0; i < n; i++) out[(qsizetype)(pos + i)] = (char)(v >> (8 * i)); };
+	int fw = big ? 8 : 4;
+	out.append ("II");
+	put (big ? 43 : 42, 2);
+	if (big) { put (8, 2); put (0, 2); }
+	size_t next = (size_t)out.size();
+	put (0, fw);
+	for (size_t li = 0; li < lv.size(); li++) {
+		const CogLevel &l = lv[li];
+		int nt = (l.size + tile - 1) / tile;
+		std::vector<uint64_t> offs, cnts;
+		for (int ty = 0; ty < nt; ty++)
+			for (int tx = 0; tx < nt; tx++) {
+				std::vector<uint8_t> raw ((size_t)tile * tile, 0);
+				for (int y = 0; y < tile; y++)
+					for (int x = 0; x < tile; x++) {
+						int gx = tx * tile + x, gy = ty * tile + y;
+						if (gx < l.size && gy < l.size) raw[(size_t)y * tile + x] = l.px[(size_t)gy * l.size + gx];
+					}
+				for (int y = 0; y < tile; y++)
+					for (int x = tile - 1; x > 0; x--) raw[(size_t)y * tile + x] -= raw[(size_t)y * tile + x - 1];
+				QByteArray z = qCompress (raw.data(), (qsizetype)raw.size()).mid (4);
+				offs.push_back ((uint64_t)out.size());
+				cnts.push_back ((uint64_t)z.size());
+				out.append (z);
+			}
+		int ot = big ? 16 : 4, os = big ? 8 : 4;
+		size_t offArr = (size_t)out.size();
+		for (uint64_t o : offs) put (o, os);
+		size_t cntArr = (size_t)out.size();
+		for (uint64_t c : cnts) put (c, os);
+		if (out.size() & 1) out.append ('\0');
+		at (next, (uint64_t)out.size(), fw);
+		struct E { int tag, type; uint64_t count, val; };
+		uint64_t n = offs.size();
+		std::vector<E> es = {{254, 4, 1, li ? 1u : 0u}, {256, 3, 1, (uint64_t)l.size}, {257, 3, 1, (uint64_t)l.size}, {258, 3, 1, 8}, {259, 3, 1, 8},
+			{262, 3, 1, 1}, {277, 3, 1, 1}, {317, 3, 1, 2}, {322, 3, 1, (uint64_t)tile}, {323, 3, 1, (uint64_t)tile},
+			{324, ot, n, n == 1 ? offs[0] : offArr}, {325, ot, n, n == 1 ? cnts[0] : cntArr}};
+		put (es.size(), big ? 8 : 2);
+		for (const E &e : es) {
+			put ((uint64_t)e.tag, 2);
+			put ((uint64_t)e.type, 2);
+			put (e.count, fw);
+			int ts = e.type == 3 ? 2 : e.type == 4 ? 4 : 8;
+			if (e.count * ts <= (uint64_t)fw) { put (e.val, ts); put (0, fw - ts); }
+			else put (e.val, fw);
+		}
+		next = (size_t)out.size();
+		put (0, fw);
+	}
+	return out;
+}
+
+static std::vector<uint8_t> Pattern (int size)
+{
+	std::vector<uint8_t> v ((size_t)size * size);
+	for (int y = 0; y < size; y++)
+		for (int x = 0; x < size; x++) v[(size_t)y * size + x] = (uint8_t)(x * 7 + y * 3);
+	return v;
+}
+
+TEST_CASE ("A COG's IFDs parse, overviews included, and its tiles inflate with predictor 2 undone", "[TileStream]")
+{
+	for (bool big : {false, true}) {
+		QByteArray f = Cog ({{64, Pattern (64)}, {32, Pattern (32)}}, 32, big);
+		std::vector<TsCog::Ifd> ifd;
+		CHECK (TsCog::Parse (f.left (12), ifd) > 12); // the header asks for more
+		REQUIRE (TsCog::Parse (f, ifd) == 0);
+		REQUIRE (ifd.size() == 2);
+		CHECK (ifd[0].w == 64);
+		CHECK (ifd[0].tw == 32);
+		CHECK (ifd[0].comp == 8);
+		CHECK (ifd[0].pred == 2);
+		CHECK (ifd[0].off.size() == 4);
+		CHECK (ifd[1].w == 32);
+		CHECK (ifd[1].off.size() == 1);
+		std::vector<uint8_t> px;
+		const TsCog::Ifd &a = ifd[0];
+		REQUIRE (TsCog::Decode (a, f.mid ((qsizetype)a.off[3], (qsizetype)a.cnt[3]), px)); // tile (1, 1)
+		REQUIRE (px.size() == 32 * 32);
+		std::vector<uint8_t> p = Pattern (64);
+		bool same = true;
+		for (int y = 0; y < 32; y++)
+			for (int x = 0; x < 32; x++) same = same && px[(size_t)y * 32 + x] == p[(size_t)(32 + y) * 64 + 32 + x];
+		CHECK (same);
+		CHECK_FALSE (TsCog::Decode (a, QByteArray ("junk"), px));
+	}
+	std::vector<TsCog::Ifd> ifd;
+	CHECK (TsCog::Parse (QByteArray (64, 'x'), ifd) == -1);
+	CHECK (TsCog::CellName (27, -81) == "N27W081");
+	CHECK (TsCog::CellName (-3, 6) == "S03E006");
+}
+
+TEST_CASE ("Byte ranges of a file:// URL", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	QByteArray data;
+	for (int i = 0; i < 100000; i++) data.append ((char)(i * 31));
+	fs::path p = t.root / "f.bin";
+	{
+		std::ofstream o (p, std::ios::binary);
+		o.write (data.constData(), data.size());
+	}
+	TsNet net ("test");
+	auto get = [&] (const std::string &url, int64_t off, int64_t len, QByteArray &body) {
+		std::atomic<int> st {-1};
+		net.Get (url, [&] (int s, QByteArray b, int) { body = b; st = s; }, off, len);
+		WaitFor ([&] { return st >= 0; }, 5.0);
+		return st.load();
+	};
+	QByteArray b;
+	CHECK (get ("file://" + p.string(), 1000, 50, b) == 200);
+	CHECK (b == data.mid (1000, 50));
+	CHECK (get ("file://" + p.string(), 99990, 50, b) == 200);
+	CHECK (b == data.mid (99990));
+	CHECK (get ("file://" + p.string(), 200000, 50, b) == 416);
+	CHECK (get ("file://" + (t.root / "none.bin").string(), 0, 50, b) == 404);
+	CHECK (get ("file://" + p.string(), -1, 0, b) == 200); // the whole file as before
+	CHECK (b == data);
+}
+
+// a WorldCover-like cell: west half water (80), east half trees (10)
+static void WcCell (const fs::path &p)
+{
+	auto half = [] (int s) {
+		std::vector<uint8_t> v ((size_t)s * s);
+		for (int y = 0; y < s; y++)
+			for (int x = 0; x < s; x++) v[(size_t)y * s + x] = x < s / 2 ? 80 : 10;
+		return v;
+	};
+	QByteArray f = Cog ({{64, half (64)}, {32, half (32)}}, 32, false);
+	fs::create_directories (p.parent_path());
+	std::ofstream o (p, std::ios::binary);
+	o.write (f.constData(), f.size());
+}
+
+TEST_CASE ("WorldCover classes over an Orbiter tile: water bit, open sea, class tile", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	WcCell (t.root / "wc" / "c_N27W081.tif");
+	std::string tmpl = "file://" + (t.root / "wc").string() + "/c_{tile}.tif";
+	TsNet net ("test");
+	int reads = 0;
+	TsCog::Fetch fetch = [&] (std::vector<TsCog::Req> &rq) {
+		std::atomic<int> left {(int)rq.size()};
+		for (TsCog::Req &r : rq) {
+			reads++;
+			net.Get (r.url, [&r, &left] (int s, QByteArray b, int) { r.status = s; r.data = std::make_shared<const QByteArray> (b); left--; }, (int64_t)r.off, (int64_t)r.len);
+		}
+		WaitFor ([&] { return left == 0; }, 5.0);
+	};
+	// L12 row 86 col 142: lat 28.83..29.53, lng -80.16..-79.45; the cell's half line at -79.5
+	std::vector<uint8_t> c;
+	REQUIRE (TsCog::Classes (tmpl, 12, 86, 142, 512, fetch, c));
+	REQUIRE (c.size() == 512 * 512);
+	CHECK (c[100 * 512 + 10] == 80);
+	CHECK (c[100 * 512 + 470] == 80);
+	CHECK (c[100 * 512 + 490] == 10);
+	CHECK (c[100 * 512 + 511] == 10);
+	CHECK (reads == 3); // a header and the two full-size tiles of its row
+	int again = reads;
+	REQUIRE (TsCog::Classes (tmpl, 12, 86, 142, 512, fetch, c));
+	CHECK (reads == again); // headers and decoded tiles kept in memory
+	// col 145: lng -78.05..-77.34, east of -78 the N27W078 cell is missing: open sea
+	REQUIRE (TsCog::Classes (tmpl, 12, 86, 145, 512, fetch, c));
+	CHECK (c[200 * 512 + 10] == 10);
+	CHECK (c[200 * 512 + 300] == 0);
+	CHECK (TsCog::IsWater (c[200 * 512 + 300]));
+	// outside WorldCover (Antarctica): 255, the GIBS water stays
+	std::vector<uint8_t> s;
+	REQUIRE (TsCog::Classes (tmpl, 12, 240, 10, 512, fetch, s));
+	CHECK (s[0] == 255);
+	QImage gibs (512, 512, QImage::Format_RGB888);
+	gibs.fill (QColor (30, 30, 30));
+	QImage w = TsCog::Water (s, 512, gibs);
+	CHECK (w.pixelColor (5, 5).red() == 30);
+	// the mask: transparent over WorldCover water, opaque over trees
+	w = TsCog::Water (c, 512, gibs);
+	QImage lights (512, 512, QImage::Format_RGB888);
+	lights.fill (QColor (50, 50, 50));
+	int black[3] = {0, 0, 0};
+	QImage m = TsImg::Mask (lights, w, black, 101.5);
+	CHECK (m.pixelColor (10, 200).alpha() == 255);
+	CHECK (m.pixelColor (300, 200).alpha() == 0);
+	// the class tile: trees red, sea black
+	QImage k = TsCog::ClassImage (c, 512, 256);
+	REQUIRE (k.width() == 256);
+	CHECK (k.pixelColor (2, 100).red() == 255);
+	CHECK (k.pixelColor (200, 100) == QColor (0, 0, 0));
+	std::string d = TsImg::Dds (k, false);
+	CHECK (d.size() == 43832); // 256 px DXT1 with nine mips
+	// a read that fails: no classes
+	TsCog::Fetch bad = [] (std::vector<TsCog::Req> &rq) { for (TsCog::Req &r : rq) r.status = 0; };
+	CHECK_FALSE (TsCog::Classes ("file:///nowhere/{tile}.tif", 12, 86, 142, 512, bad, c));
 }

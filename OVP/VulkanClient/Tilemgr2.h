@@ -404,7 +404,7 @@ public:
 	void StreamQueue (int L, int ilat, int ilng); // not upstream: a streamed tile to swap in
 
 protected:
-	struct StreamLoad { int L, ilat, ilng; VkPixels *surf, *mask; }; // not upstream
+	struct StreamLoad { int L, ilat, ilng; VkPixels *surf, *mask, *cls; }; // not upstream
 	std::vector<StreamLoad> streamKeys; // not upstream: tiles to swap in, pixels read once taken
 	MATRIX4 WorldMatrix (int ilng, int nlng, int ilat, int nlat);
 	MATRIX4 WorldMatrix(Tile *tile);

@@ -26,8 +26,8 @@ using Clock = TileStream::Clock;
 
 namespace {
 
-enum { EOX, GIBS, TERR, NHOST };
-const char *HostName[NHOST] = {"EOX", "GIBS", "Terrain Tiles"};
+enum { EOX, GIBS, TERR, WC, NHOST };
+const char *HostName[NHOST] = {"EOX", "GIBS", "Terrain Tiles", "WorldCover"};
 
 uint64_t Key (int L, int ilat, int ilng) { return (uint64_t)L << 48 | (uint64_t)ilat << 24 | (uint64_t)ilng; }
 int KL (uint64_t k) { return (int)(k >> 48 & 0xFF); }
@@ -117,6 +117,11 @@ struct TileStream::Impl {
 	std::mutex imx;
 	std::list<std::pair<uint64_t, QImage>> imgs;
 	int tmpSeq = 0;
+	std::condition_variable scv; // a worker's WorldCover range reads
+	std::unordered_map<std::string, int> syncWait;
+	std::unordered_map<std::string, std::pair<int, std::shared_ptr<const QByteArray>>> syncRes;
+	int coverFails = 0;
+	void FetchAll (std::vector<TsCog::Req> &rq);
 
 	explicit Impl (const Options &o);
 	~Impl ();
@@ -220,6 +225,7 @@ TileStream::Impl::Impl (const Options &o)
 	host[EOX].cap = 6;
 	host[GIBS].cap = 4;
 	host[TERR].cap = 8;
+	host[WC].cap = 6;
 	std::vector<TsBodyCfg> cfg;
 	std::string err;
 	if (!TsReadCfg (opt.cfgfile, cfg, err)) {
@@ -235,7 +241,7 @@ TileStream::Impl::Impl (const Options &o)
 		while (b->dir.size() > 1 && b->dir.back() == '/') b->dir.pop_back();
 		std::error_code ec;
 		bool ok = !b->dir.empty();
-		for (const char *s : {"/Surf", "/Mask", "/Elev", "/TileStream/tmp", "/Cloud", "/Elev_mod"}) // earth-sky: Cloud, Elev_mod
+		for (const char *s : {"/Surf", "/Mask", "/Elev", "/Class", "/TileStream/tmp", "/Cloud", "/Elev_mod"})
 			if (ok) { fs::create_directories (b->dir + s, ec); ok = !ec; }
 		if (!ok) {
 			Log ("TileStream: cannot create the tile folders in " + b->dir);
@@ -263,7 +269,7 @@ TileStream::Impl::Impl (const Options &o)
 				if (B.written.count (k)) B.refetchQueue.push_back (k);
 		}
 	}
-	for (int i = 0; i < 2; i++) workers.emplace_back ([this] { Work (); });
+	for (int i = 0; i < 3; i++) workers.emplace_back ([this] { Work (); }); // one more: WorldCover reads wait in a worker
 	ctl = std::thread ([this] { Run (); });
 }
 
@@ -276,6 +282,7 @@ TileStream::Impl::~Impl ()
 	quit = true;
 	cv.notify_all();
 	wcv.notify_all();
+	scv.notify_all();
 	if (ctl.joinable()) ctl.join();
 	for (std::thread &t : workers) t.join();
 	net.reset();
@@ -313,6 +320,7 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 		std::error_code ec;
 		fs::remove (Tile (B.dir, "Surf", k), ec);
 		fs::remove (Tile (B.dir, "Mask", k), ec);
+		fs::remove (Tile (B.dir, "Class", k), ec);
 		lk.lock();
 		if (stop) return -1;
 	}
@@ -454,6 +462,10 @@ void TileStream::Impl::Deliver (const std::string &url, int status, const std::s
 	if (it == inflight.end()) return;
 	std::vector<uint64_t> ids = std::move (it->second);
 	inflight.erase (it);
+	if (syncWait.count (url)) {
+		syncRes[url] = {status, data};
+		scv.notify_all();
+	}
 	for (uint64_t id : ids) {
 		auto j = jobs.find (id);
 		if (j == jobs.end() || j->second.stage != 1) continue;
@@ -628,12 +640,17 @@ void TileStream::Impl::Dispatch (Clock::time_point now)
 			std::string url = std::move (H.queue.front());
 			H.queue.pop_front();
 			H.inflight++;
-			net->Get (url, [this, url, h] (int st, QByteArray body, int ra) {
+			auto back = [this, url, h] (int st, QByteArray body, int ra) {
 				std::lock_guard<std::mutex> lk (mx);
 				results.push_back ({url, h, st, ra, std::move (body)});
 				kick = true;
 				cv.notify_all();
-			});
+			};
+			size_t r = url.rfind ('#');
+			long long off = -1, len = 0;
+			if (h == WC && r != std::string::npos && sscanf (url.c_str() + r, "#%lld+%lld", &off, &len) == 2)
+				net->Get (url.substr (0, r), back, off, len); // url#off+len: a byte range
+			else net->Get (url, back);
 		}
 	}
 }
@@ -758,12 +775,26 @@ void TileStream::Impl::Build (Job J)
 		QImage surf = TsImg::Build (sv, L, la, ln, TsImg::SrcGrid (sv, L, la, ln), st);
 		QImage lights = TsImg::Build (C.lights, L, la, ln, TsImg::SrcGrid (C.lights, L, la, ln), lt);
 		QImage water = TsImg::Build (C.water, L, la, ln, TsImg::SrcGrid (C.water, L, la, ln), wt);
+		QImage cls; // WorldCover: the water bit and the class tile, else GIBS water as before
+		if (!C.cover.kind.empty() && L >= C.cover.lmin && L <= C.cover.lmax && net) {
+			std::vector<uint8_t> cv;
+			int n = water.width();
+			if (TsCog::Classes (C.cover.url, L, la, ln, n, [this] (std::vector<TsCog::Req> &r) { FetchAll (r); }, cv)) {
+				water = TsCog::Water (cv, n, water);
+				cls = TsCog::ClassImage (cv, n, 256);
+			} else {
+				std::lock_guard<std::mutex> lk (mx);
+				if (coverFails++ % 50 == 0) Log ("TileStream: WorldCover read failed, GIBS water for " + Tile (B.dir, "Mask", J.key));
+			}
+		}
 		QImage mask = TsImg::Mask (lights, water, C.black, C.waterGrey);
-		std::string mpath = Tile (B.dir, "Mask", J.key);
+		std::string mpath = Tile (B.dir, "Mask", J.key), cpath = Tile (B.dir, "Class", J.key);
+		std::error_code ec;
+		if (cls.isNull() || !Write (B, cpath, TsImg::Dds (cls, false))) fs::remove (cpath, ec); // before Surf: the client reads them together
 		ok = Write (B, mpath, TsImg::Dds (mask, true));
 		if (ok && !(ok = Write (B, Tile (B.dir, "Surf", J.key), TsImg::Dds (surf, false)))) {
-			std::error_code ec;
 			fs::remove (mpath, ec); // no Mask without its Surf
+			fs::remove (cpath, ec);
 		}
 		if (ok && L >= 4) Remember (Id (J.body, J.key), surf);
 		if (ok && !elv.empty()) Write (B, Tile (B.dir, "Elev", J.key), elv);
@@ -790,6 +821,44 @@ void TileStream::Impl::Build (Job J)
 		NewJob (J.body, J.key, opt.now()).elevOnly = true; // its Elev, a job of its own
 	kick = true;
 	cv.notify_all();
+}
+
+// a worker's range reads on the WorldCover host, through its cap and pause; waits for all of them
+void TileStream::Impl::FetchAll (std::vector<TsCog::Req> &rq)
+{
+	std::unique_lock<std::mutex> lk (mx);
+	std::vector<std::string> keys;
+	for (TsCog::Req &r : rq) {
+		keys.push_back (r.url + "#" + std::to_string (r.off) + "+" + std::to_string (r.len));
+		const std::string &k = keys.back();
+		if ((r.data = CacheGet (k))) { r.status = 200; continue; }
+		if (!net || stop || Paused (WC, opt.now())) { r.status = 0; continue; }
+		r.status = -1;
+		syncWait[k]++;
+		if (!inflight.count (k)) {
+			inflight[k];
+			host[WC].queue.push_back (k);
+		}
+	}
+	kick = true;
+	cv.notify_all();
+	auto ready = [&] {
+		if (stop) return true;
+		for (size_t i = 0; i < rq.size(); i++)
+			if (rq[i].status < 0 && !syncRes.count (keys[i])) return false;
+		return true;
+	};
+	scv.wait_for (lk, std::chrono::seconds (90), ready);
+	for (size_t i = 0; i < rq.size(); i++) {
+		if (rq[i].status >= 0) continue;
+		auto it = syncRes.find (keys[i]);
+		rq[i].status = it != syncRes.end() ? it->second.first : 0;
+		if (it != syncRes.end()) rq[i].data = it->second.second;
+		if (--syncWait[keys[i]] <= 0) {
+			syncWait.erase (keys[i]);
+			syncRes.erase (keys[i]);
+		}
+	}
 }
 
 // a source didn't decode: drop it from memory and fetch again, a few times
@@ -967,6 +1036,8 @@ void TileStream::Impl::Evict ()
 			uint64_t size = ss + (e2 ? 0 : ms);
 			uint64_t es = fs::file_size (Tile (B.dir, "Elev", k), e2);
 			if (!e2) size += es;
+			es = fs::file_size (Tile (B.dir, "Class", k), e2);
+			if (!e2) size += es;
 			total += size;
 			if (KL (k) > 8) v.push_back ({fs::last_write_time (s, e1), k, size});
 		}
@@ -978,6 +1049,7 @@ void TileStream::Impl::Evict ()
 				fs::remove (Tile (B.dir, "Surf", e.k), ec);
 				fs::remove (Tile (B.dir, "Mask", e.k), ec);
 				fs::remove (Tile (B.dir, "Elev", e.k), ec);
+				fs::remove (Tile (B.dir, "Class", e.k), ec);
 				total -= e.size;
 				gone.push_back (e.k);
 			}
@@ -1014,7 +1086,7 @@ void TileStream::PrepareDirs (const std::string &cfgfile, const std::function<st
 		while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
 		if (dir.empty()) continue;
 		std::error_code ec;
-		for (const char *s : {"/Surf", "/Mask", "/Elev", "/TileStream/tmp", "/Cloud", "/Elev_mod"}) fs::create_directories (dir + s, ec); // earth-sky: Cloud, Elev_mod
+		for (const char *s : {"/Surf", "/Mask", "/Elev", "/Class", "/TileStream/tmp", "/Cloud", "/Elev_mod"}) fs::create_directories (dir + s, ec);
 	}
 }
 
