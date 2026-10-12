@@ -6,6 +6,8 @@
 
 #include "OptionsPages.h"
 #include "TileStream.h"
+#include "StreamBases.h"
+#include <chrono>
 #include <memory>
 #include <thread>
 #include <QPointer>
@@ -34,14 +36,17 @@ protected:
 	BOOL OnInitDialog(QWidget *hPage);
 
 private:
-	struct Size { std::atomic<bool> ready {false}; uint64_t streamed = 0, total = 0; size_t tiles = 0; long cleared = -1; };
-	struct Fetch { std::atomic<bool> cancel {false}, finished {false}; std::atomic<int> result {-1}; TileStream::Progress p; };
+	struct Size { std::atomic<bool> ready {false}; bool clear = false, shown = false; uint64_t streamed = 0, total = 0; size_t tiles = 0; long cleared = -1; std::string error; };
+	struct Fetch { std::atomic<bool> cancel {false}, finished {false}; std::atomic<int> result {-1}; TileStream::Progress p; std::string error; };
 	std::string BodyDir() const;
 	std::string CfgFile() const;
 	void LoadBases();
-	void ScanSize();
+	void Layout(QWidget *hPage);
+	void StartScan();
+	void StartClear(bool keep);
 	void Tick();
 	void Estimate();
+	bool Refused(StreamAct a);
 	void OnClear();
 	void OnDownload();
 	void Cancel();
@@ -59,6 +64,11 @@ private:
 	std::shared_ptr<Size> m_sz;
 	std::shared_ptr<Fetch> m_fetch;
 	int m_lmax = 16, m_elmax = 0; // last levels the cfg's SURF and ELEV sources serve
+	bool m_clearing = false;      // a Clear runs; its result not shown yet
+	bool m_pendingClear = false, m_pendingKeep = true; // a confirmed Clear waits for the running size count
+	bool m_scanWanted = false;    // count the cache once the page shows
+	bool m_capUser = false;       // the cache limit was changed on the page
+	std::chrono::steady_clock::time_point m_nextScan {}; // at most one count every 10 s
 };
 
 #endif // !__TABSTREAM_H

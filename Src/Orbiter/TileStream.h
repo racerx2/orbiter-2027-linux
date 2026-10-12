@@ -91,6 +91,7 @@ bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::st
 
 namespace TsImg {
 	struct Grid { int z, row0, col0, nrow, ncol; };
+	double FloorAt (const std::vector<TsBodyCfg::Floor> &floor, double lng, double lat); // metres a node may go down to
 	int Size (int L);                                   // 128, 256, 512
 	Grid EoxGrid (int L, int ilat, int ilng);
 	int GibsLevel (int L, int nmax);

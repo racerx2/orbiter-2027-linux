@@ -2040,7 +2040,7 @@ void TileStream::Impl::LoadBases (Body &B)
 			uint64_t k = Key (L, std::clamp ((int)((90.0 - lat) / span), 0, (1 << (L - 4)) - 1), std::clamp ((int)((lng + 180.0) / span), 0, (1 << (L - 3)) - 1));
 			double h = TsSky::ElvAt (ReadAll (Tile (B.dir, "Elev", k)), b.lng, b.lat);
 			if (!std::isnan (h)) {
-				B.baseH[i] = std::max (0.0, h);
+				B.baseH[i] = std::max (TsImg::FloorAt (B.cfg.floor, lng, lat), h);
 				std::ofstream (Idx (B, "bases"), std::ios::app) << b.name << ' ' << B.baseH[i] << '\n';
 			}
 		}
@@ -2090,7 +2090,7 @@ void TileStream::Impl::BaseHeights (Body &B, const Job &J, const std::vector<QIm
 		TsSky::TerrTile (lng, lat, z, row, col);
 		double h = TsSky::TerrAt (et[n0 + j], z, row, col, lng, lat);
 		if (std::isnan (h)) continue;
-		h = std::round (std::max (0.0, h) / B.cfg.elevScale) * B.cfg.elevScale;
+		h = std::round (std::max (TsImg::FloorAt (B.cfg.floor, lng, lat), h) / B.cfg.elevScale) * B.cfg.elevScale;
 		std::lock_guard<std::mutex> lk (mx);
 		double &H = B.baseH[(size_t)J.baseIdx[j]];
 		if (!std::isnan (H)) continue;

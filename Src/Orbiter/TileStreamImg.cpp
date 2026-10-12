@@ -365,7 +365,7 @@ QImage DdsImage (const QByteArray &d)
 }
 
 // metres a node may go down to: the first FLOOR box holding it, else sea level
-static double FloorAt (const std::vector<TsBodyCfg::Floor> &floor, double lng, double lat)
+double FloorAt (const std::vector<TsBodyCfg::Floor> &floor, double lng, double lat)
 {
 	lng = std::remainder (lng, 360.0);
 	for (const TsBodyCfg::Floor &f : floor)

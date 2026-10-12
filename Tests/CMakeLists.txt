@@ -117,16 +117,18 @@ target_compile_options(TexPack.Test PRIVATE -fsanitize=address -fno-omit-frame-p
 target_link_options(TexPack.Test PRIVATE -fsanitize=address)
 # not upstream: the planet tile stream: grids, pixels, DDS, config, size cap, and the service on file:// sources
 add_unit_test(TileStream.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp)
-target_link_libraries(TileStream.Test Qt6::Network Qt6::Gui stb_dxt z)
+target_link_libraries(TileStream.Test Qt6::Network Qt6::Gui stb_dxt zlib)
 target_compile_options(TileStream.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 target_link_options(TileStream.Test PRIVATE -fsanitize=address)
-set_tests_properties(TileStream.Test PROPERTIES TIMEOUT 120) # the outage case waits out a 10 s retry
+set_tests_properties(TileStream.Test PROPERTIES TIMEOUT 120) # room for a slow machine: the binary runs in seconds
 add_unit_test(TileStreamDecode.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream: the tile stream's decoders on hostile input, ASan
 target_link_libraries(TileStreamDecode.Test Qt6::Network Qt6::Gui stb_dxt zlib)
 target_compile_options(TileStreamDecode.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 target_link_options(TileStreamDecode.Test PRIVATE -fsanitize=address)
 add_unit_test(TileStreamCore.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream: the core's lock, holds, ownership, indexes, archives, disks and caps
 target_link_libraries(TileStreamCore.Test Qt6::Network Qt6::Gui stb_dxt zlib)
+# not upstream: the Launchpad Earth streaming page: base list, when Clear and Download are refused
+add_unit_test(TileStreamLaunchpad.Test ${ORBITER_SOURCE_DIR}/StreamBases.cpp)
 
 if (BUILD_ORBITER_SERVER)
 

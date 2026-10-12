@@ -300,19 +300,28 @@ TEST_CASE ("The tile stream config reads its body and rejects bad lines", "[Tile
 	CHECK (b[0].cover.kind == "worldcover");
 	CHECK (b[0].cover.lmin == 12);
 	CHECK (b[0].cover.url.find ("{tile}") != std::string::npos);
-	REQUIRE (b[0].credit.size() == 6);
-	CHECK (b[0].credit[3] == "Clouds: NASA Visible Earth");
-	CHECK (b[0].credit[4] == "Water/land cover: ESA WorldCover 2021 (CC-BY 4.0)");
-	CHECK (b[0].credit[5] == "Buildings: (c) OpenMapTiles (c) OpenStreetMap contributors, OpenFreeMap");
 	CHECK (b[0].bldgJson == "https://tiles.openfreemap.org/planet");
 	CHECK (b[0].bldgUrl.find ("https://tiles.openfreemap.org/planet/") == 0);
-	CHECK (b[0].credit[2] == "Elevation: Terrain Tiles on AWS (Mapzen, with SRTM, GMTED2010, ETOPO1 and others)");
-	CHECK (b[0].credit[3] == "Clouds: NASA Visible Earth");
 	CHECK (b[0].cloudSmall.find ("cloud_combined_2048.jpg") != std::string::npos);
 	CHECK (b[0].cloudBig.find ("cloud_combined_8192.tif") != std::string::npos);
 	CHECK (b[0].cloudMax == 7);
-	CHECK (b[0].credit[0].find ("EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016 & 2017)") != std::string::npos);
-	CHECK (b[0].credit[1].find ("OpenStreetMap contributors") != std::string::npos);
+	// every source's required credit: EOX wording, OSM's ODbL link, WorldCover's sentence, the Terrain Tiles list (tilezen/joerd attribution.md)
+	const std::vector<std::string> &cr = b[0].credit;
+	auto has = [&] (const std::string &s) { for (const std::string &c : cr) if (c.find (s) != std::string::npos) return true; return false; };
+	auto count = [&] (const std::string &s) { int n = 0; for (const std::string &c : cr) n += c.find (s) != std::string::npos; return n; };
+	REQUIRE (cr.size() == 19);
+	CHECK (cr[0].find ("EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016 & 2017), CC BY 4.0") != std::string::npos);
+	CHECK (has ("Blue Marble: Next Generation"));
+	CHECK (has ("NASA Black Marble 2016"));
+	CHECK (has ("NASA Visible Earth"));
+	CHECK (count ("\xc2\xa9 OpenStreetMap contributors, available under the Open Database License https://www.openstreetmap.org/copyright") == 2); // water mask, buildings
+	CHECK (has ("\xc2\xa9 ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium"));
+	CHECK (has ("OpenFreeMap https://openfreemap.org"));
+	CHECK (has ("Terrain Tiles on AWS https://registry.opendata.aws/terrain-tiles: Mapzen"));
+	for (const char *t : {"ArcticDEM terrain data", "Australia terrain data", "Austria terrain data", "Canada terrain data", "Europe terrain data",
+		"Global ETOPO1 terrain data", "Mexico terrain data", "New Zealand terrain data", "Norway terrain data", "United Kingdom terrain data",
+		"United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data courtesy of the U.S. Geological Survey."})
+		CHECK (count (t) == 1);
 	Tmp t;
 	auto bad = [&] (const std::string &text, const std::string &what) {
 		std::string f = (t.root / "bad.cfg").string();
@@ -650,6 +659,7 @@ TEST_CASE ("Coarse levels go first; ocean quarters are filled from the ancestor"
 
 TEST_CASE ("A tile that can't be written is held and still wanted, with no Mask left behind", "[TileStream]")
 {
+	if (geteuid() == 0) SKIP ("root writes into a read-only folder");
 	App app;
 	Tmp t;
 	Srv s (t.root);
@@ -781,7 +791,7 @@ TEST_CASE ("Prefetch never takes every slot from the camera's wants", "[TileStre
 	App app;
 	Tmp t;
 	std::string cfg = (t.root / "ts.cfg").string();
-	std::ofstream (cfg) << "BODY Earth\nSURF eox http://127.0.0.1:9/{z}/{row}/{col} 1 16\nLIGHTS gibs http://127.0.0.1:9/{n}/{row}/{col} 7\nWATER gibs http://127.0.0.1:9/{n}/{row}/{col} 8\nEND\n";
+	std::ofstream (cfg) << "BODY Earth\nSURF eox bogus://eox/{z}/{row}/{col} 1 16\nLIGHTS gibs bogus://gibs/{n}/{row}/{col} 7\nWATER gibs bogus://gibs/{n}/{row}/{col} 8\nEND\n"; // no such scheme: nothing answers
 	fs::create_directories (t.root / "Earth" / "Surf");
 	for (int L = 1; L <= 4; L++)
 		for (int c = 0; c < (L == 4 ? 2 : 1); c++) {
@@ -1501,6 +1511,45 @@ TEST_CASE ("A region prefetch from file:// sources fetches every tile coarse to 
 	o.cfgfile = (t.root / "nothing.cfg").string();
 	cancel = false;
 	CHECK (TileStream::Prefetch (o, "Earth", keys, c, cancel, 20.0) == 3);
+}
+
+TEST_CASE ("A region prefetch cancelled from another thread after its first tiles stops within a second and keeps them", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	s.Required (true);
+	std::vector<TileStream::TileKey> keys = TileStream::RegionKeys (0.0, 0.0, 50.0, 12);
+	REQUIRE (keys.size() > 25);
+	for (const TileStream::TileKey &k : keys)
+		if (k.L >= 5) {
+			s.EoxTile (k.L, k.ilat, k.ilng, QColor (120, 100, 80));
+			s.Masks (k.L, k.ilat, k.ilng);
+		}
+	fs::path tex = t.root / "Earth";
+	TileStream::Options o;
+	o.cfgfile = s.Cfg (t.root / "ts.cfg", s.url + "/eox");
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	TileStream::Progress p;
+	std::atomic<bool> cancel {false};
+	std::atomic<int> result {-1};
+	std::chrono::steady_clock::time_point stopped;
+	std::thread run ([&] { result = TileStream::Prefetch (o, "Earth", keys, p, cancel, 20.0); stopped = std::chrono::steady_clock::now(); });
+	bool landed = WaitFor ([&] { return p.have >= 1; }, 20.0);
+	auto asked = std::chrono::steady_clock::now();
+	cancel = true;
+	run.join();
+	REQUIRE (landed);
+	CHECK (result == 1);
+	CHECK (p.done < p.total);
+	CHECK (std::chrono::duration<double> (stopped - asked).count() < 1.0);
+	int kept = 0;
+	for (const TileStream::TileKey &k : keys) {
+		char rel[40];
+		snprintf (rel, sizeof rel, "%02d/%06d/%06d.dds", k.L, k.ilat, k.ilng);
+		kept += fs::exists (tex / "Surf" / rel);
+	}
+	CHECK (kept >= p.have);
 }
 
 TEST_CASE ("Clear and CacheBytes cover Class, buildings, Elev_mod and clouds", "[TileStream]")
