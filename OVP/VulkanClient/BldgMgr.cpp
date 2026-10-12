@@ -84,13 +84,14 @@ void BldgMgr::Update ()
 		TileOf (camLat + dlat, camLng - dlng, x0, y0);
 		TileOf (camLat - dlat, camLng + dlng, x1, y1);
 		if (x1 < x0) x1 += 1 << Z; // across 180
-		for (int y = y0; y <= y1; y++)
-			for (int xx = x0; xx <= x1; xx++) {
+		bool off = false;
+		for (int y = y0; y <= y1 && !off; y++)
+			for (int xx = x0; xx <= x1 && !off; xx++) {
 				int x = xx & ((1 << Z) - 1);
 				long long key = (long long)x << 20 | y;
 				if (tiles.count (key)) continue;
 				int w = oapiTileStreamBldgWant (hObj, x, y);
-				if (w < 0) return; // no buildings for this body
+				if (w < 0) { off = true; break; } // no buildings for this body, or offline
 				if (w == 0 || !load) continue;
 				load = false; // one tile a pass: the mesh build is on the render thread
 				Tile T;
