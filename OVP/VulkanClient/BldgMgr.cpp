@@ -273,29 +273,30 @@ void BldgMgr::Make (Tile &t, const TSBLDGMESH *m)
 void BldgMgr::Reground (Tile &t)
 {
 	if (!t.mesh) return;
-	std::map<DWORD, std::pair<std::vector<WORD>, std::vector<NTVERTEX>>> ed;
-	NTVERTEX dv;
-	memset (&dv, 0, sizeof dv);
+	std::map<DWORD, std::pair<std::vector<WORD>, std::vector<float>>> ed; // per group: vertices, their lift
 	for (size_t b = 0; b < t.ground.size(); b++) {
 		double g = Ground (t.lat[b], t.lng[b]), d = g - t.ground[b];
 		if (!(std::fabs (d) > 0.25)) continue;
 		t.ground[b] = g;
-		dv.y = (float)d; // along the tile's up: the anchor's up is within 2e-4 rad of it
 		for (const Run &r : t.runs[b]) {
 			auto &e = ed[r.grp];
 			for (DWORD v = r.v0; v < r.v0 + r.nv; v++) {
 				e.first.push_back ((WORD)v);
-				e.second.push_back (dv);
+				e.second.push_back ((float)d); // along the tile's up: the anchor's up is within 2e-4 rad of it
 			}
 		}
 	}
-	for (auto &p : ed) {
+	for (auto &p : ed) { // the client's EditGroup takes no ADD flags: y is read from the mesh's copy and set
+		std::vector<NTVERTEX> v (p.second.first.size());
+		GROUPREQUESTSPEC grs;
+		memset (&grs, 0, sizeof grs);
+		grs.Vtx = v.data(); grs.nVtx = (DWORD)v.size(); grs.VtxPerm = p.second.first.data();
+		if (t.mesh->GetGroup (p.first, &grs)) continue;
+		for (size_t i = 0; i < v.size(); i++) v[i].y += p.second.second[i];
 		GROUPEDITSPEC ges;
 		memset (&ges, 0, sizeof ges);
-		ges.flags = GRPEDIT_VTXCRDADDY;
-		ges.Vtx = p.second.second.data();
-		ges.nVtx = (DWORD)p.second.first.size();
-		ges.vIdx = p.second.first.data();
+		ges.flags = GRPEDIT_VTXCRDY;
+		ges.Vtx = v.data(); ges.nVtx = (DWORD)v.size(); ges.vIdx = p.second.first.data();
 		t.mesh->EditGroup (p.first, &ges);
 	}
 }
