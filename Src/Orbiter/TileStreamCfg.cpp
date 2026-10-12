@@ -44,6 +44,7 @@ bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::st
 		else if (w == "LIGHTS") ok = Source (is, cur.lights, false) && cur.lights.kind == "gibs";
 		else if (w == "WATER") ok = Source (is, cur.water, false) && cur.water.kind == "gibs";
 		else if (w == "ELEV") ok = Source (is, cur.elev, true) && cur.elev.kind == "terrarium";
+		else if (w == "BLDG") ok = (is >> cur.bldgJson >> cur.bldgUrl) && cur.bldgUrl.find ("{x}") != std::string::npos;
 		else if (w == "ELEV_SCALE") ok = (is >> cur.elevScale) && cur.elevScale > 0.0;
 		else if (w == "LIGHTS_BLACK") ok = (bool)(is >> cur.black[0] >> cur.black[1] >> cur.black[2]);
 		else if (w == "WATER_GREY") ok = (bool)(is >> cur.waterGrey);

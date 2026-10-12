@@ -388,6 +388,7 @@ public:
 	bool bTileStream;       // not upstream: stream planet tiles into their tile folders (TileStream.cpp)
 	bool bTileStreamOffline;// not upstream: the tile stream makes no requests
 	int  TileStreamCacheMB; // not upstream: size cap of the streamed tiles, 0 = none
+	bool bTileStreamBuildings; // not upstream: stream 3D buildings where the cfg has them
 
 	// directory information
 	char *Root;             // master config file

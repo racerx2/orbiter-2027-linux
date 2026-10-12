@@ -14,6 +14,7 @@
 #include <fstream>
 #include <thread>
 #include <unistd.h>
+#include <zlib.h>
 
 namespace fs = std::filesystem;
 
@@ -294,7 +295,10 @@ TEST_CASE ("The tile stream config reads its body and rejects bad lines", "[Tile
 	CHECK (b[0].elev.nmax == 15);
 	CHECK (b[0].elev.lmax == 16);
 	CHECK (b[0].elevScale == 0.5);
-	REQUIRE (b[0].credit.size() == 3);
+	REQUIRE (b[0].credit.size() == 4);
+	CHECK (b[0].credit[3] == "Buildings: (c) OpenMapTiles (c) OpenStreetMap contributors, OpenFreeMap");
+	CHECK (b[0].bldgJson == "https://tiles.openfreemap.org/planet");
+	CHECK (b[0].bldgUrl.find ("https://tiles.openfreemap.org/planet/") == 0);
 	CHECK (b[0].credit[2] == "Elevation: Terrain Tiles on AWS (Mapzen, with SRTM, GMTED2010, ETOPO1 and others)");
 	CHECK (b[0].credit[0].find ("EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016 & 2017)") != std::string::npos);
 	CHECK (b[0].credit[1].find ("OpenStreetMap contributors") != std::string::npos);
@@ -682,4 +686,242 @@ TEST_CASE ("Refetches wait their turn and never block what the client asks for",
 	CHECK (ts.Pending() == 5); // the required set only
 	CHECK (ts.Want ("Earth", 14, 5, 5, 0) == 0);
 	CHECK (ts.Pending() == 6);
+}
+
+// ---- buildings (TileStreamMvt.cpp) ----
+
+namespace {
+void PVar (std::string &s, uint64_t v) { do { uint8_t b = v & 0x7F; v >>= 7; s += (char)(b | (v ? 0x80 : 0)); } while (v); }
+void PKey (std::string &s, int f, int wt) { PVar (s, (uint64_t)f << 3 | wt); }
+void PBytes (std::string &s, int f, const std::string &b) { PKey (s, f, 2); PVar (s, b.size()); s += b; }
+uint32_t Zig (int32_t n) { return (uint32_t)((n << 1) ^ (n >> 31)); }
+
+// MoveTo, LineTo, ClosePath for each ring, absolute tile points to deltas
+std::string Geom (const std::vector<std::vector<std::pair<int, int>>> &rings)
+{
+	std::string g;
+	int x = 0, y = 0;
+	for (const auto &r : rings) {
+		PVar (g, 1 | 1 << 3);
+		PVar (g, Zig (r[0].first - x)); PVar (g, Zig (r[0].second - y));
+		x = r[0].first; y = r[0].second;
+		PVar (g, 2 | (uint32_t)(r.size() - 1) << 3);
+		for (size_t i = 1; i < r.size(); i++) {
+			PVar (g, Zig (r[i].first - x)); PVar (g, Zig (r[i].second - y));
+			x = r[i].first; y = r[i].second;
+		}
+		PVar (g, 7 | 1 << 3);
+	}
+	return g;
+}
+
+std::string Feat (const std::vector<uint32_t> &tags, const std::string &geom)
+{
+	std::string f, t;
+	for (uint32_t v : tags) PVar (t, v);
+	PBytes (f, 2, t);
+	PKey (f, 3, 0); PVar (f, 3);
+	PBytes (f, 4, geom);
+	return f;
+}
+
+// a water layer to skip, then buildings: a 100 x 100 block with a 40 x 40 court (30 m, from 10 m), and a hidden one
+std::string TestPbf ()
+{
+	std::string water, l, v, tile;
+	PBytes (water, 1, "water");
+	PBytes (water, 2, Feat ({}, Geom ({{{0, 0}, {10, 0}, {10, 10}}})));
+	PKey (water, 15, 0); PVar (water, 2);
+	PBytes (tile, 3, water);
+	PKey (l, 15, 0); PVar (l, 2);
+	PBytes (l, 1, "building");
+	auto ring = std::vector<std::pair<int, int>> {{1000, 1000}, {1100, 1000}, {1100, 1100}, {1000, 1100}};
+	auto hole = std::vector<std::pair<int, int>> {{1030, 1030}, {1030, 1070}, {1070, 1070}, {1070, 1030}};
+	PBytes (l, 2, Feat ({0, 0, 1, 1}, Geom ({ring, hole})));
+	PBytes (l, 2, Feat ({0, 0, 2, 2}, Geom ({{{2000, 2000}, {2100, 2000}, {2100, 2100}, {2000, 2100}}})));
+	PBytes (l, 3, "render_height");
+	PBytes (l, 3, "render_min_height");
+	PBytes (l, 3, "hide_3d");
+	std::string v0, v1, v2;
+	double h = 30.0;
+	PKey (v0, 3, 1); v0.append ((const char*)&h, 8);
+	PKey (v1, 5, 0); PVar (v1, 10);
+	PKey (v2, 7, 0); PVar (v2, 1);
+	PBytes (l, 4, v0); PBytes (l, 4, v1); PBytes (l, 4, v2);
+	PKey (l, 5, 0); PVar (l, 4096);
+	PBytes (tile, 3, l);
+	return tile;
+}
+
+double TriArea (const std::vector<std::vector<TsBldg::Pt>> &rings, const std::vector<uint32_t> &tri, bool &cw)
+{
+	std::vector<TsBldg::Pt> all;
+	for (const auto &r : rings) all.insert (all.end(), r.begin(), r.end());
+	double a = 0.0;
+	cw = true;
+	for (size_t i = 0; i + 2 < tri.size(); i += 3) {
+		const TsBldg::Pt &p = all[tri[i]], &q = all[tri[i + 1]], &r = all[tri[i + 2]];
+		double c = (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+		if (c > 0) cw = false;
+		a += -0.5 * c;
+	}
+	return a;
+}
+}
+
+TEST_CASE ("The MVT decoder reads the building layer", "[TileStream]")
+{
+	std::vector<TsBldg::Feature> f;
+	uint32_t ext = 0;
+	REQUIRE (TsBldg::Decode (TestPbf(), f, ext));
+	CHECK (ext == 4096);
+	REQUIRE (f.size() == 2);
+	CHECK (f[0].height == 30.0);
+	CHECK (f[0].minHeight == 10.0);
+	CHECK_FALSE (f[0].hide);
+	REQUIRE (f[0].rings.size() == 2);
+	CHECK (f[0].rings[0].size() == 4);
+	CHECK (f[0].rings[1][1].x == 1030);
+	CHECK (f[0].rings[1][1].y == 1070);
+	CHECK (f[1].hide);
+	std::string bad = TestPbf();
+	bad.resize (bad.size() - 7);
+	CHECK_FALSE (TsBldg::Decode (bad, f, ext));
+}
+
+TEST_CASE ("Ear clipping covers the polygon, holes included, clockwise", "[TileStream]")
+{
+	std::vector<uint32_t> tri;
+	bool cw;
+	std::vector<std::vector<TsBldg::Pt>> sq {{{0, 0}, {100, 0}, {100, 100}, {0, 100}}, {{30, 30}, {70, 30}, {70, 70}, {30, 70}}};
+	REQUIRE (TsBldg::Triangulate (sq, tri));
+	CHECK (tri.size() == 8 * 3);
+	CHECK (std::fabs (TriArea (sq, tri, cw) - 8400.0) < 1e-6);
+	CHECK (cw);
+	std::vector<std::vector<TsBldg::Pt>> ell {{{0, 0}, {0, 20}, {10, 20}, {10, 10}, {20, 10}, {20, 0}}}; // clockwise L
+	REQUIRE (TsBldg::Triangulate (ell, tri));
+	CHECK (tri.size() == 4 * 3);
+	CHECK (std::fabs (TriArea (ell, tri, cw) - 300.0) < 1e-6);
+	CHECK (cw);
+}
+
+TEST_CASE ("Building meshes extrude, round-trip through the file and inflate from gzip", "[TileStream]")
+{
+	std::vector<TsBldg::Feature> f;
+	uint32_t ext;
+	REQUIRE (TsBldg::Decode (TestPbf(), f, ext));
+	TsBldg::Mesh m = TsBldg::Build (14, 4824, 6157, f, ext);
+	REQUIRE (m.b.size() == 1); // the hidden one is left out
+	const TsBldg::Building &b = m.b[0];
+	CHECK (b.hmin == 10.0f);
+	CHECK (b.hmax == 30.0f);
+	CHECK (b.nv == 8 * 4 + 8);
+	CHECK (b.ni == 8 * 6 + 8 * 3);
+	double lat, lng;
+	TsBldg::LatLng (14, 4824 + 1050.0 / 4096, 6157 + 1050.0 / 4096, lat, lng);
+	CHECK (std::fabs (b.lat - lat) < 1e-9);
+	CHECK (std::fabs (b.lng - lng) < 1e-9);
+	int x, y;
+	TsBldg::TileOf (lat, lng, 14, x, y);
+	CHECK (x == 4824);
+	CHECK (y == 6157);
+	float span = 0, hmax = 0;
+	for (uint32_t i = 0; i < b.nv; i++) {
+		span = std::max (span, std::fabs (m.vtx[(b.v0 + i) * 6]));
+		hmax = std::max (hmax, m.vtx[(b.v0 + i) * 6 + 1]);
+	}
+	CHECK (span > 21.0f); // 100 units of 4096 at z14, 40.75 N: 45 m across
+	CHECK (span < 24.0f);
+	CHECK (hmax == 30.0f);
+	std::string bytes = TsBldg::Encode (m);
+	TsBldg::Mesh r;
+	REQUIRE (TsBldg::Read (bytes, r));
+	CHECK (r.x == 4824);
+	CHECK (r.b.size() == 1);
+	CHECK (r.vtx == m.vtx);
+	CHECK (r.idx == m.idx);
+	CHECK_FALSE (TsBldg::Read (bytes.substr (0, bytes.size() - 1), r));
+	TsBldg::Mesh empty;
+	REQUIRE (TsBldg::Read (TsBldg::Encode (empty), r));
+	CHECK (r.b.empty());
+	std::string pbf = TestPbf(), gz (pbf.size() + 128, '\0'), out;
+	z_stream s {};
+	REQUIRE (deflateInit2 (&s, 6, Z_DEFLATED, 16 + 15, 8, Z_DEFAULT_STRATEGY) == Z_OK);
+	s.next_in = (Bytef*)pbf.data(); s.avail_in = (uInt)pbf.size();
+	s.next_out = (Bytef*)gz.data(); s.avail_out = (uInt)gz.size();
+	REQUIRE (deflate (&s, Z_FINISH) == Z_STREAM_END);
+	gz.resize (s.total_out);
+	deflateEnd (&s);
+	REQUIRE (TsBldg::Inflate (gz, out));
+	CHECK (out == pbf);
+}
+
+TEST_CASE ("The service writes building tiles from file:// sources", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	fs::path src = t.root / "bldg", tex = t.root / "Earth";
+	fs::create_directories (src / "14" / "4824");
+	std::ofstream (src / "14" / "4824" / "6157.pbf", std::ios::binary) << TestPbf();
+	std::ofstream (t.root / "tiles.json") << "{\"tiles\":[\"file://" << src.string() << "/{z}/{x}/{y}.pbf\"],\"maxzoom\":14}";
+	std::string cfg = (t.root / "ts.cfg").string();
+	std::ofstream (cfg) << "BODY Earth\nSURF eox file:///none/{z}/{row}/{col} 1 16\nLIGHTS gibs file:///none/{n}/{row}/{col} 7\nWATER gibs file:///none/{n}/{row}/{col} 8\n"
+		"BLDG file://" << (t.root / "tiles.json").string() << " file:///none/{z}/{x}/{y}.pbf\nEND\n";
+	TileStream::Options o;
+	o.cfgfile = cfg;
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	o.staleSec = 30.0;
+	{
+		TileStream ts (o);
+		CHECK (ts.WantBldg ("Earth", 4824, 6157) == 0);
+		CHECK (ts.WantBldg ("Earth", 4824, 6158) == 0); // no file: written empty
+		CHECK (ts.WantBldg ("Earth", -1, 0) == -1);
+		CHECK (ts.WantBldg ("Mars", 0, 0) == -1);
+		CHECK (WaitFor ([&] { return ts.WantBldg ("Earth", 4824, 6157) == 1 && ts.WantBldg ("Earth", 4824, 6158) == 1; }, 20.0));
+		TsBldg::Mesh m;
+		REQUIRE (TsBldg::Read (Read (ts.BldgPath ("Earth", 4824, 6157)), m));
+		CHECK (m.b.size() == 1);
+		REQUIRE (TsBldg::Read (Read (ts.BldgPath ("Earth", 4824, 6158)), m));
+		CHECK (m.b.empty());
+	}
+	CHECK (Read (tex / "TileStream" / "bldg.idx").find ("14 4824 6157") != std::string::npos);
+	o.buildings = false;
+	TileStream off (o);
+	CHECK (off.WantBldg ("Earth", 4824, 6157) == -1);
+}
+
+TEST_CASE ("The size cap takes building tiles too", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	fs::path tex = t.root / "Earth";
+	std::string cfg = (t.root / "ts.cfg").string();
+	std::ofstream (cfg) << "BODY Earth\nSURF eox file:///none/{z}/{row}/{col} 1 16\nLIGHTS gibs file:///none/{n}/{row}/{col} 7\nWATER gibs file:///none/{n}/{row}/{col} 8\nBLDG file:///none.json file:///none/{z}/{x}/{y}.pbf\nEND\n";
+	std::string mb (1 << 20, 'x');
+	auto now = fs::file_time_type::clock::now();
+	for (int i = 0; i < 4; i++) {
+		fs::path p = tex / "Bldg" / "14" / "10" / (std::to_string (i) + ".bld");
+		fs::create_directories (p.parent_path());
+		std::ofstream (p, std::ios::binary) << mb;
+		fs::last_write_time (p, now - std::chrono::hours (10 - i));
+	}
+	fs::create_directories (tex / "TileStream");
+	std::ofstream (tex / "TileStream" / "bldg.idx") << "14 10 0\n14 10 1\n14 10 2\n";
+	TileStream::Options o;
+	o.cfgfile = cfg;
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	o.capMB = 2;
+	o.offline = true;
+	{
+		TileStream ts (o);
+		ts.Evict();
+		std::this_thread::sleep_for (std::chrono::milliseconds (300));
+	}
+	CHECK_FALSE (fs::exists (tex / "Bldg" / "14" / "10" / "0.bld"));
+	CHECK_FALSE (fs::exists (tex / "Bldg" / "14" / "10" / "1.bld"));
+	CHECK (fs::exists (tex / "Bldg" / "14" / "10" / "2.bld"));
+	CHECK (fs::exists (tex / "Bldg" / "14" / "10" / "3.bld")); // not ours
+	CHECK (Read (tex / "TileStream" / "bldg.idx") == "14 10 2\n");
 }

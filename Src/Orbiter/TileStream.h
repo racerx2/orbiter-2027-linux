@@ -29,7 +29,29 @@ struct TsBodyCfg {
 	double waterGrey = 101.5;  // water at or above this grey
 	int fill[3] = {24, 44, 78}; // EOX open-ocean fill colour
 	std::vector<std::string> credit;
+	std::string bldgJson, bldgUrl; // TileJSON of the building tiles, last known {z}/{x}/{y} template
 };
+
+// 3D buildings from z14 Mapbox vector tiles (TileStreamMvt.cpp)
+namespace TsBldg {
+	struct Pt { double x, y; };
+	struct Feature { std::vector<std::vector<Pt>> rings; double height = 0.0, minHeight = 0.0; bool hide = false; }; // tile units, y down
+	struct Building { double lat, lng; float hmin, hmax; uint32_t v0, nv, i0, ni; }; // anchor in radians
+	struct Mesh {
+		int z = 0, x = 0, y = 0;
+		std::vector<Building> b;
+		std::vector<float> vtx;     // x east, y up, z north (m from the anchor), nx, ny, nz
+		std::vector<uint32_t> idx;  // per building, from its v0
+	};
+	bool Inflate (const std::string &in, std::string &out);   // gzip or zlib
+	bool Decode (const std::string &pbf, std::vector<Feature> &out, uint32_t &extent); // layer "building"
+	bool Triangulate (const std::vector<std::vector<Pt>> &rings, std::vector<uint32_t> &tri); // ring 0 outer, then holes; indices into the rings in order
+	Mesh Build (int z, int x, int y, const std::vector<Feature> &f, uint32_t extent);
+	std::string Encode (const Mesh &m);
+	bool Read (const std::string &bytes, Mesh &m);
+	void TileOf (double lat, double lng, int z, int &x, int &y); // radians
+	void LatLng (int z, double x, double y, double &lat, double &lng); // tile coordinates to radians
+}
 
 bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::string &err);
 
@@ -68,6 +90,7 @@ public:
 		std::function<Clock::time_point ()> now;                  // tests
 		int maxActive = 12;                                        // tests: 0 holds every job
 		double staleSec = 2.0;
+		bool buildings = true;                                     // BLDG lines are used
 	};
 
 	explicit TileStream (const Options &opt);
@@ -81,6 +104,9 @@ public:
 	int Want (const std::string &body, int L, int ilat, int ilng, int flags);
 	int Done (const std::string &body, int *keys, int nmax); // (L, ilat, ilng) triples
 	std::string Credit (const std::string &body) const;
+	// z14 building tiles: 1 the file is there, 0 wanted, -1 never
+	int WantBldg (const std::string &body, int x, int y);
+	std::string BldgPath (const std::string &body, int x, int y) const;
 
 	size_t Pending () const; // tests
 	void Evict ();           // tests: the size cap on the caller's thread

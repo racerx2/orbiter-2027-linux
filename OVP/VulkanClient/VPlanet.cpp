@@ -39,6 +39,7 @@
 #include "IProcess.h"
 #include "VkTexFile.h"
 #include "OrbiterResource.h"
+#include "BldgMgr.h" // not upstream
 #include <filesystem>
 
 using namespace oapi;
@@ -404,11 +405,13 @@ vPlanet::vPlanet (OBJHANDLE _hObj, const Scene *scene) :
 	if (tilever < 2) {
 		surfmgr = new SurfaceManager (gc, this);
 		surfmgr2 = NULL;
+		bldgmgr = NULL; // not upstream
 	} else {
 		LoadAtmoConfig();
 		surfmgr = NULL;
 		int patchlvl = 1 << (4 + Config->MeshRes);
 		surfmgr2 = new TileManager2<SurfTile> (this, max_patchres, patchlvl);
+		bldgmgr = oapiTileStreamEnabled (_hObj) ? new BldgMgr (this, _hObj, scn) : NULL; // not upstream
 		prm.horizon_excess = *(double*)oapiGetObjectParam (_hObj, OBJPRM_PLANET_HORIZONEXCESS);
 		prm.tilebb_excess = *(double*)oapiGetObjectParam (_hObj, OBJPRM_PLANET_TILEBBEXCESS);
 	}
@@ -557,6 +560,7 @@ vPlanet::~vPlanet ()
 	}
 	if (surfmgr) delete surfmgr;
 	else if (surfmgr2) delete surfmgr2;
+	delete bldgmgr; // not upstream
 	if (cloudmgr2) delete cloudmgr2;
 
 	// overlays' y->Release() left out: the textures belong to their SURFHANDLEs (upstream released a reference it didn't own)
@@ -765,6 +769,8 @@ bool vPlanet::Update (bool bMainScene)
 	if (!active) return false;
 
 	vObject::Update(bMainScene);
+
+	if (bldgmgr && bMainScene) bldgmgr->Update (); // not upstream
 
 	if (patchres==0) return true;
 
@@ -1070,6 +1076,7 @@ bool vPlanet::Render(VkDev *dev)
 		}
 
 		if (nbase) RenderBaseStructures (dev);
+		if (bldgmgr) bldgmgr->Render (dev); // not upstream
 
 		if (prm.bCloud && (prm.cloudvis & 2))
 			RenderCloudLayer (dev, VK_CULL_MODE_BACK_BIT);	  // render clouds from above

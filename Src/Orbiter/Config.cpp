@@ -778,6 +778,7 @@ bool Config::Load(const char *fname)
 	GetBool (ifs, "TileStream", bTileStream); // not upstream
 	GetBool (ifs, "TileStreamOffline", bTileStreamOffline); // not upstream
 	if (GetInt (ifs, "TileStreamCacheMB", i)) TileStreamCacheMB = std::max (0, i); // not upstream
+	GetBool (ifs, "TileStreamBuildings", bTileStreamBuildings); // not upstream
 
 	if (GetString (ifs, "DlgMapPos", cbuf))
 		sscanf (cbuf, "%d%d%d%d", &CfgWindowPos.DlgMap.left, &CfgWindowPos.DlgMap.top,
@@ -846,6 +847,7 @@ void Config::SetDefaults ()
 	bTileStream = true; // not upstream
 	bTileStreamOffline = false; // not upstream
 	TileStreamCacheMB = 2048; // not upstream
+	bTileStreamBuildings = true; // not upstream
 
 	if (QScreen *scr = QGuiApplication::primaryScreen()) { // no screen before the QGuiApplication exists: keep 800x600
 		QRect r = scr->geometry();
@@ -984,6 +986,8 @@ BOOL Config::Write (const char *fname) const
 		ofs << "TileStreamOffline = " << BoolStr (bTileStreamOffline) << '\n';
 	if (TileStreamCacheMB != 2048 || bEchoAll) // not upstream
 		ofs << "TileStreamCacheMB = " << TileStreamCacheMB << '\n';
+	if (!bTileStreamBuildings || bEchoAll) // not upstream
+		ofs << "TileStreamBuildings = " << BoolStr (bTileStreamBuildings) << '\n';
 
 	if (strcmp (CfgDirPrm.ConfigDir, CfgDirPrm_default.ConfigDir) || 
 		strcmp (CfgDirPrm.MeshDir, CfgDirPrm_default.MeshDir) ||

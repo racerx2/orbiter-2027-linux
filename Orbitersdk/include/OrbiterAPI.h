@@ -6337,6 +6337,21 @@ OAPIFUNC int  oapiTileStreamWant (OBJHANDLE hBody, int lvl, int ilat, int ilng, 
 // finished tiles as (lvl, ilat, ilng) triples, keys holds 3*nmax; returns the count
 OAPIFUNC int  oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax);
 
+// not upstream: streamed 3D buildings, z14 Web Mercator tiles (x east from 180W, y south from the top)
+typedef struct { double lat, lng; float hmin, hmax; DWORD v0, nv, i0, ni; } TSBLDG; // anchor (rad), vertex and index ranges
+typedef struct {
+	int z, x, y;
+	DWORD nb, nv, ni;
+	const TSBLDG *b;
+	const float *vtx;  // per vertex x east, y up, z north (m from its building's anchor), nx, ny, nz
+	const DWORD *idx;  // triangles, clockwise from the front, relative to the building's v0
+} TSBLDGMESH;
+// returns 1 the tile file is there, 0 wanted, -1 never (no buildings for this body, or off)
+OAPIFUNC int  oapiTileStreamBldgWant (OBJHANDLE hBody, int x, int y);
+// the tile's buildings, NULL if not there; free with oapiTileStreamBldgFree
+OAPIFUNC TSBLDGMESH *oapiTileStreamBldgLoad (OBJHANDLE hBody, int x, int y);
+OAPIFUNC void oapiTileStreamBldgFree (TSBLDGMESH *mesh);
+
 	/**
 	* \brief Writes the current simulation state to a scenario file.
 	* \param fname scenario file name
