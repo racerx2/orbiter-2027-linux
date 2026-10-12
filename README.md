@@ -81,6 +81,8 @@ draws stream in from free servers and are kept in `Textures/Earth`
 - Night lights: NASA GIBS / ESDIS (VIIRS Black Marble 2016)
 - Water mask: © OpenStreetMap contributors (ODbL), via NASA GIBS
 - Elevation: Terrain Tiles on AWS (Mapzen; SRTM, GMTED2010, ETOPO1 and others)
+- Water/land cover: ESA WorldCover 2021 (CC-BY 4.0), © ESA WorldCover project 2021,
+  contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium
 
 ## Help
 
