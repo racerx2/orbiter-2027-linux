@@ -16,25 +16,33 @@
 #include <QPointF>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStringList>
 #include <QVBoxLayout>
 #include <algorithm>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <strings.h>
+#include <climits>
 
 extern Orbiter* g_pOrbiter;
-namespace fs = std::filesystem;
 
 static OptionsPage_Stream *s_page = nullptr;
+
+static bool StreamBusy (const std::string &) { return false; } // merge: use TileStream::Busy
 
 static QString Bytes (uint64_t b)
 {
 	if (b >= ((uint64_t)10 << 30)) return QString ("%1 GB").arg (b / 1073741824.0, 0, 'f', 1);
 	return QString ("%1 MB").arg (b / 1048576.0, 0, 'f', 1);
+}
+
+// the cfg's CREDIT lines as rich text, http(s) addresses as links
+static QString CreditHtml (const std::vector<std::string> &lines)
+{
+	static const QRegularExpression url ("(https?://[^\\s<>\"]*[^\\s<>\".,;:)])");
+	QStringList c;
+	for (const std::string &l : lines) c << QString::fromStdString (l).toHtmlEscaped().replace (url, "<a href=\"\\1\">\\1</a>");
+	return c.join ("<br>");
 }
 
 OptionsPage_Stream::OptionsPage_Stream(OptionsPageContainer* container)
@@ -57,6 +65,10 @@ void OptionsPage_Stream::StopPrefetch()
 	s_page->Cancel();
 	if (s_page->m_fetchThread.joinable()) s_page->m_fetchThread.join();
 	if (s_page->m_sizeThread.joinable()) s_page->m_sizeThread.join(); // a Clear finishes before the session's stream starts
+	if (s_page->m_pendingClear) {
+		s_page->StartClear (s_page->m_pendingKeep); // a Clear confirmed behind a count runs now
+		s_page->m_sizeThread.join();
+	}
 }
 
 void OptionsPage_Stream::Cancel()
@@ -93,9 +105,9 @@ BOOL OptionsPage_Stream::OnInitDialog(QWidget *hPage)
 	m_enable = new QCheckBox ("Stream Earth imagery and elevation", gs);
 	m_enable->setToolTip ("While the simulation runs, missing Earth tiles are fetched from the free servers listed in Config/TileStream.cfg");
 	m_offline = new QCheckBox ("Offline: only tiles already on disk", gs);
-	m_offline->setToolTip ("The simulation makes no tile requests");
+	m_offline->setToolTip ("The simulation makes no tile requests, and a region download is refused");
 	m_cap = new QSpinBox (gs);
-	m_cap->setRange (0, 1048576);
+	m_cap->setRange (0, INT_MAX);
 	m_cap->setSingleStep (256);
 	m_cap->setSuffix (" MB");
 	m_cap->setSpecialValueText ("No limit");
@@ -178,15 +190,21 @@ BOOL OptionsPage_Stream::OnInitDialog(QWidget *hPage)
 	auto *lk = new QVBoxLayout (gk);
 	m_credits = new QLabel (gk);
 	m_credits->setWordWrap (true);
-	m_credits->setTextInteractionFlags (Qt::TextSelectableByMouse);
+	m_credits->setTextFormat (Qt::RichText);
+	m_credits->setOpenExternalLinks (true);
+	m_credits->setTextInteractionFlags (Qt::TextBrowserInteraction);
 	lk->addWidget (m_credits);
 	top->addWidget (gk);
 	top->addStretch (1);
 
 	QObject::connect (m_enable, &QCheckBox::toggled, hPage, [this] (bool on) { Cfg()->bTileStream = on; m_offline->setEnabled (on); });
 	QObject::connect (m_offline, &QCheckBox::toggled, hPage, [this] (bool on) { Cfg()->bTileStreamOffline = on; });
-	QObject::connect (m_cap, QOverload<int>::of (&QSpinBox::valueChanged), hPage, [this] (int v) { Cfg()->TileStreamCacheMB = v; });
-	QObject::connect (m_refresh, &QPushButton::clicked, hPage, [this] { ScanSize (); });
+	QObject::connect (m_cap, QOverload<int>::of (&QSpinBox::valueChanged), hPage, [this] (int v) { Cfg()->TileStreamCacheMB = v; m_capUser = true; });
+	QObject::connect (m_refresh, &QPushButton::clicked, hPage, [this] {
+		if (m_sizeThread.joinable() || m_clearing || m_pendingClear) return;
+		m_scanWanted = true; // Tick counts, at most once every 10 s
+		m_size->setText ("Counting...");
+	});
 	QObject::connect (m_clear, &QPushButton::clicked, hPage, [this] { OnClear (); });
 	QObject::connect (m_download, &QPushButton::clicked, hPage, [this] { OnDownload (); });
 	QObject::connect (m_cancel, &QPushButton::clicked, hPage, [this] { Cancel (); m_status->setText ("Cancelling..."); });
@@ -228,41 +246,19 @@ void OptionsPage_Stream::LoadBases()
 			if (b.name == "Earth") {
 				m_lmax = b.surf.lmax;
 				m_elmax = b.elev.kind.empty() ? 0 : b.elev.lmax;
-				QStringList c;
-				for (const std::string &l : b.credit) c << QString::fromStdString (l);
-				m_credits->setText (c.join ("\n"));
+				m_credits->setText (CreditHtml (b.credit));
 			}
 	std::string dir = Cfg()->CfgDirPrm.ConfigDir;
 	std::replace (dir.begin(), dir.end(), '\\', '/');
 	if (!dir.empty() && dir.back() != '/') dir += '/';
-	std::vector<std::pair<std::string, QPointF>> bases;
-	std::error_code ec;
-	for (fs::directory_iterator it (oapiResolvePath ((dir + "Earth/Base").c_str()), ec), end; !ec && it != end; it.increment (ec)) {
-		if (it->path().extension() != ".cfg") continue;
-		std::ifstream f (it->path());
-		std::string line, name;
-		double lng = 0.0, lat = 0.0;
-		bool loc = false;
-		while (std::getline (f, line) && line.compare (0, 6, "BEGIN_")) {
-			size_t eq = line.find ('=');
-			if (eq == std::string::npos) continue;
-			std::string key = line.substr (0, eq), val = line.substr (eq + 1);
-			key.erase (key.find_last_not_of (" \t") + 1);
-			val.erase (0, val.find_first_not_of (" \t"));
-			val.erase (val.find_last_not_of (" \t\r") + 1);
-			if (!strcasecmp (key.c_str(), "Name")) name = val;
-			else if (!strcasecmp (key.c_str(), "Location")) loc = (bool)(std::istringstream (val) >> lng >> lat);
-		}
-		if (!name.empty() && loc) bases.push_back ({name, QPointF (lng, lat)});
-	}
-	std::sort (bases.begin(), bases.end(), [] (const auto &a, const auto &b) { return a.first < b.first; });
+	std::vector<StreamBase> bases = StreamBaseList (oapiResolvePath ((dir + "Earth/Base").c_str()));
 	QSignalBlocker block (m_where);
 	m_where->clear();
 	m_where->addItem ("Custom position");
 	int ksc = 0;
-	for (const auto &b : bases) {
-		if (b.first == "Cape Canaveral") ksc = m_where->count();
-		m_where->addItem (QString::fromStdString (b.first), b.second);
+	for (const StreamBase &b : bases) {
+		if (b.name == "Cape Canaveral") ksc = m_where->count();
+		m_where->addItem (QString::fromStdString (b.name), QPointF (b.lng, b.lat));
 	}
 	if (!ksc && m_where->count() > 1) ksc = 1;
 	if (ksc) {
@@ -284,7 +280,12 @@ void OptionsPage_Stream::UpdateControls(QWidget *hPage)
 		m_offline->setEnabled (Cfg()->bTileStream);
 		m_cap->setValue (Cfg()->TileStreamCacheMB);
 	}
-	if (!m_fetch && !m_sizeThread.joinable()) ScanSize (); // a session may have streamed more
+	m_scanWanted = true; // a session may have streamed more; counted while the page shows
+	Layout (hPage);
+}
+
+void OptionsPage_Stream::Layout(QWidget *hPage)
+{
 	int w = std::max (HParent()->width(), hPage->minimumSizeHint().width());
 	QLayout *l = hPage->layout();
 	hPage->resize (w, l && l->hasHeightForWidth() ? l->totalHeightForWidth (w) : hPage->sizeHint().height());
@@ -295,19 +296,50 @@ void OptionsPage_Stream::UpdateConfig(QWidget *hPage)
 	if (!m_enable) return;
 	Cfg()->bTileStream = m_enable->isChecked();
 	Cfg()->bTileStreamOffline = m_offline->isChecked();
-	Cfg()->TileStreamCacheMB = m_cap->value();
+	if (m_capUser) Cfg()->TileStreamCacheMB = m_cap->value(); // a larger cfg value is never cut to the box
 }
 
 // off the UI thread: the size of the streamed tiles and of every loose Earth tile
-void OptionsPage_Stream::ScanSize()
+void OptionsPage_Stream::StartScan()
 {
-	if (m_sizeThread.joinable()) return;
+	m_scanWanted = false;
+	m_nextScan = std::chrono::steady_clock::now() + std::chrono::seconds (10);
 	m_size->setText ("Counting...");
 	auto s = std::make_shared<Size>();
 	m_sz = s;
 	std::string dir = BodyDir();
 	m_sizeThread = std::thread ([s, dir] {
-		s->streamed = TileStream::CacheBytes (dir, &s->total, &s->tiles);
+		try {
+			s->streamed = TileStream::CacheBytes (dir, &s->total, &s->tiles);
+		} catch (const std::exception &e) {
+			s->error = e.what();
+		} catch (...) {
+			s->error = "unknown error";
+		}
+		s->ready = true;
+	});
+}
+
+// off the UI thread: deletes the streamed tiles, then counts again
+void OptionsPage_Stream::StartClear(bool keep)
+{
+	m_pendingClear = false;
+	m_clearing = true;
+	m_scanWanted = false;
+	m_nextScan = std::chrono::steady_clock::now() + std::chrono::seconds (10);
+	auto s = std::make_shared<Size>();
+	s->clear = true;
+	m_sz = s;
+	std::string dir = BodyDir();
+	m_sizeThread = std::thread ([s, dir, keep] {
+		try {
+			s->cleared = (long)TileStream::Clear (dir, keep);
+			s->streamed = TileStream::CacheBytes (dir, &s->total, &s->tiles);
+		} catch (const std::exception &e) {
+			s->error = e.what();
+		} catch (...) {
+			s->error = "unknown error";
+		}
 		s->ready = true;
 	});
 }
@@ -323,20 +355,42 @@ void OptionsPage_Stream::Estimate()
 	else s = QString ("%1 tiles, levels 1 to %2, up to %3").arg (keys.size()).arg (L).arg (Bytes (bytes));
 	if (m_level->value() > m_lmax) s += QString (" The imagery ends at level %1.").arg (m_lmax);
 	m_estimate->setText (s);
-	m_download->setEnabled (!m_fetch && !keys.empty() && keys.size() < 100000);
+	m_download->setEnabled (!m_fetch && !m_clearing && !m_pendingClear && !keys.empty() && keys.size() < 100000);
 }
 
 void OptionsPage_Stream::Tick()
 {
 	QWidget *hPage = HPage();
-	if (hPage && hPage->isVisible() && hPage->width() < HParent()->width()) UpdateControls (hPage);
-	if (m_sz && m_sz->ready && m_sizeThread.joinable()) {
-		m_sizeThread.join();
-		m_size->setText (QString ("Streamed: %1 in %2 tiles\nAll loose Earth tiles: %3").arg (Bytes (m_sz->streamed)).arg (m_sz->tiles).arg (Bytes (m_sz->total)));
-		if (m_sz->cleared >= 0) m_status->setText (QString ("Cleared %1 streamed tiles.").arg (m_sz->cleared));
-		m_clear->setEnabled (!m_fetch);
-		m_refresh->setEnabled (true);
+	bool shows = hPage && hPage->isVisible();
+	if (shows && hPage->width() < HParent()->width()) Layout (hPage);
+	if (m_sz && m_sz->ready && !m_sz->shown) { // also a result whose thread StopPrefetch joined
+		if (m_sizeThread.joinable()) m_sizeThread.join();
+		m_sz->shown = true;
+		if (!m_sz->error.empty()) m_size->setText (QString ("Not counted: %1").arg (QString::fromStdString (m_sz->error)));
+		else m_size->setText (QString ("Streamed: %1 in %2 tiles\nAll loose Earth tiles: %3").arg (Bytes (m_sz->streamed)).arg (m_sz->tiles).arg (Bytes (m_sz->total)));
+		if (m_sz->clear) {
+			m_clearing = false;
+			QString s = m_sz->error.empty() ? QString ("Cleared %1 streamed tiles.").arg (m_sz->cleared) : QString ("Clearing stopped: %1").arg (QString::fromStdString (m_sz->error));
+			m_status->setText (s);
+			LOGOUT ("TileStream: %s", s.toUtf8().constData());
+		} else if (!m_sz->error.empty()) LOGOUT ("TileStream: cache count failed: %s", m_sz->error.c_str());
+		if (!m_pendingClear) {
+			m_clear->setEnabled (!m_fetch);
+			m_refresh->setEnabled (true);
+			Estimate ();
+		}
 	}
+	if (m_pendingClear && !m_sizeThread.joinable()) { // the count it waited for has ended
+		if (StreamBusy (BodyDir())) {
+			m_pendingClear = false;
+			m_status->setText ("Not cleared: another Orbiter is using the Earth tile cache.");
+			m_clear->setEnabled (!m_fetch);
+			m_refresh->setEnabled (true);
+			m_scanWanted = true;
+			Estimate ();
+		} else StartClear (m_pendingKeep);
+	}
+	if (m_scanWanted && shows && !m_fetch && !m_clearing && !m_sizeThread.joinable() && std::chrono::steady_clock::now() >= m_nextScan) StartScan ();
 	if (!m_fetch) return;
 	const TileStream::Progress &p = m_fetch->p;
 	m_bar->setRange (0, std::max (1, p.total.load()));
@@ -351,49 +405,61 @@ void OptionsPage_Stream::Tick()
 	case 0: s = "Done. " + s; break;
 	case 1: s = "Cancelled. " + s; break;
 	case 2: s = "Stopped: no answer from the tile servers for two minutes. " + s; break;
-	default: s = "Config/TileStream.cfg has no Earth: nothing to download."; break;
+	case 3: s = "Config/TileStream.cfg has no Earth: nothing to download."; break;
+	default: s = QString ("Stopped: %1. ").arg (QString::fromStdString (m_fetch->error)) + s; break;
 	}
 	m_status->setText (s);
 	LOGOUT ("TileStream: region download: %s", s.toUtf8().constData());
 	m_fetch.reset();
 	m_cancel->setEnabled (false);
+	m_clear->setEnabled (!m_clearing && !m_pendingClear);
 	Estimate ();
-	ScanSize ();
+	m_scanWanted = true;
 }
 
-static bool SessionRunning(QWidget *parent)
+// a message box and true if the action may not start now
+bool OptionsPage_Stream::Refused(StreamAct a)
 {
-	if (!g_pOrbiter || !g_pOrbiter->Stream()) return false;
-	QMessageBox::information (parent, "Earth streaming", "A simulation session is running. Try again once it has ended.");
+	StreamState st;
+	st.session = g_pOrbiter && g_pOrbiter->Stream();
+	st.fetching = m_fetch || m_fetchThread.joinable();
+	st.clearing = m_clearing;
+	st.pendingClear = m_pendingClear;
+	st.offline = m_offline->isEnabled() && m_offline->isChecked();
+	std::string why = StreamRefusal (a, st);
+	if (why.empty()) {
+		st.busy = StreamBusy (BodyDir());
+		why = StreamRefusal (a, st);
+	}
+	if (why.empty()) return false;
+	QMessageBox::information (HPage(), a == StreamAct::Clear ? "Clear streamed tiles" : "Download a region", QString::fromStdString (why));
 	return true;
 }
 
 void OptionsPage_Stream::OnClear()
 {
-	if (m_fetch || SessionRunning (HPage())) return;
+	if (Refused (StreamAct::Clear)) return;
 	bool keep = !m_base->isChecked();
 	QString msg = "Delete the Earth tiles the stream has downloaded?\n\n";
 	msg += keep ? "Levels 8 and below are kept, so the globe still shows when you are offline. "
 		: "Base levels 8 and below are deleted too; they are fetched again when needed. ";
 	msg += "Tiles you installed yourself, texture packs and the Archive folder are not touched.";
 	if (QMessageBox::question (HPage(), "Clear streamed tiles", msg, QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) return;
-	if (m_sizeThread.joinable()) m_sizeThread.join();
+	if (m_fetch || m_clearing || m_pendingClear) return; // started while the question was open
 	m_size->setText ("Clearing...");
+	m_status->clear();
 	m_clear->setEnabled (false);
 	m_refresh->setEnabled (false);
-	auto s = std::make_shared<Size>();
-	m_sz = s;
-	std::string dir = BodyDir();
-	m_sizeThread = std::thread ([s, dir, keep] {
-		s->cleared = (long)TileStream::Clear (dir, keep);
-		s->streamed = TileStream::CacheBytes (dir, &s->total, &s->tiles);
-		s->ready = true;
-	});
+	m_download->setEnabled (false);
+	if (m_sizeThread.joinable()) { // a count runs: Tick starts the Clear after it, the UI never waits
+		m_pendingClear = true;
+		m_pendingKeep = keep;
+	} else StartClear (keep);
 }
 
 void OptionsPage_Stream::OnDownload()
 {
-	if (m_fetch || m_fetchThread.joinable() || SessionRunning (HPage())) return;
+	if (Refused (StreamAct::Download)) return;
 	int L = std::min (m_level->value(), m_lmax);
 	double radius = m_radius->value();
 	std::vector<TileStream::TileKey> keys = TileStream::RegionKeys (m_lat->value(), m_lng->value(), radius, L);
@@ -407,6 +473,7 @@ void OptionsPage_Stream::OnDownload()
 	if (cap && now + bytes > cap)
 		msg += QString ("\n\nThis may go over the cache limit of %1: the next session removes the oldest streamed tiles to get under it. Raise the limit to keep them.").arg (Bytes (cap));
 	if (QMessageBox::question (HPage(), "Download a region", msg, QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes) != QMessageBox::Yes) return;
+	if (m_fetch || m_clearing || m_pendingClear) return; // started while the question was open
 	TileStream::Options o;
 	o.cfgfile = CfgFile();
 	std::string dir = BodyDir();
@@ -425,7 +492,15 @@ void OptionsPage_Stream::OnDownload()
 	m_clear->setEnabled (false);
 	LOGOUT ("TileStream: region download of %d tiles around %s, %.1f km, level %d", (int)keys.size(), where.toUtf8().constData(), radius, L);
 	m_fetchThread = std::thread ([o, keys, f] {
-		f->result = TileStream::Prefetch (o, "Earth", keys, f->p, f->cancel);
+		try {
+			f->result = TileStream::Prefetch (o, "Earth", keys, f->p, f->cancel);
+		} catch (const std::exception &e) {
+			f->error = e.what();
+			f->result = 4;
+		} catch (...) {
+			f->error = "unknown error";
+			f->result = 4;
+		}
 		f->finished = true;
 	});
 }
