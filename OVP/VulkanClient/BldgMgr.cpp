@@ -5,11 +5,15 @@
 #include "VPlanet.h"
 #include "Scene.h"
 #include "AABBUtil.h"
+#include "Surfmgr2.h"
 #include <cmath>
 
 namespace {
 const double MaxAlt = 15e3, DropAlt = 20e3, EnvRange = 2e3;
+const double EditGap = 0.25; // s between two edits of a cell's mesh: each is a whole upload
 const int Z = 14;
+const int EditsPerFrame = 4; // cell meshes edited a frame
+const int SunMarches = 8;    // fresh terrain sun marches a frame; a cell whose cache holds costs none
 const size_t InFlight = 2; // tiles given to the worker at a time
 
 VECTOR3 Up (double lat, double lng) { return _V(cos (lat) * cos (lng), sin (lat), cos (lat) * sin (lng)); }
@@ -78,15 +82,18 @@ void BldgMgr::Work ()
 
 void BldgMgr::Drop (Tile &t)
 {
-	delete t.mesh;
-	t.mesh = nullptr;
+	for (Cell &c : t.cell) {
+		delete c.mesh;
+		c.mesh = nullptr;
+	}
 }
 
-// the rendered terrain under a point, so the buildings stand on what is drawn
+// the terrain under a point from the deepest loaded tile: the rendered tree changes with each pass's view
 double BldgMgr::Ground (double lat, double lng) const
 {
 	double e = 0.0;
-	if (vp->GetElevation (lng, lat, &e) == 1) return e; // 2: the tile has no elevation yet, not sea level
+	TileManager2<SurfTile> *sm = vp->SurfMgr2();
+	if (sm && sm->GetLoadedElevation (lng, lat, &e) == 1) return e; // 2: the tile has no elevation yet, not sea level
 	return oapiSurfaceElevation (hObj, lng, lat);
 }
 
@@ -99,6 +106,9 @@ bool BldgMgr::Near (int x, int y) const
 
 void BldgMgr::Update ()
 {
+	sunLeft = SunMarches; // once a frame, before the passes
+	if (sunOff >= 0) sunFrom = sunOff; // the marches go on from the first tile put off
+	sunOff = -1;
 	VECTOR3 cam = vp->CameraPos();
 	MATRIX3 rot;
 	oapiGetRotationMatrix (hObj, &rot);
@@ -130,7 +140,7 @@ void BldgMgr::Update ()
 				Make (T, got.second);
 				settle = (int)tiles.size(); // placed on the terrain loaded so far
 			}
-			oapiTileStreamBldgFree (got.second); // the D3D9Mesh has its own copy
+			oapiTileStreamBldgFree (got.second); // the D3D9Meshes have their own copies
 		}
 	}
 	if (alt > DropAlt) {
@@ -177,9 +187,17 @@ void BldgMgr::Update ()
 		else if (settle > 0) settle--;
 		tGround = settle > 0 ? t : t + 0.25;
 	}
+	auto it = tiles.lower_bound (lastEdit); // the lifts, round the tiles: a few cell meshes a frame
+	int n = 0;
+	for (size_t i = 0; i < tiles.size(); i++, ++it) {
+		if (it == tiles.end()) it = tiles.begin();
+		for (Cell &c : it->second.cell)
+			if (c.dirty && t >= c.tEdit && n < EditsPerFrame) { Edit (it->second, c, t); n++; }
+		if (n == EditsPerFrame) { lastEdit = it->first; break; } // the rest of this tile next frame
+	}
 }
 
-// the tile's buildings as one mesh in a frame at the tile centre: walls and roofs per cell, <= 65535 vertices a group
+// the tile's buildings as one mesh a cell, all in a frame at the tile centre: walls and roofs, <= 65535 vertices a group
 void BldgMgr::Make (Tile &t, const TSBLDGMESH *m)
 {
 	double lat0, lng0;
@@ -190,28 +208,29 @@ void BldgMgr::Make (Tile &t, const TSBLDGMESH *m)
 	for (int c = 0; c < NC * NC; c++) {
 		double la, ln;
 		Merc (t.x + (c % NC + 0.5) / NC, t.y + (c / NC + 0.5) / NC, la, ln);
-		t.cellUp[c] = Up (la, ln);
-		t.mtrl[c][0] = t.mtrl[c][1] = -1;
-		t.vis[c] = 1.0f;
+		t.cell[c].up = Up (la, ln);
+		t.cell[c].bldg.clear();
 	}
 	t.lat.assign (m->nb, 0.0);
 	t.lng.assign (m->nb, 0.0);
 	t.ground.assign (m->nb, 0.0);
 	t.runs.assign (m->nb, {});
 	const double n = (double)(1 << Z);
-	struct Grp { std::vector<NTVERTEX> v; std::vector<WORD> i; int cell, kind; };
-	std::vector<Grp> grps;
+	struct Grp { std::vector<NTVERTEX> v; std::vector<WORD> i; int kind; };
+	std::vector<Grp> grps[NC * NC]; // per cell, in its mesh's group order
 	int cur[NC * NC][2];
 	for (auto &c : cur) c[0] = c[1] = -1;
-	std::vector<std::pair<int, int>> remap; // building vertex: group, index in it
+	std::vector<std::pair<int, int>> remap; // building vertex: group in its cell, index in it
 	for (DWORD b = 0; b < m->nb; b++) {
 		const TSBLDG &B = m->b[b];
 		double g = Ground (B.lat, B.lng);
 		t.lat[b] = B.lat; t.lng[b] = B.lng; t.ground[b] = g;
 		double fx = (B.lng / (2.0 * PI) + 0.5) * n - t.x, fy = (1.0 - std::asinh (std::tan (B.lat)) / PI) * 0.5 * n - t.y;
 		int cell = CellOf (fy, NC) * NC + CellOf (fx, NC);
+		t.cell[cell].bldg.push_back (b);
+		std::vector<Grp> &gs = grps[cell];
 		for (int k = 0; k < 2; k++) // a building that does not fit starts a new group
-			if (cur[cell][k] >= 0 && grps[cur[cell][k]].v.size() + B.nv > 65535) cur[cell][k] = -1;
+			if (cur[cell][k] >= 0 && gs[cur[cell][k]].v.size() + B.nv > 65535) cur[cell][k] = -1;
 		VECTOR3 ub = Up (B.lat, B.lng), eb = East (B.lng), nb = North (B.lat, B.lng);
 		VECTOR3 pb = ub * (R + g) - t.p0;
 		remap.assign (B.nv, {-1, 0});
@@ -219,11 +238,11 @@ void BldgMgr::Make (Tile &t, const TSBLDGMESH *m)
 			const DWORD *tri = m->idx + B.i0 + k;
 			int kind = m->vtx[(B.v0 + tri[0]) * 6 + 4] > 0.5f ? 1 : 0;
 			int &cg = cur[cell][kind];
-			if (cg < 0 || grps[cg].v.size() + 3 > 65535) {
-				cg = (int)grps.size();
-				grps.push_back ({{}, {}, cell, kind});
+			if (cg < 0 || gs[cg].v.size() + 3 > 65535) {
+				cg = (int)gs.size();
+				gs.push_back ({{}, {}, kind});
 			}
-			Grp &G = grps[cg];
+			Grp &G = gs[cg];
 			for (int c = 0; c < 3; c++) {
 				DWORD vi = tri[c];
 				if (remap[vi].first != cg) {
@@ -246,40 +265,57 @@ void BldgMgr::Make (Tile &t, const TSBLDGMESH *m)
 			}
 		}
 	}
-	delete t.mesh;
-	t.mesh = nullptr;
-	if (grps.empty()) return;
-	MESHHANDLE hMesh = oapiCreateMesh (0, nullptr);
+	t.placed = t.ground;
 	MATERIAL mat[2] = {
 		{{0.78f, 0.76f, 0.72f, 1.0f}, {0.78f, 0.76f, 0.72f, 1.0f}, {0.1f, 0.1f, 0.1f, 1.0f}, {0, 0, 0, 0}, 10.0f},  // wall
 		{{0.52f, 0.52f, 0.54f, 1.0f}, {0.52f, 0.52f, 0.54f, 1.0f}, {0.05f, 0.05f, 0.05f, 1.0f}, {0, 0, 0, 0}, 5.0f}}; // roof
-	for (Grp &G : grps) {
-		int &mi = t.mtrl[G.cell][G.kind];
-		if (mi < 0) mi = (int)oapiAddMaterial (hMesh, &mat[G.kind]);
-		MESHGROUP mg;
-		memset (&mg, 0, sizeof mg);
-		mg.Vtx = G.v.data(); mg.nVtx = (DWORD)G.v.size();
-		mg.Idx = G.i.data(); mg.nIdx = (DWORD)G.i.size();
-		mg.MtrlIdx = (DWORD)mi;
-		mg.TexIdx = SPEC_DEFAULT;
-		oapiAddMeshGroup (hMesh, &mg);
+	for (int c = 0; c < NC * NC; c++) {
+		Cell &C = t.cell[c];
+		delete C.mesh;
+		C.mesh = nullptr;
+		if (grps[c].empty()) continue;
+		MESHHANDLE hMesh = oapiCreateMesh (0, nullptr);
+		DWORD mi[2] = {oapiAddMaterial (hMesh, &mat[0]), oapiAddMaterial (hMesh, &mat[1])};
+		for (Grp &G : grps[c]) {
+			MESHGROUP mg;
+			memset (&mg, 0, sizeof mg);
+			mg.Vtx = G.v.data(); mg.nVtx = (DWORD)G.v.size();
+			mg.Idx = G.i.data(); mg.nIdx = (DWORD)G.i.size();
+			mg.MtrlIdx = mi[G.kind];
+			mg.TexIdx = SPEC_DEFAULT;
+			oapiAddMeshGroup (hMesh, &mg);
+		}
+		C.mesh = new D3D9Mesh (hMesh);
+		oapiDeleteMesh (hMesh); // the D3D9Mesh copied it all
+		std::vector<Grp>().swap (grps[c]);
 	}
-	t.mesh = new D3D9Mesh (hMesh);
-	oapiDeleteMesh (hMesh); // the D3D9Mesh copied it all
-	for (int k = 0; k < 2; k++)
-		for (int c = 0; c < NC * NC; c++)
-			if (t.mtrl[c][k] >= 0) { t.mesh->GetMaterial (&t.base[k], (DWORD)t.mtrl[c][k]); break; }
 }
 
-// buildings whose ground moved more than 0.25 m are lifted in the mesh's own vertex copy: one EditGroup a group, one upload
+// the ground under each building: a cell whose buildings' ground moved more than 0.25 m is marked for Edit
 bool BldgMgr::Reground (Tile &t)
 {
-	if (!t.mesh) return false;
+	bool moved = false;
+	for (Cell &c : t.cell)
+		for (DWORD b : c.bldg) {
+			double g = Ground (t.lat[b], t.lng[b]);
+			if (!(std::fabs (g - t.ground[b]) > 0.25)) continue;
+			t.ground[b] = g;
+			c.dirty = moved = true;
+		}
+	return moved;
+}
+
+// the cell's buildings lifted by what their ground moved since the last edit: one EditGroup a group, one upload
+void BldgMgr::Edit (Tile &t, Cell &c, double now)
+{
+	c.dirty = false;
+	c.tEdit = now + EditGap;
+	if (!c.mesh) return;
 	std::map<DWORD, std::pair<std::vector<WORD>, std::vector<float>>> ed; // per group: vertices, their lift
-	for (size_t b = 0; b < t.ground.size(); b++) {
-		double g = Ground (t.lat[b], t.lng[b]), d = g - t.ground[b];
-		if (!(std::fabs (d) > 0.25)) continue;
-		t.ground[b] = g;
+	for (DWORD b : c.bldg) {
+		double d = t.ground[b] - t.placed[b];
+		if (d == 0.0) continue;
+		t.placed[b] = t.ground[b];
 		for (const Run &r : t.runs[b]) {
 			auto &e = ed[r.grp];
 			for (DWORD v = r.v0; v < r.v0 + r.nv; v++) {
@@ -293,36 +329,17 @@ bool BldgMgr::Reground (Tile &t)
 		GROUPREQUESTSPEC grs;
 		memset (&grs, 0, sizeof grs);
 		grs.Vtx = v.data(); grs.nVtx = (DWORD)v.size(); grs.VtxPerm = p.second.first.data();
-		if (t.mesh->GetGroup (p.first, &grs)) continue;
+		if (c.mesh->GetGroup (p.first, &grs)) continue;
 		for (size_t i = 0; i < v.size(); i++) v[i].y += p.second.second[i];
 		GROUPEDITSPEC ges;
 		memset (&ges, 0, sizeof ges);
 		ges.flags = GRPEDIT_VTXCRDY;
 		ges.Vtx = v.data(); ges.nVtx = (DWORD)v.size(); ges.vIdx = p.second.first.data();
-		t.mesh->EditGroup (p.first, &ges);
-	}
-	return !ed.empty();
-}
-
-// each cell's materials carry its own terrain sun: the sun light stays the tile's
-void BldgMgr::Sun (Tile &t, const MATRIX3 &rot)
-{
-	for (int c = 0; c < NC * NC; c++) {
-		if (t.mtrl[c][0] < 0 && t.mtrl[c][1] < 0) continue;
-		float v = vp->TerrainSunVisibility (vp->GlobalPos() + mul (rot, t.cellUp[c] * R), t.ts[c]); // lifted onto the drawn ground
-		bool end = (v == 0.0f || v == 1.0f) && v != t.vis[c];
-		if (!end && std::fabs (v - t.vis[c]) <= 0.02f) continue;
-		t.vis[c] = v;
-		for (int k = 0; k < 2; k++) {
-			if (t.mtrl[c][k] < 0) continue;
-			D3D9MatExt mt = t.base[k];
-			mt.Diffuse.x *= v; mt.Diffuse.y *= v; mt.Diffuse.z *= v;
-			mt.Specular.x *= v; mt.Specular.y *= v; mt.Specular.z *= v;
-			t.mesh->SetMaterial (&mt, (DWORD)t.mtrl[c][k], false);
-		}
+		c.mesh->EditGroup (p.first, &ges);
 	}
 }
 
+// each cell's mesh is lit by the tile's sun times the cell's terrain sun, its materials stay as made
 void BldgMgr::Render (VkDev *dev)
 {
 	DWORD pass = scn->GetRenderPass();
@@ -331,11 +348,12 @@ void BldgMgr::Render (VkDev *dev)
 	if (!main && !(scn->GetRenderFlags() & 0x20)) return; // with the base structures: env maps in EnvMapMode 2
 	MATRIX3 rot;
 	oapiGetRotationMatrix (hObj, &rot);
-	VECTOR3 cam = vp->CameraPos(); // this pass's camera
+	VECTOR3 cam = vp->CameraPos(), gp = vp->GlobalPos(); // this pass's camera
 	D3DXVECTOR4 F = D9LinearFieldOfView (scn->GetProjectionMatrix());
-	for (auto &p : tiles) {
-		Tile &t = p.second;
-		if (!t.mesh) continue;
+	auto it = tiles.lower_bound (sunFrom); // round the tiles from where the marches were put off
+	for (size_t i = 0; i < tiles.size(); i++, ++it) {
+		if (it == tiles.end()) it = tiles.begin();
+		Tile &t = it->second;
 		VECTOR3 e = mul (rot, t.e0), u = mul (rot, t.u0), n = mul (rot, t.n0), g = mul (rot, t.p0), o = g - cam;
 		double d = length (o);
 		if (main ? d > range + 6000.0 : env && d > EnvRange + t.rad) continue;
@@ -346,10 +364,17 @@ void BldgMgr::Render (VkDev *dev)
 		W._31 = (float)n.x; W._32 = (float)n.y; W._33 = (float)n.z;
 		W._41 = (float)o.x; W._42 = (float)o.y; W._43 = (float)o.z;
 		D3DXMatrixMultiply (&WV, &W, scn->GetViewMatrix());
-		if (!D9IsAABBVisible (t.mesh->GetAABB(), &WV, &F)) continue; // culled by this pass's camera
-		if (main) Sun (t, rot); // no updates from the other passes
-		D3D9Sun sp = vp->GetObjectAtmoParams (g);
-		t.mesh->SetSunLight (&sp);
-		t.mesh->Render (&W, RENDER_BASE);
+		D3D9Sun sp;
+		bool lit = false;
+		for (Cell &c : t.cell) {
+			if (!c.mesh || !D9IsAABBVisible (c.mesh->GetAABB(), &WV, &F)) continue; // culled by this pass's camera
+			if (!lit) { sp = vp->GetObjectAtmoParams (g); lit = true; }
+			c.vis = vp->TerrainSunVisibility (gp + mul (rot, c.up * R), c.ts, c.ts.owner ? &sunLeft : nullptr); // a cell's first value is not put off
+			if (sunLeft < 0 && sunOff < 0) sunOff = it->first;
+			D3D9Sun s = sp;
+			s.Color *= c.vis; // the sun only: local lights and earth glow go through the materials
+			c.mesh->SetSunLight (&s);
+			c.mesh->Render (&W, RENDER_BASE);
+		}
 	}
 }

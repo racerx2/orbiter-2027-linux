@@ -406,7 +406,7 @@ public:
 	double streamNow = 0.0; // not upstream: sys time of this Render call
 
 protected:
-	struct StreamLoad { int L, ilat, ilng; VkPixels *surf, *mask, *cls; bool checked; }; // not upstream: checked, StreamApply found a tile to take it
+	struct StreamLoad { int L, ilat, ilng; VkPixels *surf, *mask, *cls; bool checked; uint64_t stamp; }; // not upstream: checked, StreamApply found a tile to take it; stamp, the Surf file read
 	std::vector<StreamLoad> streamKeys; // not upstream: tiles to swap in, pixels read once taken
 	MATRIX4 WorldMatrix (int ilng, int nlng, int ilat, int nlat);
 	MATRIX4 WorldMatrix(Tile *tile);

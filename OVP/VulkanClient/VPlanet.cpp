@@ -726,7 +726,7 @@ int vPlanet::GetElevation(double lng, double lat, double *elv, FVECTOR3 *nrm) co
 // ==============================================================
 // not upstream: march the ray to the sun over the loaded terrain; 0 hidden, 1 clear
 
-float vPlanet::TerrainSunVisibility(const VECTOR3 &gpos, TerrainSunCache &tc)
+float vPlanet::TerrainSunVisibility(const VECTOR3 &gpos, TerrainSunCache &tc, int *left)
 {
 	if (!surfmgr2) return 1.0f;
 	OBJHANDLE hSun = oapiGetObjectByIndex(0);
@@ -744,6 +744,8 @@ float vPlanet::TerrainSunVisibility(const VECTOR3 &gpos, TerrainSunCache &tc)
 	VECTOR3 lpos = ToLocal(p0), ldir = ToLocal(d);       // the planet frame: still when nothing moves on the ground
 	double now = oapiGetSysTime();
 	if (tc.owner == this && length(lpos - tc.pos) < 1.0 && length(ldir - tc.dir) < std::max(2e-4, tc.margin) && now < tc.t) return tc.vis;
+	if (left && *left <= 0) { *left = -1; return tc.vis; } // over the caller's budget: the last value meanwhile
+	if (left) (*left)--;
 
 	double lng, lat, rad, e0 = 0.0;
 	oapiGlobalToEqu(hObj, gpos, &lng, &lat, &rad);

@@ -26,24 +26,28 @@ public:
 	void Render (VkDev *dev);   // after the base structures, depth tested: main scene, custom cameras, env maps near by
 
 private:
-	static const int NC = 4;              // a tile's buildings in NC x NC cells, each lit by its own terrain sun
-	struct Run { DWORD grp, v0, nv; };    // a building's vertices in one group
+	static const int NC = 4;              // a tile's buildings in NC x NC cells, a mesh each, lit by its own terrain sun
+	struct Run { DWORD grp, v0, nv; };    // a building's vertices in one group of its cell's mesh
+	struct Cell {
+		D3D9Mesh *mesh = nullptr;
+		VECTOR3 up;                       // centre, planet-local unit vector
+		std::vector<DWORD> bldg;          // its buildings
+		float vis = 1.0f;                 // its terrain sun
+		TerrainSunCache ts;
+		bool dirty = false;               // ground moved under some of its buildings, the mesh not edited yet
+		double tEdit = 0.0;               // the mesh is edited at most every 0.25 s
+	};
 	struct Tile {
 		int x = 0, y = 0;
-		D3D9Mesh *mesh = nullptr;
 		VECTOR3 p0, e0, u0, n0;           // tile frame at the tile centre, planet-local
 		double rad = 0.0;                 // bounding radius around p0, m
-		std::vector<double> lat, lng, ground; // per building: anchor (rad), the ground it stands on (m)
+		std::vector<double> lat, lng, ground, placed; // per building: anchor (rad), its ground, the ground its mesh has (m)
 		std::vector<std::vector<Run>> runs;   // per building
-		VECTOR3 cellUp[NC * NC];          // cell centres, planet-local unit vectors
-		int mtrl[NC * NC][2];             // per cell: wall and roof material, -1 none
-		D3D9MatExt base[2];               // wall and roof as lit by the full sun
-		float vis[NC * NC];               // the terrain sun the cell's materials carry
-		TerrainSunCache ts[NC * NC];
+		Cell cell[NC * NC];
 	};
 	void Make (Tile &t, const TSBLDGMESH *m);
 	bool Reground (Tile &t);
-	void Sun (Tile &t, const MATRIX3 &rot);
+	void Edit (Tile &t, Cell &c, double now);
 	void Drop (Tile &t);
 	bool Near (int x, int y) const;
 	double Ground (double lat, double lng) const;
@@ -57,7 +61,10 @@ private:
 	std::set<long long> bad;     // tiles whose file did not load
 	std::set<long long> busy;    // render thread: given to the worker, result not taken yet
 	long long lastGround = -1;   // the last tile re-grounded
+	long long lastEdit = -1;     // the tile the next frame's edits start at
 	int settle = 0;              // tiles left to re-ground every frame while the terrain under them refines
+	int sunLeft = 0;             // fresh terrain sun marches left this frame, all passes; < 0 some were put off
+	long long sunFrom = -1, sunOff = -1; // the tile the marches start at; the first tile put off this frame
 	double tWant = 0.0, tGround = 0.0;
 	double camLat = 0.0, camLng = 0.0, range = 0.0;
 
