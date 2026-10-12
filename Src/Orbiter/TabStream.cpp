@@ -103,7 +103,6 @@ BOOL OptionsPage_Stream::OnInitDialog(QWidget *hPage)
 	auto *scroll = new QScrollArea (hPage);
 	scroll->setFrameShape (QFrame::NoFrame);
 	scroll->setWidgetResizable (true);
-	scroll->setHorizontalScrollBarPolicy (Qt::ScrollBarAlwaysOff);
 	auto *body = new QWidget (scroll);
 	scroll->setWidget (body);
 	outer->addWidget (scroll);
@@ -212,7 +211,7 @@ BOOL OptionsPage_Stream::OnInitDialog(QWidget *hPage)
 	QObject::connect (m_offline, &QCheckBox::toggled, hPage, [this] (bool on) { Cfg()->bTileStreamOffline = on; });
 	QObject::connect (m_cap, QOverload<int>::of (&QSpinBox::valueChanged), hPage, [this] (int v) { Cfg()->TileStreamCacheMB = v; m_capUser = true; });
 	QObject::connect (m_refresh, &QPushButton::clicked, hPage, [this] {
-		if (m_sizeThread.joinable() || m_clearing || m_pendingClear) return;
+		if (m_sizeThread.joinable() || m_clearing || m_pendingClear || m_fetch) return; // a download counts when it ends
 		m_scanWanted = true; // Tick counts, at most once every 10 s
 		m_size->setText ("Counting...");
 	});
