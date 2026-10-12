@@ -229,7 +229,7 @@ std::string ElevMod (int L, int ilat, int ilng, const std::vector<std::pair<cons
 
 } // namespace TsSky
 
-// a base cfg: Location, then each object as a disc (POS, SCALE) and each runway as a capsule; relpos x is south, z east (Base::Rel_EquPos)
+// a base cfg: Location, objects as discs (POS, SCALE), runways as capsules; relpos x south, z east (Base::Rel_EquPos)
 bool TsReadBase (const std::string &file, TsBase &b)
 {
 	std::ifstream f (file);

@@ -373,7 +373,7 @@ double FloorAt (const std::vector<TsBodyCfg::Floor> &floor, double lng, double l
 	return 0.0;
 }
 
-// Orbiter .elv: 259x259 int16 nodes, row 0 south, one node of padding round the tile, metres = value * scale; every node at 0: flat (dtype 0)
+// Orbiter .elv: 259x259 int16, row 0 south, one node of padding, metres = value * scale; all nodes 0: flat (dtype 0)
 std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QImage> &tiles, double scale, const std::vector<TsBodyCfg::Floor> &floor)
 {
 	const int N = 259;

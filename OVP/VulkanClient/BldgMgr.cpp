@@ -13,7 +13,8 @@ const double MaxAlt = 15e3, DropAlt = 20e3, EnvRange = 2e3;
 const double EditGap = 0.25; // s between two edits of a cell's mesh: each is a whole upload
 const int Z = 14;
 const int EditsPerFrame = 4; // cell meshes edited a frame
-const int SunMarches = 8;    // fresh terrain sun marches a frame; a cell whose cache holds costs none
+const int SunMarches = 8;    // main scene: fresh terrain sun marches a frame; a cached cell costs none
+const int SunMarchesAux = 4; // the same for the custom camera and env map passes together
 const size_t InFlight = 2; // tiles given to the worker at a time
 
 VECTOR3 Up (double lat, double lng) { return _V(cos (lat) * cos (lng), sin (lat), cos (lat) * sin (lng)); }
@@ -88,13 +89,17 @@ void BldgMgr::Drop (Tile &t)
 	}
 }
 
-// the terrain under a point from the deepest loaded tile: the rendered tree changes with each pass's view
-double BldgMgr::Ground (double lat, double lng) const
+// ground under n points from the deepest loaded tile, 256 a lock; the drawn tree differs per pass
+void BldgMgr::Grounds (const double *lng, const double *lat, size_t n, double *g) const
 {
-	double e = 0.0;
 	TileManager2<SurfTile> *sm = vp->SurfMgr2();
-	if (sm && sm->GetLoadedElevation (lng, lat, &e) == 1) return e; // 2: the tile has no elevation yet, not sea level
-	return oapiSurfaceElevation (hObj, lng, lat);
+	int rc[256];
+	for (size_t i0 = 0; i0 < n; i0 += 256) {
+		int k = (int)std::min<size_t> (256, n - i0);
+		if (sm) sm->GetLoadedElevations (k, lng + i0, lat + i0, g + i0, rc);
+		for (int i = 0; i < k; i++)
+			if (!sm || rc[i] != 1) g[i0 + i] = oapiSurfaceElevation (hObj, lng[i0 + i], lat[i0 + i]); // 2: no elevation yet, not sea level
+	}
 }
 
 bool BldgMgr::Near (int x, int y) const
@@ -106,9 +111,11 @@ bool BldgMgr::Near (int x, int y) const
 
 void BldgMgr::Update ()
 {
-	sunLeft = SunMarches; // once a frame, before the passes
-	if (sunOff >= 0) sunFrom = sunOff; // the marches go on from the first tile put off
-	sunOff = -1;
+	for (int k = 0; k < 2; k++) { // once a frame, before the passes
+		sunLeft[k] = k ? SunMarchesAux : SunMarches;
+		if (sunOff[k] >= 0) sunFrom[k] = sunOff[k]; // the marches go on from the first tile put off
+		sunOff[k] = -1;
+	}
 	VECTOR3 cam = vp->CameraPos();
 	MATRIX3 rot;
 	oapiGetRotationMatrix (hObj, &rot);
@@ -197,7 +204,7 @@ void BldgMgr::Update ()
 	}
 }
 
-// the tile's buildings as one mesh a cell, all in a frame at the tile centre: walls and roofs, <= 65535 vertices a group
+// a tile's buildings, one mesh a cell in the tile-centre frame: walls and roofs, <= 65535 vertices a group
 void BldgMgr::Make (Tile &t, const TSBLDGMESH *m)
 {
 	double lat0, lng0;
@@ -215,6 +222,8 @@ void BldgMgr::Make (Tile &t, const TSBLDGMESH *m)
 	t.lng.assign (m->nb, 0.0);
 	t.ground.assign (m->nb, 0.0);
 	t.runs.assign (m->nb, {});
+	for (DWORD b = 0; b < m->nb; b++) t.lat[b] = m->b[b].lat, t.lng[b] = m->b[b].lng;
+	Grounds (t.lng.data(), t.lat.data(), m->nb, t.ground.data());
 	const double n = (double)(1 << Z);
 	struct Grp { std::vector<NTVERTEX> v; std::vector<WORD> i; int kind; };
 	std::vector<Grp> grps[NC * NC]; // per cell, in its mesh's group order
@@ -223,8 +232,7 @@ void BldgMgr::Make (Tile &t, const TSBLDGMESH *m)
 	std::vector<std::pair<int, int>> remap; // building vertex: group in its cell, index in it
 	for (DWORD b = 0; b < m->nb; b++) {
 		const TSBLDG &B = m->b[b];
-		double g = Ground (B.lat, B.lng);
-		t.lat[b] = B.lat; t.lng[b] = B.lng; t.ground[b] = g;
+		double g = t.ground[b];
 		double fx = (B.lng / (2.0 * PI) + 0.5) * n - t.x, fy = (1.0 - std::asinh (std::tan (B.lat)) / PI) * 0.5 * n - t.y;
 		int cell = CellOf (fy, NC) * NC + CellOf (fx, NC);
 		t.cell[cell].bldg.push_back (b);
@@ -295,9 +303,12 @@ void BldgMgr::Make (Tile &t, const TSBLDGMESH *m)
 bool BldgMgr::Reground (Tile &t)
 {
 	bool moved = false;
+	std::vector<double> &gr = scratch;
+	gr.resize (t.lat.size());
+	Grounds (t.lng.data(), t.lat.data(), gr.size(), gr.data());
 	for (Cell &c : t.cell)
 		for (DWORD b : c.bldg) {
-			double g = Ground (t.lat[b], t.lng[b]);
+			double g = gr[b];
 			if (!(std::fabs (g - t.ground[b]) > 0.25)) continue;
 			t.ground[b] = g;
 			c.dirty = moved = true;
@@ -350,7 +361,8 @@ void BldgMgr::Render (VkDev *dev)
 	oapiGetRotationMatrix (hObj, &rot);
 	VECTOR3 cam = vp->CameraPos(), gp = vp->GlobalPos(); // this pass's camera
 	D3DXVECTOR4 F = D9LinearFieldOfView (scn->GetProjectionMatrix());
-	auto it = tiles.lower_bound (sunFrom); // round the tiles from where the marches were put off
+	int k = main ? 0 : 1;
+	auto it = tiles.lower_bound (sunFrom[k]); // round the tiles from where the marches were put off
 	for (size_t i = 0; i < tiles.size(); i++, ++it) {
 		if (it == tiles.end()) it = tiles.begin();
 		Tile &t = it->second;
@@ -369,8 +381,8 @@ void BldgMgr::Render (VkDev *dev)
 		for (Cell &c : t.cell) {
 			if (!c.mesh || !D9IsAABBVisible (c.mesh->GetAABB(), &WV, &F)) continue; // culled by this pass's camera
 			if (!lit) { sp = vp->GetObjectAtmoParams (g); lit = true; }
-			c.vis = vp->TerrainSunVisibility (gp + mul (rot, c.up * R), c.ts, c.ts.owner ? &sunLeft : nullptr); // a cell's first value is not put off
-			if (sunLeft < 0 && sunOff < 0) sunOff = it->first;
+			c.vis = vp->TerrainSunVisibility (gp + mul (rot, c.up * R), c.ts, c.ts.owner ? &sunLeft[k] : nullptr); // a cell's first value is not put off
+			if (sunLeft[k] < 0 && sunOff[k] < 0) sunOff[k] = it->first;
 			D3D9Sun s = sp;
 			s.Color *= c.vis; // the sun only: local lights and earth glow go through the materials
 			c.mesh->SetSunLight (&s);

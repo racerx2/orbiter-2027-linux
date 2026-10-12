@@ -434,7 +434,8 @@ bool OptionsPage_Stream::Refused(StreamAct a)
 	st.fetching = m_fetch || m_fetchThread.joinable();
 	st.clearing = m_clearing;
 	st.pendingClear = m_pendingClear;
-	st.offline = Cfg()->bTileStreamOffline; // ticked, also greyed with streaming off
+	st.offline = Cfg()->bTileStreamOffline;
+	st.streamOff = !Cfg()->bTileStream;
 	std::string why = StreamRefusal (a, st);
 	if (why.empty()) {
 		st.busy = TileStream::Busy (BodyDir());

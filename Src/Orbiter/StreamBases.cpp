@@ -55,6 +55,7 @@ std::string StreamRefusal (StreamAct a, const StreamState &s)
 	} else {
 		if (s.clearing || s.pendingClear) return "The streamed tiles are being cleared. Try again once that has finished.";
 		if (s.fetching) return "A region download is running already.";
+		if (s.offline && s.streamOff) return "Offline is ticked, so no tiles are requested. Tick Stream Earth imagery and elevation, then untick Offline, to download a region.";
 		if (s.offline) return "Offline is ticked, so no tiles are requested. Untick it to download a region.";
 	}
 	if (s.busy) return "Another Orbiter is using the Earth tile cache. Try again once it has ended.";

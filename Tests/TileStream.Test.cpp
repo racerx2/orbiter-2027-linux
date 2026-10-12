@@ -305,7 +305,7 @@ TEST_CASE ("The tile stream config reads its body and rejects bad lines", "[Tile
 	CHECK (b[0].cloudSmall.find ("cloud_combined_2048.jpg") != std::string::npos);
 	CHECK (b[0].cloudBig.find ("cloud_combined_8192.tif") != std::string::npos);
 	CHECK (b[0].cloudMax == 7);
-	// every source's required credit: EOX wording, OSM's ODbL link, WorldCover's sentence, the Terrain Tiles list (tilezen/joerd attribution.md)
+	// each source's required credit: EOX wording, OSM ODbL link, WorldCover sentence, Terrain Tiles list (joerd attribution.md)
 	const std::vector<std::string> &cr = b[0].credit;
 	auto has = [&] (const std::string &s) { for (const std::string &c : cr) if (c.find (s) != std::string::npos) return true; return false; };
 	auto count = [&] (const std::string &s) { int n = 0; for (const std::string &c : cr) n += c.find (s) != std::string::npos; return n; };

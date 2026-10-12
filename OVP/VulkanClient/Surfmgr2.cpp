@@ -24,6 +24,7 @@
 #include "D3D9Surface.h"
 #include "VkTexFile.h"
 #include <filesystem> // not upstream
+#include <sys/stat.h> // not upstream
 
 // =======================================================================
 extern void FilterElevationGraphics(OBJHANDLE hPlanet, int lvl, int ilat, int ilng, float *elev);
@@ -68,15 +69,13 @@ static bool ElevNodeOk (const BYTE *buf, DWORD ndata, int ndat) // not upstream:
 	return ndata - (DWORD)hdr.hdrsize >= (DWORD)ndat * (hdr.dtype == 8 ? 1 : hdr.dtype == -16 ? 2 : 0);
 }
 
-static uint64_t FileStamp (const char *path) // not upstream: mtime and size, 0 when missing; the tile stream renames each new file into place
+static uint64_t FileStamp (const char *path) // not upstream: inode, mtime and size, 0 when missing; each new stream file is renamed into place
 {
-	std::error_code ec;
-	std::filesystem::path p (oapiResolvePath(path));
-	auto t = std::filesystem::last_write_time(p, ec);
-	if (ec) return 0;
-	uintmax_t n = std::filesystem::file_size(p, ec);
-	if (ec) return 0;
-	return (uint64_t)t.time_since_epoch().count() * 1000003u + (uint64_t)n;
+	struct stat st;
+	if (stat(oapiResolvePath(path).c_str(), &st) != 0) return 0;
+	uint64_t t = (uint64_t)st.st_mtim.tv_sec * 1000000000u + (uint64_t)st.st_mtim.tv_nsec;
+	uint64_t h = (t * 1000003u + (uint64_t)st.st_size) ^ ((uint64_t)st.st_ino * 0x9E3779B97F4A7C15ull);
+	return h ? h : 1;
 }
 
 
@@ -1836,12 +1835,14 @@ int TileManager2<SurfTile>::GetLoadedElevation(double lng, double lat, double *e
 }
 
 template<>
-void TileManager2<SurfTile>::GetLoadedElevations(int n, const double *lng, const double *lat, double *elev)
+void TileManager2<SurfTile>::GetLoadedElevations(int n, const double *lng, const double *lat, double *elev, int *rc)
 {
 	loader->WaitForMutex();
 	for (int i = 0; i < n; i++) {
 		const SurfTile *t = static_cast<const SurfTile *>(SearchTile(lng[i], lat[i], 32, false));
-		if (!t || t->GetElevation(lng[i], lat[i], elev + i, NULL, NULL, true, true) != 1) elev[i] = 0.0;
+		int r = t ? t->GetElevation(lng[i], lat[i], elev + i, NULL, NULL, true, true) : 0;
+		if (r != 1) elev[i] = 0.0;
+		if (rc) rc[i] = r;
 	}
 	loader->ReleaseMutex();
 }

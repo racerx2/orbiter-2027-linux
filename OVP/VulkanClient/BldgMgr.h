@@ -50,7 +50,7 @@ private:
 	void Edit (Tile &t, Cell &c, double now);
 	void Drop (Tile &t);
 	bool Near (int x, int y) const;
-	double Ground (double lat, double lng) const;
+	void Grounds (const double *lng, const double *lat, size_t n, double *g) const;
 	void Work ();
 
 	vPlanet *vp;
@@ -63,9 +63,10 @@ private:
 	long long lastGround = -1;   // the last tile re-grounded
 	long long lastEdit = -1;     // the tile the next frame's edits start at
 	int settle = 0;              // tiles left to re-ground every frame while the terrain under them refines
-	int sunLeft = 0;             // fresh terrain sun marches left this frame, all passes; < 0 some were put off
-	long long sunFrom = -1, sunOff = -1; // the tile the marches start at; the first tile put off this frame
+	int sunLeft[2] = {0, 0};     // marches left this frame, [0] main [1] custom/env passes; < 0 some put off
+	long long sunFrom[2] = {-1, -1}, sunOff[2] = {-1, -1}; // per kind: the tile the marches start at, the first put off
 	double tWant = 0.0, tGround = 0.0;
+	std::vector<double> scratch; // Reground's grounds, kept between frames
 	double camLat = 0.0, camLng = 0.0, range = 0.0;
 
 	std::thread worker;          // reads and parses the .bld files, nothing else

@@ -48,10 +48,10 @@ TsNet::~TsNet ()
 	delete thread;
 }
 
-void TsNet::Get (const std::string &url, Reply done, int64_t off, int64_t len)
+void TsNet::Get (const std::string &url, Reply done, int64_t off, int64_t len, int ownMs)
 {
 	int64_t most = off >= 0 ? rangeCap : cap;
-	int maxMs = totalMs;
+	int maxMs = ownMs > 0 ? ownMs : totalMs;
 	QMetaObject::invokeMethod (ctx, [this, url, done, off, len, most, maxMs] {
 		bool called = false;
 		auto reply = [&] (int st, QByteArray body) { called = true; done (st, std::move (body), 0); };

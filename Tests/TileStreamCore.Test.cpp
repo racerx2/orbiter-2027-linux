@@ -902,18 +902,18 @@ TEST_CASE ("Evict counts and removes our Elev whose Surf is gone, never at L8 an
 	CHECK (Read (ts / "written.idx") == "9 0 6\n");
 }
 
-TEST_CASE ("A request sends only the headers the manual lists, no cookies, and fails past the total time cap however slowly it moves", "[TileStreamCore]")
+TEST_CASE ("A request sends only the headers the manual lists, no cookies, and fails past its total time cap however slowly it moves", "[TileStreamCore]")
 {
 	App app;
 	for (const char *v : {"http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"}) unsetenv (v);
 	TsNet net ("OrbiterLinux/test", 1000, 200, 1500);
-	auto get = [&] (const std::string &url, QByteArray &body) {
+	auto get = [&] (const std::string &url, QByteArray &body, int ms = 0) {
 		std::atomic<int> st {-1};
-		net.Get (url, [&] (int s, QByteArray got, int) { body = got; st = s; });
+		net.Get (url, [&] (int s, QByteArray got, int) { body = got; st = s; }, -1, 0, ms);
 		WaitFor ([&] { return st >= 0; }, 20.0);
 		return st.load();
 	};
-	Http h ({Reply ("200 OK", "Set-Cookie: id=42; Path=/\r\n", "ok"), Reply ("200 OK", "", "ok"), Reply ("200 OK", "", std::string (300, 'x'))});
+	Http h ({Reply ("200 OK", "Set-Cookie: id=42; Path=/\r\n", "ok"), Reply ("200 OK", "", "ok"), Reply ("200 OK", "", std::string (300, 'x')), Reply ("200 OK", "", std::string (40, 'y'))});
 	QByteArray b;
 	CHECK (get (h.Url(), b) == 200);
 	CHECK (get (h.Url(), b) == 200);
@@ -944,4 +944,7 @@ TEST_CASE ("A request sends only the headers the manual lists, no cookies, and f
 	double sec = std::chrono::duration<double> (Clock::now() - t0).count();
 	CHECK (sec >= 1.0);
 	CHECK (sec < 8.0);
+	h.dripMs = 25; // about 2.5 s: past the 1.5 s default, inside the request's own 20 s cap (the cloud TIFF's LongMs)
+	CHECK (get (h.Url(), b, 20000) == 200);
+	CHECK (b == QByteArray (40, 'y'));
 }

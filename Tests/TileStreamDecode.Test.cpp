@@ -1,5 +1,5 @@
 
-// not upstream: the tile stream's decoders on hostile input: TIFF limits, .elv headers, MVT holes and heights, FLOOR boxes, the date line, odd orbits
+// not upstream: tile stream decoders on hostile input: TIFF, .elv, MVT, FLOOR boxes, the date line, odd orbits
 
 #include <catch2/catch_test_macros.hpp>
 #include "TileStream.h"

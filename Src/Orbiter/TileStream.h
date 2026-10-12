@@ -167,7 +167,7 @@ public:
 	int WantBldg (const std::string &body, int x, int y);
 	std::string BldgPath (const std::string &body, int x, int y) const;
 
-	// not upstream (earth-sky): a ground-track tile, below camera wants and above refetches; 1 queued or there, 0 queue full, -1 never
+	// not upstream (earth-sky): a ground-track tile, after camera wants, before refetches; 1 queued or there, 0 full, -1 never
 	int Prefetch (const std::string &body, int L, int ilat, int ilng);
 	size_t Prefetching () const; // tests
 
@@ -177,15 +177,15 @@ public:
 	// not upstream: Launchpad cache controls and region prefetch (TabStream.cpp)
 	struct TileKey { int L, ilat, ilng; };
 	struct Progress { std::atomic<int> total {0}, done {0}, have {0}, none {0}, failed {0}; std::atomic<uint64_t> bytes {0}; }; // failed: given up on after its tries
-	// bytes of the files the stream wrote (written.idx tiles, its Elev, buildings, Elev_mod, clouds, .part leftovers); total: every file under the layer folders
+	// bytes the stream wrote (tiles, Elev, buildings, Elev_mod, clouds, .part); total: all files under the layer folders
 	static uint64_t CacheBytes (const std::string &bodyDir, uint64_t *total = nullptr, size_t *tiles = nullptr);
-	// deletes the files the stream wrote (L <= 8 kept with keepBase) and rewrites the indexes; tiles removed, 0 and *refused while Busy
+	// deletes the stream's files (keepBase: L <= 8 stay), rewrites the indexes; tiles removed, 0 and *refused while Busy
 	static size_t Clear (const std::string &bodyDir, bool keepBase, bool *refused = nullptr);
 	// a stream (this process or another Orbiter) or a Clear has the folder
 	static bool Busy (const std::string &bodyDir);
 	// tiles within radiusKm of (lat, lng) degrees, L1..maxL, coarse to fine
 	static std::vector<TileKey> RegionKeys (double lat, double lng, double radiusKm, int maxL);
-	// a headless stream fetching keys coarse to fine; 0 done, 1 cancelled, 2 no progress for stallSec, 3 no stream, 4 the folder is Busy, 5 an error
+	// headless fetch of keys, coarse to fine: 0 done, 1 cancelled, 2 stalled stallSec, 3 no stream, 4 Busy, 5 error
 	static int Prefetch (Options opt, const std::string &body, const std::vector<TileKey> &keys, Progress &p, const std::atomic<bool> &cancel, double stallSec = 120.0);
 
 	struct Impl;

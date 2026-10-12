@@ -1,4 +1,4 @@
-// not upstream: Launchpad Earth streaming page (TabStream.cpp): the surface base list, when Clear and Download are refused, and how they end
+// not upstream: Launchpad Earth streaming page logic (TabStream.cpp): base list, Clear/Download refusals, end texts
 
 #ifndef __STREAMBASES_H
 #define __STREAMBASES_H
@@ -21,6 +21,7 @@ struct StreamState {
 	bool clearing = false;     // a Clear runs
 	bool pendingClear = false; // a Clear waits for the size count
 	bool offline = false;      // Offline is ticked
+	bool streamOff = false;    // streaming is off, so the Offline box is greyed
 	bool busy = false;         // another process holds the tile cache
 };
 // empty if the action may start, else the reason shown to the user
@@ -31,7 +32,7 @@ enum class PendingClear { None, Wait, Start, Refuse };
 PendingClear StreamPendingClear (bool pending, bool counting, const std::function<bool ()> &busy);
 // the page's line for a Clear that has ended
 std::string StreamClearText (long cleared, bool refused, const std::string &error);
-// the page's line for a region download that has ended (TileStream::Prefetch's result, 6 an exception); progress: its counts
+// the page's line for an ended region download (Prefetch's result, 6 an exception); progress: its counts
 std::string StreamFetchText (int result, const std::string &error, const std::string &progress);
 
 #endif // !__STREAMBASES_H

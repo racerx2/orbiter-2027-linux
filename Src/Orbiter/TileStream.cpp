@@ -1926,7 +1926,7 @@ QByteArray TileStream::Impl::Fetch (const std::string &url, int sec)
 		w->body = std::move (body);
 		w->done = true;
 		w->c.notify_all();
-	});
+	}, -1, 0, sec ? sec * 1000 : TsNet::LongMs); // a wait given up stops its download too
 	Clock::time_point until = Clock::now() + std::chrono::seconds (sec);
 	std::unique_lock<std::mutex> l (w->m);
 	while (!w->done && !quit && (!sec || Clock::now() < until)) w->c.wait_for (l, std::chrono::milliseconds (200));
