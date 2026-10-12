@@ -319,7 +319,6 @@ Orbiter::Orbiter ()
 	hBk             = NULL;
 	hScnInterp      = NULL;
 	snote_playback  = NULL;
-	snote_stream    = NULL; // not upstream
 	m_pTileStream   = NULL; // not upstream
 	nsnote          = 0;
 	bVisible        = false;
@@ -1785,21 +1784,6 @@ VOID Orbiter::Output2DData ()
 		for (DWORD i = 0; i < nsnote; i++)
 			snote[i]->Render();
 		if (snote_playback && pConfig->CfgRecPlayPrm.bShowNotes) snote_playback->Render();
-		if (snote_stream && m_pTileStream) { // not upstream: tile stream credits while the camera is at a streamed body
-			const Planet *p = g_camera->ProxyPlanet();
-			if (p && m_pTileStream->Enabled (p->Name())) {
-				if (snote_stream_body != p->Name()) {
-					snote_stream_body = p->Name();
-					std::string t = m_pTileStream->Credit (snote_stream_body);
-					std::vector<char> buf (t.begin(), t.end());
-					buf.push_back ('\0');
-					double lines = 1.0 + std::count (t.begin(), t.end(), '\n'); // the box grows up to fit every credit line
-					snote_stream->SetPosition (0.01, std::max (0.5, 0.995 - lines * 0.6 / 35.0 * 1.35), 0.95, 0.995);
-					snote_stream->SetText (buf.data());
-				}
-				snote_stream->Render();
-			}
-		}
 	}
 }
 
@@ -1833,18 +1817,10 @@ void Orbiter::StartTileStream ()
 		return 6.37101e6;
 	};
 	m_pTileStream = new TileStream (o);
-	snote_stream = gclient->clbkCreateAnnotation ();
-	if (snote_stream) {
-		snote_stream->SetPosition (0.01, 0.90, 0.95, 0.995);
-		snote_stream->SetSize (0.6);
-		snote_stream->SetColour (_V(0.85, 0.85, 0.85));
-	}
-	snote_stream_body.clear();
 }
 
 void Orbiter::StopTileStream ()
 {
-	if (snote_stream) { delete snote_stream; snote_stream = NULL; }
 	if (m_pTileStream) { delete m_pTileStream; m_pTileStream = NULL; }
 }
 

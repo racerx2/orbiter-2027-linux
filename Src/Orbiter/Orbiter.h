@@ -382,9 +382,7 @@ private:
 	oapi::ScreenAnnotation **snote;// onscreen annotations
 	DWORD           nsnote;        // number of annotations
 	oapi::ScreenAnnotation *snote_playback;// onscreen annotation during playback
-	oapi::ScreenAnnotation *snote_stream;  // not upstream: tile stream credits
 	TileStream *m_pTileStream;             // not upstream: planet tile stream
-	std::string snote_stream_body;         // not upstream: whose credits snote_stream holds
 	void StartTileStream ();               // not upstream
 	void StopTileStream ();                // not upstream
 	void StreamPrefetch ();                // not upstream: ground-track tiles at high time acceleration

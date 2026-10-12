@@ -18,6 +18,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStringList>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <filesystem>
@@ -172,6 +173,14 @@ BOOL OptionsPage_Stream::OnInitDialog(QWidget *hPage)
 	lr->setColumnStretch (1, 1);
 	lr->setColumnStretch (3, 1);
 	top->addWidget (gr);
+
+	auto *gk = new QGroupBox ("Sources and credits", hPage);
+	auto *lk = new QVBoxLayout (gk);
+	m_credits = new QLabel (gk);
+	m_credits->setWordWrap (true);
+	m_credits->setTextInteractionFlags (Qt::TextSelectableByMouse);
+	lk->addWidget (m_credits);
+	top->addWidget (gk);
 	top->addStretch (1);
 
 	QObject::connect (m_enable, &QCheckBox::toggled, hPage, [this] (bool on) { Cfg()->bTileStream = on; m_offline->setEnabled (on); });
@@ -219,6 +228,9 @@ void OptionsPage_Stream::LoadBases()
 			if (b.name == "Earth") {
 				m_lmax = b.surf.lmax;
 				m_elmax = b.elev.kind.empty() ? 0 : b.elev.lmax;
+				QStringList c;
+				for (const std::string &l : b.credit) c << QString::fromStdString (l);
+				m_credits->setText (c.join ("\n"));
 			}
 	std::string dir = Cfg()->CfgDirPrm.ConfigDir;
 	std::replace (dir.begin(), dir.end(), '\\', '/');

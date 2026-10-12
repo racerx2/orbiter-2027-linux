@@ -49,7 +49,7 @@ private:
 
 	QCheckBox *m_enable = nullptr, *m_offline = nullptr, *m_base = nullptr;
 	QSpinBox *m_cap = nullptr, *m_level = nullptr;
-	QLabel *m_size = nullptr, *m_estimate = nullptr, *m_status = nullptr;
+	QLabel *m_size = nullptr, *m_estimate = nullptr, *m_status = nullptr, *m_credits = nullptr;
 	QPushButton *m_clear = nullptr, *m_refresh = nullptr, *m_download = nullptr, *m_cancel = nullptr;
 	QComboBox *m_where = nullptr;
 	QDoubleSpinBox *m_lat = nullptr, *m_lng = nullptr, *m_radius = nullptr;
