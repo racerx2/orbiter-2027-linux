@@ -402,9 +402,11 @@ public:
 
 	bool bStream; // not upstream: the tile stream fills this body's tile folders (TileStream.cpp in the core)
 	void StreamQueue (int L, int ilat, int ilng); // not upstream: a streamed tile to swap in
+	DWORD streamFrame = 0;  // not upstream: counts Render calls, SurfTile::Render's walk stamp
+	double streamNow = 0.0; // not upstream: sys time of this Render call
 
 protected:
-	struct StreamLoad { int L, ilat, ilng; VkPixels *surf, *mask, *cls; }; // not upstream
+	struct StreamLoad { int L, ilat, ilng; VkPixels *surf, *mask, *cls; bool checked; }; // not upstream: checked, StreamApply found a tile to take it
 	std::vector<StreamLoad> streamKeys; // not upstream: tiles to swap in, pixels read once taken
 	MATRIX4 WorldMatrix (int ilng, int nlng, int ilat, int nlat);
 	MATRIX4 WorldMatrix(Tile *tile);

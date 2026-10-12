@@ -62,6 +62,9 @@ protected:
 	TileManager2<SurfTile> *smgr;	// surface tile manager interface
 	QuadTreeNode<SurfTile> *node;	// my node in the quad tree, if I'm part of a tree
 	bool streamWait;				// not upstream: asked the tile stream, shows an ancestor meanwhile
+	bool looseTex;					// not upstream: shows its loose Surf file, a rewrite by the stream replaces it
+	double touchT;					// not upstream: last want sent from Render (sys time)
+	DWORD touchF;					// not upstream: the stream frame Render last walked it
 
 	void FixCorner (const SurfTile *nbr);
 	// Match corner elevation to neighbour

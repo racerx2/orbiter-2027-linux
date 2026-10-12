@@ -77,6 +77,9 @@ SurfTile::SurfTile (TileManager2Base *_mgr, int _lvl, int _ilat, int _ilng)
 	smgr = static_cast<TileManager2<SurfTile>* > (_mgr);
 	node = 0;
 	streamWait = false; // not upstream
+	looseTex = false; // not upstream
+	touchT = -1e9; // not upstream
+	touchF = 0; // not upstream
 	elev = NULL;
 	ggelev = NULL;
 	elev_file = NULL;
@@ -133,6 +136,7 @@ void SurfTile::PreLoad()
 		LoadTextureFile(path, &pSysSrf);
 		if (pSysSrf && smgr->bStream && lvl >= 0) oapiTileStreamWant(mgr->Cbody(), lvl + 4, ilat, ilng, 2); // not upstream: in use, the size cap takes it later
 	}
+	bool loose = pSysSrf != nullptr; // not upstream
 	if (!pSysSrf && smgr->ZTreeManager(0)) { // try loading from compressed archive
 		BYTE *buf;
 		DWORD ndata = smgr->ZTreeManager(0)->ReadData(lvl+4, ilat, ilng, &buf);
@@ -147,6 +151,7 @@ void SurfTile::PreLoad()
 			snprintf(path, MAX_PATH, "%s\\Surf\\%02d\\%06d\\%06d.dds", mgr->DataRootDir().c_str(), lvl + 4, ilat, ilng);
 			LoadTextureFile(path, &pSysSrf);
 			if (!pSysSrf) r = oapiTileStreamWant(mgr->Cbody(), lvl + 4, ilat, ilng, 1);
+			loose = pSysSrf != nullptr;
 		}
 		streamWait = (r >= 0 && !pSysSrf);
 	}
@@ -157,6 +162,7 @@ void SurfTile::PreLoad()
 			owntex = false;
 		}
 	}
+	looseTex = smgr->bStream && loose && tex && owntex; // not upstream: a rewrite of the loose file is swapped in (StreamApply)
 	
 	SAFE_DELETE(pSysSrf); // Release
 
@@ -808,7 +814,10 @@ void SurfTile::Render ()
 		DWORD pass = mgr->GetScene()->GetRenderPass();
 		if (pass == RENDERPASS_MAINSCENE || pass == RENDERPASS_CUSTOMCAM) {
 			for (SurfTile *t = this; t; t = t->getSurfParent()) {
-				if (t->streamWait) {
+				if (t->touchF == smgr->streamFrame) break; // walked this frame from another descendant, and its ancestors with it
+				t->touchF = smgr->streamFrame;
+				if (t->streamWait && smgr->streamNow - t->touchT >= 0.25) { // well inside the core's 2 s stale time
+					t->touchT = smgr->streamNow;
 					int r = oapiTileStreamWant(mgr->Cbody(), t->lvl + 4, t->ilat, t->ilng, 0);
 					if (r > 0) smgr->StreamQueue(t->lvl + 4, t->ilat, t->ilng);
 					else if (r < 0) t->streamWait = false;
@@ -1444,7 +1453,7 @@ void TileManager2<SurfTile>::StreamRead ()
 	char path[MAX_PATH];
 	int taken = 0;
 	for (StreamLoad &s : streamKeys) {
-		if (s.surf) continue;
+		if (s.surf || !s.checked) continue; // StreamApply checks first that the tile can take it
 		if (taken == 4) break;
 		if (!StreamNode(tiletree, s.L, s.ilat, s.ilng)) { s.L = 0; continue; } // the tree only changes on this thread
 		snprintf(path, MAX_PATH, "%s\\Surf\\%02d\\%06d\\%06d.dds", DataRootDir().c_str(), s.L, s.ilat, s.ilng);
@@ -1481,10 +1490,13 @@ void TileManager2<SurfTile>::StreamApply ()
 	static const TEXCRDRANGE2 full = {0, 1, 0, 1};
 	std::vector<StreamLoad> keep;
 	for (StreamLoad &s : streamKeys) {
-		if (!s.surf) { keep.push_back(s); continue; }
 		QuadTreeNode<SurfTile> *node = StreamNode(tiletree, s.L, s.ilat, s.ilng);
 		SurfTile *t = node ? node->Entry() : NULL;
-		bool use = t && (t->state & TILE_VALID) && t->streamWait; // others read the file in their own PreLoad
+		bool use = t && (t->state & TILE_VALID) && (t->streamWait || t->looseTex); // others read the file in their own PreLoad
+		if (!s.surf) { // not read yet: only what can be applied is read
+			if (use) { s.checked = true; keep.push_back(s); }
+			continue;
+		}
 		std::vector<QuadTreeNode<SurfTile>*> set;
 		if (use) {
 			set.push_back(node);
@@ -1517,6 +1529,7 @@ void TileManager2<SurfTile>::StreamApply ()
 			t->owntex = true;
 			t->texrange = full;
 			t->streamWait = false;
+			t->looseTex = true;
 			for (size_t i = 1; i < set.size(); i++) {
 				SurfTile *e = set[i]->Entry(), *p = e->getSurfParent();
 				e->tex = p->tex;
@@ -1640,6 +1653,7 @@ void TileManager2<SurfTile>::Render (MATRIX4 &dwmat, bool use_zbuf, const vPlane
 
 	bool bStreamPass = bStream && scene->GetRenderPass() == RENDERPASS_MAINSCENE; // not upstream
 	if (bStreamPass) StreamRead(); // not upstream
+	if (bStream) { streamFrame++; streamNow = oapiGetSysTime(); } // not upstream
 
 	loader->WaitForMutex();
 
