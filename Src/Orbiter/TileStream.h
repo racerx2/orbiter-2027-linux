@@ -35,6 +35,8 @@ struct TsBodyCfg {
 	std::string cloudSmall, cloudBig; // not upstream (earth-sky): CLOUD equirect images, L1-L5 and up to cloudMax
 	int cloudMax = 7;
 	std::string bldgJson, bldgUrl; // TileJSON of the building tiles, last known {z}/{x}/{y} template
+	struct Floor { double lng0, lat0, lng1, lat1, m; }; // FLOOR: degrees, the lowest metres inside; elsewhere 0
+	std::vector<Floor> floor;
 };
 
 // not upstream (earth-sky): a surface base's footprint for Elev_mod flattening
@@ -104,7 +106,7 @@ namespace TsImg {
 	QImage Region (const QImage &anc, int depth, int ilat, int ilng);
 	std::string Dds (const QImage &img, bool alpha);   // DXT1, full mip chain
 	QImage DdsImage (const QByteArray &dds);             // level 0 of a DXT1 DDS
-	std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QImage> &tiles, double scale); // .elv, header only (dtype 0) at sea level
+	std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QImage> &tiles, double scale, const std::vector<TsBodyCfg::Floor> &floor = {}); // .elv, header only (dtype 0) at sea level
 }
 
 // Cloud-Optimized GeoTIFF reads: ESA WorldCover 3 degree cells (TileStreamCog.cpp)

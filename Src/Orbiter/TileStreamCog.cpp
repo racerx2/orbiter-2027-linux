@@ -2,6 +2,7 @@
 // not upstream: Cloud-Optimized GeoTIFF reads for the tile stream: ESA WorldCover classes over an Orbiter tile (TileStream.h)
 
 #include "TileStream.h"
+#include <zlib.h>
 #include <algorithm>
 #include <cmath>
 #include <list>
@@ -12,6 +13,21 @@
 namespace TsCog {
 
 namespace {
+
+const uint64_t MaxBody = 8u << 20;  // one tile's compressed bytes
+const uint64_t MaxTile = 16u << 20; // one tile's pixels
+
+uint64_t Across (const Ifd &f) { return ((uint64_t)f.w + f.tw - 1) / f.tw; }
+uint64_t Down (const Ifd &f) { return ((uint64_t)f.h + f.th - 1) / f.th; }
+
+// the limits Parse and Decode hold a level to
+bool Sane (const Ifd &f)
+{
+	if (!f.w || !f.h || !f.tw || !f.th || !f.spp) return false;
+	if (f.w > (1u << 20) || f.h > (1u << 20) || f.tw > 4096 || f.th > 4096 || f.tw % 16 || f.th % 16 || f.spp > 4) return false;
+	if ((uint64_t)f.tw * f.th * f.spp > MaxTile) return false;
+	return f.bps == 8 && (f.comp == 8 || f.comp == 32946) && (f.pred == 1 || f.pred == 2);
+}
 
 struct Head {
 	bool missing = false;
@@ -87,6 +103,8 @@ int64_t Parse (const QByteArray &head, std::vector<Ifd> &ifds)
 			case 322: f.tw = (uint32_t)val (0); break;
 			case 323: f.th = (uint32_t)val (0); break;
 			case 324: case 325: {
+				uint64_t len = count * sz;
+				if (at > n || len > n - at) { need = at > UINT64_MAX - len ? UINT64_MAX : std::max (need, at + len); break; } // fits before the resize
 				std::vector<uint64_t> &v = tag == 324 ? f.off : f.cnt;
 				v.resize (count);
 				for (uint64_t k = 0; k < count; k++) v[k] = val (k);
@@ -100,8 +118,8 @@ int64_t Parse (const QByteArray &head, std::vector<Ifd> &ifds)
 		off = next;
 	}
 	for (const Ifd &f : ifds) {
-		if (!f.w || !f.h || !f.tw || !f.th || !f.spp) return -1;
-		uint64_t nt = (uint64_t)((f.w + f.tw - 1) / f.tw) * ((f.h + f.th - 1) / f.th) * (f.planar == 2 ? f.spp : 1);
+		if (!Sane (f)) return -1;
+		uint64_t nt = Across (f) * Down (f) * (f.planar == 2 ? f.spp : 1);
 		if (f.off.size() != nt || f.cnt.size() != nt) return -1;
 	}
 	std::stable_sort (ifds.begin(), ifds.end(), [] (const Ifd &a, const Ifd &b) { return a.w > b.w; });
@@ -110,19 +128,20 @@ int64_t Parse (const QByteArray &head, std::vector<Ifd> &ifds)
 
 bool Decode (const Ifd &f, const QByteArray &data, std::vector<uint8_t> &out)
 {
-	if (f.bps != 8 || (f.planar == 2 && f.spp > 1)) return false;
+	if (!Sane (f) || (f.planar == 2 && f.spp > 1) || (uint64_t)data.size() > MaxBody) return false;
 	size_t row = (size_t)f.tw * f.spp, sz = row * f.th;
 	if (data.isEmpty()) { out.assign (sz, 0); return true; } // a sparse tile: no data
-	if (f.comp == 1) {
-		if ((size_t)data.size() < sz) return false;
-		out.assign (data.constData(), data.constData() + sz);
-	} else if (f.comp == 8 || f.comp == 32946) {
-		QByteArray z (4, 0); // qUncompress wants the size up front
-		for (int i = 0; i < 4; i++) z[i] = (char)(sz >> (24 - 8 * i));
-		QByteArray r = qUncompress (z + data);
-		if ((size_t)r.size() < sz) return false;
-		out.assign (r.constData(), r.constData() + sz);
-	} else return false;
+	out.assign (sz, 0);
+	z_stream s {};
+	if (inflateInit (&s) != Z_OK) return false;
+	s.next_in = (Bytef*)data.constData();
+	s.avail_in = (uInt)data.size();
+	s.next_out = out.data();
+	s.avail_out = (uInt)sz;
+	int r = inflate (&s, Z_FINISH); // into exactly the tile: never more
+	uLong got = s.total_out;
+	inflateEnd (&s);
+	if (got != sz || (r != Z_STREAM_END && r != Z_BUF_ERROR)) return false;
 	if (f.pred == 2)
 		for (size_t y = 0; y < f.th; y++)
 			for (size_t x = f.spp; x < row; x++) out[y * row + x] += out[y * row + x - f.spp];
@@ -208,7 +227,8 @@ bool Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const F
 		const Ifd &f = h->second->ifd[lev[c]];
 		int x = std::clamp ((int)std::floor ((g - c.second) / 3.0 * f.w), 0, (int)f.w - 1);
 		int y = std::clamp ((int)std::floor ((c.first + 3.0 - a) / 3.0 * f.h), 0, (int)f.h - 1);
-		t = (size_t)(y / f.th) * ((f.w + f.tw - 1) / f.tw) + x / f.tw;
+		t = (size_t)(y / f.th) * Across (f) + x / f.tw;
+		if (t >= f.off.size() || t >= f.cnt.size()) return 0;
 		o = ((size_t)(y % f.th) * f.tw + x % f.tw) * f.spp;
 		return 2;
 	};
@@ -228,6 +248,7 @@ bool Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const F
 			if (tl.count (k)) continue;
 			if ((tl[k] = Find (dec, k))) continue;
 			const Ifd &f = hd[c]->ifd[lev[c]];
+			if (f.cnt[t] > MaxBody) return false;
 			rq.push_back ({url (c), f.off[t], f.cnt[t]});
 			want.push_back ({c, t});
 		}

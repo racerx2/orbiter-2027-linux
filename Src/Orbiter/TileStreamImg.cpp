@@ -69,17 +69,21 @@ static double MercY (double lat, double W)
 	return (1.0 - std::asinh (std::tan (phi)) / M_PI) * 0.5 * W;
 }
 
-// Terrarium tiles under an Orbiter tile and its one-node padding, zoom L-3
+// Terrarium tiles under an Orbiter tile and its one-node padding, zoom L-3; padding across the date line: col0 < 0, Url adds 2^z
 Grid TerrGrid (int L, int ilat, int ilng, int zmax)
 {
 	double w, n, dw, dh;
 	Bounds (L, ilat, ilng, w, n, dw, dh);
-	int z = std::max (0, std::min (L - 3, zmax));
-	double W = 256.0 * (1 << z);
+	int z = std::max (0, std::min (L - 3, zmax)), nt = 1 << z;
+	double W = 256.0 * nt;
 	auto px = [W] (double v) { return std::clamp ((int)std::floor (v), 0, (int)W - 1); };
-	int x0 = px (MercX (std::max (-180.0, w - dw / 256.0), W) - 0.5), x1 = std::min (px (MercX (std::min (180.0, w + dw + dw / 256.0), W) - 0.5) + 1, (int)W - 1);
+	int ca = (int)std::floor (std::floor (MercX (w - dw / 256.0, W) - 0.5) / 256.0);
+	int cb = (int)std::floor ((std::floor (MercX (w + dw + dw / 256.0, W) - 0.5) + 1.0) / 256.0);
+	int col0 = ca, ncol = cb - ca + 1;
+	if (ncol >= nt) { col0 = 0; ncol = nt; }
+	else if (cb >= nt) col0 = ca - nt;
 	int y0 = px (MercY (n + dh / 256.0, W) - 0.5), y1 = std::min (px (MercY (n - dh - dh / 256.0, W) - 0.5) + 1, (int)W - 1);
-	return {z, y0 / 256, x0 / 256, y1 / 256 - y0 / 256 + 1, x1 / 256 - x0 / 256 + 1};
+	return {z, y0 / 256, col0, y1 / 256 - y0 / 256 + 1, ncol};
 }
 
 Grid SrcGrid (const TsSource &s, int L, int ilat, int ilng)
@@ -91,6 +95,7 @@ Grid SrcGrid (const TsSource &s, int L, int ilat, int ilng)
 
 std::string Url (const std::string &tmpl, int z, int row, int col)
 {
+	if (col < 0 && z >= 0 && z < 30) col = (int)(((int64_t)col % (1 << z) + (1 << z)) % (1 << z)); // Terrarium across the date line
 	std::string u = tmpl;
 	auto rep = [&u] (const std::string &k, int v) {
 		for (size_t p; (p = u.find (k)) != std::string::npos; ) u.replace (p, k.size(), std::to_string (v));
@@ -359,38 +364,51 @@ QImage DdsImage (const QByteArray &d)
 	return out;
 }
 
-// Orbiter .elv: 259x259 int16 nodes, row 0 south, one node of padding round the tile, metres = value * scale; all at sea level: flat (dtype 0)
-std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QImage> &tiles, double scale)
+// metres a node may go down to: the first FLOOR box holding it, else sea level
+static double FloorAt (const std::vector<TsBodyCfg::Floor> &floor, double lng, double lat)
+{
+	lng = std::remainder (lng, 360.0);
+	for (const TsBodyCfg::Floor &f : floor)
+		if (lng >= f.lng0 && lng <= f.lng1 && lat >= f.lat0 && lat <= f.lat1) return f.m;
+	return 0.0;
+}
+
+// Orbiter .elv: 259x259 int16 nodes, row 0 south, one node of padding round the tile, metres = value * scale; every node at 0: flat (dtype 0)
+std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QImage> &tiles, double scale, const std::vector<TsBodyCfg::Floor> &floor)
 {
 	const int N = 259;
 	double w, n, dw, dh;
 	Bounds (L, ilat, ilng, w, n, dw, dh);
 	double W = 256.0 * (1 << g.z);
+	long Wl = 256L << g.z, lo = (long)g.col0 * 256;
 	std::vector<QImage> t (tiles.size());
 	for (size_t i = 0; i < tiles.size(); i++)
 		if (!tiles[i].isNull()) t[i] = tiles[i].convertToFormat (QImage::Format_RGB888);
-	auto h = [&] (int x, int y) -> double {
-		int c = std::clamp (x / 256 - g.col0, 0, g.ncol - 1), r = std::clamp (y / 256 - g.row0, 0, g.nrow - 1);
-		const QImage &im = t[(size_t)(r * g.ncol + c)];
-		if (im.isNull()) return 0.0;
-		int lx = std::clamp (x - (g.col0 + c) * 256, 0, im.width() - 1), ly = std::clamp (y - (g.row0 + r) * 256, 0, im.height() - 1);
+	auto h = [&] (long x, int y) -> double {
+		x = ((x - lo) % Wl + Wl) % Wl + lo; // the grid's copy of the column, across the date line too
+		int c = (int)std::min ((x - lo) / 256, (long)g.ncol - 1), r = std::clamp (y / 256 - g.row0, 0, g.nrow - 1);
+		size_t k = (size_t)r * g.ncol + c;
+		if (k >= t.size() || t[k].isNull()) return 0.0;
+		const QImage &im = t[k];
+		int lx = (int)std::clamp (x - (long)(g.col0 + c) * 256, 0L, (long)im.width() - 1), ly = std::clamp (y - (g.row0 + r) * 256, 0, im.height() - 1);
 		const uchar *p = im.constScanLine (ly) + 3 * lx;
 		return p[0] * 256.0 + p[1] + p[2] / 256.0 - 32768.0;
 	};
 	std::vector<int16_t> z ((size_t)N * N);
 	double emin = 1e9, emax = -1e9, sum = 0.0;
 	for (int i = 0; i < N; i++) {
-		double gy = std::clamp (MercY (n - dh + (i - 1) * dh / 256.0, W) - 0.5, 0.0, W - 1.0);
+		double lat = n - dh + (i - 1) * dh / 256.0;
+		double gy = std::clamp (MercY (lat, W) - 0.5, 0.0, W - 1.0);
 		int y0 = (int)gy, y1 = std::min (y0 + 1, (int)W - 1);
 		double fy = gy - y0;
 		for (int j = 0; j < N; j++) {
 			double lng = w + (j - 1) * dw / 256.0;
-			double gx = std::clamp (MercX (std::clamp (lng, -180.0, 180.0), W) - 0.5, 0.0, W - 1.0);
-			int x0 = (int)gx, x1 = std::min (x0 + 1, (int)W - 1);
+			double gx = MercX (lng, W) - 0.5; // past +-180: h wraps
+			long x0 = (long)std::floor (gx), x1 = x0 + 1;
 			double fx = gx - x0;
 			double v = (h (x0, y0) * (1 - fx) + h (x1, y0) * fx) * (1 - fy) + (h (x0, y1) * (1 - fx) + h (x1, y1) * fx) * fy;
-			long q = std::lround (std::max (0.0, v) / scale);
-			int16_t e = (int16_t)std::min (q, 32767L);
+			long q = std::lround (std::max (FloorAt (floor, lng, lat), v) / scale);
+			int16_t e = (int16_t)std::clamp (q, -32767L, 32767L);
 			z[(size_t)i * N + j] = e;
 			double m = e * scale;
 			emin = std::min (emin, m);
@@ -398,7 +416,7 @@ std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QI
 			sum += m;
 		}
 	}
-	bool flat = emax <= 0.0; // sea level: a header-only flat tile, so it isn't fetched again
+	bool flat = emin == 0.0 && emax == 0.0; // sea level: a header-only flat tile, so it isn't fetched again
 	std::string out (100, '\0');
 	auto i32 = [&out] (size_t at, int32_t v) { memcpy (&out[at], &v, 4); };
 	auto f64 = [&out] (size_t at, double v) { memcpy (&out[at], &v, 8); };

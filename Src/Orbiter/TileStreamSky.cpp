@@ -114,11 +114,13 @@ double ElvAt (const std::string &e, double lng, double lat)
 	double sc, of, b[4];
 	memcpy (&hs, &e[4], 4); memcpy (&dt, &e[8], 4); memcpy (&nx, &e[12], 4); memcpy (&ny, &e[16], 4);
 	memcpy (&sc, &e[28], 8); memcpy (&of, &e[36], 8); memcpy (b, &e[44], 32);
-	if (lat < b[0] || lat > b[1] || lng < b[2] || lng > b[3] || nx != 259 || ny != 259) return NAN;
+	for (double v : b) if (!std::isfinite (v)) return NAN;
+	if (!(b[1] > b[0] && b[3] > b[2] && std::isfinite (sc) && std::isfinite (of))) return NAN;
+	if (!(lat >= b[0] && lat <= b[1] && lng >= b[2] && lng <= b[3]) || nx != 259 || ny != 259) return NAN;
 	if (dt == 0) return of;
 	if (dt != -16 || hs < 100 || e.size() < (size_t)hs + 259 * 259 * 2) return NAN;
 	double fi = (lat - b[0]) / (b[1] - b[0]) * 256.0 + 1.0, fj = (lng - b[2]) / (b[3] - b[2]) * 256.0 + 1.0;
-	int i0 = std::min ((int)fi, 257), j0 = std::min ((int)fj, 257);
+	int i0 = std::clamp ((int)fi, 0, 257), j0 = std::clamp ((int)fj, 0, 257);
 	double u = fi - i0, v = fj - j0;
 	auto z = [&] (int i, int j) { int16_t q; memcpy (&q, &e[(size_t)hs + ((size_t)i * 259 + j) * 2], 2); return q * sc + of; };
 	return (z (i0, j0) * (1 - v) + z (i0, j0 + 1) * v) * (1 - u) + (z (i0 + 1, j0) * (1 - v) + z (i0 + 1, j0 + 1) * v) * u;
@@ -171,7 +173,7 @@ bool Hits (const TsBase &b, double R, int L, int ilat, int ilng, double blend)
 	Bounds (L, ilat, ilng, w, n, dw, dh);
 	double r = (b.ext + blend) / R * 180.0 / M_PI, la = b.lat * 180.0 / M_PI, ln = b.lng * 180.0 / M_PI;
 	double rl = r / std::max (0.05, cos (b.lat));
-	return la + r >= n - dh && la - r <= n && ln + rl >= w && ln - rl <= w + dw;
+	return la + r >= n - dh && la - r <= n && std::fabs (std::remainder (ln - (w + dw / 2), 360.0)) <= dw / 2 + rl; // across the date line too
 }
 
 // Elev_mod of a tile: bases flat at their height, cosine blend ring, SHRT_MAX elsewhere; "" if untouched
@@ -201,7 +203,8 @@ std::string ElevMod (int L, int ilat, int ilng, const std::vector<std::pair<cons
 			if (wt <= 0) continue;
 			double e0 = wt < 1.0 ? ElvNode (elev, i, j) : H;
 			double m = H * wt + e0 * (1.0 - wt);
-			int16_t q = (int16_t)std::clamp (std::lround (std::max (0.0, m) / scale), 0L, 32766L);
+			double lo = std::isfinite (e0) ? std::min (0.0, e0) : 0.0; // the Elev tile's own floor (FLOOR boxes), else sea level
+			int16_t q = (int16_t)std::clamp (std::lround (std::max (lo, std::isfinite (m) ? m : lo) / scale), -32767L, 32766L);
 			z[(size_t)i * N + j] = q;
 			any = true;
 			cnt++;
@@ -284,7 +287,7 @@ std::vector<Pt> Propagate (const double r0[3], const double v0[3], double mu, do
 	double p[3] = {r0[0], r0[1], r0[2]}, v[3] = {v0[0], v0[1], v0[2]};
 	for (int i = 0; i <= n; i++) {
 		double t = horizon * i / n;
-		if (a > 0) { // elliptic: Kepler's equation in the eccentric anomaly change
+		if (std::isfinite (a) && a > 0) { // elliptic: Kepler's equation in the eccentric anomaly change; parabolic steps
 			double sa = std::sqrt (a), M = std::sqrt (mu / (a * a * a)) * t, E = M;
 			for (int it = 0; it < 50; it++) {
 				double f = E + sig / sa * (1 - cos (E)) - (1 - r / a) * sin (E) - M;
@@ -320,6 +323,7 @@ std::vector<std::array<int, 3>> Keys (const std::vector<Pt> &pts, int L, int hal
 	int nlat = 1 << (L - 4), nlng = 1 << (L - 3);
 	double span = M_PI / nlat;
 	for (const Pt &p : pts) {
+		if (!std::isfinite (p.lat) || !std::isfinite (p.lng)) continue;
 		int ia = std::clamp ((int)((M_PI / 2 - p.lat) / span), 0, nlat - 1), ib = std::clamp ((int)((p.lng + M_PI) / span), 0, nlng - 1);
 		for (int da = -half; da <= half; da++)
 			for (int db = -half; db <= half; db++) {

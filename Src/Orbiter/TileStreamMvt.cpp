@@ -10,6 +10,10 @@
 namespace {
 
 const double Rn = 6371010.0; // nominal radius for the metres around an anchor
+const size_t MaxHoles = 64;      // per polygon; more are dropped, the outer ring kept
+const size_t MaxPoly = 2000;     // vertices per polygon, holes and bridges included
+const size_t MaxTile = 200000;   // ring vertices per tile
+const double MaxHeight = 1000.0; // metres
 
 struct Pb {
 	const uint8_t *p, *e;
@@ -172,6 +176,7 @@ bool TsBldg::Decode (const std::string &pbf, std::vector<Feature> &out, uint32_t
 {
 	out.clear();
 	extent = 4096;
+	bool seen = false;
 	Pb tile (pbf.data(), pbf.size());
 	int f, wt;
 	while (tile.More()) {
@@ -198,7 +203,9 @@ bool TsBldg::Decode (const std::string &pbf, std::vector<Feature> &out, uint32_t
 		}
 		if (name != "building") continue;
 		if (ext < 1 || ext > (1u << 20)) return false;
-		extent = (uint32_t)ext;
+		if (!seen) extent = (uint32_t)ext; // the first building layer's units; later layers scale to them
+		double to = (double)extent / (double)ext;
+		seen = true;
 		for (Pb &fp : feats) {
 			std::vector<uint32_t> tags, geom;
 			uint64_t type = 0;
@@ -216,11 +223,15 @@ bool TsBldg::Decode (const std::string &pbf, std::vector<Feature> &out, uint32_t
 				const std::string &k = keys[tags[i]];
 				const Val &v = vals[tags[i + 1]];
 				double num = v.kind == 2 ? atof (v.str.c_str()) : v.num;
+				if (!std::isfinite (num)) continue;
 				if (k == "render_height") F.height = num;
 				else if (k == "render_min_height") F.minHeight = num;
 				else if (k == "hide_3d") F.hide = v.kind == 3 ? v.num != 0.0 : (v.kind == 2 ? v.str == "true" : v.num != 0.0);
 			}
 			if (!Rings (geom, F.rings)) return false;
+			if (to != 1.0)
+				for (auto &r : F.rings)
+					for (Pt &p : r) { p.x *= to; p.y *= to; }
 			if (!F.rings.empty()) out.push_back (std::move (F));
 		}
 	}
@@ -240,30 +251,40 @@ bool TsBldg::Triangulate (const std::vector<std::vector<Pt>> &rings, std::vector
 		if ((Area (rings[r]) > 0) != ccw) std::reverse (v.begin(), v.end());
 		return v;
 	};
+	if (rings[0].size() > MaxPoly) return false;
 	std::vector<V> poly = ring (0, true);
 	std::vector<std::vector<V>> holes;
+	bool ok = true;
+	size_t total = poly.size();
 	for (size_t r = 1; r < rings.size(); r++)
-		if (rings[r].size() >= 3) holes.push_back (ring (r, false));
-		else base += (uint32_t)rings[r].size();
+		if (rings[r].size() >= 3 && holes.size() < MaxHoles && total + rings[r].size() + 2 <= MaxPoly) {
+			holes.push_back (ring (r, false));
+			total += rings[r].size() + 2; // each bridge repeats two vertices
+		} else {
+			if (rings[r].size() >= 3) ok = false; // hole dropped before bridging: roof covers it
+			base += (uint32_t)rings[r].size();
+		}
 	auto maxx = [] (const std::vector<V> &h) { size_t m = 0; for (size_t k = 1; k < h.size(); k++) if (h[k].p.x > h[m].p.x) m = k; return m; };
 	std::sort (holes.begin(), holes.end(), [&] (const std::vector<V> &a, const std::vector<V> &b) { return a[maxx (a)].p.x > b[maxx (b)].p.x; });
-	bool ok = true;
+	std::vector<std::pair<double, size_t>> near;
 	for (size_t h = 0; h < holes.size(); h++) {
 		const std::vector<V> &H = holes[h];
 		size_t m = maxx (H);
 		const Pt M = H[m].p;
 		size_t best = poly.size();
-		double bd = 0.0;
-		for (size_t k = 0; k < poly.size(); k++) {
-			double d = (poly[k].p.x - M.x) * (poly[k].p.x - M.x) + (poly[k].p.y - M.y) * (poly[k].p.y - M.y);
-			if (best < poly.size() && d >= bd) continue;
+		near.clear();
+		for (size_t k = 0; k < poly.size(); k++)
+			near.push_back ({(poly[k].p.x - M.x) * (poly[k].p.x - M.x) + (poly[k].p.y - M.y) * (poly[k].p.y - M.y), k});
+		std::stable_sort (near.begin(), near.end(), [] (const auto &a, const auto &b) { return a.first < b.first; });
+		for (const auto &nk : near) { // the nearest visible vertex
+			size_t k = nk.second;
 			bool vis = true;
 			for (size_t e = 0; e < poly.size() && vis; e++)
 				vis = !Crosses (M, poly[k].p, poly[e].p, poly[(e + 1) % poly.size()].p);
 			for (size_t g = h; g < holes.size() && vis; g++)
 				for (size_t e = 0; e < holes[g].size() && vis; e++)
 					vis = !Crosses (M, poly[k].p, holes[g][e].p, holes[g][(e + 1) % holes[g].size()].p);
-			if (vis) { best = k; bd = d; }
+			if (vis) { best = k; break; }
 		}
 		if (best == poly.size()) { ok = false; continue; } // hole dropped: roof covers it
 		std::vector<V> np (poly.begin(), poly.begin() + best + 1);
@@ -272,7 +293,7 @@ bool TsBldg::Triangulate (const std::vector<std::vector<Pt>> &rings, std::vector
 		np.insert (np.end(), poly.begin() + best + 1, poly.end());
 		poly.swap (np);
 	}
-	if (poly.size() > 2000) return false;
+	if (poly.size() > MaxPoly) return false;
 	std::vector<size_t> idx (poly.size());
 	for (size_t k = 0; k < idx.size(); k++) idx[k] = k;
 	size_t guard = 0;
@@ -327,10 +348,11 @@ TsBldg::Mesh TsBldg::Build (int z, int x, int y, const std::vector<Feature> &fea
 	Mesh m;
 	m.z = z; m.x = x; m.y = y;
 	double E = (double)extent;
+	size_t budget = MaxTile;
 	for (const Feature &F : feats) {
 		if (F.hide) continue;
-		double top = F.height > 0.0 ? F.height : 5.0;
-		double bot = F.minHeight > 0.0 ? F.minHeight : -4.0; // sunk: slopes and terrain detail
+		double top = std::isfinite (F.height) && F.height > 0.0 ? std::min (F.height, MaxHeight) : 5.0;
+		double bot = std::isfinite (F.minHeight) && F.minHeight > 0.0 ? std::min (F.minHeight, top) : -4.0; // sunk: slopes and terrain detail
 		if (top - std::max (0.0, bot) < 0.5) continue;
 		// split into polygons: a positive ring (tile y down) starts one, negative rings are its holes
 		std::vector<std::vector<std::vector<Pt>>> polys;
@@ -360,7 +382,17 @@ TsBldg::Mesh TsBldg::Build (int z, int x, int y, const std::vector<Feature> &fea
 				if (q.size() >= 3 && std::fabs (Area (q)) > 1.0) rings.push_back (q);
 				else if (rings.empty()) break;
 			}
-			if (rings.empty() || rings[0].size() > 2000) continue;
+			if (rings.empty() || rings[0].size() > MaxPoly) continue;
+			size_t total = rings[0].size(), keep = 1;
+			for (size_t r = 1; r < rings.size(); r++) // holes past the caps dropped, the outer ring kept
+				if (keep <= MaxHoles && total + rings[r].size() + 2 <= MaxPoly) {
+					total += rings[r].size() + 2;
+					if (keep != r) rings[keep] = std::move (rings[r]);
+					keep++;
+				}
+			rings.resize (keep);
+			if (total > budget) continue; // the tile's vertex budget is spent
+			budget -= total;
 			Building b {alat, alng, (float)std::max (0.0, bot), (float)top, (uint32_t)(m.vtx.size() / 6), 0, (uint32_t)m.idx.size(), 0};
 			uint32_t nv = 0;
 			auto vtx = [&] (double e, double h, double n, double nx, double ny, double nz) {
@@ -419,8 +451,8 @@ std::string TsBldg::Encode (const Mesh &m)
 		Put (s, b.lat); Put (s, b.lng); Put (s, b.hmin); Put (s, b.hmax);
 		Put (s, b.v0); Put (s, b.nv); Put (s, b.i0); Put (s, b.ni);
 	}
-	s.append ((const char*)m.vtx.data(), m.vtx.size() * sizeof (float));
-	s.append ((const char*)m.idx.data(), m.idx.size() * sizeof (uint32_t));
+	if (!m.vtx.empty()) s.append ((const char*)m.vtx.data(), m.vtx.size() * sizeof (float));
+	if (!m.idx.empty()) s.append ((const char*)m.idx.data(), m.idx.size() * sizeof (uint32_t));
 	return s;
 }
 
@@ -441,10 +473,10 @@ bool TsBldg::Read (const std::string &s, Mesh &m)
 		if ((uint64_t)b.v0 + b.nv > nv || (uint64_t)b.i0 + b.ni > ni) return false;
 	}
 	m.vtx.resize ((size_t)nv * 6);
-	memcpy (m.vtx.data(), s.data() + at, m.vtx.size() * sizeof (float));
+	if (nv) memcpy (m.vtx.data(), s.data() + at, m.vtx.size() * sizeof (float));
 	at += m.vtx.size() * sizeof (float);
 	m.idx.resize (ni);
-	memcpy (m.idx.data(), s.data() + at, m.idx.size() * sizeof (uint32_t));
+	if (ni) memcpy (m.idx.data(), s.data() + at, m.idx.size() * sizeof (uint32_t));
 	for (const Building &b : m.b)
 		for (uint32_t i = b.i0; i < b.i0 + b.ni; i++)
 			if (m.idx[i] >= b.nv) return false;

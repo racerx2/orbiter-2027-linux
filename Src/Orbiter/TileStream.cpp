@@ -766,7 +766,7 @@ void TileStream::Impl::Build (Job J)
 	for (const Src &s : J.elev) elevOk = elevOk && s.status == 200 && s.data;
 	if (elevOk) {
 		std::vector<QImage> et;
-		if (decode (J.elev, et)) elv = TsImg::Elev (L, la, ln, TsImg::SrcGrid (C.elev, L, la, ln), et, C.elevScale);
+		if (decode (J.elev, et)) elv = TsImg::Elev (L, la, ln, TsImg::SrcGrid (C.elev, L, la, ln), et, C.elevScale, C.floor);
 		if (!elv.empty()) BaseHeights (B, J, et); // earth-sky
 	}
 	if (J.elevOnly) {
@@ -1556,10 +1556,10 @@ void TileStream::Impl::LoadBases (Body &B)
 		for (int L = ModLevel; L <= B.cfg.elev.lmax; L++) {
 			double span = 180.0 / (1 << (L - 4)), r = (b.ext + Blend) / B.radius * 180.0 / M_PI, rl = r / std::max (0.05, cos (b.lat));
 			int a0 = std::max (0, (int)((90.0 - lat - r) / span)), a1 = std::min ((1 << (L - 4)) - 1, (int)((90.0 - lat + r) / span));
-			int c0 = std::max (0, (int)((lng + 180.0 - rl) / span)), c1 = std::min ((1 << (L - 3)) - 1, (int)((lng + 180.0 + rl) / span));
+			int nl = 1 << (L - 3), c0 = (int)std::floor ((lng + 180.0 - rl) / span), c1 = std::min (c0 + nl - 1, (int)std::floor ((lng + 180.0 + rl) / span)); // fix-decoders: across the date line
 			for (int a = a0; a <= a1; a++)
 				for (int c = c0; c <= c1; c++) {
-					uint64_t k = Key (L, a, c);
+					uint64_t k = Key (L, a, (c % nl + nl) % nl); // fix-decoders: wrapped column
 					if (!fs::exists (Tile (B.dir, "Elev", k), ec) || fs::exists (Tile (B.dir, "Elev_mod", k), ec)) continue;
 					made += Mods (B, k, ReadAll (Tile (B.dir, "Elev", k))) && fs::exists (Tile (B.dir, "Elev_mod", k), ec) ? 1 : 0;
 				}
