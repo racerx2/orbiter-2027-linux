@@ -65,10 +65,25 @@ void OptionsPage_Stream::StopPrefetch()
 	s_page->Cancel();
 	if (s_page->m_fetchThread.joinable()) s_page->m_fetchThread.join();
 	if (s_page->m_sizeThread.joinable()) s_page->m_sizeThread.join(); // a Clear finishes before the session's stream starts
-	if (s_page->m_pendingClear) {
+	PendingClear pc = StreamPendingClear (s_page->m_pendingClear, false, [] { return TileStream::Busy (s_page->BodyDir()); });
+	if (pc == PendingClear::Refuse) s_page->NotCleared ();
+	else if (pc == PendingClear::Start) {
 		s_page->StartClear (s_page->m_pendingKeep); // a Clear confirmed behind a count runs now
 		s_page->m_sizeThread.join();
 	}
+}
+
+// a Clear that waited for a count is refused: another Orbiter has the folder
+void OptionsPage_Stream::NotCleared()
+{
+	m_pendingClear = false;
+	QString s = QString::fromStdString (StreamClearText (0, true, std::string()));
+	m_status->setText (s);
+	LOGOUT ("TileStream: %s", s.toUtf8().constData());
+	m_clear->setEnabled (!m_fetch);
+	m_refresh->setEnabled (true);
+	m_scanWanted = true;
+	Estimate ();
 }
 
 void OptionsPage_Stream::Cancel()
@@ -340,7 +355,7 @@ void OptionsPage_Stream::StartClear(bool keep)
 	std::string dir = BodyDir();
 	m_sizeThread = std::thread ([s, dir, keep] {
 		try {
-			s->cleared = (long)TileStream::Clear (dir, keep);
+			s->cleared = (long)TileStream::Clear (dir, keep, &s->refused);
 			s->streamed = TileStream::CacheBytes (dir, &s->total, &s->tiles);
 		} catch (const std::exception &e) {
 			s->error = e.what();
@@ -377,7 +392,7 @@ void OptionsPage_Stream::Tick()
 		else m_size->setText (QString ("Streamed: %1 in %2 tiles\nAll loose Earth tiles: %3").arg (Bytes (m_sz->streamed)).arg (m_sz->tiles).arg (Bytes (m_sz->total)));
 		if (m_sz->clear) {
 			m_clearing = false;
-			QString s = m_sz->error.empty() ? QString ("Cleared %1 streamed tiles.").arg (m_sz->cleared) : QString ("Clearing stopped: %1").arg (QString::fromStdString (m_sz->error));
+			QString s = QString::fromStdString (StreamClearText (m_sz->cleared, m_sz->refused, m_sz->error));
 			m_status->setText (s);
 			LOGOUT ("TileStream: %s", s.toUtf8().constData());
 		} else if (!m_sz->error.empty()) LOGOUT ("TileStream: cache count failed: %s", m_sz->error.c_str());
@@ -387,16 +402,9 @@ void OptionsPage_Stream::Tick()
 			Estimate ();
 		}
 	}
-	if (m_pendingClear && !m_sizeThread.joinable()) { // the count it waited for has ended
-		if (TileStream::Busy (BodyDir())) {
-			m_pendingClear = false;
-			m_status->setText ("Not cleared: another Orbiter is using the Earth tile cache.");
-			m_clear->setEnabled (!m_fetch);
-			m_refresh->setEnabled (true);
-			m_scanWanted = true;
-			Estimate ();
-		} else StartClear (m_pendingKeep);
-	}
+	PendingClear pc = StreamPendingClear (m_pendingClear, m_sizeThread.joinable(), [this] { return TileStream::Busy (BodyDir()); });
+	if (pc == PendingClear::Refuse) NotCleared ();
+	else if (pc == PendingClear::Start) StartClear (m_pendingKeep); // the count it waited for has ended
 	if (m_scanWanted && shows && !m_fetch && !m_clearing && !m_sizeThread.joinable() && std::chrono::steady_clock::now() >= m_nextScan) StartScan ();
 	if (!m_fetch) return;
 	const TileStream::Progress &p = m_fetch->p;
@@ -408,15 +416,7 @@ void OptionsPage_Stream::Tick()
 		return;
 	}
 	if (m_fetchThread.joinable()) m_fetchThread.join();
-	switch (m_fetch->result) {
-	case 0: s = "Done. " + s; break;
-	case 1: s = "Cancelled. " + s; break;
-	case 2: s = "Stopped: no answer from the tile servers for two minutes. " + s; break;
-	case 3: s = "Config/TileStream.cfg has no Earth: nothing to download."; break;
-	case 4: s = "Not started: another Orbiter or a Clear is using the Earth tile folder."; break;
-	case 5: s = "Stopped by an error, see Orbiter.log. " + s; break;
-	default: s = QString ("Stopped: %1. ").arg (QString::fromStdString (m_fetch->error)) + s; break;
-	}
+	s = QString::fromStdString (StreamFetchText (m_fetch->result, m_fetch->error, s.toStdString()));
 	m_status->setText (s);
 	LOGOUT ("TileStream: region download: %s", s.toUtf8().constData());
 	m_fetch.reset();
@@ -434,7 +434,7 @@ bool OptionsPage_Stream::Refused(StreamAct a)
 	st.fetching = m_fetch || m_fetchThread.joinable();
 	st.clearing = m_clearing;
 	st.pendingClear = m_pendingClear;
-	st.offline = m_offline->isEnabled() && m_offline->isChecked();
+	st.offline = Cfg()->bTileStreamOffline; // ticked, also greyed with streaming off
 	std::string why = StreamRefusal (a, st);
 	if (why.empty()) {
 		st.busy = TileStream::Busy (BodyDir());
@@ -503,12 +503,12 @@ void OptionsPage_Stream::OnDownload()
 	m_fetchThread = std::thread ([o, keys, f] {
 		try {
 			f->result = TileStream::Prefetch (o, "Earth", keys, f->p, f->cancel);
-		} catch (const std::exception &e) {
+		} catch (const std::exception &e) { // shown with its text
 			f->error = e.what();
-			f->result = 4;
+			f->result = 6;
 		} catch (...) {
 			f->error = "unknown error";
-			f->result = 4;
+			f->result = 6;
 		}
 		f->finished = true;
 	});

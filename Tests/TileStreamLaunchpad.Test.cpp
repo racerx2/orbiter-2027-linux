@@ -1,4 +1,4 @@
-// not upstream: the Launchpad Earth streaming page: the base list on the shipped base cfgs, and when Clear and Download are refused
+// not upstream: the Launchpad Earth streaming page: the base list on the shipped base cfgs, when Clear and Download are refused, and how they end
 
 #include <catch2/catch_test_macros.hpp>
 #include "StreamBases.h"
@@ -92,4 +92,34 @@ TEST_CASE ("Clear and Download are refused while the other runs, in a session, o
 	CHECK (StreamRefusal (StreamAct::Download, s).find ("session") != std::string::npos); // the session goes first
 	s.session = false;
 	CHECK (StreamRefusal (StreamAct::Download, s).find ("cleared") != std::string::npos); // then what the page itself runs
+}
+
+TEST_CASE ("A Clear left waiting behind a count starts once the count ends, at Launch too, unless another Orbiter has the folder", "[TileStreamLaunchpad]")
+{
+	int asked = 0;
+	auto busy = [&] (bool b) { return [&asked, b] { asked++; return b; }; };
+	CHECK (StreamPendingClear (false, false, busy (true)) == PendingClear::None);
+	CHECK (StreamPendingClear (false, true, busy (true)) == PendingClear::None);
+	CHECK (StreamPendingClear (true, true, busy (true)) == PendingClear::Wait); // Tick: the count still runs
+	CHECK (asked == 0); // Busy is asked only when the Clear could start
+	CHECK (StreamPendingClear (true, false, busy (false)) == PendingClear::Start);
+	CHECK (StreamPendingClear (true, false, busy (true)) == PendingClear::Refuse); // StopPrefetch: the count joined, another Orbiter holds the folder
+	CHECK (asked == 2);
+	CHECK (StreamPendingClear (true, false, nullptr) == PendingClear::Start);
+}
+
+TEST_CASE ("A Clear's and a region download's last line: refused is not 'Cleared 0', an exception shows its text", "[TileStreamLaunchpad]")
+{
+	CHECK (StreamClearText (12, false, "") == "Cleared 12 streamed tiles.");
+	CHECK (StreamClearText (0, false, "") == "Cleared 0 streamed tiles.");
+	CHECK (StreamClearText (0, true, "") == "Not cleared: another Orbiter is using the Earth tile cache.");
+	CHECK (StreamClearText (3, false, "disk full") == "Clearing stopped: disk full");
+	CHECK (StreamFetchText (0, "", "1 of 1 tiles") == "Done. 1 of 1 tiles");
+	CHECK (StreamFetchText (1, "", "p") == "Cancelled. p");
+	CHECK (StreamFetchText (2, "", "p").find ("no answer") != std::string::npos);
+	CHECK (StreamFetchText (3, "", "p").find ("no Earth") != std::string::npos);
+	CHECK (StreamFetchText (4, "", "p").find ("another Orbiter") != std::string::npos);
+	CHECK (StreamFetchText (5, "", "p").find ("Orbiter.log") != std::string::npos);
+	CHECK (StreamFetchText (6, "std::bad_alloc", "p") == "Stopped: std::bad_alloc. p"); // the page's own catch
+	CHECK (StreamFetchText (6, "", "p") == "Stopped: unknown error. p");
 }

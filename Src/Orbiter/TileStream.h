@@ -125,6 +125,9 @@ namespace TsCog {
 	QImage ClassImage (const std::vector<uint8_t> &cls, int n, int size);      // RGB weights for the client's micro detail
 }
 
+// flock (2) for the folder lock; tests put a stand-in here to fake its errors
+extern int (*TsFlock) (int fd, int op);
+
 class TileStream {
 public:
 	using Clock = std::chrono::steady_clock;
@@ -160,7 +163,6 @@ public:
 	// 1: the Surf file is there, 0: wanted, -1: never (an installed archive's tile included)
 	int Want (const std::string &body, int L, int ilat, int ilng, int flags);
 	int Done (const std::string &body, int *keys, int nmax); // (L, ilat, ilng) triples
-	std::string Credit (const std::string &body) const;      // the CREDIT lines, one per line (the Launchpad page)
 	// z14 building tiles: 1 the file is there, 0 wanted, -1 never
 	int WantBldg (const std::string &body, int x, int y);
 	std::string BldgPath (const std::string &body, int x, int y) const;
@@ -177,8 +179,8 @@ public:
 	struct Progress { std::atomic<int> total {0}, done {0}, have {0}, none {0}, failed {0}; std::atomic<uint64_t> bytes {0}; }; // failed: given up on after its tries
 	// bytes of the files the stream wrote (written.idx tiles, its Elev, buildings, Elev_mod, clouds, .part leftovers); total: every file under the layer folders
 	static uint64_t CacheBytes (const std::string &bodyDir, uint64_t *total = nullptr, size_t *tiles = nullptr);
-	// deletes the files the stream wrote (L <= 8 kept with keepBase) and rewrites the indexes; tiles removed, 0 and nothing removed while Busy
-	static size_t Clear (const std::string &bodyDir, bool keepBase);
+	// deletes the files the stream wrote (L <= 8 kept with keepBase) and rewrites the indexes; tiles removed, 0 and *refused while Busy
+	static size_t Clear (const std::string &bodyDir, bool keepBase, bool *refused = nullptr);
 	// a stream (this process or another Orbiter) or a Clear has the folder
 	static bool Busy (const std::string &bodyDir);
 	// tiles within radiusKm of (lat, lng) degrees, L1..maxL, coarse to fine

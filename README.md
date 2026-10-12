@@ -108,9 +108,10 @@ cache size, clears the streamed tiles (only files the stream wrote, listed in
 or a position, for flying offline. A region download is refused while Offline
 is ticked or while the tiles are being cleared.
 
-Privacy: each tile request tells the server which part of Earth is shown and
-names the program (`OrbiterLinux/<version>`); nothing else is sent. Offline
-mode makes no requests.
+Privacy: each tile request tells the server which part of Earth is shown. Its
+only headers are `Host`, `User-Agent: OrbiterLinux/<version>`,
+`Accept-Language: en`, `Accept-Encoding` and `Connection`, and `Range` for a
+WorldCover read; no cookies are kept or sent. Offline mode makes no requests.
 
 ### Earth credits
 

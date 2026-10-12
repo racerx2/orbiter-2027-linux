@@ -127,7 +127,9 @@ target_compile_options(TileStreamDecode.Test PRIVATE -fsanitize=address -fno-omi
 target_link_options(TileStreamDecode.Test PRIVATE -fsanitize=address)
 add_unit_test(TileStreamCore.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream: the core's lock, holds, ownership, indexes, archives, disks and caps
 target_link_libraries(TileStreamCore.Test Qt6::Network Qt6::Gui stb_dxt zlib)
-# not upstream: the Launchpad Earth streaming page: base list, when Clear and Download are refused
+target_compile_options(TileStreamCore.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(TileStreamCore.Test PRIVATE -fsanitize=address)
+# not upstream: the Launchpad Earth streaming page: base list, when Clear and Download are refused, how they end
 add_unit_test(TileStreamLaunchpad.Test ${ORBITER_SOURCE_DIR}/StreamBases.cpp)
 
 if (BUILD_ORBITER_SERVER)
