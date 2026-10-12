@@ -85,6 +85,7 @@ struct FlowControlPS
 	BOOL bPlanetShadow;			// Use spherical approximation for shadow
 	BOOL bEclipse;				// Eclipse is occuring
 	BOOL bTexture;				// Surface texture exists
+	BOOL bClass;				// not upstream: land class weights (tClass) for micro detail, repeat in vMSc[0]
 };
 
 struct FlowControlVS
@@ -138,6 +139,7 @@ layout(binding = 26) uniform sampler2D	tOverlay;
 layout(binding = 27) uniform sampler2D	tMskOverlay;
 layout(binding = 28) uniform sampler2D	tElvOverlay;
 layout(binding = 29) uniform sampler2D	tEclipse;
+layout(binding = 30) uniform sampler2D	tClass;				// not upstream: R trees, G grass / crops, B bare / built-up
 
 
 
@@ -421,6 +423,22 @@ float GGX_NDF(float dHN, float rgh)
 }
 
 
+// not upstream: periodic value noise for the land class detail; period P keeps it seamless over tiles of any level
+float ClsHash(vec2 p)
+{
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
+float ClsNoise(vec2 p, float P)
+{
+	vec2 i = floor(p), f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	vec2 a = mod(i, P), b = mod(i + 1.0, P);
+	return mix(mix(ClsHash(a), ClsHash(vec2(b.x, a.y)), f.x), mix(ClsHash(vec2(a.x, b.y)), ClsHash(b), f.x), f.y);
+}
+
 vec4 TerrainPS(TileVS frg)
 {
 
@@ -603,6 +621,22 @@ vec4 TerrainPS(TileVS frg)
 		cTex.rgb *= mix(vec3(1.0f), cFnl, step1);
 	}
 #endif
+
+	// not upstream: land class micro detail, 8 m and 2 m cells, fading in below 5 km
+	if (Flow.bClass)
+	{
+		float fade = 1.0 - smoothstep(800.0, 5000.0, dst);
+		if (fade > 0.0) {
+			vec3 w = texture(tClass, vUVSrf).rgb;
+			vec2 p = frg.texUV.xy * Prm.vMSc[0].xy + Prm.vMSc[0].zw;
+			float n1 = ClsNoise(p, 16384.0) * 0.6 + ClsNoise(p * 2.0, 32768.0) * 0.4;
+			float n2 = ClsNoise(p * 4.0, 65536.0);
+			float fT = (n1 - 0.5) * 0.9 + (n2 - 0.5) * 0.2;	// canopy clumps and gaps
+			float fG = (n2 - 0.5) * 0.3 + (n1 - 0.5) * 0.15;	// grass and crop texture
+			float fB = (n2 - 0.5) * 0.35 + (n1 - 0.5) * 0.1;	// grit
+			cTex.rgb *= 1.0 + (w.r * fT + w.g * fG + w.b * fB) * fade;
+		}
+	}
 
 
 	// Render Eclipse ------------------------------------------------------------

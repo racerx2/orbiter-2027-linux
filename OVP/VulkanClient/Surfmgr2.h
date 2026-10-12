@@ -90,6 +90,7 @@ private:
 	D3DXVECTOR2 MicroRep[3];
 	DWORD MaxRep;
 	VkTex *ltex;	///< landmask/nightlight texture, if applicable
+	VkTex *ctex;	// not upstream: land class weights from the tile stream's Class layer, shared like ltex
 	INT16 *elev_file;			///< elevation data [m]
 	float *elev;				///< elevation data [m] (8x subsampled)
 	mutable float *ggelev;		///< pointer to my elevation data in the great-grandparent

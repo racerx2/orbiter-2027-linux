@@ -44,7 +44,10 @@ bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::st
 		else if (w == "LIGHTS") ok = Source (is, cur.lights, false) && cur.lights.kind == "gibs";
 		else if (w == "WATER") ok = Source (is, cur.water, false) && cur.water.kind == "gibs";
 		else if (w == "ELEV") ok = Source (is, cur.elev, true) && cur.elev.kind == "terrarium";
-		else if (w == "ELEV_SCALE") ok = (is >> cur.elevScale) && cur.elevScale > 0.0;
+		else if (w == "COVER") {
+			ok = (is >> cur.cover.kind >> cur.cover.url >> cur.cover.lmin) && cur.cover.kind == "worldcover" && cur.cover.lmin >= 4 && cur.cover.lmin <= 21;
+			cur.cover.lmax = 21;
+		} else if (w == "ELEV_SCALE") ok = (is >> cur.elevScale) && cur.elevScale > 0.0;
 		else if (w == "LIGHTS_BLACK") ok = (bool)(is >> cur.black[0] >> cur.black[1] >> cur.black[2]);
 		else if (w == "WATER_GREY") ok = (bool)(is >> cur.waterGrey);
 		else if (w == "EOX_FILL_RGB") ok = (bool)(is >> cur.fill[0] >> cur.fill[1] >> cur.fill[2]);

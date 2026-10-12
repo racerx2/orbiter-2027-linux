@@ -81,6 +81,7 @@ SurfTile::SurfTile (TileManager2Base *_mgr, int _lvl, int _ilat, int _ilng)
 	ggelev = NULL;
 	elev_file = NULL;
 	ltex = NULL;
+	ctex = NULL; // not upstream
 	has_elevfile = false;
 	label = NULL;
 	imicrolvl = 14;	// Water resolution level
@@ -100,6 +101,7 @@ SurfTile::~SurfTile ()
 	if (elev_file) g_pMemgr_i->Free(elev_file);	
 	if (tex && owntex) g_pTexmgr_tt->Free(tex);
 	if (ltex && owntex) g_pTexmgr_tt->Free(ltex);
+	if (ctex && owntex) g_pTexmgr_tt->Free(ctex); // not upstream
 		
 	DeleteLabels();
 }
@@ -115,6 +117,7 @@ void SurfTile::PreLoad()
 
 	assert(tex == nullptr);
 	assert(ltex == nullptr);
+	assert(ctex == nullptr); // not upstream
 
 	VkDev *pDev = mgr->Dev();
 	VkPixels *pSysSrf = nullptr; // D3DPOOL_SYSTEMMEM texture
@@ -157,6 +160,15 @@ void SurfTile::PreLoad()
 	
 	SAFE_DELETE(pSysSrf); // Release
 
+	if (smgr->bStream && tex) { // not upstream: the tile stream's land class weights go with the Surf tile, L >= 12
+		if (owntex && lvl + 4 >= 12) {
+			snprintf(path, MAX_PATH, "%s\\Class\\%02d\\%06d\\%06d.dds", mgr->DataRootDir().c_str(), lvl + 4, ilat, ilng);
+			LoadTextureFile(path, &pSysSrf);
+			if (pSysSrf) CreateTexture(pDev, pSysSrf, &ctex);
+			SAFE_DELETE(pSysSrf);
+		}
+		else if (!owntex && node && node->Parent()) ctex = getSurfParent()->ctex;
+	}
 
 	// Load mask texture
 
@@ -1011,12 +1023,23 @@ void SurfTile::Render ()
 		else pShader->SetTexture(pShader->tMask, NULL, IPF_CLAMP | IPF_ANISOTROPIC, Config->Anisotrophy);
 	}
 
+	fc->bClass = false; // not upstream: land class detail where the stream made a Class tile and no micro texture is set
+	if (ctex && tex && !has_microtex && vPlanet->HasTextures() && vPlanet->CameraAltitude() < 20e3) {
+		double rep = height * vPlanet->GetSize() / 8.0; // 8 m cells, a power of two per tile: the same lattice on every level
+		rep = std::max(1.0, std::exp2(std::round(std::log2(std::max(rep, 1.0)))));
+		double P = 16384.0;
+		sp->vMSc[0] = FVECTOR4(float(rep), float(rep), float(std::fmod(ilng * rep, P)), float(std::fmod(ilat * rep, P)));
+		pShader->SetTexture("tClass", ctex, IPF_CLAMP | IPF_LINEAR);
+		fc->bClass = true;
+	}
+
 	if (tex == nullptr || !vPlanet->HasTextures())
 	{
 		fc->bTexture = false;
 		fc->bMask = false;
 		fc->bCloudShd = false;
 		fc->bMicroTex = false;
+		fc->bClass = false; // not upstream
 	}
 
 	sp->vTexOff = GetTexRangeDX(&texrange);
@@ -1442,6 +1465,10 @@ void TileManager2<SurfTile>::StreamRead ()
 				continue;
 			}
 		}
+		if (s.L >= 12) { // land class weights, when the stream made them
+			snprintf(path, MAX_PATH, "%s\\Class\\%02d\\%06d\\%06d.dds", DataRootDir().c_str(), s.L, s.ilat, s.ilng);
+			t0->LoadTextureFile(path, &s.cls);
+		}
 		taken++;
 	}
 	streamKeys.erase(std::remove_if(streamKeys.begin(), streamKeys.end(), [](const StreamLoad &s) { return s.L == 0; }), streamKeys.end());
@@ -1475,15 +1502,18 @@ void TileManager2<SurfTile>::StreamApply ()
 				}
 			if (busy) { keep.push_back(s); continue; }
 		}
-		VkTex *nt = NULL, *nl = NULL;
+		VkTex *nt = NULL, *nl = NULL, *nc = NULL;
 		if (use && t->CreateTexture(Dev(), s.surf, &nt)) {
 			if (s.mask) t->CreateTexture(Dev(), s.mask, &nl);
+			if (s.cls) t->CreateTexture(Dev(), s.cls, &nc);
 			if (t->owntex) {
 				if (t->tex) g_pTexmgr_tt->Free(t->tex);
 				if (t->ltex) g_pTexmgr_tt->Free(t->ltex);
+				if (t->ctex) g_pTexmgr_tt->Free(t->ctex);
 			}
 			t->tex = nt;
 			t->ltex = nl;
+			t->ctex = nc;
 			t->owntex = true;
 			t->texrange = full;
 			t->streamWait = false;
@@ -1491,11 +1521,13 @@ void TileManager2<SurfTile>::StreamApply ()
 				SurfTile *e = set[i]->Entry(), *p = e->getSurfParent();
 				e->tex = p->tex;
 				e->ltex = p->ltex;
+				e->ctex = p->ctex;
 				e->GetParentSubTexRange(&e->texrange);
 			}
 		}
 		delete s.surf;
 		delete s.mask;
+		delete s.cls;
 	}
 	streamKeys.swap(keep);
 }

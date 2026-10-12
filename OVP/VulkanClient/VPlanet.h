@@ -119,6 +119,7 @@ struct FlowControlPS
 	BOOL bPlanetShadow;			// Use spherical approximation for shadow
 	BOOL bEclipse;				// Eclipse is occuring
 	BOOL bTexture;				// Surface texture exists
+	BOOL bClass;				// not upstream: land class weights (tClass) for micro detail, repeat in vMSc[0]
 };
 
 struct FlowControlVS

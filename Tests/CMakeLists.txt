@@ -116,7 +116,7 @@ target_link_libraries(TexPack.Test Qt6::Network zlib)
 target_compile_options(TexPack.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 target_link_options(TexPack.Test PRIVATE -fsanitize=address)
 # not upstream: the planet tile stream: grids, pixels, DDS, config, size cap, and the service on file:// sources
-add_unit_test(TileStream.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp)
+add_unit_test(TileStream.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp)
 target_link_libraries(TileStream.Test Qt6::Network Qt6::Gui stb_dxt)
 target_compile_options(TileStream.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 target_link_options(TileStream.Test PRIVATE -fsanitize=address)

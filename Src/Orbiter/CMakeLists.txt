@@ -47,6 +47,7 @@ set(common_src
 	TileStreamApi.cpp # not upstream
 	TileStreamCfg.cpp # not upstream
 	TileStreamImg.cpp # not upstream
+	TileStreamCog.cpp # not upstream
 	TileStreamNet.cpp # not upstream
 # Dialogs
 	CustomControls.cpp
