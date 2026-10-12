@@ -4776,6 +4776,8 @@ OAPIFUNC void oapiReleaseTexture (SURFHANDLE hTex);
 	*  to retrieve a \c MESHGROUP pointer, and modify the TexIdx entry.
 	*/
 OAPIFUNC bool oapiSetTexture (MESHHANDLE hMesh, DWORD texidx, SURFHANDLE tex);
+// not upstream: adds tex to the mesh, which takes its own reference; returns the index for MESHGROUP::TexIdx, (DWORD)-1 if none
+OAPIFUNC DWORD oapiAddMeshTexture (MESHHANDLE hMesh, SURFHANDLE tex);
 OAPIFUNC bool oapiSetTexture (DEVMESHHANDLE hMesh, DWORD texidx, SURFHANDLE tex);
 
 	/**

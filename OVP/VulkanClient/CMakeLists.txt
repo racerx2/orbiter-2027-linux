@@ -69,6 +69,7 @@ set(SourceFiles
 	Tilemgr2.cpp
 	VBase.cpp
 	BldgMgr.cpp # not upstream
+	BldgGeom.cpp # not upstream
 	VideoTab.cpp
 	VObject.cpp
 	VPlanet.cpp

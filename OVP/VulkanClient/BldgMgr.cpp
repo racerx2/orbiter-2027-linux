@@ -6,7 +6,10 @@
 #include "Scene.h"
 #include "AABBUtil.h"
 #include "Surfmgr2.h"
+#include "D3D9Client.h"
+#include "D3D9Surface.h"
 #include <cmath>
+#include <cstring>
 
 namespace {
 const double MaxAlt = 15e3, DropAlt = 20e3, EnvRange = 2e3;
@@ -41,12 +44,17 @@ void Merc (double fx, double fy, double &lat, double &lng)
 void Centre (int x, int y, double &lat, double &lng) { Merc (x + 0.5, y + 0.5, lat, lng); }
 
 int CellOf (double f, int nc) { return f > 0.0 ? std::min (nc - 1, (int)(std::min (f, 1.0) * nc)) : 0; } // NaN goes to 0
+
+uint64_t Mix (uint64_t x) { x ^= x >> 31; x *= 0xBF58476D1CE4E5B9ull; x ^= x >> 29; x *= 0x94D049BB133111EBull; return x ^ (x >> 32); }
 }
 
 BldgMgr::BldgMgr (vPlanet *_vp, OBJHANDLE _hObj, const Scene *_scn)
 : vp(_vp), hObj(_hObj), scn(_scn)
 {
 	R = oapiGetSize (hObj);
+	texFacade = oapiLoadTexture ("Bldg/facade.dds"); // with its _emis and _norm maps
+	texRoof = oapiLoadTexture ("Bldg/roof.dds");
+	if (!texFacade || !texRoof) oapiWriteLog ("TileStream: no Textures/Bldg, buildings are drawn untextured");
 	worker = std::thread (&BldgMgr::Work, this);
 }
 
@@ -61,6 +69,8 @@ BldgMgr::~BldgMgr ()
 	worker.join();
 	for (auto &r : ready) if (r.second) oapiTileStreamBldgFree (r.second);
 	for (auto &p : tiles) Drop (p.second);
+	if (texFacade) oapiReleaseTexture (texFacade); // after every cell mesh that drew with it
+	if (texRoof) oapiReleaseTexture (texRoof);
 }
 
 // worker thread: oapiTileStreamBldgLoad reads and parses the file, and reads only core state fixed for the session
@@ -163,14 +173,13 @@ void BldgMgr::Update ()
 		TileOf (camLat + dlat, camLng - dlng, x0, y0);
 		TileOf (camLat - dlat, camLng + dlng, x1, y1);
 		if (x1 < x0) x1 += 1 << Z; // across 180
-		bool off = false;
-		for (int y = y0; y <= y1 && !off; y++)
-			for (int xx = x0; xx <= x1 && !off; xx++) {
+		for (int y = y0; y <= y1; y++)
+			for (int xx = x0; xx <= x1; xx++) {
 				int x = xx & ((1 << Z) - 1);
 				long long key = (long long)x << 20 | y;
 				if (tiles.count (key) || bad.count (key) || busy.count (key)) continue;
 				int w = oapiTileStreamBldgWant (hObj, x, y);
-				if (w < 0) { off = true; break; } // no buildings for this body, or offline
+				if (w < 0) continue; // not now: offline and not on disk, or no building source yet; the rest are still asked
 				if (w == 0 || busy.size() >= InFlight) continue;
 				busy.insert (key);
 				{
@@ -194,6 +203,7 @@ void BldgMgr::Update ()
 		else if (settle > 0) settle--;
 		tGround = settle > 0 ? t : t + 0.25;
 	}
+	Night();
 	auto it = tiles.lower_bound (lastEdit); // the lifts, round the tiles: a few cell meshes a frame
 	int n = 0;
 	for (size_t i = 0; i < tiles.size(); i++, ++it) {
@@ -204,7 +214,46 @@ void BldgMgr::Update ()
 	}
 }
 
-// a tile's buildings, one mesh a cell in the tile-centre frame: walls and roofs, <= 65535 vertices a group
+// a base's structures in its frame, built once: the meshes the base draws, add-on bases and their own meshes included
+const BldgMgr::BaseRec &BldgMgr::BaseOf (OBJHANDLE hBase)
+{
+	auto it = bases.find (hBase);
+	if (it != bases.end()) return it->second;
+	BaseRec &b = bases[hBase];
+	VECTOR3 gp, gb;
+	oapiGetRotationMatrix (hObj, &b.rp);
+	oapiGetRotationMatrix (hBase, &b.rb);
+	oapiGetGlobalPos (hObj, &gp);
+	oapiGetGlobalPos (hBase, &gb);
+	b.p = tmul (b.rp, gb - gp);
+	MESHHANDLE *sbs = nullptr, *sas = nullptr;
+	DWORD nbs = 0, nas = 0;
+	vp->GetClient()->GetBaseStructures (hBase, &sbs, &nbs, &sas, &nas);
+	for (int pass = 0; pass < 2; pass++)
+		for (DWORD k = 0; k < (pass ? nas : nbs); k++) {
+			MESHHANDLE hm = pass ? sas[k] : sbs[k];
+			for (DWORD g = 0; hm && g < oapiMeshGroupCount (hm); g++) {
+				const MESHGROUP *G = oapiMeshGroup (hm, g);
+				if (!G || !G->Vtx || !G->Idx) continue;
+				for (DWORD i = 0; i + 2 < G->nIdx; i += 3) {
+					double v[3][3];
+					bool ok = true;
+					for (int c = 0; c < 3; c++) {
+						WORD n = G->Idx[i + c];
+						if (n >= G->nVtx) { ok = false; break; }
+						v[c][0] = G->Vtx[n].x; v[c][1] = G->Vtx[n].y; v[c][2] = G->Vtx[n].z;
+					}
+					if (ok) b.idx.Add (v[0], v[1], v[2]);
+				}
+			}
+		}
+	char name[64] = "";
+	oapiGetObjectName (hBase, name, 64);
+	if (b.idx.Count()) oapiWriteLogV ("TileStream: base %s: %u structure faces keep streamed buildings out", name, (unsigned)b.idx.Count());
+	return b;
+}
+
+// a tile's buildings, one mesh a cell in the tile-centre frame: textured walls and pitched roofs, flat roofs; <= 65535 vertices a group
 void BldgMgr::Make (Tile &t, const TSBLDGMESH *m)
 {
 	double lat0, lng0;
@@ -217,6 +266,8 @@ void BldgMgr::Make (Tile &t, const TSBLDGMESH *m)
 		Merc (t.x + (c % NC + 0.5) / NC, t.y + (c / NC + 0.5) / NC, la, ln);
 		t.cell[c].up = Up (la, ln);
 		t.cell[c].bldg.clear();
+		t.cell[c].night = 0.0f;
+		t.cell[c].nightAt = 0.6f * (float)(Mix ((uint64_t)t.x * 73856093ull ^ (uint64_t)t.y * 19349663ull ^ (uint64_t)c * 83492791ull) % 1000) / 1000.0f;
 	}
 	t.lat.assign (m->nb, 0.0);
 	t.lng.assign (m->nb, 0.0);
@@ -224,59 +275,91 @@ void BldgMgr::Make (Tile &t, const TSBLDGMESH *m)
 	t.runs.assign (m->nb, {});
 	for (DWORD b = 0; b < m->nb; b++) t.lat[b] = m->b[b].lat, t.lng[b] = m->b[b].lng;
 	Grounds (t.lng.data(), t.lat.data(), m->nb, t.ground.data());
+	std::vector<const BaseRec *> near; // bases within 25 km: their structures keep streamed buildings out
+	for (DWORD i = 0, nb = oapiGetBaseCount (hObj); i < nb; i++) {
+		OBJHANDLE hb = oapiGetBaseByIndex (hObj, i);
+		double lng, lat, rad;
+		oapiGetBaseEquPos (hb, &lng, &lat, &rad);
+		if (R * acos (std::min (1.0, dotp (Up (lat, lng), t.u0))) > 25e3) continue;
+		const BaseRec &br = BaseOf (hb);
+		if (!br.idx.Empty()) near.push_back (&br);
+	}
 	const double n = (double)(1 << Z);
 	struct Grp { std::vector<NTVERTEX> v; std::vector<WORD> i; int kind; };
 	std::vector<Grp> grps[NC * NC]; // per cell, in its mesh's group order
 	int cur[NC * NC][2];
 	for (auto &c : cur) c[0] = c[1] = -1;
-	std::vector<std::pair<int, int>> remap; // building vertex: group in its cell, index in it
+	BldgGeom::Out o;
+	std::vector<std::array<double, 2>> foot;
+	DWORD hidden = 0;
 	for (DWORD b = 0; b < m->nb; b++) {
 		const TSBLDG &B = m->b[b];
+		uint64_t la, ln;
+		memcpy (&la, &B.lat, 8); memcpy (&ln, &B.lng, 8);
+		BldgGeom::Build (m->vtx + (size_t)B.v0 * 6, B.nv, m->idx + B.i0, B.ni, B.hmin, B.hmax, (uint32_t)Mix (la ^ (ln * 0x9E3779B97F4A7C15ull)), o);
 		double g = t.ground[b];
-		double fx = (B.lng / (2.0 * PI) + 0.5) * n - t.x, fy = (1.0 - std::asinh (std::tan (B.lat)) / PI) * 0.5 * n - t.y;
-		int cell = CellOf (fy, NC) * NC + CellOf (fx, NC);
-		t.cell[cell].bldg.push_back (b);
-		std::vector<Grp> &gs = grps[cell];
-		for (int k = 0; k < 2; k++) // a building that does not fit starts a new group
-			if (cur[cell][k] >= 0 && gs[cur[cell][k]].v.size() + B.nv > 65535) cur[cell][k] = -1;
 		VECTOR3 ub = Up (B.lat, B.lng), eb = East (B.lng), nb = North (B.lat, B.lng);
 		VECTOR3 pb = ub * (R + g) - t.p0;
-		remap.assign (B.nv, {-1, 0});
-		for (DWORD k = 0; k + 2 < B.ni; k += 3) {
-			const DWORD *tri = m->idx + B.i0 + k;
-			int kind = m->vtx[(B.v0 + tri[0]) * 6 + 4] > 0.5f ? 1 : 0;
+		if (!near.empty() && o.ring.size() >= 3) { // inside or touching a base's own building: left out
+			bool hit = false;
+			for (const BaseRec *br : near) {
+				foot.clear();
+				for (const auto &q : o.ring) {
+					VECTOR3 p = pb + t.p0 + eb * q[0] + nb * q[1] - br->p, l = tmul (br->rb, mul (br->rp, p));
+					foot.push_back ({l.x, l.z});
+				}
+				double cx = 0, cz = 0;
+				for (size_t k = 0; k < foot.size() && !hit; k++) {
+					const auto &a = foot[k], &c = foot[(k + 1) % foot.size()];
+					hit = br->idx.Near (a[0], a[1], 6.0) || br->idx.Near (0.5 * (a[0] + c[0]), 0.5 * (a[1] + c[1]), 6.0);
+					cx += a[0]; cz += a[1];
+				}
+				hit = hit || br->idx.Near (cx / foot.size(), cz / foot.size(), 6.0) || br->idx.Inside (foot);
+				if (hit) break;
+			}
+			if (hit) { hidden++; continue; }
+		}
+		double fx = (B.lng / (2.0 * PI) + 0.5) * n - t.x, fy = (1.0 - std::asinh (std::tan (B.lat)) / PI) * 0.5 * n - t.y;
+		int cell = CellOf (fy, NC) * NC + CellOf (fx, NC);
+		std::vector<Grp> &gs = grps[cell];
+		bool any = false;
+		for (int kind = 0; kind < 2; kind++) {
+			const std::vector<BldgGeom::V> &vs = kind ? o.rv : o.fv;
+			const std::vector<uint32_t> &is = kind ? o.ri : o.fi;
+			if (vs.empty() || vs.size() > 65535) continue;
 			int &cg = cur[cell][kind];
-			if (cg < 0 || gs[cg].v.size() + 3 > 65535) {
+			if (cg < 0 || gs[cg].v.size() + vs.size() > 65535) { // a building that does not fit starts a new group
 				cg = (int)gs.size();
 				gs.push_back ({{}, {}, kind});
 			}
 			Grp &G = gs[cg];
-			for (int c = 0; c < 3; c++) {
-				DWORD vi = tri[c];
-				if (remap[vi].first != cg) {
-					const float *s = m->vtx + (B.v0 + vi) * 6;
-					VECTOR3 p = pb + eb * s[0] + ub * s[1] + nb * s[2];
-					VECTOR3 nr = eb * s[3] + ub * s[4] + nb * s[5];
-					NTVERTEX v;
-					v.x = (float)dotp (p, t.e0); v.y = (float)dotp (p, t.u0); v.z = (float)dotp (p, t.n0);
-					v.nx = (float)dotp (nr, t.e0); v.ny = (float)dotp (nr, t.u0); v.nz = (float)dotp (nr, t.n0);
-					v.tu = v.tv = 0.0f;
-					std::vector<Run> &rs = t.runs[b];
-					DWORD vn = (DWORD)G.v.size();
-					if (!rs.empty() && rs.back().grp == (DWORD)cg && rs.back().v0 + rs.back().nv == vn) rs.back().nv++;
-					else rs.push_back ({(DWORD)cg, vn, 1});
-					remap[vi] = {cg, (int)vn};
-					G.v.push_back (v);
-					t.rad = std::max (t.rad, length (p));
-				}
-				G.i.push_back ((WORD)remap[vi].second);
+			DWORD vn = (DWORD)G.v.size();
+			for (const BldgGeom::V &s : vs) {
+				VECTOR3 p = pb + eb * s.x + ub * s.y + nb * s.z;
+				VECTOR3 nr = eb * s.nx + ub * s.ny + nb * s.nz;
+				NTVERTEX v;
+				v.x = (float)dotp (p, t.e0); v.y = (float)dotp (p, t.u0); v.z = (float)dotp (p, t.n0);
+				v.nx = (float)dotp (nr, t.e0); v.ny = (float)dotp (nr, t.u0); v.nz = (float)dotp (nr, t.n0);
+				v.tu = s.u; v.tv = s.v;
+				G.v.push_back (v);
+				t.rad = std::max (t.rad, length (p));
 			}
+			for (uint32_t i : is) G.i.push_back ((WORD)(vn + i));
+			t.runs[b].push_back ({(DWORD)cg, vn, (DWORD)vs.size()});
+			any = true;
 		}
+		if (any) t.cell[cell].bldg.push_back (b);
 	}
+	if (hidden) oapiWriteLogV ("TileStream: buildings %d/%d/%d: %u inside base structures left out", Z, t.x, t.y, (unsigned)hidden);
 	t.placed = t.ground;
-	MATERIAL mat[2] = {
-		{{0.78f, 0.76f, 0.72f, 1.0f}, {0.78f, 0.76f, 0.72f, 1.0f}, {0.1f, 0.1f, 0.1f, 1.0f}, {0, 0, 0, 0}, 10.0f},  // wall
-		{{0.52f, 0.52f, 0.54f, 1.0f}, {0.52f, 0.52f, 0.54f, 1.0f}, {0.05f, 0.05f, 0.05f, 1.0f}, {0, 0, 0, 0}, 5.0f}}; // roof
+	bool tex = texFacade && texRoof;
+	MATERIAL mat[2] = { // textured: white, the texture is the colour; else the grey of untextured walls and roofs
+		{{1, 1, 1, 1}, {1, 1, 1, 1}, {0.06f, 0.06f, 0.06f, 1}, {0, 0, 0, 0}, 10.0f},
+		{{1, 1, 1, 1}, {1, 1, 1, 1}, {0.03f, 0.03f, 0.03f, 1}, {0, 0, 0, 0}, 5.0f}};
+	if (!tex) {
+		mat[0] = {{0.78f, 0.76f, 0.72f, 1.0f}, {0.78f, 0.76f, 0.72f, 1.0f}, {0.1f, 0.1f, 0.1f, 1.0f}, {0, 0, 0, 0}, 10.0f};
+		mat[1] = {{0.52f, 0.52f, 0.54f, 1.0f}, {0.52f, 0.52f, 0.54f, 1.0f}, {0.05f, 0.05f, 0.05f, 1.0f}, {0, 0, 0, 0}, 5.0f};
+	}
 	for (int c = 0; c < NC * NC; c++) {
 		Cell &C = t.cell[c];
 		delete C.mesh;
@@ -284,19 +367,50 @@ void BldgMgr::Make (Tile &t, const TSBLDGMESH *m)
 		if (grps[c].empty()) continue;
 		MESHHANDLE hMesh = oapiCreateMesh (0, nullptr);
 		DWORD mi[2] = {oapiAddMaterial (hMesh, &mat[0]), oapiAddMaterial (hMesh, &mat[1])};
+		DWORD ti[2] = {SPEC_DEFAULT, SPEC_DEFAULT};
+		if (tex) { ti[0] = oapiAddMeshTexture (hMesh, texFacade); ti[1] = oapiAddMeshTexture (hMesh, texRoof); }
 		for (Grp &G : grps[c]) {
 			MESHGROUP mg;
 			memset (&mg, 0, sizeof mg);
 			mg.Vtx = G.v.data(); mg.nVtx = (DWORD)G.v.size();
 			mg.Idx = G.i.data(); mg.nIdx = (DWORD)G.i.size();
 			mg.MtrlIdx = mi[G.kind];
-			mg.TexIdx = SPEC_DEFAULT;
+			mg.TexIdx = ti[G.kind] == (DWORD)-1 ? SPEC_DEFAULT : ti[G.kind];
 			oapiAddMeshGroup (hMesh, &mg);
 		}
 		C.mesh = new D3D9Mesh (hMesh);
-		oapiDeleteMesh (hMesh); // the D3D9Mesh copied it all
+		oapiDeleteMesh (hMesh); // the D3D9Mesh copied it all; BldgMgr's own texture references keep them
+		if (tex) { SURFACE(texFacade)->DecRef(); SURFACE(texRoof)->DecRef(); } // the core mesh's: its release is skipped while a mesh draws them
+		oapi::FVECTOR4 off (0.0f, 0.0f, 0.0f, 1.0f);
+		C.mesh->SetMaterialEx (0, MatProp::Emission, &off); // no window light by day (the default is 1)
+		C.mesh->SetMaterialEx (1, MatProp::Emission, &off);
 		std::vector<Grp>().swap (grps[c]);
 	}
+}
+
+// window light per cell from the sun's elevation there: off above +2 deg, full by -6 deg, cells starting along that ramp
+void BldgMgr::Night ()
+{
+	if (!texFacade || tiles.empty()) return;
+	OBJHANDLE hSun = oapiGetGbodyByIndex (0);
+	if (!hSun) return;
+	VECTOR3 gs, gp;
+	MATRIX3 rot;
+	oapiGetGlobalPos (hSun, &gs);
+	oapiGetGlobalPos (hObj, &gp);
+	oapiGetRotationMatrix (hObj, &rot);
+	VECTOR3 sd = unit (tmul (rot, gs - gp));
+	for (auto &p : tiles)
+		for (Cell &c : p.second.cell) {
+			if (!c.mesh) continue;
+			double el = asin (std::clamp (dotp (sd, c.up), -1.0, 1.0)) * DEG;
+			float dusk = (float)std::clamp ((2.0 - el) / 8.0, 0.0, 1.0);
+			float lit = std::clamp ((dusk - c.nightAt) / 0.4f, 0.0f, 1.0f);
+			if (std::fabs (lit - c.night) < 0.02f && !(lit == 0.0f && c.night != 0.0f) && !(lit == 1.0f && c.night != 1.0f)) continue;
+			c.night = lit;
+			oapi::FVECTOR4 e (lit, lit, lit, 1.0f);
+			c.mesh->SetMaterialEx (0, MatProp::Emission, &e);
+		}
 }
 
 // the ground under each building: a cell whose buildings' ground moved more than 0.25 m is marked for Edit

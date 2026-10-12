@@ -6,6 +6,7 @@
 
 #include "Mesh.h"
 #include "VObject.h"
+#include "BldgGeom.h"
 #include <condition_variable>
 #include <deque>
 #include <map>
@@ -36,6 +37,8 @@ private:
 		TerrainSunCache ts;
 		bool dirty = false;               // ground moved under some of its buildings, the mesh not edited yet
 		double tEdit = 0.0;               // the mesh is edited at most every 0.25 s
+		float night = 0.0f;               // the window light its mesh has
+		float nightAt = 0.0f;             // where on the dusk ramp its windows start to light
 	};
 	struct Tile {
 		int x = 0, y = 0;
@@ -45,19 +48,28 @@ private:
 		std::vector<std::vector<Run>> runs;   // per building
 		Cell cell[NC * NC];
 	};
+	struct BaseRec {                      // a base's structures; planet-local to its frame through rp, then rb
+		MATRIX3 rp, rb;
+		VECTOR3 p;                        // its origin, planet-local
+		BldgGeom::BaseIndex idx;
+	};
 	void Make (Tile &t, const TSBLDGMESH *m);
 	bool Reground (Tile &t);
 	void Edit (Tile &t, Cell &c, double now);
 	void Drop (Tile &t);
 	bool Near (int x, int y) const;
 	void Grounds (const double *lng, const double *lat, size_t n, double *g) const;
+	const BaseRec &BaseOf (OBJHANDLE hBase);
+	void Night ();
 	void Work ();
 
 	vPlanet *vp;
 	OBJHANDLE hObj;
 	const Scene *scn;
 	double R;
+	SURFHANDLE texFacade = nullptr, texRoof = nullptr; // Textures/Bldg, made by Utils/bldgtex
 	std::map<long long, Tile> tiles;
+	std::map<OBJHANDLE, BaseRec> bases;
 	std::set<long long> bad;     // tiles whose file did not load
 	std::set<long long> busy;    // render thread: given to the worker, result not taken yet
 	long long lastGround = -1;   // the last tile re-grounded

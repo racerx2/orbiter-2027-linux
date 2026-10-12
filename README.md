@@ -85,7 +85,9 @@ in `Textures/Earth` like installed tiles. The sources are listed in
 - `s3.amazonaws.com` (`elevation-tiles-prod`): elevation, Terrain Tiles on AWS
 - `eoimages.gsfc.nasa.gov`: clouds, the NASA Visible Earth cloud map (levels 1 to 7)
 - `tiles.openfreemap.org`: 3D buildings within 3 to 6 km of the camera below
-  15 km altitude, plain grey blocks set on the terrain
+  15 km altitude, set on the terrain with textured walls, roofs and lit windows
+  at night; the textures are drawn by the build itself (`Utils/bldgtex`, into
+  `Textures/Bldg`), and a building inside a base's own buildings is left out
 
 The runways and pads of the Earth surface bases are laid flat at the base's
 height. Elevation below sea level is raised to 0 m except in the `FLOOR` boxes

@@ -131,6 +131,14 @@ target_compile_options(TileStreamCore.Test PRIVATE -fsanitize=address -fno-omit-
 target_link_options(TileStreamCore.Test PRIVATE -fsanitize=address)
 # not upstream: the Launchpad Earth streaming page: base list, when Clear and Download are refused, how they end
 add_unit_test(TileStreamLaunchpad.Test ${ORBITER_SOURCE_DIR}/StreamBases.cpp)
+# not upstream: streamed buildings' walls, roofs, atlas UVs and base structures, on .bld meshes the core makes
+add_unit_test(BldgGeom.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/BldgGeom.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp)
+target_include_directories(BldgGeom.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+target_link_libraries(BldgGeom.Test Qt6::Gui zlib)
+target_compile_definitions(BldgGeom.Test PRIVATE BLDGTEX_DIR="${ORBITER_BINARY_TEXTURES_DIR}/Bldg")
+add_dependencies(BldgGeom.Test BldgTextures)
+target_compile_options(BldgGeom.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(BldgGeom.Test PRIVATE -fsanitize=address)
 
 if (BUILD_ORBITER_SERVER)
 
