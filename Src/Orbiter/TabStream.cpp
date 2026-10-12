@@ -141,6 +141,7 @@ BOOL OptionsPage_Stream::OnInitDialog(QWidget *hPage)
 	m_level->setToolTip ("Finest tile level: 14 is about 20 km a tile, 16 about 5 km, 18 about 1.2 km");
 	m_estimate = new QLabel (gr);
 	m_estimate->setWordWrap (true);
+	m_estimate->setToolTip ("Open ocean and tiles already on disk take nothing");
 	m_download = new QPushButton ("Download...", gr);
 	m_cancel = new QPushButton ("Cancel", gr);
 	m_cancel->setEnabled (false);
@@ -272,7 +273,8 @@ void OptionsPage_Stream::UpdateControls(QWidget *hPage)
 	}
 	if (!m_fetch && !m_sizeThread.joinable()) ScanSize (); // a session may have streamed more
 	int w = std::max (HParent()->width(), hPage->minimumSizeHint().width());
-	hPage->resize (w, std::max (hPage->sizeHint().height(), hPage->minimumSizeHint().height()));
+	QLayout *l = hPage->layout();
+	hPage->resize (w, l && l->hasHeightForWidth() ? l->totalHeightForWidth (w) : hPage->sizeHint().height());
 }
 
 void OptionsPage_Stream::UpdateConfig(QWidget *hPage)
@@ -305,7 +307,7 @@ void OptionsPage_Stream::Estimate()
 	for (const TileStream::TileKey &k : keys) bytes += 2 * 174904 + (k.L >= 4 && k.L <= m_elmax ? 134262 : 0);
 	QString s;
 	if (keys.size() >= 100000) s = "Too many tiles: make the radius or the level smaller.";
-	else s = QString ("%1 tiles, levels 1 to %2: up to %3 (open ocean and tiles already on disk take nothing).").arg (keys.size()).arg (L).arg (Bytes (bytes));
+	else s = QString ("%1 tiles, levels 1 to %2, up to %3").arg (keys.size()).arg (L).arg (Bytes (bytes));
 	if (m_level->value() > m_lmax) s += QString (" The imagery ends at level %1.").arg (m_lmax);
 	m_estimate->setText (s);
 	m_download->setEnabled (!m_fetch && !keys.empty() && keys.size() < 100000);
