@@ -422,6 +422,7 @@ private:
 	vBase **vbase;            // list of base visuals
 	SurfaceManager *surfmgr;  // planet surface tile manager
 	TileManager2<SurfTile> *surfmgr2;   // planet surface tile manager (v2)
+	class BldgMgr *bldgmgr = nullptr;          // not upstream: streamed 3D buildings (BldgMgr.h)
 	TileManager2<CloudTile> *cloudmgr2; // planet cloud layer tile manager (v2)
 	mutable class SurfTile *tile_cache;
 	HazeManager *hazemgr;     // horizon haze rendering

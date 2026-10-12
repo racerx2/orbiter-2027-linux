@@ -74,7 +74,8 @@ by setting the `PlanetTexDir` entry in `Orbiter.cfg`.
 Earth is not part of the texture download. While Orbiter runs, the tiles it
 draws stream in from free servers and are kept in `Textures/Earth`
 (`Config/TileStream.cfg`; `TileStream`, `TileStreamOffline` and
-`TileStreamCacheMB` in `Orbiter.cfg`).
+`TileStreamCacheMB` in `Orbiter.cfg`). Below 15 km, 3D buildings stream in
+the same way (`TileStreamBuildings`).
 
 - Imagery: EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH
   (Contains modified Copernicus Sentinel data 2016 & 2017), CC BY 4.0
@@ -83,6 +84,7 @@ draws stream in from free servers and are kept in `Textures/Earth`
 - Elevation: Terrain Tiles on AWS (Mapzen; SRTM, GMTED2010, ETOPO1 and others)
 - Water/land cover: ESA WorldCover 2021 (CC-BY 4.0), © ESA WorldCover project 2021,
   contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium
+- Buildings: © OpenMapTiles © OpenStreetMap contributors (ODbL), OpenFreeMap
 
 ## Help
 

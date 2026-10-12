@@ -1821,6 +1821,7 @@ void Orbiter::StartTileStream ()
 	o.bodyDir = StreamBodyDir (pConfig);
 	o.capMB = (uint64_t)std::max (0, pConfig->TileStreamCacheMB);
 	o.offline = pConfig->bTileStreamOffline;
+	o.buildings = pConfig->bTileStreamBuildings;
 	o.userAgent = "OrbiterLinux/" + std::to_string (oapiGetOrbiterVersion()) + " (+https://github.com/racerx2/orbiter-2027-linux)";
 	o.log = [] (const std::string &s) { LOGOUT ("%s", s.c_str()); };
 	o.baseDir = [this] (const std::string &name) { return oapiResolvePath ((std::string (pConfig->CfgDirPrm.ConfigDir) + name + "/Base").c_str()); }; // not upstream (earth-sky)

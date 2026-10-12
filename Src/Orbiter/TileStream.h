@@ -33,6 +33,7 @@ struct TsBodyCfg {
 	std::vector<std::string> credit;
 	std::string cloudSmall, cloudBig; // not upstream (earth-sky): CLOUD equirect images, L1-L5 and up to cloudMax
 	int cloudMax = 7;
+	std::string bldgJson, bldgUrl; // TileJSON of the building tiles, last known {z}/{x}/{y} template
 };
 
 // not upstream (earth-sky): a surface base's footprint for Elev_mod flattening
@@ -60,6 +61,27 @@ namespace TsTrack {
 	std::vector<Pt> Propagate (const double r0[3], const double v0[3], double mu, double omega, double horizon, int n);
 	std::vector<std::array<int, 3>> Keys (const std::vector<Pt> &pts, int L, int half);
 	int Level (double alt, int lmin, int lmax);
+}
+
+// 3D buildings from z14 Mapbox vector tiles (TileStreamMvt.cpp)
+namespace TsBldg {
+	struct Pt { double x, y; };
+	struct Feature { std::vector<std::vector<Pt>> rings; double height = 0.0, minHeight = 0.0; bool hide = false; }; // tile units, y down
+	struct Building { double lat, lng; float hmin, hmax; uint32_t v0, nv, i0, ni; }; // anchor in radians
+	struct Mesh {
+		int z = 0, x = 0, y = 0;
+		std::vector<Building> b;
+		std::vector<float> vtx;     // x east, y up, z north (m from the anchor), nx, ny, nz
+		std::vector<uint32_t> idx;  // per building, from its v0
+	};
+	bool Inflate (const std::string &in, std::string &out);   // gzip or zlib
+	bool Decode (const std::string &pbf, std::vector<Feature> &out, uint32_t &extent); // layer "building"
+	bool Triangulate (const std::vector<std::vector<Pt>> &rings, std::vector<uint32_t> &tri); // ring 0 outer, then holes; indices into the rings in order
+	Mesh Build (int z, int x, int y, const std::vector<Feature> &f, uint32_t extent);
+	std::string Encode (const Mesh &m);
+	bool Read (const std::string &bytes, Mesh &m);
+	void TileOf (double lat, double lng, int z, int &x, int &y); // radians
+	void LatLng (int z, double x, double y, double &lat, double &lng); // tile coordinates to radians
 }
 
 bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::string &err);
@@ -117,6 +139,7 @@ public:
 		std::function<std::string (const std::string &)> baseDir; // not upstream (earth-sky): Config/<Body>/Base, resolved
 		std::function<double (const std::string &)> radius;       // metres
 		int cloudWait = 15;                                        // seconds for the small cloud image at startup
+		bool buildings = true;                                     // BLDG lines are used
 	};
 
 	explicit TileStream (const Options &opt);
@@ -130,6 +153,9 @@ public:
 	int Want (const std::string &body, int L, int ilat, int ilng, int flags);
 	int Done (const std::string &body, int *keys, int nmax); // (L, ilat, ilng) triples
 	std::string Credit (const std::string &body) const;
+	// z14 building tiles: 1 the file is there, 0 wanted, -1 never
+	int WantBldg (const std::string &body, int x, int y);
+	std::string BldgPath (const std::string &body, int x, int y) const;
 
 	// not upstream (earth-sky): a ground-track tile, below camera wants and above refetches; 1 queued or there, 0 queue full, -1 never
 	int Prefetch (const std::string &body, int L, int ilat, int ilng);

@@ -48,6 +48,7 @@ set(common_src
 	TileStreamCfg.cpp # not upstream
 	TileStreamImg.cpp # not upstream
 	TileStreamCog.cpp # not upstream
+	TileStreamMvt.cpp # not upstream
 	TileStreamNet.cpp # not upstream
 	TileStreamSky.cpp # not upstream: clouds, base flattening, ground track
 # Dialogs

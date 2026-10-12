@@ -26,8 +26,8 @@ using Clock = TileStream::Clock;
 
 namespace {
 
-enum { EOX, GIBS, TERR, WC, NHOST };
-const char *HostName[NHOST] = {"EOX", "GIBS", "Terrain Tiles", "WorldCover"};
+enum { EOX, GIBS, TERR, WC, BLDG, NHOST };
+const char *HostName[NHOST] = {"EOX", "GIBS", "Terrain Tiles", "WorldCover", "OpenFreeMap"};
 
 uint64_t Key (int L, int ilat, int ilng) { return (uint64_t)L << 48 | (uint64_t)ilat << 24 | (uint64_t)ilng; }
 int KL (uint64_t k) { return (int)(k >> 48 & 0xFF); }
@@ -49,6 +49,11 @@ int64_t Today ()
 
 int HostOf (const TsSource &s) { return s.kind == "eox" ? EOX : s.kind == "terrarium" ? TERR : GIBS; }
 
+std::string BldgFile (const std::string &dir, uint64_t k)
+{
+	return dir + "/Bldg/14/" + std::to_string (KLat (k)) + "/" + std::to_string (KLng (k)) + ".bld";
+}
+
 }
 
 struct TileStream::Impl {
@@ -65,7 +70,11 @@ struct TileStream::Impl {
 		std::vector<TsBase> bases;
 		std::vector<double> baseH;                      // flat height per base, NaN until known
 		double radius = 6.37101e6;
+		std::unordered_set<uint64_t> bldg; // building tiles written, Key (14, x, y)
+		std::string bldgUrl;               // from the TileJSON
+		int bldgState = 0;                 // 0 TileJSON not asked, 1 asking, 2 known
 	};
+	struct BJob { int body = 0, stage = 0, tries = 0; uint64_t key = 0; Clock::time_point want, retry; };
 	struct Src {
 		std::string url;
 		int host = EOX;
@@ -122,6 +131,10 @@ struct TileStream::Impl {
 	std::unordered_map<std::string, std::pair<int, std::shared_ptr<const QByteArray>>> syncRes;
 	int coverFails = 0;
 	void FetchAll (std::vector<TsCog::Req> &rq);
+	std::unordered_map<uint64_t, BJob> bjobs;               // building tiles, by Id (body, Key (14, x, y))
+	std::unordered_map<std::string, uint64_t> binflight;    // url -> bjob id
+	std::unordered_map<std::string, int> bjson;             // TileJSON url -> body
+	std::unordered_map<uint64_t, Clock::time_point> bhold;
 
 	explicit Impl (const Options &o);
 	~Impl ();
@@ -205,6 +218,10 @@ struct TileStream::Impl {
 	void BaseSrcs (Body &B, Job &J);
 	void BaseHeights (Body &B, const Job &J, const std::vector<QImage> &et);
 	bool Mods (Body &B, uint64_t k, const std::string &elv);
+	int WantBldg (int b, int x, int y);       // TileStreamMvt.cpp's tiles, below imagery
+	void StartBldg (Clock::time_point now);
+	void BldgDeliver (const std::string &url, int status, const std::shared_ptr<const QByteArray> &data, Clock::time_point now);
+	void BuildBldg (int b, uint64_t k, std::shared_ptr<const QByteArray> data);
 };
 
 static bool Better (const TileStream::Impl::Job &a, const TileStream::Impl::Job &b)
@@ -226,6 +243,7 @@ TileStream::Impl::Impl (const Options &o)
 	host[GIBS].cap = 4;
 	host[TERR].cap = 8;
 	host[WC].cap = 6;
+	host[BLDG].cap = 4;
 	std::vector<TsBodyCfg> cfg;
 	std::string err;
 	if (!TsReadCfg (opt.cfgfile, cfg, err)) {
@@ -398,6 +416,7 @@ void TileStream::Impl::Run ()
 		}
 		DropStale (now);
 		StartJobs (now);
+		StartBldg (now);
 		Dispatch (now);
 		if (now >= nextHits) {
 			nextHits = now + std::chrono::seconds (5);
@@ -431,7 +450,7 @@ void TileStream::Impl::OnResult (Result &r, Clock::time_point now)
 	std::shared_ptr<const QByteArray> data;
 	if (r.status == 200) {
 		data = std::make_shared<const QByteArray> (std::move (r.body));
-		CachePut (r.url, data);
+		if (r.host != BLDG) CachePut (r.url, data);
 	}
 	if (r.status == 200 || r.status == 404 || r.status == 400) {
 		h.fails = 0;
@@ -444,7 +463,8 @@ void TileStream::Impl::OnResult (Result &r, Clock::time_point now)
 		h.backoff = std::min (h.backoff * 2.0, 600.0);
 		h.fails = 0;
 	}
-	Deliver (r.url, r.status, data, now);
+	if (r.host == BLDG) BldgDeliver (r.url, r.status, data, now);
+	else Deliver (r.url, r.status, data, now);
 }
 
 // a host that pauses gives its queued requests back at once, so their jobs fall back or wait in the queue, not in a slot
@@ -453,7 +473,10 @@ void TileStream::Impl::Pause (int h, Clock::time_point until, Clock::time_point 
 	host[h].paused = until;
 	std::deque<std::string> q;
 	q.swap (host[h].queue);
-	for (const std::string &url : q) Deliver (url, 0, nullptr, now);
+	for (const std::string &url : q) {
+		if (h == BLDG) BldgDeliver (url, 0, nullptr, now);
+		else Deliver (url, 0, nullptr, now);
+	}
 }
 
 void TileStream::Impl::Deliver (const std::string &url, int status, const std::shared_ptr<const QByteArray> &data, Clock::time_point now)
@@ -662,6 +685,10 @@ void TileStream::Impl::DropStale (Clock::time_point now)
 		const Job &J = it->second;
 		bool old = now - J.want > (J.pre ? std::chrono::duration<double> (10.0) : stale); // earth-sky: a prefetch the track left behind
 		if (!J.stage && !J.required && !J.low && !J.elevOnly && old) it = jobs.erase (it);
+		else ++it;
+	}
+	for (auto it = bjobs.begin(); it != bjobs.end(); ) {
+		if (!it->second.stage && now - it->second.want > 3 * stale) it = bjobs.erase (it);
 		else ++it;
 	}
 }
@@ -957,6 +984,7 @@ void TileStream::Impl::LoadIdx (Body &B)
 	load ("ocean", [&] (uint64_t k, int64_t) { B.ocean.insert (k); });
 	load ("refetch", [&] (uint64_t k, int64_t) { B.refetch.insert (k); });
 	load ("none", [&] (uint64_t k, int64_t t) { B.none[k] = t; });
+	load ("bldg", [&] (uint64_t k, int64_t) { if (KL (k) == 14) B.bldg.insert (k); });
 }
 
 void TileStream::Impl::Append (const Body &B, const char *name, uint64_t k, int64_t t)
@@ -1017,15 +1045,25 @@ void TileStream::Impl::Evict ()
 	if (!cap) return;
 	for (auto &bp : bodies) {
 		Body &B = *bp;
-		std::vector<uint64_t> keys;
+		std::vector<uint64_t> keys, bkeys;
 		{
 			std::lock_guard<std::mutex> lk (mx);
 			keys.assign (B.written.begin(), B.written.end());
+			bkeys.assign (B.bldg.begin(), B.bldg.end());
 		}
-		struct E { fs::file_time_type t; uint64_t k, size; };
+		struct E { fs::file_time_type t; uint64_t k, size; bool bldg; };
 		std::vector<E> v;
-		std::vector<uint64_t> gone;
+		std::vector<uint64_t> gone, bgone;
 		uint64_t total = 0;
+		for (uint64_t k : bkeys) {
+			if (quit) return;
+			std::error_code e1;
+			std::string s = BldgFile (B.dir, k);
+			uint64_t size = fs::file_size (s, e1);
+			if (e1) { bgone.push_back (k); continue; }
+			total += size;
+			v.push_back ({fs::last_write_time (s, e1), k, size, true});
+		}
 		for (uint64_t k : keys) {
 			if (quit) return;
 			std::error_code e1, e2;
@@ -1039,23 +1077,33 @@ void TileStream::Impl::Evict ()
 			es = fs::file_size (Tile (B.dir, "Class", k), e2);
 			if (!e2) size += es;
 			total += size;
-			if (KL (k) > 8) v.push_back ({fs::last_write_time (s, e1), k, size});
+			if (KL (k) > 8) v.push_back ({fs::last_write_time (s, e1), k, size, false});
 		}
 		if (cap && total > cap) {
 			std::sort (v.begin(), v.end(), [] (const E &a, const E &b) { return a.t < b.t; });
 			for (const E &e : v) {
 				if (total <= cap / 10 * 9) break;
 				std::error_code ec;
+				total -= e.size;
+				if (e.bldg) {
+					fs::remove (BldgFile (B.dir, e.k), ec);
+					bgone.push_back (e.k);
+					continue;
+				}
 				fs::remove (Tile (B.dir, "Surf", e.k), ec);
 				fs::remove (Tile (B.dir, "Mask", e.k), ec);
 				fs::remove (Tile (B.dir, "Elev", e.k), ec);
 				fs::remove (Tile (B.dir, "Class", e.k), ec);
-				total -= e.size;
 				gone.push_back (e.k);
 			}
 		}
-		if (gone.empty()) continue;
+		if (gone.empty() && bgone.empty()) continue;
 		std::lock_guard<std::mutex> lk (mx);
+		if (!bgone.empty()) {
+			for (uint64_t k : bgone) B.bldg.erase (k);
+			Rewrite (B, "bldg", B.bldg);
+		}
+		if (gone.empty()) continue;
 		bool refetch = false;
 		for (uint64_t k : gone) {
 			B.written.erase (k);
@@ -1064,6 +1112,157 @@ void TileStream::Impl::Evict ()
 		Rewrite (B, "written", B.written);
 		if (refetch) Rewrite (B, "refetch", B.refetch);
 	}
+}
+
+// building tiles: their own jobs on the OpenFreeMap host, started when no imagery job waits
+int TileStream::Impl::WantBldg (int b, int x, int y)
+{
+	Body &B = *bodies[b];
+	if (!opt.buildings || B.cfg.bldgUrl.empty() || x < 0 || y < 0 || x >= 1 << 14 || y >= 1 << 14) return -1;
+	uint64_t k = Key (14, x, y), id = Id (b, k);
+	std::unique_lock<std::mutex> lk (mx);
+	if (stop) return -1;
+	if (B.bldg.count (k)) return 1;
+	Clock::time_point now = opt.now();
+	auto j = bjobs.find (id);
+	if (j != bjobs.end()) {
+		j->second.want = now;
+		return 0;
+	}
+	lk.unlock();
+	std::error_code ec;
+	bool have = fs::exists (BldgFile (B.dir, k), ec);
+	lk.lock();
+	if (stop) return -1;
+	if (have) return 1;
+	if (!net) return -1;
+	auto h = bhold.find (id);
+	if (h != bhold.end()) {
+		if (now < h->second) return 0;
+		bhold.erase (h);
+	}
+	if (bjobs.count (id)) return 0;
+	if (!B.bldgState) {
+		B.bldgState = 1;
+		bjson[B.cfg.bldgJson] = b;
+		host[BLDG].queue.push_front (B.cfg.bldgJson);
+	}
+	BJob &J = bjobs[id];
+	J.body = b;
+	J.key = k;
+	J.want = now;
+	while (bjobs.size() > 64) {
+		auto worst = bjobs.end();
+		for (auto it = bjobs.begin(); it != bjobs.end(); ++it)
+			if (!it->second.stage && (worst == bjobs.end() || it->second.want < worst->second.want)) worst = it;
+		if (worst == bjobs.end()) break;
+		bjobs.erase (worst);
+	}
+	kick = true;
+	cv.notify_all();
+	return 0;
+}
+
+void TileStream::Impl::StartBldg (Clock::time_point now)
+{
+	if (bjobs.empty() || Paused (BLDG, now)) return;
+	int cap = host[BLDG].cap;
+	for (auto &p : jobs)
+		if (!p.second.stage && !p.second.low && p.second.retry <= now && Startable (p.second, now)) { cap = 1; break; } // imagery waits: one building tile at a time
+	int active = 0;
+	for (auto &p : bjobs) if (p.second.stage) active++;
+	while (active < cap) {
+		BJob *best = nullptr;
+		for (auto &p : bjobs) {
+			BJob &J = p.second;
+			if (J.stage || J.retry > now || bodies[J.body]->bldgState != 2) continue;
+			if (!best || J.want > best->want) best = &J;
+		}
+		if (!best) return;
+		Body &B = *bodies[best->body];
+		std::string url = B.bldgUrl;
+		for (auto r : {std::make_pair ("{z}", 14), std::make_pair ("{x}", KLat (best->key)), std::make_pair ("{y}", KLng (best->key))}) {
+			size_t at = url.find (r.first);
+			if (at != std::string::npos) url.replace (at, 3, std::to_string (r.second));
+		}
+		best->stage = 1;
+		binflight[url] = Id (best->body, best->key);
+		host[BLDG].queue.push_back (url);
+		active++;
+	}
+}
+
+void TileStream::Impl::BldgDeliver (const std::string &url, int status, const std::shared_ptr<const QByteArray> &data, Clock::time_point now)
+{
+	auto js = bjson.find (url);
+	if (js != bjson.end()) {
+		Body &B = *bodies[js->second];
+		bjson.erase (js);
+		B.bldgUrl = B.cfg.bldgUrl;
+		if (status == 200 && data) {
+			std::string s = data->toStdString();
+			size_t a = s.find ("\"tiles\""), q0 = a == std::string::npos ? a : s.find ('"', s.find ('[', a) + 1);
+			size_t q1 = q0 == std::string::npos ? q0 : s.find ('"', q0 + 1);
+			std::string t = q1 == std::string::npos ? std::string() : s.substr (q0 + 1, q1 - q0 - 1);
+			if (t.find ("://") != std::string::npos && t.find ("{x}") != std::string::npos && t.find ("{y}") != std::string::npos) B.bldgUrl = t;
+		}
+		Log ("TileStream: " + B.cfg.name + " buildings from " + B.bldgUrl);
+		B.bldgState = 2;
+		kick = true;
+		return;
+	}
+	auto it = binflight.find (url);
+	if (it == binflight.end()) return;
+	uint64_t id = it->second;
+	binflight.erase (it);
+	auto j = bjobs.find (id);
+	if (j == bjobs.end() || j->second.stage != 1) return;
+	BJob &J = j->second;
+	if (status == 200 || status == 204 || status == 404) { // 204 and 404: no tile, written empty
+		J.stage = 2;
+		int b = J.body;
+		uint64_t k = J.key;
+		std::shared_ptr<const QByteArray> d = status == 200 ? data : nullptr;
+		Queue ([this, b, k, d] { BuildBldg (b, k, d); });
+		return;
+	}
+	if (++J.tries >= 3) {
+		bhold[id] = now + std::chrono::seconds (60);
+		bjobs.erase (j);
+	} else {
+		J.stage = 0;
+		J.retry = now + std::chrono::seconds (10);
+	}
+}
+
+void TileStream::Impl::BuildBldg (int b, uint64_t k, std::shared_ptr<const QByteArray> data)
+{
+	Body &B = *bodies[b];
+	std::string raw = data ? data->toStdString() : std::string(), pbf;
+	bool ok = true;
+	if (raw.size() >= 2 && (uint8_t)raw[0] == 0x1f && (uint8_t)raw[1] == 0x8b) ok = TsBldg::Inflate (raw, pbf);
+	else pbf.swap (raw);
+	std::vector<TsBldg::Feature> f;
+	uint32_t ext = 4096;
+	ok = ok && TsBldg::Decode (pbf, f, ext);
+	size_t n = 0;
+	if (ok) {
+		TsBldg::Mesh m = TsBldg::Build (14, KLat (k), KLng (k), f, ext);
+		n = m.b.size();
+		ok = Write (B, BldgFile (B.dir, k), TsBldg::Encode (m));
+	}
+	std::lock_guard<std::mutex> lk (mx);
+	if (ok) {
+		B.bldg.insert (k);
+		Append (B, "bldg", k, -1);
+		Log ("TileStream: buildings 14/" + std::to_string (KLat (k)) + "/" + std::to_string (KLng (k)) + ": " + std::to_string (n));
+	} else {
+		Log ("TileStream: cannot make buildings 14/" + std::to_string (KLat (k)) + "/" + std::to_string (KLng (k)));
+		bhold[Id (b, k)] = opt.now() + std::chrono::seconds (600);
+	}
+	bjobs.erase (Id (b, k));
+	kick = true;
+	cv.notify_all();
 }
 
 // -----------------------------------------------------------------------
@@ -1115,6 +1314,18 @@ int TileStream::Done (const std::string &body, int *keys, int nmax)
 		keys[3 * n + 2] = KLng (k);
 	}
 	return n;
+}
+
+int TileStream::WantBldg (const std::string &body, int x, int y)
+{
+	int b = d->FindBody (body);
+	return b < 0 ? -1 : d->WantBldg (b, x, y);
+}
+
+std::string TileStream::BldgPath (const std::string &body, int x, int y) const
+{
+	int b = d->FindBody (body);
+	return b < 0 || x < 0 || y < 0 ? std::string() : BldgFile (d->bodies[b]->dir, Key (14, x, y));
 }
 
 std::string TileStream::Credit (const std::string &body) const
