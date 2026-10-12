@@ -220,6 +220,8 @@ private:
 	UINT vClass;
 	ANIMATION *anim;		// list of animations (defined in the vessel object)
 	double tCheckLight;		// time for next lighting check
+	float terrainSun = 1.0f;	// not upstream: share of the sun above the terrain, see vPlanet::TerrainSunVisibility
+	TerrainSunCache tsCache; // not upstream: reused while the vessel and the sun keep still
 	float ExhaustLength;
 
 	static class SurfNative *defreentrytex, *defexhausttex;

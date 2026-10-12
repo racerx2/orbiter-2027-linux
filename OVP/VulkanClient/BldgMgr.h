@@ -5,6 +5,7 @@
 #define __BLDGMGR_H
 
 #include "Mesh.h"
+#include "VObject.h"
 #include <map>
 #include <set>
 #include <vector>
@@ -28,6 +29,7 @@ private:
 		MESHHANDLE hMesh = nullptr;
 		VECTOR3 p0, e0, u0, n0;     // tile frame at the tile centre, planet-local
 		std::vector<double> ground; // per building, metres
+		TerrainSunCache ts;         // the sun behind terrain at the tile centre
 	};
 	void Make (Tile &t, bool reground);
 	void Drop (Tile &t);

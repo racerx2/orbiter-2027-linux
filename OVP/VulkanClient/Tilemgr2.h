@@ -452,6 +452,8 @@ public:
 	void Render (MATRIX4 &dwmat, bool use_zbuf, const vPlanet::RenderPrm &rprm);
 
 	int GetElevation(double lng, double lat, double *elev, FVECTOR3 *nrm, SurfTile **cache);
+	int GetLoadedElevation(double lng, double lat, double *elev); // not upstream: the deepest loaded tile, in view or not
+	void GetLoadedElevations(int n, const double *lng, const double *lat, double *elev); // not upstream: the same for n points, one lock; 0 where none
 	void Unload(int lvl);
 
 	void Pick(D3DXVECTOR3 &vRay, TILEPICK *pPick);

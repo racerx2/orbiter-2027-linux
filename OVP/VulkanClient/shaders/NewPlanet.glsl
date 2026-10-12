@@ -819,7 +819,7 @@ void main() { oVS = CloudVS(TILEVERTEX(iPosL, iNrmL, iTex0, iElev)); gl_Position
 // 
 vec4 CloudPS(CldVS frg)
 {
-	vec2 vUVTex = frg.texUV.xy;
+	vec2 vUVTex = frg.texUV.xy * Prm.vCloudOff.zw + Prm.vCloudOff.xy; // not upstream: a tile without its own file shows its part of the parent's texture
 	vec4 cTex = texture(tDiff, vUVTex);
 	vec3 vRay;
 	vec3 vPxl;
@@ -1057,7 +1057,7 @@ void main() { oColor = GiantPS(frg); }
 
 vec4 GiantCloudPS(CldVS frg)
 {
-	vec4 cTex = texture(tDiff, frg.texUV.xy);
+	vec4 cTex = texture(tDiff, frg.texUV.xy * Prm.vCloudOff.zw + Prm.vCloudOff.xy); // not upstream: parent's sub-range
 	vec3 vPlN = normalize(frg.nrmW);
 	vec3 vRay = normalize(frg.posW);
 	vec3 vVrt = Const.CamPos + frg.posW.xyz;	// Geo-centric pixel position

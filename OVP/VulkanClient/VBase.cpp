@@ -352,6 +352,8 @@ bool vBase::Update (bool bMainScene)
 	if (fabs(simt-Tlghtchk)>0.1 || oapiGetPause()) {
 		VECTOR3 rpos = gpos - vP->GlobalPos();
 		sunLight = vP->GetObjectAtmoParams(rpos);
+		terrainSun = vP->TerrainSunVisibility(gpos, tsCache); // not upstream: a base behind a mountain is in its shadow
+		sunLight.Color *= terrainSun;
 		Tlghtchk = simt;
 	}
 
@@ -424,6 +426,7 @@ bool vBase::RenderStructures(VkDev *dev)
 		FVECTOR3 bs = structure_as[i]->GetBoundingSpherePos();
 		FVECTOR3 qw = TransformCoord(bs, mWorld);
 		D3D9Sun sp = vP->GetObjectAtmoParams(qw._V() + vP->CameraPos());
+		sp.Color *= terrainSun; // not upstream
 		structure_as[i]->SetSunLight(&sp);
 		structure_as[i]->Render(&mWorld, RENDER_BASE);
 		++uCurrentMesh;
@@ -471,6 +474,8 @@ void vBase::RenderGroundShadow(VkDev *dev, float alpha)
 	if (!active) return;
 	if (!IsVisible()) return;
 	if (Config->TerrainShadowing == 0) return;
+	if (terrainSun <= 0.0f) return; // not upstream: no sun on it, no shadow from it
+	alpha *= terrainSun;            // not upstream
 
 	pCurrentVisual = this;
 

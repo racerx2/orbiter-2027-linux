@@ -661,6 +661,7 @@ bool vVessel::Render(VkDev *dev, bool internalpass)
 {
 	_TRACE;
 	if (!active) return false;
+	if (scn->GetRenderPass() == RENDERPASS_SHADOWMAP && terrainSun <= 0.0f) return true; // not upstream: behind a mountain it casts no shadow
 
 	UINT i, mfd;
 
@@ -1039,6 +1040,8 @@ void vVessel::RenderGroundShadow(VkDev *dev, OBJHANDLE hPlanet, float alpha)
 {
 	if (!bStencilShadow && scn->GetRenderPass() == RENDERPASS_MAINSCENE) return;
 	if (Config->TerrainShadowing == 0) return;
+	if (terrainSun <= 0.0f) return; // not upstream: no sun on it, no shadow from it
+	alpha *= terrainSun;            // not upstream: fades as the sun goes behind terrain
 
 	static const double eps = 1e-2;
 	static const double shadow_elev_limit = 0.07;
@@ -1483,6 +1486,9 @@ bool vVessel::ModLighting()
 			vPlanet* vP = (vPlanet*)vO;	
 			VECTOR3 rpos = gpos - vP->GlobalPos();
 			sunLight = vP->GetObjectAtmoParams(rpos);
+			// not upstream: a vessel behind a mountain is in its shadow
+			terrainSun = vP->TerrainSunVisibility(gpos, tsCache);
+			sunLight.Color *= terrainSun;
 			return true;		
 		}
 	}

@@ -724,6 +724,54 @@ int vPlanet::GetElevation(double lng, double lat, double *elv, FVECTOR3 *nrm) co
 }
 
 // ==============================================================
+// not upstream: march the ray to the sun over the loaded terrain; 0 hidden, 1 clear
+
+float vPlanet::TerrainSunVisibility(const VECTOR3 &gpos, TerrainSunCache &tc)
+{
+	if (!surfmgr2) return 1.0f;
+	OBJHANDLE hSun = oapiGetObjectByIndex(0);
+	VECTOR3 gsun; oapiGetGlobalPos(hSun, &gsun);
+	VECTOR3 d = gsun - gpos;
+	double sd = length(d);
+	if (sd <= 0.0) return 1.0f;
+	d /= sd;
+	VECTOR3 p0 = gpos - GlobalPos();
+	const double rsun = oapiGetSize(hSun) / sd;          // angular radius of the disc
+	const double R = size, top = R + std::max(maxelev, 9000.0) + 500.0;
+	double b = dotp(p0, d), c = dotp(p0, p0) - top * top, disc = b * b - c;
+	if (disc <= 0.0 || -b + sqrt(disc) <= 0.0) return tc.vis = 1.0f; // above every summit, or above them and climbing
+
+	VECTOR3 lpos = ToLocal(p0), ldir = ToLocal(d);       // the planet frame: still when nothing moves on the ground
+	double now = oapiGetSysTime();
+	if (tc.owner == this && length(lpos - tc.pos) < 1.0 && length(ldir - tc.dir) < std::max(2e-4, tc.margin) && now < tc.t) return tc.vis;
+
+	double lng, lat, rad, e0 = 0.0;
+	oapiGlobalToEqu(hObj, gpos, &lng, &lat, &rad);
+	if (surfmgr2->GetLoadedElevation(lng, lat, &e0) != 1) return 1.0f; // no terrain yet: asked again next time
+	if (rad - R < e0 + 2.0) p0 += unit(p0) * (e0 + 2.0 - (rad - R)); // on the drawn ground, not under it
+	b = dotp(p0, d); c = dotp(p0, p0) - top * top; disc = b * b - c;
+	double s0 = std::max(-b - sqrt(std::max(disc, 0.0)), 30.0), s1 = -b + sqrt(std::max(disc, 0.0));
+
+	const int N = 32;
+	double low = 1e9, ss[N], hh[N], lo[N], la[N], ee[N];
+	double s = s0;
+	while (s < s1 && low >= -rsun) {
+		int n = 0;
+		for (; n < N && s < s1; n++, s += std::max(10.0, s * 0.015)) {
+			oapiGlobalToEqu(hObj, GlobalPos() + p0 + d * s, lo + n, la + n, &rad);
+			ss[n] = s; hh[n] = rad - R;
+		}
+		surfmgr2->GetLoadedElevations(n, lo, la, ee);
+		for (int i = 0; i < n && low >= -rsun; i++) low = std::min(low, (hh[i] - ee[i]) / ss[i]);
+	}
+	float vis = low < -rsun ? 0.0f : float(saturate((low + rsun) / (2.0 * rsun)));
+	double margin = vis <= 0.0f ? -low - rsun : vis >= 1.0f ? low - rsun : 0.0; // how far the sun can move before it matters
+	tc.owner = this; tc.pos = lpos; tc.dir = ldir; tc.margin = std::max(0.0, margin);
+	tc.t = now + (margin > 0.01 ? 5.0 : 1.0) + 0.5 * std::rand() / RAND_MAX; // refined terrain rechecked; staggered between observers
+	return tc.vis = vis;
+}
+
+// ==============================================================
 
 SurfTile * vPlanet::FindTile(double lng, double lat, int maxlvl)
 {

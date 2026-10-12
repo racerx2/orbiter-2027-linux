@@ -209,6 +209,7 @@ void BldgMgr::Render (VkDev *dev)
 		W._31 = (float)n.x; W._32 = (float)n.y; W._33 = (float)n.z;
 		W._41 = (float)o.x; W._42 = (float)o.y; W._43 = (float)o.z;
 		D3D9Sun sp = vp->GetObjectAtmoParams (g);
+		sp.Color *= vp->TerrainSunVisibility (vp->GlobalPos() + g, t.ts);
 		t.mesh->SetSunLight (&sp);
 		t.mesh->Render (&W, RENDER_BASE);
 	}

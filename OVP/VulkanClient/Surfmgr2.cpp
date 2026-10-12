@@ -1785,6 +1785,30 @@ int TileManager2<SurfTile>::GetElevation(double lng, double lat, double *elev, F
 }
 
 // -----------------------------------------------------------------------
+// not upstream: elevation from the deepest loaded tile, also for tiles out of view (sun behind terrain)
+
+template<>
+int TileManager2<SurfTile>::GetLoadedElevation(double lng, double lat, double *elev)
+{
+	loader->WaitForMutex();
+	const SurfTile *t = static_cast<const SurfTile *>(SearchTile(lng, lat, 32, false));
+	int rv = t ? t->GetElevation(lng, lat, elev, NULL, NULL, true, true) : 0;
+	loader->ReleaseMutex();
+	return rv;
+}
+
+template<>
+void TileManager2<SurfTile>::GetLoadedElevations(int n, const double *lng, const double *lat, double *elev)
+{
+	loader->WaitForMutex();
+	for (int i = 0; i < n; i++) {
+		const SurfTile *t = static_cast<const SurfTile *>(SearchTile(lng[i], lat[i], 32, false));
+		if (!t || t->GetElevation(lng[i], lat[i], elev + i, NULL, NULL, true, true) != 1) elev[i] = 0.0;
+	}
+	loader->ReleaseMutex();
+}
+
+// -----------------------------------------------------------------------
 
 template<>
 void TileManager2<SurfTile>::Unload(int lvl)

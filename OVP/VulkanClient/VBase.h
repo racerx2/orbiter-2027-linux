@@ -77,6 +77,8 @@ private:
 
 	double Tchk;               // next update
 	double Tlghtchk;           // next lighting update
+	TerrainSunCache tsCache;   // not upstream: the sun behind terrain (vPlanet::TerrainSunVisibility)
+	float terrainSun = 1.0f;   // not upstream
 	double csun_lights;
 	DWORD ntile;               // number of surface tiles
 	const SurftileSpec *tspec; // list of tile specs
