@@ -757,6 +757,9 @@ TEST_CASE ("Prefetch waits below the camera's wants, never goes stale, and is ca
 	CHECK (ts.Prefetching() == 63);
 	ms = 3000;
 	CHECK (WaitFor ([&] { return ts.Pending() == base + 63; }, 2.0)); // the want went stale, the prefetches stay
+	ms = 14000;
+	CHECK (WaitFor ([&] { return ts.Pending() == base; }, 2.0)); // left behind by the track: gone after 10 s
+	for (int i = 0; i < 10; i++) CHECK (ts.Prefetch ("Earth", 12, 11, i) == 1);
 	for (int i = 0; i < 300; i++) ts.Want ("Earth", 14, 0, i, 0);
 	CHECK (ts.Pending() == 256);
 	CHECK (ts.Prefetching() == 0); // the cap takes prefetches before wants

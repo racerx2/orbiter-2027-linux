@@ -643,7 +643,8 @@ void TileStream::Impl::DropStale (Clock::time_point now)
 	std::chrono::duration<double> stale (opt.staleSec);
 	for (auto it = jobs.begin(); it != jobs.end(); ) {
 		const Job &J = it->second;
-		if (!J.stage && !J.required && !J.low && !J.elevOnly && !J.pre && now - J.want > stale) it = jobs.erase (it);
+		bool old = now - J.want > (J.pre ? std::chrono::duration<double> (10.0) : stale); // earth-sky: a prefetch the track left behind
+		if (!J.stage && !J.required && !J.low && !J.elevOnly && old) it = jobs.erase (it);
 		else ++it;
 	}
 }
@@ -1090,7 +1091,11 @@ int TileStream::Impl::Prefetch (const std::string &name, int L, int ilat, int il
 	auto count = [this] { int n = 0; for (auto &p : jobs) n += p.second.pre; return n; };
 	std::unique_lock<std::mutex> lk (mx);
 	if (stop || Ocean (B, k) || hold.count (id) || B.none.count (k)) return -1;
-	if (jobs.count (id)) return 1;
+	auto j = jobs.find (id);
+	if (j != jobs.end()) {
+		if (j->second.pre) { j->second.want = opt.now(); j->second.seq = ++preSeq; } // still on the track: kept, in this call's order
+		return 1;
+	}
 	if (count() >= 64 || jobs.size() >= 200) return 0; // room left for the camera's wants
 	lk.unlock();
 	std::error_code ec;
