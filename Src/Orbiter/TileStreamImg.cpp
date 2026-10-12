@@ -60,9 +60,33 @@ Grid GibsGrid (int L, int ilat, int ilng, int nmax)
 	return {gn, y0 / 512, x0 / 512, y1 / 512 - y0 / 512 + 1, x1 / 512 - x0 / 512 + 1};
 }
 
+// Web Mercator: global pixel of a longitude / latitude at a world size of W px
+static const double MercLat = 85.0511287798;
+static double MercX (double lng, double W) { return (lng + 180.0) / 360.0 * W; }
+static double MercY (double lat, double W)
+{
+	double phi = std::clamp (lat, -MercLat, MercLat) * M_PI / 180.0;
+	return (1.0 - std::asinh (std::tan (phi)) / M_PI) * 0.5 * W;
+}
+
+// Terrarium tiles under an Orbiter tile and its one-node padding, zoom L-3
+Grid TerrGrid (int L, int ilat, int ilng, int zmax)
+{
+	double w, n, dw, dh;
+	Bounds (L, ilat, ilng, w, n, dw, dh);
+	int z = std::max (0, std::min (L - 3, zmax));
+	double W = 256.0 * (1 << z);
+	auto px = [W] (double v) { return std::clamp ((int)std::floor (v), 0, (int)W - 1); };
+	int x0 = px (MercX (std::max (-180.0, w - dw / 256.0), W) - 0.5), x1 = std::min (px (MercX (std::min (180.0, w + dw + dw / 256.0), W) - 0.5) + 1, (int)W - 1);
+	int y0 = px (MercY (n + dh / 256.0, W) - 0.5), y1 = std::min (px (MercY (n - dh - dh / 256.0, W) - 0.5) + 1, (int)W - 1);
+	return {z, y0 / 256, x0 / 256, y1 / 256 - y0 / 256 + 1, x1 / 256 - x0 / 256 + 1};
+}
+
 Grid SrcGrid (const TsSource &s, int L, int ilat, int ilng)
 {
-	return s.kind == "eox" ? EoxGrid (L, ilat, ilng) : GibsGrid (L, ilat, ilng, s.nmax);
+	if (s.kind == "eox") return EoxGrid (L, ilat, ilng);
+	if (s.kind == "terrarium") return TerrGrid (L, ilat, ilng, s.nmax);
+	return GibsGrid (L, ilat, ilng, s.nmax);
 }
 
 std::string Url (const std::string &tmpl, int z, int row, int col)
@@ -332,6 +356,63 @@ QImage DdsImage (const QByteArray &d)
 				o[0] = (uchar)p[0]; o[1] = (uchar)p[1]; o[2] = (uchar)p[2];
 			}
 		}
+	return out;
+}
+
+// Orbiter .elv: 259x259 int16 nodes, row 0 south, one node of padding round the tile, metres = value * scale
+std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QImage> &tiles, double scale)
+{
+	const int N = 259;
+	double w, n, dw, dh;
+	Bounds (L, ilat, ilng, w, n, dw, dh);
+	double W = 256.0 * (1 << g.z);
+	std::vector<QImage> t (tiles.size());
+	for (size_t i = 0; i < tiles.size(); i++)
+		if (!tiles[i].isNull()) t[i] = tiles[i].convertToFormat (QImage::Format_RGB888);
+	auto h = [&] (int x, int y) -> double {
+		int c = std::clamp (x / 256 - g.col0, 0, g.ncol - 1), r = std::clamp (y / 256 - g.row0, 0, g.nrow - 1);
+		const QImage &im = t[(size_t)(r * g.ncol + c)];
+		if (im.isNull()) return 0.0;
+		int lx = std::clamp (x - (g.col0 + c) * 256, 0, im.width() - 1), ly = std::clamp (y - (g.row0 + r) * 256, 0, im.height() - 1);
+		const uchar *p = im.constScanLine (ly) + 3 * lx;
+		return p[0] * 256.0 + p[1] + p[2] / 256.0 - 32768.0;
+	};
+	std::vector<int16_t> z ((size_t)N * N);
+	double emin = 1e9, emax = -1e9, sum = 0.0;
+	for (int i = 0; i < N; i++) {
+		double gy = std::clamp (MercY (n - dh + (i - 1) * dh / 256.0, W) - 0.5, 0.0, W - 1.0);
+		int y0 = (int)gy, y1 = std::min (y0 + 1, (int)W - 1);
+		double fy = gy - y0;
+		for (int j = 0; j < N; j++) {
+			double lng = w + (j - 1) * dw / 256.0;
+			double gx = std::clamp (MercX (std::clamp (lng, -180.0, 180.0), W) - 0.5, 0.0, W - 1.0);
+			int x0 = (int)gx, x1 = std::min (x0 + 1, (int)W - 1);
+			double fx = gx - x0;
+			double v = (h (x0, y0) * (1 - fx) + h (x1, y0) * fx) * (1 - fy) + (h (x0, y1) * (1 - fx) + h (x1, y1) * fx) * fy;
+			long q = std::lround (std::max (0.0, v) / scale);
+			int16_t e = (int16_t)std::min (q, 32767L);
+			z[(size_t)i * N + j] = e;
+			double m = e * scale;
+			emin = std::min (emin, m);
+			emax = std::max (emax, m);
+			sum += m;
+		}
+	}
+	if (emax <= 0.0) return std::string();
+	std::string out (100, '\0');
+	auto i32 = [&out] (size_t at, int32_t v) { memcpy (&out[at], &v, 4); };
+	auto f64 = [&out] (size_t at, double v) { memcpy (&out[at], &v, 8); };
+	out[0] = 'E'; out[1] = 'L'; out[2] = 'E'; out[3] = 1;
+	i32 (4, 100);
+	i32 (8, -16);
+	i32 (12, N); i32 (16, N);
+	i32 (20, 1); i32 (24, 1);
+	f64 (28, scale);
+	f64 (36, 0.0);
+	f64 (44, (n - dh) * M_PI / 180.0); f64 (52, n * M_PI / 180.0);
+	f64 (60, w * M_PI / 180.0); f64 (68, (w + dw) * M_PI / 180.0);
+	f64 (76, emin); f64 (84, emax); f64 (92, sum / ((double)N * N));
+	out.append ((const char*)z.data(), z.size() * sizeof (int16_t));
 	return out;
 }
 

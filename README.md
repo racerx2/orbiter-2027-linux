@@ -80,6 +80,7 @@ draws stream in from free servers and are kept in `Textures/Earth`
   (Contains modified Copernicus Sentinel data 2016 & 2017), CC BY 4.0
 - Night lights: NASA GIBS / ESDIS (VIIRS Black Marble 2016)
 - Water mask: © OpenStreetMap contributors (ODbL), via NASA GIBS
+- Elevation: Terrain Tiles on AWS (Mapzen; SRTM, GMTED2010, ETOPO1 and others)
 
 ## Help
 

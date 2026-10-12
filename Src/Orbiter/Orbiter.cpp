@@ -62,6 +62,8 @@
 #include "TileStream.h" // not upstream
 #include <filesystem>
 
+static std::function<std::string (const std::string &)> StreamBodyDir (class Config *cfg); // not upstream: TileStream.cpp tile folders
+
 #include "Tracy.hpp"
 
 namespace fs = std::filesystem;
@@ -786,6 +788,8 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 	else if (Cfg()->CfgDebugPrm.FixedStep > 0.0)
 		td.SetFixedStep(Cfg()->CfgDebugPrm.FixedStep);
 
+	if (gclient && pConfig->bTileStream) // not upstream: the planets look for their tile folders when they are made
+		TileStream::PrepareDirs (oapiResolvePath (ConfigPath ("TileStream")), StreamBodyDir (pConfig));
 	if (!InitializeWorld (pState->Solsys())) {
 		LOGOUT_ERR_FILENOTFOUND_MSG(g_pOrbiter->ConfigPath (pState->Solsys()), "while initialising solar system %s", pState->Solsys());
 		TerminateOnError();
@@ -1796,19 +1800,23 @@ VOID Orbiter::Output2DData ()
 }
 
 //-----------------------------------------------------------------------------
-// not upstream: the planet tile stream fills Textures/<Body>/Surf and Mask while the sim runs (TileStream.cpp)
+// not upstream: the planet tile stream fills Textures/<Body>/Surf, Mask and Elev while the sim runs (TileStream.cpp)
 //-----------------------------------------------------------------------------
+static std::function<std::string (const std::string &)> StreamBodyDir (Config *cfg)
+{
+	return [cfg] (const std::string &name) {
+		char p[512];
+		return cfg->PTexPath (p, sizeof p, name.c_str()) ? oapiResolvePath (p) : std::string();
+	};
+}
+
 void Orbiter::StartTileStream ()
 {
 	if (!gclient || !pConfig->bTileStream || m_pTileStream) return;
 	TileStream::Options o;
 	o.cfgfile = oapiResolvePath (ConfigPath ("TileStream"));
 	for (size_t i = 0; i < g_psys->nPlanet(); i++) o.bodies.push_back (g_psys->GetPlanet ((int)i)->Name());
-	Config *cfg = pConfig;
-	o.bodyDir = [cfg] (const std::string &name) {
-		char p[512];
-		return cfg->PTexPath (p, sizeof p, name.c_str()) ? oapiResolvePath (p) : std::string();
-	};
+	o.bodyDir = StreamBodyDir (pConfig);
 	o.capMB = (uint64_t)std::max (0, pConfig->TileStreamCacheMB);
 	o.offline = pConfig->bTileStreamOffline;
 	o.userAgent = "OrbiterLinux/" + std::to_string (oapiGetOrbiterVersion()) + " (+https://github.com/racerx2/orbiter-2027-linux)";
@@ -1816,7 +1824,7 @@ void Orbiter::StartTileStream ()
 	m_pTileStream = new TileStream (o);
 	snote_stream = gclient->clbkCreateAnnotation ();
 	if (snote_stream) {
-		snote_stream->SetPosition (0.01, 0.93, 0.85, 0.995);
+		snote_stream->SetPosition (0.01, 0.90, 0.95, 0.995);
 		snote_stream->SetSize (0.6);
 		snote_stream->SetColour (_V(0.85, 0.85, 0.85));
 	}

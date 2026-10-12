@@ -8,7 +8,7 @@ static bool Source (std::istringstream &is, TsSource &s, bool levels)
 {
 	int a = 0, b = 0;
 	if (!(is >> s.kind >> s.url >> a)) return false;
-	if (s.kind != "eox" && s.kind != "gibs") return false;
+	if (s.kind != "eox" && s.kind != "gibs" && s.kind != "terrarium") return false;
 	if (levels && !(is >> b)) return false;
 	if (s.kind == "eox") { s.lmin = a; s.lmax = b; }
 	else { s.nmax = a; s.lmin = 1; s.lmax = levels ? b : 21; }
@@ -43,6 +43,8 @@ bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::st
 		else if (w == "SURF_FALLBACK") ok = Source (is, cur.fallback, true);
 		else if (w == "LIGHTS") ok = Source (is, cur.lights, false) && cur.lights.kind == "gibs";
 		else if (w == "WATER") ok = Source (is, cur.water, false) && cur.water.kind == "gibs";
+		else if (w == "ELEV") ok = Source (is, cur.elev, true) && cur.elev.kind == "terrarium";
+		else if (w == "ELEV_SCALE") ok = (is >> cur.elevScale) && cur.elevScale > 0.0;
 		else if (w == "LIGHTS_BLACK") ok = (bool)(is >> cur.black[0] >> cur.black[1] >> cur.black[2]);
 		else if (w == "WATER_GREY") ok = (bool)(is >> cur.waterGrey);
 		else if (w == "EOX_FILL_RGB") ok = (bool)(is >> cur.fill[0] >> cur.fill[1] >> cur.fill[2]);

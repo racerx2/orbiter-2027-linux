@@ -206,6 +206,57 @@ TEST_CASE ("The mask takes off the night light background and keeps water transp
 	}
 }
 
+TEST_CASE ("Terrarium heights become a 259x259 .elv, row 0 south, nothing for sea level", "[TileStream]")
+{
+	auto tiles = [] (const TsImg::Grid &g, std::function<QColor (int row)> col) {
+		std::vector<QImage> v;
+		for (int r = 0; r < g.nrow; r++)
+			for (int c = 0; c < g.ncol; c++) {
+				QImage im (256, 256, QImage::Format_RGB888);
+				im.fill (col (g.row0 + r));
+				v.push_back (im);
+			}
+		return v;
+	};
+	TsImg::Grid g = TsImg::TerrGrid (14, 1000, 1500, 15);
+	CHECK (g.z == 11);
+	CHECK (g.nrow >= 1);
+	CHECK (g.ncol >= 1);
+	CHECK (g.nrow <= 3);
+	CHECK (g.ncol <= 3); // aligned edges: the padding reaches both neighbours
+	std::string e = TsImg::Elev (14, 1000, 1500, g, tiles (g, [] (int) { return QColor (128, 100, 0); }), 0.5);
+	REQUIRE (e.size() == 134262);
+	CHECK (e.compare (0, 3, "ELE") == 0);
+	CHECK (e[3] == 1);
+	CHECK (U32 (e, 4) == 100);
+	CHECK ((int32_t)U32 (e, 8) == -16);
+	CHECK (U32 (e, 12) == 259);
+	CHECK (U32 (e, 20) == 1);
+	double scale, emin, emax, latmin, latmax;
+	memcpy (&scale, &e[28], 8);
+	memcpy (&latmin, &e[44], 8);
+	memcpy (&latmax, &e[52], 8);
+	memcpy (&emin, &e[76], 8);
+	memcpy (&emax, &e[84], 8);
+	CHECK (scale == 0.5);
+	CHECK (emin == 100.0);
+	CHECK (emax == 100.0);
+	CHECK (std::abs ((latmax - latmin) * 180.0 / M_PI - 180.0 / 1024.0) < 1e-9);
+	int16_t v;
+	memcpy (&v, &e[100 + 2 * (130 * 259 + 130)], 2);
+	CHECK (v == 200);
+	CHECK (TsImg::Elev (14, 1000, 1500, g, tiles (g, [] (int) { return QColor (127, 206, 0); }), 0.5).empty()); // -50 m: sea
+	TsImg::Grid h = TsImg::TerrGrid (4, 0, 0, 15); // z1: north row 1000 m, south row 10 m
+	REQUIRE (h.nrow == 2);
+	std::string w = TsImg::Elev (4, 0, 0, h, tiles (h, [] (int row) { return row ? QColor (128, 10, 0) : QColor (131, 232, 0); }), 0.5);
+	REQUIRE (w.size() == 134262);
+	int16_t south, north;
+	memcpy (&south, &w[100 + 2 * (0 * 259 + 100)], 2);
+	memcpy (&north, &w[100 + 2 * (258 * 259 + 100)], 2);
+	CHECK (south == 20);
+	CHECK (north == 2000);
+}
+
 TEST_CASE ("An ancestor's sub-area is cut and scaled to a tile", "[TileStream]")
 {
 	QImage anc (512, 512, QImage::Format_RGB888);
@@ -237,7 +288,12 @@ TEST_CASE ("The tile stream config reads its body and rejects bad lines", "[Tile
 	CHECK (b[0].black[2] == 14);
 	CHECK (b[0].waterGrey == 101.5);
 	CHECK (b[0].fill[0] == 24);
-	REQUIRE (b[0].credit.size() == 2);
+	CHECK (b[0].elev.kind == "terrarium");
+	CHECK (b[0].elev.nmax == 15);
+	CHECK (b[0].elev.lmax == 16);
+	CHECK (b[0].elevScale == 0.5);
+	REQUIRE (b[0].credit.size() == 3);
+	CHECK (b[0].credit[2].find ("Terrain Tiles on AWS") != std::string::npos);
 	CHECK (b[0].credit[0].find ("EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016 & 2017)") != std::string::npos);
 	CHECK (b[0].credit[1].find ("OpenStreetMap contributors") != std::string::npos);
 	Tmp t;
@@ -359,6 +415,12 @@ TEST_CASE ("The service writes stock tiles from file:// sources", "[TileStream]"
 			FillPng (eox (9, 200 + r, 200 + c));
 		}
 	masks (14, 1000, 1500);
+	{
+		TsImg::Grid g = TsImg::TerrGrid (14, 1000, 1500, 15);
+		for (int r = 0; r < g.nrow; r++)
+			for (int c = 0; c < g.ncol; c++)
+				Png (srv / "terr" / std::to_string (g.z) / std::to_string (g.col0 + c) / (std::to_string (g.row0 + r) + ".png"), 256, QColor (128, 100, 0)); // 100 m
+	}
 	masks (12, 100, 100);
 	masks (13, 50, 50); // no EOX tiles: 404
 	std::string cfg = (t.root / "ts.cfg").string();
@@ -367,6 +429,7 @@ TEST_CASE ("The service writes stock tiles from file:// sources", "[TileStream]"
 		"LIGHTS gibs " << base << "/lights/{n}/{row}/{col}.png 7\n"
 		"LIGHTS_BLACK 3 4 14\n"
 		"WATER gibs " << base << "/water/{n}/{row}/{col}.png 8\n"
+		"ELEV terrarium " << base << "/terr/{z}/{col}/{row}.png 15 16\n"
 		"CREDIT test credit\nEND\n";
 	TileStream::Options o;
 	o.cfgfile = cfg;
@@ -403,7 +466,6 @@ TEST_CASE ("The service writes stock tiles from file:// sources", "[TileStream]"
 	REQUIRE (m.size() == 174904);
 	CHECK (AllWater (m, 128, 128 * 128));
 	CHECK (ts.Want ("Earth", 14, 1000, 1500, 0) == 1);
-	CHECK (ts.Want ("Earth", 14, 1000, 1500, 2) == 1);
 	bool seen = false;
 	REQUIRE (WaitFor ([&] {
 		int k[3 * 16];
@@ -412,6 +474,15 @@ TEST_CASE ("The service writes stock tiles from file:// sources", "[TileStream]"
 		return seen;
 	}, 5.0));
 	CHECK (fs::exists (tex / "TileStream" / "written.idx"));
+
+	// its elevation came with it; a cache hit on it without one has it made
+	fs::path elv = tex / "Elev" / "14" / "001000" / "001500.elv";
+	REQUIRE (fs::exists (elv));
+	CHECK (fs::file_size (elv) == 134262);
+	CHECK_FALSE (fs::exists (tex / "Elev" / "04" / "000000" / "000000.elv")); // no Terrarium tile served: no Elev, the Surf still came
+	fs::remove (elv);
+	CHECK (ts.Want ("Earth", 14, 1000, 1500, 2) == 1);
+	REQUIRE (WaitFor ([&] { return fs::exists (elv); }, 20.0));
 
 	// a file of ours that failed to load is made again
 	fs::resize_file (l14, 1000);

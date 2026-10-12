@@ -12,7 +12,7 @@
 #include <QByteArray>
 #include <QImage>
 
-// one imagery source: eox (EOX WGS84 256 px grid) or gibs (NASA GIBS EPSG:4326 512 px grid)
+// one source: eox (EOX WGS84 256 px grid), gibs (NASA GIBS EPSG:4326 512 px grid) or terrarium (Web Mercator 256 px elevation)
 struct TsSource {
 	std::string kind;
 	std::string url;  // {z} or {n}, {row}, {col}
@@ -23,7 +23,8 @@ struct TsSource {
 
 struct TsBodyCfg {
 	std::string name;
-	TsSource surf, fallback, lights, water;
+	TsSource surf, fallback, lights, water, elev;
+	double elevScale = 0.5;    // metres per .elv step
 	int black[3] = {0, 0, 0};  // night light background taken off
 	double waterGrey = 101.5;  // water at or above this grey
 	int fill[3] = {24, 44, 78}; // EOX open-ocean fill colour
@@ -38,6 +39,7 @@ namespace TsImg {
 	Grid EoxGrid (int L, int ilat, int ilng);
 	int GibsLevel (int L, int nmax);
 	Grid GibsGrid (int L, int ilat, int ilng, int nmax);
+	Grid TerrGrid (int L, int ilat, int ilng, int zmax);
 	Grid SrcGrid (const TsSource &s, int L, int ilat, int ilng);
 	std::string Url (const std::string &tmpl, int z, int row, int col);
 	bool IsFill (const QImage &img, const int rgb[3]);
@@ -48,6 +50,7 @@ namespace TsImg {
 	QImage Region (const QImage &anc, int depth, int ilat, int ilng);
 	std::string Dds (const QImage &img, bool alpha);   // DXT1, full mip chain
 	QImage DdsImage (const QByteArray &dds);             // level 0 of a DXT1 DDS
+	std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QImage> &tiles, double scale); // .elv, empty when all at sea level
 }
 
 class TileStream {
@@ -68,6 +71,8 @@ public:
 	};
 
 	explicit TileStream (const Options &opt);
+	// the tile folders of every body in the cfg, made before the planets check for them
+	static void PrepareDirs (const std::string &cfgfile, const std::function<std::string (const std::string &)> &bodyDir);
 	~TileStream ();
 
 	bool Enabled (const std::string &body) const;

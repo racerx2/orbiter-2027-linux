@@ -16,6 +16,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <cstring>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
@@ -23,7 +24,8 @@ using Clock = TileStream::Clock;
 
 namespace {
 
-enum { EOX, GIBS, NHOST };
+enum { EOX, GIBS, TERR, NHOST };
+const char *HostName[NHOST] = {"EOX", "GIBS", "Terrain Tiles"};
 
 uint64_t Key (int L, int ilat, int ilng) { return (uint64_t)L << 48 | (uint64_t)ilat << 24 | (uint64_t)ilng; }
 int KL (uint64_t k) { return (int)(k >> 48 & 0xFF); }
@@ -34,7 +36,7 @@ uint64_t Id (int body, uint64_t k) { return (uint64_t)body << 56 | k; }
 std::string Tile (const std::string &dir, const char *layer, uint64_t k)
 {
 	char b[48];
-	snprintf (b, sizeof b, "/%s/%02d/%06d/%06d.dds", layer, KL (k), KLat (k), KLng (k));
+	snprintf (b, sizeof b, "/%s/%02d/%06d/%06d.%s", layer, KL (k), KLat (k), KLng (k), strcmp (layer, "Elev") ? "dds" : "elv");
 	return dir + b;
 }
 
@@ -43,7 +45,7 @@ int64_t Today ()
 	return std::chrono::duration_cast<std::chrono::hours> (std::chrono::system_clock::now().time_since_epoch()).count() / 24;
 }
 
-int HostOf (const TsSource &s) { return s.kind == "eox" ? EOX : GIBS; }
+int HostOf (const TsSource &s) { return s.kind == "eox" ? EOX : s.kind == "terrarium" ? TERR : GIBS; }
 
 }
 
@@ -56,6 +58,7 @@ struct TileStream::Impl {
 		std::deque<uint64_t> done;
 		std::vector<uint64_t> hits;
 		std::deque<uint64_t> refetchQueue; // fed in slowly when nothing else waits
+		std::unordered_set<uint64_t> elevSeen, noElev; // this session: checked for an Elev file, Elev failed
 	};
 	struct Src {
 		std::string url;
@@ -66,9 +69,9 @@ struct TileStream::Impl {
 	struct Job {
 		uint64_t id = 0, key = 0;
 		int body = 0, stage = 0, tries = 0, waiting = 0; // stage 0 queued, 1 fetching, 2 building
-		bool required = false, low = false, fallback = false;
+		bool required = false, low = false, fallback = false, elevOnly = false;
 		Clock::time_point want, retry;
-		std::vector<Src> surf, lights, water;
+		std::vector<Src> surf, lights, water, elev;
 	};
 	struct Host {
 		int cap = 4, inflight = 0, fails = 0;
@@ -193,6 +196,7 @@ TileStream::Impl::Impl (const Options &o)
 	if (!opt.now) opt.now = [] { return Clock::now(); };
 	host[EOX].cap = 6;
 	host[GIBS].cap = 4;
+	host[TERR].cap = 8;
 	std::vector<TsBodyCfg> cfg;
 	std::string err;
 	if (!TsReadCfg (opt.cfgfile, cfg, err)) {
@@ -208,7 +212,7 @@ TileStream::Impl::Impl (const Options &o)
 		while (b->dir.size() > 1 && b->dir.back() == '/') b->dir.pop_back();
 		std::error_code ec;
 		bool ok = !b->dir.empty();
-		for (const char *s : {"/Surf", "/Mask", "/TileStream/tmp"})
+		for (const char *s : {"/Surf", "/Mask", "/Elev", "/TileStream/tmp"})
 			if (ok) { fs::create_directories (b->dir + s, ec); ok = !ec; }
 		if (!ok) {
 			Log ("TileStream: cannot create the tile folders in " + b->dir);
@@ -264,7 +268,19 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 	std::unique_lock<std::mutex> lk (mx);
 	if (stop) return -1;
 	if (flags & 2) {
-		if (B.written.count (k)) B.hits.push_back (k);
+		if (!B.written.count (k)) return 1;
+		B.hits.push_back (k);
+		const TsSource &es = B.cfg.elev;
+		if (!net || es.kind.empty() || L < 4 || L > es.lmax || !B.elevSeen.insert (k).second || B.noElev.count (k) || jobs.count (id)) return 1;
+		lk.unlock();
+		std::error_code ec;
+		bool have = fs::exists (Tile (B.dir, "Elev", k), ec);
+		lk.lock();
+		if (stop || have || jobs.count (id)) return 1;
+		NewJob (b, k, opt.now()).elevOnly = true; // a tile from before the stream made Elev
+		Trim ();
+		kick = true;
+		cv.notify_all();
 		return 1;
 	}
 	if (flags & 1) {
@@ -323,7 +339,8 @@ void TileStream::Impl::Trim ()
 		for (auto it = jobs.begin(); it != jobs.end(); ++it) {
 			const Job &J = it->second;
 			if (J.stage || J.required) continue;
-			if (worst == jobs.end() || (J.low && !worst->second.low) || (J.low == worst->second.low && J.want < worst->second.want)) worst = it;
+			bool jl = J.low || J.elevOnly, wl = worst != jobs.end() && (worst->second.low || worst->second.elevOnly);
+			if (worst == jobs.end() || (jl && !wl) || (jl == wl && J.want < worst->second.want)) worst = it;
 		}
 		if (worst == jobs.end()) return;
 		if (worst->second.low) bodies[worst->second.body]->refetchQueue.push_back (worst->second.key);
@@ -387,7 +404,7 @@ void TileStream::Impl::OnResult (Result &r, Clock::time_point now)
 	} else if (r.status == 429 || r.status == 503) {
 		Pause (r.host, now + std::chrono::seconds (r.retryAfter > 0 ? std::min (r.retryAfter, 3600) : 30), now);
 	} else if (++h.fails >= 5) {
-		Log (std::string ("TileStream: ") + (r.host == EOX ? "EOX" : "GIBS") + " is not answering, paused for " + std::to_string ((int)h.backoff) + " s");
+		Log (std::string ("TileStream: ") + HostName[r.host] + " is not answering, paused for " + std::to_string ((int)h.backoff) + " s");
 		Pause (r.host, now + std::chrono::milliseconds ((int64_t)(h.backoff * 1000.0)), now);
 		h.backoff = std::min (h.backoff * 2.0, 600.0);
 		h.fails = 0;
@@ -414,7 +431,7 @@ void TileStream::Impl::Deliver (const std::string &url, int status, const std::s
 		auto j = jobs.find (id);
 		if (j == jobs.end() || j->second.stage != 1) continue;
 		Job &J = j->second;
-		for (std::vector<Src> *v : {&J.surf, &J.lights, &J.water})
+		for (std::vector<Src> *v : {&J.surf, &J.lights, &J.water, &J.elev})
 			for (Src &s : *v)
 				if (s.status < 0 && s.url == url) {
 					s.status = status;
@@ -433,11 +450,24 @@ void TileStream::Impl::Retry (Job &J, Clock::time_point now, int sec)
 	J.surf.clear();
 	J.lights.clear();
 	J.water.clear();
+	J.elev.clear();
 }
 
 // all sources answered: build, fall back, retry or give up
 void TileStream::Impl::Fetched (Job &J, Clock::time_point now)
 {
+	if (J.elevOnly) {
+		for (const Src &s : J.elev)
+			if (s.status != 200) {
+				bodies[J.body]->noElev.insert (J.key);
+				jobs.erase (J.id);
+				return;
+			}
+		J.stage = 2;
+		Job copy = J;
+		Queue ([this, copy] { Build (copy); });
+		return;
+	}
 	bool miss[3] = {false, false, false}, fail[3] = {false, false, false};
 	int i = 0;
 	for (std::vector<Src> *v : {&J.surf, &J.lights, &J.water}) {
@@ -474,6 +504,7 @@ void TileStream::Impl::Fetched (Job &J, Clock::time_point now)
 int TileStream::Impl::Startable (const Job &J, Clock::time_point now) const
 {
 	const Body &B = *bodies[J.body];
+	if (J.elevOnly) return Paused (TERR, now) ? 0 : 1;
 	if (Paused (GIBS, now)) return 0; // the mask needs GIBS
 	if (J.fallback || HostOf (B.cfg.surf) != EOX || !Paused (EOX, now)) return 1;
 	return CanFallback (B, KL (J.key)) ? 2 : 0;
@@ -537,12 +568,16 @@ void TileStream::Impl::Start (Job &J, Clock::time_point now)
 {
 	Body &B = *bodies[J.body];
 	int L = KL (J.key), la = KLat (J.key), ln = KLng (J.key);
-	J.surf = Srcs (J.fallback ? B.cfg.fallback : B.cfg.surf, L, la, ln);
-	J.lights = Srcs (B.cfg.lights, L, la, ln);
-	J.water = Srcs (B.cfg.water, L, la, ln);
+	if (!J.elevOnly) {
+		J.surf = Srcs (J.fallback ? B.cfg.fallback : B.cfg.surf, L, la, ln);
+		J.lights = Srcs (B.cfg.lights, L, la, ln);
+		J.water = Srcs (B.cfg.water, L, la, ln);
+	}
+	const TsSource &es = B.cfg.elev;
+	if (!es.kind.empty() && L >= 4 && L <= es.lmax && !Paused (TERR, now)) J.elev = Srcs (es, L, la, ln); // optional for a Surf job
 	J.stage = 1;
 	J.waiting = 0;
-	for (std::vector<Src> *v : {&J.surf, &J.lights, &J.water})
+	for (std::vector<Src> *v : {&J.surf, &J.lights, &J.water, &J.elev})
 		for (Src &s : *v) {
 			if ((s.data = CacheGet (s.url))) {
 				s.status = 200;
@@ -580,7 +615,7 @@ void TileStream::Impl::DropStale (Clock::time_point now)
 	std::chrono::duration<double> stale (opt.staleSec);
 	for (auto it = jobs.begin(); it != jobs.end(); ) {
 		const Job &J = it->second;
-		if (!J.stage && !J.required && !J.low && now - J.want > stale) it = jobs.erase (it);
+		if (!J.stage && !J.required && !J.low && !J.elevOnly && now - J.want > stale) it = jobs.erase (it);
 		else ++it;
 	}
 }
@@ -647,6 +682,22 @@ void TileStream::Impl::Build (Job J)
 		}
 		return true;
 	};
+	std::string elv; // optional: every Terrarium tile in hand, else none
+	bool elevOk = !J.elev.empty();
+	for (const Src &s : J.elev) elevOk = elevOk && s.status == 200 && s.data;
+	if (elevOk) {
+		std::vector<QImage> et;
+		if (decode (J.elev, et)) elv = TsImg::Elev (L, la, ln, TsImg::SrcGrid (C.elev, L, la, ln), et, C.elevScale);
+	}
+	if (J.elevOnly) {
+		bool ok = elv.empty() || Write (B, Tile (B.dir, "Elev", J.key), elv);
+		std::lock_guard<std::mutex> lk (mx);
+		if (!elevOk || !ok) B.noElev.insert (J.key);
+		jobs.erase (J.id);
+		kick = true;
+		cv.notify_all();
+		return;
+	}
 	std::vector<QImage> st, lt, wt;
 	if (!decode (J.surf, st) || !decode (J.lights, lt) || !decode (J.water, wt)) {
 		Failed (J);
@@ -682,6 +733,7 @@ void TileStream::Impl::Build (Job J)
 			fs::remove (mpath, ec); // no Mask without its Surf
 		}
 		if (ok && L >= 4) Remember (Id (J.body, J.key), surf);
+		if (ok && !elv.empty()) Write (B, Tile (B.dir, "Elev", J.key), elv);
 	}
 	std::lock_guard<std::mutex> lk (mx);
 	if (ocean) {
@@ -708,7 +760,7 @@ void TileStream::Impl::Build (Job J)
 void TileStream::Impl::Failed (const Job &J)
 {
 	std::lock_guard<std::mutex> lk (mx);
-	for (const std::vector<Src> *v : {&J.surf, &J.lights, &J.water})
+	for (const std::vector<Src> *v : {&J.surf, &J.lights, &J.water, &J.elev})
 		for (const Src &s : *v) CacheDrop (s.url);
 	auto it = jobs.find (J.id);
 	if (it == jobs.end()) return;
@@ -877,6 +929,8 @@ void TileStream::Impl::Evict ()
 			if (e1) { gone.push_back (k); continue; }
 			uint64_t ms = fs::file_size (m, e2);
 			uint64_t size = ss + (e2 ? 0 : ms);
+			uint64_t es = fs::file_size (Tile (B.dir, "Elev", k), e2);
+			if (!e2) size += es;
 			total += size;
 			if (KL (k) > 8) v.push_back ({fs::last_write_time (s, e1), k, size});
 		}
@@ -887,6 +941,7 @@ void TileStream::Impl::Evict ()
 				std::error_code ec;
 				fs::remove (Tile (B.dir, "Surf", e.k), ec);
 				fs::remove (Tile (B.dir, "Mask", e.k), ec);
+				fs::remove (Tile (B.dir, "Elev", e.k), ec);
 				total -= e.size;
 				gone.push_back (e.k);
 			}
@@ -911,6 +966,21 @@ TileStream::TileStream (const Options &opt)
 }
 
 TileStream::~TileStream () = default;
+
+void TileStream::PrepareDirs (const std::string &cfgfile, const std::function<std::string (const std::string &)> &bodyDir)
+{
+	std::vector<TsBodyCfg> cfg;
+	std::string err;
+	if (!bodyDir || !TsReadCfg (cfgfile, cfg, err)) return;
+	for (const TsBodyCfg &c : cfg) {
+		std::string dir = bodyDir (c.name);
+		std::replace (dir.begin(), dir.end(), '\\', '/');
+		while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
+		if (dir.empty()) continue;
+		std::error_code ec;
+		for (const char *s : {"/Surf", "/Mask", "/Elev", "/TileStream/tmp"}) fs::create_directories (dir + s, ec);
+	}
+}
 
 bool TileStream::Enabled (const std::string &body) const
 {
