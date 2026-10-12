@@ -89,14 +89,14 @@ void BldgMgr::Update ()
 			for (int xx = x0; xx <= x1 && !off; xx++) {
 				int x = xx & ((1 << Z) - 1);
 				long long key = (long long)x << 20 | y;
-				if (tiles.count (key)) continue;
+				if (tiles.count (key) || bad.count (key)) continue;
 				int w = oapiTileStreamBldgWant (hObj, x, y);
 				if (w < 0) { off = true; break; } // no buildings for this body, or offline
 				if (w == 0 || !load) continue;
-				load = false; // one tile a pass: the mesh build is on the render thread
 				Tile T;
 				T.x = x; T.y = y;
-				if (!(T.src = oapiTileStreamBldgLoad (hObj, x, y))) continue;
+				if (!(T.src = oapiTileStreamBldgLoad (hObj, x, y))) { bad.insert (key); continue; } // unreadable: skipped this session
+				load = false; // one tile a pass: the mesh build is on the render thread
 				Make (T, false);
 				tiles[key] = T;
 			}
@@ -110,9 +110,12 @@ void BldgMgr::Update ()
 			it = tiles.erase (it);
 		} else ++it;
 	}
-	if (t >= tGround) { // the terrain under them refines as the camera comes down
-		tGround = t + 2.0;
-		for (auto &p : tiles) Make (p.second, true);
+	if (t >= tGround && !tiles.empty()) { // the terrain under them refines as the camera comes down: one tile a pass
+		tGround = t + 0.25;
+		auto it = tiles.upper_bound (lastGround);
+		if (it == tiles.end()) it = tiles.begin();
+		lastGround = it->first;
+		Make (it->second, true);
 	}
 }
 

@@ -6,6 +6,7 @@
 
 #include "Mesh.h"
 #include <map>
+#include <set>
 #include <vector>
 
 class vPlanet;
@@ -37,6 +38,8 @@ private:
 	const Scene *scn;
 	double R;
 	std::map<long long, Tile> tiles;
+	std::set<long long> bad;     // tiles whose file did not load
+	long long lastGround = -1;   // the last tile re-grounded
 	double tWant = 0.0, tGround = 0.0;
 	double camLat = 0.0, camLng = 0.0, range = 0.0;
 };

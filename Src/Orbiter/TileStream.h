@@ -141,6 +141,7 @@ public:
 		std::function<double (const std::string &)> radius;       // metres
 		int cloudWait = 15;                                        // seconds for the small cloud image at startup
 		bool buildings = true;                                     // BLDG lines are used
+		bool sky = true;                                           // clouds and base flattening at startup
 	};
 
 	explicit TileStream (const Options &opt);

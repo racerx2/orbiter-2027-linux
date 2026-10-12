@@ -1502,3 +1502,34 @@ TEST_CASE ("A region prefetch from file:// sources fetches every tile coarse to 
 	cancel = false;
 	CHECK (TileStream::Prefetch (o, "Earth", keys, c, cancel, 20.0) == 3);
 }
+
+TEST_CASE ("Clear and CacheBytes cover Class, buildings, Elev_mod and clouds", "[TileStream]")
+{
+	Tmp t;
+	fs::path tex = t.root / "Earth";
+	auto put = [&] (const fs::path &f, size_t n) { fs::create_directories (f.parent_path()); std::ofstream (f, std::ios::binary) << std::string (n, 'x'); };
+	put (tex / "Surf" / "10" / "000001" / "000002.dds", 100);
+	put (tex / "Class" / "10" / "000001" / "000002.dds", 10);
+	put (tex / "Bldg" / "14" / "4824" / "6157.bld", 20);
+	put (tex / "Elev_mod" / "12" / "000003" / "000004.elv", 30);
+	put (tex / "Cloud" / "05" / "000000" / "000001.dds", 40);
+	fs::create_directories (tex / "TileStream");
+	std::ofstream (tex / "TileStream" / "written.idx") << "10 1 2\n";
+	std::ofstream (tex / "TileStream" / "bldg.idx") << "14 4824 6157\n";
+	std::ofstream (tex / "TileStream" / "mod.idx") << "12 3 4\n";
+	std::ofstream (tex / "TileStream" / "cloud.idx") << "5 0 1\n";
+	uint64_t total = 0;
+	size_t tiles = 0;
+	CHECK (TileStream::CacheBytes (tex.string(), &total, &tiles) == 200);
+	CHECK (total == 200);
+	CHECK (tiles == 4);
+	CHECK (TileStream::Clear (tex.string(), true) == 3);
+	CHECK_FALSE (fs::exists (tex / "Class" / "10" / "000001" / "000002.dds"));
+	CHECK_FALSE (fs::exists (tex / "Bldg" / "14" / "4824" / "6157.bld"));
+	CHECK_FALSE (fs::exists (tex / "Elev_mod" / "12" / "000003" / "000004.elv"));
+	CHECK (fs::exists (tex / "Cloud" / "05" / "000000" / "000001.dds")); // a base level
+	CHECK (Read (tex / "TileStream" / "cloud.idx") == "5 0 1\n");
+	CHECK (Read (tex / "TileStream" / "bldg.idx").empty());
+	CHECK (TileStream::Clear (tex.string(), false) == 1);
+	CHECK_FALSE (fs::exists (tex / "Cloud" / "05" / "000000" / "000001.dds"));
+}

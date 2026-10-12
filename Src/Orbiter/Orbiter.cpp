@@ -1793,6 +1793,8 @@ VOID Orbiter::Output2DData ()
 					std::string t = m_pTileStream->Credit (snote_stream_body);
 					std::vector<char> buf (t.begin(), t.end());
 					buf.push_back ('\0');
+					double lines = 1.0 + std::count (t.begin(), t.end(), '\n'); // the box grows up to fit every credit line
+					snote_stream->SetPosition (0.01, std::max (0.5, 0.995 - lines * 0.6 / 35.0 * 1.35), 0.95, 0.995);
 					snote_stream->SetText (buf.data());
 				}
 				snote_stream->Render();
@@ -1846,8 +1848,7 @@ void Orbiter::StopTileStream ()
 	if (m_pTileStream) { delete m_pTileStream; m_pTileStream = NULL; }
 }
 
-// not upstream (earth-sky): once a real second at 10x or more, the Surf tiles under the focus vessel's
-// ground track for the next 45 real seconds (one orbit at most), queued below the camera's wants
+// not upstream (earth-sky): at 10x or more, prefetch tiles under the next 45 real seconds of ground track
 void Orbiter::StreamPrefetch ()
 {
 	static std::chrono::steady_clock::time_point next;

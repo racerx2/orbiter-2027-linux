@@ -52,7 +52,7 @@ int64_t Parse (const QByteArray &head, std::vector<Ifd> &ifds)
 	bool le = p[0] == 'I' && p[1] == 'I';
 	if (!le && !(p[0] == 'M' && p[1] == 'M')) return -1;
 	auto rd = [&] (uint64_t at, int sz) -> uint64_t {
-		if (at + sz > n) { need = std::max (need, at + sz); return 0; }
+		if (at > n || (uint64_t)sz > n - at) { need = at > UINT64_MAX - sz ? UINT64_MAX : std::max (need, at + sz); return 0; }
 		uint64_t v = 0;
 		for (int i = 0; i < sz; i++) v = le ? v | (uint64_t)p[at + i] << (8 * i) : v << 8 | p[at + i];
 		return v;
@@ -132,7 +132,7 @@ bool Decode (const Ifd &f, const QByteArray &data, std::vector<uint8_t> &out)
 
 std::string CellName (int lat0, int lng0)
 {
-	char b[16];
+	char b[32];
 	snprintf (b, sizeof b, "%c%02d%c%03d", lat0 < 0 ? 'S' : 'N', std::abs (lat0), lng0 < 0 ? 'W' : 'E', std::abs (lng0));
 	return b;
 }

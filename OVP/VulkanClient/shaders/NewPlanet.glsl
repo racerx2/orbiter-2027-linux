@@ -626,8 +626,8 @@ vec4 TerrainPS(TileVS frg)
 	if (Flow.bClass)
 	{
 		float fade = 1.0 - smoothstep(800.0, 5000.0, dst);
+		vec3 w = texture(tClass, vUVSrf).rgb;	// outside the per-pixel branch: defined mip level
 		if (fade > 0.0) {
-			vec3 w = texture(tClass, vUVSrf).rgb;
 			vec2 p = frg.texUV.xy * Prm.vMSc[0].xy + Prm.vMSc[0].zw;
 			float n1 = ClsNoise(p, 16384.0) * 0.6 + ClsNoise(p * 2.0, 32768.0) * 0.4;
 			float n2 = ClsNoise(p * 4.0, 65536.0);

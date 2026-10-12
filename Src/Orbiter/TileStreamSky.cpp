@@ -174,8 +174,7 @@ bool Hits (const TsBase &b, double R, int L, int ilat, int ilng, double blend)
 	return la + r >= n - dh && la - r <= n && ln + rl >= w && ln - rl <= w + dw;
 }
 
-// Elev_mod for tile (L, ilat, ilng): nodes under a base at its height H, a cosine blend to the tile's own
-// elevation (elev) over blend metres, SHRT_MAX elsewhere; "" when no node is touched
+// Elev_mod of a tile: bases flat at their height, cosine blend ring, SHRT_MAX elsewhere; "" if untouched
 std::string ElevMod (int L, int ilat, int ilng, const std::vector<std::pair<const TsBase *, double>> &bases, double R, double scale, const std::string &elev, double blend)
 {
 	const int N = 259;

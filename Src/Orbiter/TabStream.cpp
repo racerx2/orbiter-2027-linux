@@ -55,6 +55,7 @@ void OptionsPage_Stream::StopPrefetch()
 	if (!s_page) return;
 	s_page->Cancel();
 	if (s_page->m_fetchThread.joinable()) s_page->m_fetchThread.join();
+	if (s_page->m_sizeThread.joinable()) s_page->m_sizeThread.join(); // a Clear finishes before the session's stream starts
 }
 
 void OptionsPage_Stream::Cancel()
