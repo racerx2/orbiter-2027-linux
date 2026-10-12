@@ -1123,7 +1123,7 @@ void TileManager2Base::StreamQueue (int L, int ilat, int ilng)
 {
 	for (const StreamLoad &s : streamKeys)
 		if (s.L == L && s.ilat == ilat && s.ilng == ilng) return;
-	streamKeys.push_back({L, ilat, ilng, NULL, NULL, NULL, false});
+	streamKeys.push_back({L, ilat, ilng, NULL, NULL, NULL, false, 0});
 }
 
 // -----------------------------------------------------------------------

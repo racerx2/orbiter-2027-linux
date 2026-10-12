@@ -23,6 +23,7 @@
 #include "gcCore.h"
 #include "D3D9Surface.h"
 #include "VkTexFile.h"
+#include <filesystem> // not upstream
 
 // =======================================================================
 extern void FilterElevationGraphics(OBJHANDLE hPlanet, int lvl, int ilat, int ilng, float *elev);
@@ -67,6 +68,17 @@ static bool ElevNodeOk (const BYTE *buf, DWORD ndata, int ndat) // not upstream:
 	return ndata - (DWORD)hdr.hdrsize >= (DWORD)ndat * (hdr.dtype == 8 ? 1 : hdr.dtype == -16 ? 2 : 0);
 }
 
+static uint64_t FileStamp (const char *path) // not upstream: mtime and size, 0 when missing; the tile stream renames each new file into place
+{
+	std::error_code ec;
+	std::filesystem::path p (oapiResolvePath(path));
+	auto t = std::filesystem::last_write_time(p, ec);
+	if (ec) return 0;
+	uintmax_t n = std::filesystem::file_size(p, ec);
+	if (ec) return 0;
+	return (uint64_t)t.time_since_epoch().count() * 1000003u + (uint64_t)n;
+}
+
 
 // =======================================================================
 // =======================================================================
@@ -78,6 +90,7 @@ SurfTile::SurfTile (TileManager2Base *_mgr, int _lvl, int _ilat, int _ilng)
 	node = 0;
 	streamWait = false; // not upstream
 	looseTex = false; // not upstream
+	texStamp = 0; // not upstream
 	touchT = -1e9; // not upstream
 	touchF = 0; // not upstream
 	elev = NULL;
@@ -131,8 +144,10 @@ void SurfTile::PreLoad()
 
 	// Load surface texture
 
+	uint64_t stamp = 0; // not upstream
 	if (smgr->DoLoadIndividualFiles(0)) { // try loading from individual tile file
 		snprintf(path, MAX_PATH, "%s\\Surf\\%02d\\%06d\\%06d.dds", mgr->DataRootDir().c_str(), lvl + 4, ilat, ilng);
+		if (smgr->bStream) stamp = FileStamp(path); // not upstream: before the read, so a rewrite after it is not taken as read
 		LoadTextureFile(path, &pSysSrf);
 		if (pSysSrf && smgr->bStream && lvl >= 0) oapiTileStreamWant(mgr->Cbody(), lvl + 4, ilat, ilng, 2); // not upstream: in use, the size cap takes it later
 	}
@@ -149,6 +164,7 @@ void SurfTile::PreLoad()
 		int r = oapiTileStreamWant(mgr->Cbody(), lvl + 4, ilat, ilng, 0);
 		if (r > 0) { // arrived since the read above
 			snprintf(path, MAX_PATH, "%s\\Surf\\%02d\\%06d\\%06d.dds", mgr->DataRootDir().c_str(), lvl + 4, ilat, ilng);
+			stamp = FileStamp(path);
 			LoadTextureFile(path, &pSysSrf);
 			if (!pSysSrf) r = oapiTileStreamWant(mgr->Cbody(), lvl + 4, ilat, ilng, 1);
 			loose = pSysSrf != nullptr;
@@ -163,6 +179,7 @@ void SurfTile::PreLoad()
 		}
 	}
 	looseTex = smgr->bStream && loose && tex && owntex; // not upstream: a rewrite of the loose file is swapped in (StreamApply)
+	texStamp = looseTex ? stamp : 0; // not upstream
 	
 	SAFE_DELETE(pSysSrf); // Release
 
@@ -1457,6 +1474,7 @@ void TileManager2<SurfTile>::StreamRead ()
 		if (taken == 4) break;
 		if (!StreamNode(tiletree, s.L, s.ilat, s.ilng)) { s.L = 0; continue; } // the tree only changes on this thread
 		snprintf(path, MAX_PATH, "%s\\Surf\\%02d\\%06d\\%06d.dds", DataRootDir().c_str(), s.L, s.ilat, s.ilng);
+		s.stamp = FileStamp(path);
 		t0->LoadTextureFile(path, &s.surf);
 		if (!s.surf) {
 			oapiTileStreamWant(Cbody(), s.L, s.ilat, s.ilng, 1);
@@ -1494,6 +1512,11 @@ void TileManager2<SurfTile>::StreamApply ()
 		SurfTile *t = node ? node->Entry() : NULL;
 		bool use = t && (t->state & TILE_VALID) && (t->streamWait || t->looseTex); // others read the file in their own PreLoad
 		if (!s.surf) { // not read yet: only what can be applied is read
+			if (use && !s.checked && !t->streamWait && t->texStamp) { // a Done key for the very file the tile read in PreLoad is dropped
+				char path[MAX_PATH];
+				snprintf(path, MAX_PATH, "%s\\Surf\\%02d\\%06d\\%06d.dds", DataRootDir().c_str(), s.L, s.ilat, s.ilng);
+				if (FileStamp(path) == t->texStamp) use = false;
+			}
 			if (use) { s.checked = true; keep.push_back(s); }
 			continue;
 		}
@@ -1530,6 +1553,7 @@ void TileManager2<SurfTile>::StreamApply ()
 			t->texrange = full;
 			t->streamWait = false;
 			t->looseTex = true;
+			t->texStamp = s.stamp;
 			for (size_t i = 1; i < set.size(); i++) {
 				SurfTile *e = set[i]->Entry(), *p = e->getSurfParent();
 				e->tex = p->tex;

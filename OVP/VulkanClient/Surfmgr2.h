@@ -63,6 +63,7 @@ protected:
 	QuadTreeNode<SurfTile> *node;	// my node in the quad tree, if I'm part of a tree
 	bool streamWait;				// not upstream: asked the tile stream, shows an ancestor meanwhile
 	bool looseTex;					// not upstream: shows its loose Surf file, a rewrite by the stream replaces it
+	uint64_t texStamp;				// not upstream: that file's FileStamp when it was read, 0 unknown
 	double touchT;					// not upstream: last want sent from Render (sys time)
 	DWORD touchF;					// not upstream: the stream frame Render last walked it
 
