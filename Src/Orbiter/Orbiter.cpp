@@ -1082,6 +1082,7 @@ INT Orbiter::Run ()
 		if (bAllowInput) bActive = true, bAllowInput = false;
 		if (BeginTimeStep (bRunning)) {
 			UpdateWorld();
+			StreamPrefetch (); // not upstream
 			EndTimeStep (bRunning);
 			if (bVisible) {
 				if (bActive) UserInput ();

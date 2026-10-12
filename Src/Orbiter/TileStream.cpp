@@ -1268,7 +1268,7 @@ void TileStream::Impl::LoadBases (Body &B)
 				for (int c = c0; c <= c1; c++) {
 					uint64_t k = Key (L, a, c);
 					if (!fs::exists (Tile (B.dir, "Elev", k), ec) || fs::exists (Tile (B.dir, "Elev_mod", k), ec)) continue;
-					made += Mods (B, k, ReadAll (Tile (B.dir, "Elev", k))) ? 1 : 0;
+					made += Mods (B, k, ReadAll (Tile (B.dir, "Elev", k))) && fs::exists (Tile (B.dir, "Elev_mod", k), ec) ? 1 : 0;
 				}
 		}
 	}
