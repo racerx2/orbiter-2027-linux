@@ -320,6 +320,7 @@ Orbiter::Orbiter ()
 	hScnInterp      = NULL;
 	snote_playback  = NULL;
 	m_pTileStream   = NULL; // not upstream
+	m_pStreamTrack  = NULL; // not upstream
 	nsnote          = 0;
 	bVisible        = false;
 	bAllowInput     = false;
@@ -1798,6 +1799,15 @@ static std::function<std::string (const std::string &)> StreamBodyDir (Config *c
 	};
 }
 
+// not upstream (earth-sky): StreamPrefetch's state for one session
+struct StreamTrack {
+	std::chrono::steady_clock::time_point next;
+	std::vector<TsTrack::Pt> prev;
+	double prevT = 0.0;
+	int calls = 0;
+	bool failed = false; // an exception: no prefetch for the rest of the session
+};
+
 void Orbiter::StartTileStream ()
 {
 	if (!gclient || !pConfig->bTileStream || m_pTileStream) return;
@@ -1816,21 +1826,44 @@ void Orbiter::StartTileStream ()
 			if (name == g_psys->GetPlanet ((int)i)->Name()) return g_psys->GetPlanet ((int)i)->Size();
 		return 6.37101e6;
 	};
-	m_pTileStream = new TileStream (o);
+	try {
+		m_pTileStream = new TileStream (o);
+	} catch (const std::exception &e) {
+		LOGOUT ("TileStream: not started: %s", e.what());
+		m_pTileStream = NULL;
+	}
+	if (m_pTileStream && !m_pStreamTrack) m_pStreamTrack = new StreamTrack;
 }
 
 void Orbiter::StopTileStream ()
 {
 	if (m_pTileStream) { delete m_pTileStream; m_pTileStream = NULL; }
+	delete m_pStreamTrack;
+	m_pStreamTrack = NULL;
 }
 
 // not upstream (earth-sky): at 10x or more, prefetch tiles under the next 45 real seconds of ground track
 void Orbiter::StreamPrefetch ()
 {
-	static std::chrono::steady_clock::time_point next;
-	static std::vector<TsTrack::Pt> prev;
-	static double prevT = 0.0;
-	static int calls = 0;
+	if (!m_pStreamTrack || m_pStreamTrack->failed) return;
+	try {
+		StreamTrackStep ();
+	} catch (const std::exception &e) {
+		LOGOUT ("TileStream: ground-track prefetch stopped: %s", e.what());
+		m_pStreamTrack->failed = true;
+	} catch (...) {
+		LOGOUT ("TileStream: ground-track prefetch stopped");
+		m_pStreamTrack->failed = true;
+	}
+}
+
+void Orbiter::StreamTrackStep ()
+{
+	StreamTrack &s = *m_pStreamTrack;
+	std::chrono::steady_clock::time_point &next = s.next;
+	std::vector<TsTrack::Pt> &prev = s.prev;
+	double &prevT = s.prevT;
+	int &calls = s.calls;
 	if (!m_pTileStream || !g_focusobj || td.Warp() < 10.0) { prev.clear(); return; }
 	auto now = std::chrono::steady_clock::now();
 	if (now < next) return;

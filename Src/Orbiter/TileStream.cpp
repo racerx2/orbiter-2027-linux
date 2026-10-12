@@ -2,10 +2,15 @@
 
 #include "TileStream.h"
 #include "TileStreamNet.h"
+#include "ZTreeMgr.h"
+#include <QBuffer>
 #include <QColor>
 #include <QFile>
+#include <QImageReader>
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
+#include <climits>
 #include <cmath>
 #include <condition_variable>
 #include <iterator>
@@ -13,12 +18,16 @@
 #include <filesystem>
 #include <fstream>
 #include <list>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <cstring>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
@@ -28,6 +37,151 @@ namespace {
 
 enum { EOX, GIBS, TERR, WC, BLDG, NHOST };
 const char *HostName[NHOST] = {"EOX", "GIBS", "Terrain Tiles", "WorldCover", "OpenFreeMap"};
+enum { A_SURF, A_MASK, A_ELEV, A_CLOUD, NARCH };
+const int HoldSec = 600; // a tile given up on waits this long
+
+// a line of an index: three integers, a fourth where extra (written, none); anything else is no line
+bool ParseLine (const std::string &line, bool extra, int &L, int &a, int &b, long long &t)
+{
+	const char *p = line.c_str();
+	long long v[4];
+	int n = 0;
+	for (;;) {
+		while (*p == ' ' || *p == '\t' || *p == '\r') p++;
+		if (!*p) break;
+		if (n == 4) return false;
+		char *e;
+		errno = 0;
+		v[n] = strtoll (p, &e, 10);
+		if (e == p || errno || (*e && *e != ' ' && *e != '\t' && *e != '\r')) return false;
+		n++;
+		p = e;
+	}
+	if (n != 3 && !(extra && n == 4)) return false;
+	if (v[0] < 1 || v[0] > 21 || v[1] < 0 || v[2] < 0 || v[1] > INT_MAX || v[2] > INT_MAX) return false;
+	L = (int)v[0];
+	a = (int)v[1];
+	b = (int)v[2];
+	t = n == 4 ? v[3] : 0;
+	return true;
+}
+
+// inside the Orbiter grid: one tile at L1-L3, then 2^(L-4) by 2^(L-3)
+bool InGrid (int L, int a, int b)
+{
+	if (L < 1 || L > 21 || a < 0 || b < 0) return false;
+	return L < 4 ? !a && !b : a < 1 << (L - 4) && b < 1 << (L - 3);
+}
+
+// bldg: z14 x/y; the rest: the Orbiter grid from lmin to lmax
+bool KeyOk (const std::string &idx, int L, int a, int b, int lmin = 1, int lmax = 21)
+{
+	if (idx == "bldg") return L == 14 && a >= 0 && b >= 0 && a < 1 << 14 && b < 1 << 14;
+	return L >= lmin && L <= lmax && InGrid (L, a, b);
+}
+
+std::string CleanDir (std::string dir)
+{
+	std::replace (dir.begin(), dir.end(), '\\', '/');
+	while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
+	return dir;
+}
+
+// the table of contents of an installed Archive/<Layer>.tree, as ZTreeMgr reads it; no tile data
+struct Toc {
+	std::vector<TreeNode> node;
+	uint32_t root[5] = {(uint32_t)-1, (uint32_t)-1, (uint32_t)-1, (uint32_t)-1, (uint32_t)-1};
+	uint32_t Idx (int L, int a, int b) const
+	{
+		if (L < 1 || node.empty()) return (uint32_t)-1;
+		uint32_t i;
+		if (L <= 4) {
+			if (a || b < 0 || b > (L == 4 ? 1 : 0)) return (uint32_t)-1;
+			i = root[L < 4 ? L - 1 : 3 + b];
+		} else {
+			uint32_t p = Idx (L - 1, a / 2, b / 2);
+			if (p == (uint32_t)-1) return p;
+			i = node[p].child[((a & 1) << 1) + (b & 1)];
+		}
+		return i < node.size() ? i : (uint32_t)-1;
+	}
+	bool Has (int L, int a, int b) const { uint32_t i = Idx (L, a, b); return i != (uint32_t)-1 && node[i].size > 0; }
+};
+
+bool ReadToc (const std::string &file, Toc &t)
+{
+	t = Toc();
+	FILE *f = fopen (file.c_str(), "rb");
+	if (!f) return false;
+	struct { char magic[4]; uint32_t size, flags, dataOfs; int64_t dataLength; uint32_t nodeCount, root[5]; } h;
+	static_assert (sizeof h == sizeof (TreeFileHeader), "the .tree header");
+	struct stat st;
+	bool ok = fread (&h, sizeof h, 1, f) == 1 && !memcmp (h.magic, "TX\1\0", 4) && h.size == sizeof h && !fstat (fileno (f), &st)
+		&& (int64_t)h.nodeCount <= ((int64_t)st.st_size - (int64_t)sizeof h) / (int64_t)sizeof (TreeNode);
+	if (ok) {
+		t.node.resize (h.nodeCount);
+		ok = fread (t.node.data(), sizeof (TreeNode), h.nodeCount, f) == h.nodeCount;
+		memcpy (t.root, h.root, sizeof t.root);
+	}
+	fclose (f);
+	if (!ok) t = Toc();
+	return ok && !t.node.empty();
+}
+
+// one flock on <dir>/TileStream/lock per folder and process; Clear holds it alone
+struct Lock { int fd = -1, refs = 0; bool sole = false; };
+std::mutex lockMx;
+std::map<std::string, Lock> locks;
+
+std::string LockKey (const std::string &dir)
+{
+	std::error_code ec;
+	fs::path p = fs::weakly_canonical (dir, ec);
+	return ec ? dir : p.string();
+}
+
+// 1 taken, 0 held by another process (or by this one for sole), -1 the lock file can't be made
+int TakeLock (const std::string &key, bool sole)
+{
+	std::lock_guard<std::mutex> lk (lockMx);
+	auto it = locks.find (key);
+	if (it != locks.end()) {
+		if (sole || it->second.sole) return 0;
+		it->second.refs++;
+		return 1;
+	}
+	int fd = open ((key + "/TileStream/lock").c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+	if (fd < 0) return -1;
+	if (flock (fd, LOCK_EX | LOCK_NB)) {
+		close (fd);
+		return 0;
+	}
+	Lock &l = locks[key];
+	l.fd = fd;
+	l.refs = 1;
+	l.sole = sole;
+	return 1;
+}
+
+void DropLock (const std::string &key)
+{
+	std::lock_guard<std::mutex> lk (lockMx);
+	auto it = locks.find (key);
+	if (it == locks.end() || --it->second.refs > 0) return;
+	close (it->second.fd);
+	locks.erase (it);
+}
+
+// a cloud source: the format's reader takes its header (jpg, tif)
+bool ImageOk (const QByteArray &d, const char *fmt)
+{
+	if (d.isEmpty()) return false;
+	QBuffer b;
+	b.setData (d);
+	if (!b.open (QIODevice::ReadOnly)) return false;
+	QImageReader r (&b, fmt);
+	return r.canRead() && r.size().isValid();
+}
 
 uint64_t Key (int L, int ilat, int ilng) { return (uint64_t)L << 48 | (uint64_t)ilat << 24 | (uint64_t)ilng; }
 int KL (uint64_t k) { return (int)(k >> 48 & 0xFF); }
@@ -79,6 +233,12 @@ struct TileStream::Impl {
 		std::unordered_set<uint64_t> bldg; // building tiles written, Key (14, x, y)
 		std::string bldgUrl;               // from the TileJSON
 		int bldgState = 0;                 // 0 TileJSON not asked, 1 asking, 2 known
+		std::unordered_set<uint64_t> elev; // Elev files this stream wrote (elev.idx)
+		Toc arch[NARCH];                   // installed Archive/<Layer>.tree tables of contents
+		std::unordered_set<std::string> unclean; // indexes with dropped or doubled lines: rewritten at startup
+		uint64_t bytes = 0;                // the size cap's running total, once a scan has counted it
+		bool bytesKnown = false, writtenDirty = false;
+		bool Arch (int layer, uint64_t k) const { return arch[layer].Has (KL (k), KLat (k), KLng (k)); }
 	};
 	struct BJob { int body = 0, stage = 0, tries = 0; uint64_t key = 0; Clock::time_point want, retry; };
 	struct Src {
@@ -124,7 +284,12 @@ struct TileStream::Impl {
 	size_t lruBytes = 0;
 	Host host[NHOST];
 	std::deque<Result> results;
-	std::deque<std::function<void ()>> work;
+	struct Task { std::function<void ()> fn, fail; }; // fail: with mx held, after fn threw
+	std::deque<Task> work;
+	bool ro = false;                   // another process has the folder: offline, no writes
+	std::vector<std::string> lockKeys;
+	std::atomic<bool> writeLogged {false};
+	bool exLogged = false;
 	std::unique_ptr<TsNet> net;
 	std::thread ctl;
 	std::vector<std::thread> workers;
@@ -177,7 +342,14 @@ struct TileStream::Impl {
 	void Trim ();
 	void Run ();
 	void Work ();
-	void Queue (std::function<void ()> fn) { work.push_back (std::move (fn)); wcv.notify_one(); }
+	void Queue (std::function<void ()> fn, std::function<void ()> fail = nullptr) { work.push_back ({std::move (fn), std::move (fail)}); wcv.notify_one(); }
+	void Crash (const char *what, const std::function<void ()> &fail); // with mx held
+	std::function<void ()> GiveUp (uint64_t id); // a job that threw: held, erased
+	bool Held (int b, uint64_t k);
+	void LoadArchives (Body &B);
+	void Prune ();
+	void Drop (Body &B, const std::vector<uint64_t> &gone, const std::vector<uint64_t> &egone, const std::vector<uint64_t> &bgone);
+	void Dirty (Body &B);
 	void OnResult (Result &r, Clock::time_point now);
 	void Deliver (const std::string &url, int status, const std::shared_ptr<const QByteArray> &data, Clock::time_point now);
 	void Pause (int h, Clock::time_point until, Clock::time_point now);
@@ -210,6 +382,8 @@ struct TileStream::Impl {
 	void LoadIdx (Body &B);
 	void Append (const Body &B, const char *name, uint64_t k, int64_t t);
 	void Rewrite (const Body &B, const char *name, const std::unordered_set<uint64_t> &s);
+	void RewriteNone (const Body &B);
+	bool WriteText (const std::string &p, const std::string &text);
 	void MarkNone (Body &B, uint64_t k);
 	void CleanTmp ();
 	void Evict ();
@@ -217,7 +391,7 @@ struct TileStream::Impl {
 	uint64_t preSeq = 0;
 	int Prefetch (const std::string &name, int L, int ilat, int ilng);
 	QByteArray Fetch (const std::string &url, int sec);
-	QByteArray Source (Body &B, const std::string &url, const char *file, int sec);
+	QByteArray Source (Body &B, const std::string &url, const char *file, const char *fmt, int sec);
 	void Clouds (Body &B);
 	void BakeClouds (Body &B, const QImage &src, int l0, int l1);
 	void LoadBases (Body &B);
@@ -271,23 +445,41 @@ TileStream::Impl::Impl (const Options &o)
 			Log ("TileStream: cannot create the tile folders in " + b->dir);
 			continue;
 		}
-		LoadIdx (*b);
-		Log ("TileStream: " + c.name + " tiles go to " + b->dir + (opt.offline ? " (offline)" : ""));
 		bodies.push_back (std::move (b));
 	}
 	if (bodies.empty()) return;
-	if (!opt.offline) net = std::make_unique<TsNet> (opt.userAgent);
-	if (opt.sky) for (auto &b : bodies) { LoadBases (*b); Clouds (*b); } // earth-sky: before the planet visuals load their tiles
+	for (auto &b : bodies) { // one writer per folder: a second Orbiter streams offline and writes nothing
+		std::string key = LockKey (b->dir);
+		int r = TakeLock (key, false);
+		if (r > 0) {
+			lockKeys.push_back (key);
+			continue;
+		}
+		ro = true;
+		Log ("TileStream: " + b->dir + (r ? " cannot be locked" : " is in use by another Orbiter") + ", streaming offline with no writes");
+		break;
+	}
+	if (ro) {
+		for (const std::string &k : lockKeys) DropLock (k);
+		lockKeys.clear();
+	}
+	for (auto &b : bodies) {
+		LoadIdx (*b);
+		LoadArchives (*b);
+		Log ("TileStream: " + b->cfg.name + " tiles go to " + b->dir + (opt.offline || ro ? " (offline)" : ""));
+	}
+	if (!opt.offline && !ro) net = std::make_unique<TsNet> (opt.userAgent);
+	if (opt.sky && !ro) for (auto &b : bodies) { LoadBases (*b); Clouds (*b); } // earth-sky: before the planet visuals load their tiles
 	Clock::time_point now = opt.now();
 	nextHits = now + std::chrono::seconds (5);
 	nextEvict = now + std::chrono::seconds (300);
-	work.push_back ([this] { CleanTmp (); Evict (); });
+	if (!ro) work.push_back ({[this] { CleanTmp (); Prune (); Evict (); }, nullptr});
 	if (net) {
 		for (int b = 0; b < (int)bodies.size(); b++) {
 			Body &B = *bodies[b];
 			for (uint64_t k : {Key (1, 0, 0), Key (2, 0, 0), Key (3, 0, 0), Key (4, 0, 0), Key (4, 0, 1)}) {
 				std::error_code ec;
-				if (!fs::exists (Tile (B.dir, "Surf", k), ec)) NewJob (b, k, now).required = true;
+				if (!B.Arch (A_SURF, k) && !fs::exists (Tile (B.dir, "Surf", k), ec)) NewJob (b, k, now).required = true;
 			}
 			for (uint64_t k : B.refetch)
 				if (B.written.count (k)) B.refetchQueue.push_back (k);
@@ -310,6 +502,7 @@ TileStream::Impl::~Impl ()
 	if (ctl.joinable()) ctl.join();
 	for (std::thread &t : workers) t.join();
 	net.reset();
+	for (const std::string &k : lockKeys) DropLock (k);
 }
 
 int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, int flags)
@@ -323,10 +516,10 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 	std::unique_lock<std::mutex> lk (mx);
 	if (stop) return -1;
 	if (flags & 2) {
-		if (!B.written.count (k)) return 1;
+		if (ro || !B.written.count (k)) return 1;
 		B.hits.push_back (k);
 		const TsSource &es = B.cfg.elev;
-		if (!net || es.kind.empty() || L < 4 || L > es.lmax || !B.elevSeen.insert (k).second || B.noElev.count (k) || jobs.count (id)) return 1;
+		if (!net || es.kind.empty() || L < 4 || L > es.lmax || B.Arch (A_ELEV, k) || !B.elevSeen.insert (k).second || B.noElev.count (k) || jobs.count (id)) return 1;
 		lk.unlock();
 		std::error_code ec;
 		bool have = fs::exists (Tile (B.dir, "Elev", k), ec);
@@ -339,7 +532,8 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 		return 1;
 	}
 	if (flags & 1) {
-		if (!B.written.erase (k)) return -1; // not ours: never replaced
+		if (ro || !B.written.erase (k)) return -1; // not ours: never replaced
+		Dirty (B);
 		lk.unlock();
 		std::error_code ec;
 		fs::remove (Tile (B.dir, "Surf", k), ec);
@@ -348,7 +542,12 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 		lk.lock();
 		if (stop) return -1;
 	}
-	if (!net || Ocean (B, k)) return -1;
+	if (Ocean (B, k) || B.Arch (A_SURF, k)) return -1; // the installed archive's tile: never streamed
+	if (!net) {
+		lk.unlock();
+		std::error_code ec;
+		return fs::exists (Tile (B.dir, "Surf", k), ec) ? 1 : -1;
+	}
 	auto n = B.none.find (k);
 	if (n != B.none.end()) {
 		if (Today() - n->second < 30) return -1;
@@ -414,23 +613,29 @@ void TileStream::Impl::Run ()
 		cv.wait_for (lk, std::chrono::milliseconds (50), [this] { return stop || kick; });
 		kick = false;
 		if (stop) break;
-		Clock::time_point now = opt.now();
-		while (!results.empty()) {
-			Result r = std::move (results.front());
-			results.pop_front();
-			OnResult (r, now);
-		}
-		DropStale (now);
-		StartJobs (now);
-		StartBldg (now);
-		Dispatch (now);
-		if (now >= nextHits) {
-			nextHits = now + std::chrono::seconds (5);
-			Hits ();
-		}
-		if (now >= nextEvict) {
-			nextEvict = now + std::chrono::seconds (300);
-			Queue ([this] { Evict (); });
+		try {
+			Clock::time_point now = opt.now();
+			while (!results.empty()) {
+				Result r = std::move (results.front());
+				results.pop_front();
+				OnResult (r, now);
+			}
+			DropStale (now);
+			StartJobs (now);
+			StartBldg (now);
+			Dispatch (now);
+			if (now >= nextHits) {
+				nextHits = now + std::chrono::seconds (5);
+				if (!ro) Hits ();
+			}
+			if (now >= nextEvict) {
+				nextEvict = now + std::chrono::seconds (300);
+				if (!ro) Queue ([this] { Evict (); });
+			}
+		} catch (const std::exception &e) {
+			Crash (e.what(), nullptr);
+		} catch (...) {
+			Crash ("unknown", nullptr);
 		}
 	}
 }
@@ -441,12 +646,67 @@ void TileStream::Impl::Work ()
 	for (;;) {
 		wcv.wait (lk, [this] { return stop || !work.empty(); });
 		if (stop) return;
-		std::function<void ()> fn = std::move (work.front());
+		Task t = std::move (work.front());
 		work.pop_front();
 		lk.unlock();
-		fn ();
+		const char *what = nullptr;
+		std::string msg;
+		try {
+			t.fn ();
+		} catch (const std::exception &e) {
+			msg = e.what();
+			what = msg.c_str();
+		} catch (...) {
+			what = "unknown";
+		}
 		lk.lock();
+		if (what) Crash (what, t.fail);
 	}
+}
+
+// a thread caught an exception: logged once, the job given up
+void TileStream::Impl::Crash (const char *what, const std::function<void ()> &fail)
+{
+	if (!exLogged) Log (std::string ("TileStream: a job failed: ") + what);
+	exLogged = true;
+	if (!fail) return;
+	try {
+		fail ();
+	} catch (...) {
+	}
+	kick = true;
+	cv.notify_all();
+}
+
+std::function<void ()> TileStream::Impl::GiveUp (uint64_t id)
+{
+	return [this, id] {
+		auto j = jobs.find (id);
+		if (j != jobs.end() && j->second.elevOnly) bodies[j->second.body]->noElev.insert (j->second.key);
+		else hold[id] = opt.now() + std::chrono::seconds (HoldSec);
+		jobs.erase (id);
+	};
+}
+
+bool TileStream::Impl::Held (int b, uint64_t k)
+{
+	std::lock_guard<std::mutex> lk (mx);
+	auto h = hold.find (Id (b, k));
+	return h != hold.end() && opt.now() < h->second;
+}
+
+// a failed-load Want dropped a key: written.idx rewritten on a worker, once for many
+void TileStream::Impl::Dirty (Body &B)
+{
+	if (ro || B.writtenDirty) return;
+	B.writtenDirty = true;
+	Body *pb = &B;
+	Queue ([this, pb] {
+		std::lock_guard<std::mutex> lk (mx);
+		if (!pb->writtenDirty) return;
+		pb->writtenDirty = false;
+		Rewrite (*pb, "written", pb->written);
+	});
 }
 
 void TileStream::Impl::OnResult (Result &r, Clock::time_point now)
@@ -533,7 +793,7 @@ void TileStream::Impl::Fetched (Job &J, Clock::time_point now)
 			}
 		J.stage = 2;
 		Job copy = J;
-		Queue ([this, copy] { Build (copy); });
+		Queue ([this, copy] { Build (copy); }, GiveUp (J.id));
 		return;
 	}
 	bool miss[3] = {false, false, false}, fail[3] = {false, false, false};
@@ -554,8 +814,10 @@ void TileStream::Impl::Fetched (Job &J, Clock::time_point now)
 		return;
 	}
 	if (fail[0] || fail[1] || fail[2]) {
-		if (++J.tries > 5 && !J.required) jobs.erase (J.id);
-		else Retry (J, now, 10);
+		if (++J.tries > 5 && !J.required) {
+			hold[J.id] = now + std::chrono::seconds (HoldSec); // given up: the next want waits out the hold
+			jobs.erase (J.id);
+		} else Retry (J, now, 10);
 		return;
 	}
 	if (miss[0] || miss[1] || miss[2]) {
@@ -565,7 +827,7 @@ void TileStream::Impl::Fetched (Job &J, Clock::time_point now)
 	}
 	J.stage = 2;
 	Job copy = J;
-	Queue ([this, copy] { Build (copy); });
+	Queue ([this, copy] { Build (copy); }, GiveUp (J.id));
 }
 
 // 0: not now, 1: from its own source, 2: from the fallback while EOX is paused
@@ -752,6 +1014,7 @@ void TileStream::Impl::Build (Job J)
 	Body &B = *bodies[J.body];
 	const TsBodyCfg &C = B.cfg;
 	int L = KL (J.key), la = KLat (J.key), ln = KLng (J.key);
+	if (opt.onBuild) opt.onBuild (L, la, ln);
 	const TsSource &sv = J.fallback ? C.fallback : C.surf;
 	auto decode = [] (const std::vector<Src> &v, std::vector<QImage> &out) {
 		for (const Src &s : v) {
@@ -770,9 +1033,19 @@ void TileStream::Impl::Build (Job J)
 		if (!elv.empty()) BaseHeights (B, J, et); // earth-sky
 	}
 	if (J.elevOnly) {
-		bool ok = !elv.empty() && Mods (B, J.key, elv) && Write (B, Tile (B.dir, "Elev", J.key), elv); // earth-sky: its Elev_mod first
+		bool mine;
+		{
+			std::lock_guard<std::mutex> lk (mx);
+			mine = B.elev.count (J.key) > 0;
+		}
+		std::error_code ec;
+		bool theirs = !mine && fs::exists (Tile (B.dir, "Elev", J.key), ec); // someone else's Elev: never overwritten
+		bool ok = !theirs && !elv.empty() && Mods (B, J.key, elv) && Write (B, Tile (B.dir, "Elev", J.key), elv); // earth-sky: its Elev_mod first
 		std::lock_guard<std::mutex> lk (mx);
-		if (!ok) {
+		if (ok) {
+			if (B.elev.insert (J.key).second) Append (B, "elev", J.key, -1);
+			B.bytes += elv.size();
+		} else {
 			B.noElev.insert (J.key);
 			for (const Src &s : J.elev) CacheDrop (s.url);
 		}
@@ -787,6 +1060,7 @@ void TileStream::Impl::Build (Job J)
 		return;
 	}
 	bool ocean = false, ok = true;
+	uint64_t made = 0; // bytes written, for the size cap's total
 	if (sv.kind == "eox" && L >= 4) {
 		std::vector<bool> fill (st.size());
 		size_t nfill = 0;
@@ -823,35 +1097,35 @@ void TileStream::Impl::Build (Job J)
 		QImage mask = TsImg::Mask (lights, water, C.black, C.waterGrey);
 		std::string mpath = Tile (B.dir, "Mask", J.key), cpath = Tile (B.dir, "Class", J.key);
 		std::error_code ec;
-		if (cls.isNull() || !Write (B, cpath, TsImg::Dds (cls, false))) fs::remove (cpath, ec); // before Surf: the client reads them together
-		ok = Write (B, mpath, TsImg::Dds (mask, true));
-		if (ok && !(ok = Write (B, Tile (B.dir, "Surf", J.key), TsImg::Dds (surf, false)))) {
+		std::string cdds = cls.isNull() ? std::string() : TsImg::Dds (cls, false), mdds = TsImg::Dds (mask, true), sdds = TsImg::Dds (surf, false);
+		if (cdds.empty() || !Write (B, cpath, cdds)) { fs::remove (cpath, ec); cdds.clear(); } // before Surf: the client reads them together
+		ok = Write (B, mpath, mdds);
+		if (ok && !(ok = Write (B, Tile (B.dir, "Surf", J.key), sdds))) {
 			fs::remove (mpath, ec); // no Mask without its Surf
 			fs::remove (cpath, ec);
 		}
 		if (ok && L >= 4) Remember (Id (J.body, J.key), surf);
-		if (ok && !elv.empty()) Write (B, Tile (B.dir, "Elev", J.key), elv);
+		if (ok) made = sdds.size() + mdds.size() + cdds.size();
 	}
+	const TsSource &es = C.elev;
+	bool elevWanted = ok && !ocean && net && !es.kind.empty() && L >= 4 && L <= es.lmax && !B.Arch (A_ELEV, J.key);
+	std::error_code eec;
+	bool elevFree = elevWanted && !fs::exists (Tile (B.dir, "Elev", J.key), eec);
 	std::lock_guard<std::mutex> lk (mx);
 	if (ocean) {
-		B.ocean.insert (J.key);
-		Append (B, "ocean", J.key, -1);
+		if (B.ocean.insert (J.key).second) Append (B, "ocean", J.key, -1);
 	} else if (ok) {
-		B.written.insert (J.key);
-		Append (B, "written", J.key, -1);
+		if (B.written.insert (J.key).second) Append (B, "written", J.key, -1);
+		B.bytes += made;
 		B.done.push_back (J.key);
 		if (B.done.size() > 1024) B.done.pop_front();
 		if (J.fallback) {
 			if (B.refetch.insert (J.key).second) Append (B, "refetch", J.key, -1);
 		} else if (B.refetch.erase (J.key)) Rewrite (B, "refetch", B.refetch);
-	} else {
-		Log ("TileStream: cannot write " + Tile (B.dir, "Surf", J.key));
-		hold[J.id] = opt.now() + std::chrono::seconds (60);
-	}
+	} else hold[J.id] = opt.now() + std::chrono::seconds (60); // Write logged the first failure
 	jobs.erase (J.id);
-	const TsSource &es = C.elev;
-	if (ok && !ocean && net && !es.kind.empty() && L >= 4 && L <= es.lmax && B.elevSeen.insert (J.key).second)
-		NewJob (J.body, J.key, opt.now()).elevOnly = true; // its Elev, a job of its own
+	if (elevWanted && (elevFree || B.elev.count (J.key)) && B.elevSeen.insert (J.key).second)
+		NewJob (J.body, J.key, opt.now()).elevOnly = true; // its Elev, a job of its own, never over someone else's
 	kick = true;
 	cv.notify_all();
 }
@@ -946,6 +1220,7 @@ QImage TileStream::Impl::Recall (uint64_t id)
 // to a unique file in TileStream/tmp, then renamed into place: the client never reads half a file
 bool TileStream::Impl::Write (const Body &B, const std::string &path, const std::string &bytes)
 {
+	if (ro) return false;
 	std::error_code ec;
 	fs::create_directories (fs::path (path).parent_path(), ec);
 	int seq;
@@ -954,47 +1229,68 @@ bool TileStream::Impl::Write (const Body &B, const std::string &path, const std:
 		seq = ++tmpSeq;
 	}
 	std::string tmp = B.dir + "/TileStream/tmp/" + std::to_string (getpid()) + "." + std::to_string (seq) + ".tmp";
-	{
-		std::ofstream o (tmp, std::ios::binary);
+	auto put = [&bytes] (const std::string &f) {
+		std::ofstream o (f, std::ios::binary | std::ios::trunc);
 		o.write (bytes.data(), (std::streamsize)bytes.size());
 		o.close();
-		if (!o) {
-			fs::remove (tmp, ec);
-			return false;
-		}
-	}
-	fs::rename (tmp, path, ec);
-	if (ec) {
-		std::error_code rc;
-		fs::remove (tmp, rc);
-		return false;
-	}
-	return true;
+		return !o.fail();
+	};
+	std::error_code rc;
+	if (!put (tmp)) ec = std::make_error_code (std::errc::io_error);
+	else if (opt.crossDisk) ec = std::make_error_code (std::errc::cross_device_link);
+	else fs::rename (tmp, path, ec);
+	if (!ec) return true;
+	fs::remove (tmp, rc);
+	std::string part = path + ".part"; // another disk: written beside the target, then renamed there
+	std::error_code pc;
+	if (put (part)) {
+		fs::rename (part, path, pc);
+		if (!pc) return true;
+	} else pc = std::make_error_code (std::errc::io_error);
+	fs::remove (part, rc);
+	if (!writeLogged.exchange (true)) Log ("TileStream: cannot write " + path + " (" + ec.message() + ", then " + pc.message() + ")");
+	return false;
 }
 
 void TileStream::Impl::LoadIdx (Body &B)
 {
-	auto load = [&] (const char *name, auto add) {
+	auto load = [&] (const char *name, bool extra, int lmin, int lmax, auto add) {
 		std::ifstream f (Idx (B, name));
 		std::string line;
+		size_t lines = 0, good = 0;
 		while (std::getline (f, line)) {
-			std::istringstream is (line);
+			if (line.find_first_not_of (" \t\r") == std::string::npos) continue;
+			lines++;
 			int L, a, b;
 			long long t = 0;
-			if (!(is >> L >> a >> b) || L < 1 || L > 21 || a < 0 || b < 0) continue;
-			is >> t;
-			add (Key (L, a, b), (int64_t)t);
+			if (ParseLine (line, extra, L, a, b, t) && KeyOk (name, L, a, b, lmin, lmax) && add (Key (L, a, b), (int64_t)t)) good++;
 		}
+		if (good != lines) B.unclean.insert (name);
 	};
-	load ("written", [&] (uint64_t k, int64_t) { B.written.insert (k); });
-	load ("ocean", [&] (uint64_t k, int64_t) { B.ocean.insert (k); });
-	load ("refetch", [&] (uint64_t k, int64_t) { B.refetch.insert (k); });
-	load ("none", [&] (uint64_t k, int64_t t) { B.none[k] = t; });
-	load ("bldg", [&] (uint64_t k, int64_t) { if (KL (k) == 14) B.bldg.insert (k); });
+	load ("written", true, 1, 21, [&] (uint64_t k, int64_t) { return B.written.insert (k).second; });
+	load ("ocean", false, 4, 21, [&] (uint64_t k, int64_t) { return B.ocean.insert (k).second; });
+	load ("refetch", false, 1, 21, [&] (uint64_t k, int64_t) { return B.refetch.insert (k).second; });
+	load ("bldg", false, 14, 14, [&] (uint64_t k, int64_t) { return B.bldg.insert (k).second; });
+	std::error_code ec;
+	auto age = fs::file_time_type::clock::now() - fs::last_write_time (Idx (B, "none"), ec);
+	if (!ec && age > std::chrono::hours (24 * 30)) { // nothing marked for 30 days: every line is out of date
+		if (!ro) fs::remove (Idx (B, "none"), ec);
+	} else load ("none", true, 1, 21, [&] (uint64_t k, int64_t t) {
+		if (Today() - t >= 30) return false; // asked again: the line goes at startup
+		bool fresh = !B.none.count (k);
+		B.none[k] = t;
+		return fresh;
+	});
+	if (fs::exists (Idx (B, "elev"), ec)) load ("elev", false, 4, 21, [&] (uint64_t k, int64_t) { return B.elev.insert (k).second; });
+	else { // from before elev.idx: the Elev of every streamed tile is the stream's, once
+		B.elev = B.written;
+		if (!ro) Rewrite (B, "elev", B.elev);
+	}
 }
 
 void TileStream::Impl::Append (const Body &B, const char *name, uint64_t k, int64_t t)
 {
+	if (ro) return;
 	std::ofstream f (Idx (B, name), std::ios::app);
 	f << KL (k) << ' ' << KLat (k) << ' ' << KLng (k);
 	if (t >= 0) f << ' ' << t;
@@ -1002,13 +1298,14 @@ void TileStream::Impl::Append (const Body &B, const char *name, uint64_t k, int6
 }
 
 // the old index stays when the new one can't be written whole
-void TileStream::Impl::Rewrite (const Body &B, const char *name, const std::unordered_set<uint64_t> &s)
+bool TileStream::Impl::WriteText (const std::string &p, const std::string &text)
 {
-	std::string p = Idx (B, name), tmp = p + ".new";
+	if (ro) return false;
+	std::string tmp = p + ".new";
 	bool ok;
 	{
 		std::ofstream f (tmp, std::ios::trunc);
-		for (uint64_t k : s) f << KL (k) << ' ' << KLat (k) << ' ' << KLng (k) << '\n';
+		f << text;
 		f.close();
 		ok = !f.fail();
 	}
@@ -1018,14 +1315,31 @@ void TileStream::Impl::Rewrite (const Body &B, const char *name, const std::unor
 		std::error_code rc;
 		fs::remove (tmp, rc);
 		Log ("TileStream: cannot rewrite " + p);
+		return false;
 	}
+	return true;
+}
+
+void TileStream::Impl::Rewrite (const Body &B, const char *name, const std::unordered_set<uint64_t> &s)
+{
+	std::string text;
+	for (uint64_t k : s) text += std::to_string (KL (k)) + ' ' + std::to_string (KLat (k)) + ' ' + std::to_string (KLng (k)) + '\n';
+	WriteText (Idx (B, name), text);
+}
+
+void TileStream::Impl::RewriteNone (const Body &B)
+{
+	std::string text;
+	for (auto &p : B.none) text += std::to_string (KL (p.first)) + ' ' + std::to_string (KLat (p.first)) + ' ' + std::to_string (KLng (p.first)) + ' ' + std::to_string (p.second) + '\n';
+	WriteText (Idx (B, "none"), text);
 }
 
 void TileStream::Impl::MarkNone (Body &B, uint64_t k)
 {
 	int64_t t = Today();
+	bool fresh = !B.none.count (k);
 	B.none[k] = t;
-	Append (B, "none", k, t);
+	if (fresh) Append (B, "none", k, t);
 }
 
 // .tmp files of an earlier run that was killed mid-write
@@ -1048,18 +1362,20 @@ void TileStream::Impl::CleanTmp ()
 void TileStream::Impl::Evict ()
 {
 	uint64_t cap = opt.capMB << 20;
-	if (!cap) return;
+	if (!cap || ro) return;
 	for (auto &bp : bodies) {
 		Body &B = *bp;
-		std::vector<uint64_t> keys, bkeys;
+		std::vector<std::pair<uint64_t, bool>> keys; // with: its Elev is ours
+		std::vector<uint64_t> bkeys;
 		{
 			std::lock_guard<std::mutex> lk (mx);
-			keys.assign (B.written.begin(), B.written.end());
+			if (B.bytesKnown && B.bytes <= cap) continue; // the running total: no scan below the cap
+			for (uint64_t k : B.written) keys.push_back ({k, B.elev.count (k) > 0});
 			bkeys.assign (B.bldg.begin(), B.bldg.end());
 		}
-		struct E { fs::file_time_type t; uint64_t k, size; bool bldg; };
+		struct E { fs::file_time_type t; uint64_t k, size; bool bldg, elev; };
 		std::vector<E> v;
-		std::vector<uint64_t> gone, bgone;
+		std::vector<uint64_t> gone, bgone, egone;
 		uint64_t total = 0;
 		for (uint64_t k : bkeys) {
 			if (quit) return;
@@ -1068,24 +1384,24 @@ void TileStream::Impl::Evict ()
 			uint64_t size = fs::file_size (s, e1);
 			if (e1) { bgone.push_back (k); continue; }
 			total += size;
-			v.push_back ({fs::last_write_time (s, e1), k, size, true});
+			v.push_back ({fs::last_write_time (s, e1), k, size, true, false});
 		}
-		for (uint64_t k : keys) {
+		for (auto &p : keys) {
 			if (quit) return;
+			uint64_t k = p.first;
 			std::error_code e1, e2;
-			std::string s = Tile (B.dir, "Surf", k), m = Tile (B.dir, "Mask", k);
-			uint64_t ss = fs::file_size (s, e1);
+			std::string s = Tile (B.dir, "Surf", k);
+			uint64_t size = fs::file_size (s, e1);
 			if (e1) { gone.push_back (k); continue; }
-			uint64_t ms = fs::file_size (m, e2);
-			uint64_t size = ss + (e2 ? 0 : ms);
-			uint64_t es = fs::file_size (Tile (B.dir, "Elev", k), e2);
-			if (!e2) size += es;
-			es = fs::file_size (Tile (B.dir, "Class", k), e2);
-			if (!e2) size += es;
+			for (const char *layer : {"Mask", "Elev", "Class"}) {
+				if (!p.second && !strcmp (layer, "Elev")) continue; // someone else's Elev: not counted, never removed
+				uint64_t n = fs::file_size (Tile (B.dir, layer, k), e2);
+				if (!e2) size += n;
+			}
 			total += size;
-			if (KL (k) > 8) v.push_back ({fs::last_write_time (s, e1), k, size, false});
+			if (KL (k) > 8) v.push_back ({fs::last_write_time (s, e1), k, size, false, p.second});
 		}
-		if (cap && total > cap) {
+		if (total > cap) {
 			std::sort (v.begin(), v.end(), [] (const E &a, const E &b) { return a.t < b.t; });
 			for (const E &e : v) {
 				if (total <= cap / 10 * 9) break;
@@ -1096,28 +1412,152 @@ void TileStream::Impl::Evict ()
 					bgone.push_back (e.k);
 					continue;
 				}
-				fs::remove (Tile (B.dir, "Surf", e.k), ec);
-				fs::remove (Tile (B.dir, "Mask", e.k), ec);
-				fs::remove (Tile (B.dir, "Elev", e.k), ec);
-				fs::remove (Tile (B.dir, "Class", e.k), ec);
+				for (const char *layer : {"Surf", "Mask", "Elev", "Class"}) {
+					if (!e.elev && !strcmp (layer, "Elev")) continue;
+					std::string f = Tile (B.dir, layer, e.k);
+					fs::remove (f, ec);
+					fs::remove (f + ".part", ec);
+				}
 				gone.push_back (e.k);
+				if (e.elev) egone.push_back (e.k);
 			}
 		}
-		if (gone.empty() && bgone.empty()) continue;
+		if (opt.evictScanned) opt.evictScanned ();
 		std::lock_guard<std::mutex> lk (mx);
-		if (!bgone.empty()) {
-			for (uint64_t k : bgone) B.bldg.erase (k);
-			Rewrite (B, "bldg", B.bldg);
-		}
-		if (gone.empty()) continue;
-		bool refetch = false;
-		for (uint64_t k : gone) {
-			B.written.erase (k);
-			refetch |= B.refetch.erase (k) > 0;
-		}
-		Rewrite (B, "written", B.written);
-		if (refetch) Rewrite (B, "refetch", B.refetch);
+		B.bytes = total;
+		B.bytesKnown = true;
+		Drop (B, gone, egone, bgone);
 	}
+}
+
+// with mx held: index entries whose own file is gone (a tile written again since the scan stays)
+void TileStream::Impl::Drop (Body &B, const std::vector<uint64_t> &gone, const std::vector<uint64_t> &egone, const std::vector<uint64_t> &bgone)
+{
+	std::error_code ec;
+	bool w = false, r = false, e = false, b = false;
+	for (uint64_t k : bgone)
+		if (!fs::exists (BldgFile (B.dir, k), ec)) b |= B.bldg.erase (k) > 0;
+	for (uint64_t k : gone)
+		if (!fs::exists (Tile (B.dir, "Surf", k), ec) && B.written.erase (k)) {
+			w = true;
+			r |= B.refetch.erase (k) > 0;
+		}
+	for (uint64_t k : egone)
+		if (!fs::exists (Tile (B.dir, "Elev", k), ec)) e |= B.elev.erase (k) > 0;
+	if (b) Rewrite (B, "bldg", B.bldg);
+	if (w) Rewrite (B, "written", B.written);
+	if (r) Rewrite (B, "refetch", B.refetch);
+	if (e) Rewrite (B, "elev", B.elev);
+}
+
+// at startup, on a worker: index lines whose file is gone go, doubled or bad lines are written out, and the size total is counted
+void TileStream::Impl::Prune ()
+{
+	for (int bi = 0; bi < (int)bodies.size(); bi++) {
+		Body &B = *bodies[bi];
+		std::vector<std::pair<uint64_t, bool>> keys;
+		std::vector<uint64_t> ekeys, bkeys, gone, egone, bgone;
+		{
+			std::lock_guard<std::mutex> lk (mx);
+			for (uint64_t k : B.written) keys.push_back ({k, B.elev.count (k) > 0});
+			for (uint64_t k : B.elev) if (!B.written.count (k)) ekeys.push_back (k);
+			bkeys.assign (B.bldg.begin(), B.bldg.end());
+		}
+		uint64_t total = 0;
+		for (auto &p : keys) {
+			if (quit) return;
+			std::error_code ec;
+			uint64_t n = fs::file_size (Tile (B.dir, "Surf", p.first), ec);
+			if (ec) {
+				gone.push_back (p.first);
+				if (p.second) egone.push_back (p.first);
+				continue;
+			}
+			total += n;
+			for (const char *layer : {"Mask", "Elev", "Class"}) {
+				if (!p.second && !strcmp (layer, "Elev")) continue;
+				n = fs::file_size (Tile (B.dir, layer, p.first), ec);
+				if (!ec) total += n;
+				else if (layer[0] == 'E') egone.push_back (p.first);
+			}
+		}
+		for (uint64_t k : ekeys) {
+			if (quit) return;
+			std::error_code ec;
+			if (!fs::exists (Tile (B.dir, "Elev", k), ec)) egone.push_back (k);
+		}
+		for (uint64_t k : bkeys) {
+			if (quit) return;
+			std::error_code ec;
+			uint64_t n = fs::file_size (BldgFile (B.dir, k), ec);
+			if (ec) bgone.push_back (k);
+			else total += n;
+		}
+		std::lock_guard<std::mutex> lk (mx);
+		for (uint64_t k : gone) { // the rest of a tile whose Surf is gone, unless it is being made again
+			std::error_code ec;
+			if (B.written.count (k) && !jobs.count (Id (bi, k)) && !fs::exists (Tile (B.dir, "Surf", k), ec))
+				for (const char *layer : {"Surf", "Mask", "Class"}) {
+					fs::remove (Tile (B.dir, layer, k), ec);
+					fs::remove (Tile (B.dir, layer, k) + ".part", ec);
+				}
+		}
+		size_t nw = B.written.size(), ne = B.elev.size(), nb = B.bldg.size();
+		Drop (B, gone, egone, bgone);
+		if (B.unclean.count ("written") && nw == B.written.size()) Rewrite (B, "written", B.written);
+		if (B.unclean.count ("elev") && ne == B.elev.size()) Rewrite (B, "elev", B.elev);
+		if (B.unclean.count ("bldg") && nb == B.bldg.size()) Rewrite (B, "bldg", B.bldg);
+		if (B.unclean.count ("ocean")) Rewrite (B, "ocean", B.ocean);
+		if (B.unclean.count ("refetch")) Rewrite (B, "refetch", B.refetch);
+		if (B.unclean.count ("none")) RewriteNone (B);
+		if (B.unclean.count ("cloud")) Rewrite (B, "cloud", B.cloud);
+		if (B.unclean.count ("mod")) Rewrite (B, "mod", B.mod);
+		B.unclean.clear();
+		B.bytes = total;
+		B.bytesKnown = true;
+	}
+}
+
+// installed archives: their tables of contents, and our loose tiles they hold deleted (they would hide the archive)
+void TileStream::Impl::LoadArchives (Body &B)
+{
+	const char *name[NARCH] = {"Surf", "Mask", "Elev", "Cloud"};
+	int n = 0;
+	for (int a = 0; a < NARCH; a++) n += ReadToc (B.dir + "/Archive/" + name[a] + ".tree", B.arch[a]);
+	if (!n || ro) return;
+	size_t dropped = 0;
+	std::error_code ec;
+	auto rm = [&] (const char *layer, uint64_t k) {
+		std::string f = Tile (B.dir, layer, k);
+		fs::remove (f, ec);
+		fs::remove (f + ".part", ec);
+	};
+	bool w = false, r = false, e = false;
+	for (auto it = B.written.begin(); it != B.written.end(); ) {
+		uint64_t k = *it;
+		if (B.Arch (A_SURF, k)) {
+			for (const char *layer : {"Surf", "Mask", "Class"}) rm (layer, k);
+			r |= B.refetch.erase (k) > 0;
+			it = B.written.erase (it);
+			w = true;
+			dropped++;
+			continue;
+		}
+		if (B.Arch (A_MASK, k)) rm ("Mask", k);
+		++it;
+	}
+	for (auto it = B.elev.begin(); it != B.elev.end(); ) {
+		if (B.Arch (A_ELEV, *it)) {
+			rm ("Elev", *it);
+			it = B.elev.erase (it);
+			e = true;
+			dropped++;
+		} else ++it;
+	}
+	if (w) Rewrite (B, "written", B.written);
+	if (r) Rewrite (B, "refetch", B.refetch);
+	if (e) Rewrite (B, "elev", B.elev);
+	Log ("TileStream: " + std::to_string (n) + " installed archives for " + B.cfg.name + ", " + std::to_string (dropped) + " streamed tiles they hold deleted");
 }
 
 // building tiles: their own jobs on the OpenFreeMap host, started when no imagery job waits
@@ -1229,7 +1669,10 @@ void TileStream::Impl::BldgDeliver (const std::string &url, int status, const st
 		int b = J.body;
 		uint64_t k = J.key;
 		std::shared_ptr<const QByteArray> d = status == 200 ? data : nullptr;
-		Queue ([this, b, k, d] { BuildBldg (b, k, d); });
+		Queue ([this, b, k, d] { BuildBldg (b, k, d); }, [this, id] {
+			bhold[id] = opt.now() + std::chrono::seconds (HoldSec);
+			bjobs.erase (id);
+		});
 		return;
 	}
 	if (++J.tries >= 3) {
@@ -1251,16 +1694,18 @@ void TileStream::Impl::BuildBldg (int b, uint64_t k, std::shared_ptr<const QByte
 	std::vector<TsBldg::Feature> f;
 	uint32_t ext = 4096;
 	ok = ok && TsBldg::Decode (pbf, f, ext);
-	size_t n = 0;
+	size_t n = 0, bytes = 0;
 	if (ok) {
 		TsBldg::Mesh m = TsBldg::Build (14, KLat (k), KLng (k), f, ext);
 		n = m.b.size();
-		ok = Write (B, BldgFile (B.dir, k), TsBldg::Encode (m));
+		std::string enc = TsBldg::Encode (m);
+		bytes = enc.size();
+		ok = Write (B, BldgFile (B.dir, k), enc);
 	}
 	std::lock_guard<std::mutex> lk (mx);
 	if (ok) {
-		B.bldg.insert (k);
-		Append (B, "bldg", k, -1);
+		if (B.bldg.insert (k).second) Append (B, "bldg", k, -1);
+		B.bytes += bytes;
 		Log ("TileStream: buildings 14/" + std::to_string (KLat (k)) + "/" + std::to_string (KLng (k)) + ": " + std::to_string (n));
 	} else {
 		Log ("TileStream: cannot make buildings 14/" + std::to_string (KLat (k)) + "/" + std::to_string (KLng (k)));
@@ -1378,6 +1823,7 @@ int TileStream::Impl::Prefetch (const std::string &name, int L, int ilat, int il
 	if (!net || L < 4 || L > B.cfg.surf.lmax || ilat < 0 || ilng < 0 || ilat >= 1 << (L - 4) || ilng >= 1 << (L - 3)) return -1;
 	uint64_t k = Key (L, ilat, ilng), id = Id (b, k);
 	auto count = [this] { int n = 0; for (auto &p : jobs) n += p.second.pre; return n; };
+	if (B.Arch (A_SURF, k)) return 1; // the installed archive's
 	std::unique_lock<std::mutex> lk (mx);
 	if (stop || Ocean (B, k)) return -1;
 	auto nn = B.none.find (k);
@@ -1423,18 +1869,36 @@ QByteArray TileStream::Impl::Fetch (const std::string &url, int sec)
 	return w->done && w->st == 200 ? w->body : QByteArray();
 }
 
-// a cloud source image: kept in TileStream/src, fetched once
-QByteArray TileStream::Impl::Source (Body &B, const std::string &url, const char *file, int sec)
+// a cloud source image: kept in TileStream/src once its header reads; a bad answer is asked again the next day
+QByteArray TileStream::Impl::Source (Body &B, const std::string &url, const char *file, const char *fmt, int sec)
 {
-	std::string p = B.dir + "/TileStream/src/" + file;
-	QFile f (QString::fromStdString (p));
-	if (f.open (QIODevice::ReadOnly)) return f.readAll();
-	QByteArray d = Fetch (url, sec);
-	if (!d.isEmpty()) {
-		std::error_code ec;
-		fs::create_directories (B.dir + "/TileStream/src", ec);
-		Write (B, p, d.toStdString());
+	if (!QImageReader::supportedImageFormats().contains (fmt)) {
+		Log (std::string ("TileStream: no ") + fmt + " reader, " + file + " is not fetched");
+		return QByteArray();
 	}
+	std::string p = B.dir + "/TileStream/src/" + file, stamp = p + ".day";
+	std::error_code ec;
+	QFile f (QString::fromStdString (p));
+	if (f.open (QIODevice::ReadOnly)) {
+		QByteArray d = f.readAll();
+		f.close();
+		if (ImageOk (d, fmt)) return d;
+		fs::remove (p, ec);
+		Log (std::string ("TileStream: the cached ") + file + " is not an image, fetched again");
+	}
+	long long day = -1;
+	std::ifstream (stamp) >> day;
+	if (day == Today()) return QByteArray(); // a bad answer today already
+	QByteArray d = Fetch (url, sec);
+	if (d.isEmpty()) return d;
+	fs::create_directories (B.dir + "/TileStream/src", ec);
+	if (!ImageOk (d, fmt)) {
+		Log ("TileStream: " + url + " did not answer with an image");
+		std::ofstream (stamp, std::ios::trunc) << Today() << '\n';
+		return QByteArray();
+	}
+	fs::remove (stamp, ec);
+	Write (B, p, d.toStdString());
 	return d;
 }
 
@@ -1444,33 +1908,52 @@ void TileStream::Impl::Clouds (Body &B)
 	if (B.cfg.cloudSmall.empty()) return;
 	{
 		std::ifstream f (Idx (B, "cloud"));
-		int L, a, c;
-		while (f >> L >> a >> c) B.cloud.insert (Key (L, a, c));
+		std::string line;
+		size_t lines = 0;
+		while (std::getline (f, line)) {
+			if (line.find_first_not_of (" \t\r") == std::string::npos) continue;
+			lines++;
+			int L, a, c;
+			long long t;
+			if (ParseLine (line, false, L, a, c, t) && KeyOk ("cloud", L, a, c, 1, B.cfg.cloudMax)) B.cloud.insert (Key (L, a, c));
+		}
+		bool held = false;
+		for (auto it = B.cloud.begin(); it != B.cloud.end(); ) { // the installed archive's clouds go first
+			std::error_code ec;
+			if (B.Arch (A_CLOUD, *it)) {
+				fs::remove (Tile (B.dir, "Cloud", *it), ec);
+				it = B.cloud.erase (it);
+				held = true;
+			} else ++it;
+		}
+		if (held) Rewrite (B, "cloud", B.cloud);
+		else if (lines != B.cloud.size()) B.unclean.insert ("cloud");
 	}
 	auto missing = [&B] (int l0, int l1) {
 		for (int L = l0; L <= l1; L++)
 			for (int a = 0; a < (L < 4 ? 1 : 1 << (L - 4)); a++)
 				for (int c = 0; c < (L < 4 ? 1 : 1 << (L - 3)); c++) {
 					std::error_code ec;
-					if (!fs::exists (Tile (B.dir, "Cloud", Key (L, a, c)), ec)) return true;
+					uint64_t k = Key (L, a, c);
+					if (!B.Arch (A_CLOUD, k) && !fs::exists (Tile (B.dir, "Cloud", k), ec)) return true;
 				}
 		return false;
 	};
 	if (missing (1, 4)) {
 		QImage im;
-		if (im.loadFromData (Source (B, B.cfg.cloudSmall, "cloud_small.jpg", opt.cloudWait)) && !im.isNull()) BakeClouds (B, im, 1, 5);
+		if (im.loadFromData (Source (B, B.cfg.cloudSmall, "cloud_small.jpg", "jpg", opt.cloudWait)) && !im.isNull()) BakeClouds (B, im, 1, 5);
 		else Log ("TileStream: no cloud image for " + B.cfg.name);
 	}
 	if (B.cfg.cloudMax < 6 || !missing (6, B.cfg.cloudMax)) return;
 	Body *pb = &B;
-	work.push_back ([this, pb] {
+	work.push_back ({[this, pb] {
 		QImage im;
-		if (!im.loadFromData (Source (*pb, pb->cfg.cloudBig, "cloud_large.tif", 0)) || im.isNull()) {
+		if (!im.loadFromData (Source (*pb, pb->cfg.cloudBig, "cloud_large.tif", "tif", 0)) || im.isNull()) {
 			Log ("TileStream: the large cloud image did not load, upper cloud levels from the small one");
-			im.loadFromData (Source (*pb, pb->cfg.cloudSmall, "cloud_small.jpg", 30));
+			im.loadFromData (Source (*pb, pb->cfg.cloudSmall, "cloud_small.jpg", "jpg", 30));
 		}
 		if (!im.isNull() && !quit) BakeClouds (*pb, im, 6, pb->cfg.cloudMax);
-	});
+	}, nullptr});
 }
 
 // every tile of levels l0..l1 that isn't someone else's file
@@ -1482,6 +1965,7 @@ void TileStream::Impl::BakeClouds (Body &B, const QImage &src, int l0, int l1)
 		for (int a = 0; a < (L < 4 ? 1 : 1 << (L - 4)); a++)
 			for (int c = 0; c < (L < 4 ? 1 : 1 << (L - 3)) && !quit; c++) {
 				uint64_t k = Key (L, a, c);
+				if (B.Arch (A_CLOUD, k)) continue;
 				std::string p = Tile (B.dir, "Cloud", k);
 				bool ours;
 				{
@@ -1536,8 +2020,16 @@ void TileStream::Impl::LoadBases (Body &B)
 			for (size_t i = 0; i < B.bases.size(); i++)
 				if (B.bases[i].name == n) B.baseH[i] = h;
 		std::ifstream m (Idx (B, "mod"));
-		int L, a, c;
-		while (m >> L >> a >> c) B.mod.insert (Key (L, a, c));
+		std::string line;
+		size_t lines = 0;
+		while (std::getline (m, line)) {
+			if (line.find_first_not_of (" \t\r") == std::string::npos) continue;
+			lines++;
+			int L, a, c;
+			long long t;
+			if (ParseLine (line, false, L, a, c, t) && KeyOk ("mod", L, a, c, 4, std::max (4, B.cfg.elev.lmax))) B.mod.insert (Key (L, a, c));
+		}
+		if (lines != B.mod.size()) B.unclean.insert ("mod");
 	}
 	int made = 0;
 	for (size_t i = 0; i < B.bases.size(); i++) {
@@ -1643,20 +2135,28 @@ bool TileStream::Impl::Mods (Body &B, uint64_t k, const std::string &elv)
 
 namespace {
 
-std::vector<uint64_t> ReadIdx (const std::string &file)
+// idx: written, none, ocean, refetch, elev, bldg, mod or cloud, its lines checked as the stream checks them
+std::vector<uint64_t> ReadIdx (const std::string &dir, const std::string &idx)
 {
 	std::vector<uint64_t> v;
-	std::ifstream f (file);
+	std::ifstream f (dir + "/TileStream/" + idx + ".idx");
 	std::string line;
+	bool extra = idx == "written" || idx == "none";
 	while (std::getline (f, line)) {
-		std::istringstream is (line);
 		int L, a, b;
-		if (!(is >> L >> a >> b) || L < 1 || L > 21 || a < 0 || b < 0) continue;
-		v.push_back (Key (L, a, b));
+		long long t;
+		if (ParseLine (line, extra, L, a, b, t) && KeyOk (idx, L, a, b)) v.push_back (Key (L, a, b));
 	}
 	std::sort (v.begin(), v.end());
 	v.erase (std::unique (v.begin(), v.end()), v.end());
 	return v;
+}
+
+// the Elev files the stream wrote: elev.idx, or before it the Elev of every key in written.idx
+std::vector<uint64_t> ElevIdx (const std::string &dir)
+{
+	std::error_code ec;
+	return ReadIdx (dir, fs::exists (dir + "/TileStream/elev.idx", ec) ? "elev" : "written");
 }
 
 // to <file>.new, then renamed over it
@@ -1677,22 +2177,35 @@ bool WriteIdx (const std::string &file, const std::vector<uint64_t> &v)
 	return !ec;
 }
 
-std::string CleanDir (std::string dir)
-{
-	std::replace (dir.begin(), dir.end(), '\\', '/');
-	while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
-	return dir;
-}
-
-uint64_t TileBytes (const std::string &dir, uint64_t k)
+// a file and its leftover .part (a write across disks cut short)
+uint64_t FileBytes (const std::string &p)
 {
 	uint64_t n = 0;
-	for (const char *layer : {"Surf", "Mask", "Elev", "Class"}) {
+	for (const std::string &f : {p, p + ".part"}) {
 		std::error_code ec;
-		uint64_t s = fs::file_size (Tile (dir, layer, k), ec);
+		uint64_t s = fs::file_size (f, ec);
 		if (!ec) n += s;
 	}
 	return n;
+}
+
+// Surf, Mask and Class of a streamed tile; Elev only when the stream wrote it
+uint64_t TileBytes (const std::string &dir, uint64_t k, bool elev = true)
+{
+	uint64_t n = 0;
+	for (const char *layer : {"Surf", "Mask", "Elev", "Class"})
+		if (elev || strcmp (layer, "Elev")) n += FileBytes (Tile (dir, layer, k));
+	return n;
+}
+
+// a file, its .part and its row folder when that is left empty; true when the file was there
+bool RemoveFile (const std::string &p)
+{
+	std::error_code ec;
+	bool had = fs::remove (p, ec);
+	fs::remove (p + ".part", ec);
+	fs::remove (fs::path (p).parent_path(), ec);
+	return had;
 }
 
 }
@@ -1702,15 +2215,20 @@ uint64_t TileStream::CacheBytes (const std::string &bodyDir, uint64_t *total, si
 	std::string dir = CleanDir (bodyDir);
 	uint64_t n = 0;
 	size_t t = 0;
-	for (uint64_t k : ReadIdx (dir + "/TileStream/written.idx")) {
-		uint64_t b = TileBytes (dir, k);
+	std::vector<uint64_t> w = ReadIdx (dir, "written"), el = ElevIdx (dir);
+	for (uint64_t k : w) {
+		uint64_t b = TileBytes (dir, k, std::binary_search (el.begin(), el.end(), k));
+		if (b) { n += b; t++; }
+	}
+	for (uint64_t k : el) { // Elev of ours whose Surf is no longer listed
+		if (std::binary_search (w.begin(), w.end(), k)) continue;
+		uint64_t b = FileBytes (Tile (dir, "Elev", k));
 		if (b) { n += b; t++; }
 	}
 	for (const char *idx : {"bldg", "mod", "cloud"})
-		for (uint64_t k : ReadIdx (dir + "/TileStream/" + idx + ".idx")) {
-			std::error_code ec;
-			uint64_t s = fs::file_size (StreamFile (dir, idx, k), ec);
-			if (!ec) { n += s; t++; }
+		for (uint64_t k : ReadIdx (dir, idx)) {
+			uint64_t s = FileBytes (StreamFile (dir, idx, k));
+			if (s) { n += s; t++; }
 		}
 	if (tiles) *tiles = t;
 	if (total) {
@@ -1732,38 +2250,41 @@ uint64_t TileStream::CacheBytes (const std::string &bodyDir, uint64_t *total, si
 size_t TileStream::Clear (const std::string &bodyDir, bool keepBase)
 {
 	std::string dir = CleanDir (bodyDir), ts = dir + "/TileStream/";
-	std::vector<uint64_t> kept;
-	size_t n = 0;
 	std::error_code ec;
+	if (!fs::is_directory (ts, ec)) return 0;
+	std::string key = LockKey (dir);
+	if (TakeLock (key, true) <= 0) return 0; // a stream or another Orbiter has the folder: nothing removed
+	std::vector<uint64_t> kept, w = ReadIdx (dir, "written"), el = ElevIdx (dir), elKept;
+	size_t n = 0;
 	bool had = fs::exists (ts + "written.idx", ec);
-	for (uint64_t k : ReadIdx (ts + "written.idx")) {
+	for (uint64_t k : w) {
 		if (keepBase && KL (k) <= 8) {
 			kept.push_back (k);
 			continue;
 		}
 		bool any = false;
-		for (const char *layer : {"Surf", "Mask", "Elev", "Class"}) {
-			std::string p = Tile (dir, layer, k);
-			if (fs::remove (p, ec)) any = true;
-			fs::remove (fs::path (p).parent_path(), ec); // its row folder, when empty
-		}
+		for (const char *layer : {"Surf", "Mask", "Elev", "Class"})
+			if (strcmp (layer, "Elev") || std::binary_search (el.begin(), el.end(), k)) any |= RemoveFile (Tile (dir, layer, k));
 		if (any) n++;
 	}
 	if (had) WriteIdx (ts + "written.idx", kept);
+	for (uint64_t k : el) { // Elev this stream wrote: with its tile above, alone here
+		if (keepBase && KL (k) <= 8) elKept.push_back (k);
+		else if (!std::binary_search (w.begin(), w.end(), k) && RemoveFile (Tile (dir, "Elev", k))) n++;
+	}
+	WriteIdx (ts + "elev.idx", elKept);
 	for (const char *idx : {"bldg", "mod", "cloud"}) { // buildings, Elev_mod and clouds this stream wrote
 		if (!fs::exists (ts + idx + ".idx", ec)) continue;
 		std::vector<uint64_t> keep;
-		for (uint64_t k : ReadIdx (ts + idx + ".idx")) {
+		for (uint64_t k : ReadIdx (dir, idx)) {
 			if (keepBase && KL (k) <= 8 && std::string (idx) != "bldg") { keep.push_back (k); continue; }
-			std::string p = StreamFile (dir, idx, k);
-			if (fs::remove (p, ec)) n++;
-			fs::remove (fs::path (p).parent_path(), ec);
+			if (RemoveFile (StreamFile (dir, idx, k))) n++;
 		}
 		WriteIdx (ts + idx + ".idx", keep);
 	}
 	if (fs::exists (ts + "refetch.idx", ec)) {
 		std::vector<uint64_t> r;
-		for (uint64_t k : ReadIdx (ts + "refetch.idx"))
+		for (uint64_t k : ReadIdx (dir, "refetch"))
 			if (std::binary_search (kept.begin(), kept.end(), k)) r.push_back (k);
 		WriteIdx (ts + "refetch.idx", r);
 	}
@@ -1773,7 +2294,20 @@ size_t TileStream::Clear (const std::string &bodyDir, bool keepBase)
 		std::error_code rc;
 		fs::remove (it->path(), rc);
 	}
+	DropLock (key);
 	return n;
+}
+
+bool TileStream::Busy (const std::string &bodyDir)
+{
+	std::string key = LockKey (CleanDir (bodyDir));
+	std::lock_guard<std::mutex> lk (lockMx);
+	if (locks.count (key)) return true; // a stream or a Clear of this process
+	int fd = open ((key + "/TileStream/lock").c_str(), O_RDONLY | O_CLOEXEC);
+	if (fd < 0) return false; // never locked
+	bool busy = flock (fd, LOCK_EX | LOCK_NB) != 0;
+	close (fd);
+	return busy;
 }
 
 std::vector<TileStream::TileKey> TileStream::RegionKeys (double lat, double lng, double radiusKm, int maxL)
@@ -1832,14 +2366,30 @@ std::vector<TileStream::TileKey> TileStream::RegionKeys (double lat, double lng,
 // a level starts once every coarser key is answered: an ocean or missing parent rules out its children
 int TileStream::Prefetch (Options opt, const std::string &body, const std::vector<TileKey> &keys, Progress &p, const std::atomic<bool> &cancel, double stallSec)
 {
+	try {
+		return PrefetchKeys (opt, body, keys, p, cancel, stallSec);
+	} catch (const std::exception &e) {
+		if (opt.log) opt.log (std::string ("TileStream: the region download failed: ") + e.what());
+	} catch (...) {
+		if (opt.log) opt.log ("TileStream: the region download failed");
+	}
+	return 5;
+}
+
+int TileStream::PrefetchKeys (Options opt, const std::string &body, const std::vector<TileKey> &keys, Progress &p, const std::atomic<bool> &cancel, double stallSec)
+{
 	opt.offline = false;
 	opt.staleSec = 1e9; // a prefetch want never goes stale
 	opt.sky = false;    // clouds and Elev_mod are the session's
 	if (std::find (opt.bodies.begin(), opt.bodies.end(), body) == opt.bodies.end()) opt.bodies.push_back (body);
 	std::string dir = opt.bodyDir ? CleanDir (opt.bodyDir (body)) : std::string();
 	p.total = (int)keys.size();
+	if (!dir.empty() && Busy (dir)) return 4;
 	TileStream ts (opt);
 	if (!ts.Enabled (body)) return 3;
+	if (ts.d->ro) return 4;
+	int b = ts.d->FindBody (body);
+	const Impl::Body &B = *ts.d->bodies[b];
 	std::vector<size_t> open;
 	size_t next = 0, pending = 0;
 	Clock::time_point last = Clock::now();
@@ -1848,15 +2398,22 @@ int TileStream::Prefetch (Options opt, const std::string &body, const std::vecto
 		if (r > 0) {
 			p.have++;
 			p.bytes += TileBytes (dir, Key (k.L, k.ilat, k.ilng));
-		} else p.none++;
+		} else if (r == -2) p.failed++;
+		else p.none++;
 		p.done++;
 		last = Clock::now();
+	};
+	auto want = [&] (const TileKey &k) { // -2: given up on after its tries (held)
+		uint64_t key = Key (k.L, k.ilat, k.ilng);
+		if (InGrid (k.L, k.ilat, k.ilng) && B.Arch (A_SURF, key)) return 1; // in the installed archive
+		int r = ts.Want (body, k.L, k.ilat, k.ilng, 0);
+		return !r && ts.d->Held (b, key) ? -2 : r;
 	};
 	for (;;) {
 		if (cancel) return 1;
 		for (size_t j = 0; j < open.size(); ) {
 			const TileKey &k = keys[open[j]];
-			int r = ts.Want (body, k.L, k.ilat, k.ilng, 0);
+			int r = want (k);
 			if (r) {
 				answer (open[j], r);
 				open[j] = open.back();
@@ -1867,7 +2424,7 @@ int TileStream::Prefetch (Options opt, const std::string &body, const std::vecto
 		for (size_t i : open) lmin = std::min (lmin, keys[i].L);
 		while (next < keys.size() && open.size() < 48 && ts.Pending() < 200 && keys[next].L <= lmin) {
 			const TileKey &k = keys[next];
-			int r = ts.Want (body, k.L, k.ilat, k.ilng, 0);
+			int r = want (k);
 			if (r) answer (next, r);
 			else {
 				open.push_back (next);

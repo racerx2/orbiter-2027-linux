@@ -31,6 +31,7 @@ class ScriptInterface; // g++: a friend declaration doesn't introduce the name
 class DDEServer;
 class ImageIO;
 class TileStream; // not upstream
+struct StreamTrack; // not upstream
 namespace orbiter {
 	class ConsoleNG;
 	class LaunchpadDialog;
@@ -386,6 +387,8 @@ private:
 	void StartTileStream ();               // not upstream
 	void StopTileStream ();                // not upstream
 	void StreamPrefetch ();                // not upstream: ground-track tiles at high time acceleration
+	void StreamTrackStep ();               // not upstream
+	StreamTrack *m_pStreamTrack;           // not upstream: StreamPrefetch's state, one per session
 	ScriptInterface *script;
 	INTERPRETERHANDLE hScnInterp;
 
