@@ -143,6 +143,8 @@ public:
 		bool buildings = true;                                     // BLDG lines are used
 		bool sky = true;                                           // clouds and base flattening at startup
 		bool crossDisk = false;                                    // tests: the rename out of TileStream/tmp fails as across disks
+		std::function<void (int, int, int)> onBuild;              // tests: a tile's build starting on its worker (L, ilat, ilng)
+		std::function<void ()> evictScanned;                       // tests: Evict between its scan and its commit
 	};
 
 	explicit TileStream (const Options &opt);

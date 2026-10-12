@@ -1014,6 +1014,7 @@ void TileStream::Impl::Build (Job J)
 	Body &B = *bodies[J.body];
 	const TsBodyCfg &C = B.cfg;
 	int L = KL (J.key), la = KLat (J.key), ln = KLng (J.key);
+	if (opt.onBuild) opt.onBuild (L, la, ln);
 	const TsSource &sv = J.fallback ? C.fallback : C.surf;
 	auto decode = [] (const std::vector<Src> &v, std::vector<QImage> &out) {
 		for (const Src &s : v) {
@@ -1219,6 +1220,7 @@ QImage TileStream::Impl::Recall (uint64_t id)
 // to a unique file in TileStream/tmp, then renamed into place: the client never reads half a file
 bool TileStream::Impl::Write (const Body &B, const std::string &path, const std::string &bytes)
 {
+	if (ro) return false;
 	std::error_code ec;
 	fs::create_directories (fs::path (path).parent_path(), ec);
 	int seq;
@@ -1233,7 +1235,6 @@ bool TileStream::Impl::Write (const Body &B, const std::string &path, const std:
 		o.close();
 		return !o.fail();
 	};
-	if (ro) return false;
 	std::error_code rc;
 	if (!put (tmp)) ec = std::make_error_code (std::errc::io_error);
 	else if (opt.crossDisk) ec = std::make_error_code (std::errc::cross_device_link);
@@ -1421,6 +1422,7 @@ void TileStream::Impl::Evict ()
 				if (e.elev) egone.push_back (e.k);
 			}
 		}
+		if (opt.evictScanned) opt.evictScanned ();
 		std::lock_guard<std::mutex> lk (mx);
 		B.bytes = total;
 		B.bytesKnown = true;
