@@ -9,6 +9,7 @@
 #include "Help.h"
 #include "resource.h"
 #include "ResDialog.h"
+#include "TabStream.h" // not upstream
 
 //=============================================================================
 
@@ -39,6 +40,7 @@ bool orbiter::OptionsTab::OpenHelp()
 void orbiter::OptionsTab::LaunchpadShowing(bool show)
 {
 	if (show) UpdatePages(true);
+	else OptionsPage_Stream::StopPrefetch(); // not upstream: before a session starts its own tile stream
 }
 
 // ----------------------------------------------------------------------

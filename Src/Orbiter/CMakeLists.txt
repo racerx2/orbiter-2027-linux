@@ -48,6 +48,7 @@ set(common_src
 	TileStreamCfg.cpp # not upstream
 	TileStreamImg.cpp # not upstream
 	TileStreamNet.cpp # not upstream
+	TabStream.cpp # not upstream: Launchpad Earth streaming page
 # Dialogs
 	CustomControls.cpp
 	DialogWin.cpp

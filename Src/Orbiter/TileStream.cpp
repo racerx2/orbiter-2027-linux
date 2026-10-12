@@ -1036,3 +1036,234 @@ void TileStream::Evict ()
 {
 	d->Evict();
 }
+
+// -----------------------------------------------------------------------
+// not upstream: Launchpad cache controls and region prefetch (TabStream.cpp)
+
+#include <cmath>
+
+namespace {
+
+std::vector<uint64_t> ReadIdx (const std::string &file)
+{
+	std::vector<uint64_t> v;
+	std::ifstream f (file);
+	std::string line;
+	while (std::getline (f, line)) {
+		std::istringstream is (line);
+		int L, a, b;
+		if (!(is >> L >> a >> b) || L < 1 || L > 21 || a < 0 || b < 0) continue;
+		v.push_back (Key (L, a, b));
+	}
+	std::sort (v.begin(), v.end());
+	v.erase (std::unique (v.begin(), v.end()), v.end());
+	return v;
+}
+
+// to <file>.new, then renamed over it
+bool WriteIdx (const std::string &file, const std::vector<uint64_t> &v)
+{
+	std::string tmp = file + ".new";
+	std::error_code ec;
+	{
+		std::ofstream f (tmp, std::ios::trunc);
+		for (uint64_t k : v) f << KL (k) << ' ' << KLat (k) << ' ' << KLng (k) << '\n';
+		f.close();
+		if (f.fail()) {
+			fs::remove (tmp, ec);
+			return false;
+		}
+	}
+	fs::rename (tmp, file, ec);
+	return !ec;
+}
+
+std::string CleanDir (std::string dir)
+{
+	std::replace (dir.begin(), dir.end(), '\\', '/');
+	while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
+	return dir;
+}
+
+uint64_t TileBytes (const std::string &dir, uint64_t k)
+{
+	uint64_t n = 0;
+	for (const char *layer : {"Surf", "Mask", "Elev"}) {
+		std::error_code ec;
+		uint64_t s = fs::file_size (Tile (dir, layer, k), ec);
+		if (!ec) n += s;
+	}
+	return n;
+}
+
+}
+
+uint64_t TileStream::CacheBytes (const std::string &bodyDir, uint64_t *total, size_t *tiles)
+{
+	std::string dir = CleanDir (bodyDir);
+	uint64_t n = 0;
+	size_t t = 0;
+	for (uint64_t k : ReadIdx (dir + "/TileStream/written.idx")) {
+		uint64_t b = TileBytes (dir, k);
+		if (b) { n += b; t++; }
+	}
+	if (tiles) *tiles = t;
+	if (total) {
+		*total = 0;
+		for (const char *layer : {"/Surf", "/Mask", "/Elev"}) {
+			std::error_code ec;
+			for (fs::recursive_directory_iterator it (dir + layer, ec), end; !ec && it != end; it.increment (ec)) {
+				std::error_code fe;
+				if (!it->is_regular_file (fe)) continue;
+				uint64_t s = it->file_size (fe);
+				if (!fe) *total += s;
+			}
+		}
+	}
+	return n;
+}
+
+// files first, then the indexes: a failed rewrite only lists files that are gone
+size_t TileStream::Clear (const std::string &bodyDir, bool keepBase)
+{
+	std::string dir = CleanDir (bodyDir), ts = dir + "/TileStream/";
+	std::vector<uint64_t> kept;
+	size_t n = 0;
+	std::error_code ec;
+	bool had = fs::exists (ts + "written.idx", ec);
+	for (uint64_t k : ReadIdx (ts + "written.idx")) {
+		if (keepBase && KL (k) <= 8) {
+			kept.push_back (k);
+			continue;
+		}
+		bool any = false;
+		for (const char *layer : {"Surf", "Mask", "Elev"}) {
+			std::string p = Tile (dir, layer, k);
+			if (fs::remove (p, ec)) any = true;
+			fs::remove (fs::path (p).parent_path(), ec); // its row folder, when empty
+		}
+		if (any) n++;
+	}
+	if (had) WriteIdx (ts + "written.idx", kept);
+	if (fs::exists (ts + "refetch.idx", ec)) {
+		std::vector<uint64_t> r;
+		for (uint64_t k : ReadIdx (ts + "refetch.idx"))
+			if (std::binary_search (kept.begin(), kept.end(), k)) r.push_back (k);
+		WriteIdx (ts + "refetch.idx", r);
+	}
+	fs::remove (ts + "none.idx", ec);
+	if (!keepBase) fs::remove (ts + "ocean.idx", ec);
+	for (fs::directory_iterator it (ts + "tmp", ec), end; !ec && it != end; it.increment (ec)) {
+		std::error_code rc;
+		fs::remove (it->path(), rc);
+	}
+	return n;
+}
+
+std::vector<TileStream::TileKey> TileStream::RegionKeys (double lat, double lng, double radiusKm, int maxL)
+{
+	const double D = 3.14159265358979323846 / 180.0, R = 6371.0;
+	const size_t maxKeys = 100000; // a region past this is cut off: the caller says so
+	std::vector<TileKey> v;
+	if (!(radiusKm >= 0.0) || !(lat >= -90.0 && lat <= 90.0) || !std::isfinite (lng)) return v;
+	maxL = std::min (maxL, 21);
+	lng = std::remainder (lng, 360.0);
+	double ang = radiusKm / R;
+	auto dist = [&] (double la, double ln) {
+		double s1 = std::sin ((la - lat) * D / 2.0), s2 = std::sin ((ln - lng) * D / 2.0);
+		return 2.0 * std::asin (std::min (1.0, std::sqrt (s1 * s1 + std::cos (lat * D) * std::cos (la * D) * s2 * s2)));
+	};
+	double lat0 = std::max (-90.0, lat - ang / D), lat1 = std::min (90.0, lat + ang / D);
+	bool allLng = lat0 <= -90.0 || lat1 >= 90.0;
+	double dlng = 180.0;
+	if (!allLng) {
+		double s = std::sin (ang) / std::cos (lat * D);
+		if (s >= 1.0) allLng = true;
+		else dlng = std::asin (s) / D;
+	}
+	for (int L = 1; L <= maxL; L++) {
+		if (L < 4) {
+			v.push_back ({L, 0, 0});
+			continue;
+		}
+		int nlat = 1 << (L - 4), nlng = 1 << (L - 3);
+		double sz = 180.0 / nlat;
+		int r0 = std::clamp ((int)std::floor ((90.0 - lat1) / sz), 0, nlat - 1);
+		int r1 = std::clamp ((int)std::floor ((90.0 - lat0) / sz), 0, nlat - 1);
+		int c0 = 0, c1 = nlng - 1;
+		if (!allLng) {
+			c0 = (int)std::floor ((lng - dlng + 180.0) / sz);
+			c1 = (int)std::floor ((lng + dlng + 180.0) / sz);
+			if (c1 - c0 + 1 >= nlng) c0 = 0, c1 = nlng - 1;
+		}
+		for (int r = r0; r <= r1; r++) {
+			double n = 90.0 - r * sz, s = n - sz;
+			double pla = std::clamp (lat, s, n);
+			for (int c = c0; c <= c1; c++) {
+				int cc = ((c % nlng) + nlng) % nlng;
+				double w = -180.0 + cc * sz, e = w + sz;
+				double dw = std::remainder (lng - w, 360.0), de = std::remainder (lng - e, 360.0);
+				double pln = (dw >= 0.0 && de <= 0.0) ? lng : (std::fabs (dw) < std::fabs (de) ? w : e);
+				if (dist (pla, pln) > ang + 1e-12) continue;
+				v.push_back ({L, r, cc});
+				if (v.size() >= maxKeys) return v;
+			}
+		}
+	}
+	return v;
+}
+
+// a level starts once every coarser key is answered: an ocean or missing parent rules out its children
+int TileStream::Prefetch (Options opt, const std::string &body, const std::vector<TileKey> &keys, Progress &p, const std::atomic<bool> &cancel, double stallSec)
+{
+	opt.offline = false;
+	opt.staleSec = 1e9; // a prefetch want never goes stale
+	if (std::find (opt.bodies.begin(), opt.bodies.end(), body) == opt.bodies.end()) opt.bodies.push_back (body);
+	std::string dir = opt.bodyDir ? CleanDir (opt.bodyDir (body)) : std::string();
+	p.total = (int)keys.size();
+	TileStream ts (opt);
+	if (!ts.Enabled (body)) return 3;
+	std::vector<size_t> open;
+	size_t next = 0, pending = 0;
+	Clock::time_point last = Clock::now();
+	auto answer = [&] (size_t i, int r) {
+		const TileKey &k = keys[i];
+		if (r > 0) {
+			p.have++;
+			p.bytes += TileBytes (dir, Key (k.L, k.ilat, k.ilng));
+		} else p.none++;
+		p.done++;
+		last = Clock::now();
+	};
+	for (;;) {
+		if (cancel) return 1;
+		for (size_t j = 0; j < open.size(); ) {
+			const TileKey &k = keys[open[j]];
+			int r = ts.Want (body, k.L, k.ilat, k.ilng, 0);
+			if (r) {
+				answer (open[j], r);
+				open[j] = open.back();
+				open.pop_back();
+			} else j++;
+		}
+		int lmin = 1 << 30;
+		for (size_t i : open) lmin = std::min (lmin, keys[i].L);
+		while (next < keys.size() && open.size() < 48 && ts.Pending() < 200 && keys[next].L <= lmin) {
+			const TileKey &k = keys[next];
+			int r = ts.Want (body, k.L, k.ilat, k.ilng, 0);
+			if (r) answer (next, r);
+			else {
+				open.push_back (next);
+				lmin = std::min (lmin, k.L);
+			}
+			next++;
+		}
+		size_t pn = ts.Pending();
+		if (pn < pending && next == keys.size() && open.empty()) last = Clock::now(); // the Elev jobs moving
+		pending = pn;
+		bool stalled = std::chrono::duration<double> (Clock::now() - last).count() > stallSec;
+		if (next == keys.size() && open.empty() && (!pn || stalled)) return 0; // an Elev that never comes doesn't fail the tiles
+		if (stalled) return 2;
+		std::this_thread::sleep_for (std::chrono::milliseconds (100));
+	}
+}
