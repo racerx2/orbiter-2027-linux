@@ -86,6 +86,16 @@ the same way (`TileStreamBuildings`).
   contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium
 - Buildings: © OpenMapTiles © OpenStreetMap contributors (ODbL), OpenFreeMap
 
+The Launchpad page Options > Earth streaming turns streaming on or off, sets
+offline mode and the cache limit (default 2048 MB; the tiles used longest ago
+go first, levels 8 and below are always kept), shows the cache size, clears
+the streamed tiles (only files the stream wrote) and downloads a region ahead
+of time around a base or a position, for flying offline.
+
+Privacy: tile requests go only to the servers listed in
+`Config/TileStream.cfg`, and they show which part of Earth is being viewed.
+Offline mode makes no requests.
+
 ## Help
 
 Help files are located in the Doc subfolder (if you built them with `-DORBITER_MAKE_DOC=ON`).

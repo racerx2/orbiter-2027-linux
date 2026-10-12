@@ -1338,3 +1338,167 @@ TEST_CASE ("The size cap takes building tiles too", "[TileStream]")
 	CHECK (fs::exists (tex / "Bldg" / "14" / "10" / "3.bld")); // not ours
 	CHECK (Read (tex / "TileStream" / "bldg.idx") == "14 10 2\n");
 }
+
+// not upstream: Launchpad cache controls and region prefetch
+
+static bool HasKey (const std::vector<TileStream::TileKey> &v, int L, int la, int ln)
+{
+	for (const TileStream::TileKey &k : v) if (k.L == L && k.ilat == la && k.ilng == ln) return true;
+	return false;
+}
+
+TEST_CASE ("A region lists its tiles coarse to fine, inside the grid and around the centre", "[TileStream]")
+{
+	double lat = 28.5244, lng = -80.6508; // KSC
+	std::vector<TileStream::TileKey> v = TileStream::RegionKeys (lat, lng, 5.0, 15);
+	REQUIRE (!v.empty());
+	CHECK (v.front().L == 1);
+	CHECK (v.back().L == 15);
+	int n15 = 0;
+	for (size_t i = 0; i < v.size(); i++) {
+		const TileStream::TileKey &k = v[i];
+		if (i) CHECK (k.L >= v[i - 1].L);
+		if (k.L < 4) { CHECK ((k.ilat == 0 && k.ilng == 0)); continue; }
+		CHECK (k.ilat >= 0);
+		CHECK (k.ilat < 1 << (k.L - 4));
+		CHECK (k.ilng >= 0);
+		CHECK (k.ilng < 1 << (k.L - 3));
+		double sz = 180.0 / (1 << (k.L - 4)), n = 90.0 - k.ilat * sz, w = -180.0 + k.ilng * sz;
+		CHECK (n - sz <= lat + 0.05); // 5 km is 0.045 degrees
+		CHECK (n >= lat - 0.05);
+		CHECK (w <= lng + 0.06);
+		CHECK (w + sz >= lng - 0.06);
+		if (k.L == 15) n15++;
+	}
+	CHECK (n15 >= 1);
+	CHECK (n15 <= 9);
+	for (int L = 4; L <= 15; L++) {
+		double sz = 180.0 / (1 << (L - 4));
+		CHECK (HasKey (v, L, (int)std::floor ((90.0 - lat) / sz), (int)std::floor ((lng + 180.0) / sz)));
+	}
+	size_t n16 = 0;
+	for (const TileStream::TileKey &k : TileStream::RegionKeys (lat, lng, 20.0, 16)) if (k.L == 16) n16++;
+	CHECK (n16 >= 50); // 1257 km^2 over 4.9 x 4.3 km tiles, plus the rim
+	CHECK (n16 <= 120);
+	std::vector<TileStream::TileKey> one = TileStream::RegionKeys (10.1, 20.1, 0.0, 12);
+	CHECK (one.size() == 12);
+	std::vector<TileStream::TileKey> dl = TileStream::RegionKeys (0.5, 179.99, 50.0, 10); // across the date line
+	CHECK (HasKey (dl, 10, 31, 0));
+	CHECK (HasKey (dl, 10, 31, 127));
+	int row0 = 0;
+	for (const TileStream::TileKey &k : TileStream::RegionKeys (89.9, 10.0, 50.0, 8)) if (k.L == 8 && k.ilat == 0) row0++;
+	CHECK (row0 == 32); // over the pole: every longitude
+	CHECK (TileStream::RegionKeys (95.0, 0.0, 5.0, 10).empty());
+	CHECK (TileStream::RegionKeys (60.0, 0.0, 400.0, 18).size() == 100000); // cut off
+}
+
+// a written.idx with L8, L9 and L12 tiles of ours, one of someone else's, and an Archive
+static fs::path CacheDir (const fs::path &root)
+{
+	fs::path tex = root / "Earth";
+	auto put = [&] (const char *layer, const char *rel, size_t n) {
+		fs::path p = tex / layer / rel;
+		fs::create_directories (p.parent_path());
+		std::ofstream (p, std::ios::binary) << std::string (n, 'x');
+	};
+	put ("Surf", "09/000000/000000.dds", 1000);
+	put ("Mask", "09/000000/000000.dds", 1000);
+	put ("Surf", "12/000001/000002.dds", 1000);
+	put ("Mask", "12/000001/000002.dds", 1000);
+	put ("Elev", "12/000001/000002.elv", 500);
+	put ("Surf", "08/000000/000000.dds", 200);
+	put ("Surf", "09/000000/000001.dds", 300); // not ours
+	put ("Archive", "Surf.tree", 700);
+	fs::create_directories (tex / "TileStream" / "tmp");
+	std::ofstream (tex / "TileStream" / "written.idx") << "9 0 0\n12 1 2\n8 0 0\n13 5 5\n";
+	std::ofstream (tex / "TileStream" / "refetch.idx") << "9 0 0\n8 0 0\n";
+	std::ofstream (tex / "TileStream" / "none.idx") << "14 1 1 20000\n";
+	std::ofstream (tex / "TileStream" / "ocean.idx") << "10 3 3\n";
+	std::ofstream (tex / "TileStream" / "tmp" / "123.4.tmp") << "x";
+	return tex;
+}
+
+TEST_CASE ("The cache size counts the streamed tiles and every loose tile", "[TileStream]")
+{
+	Tmp t;
+	fs::path tex = CacheDir (t.root);
+	uint64_t total = 0;
+	size_t tiles = 0;
+	CHECK (TileStream::CacheBytes (tex.string() + "/", &total, &tiles) == 4700);
+	CHECK (tiles == 3);
+	CHECK (total == 5000);
+	CHECK (TileStream::CacheBytes ((t.root / "none").string()) == 0);
+}
+
+TEST_CASE ("Clearing removes only the streamed tiles, base levels on request, and rewrites the indexes", "[TileStream]")
+{
+	Tmp t;
+	fs::path tex = CacheDir (t.root), ts = tex / "TileStream";
+	CHECK (TileStream::Clear (tex.string(), true) == 2);
+	CHECK_FALSE (fs::exists (tex / "Surf" / "09" / "000000" / "000000.dds"));
+	CHECK_FALSE (fs::exists (tex / "Mask" / "12" / "000001" / "000002.dds"));
+	CHECK_FALSE (fs::exists (tex / "Elev" / "12" / "000001" / "000002.elv"));
+	CHECK_FALSE (fs::exists (tex / "Surf" / "12" / "000001")); // its empty row folder
+	CHECK (fs::exists (tex / "Surf" / "08" / "000000" / "000000.dds"));
+	CHECK (fs::exists (tex / "Surf" / "09" / "000000" / "000001.dds"));
+	CHECK (fs::exists (tex / "Archive" / "Surf.tree"));
+	CHECK (Read (ts / "written.idx") == "8 0 0\n");
+	CHECK (Read (ts / "refetch.idx") == "8 0 0\n");
+	CHECK_FALSE (fs::exists (ts / "none.idx"));
+	CHECK (fs::exists (ts / "ocean.idx"));
+	CHECK (fs::is_empty (ts / "tmp"));
+	CHECK (TileStream::Clear (tex.string(), false) == 1);
+	CHECK_FALSE (fs::exists (tex / "Surf" / "08" / "000000" / "000000.dds"));
+	CHECK (fs::exists (tex / "Surf" / "09" / "000000" / "000001.dds"));
+	CHECK (fs::exists (tex / "Archive" / "Surf.tree"));
+	CHECK (Read (ts / "written.idx").empty());
+	CHECK_FALSE (fs::exists (ts / "ocean.idx"));
+	CHECK (TileStream::Clear ((t.root / "none").string(), false) == 0);
+	CHECK_FALSE (fs::exists (t.root / "none" / "TileStream" / "written.idx"));
+}
+
+TEST_CASE ("A region prefetch from file:// sources fetches every tile coarse to fine and can be cancelled", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	s.Required (true);
+	std::vector<TileStream::TileKey> keys = TileStream::RegionKeys (0.0, 0.0, 50.0, 9); // on a corner: 4 tiles a level from L5
+	REQUIRE (keys.size() == 25);
+	for (const TileStream::TileKey &k : keys)
+		if (k.L >= 5) {
+			s.EoxTile (k.L, k.ilat, k.ilng, QColor (120, 100, 80));
+			s.Masks (k.L, k.ilat, k.ilng);
+		}
+	fs::path tex = t.root / "Earth";
+	TileStream::Options o;
+	o.cfgfile = s.Cfg (t.root / "ts.cfg", s.url + "/eox");
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.offline = true; // a prefetch is always online
+	TileStream::Progress p;
+	std::atomic<bool> cancel {false};
+	CHECK (TileStream::Prefetch (o, "Earth", keys, p, cancel, 20.0) == 0);
+	CHECK (p.total == 25);
+	CHECK (p.done == 25);
+	CHECK (p.have == 25);
+	CHECK (p.none == 0);
+	CHECK (p.bytes >= 20u * 2 * 174904);
+	for (const TileStream::TileKey &k : keys) {
+		char rel[40];
+		snprintf (rel, sizeof rel, "%02d/%06d/%06d.dds", k.L, k.ilat, k.ilng);
+		CHECK (fs::exists (tex / "Surf" / rel));
+		CHECK (fs::exists (tex / "Mask" / rel));
+	}
+	size_t tiles = 0;
+	CHECK (TileStream::CacheBytes (tex.string(), nullptr, &tiles) > 0);
+	CHECK (tiles == 25);
+	TileStream::Progress q;
+	CHECK (TileStream::Prefetch (o, "Earth", keys, q, cancel, 20.0) == 0); // all on disk
+	CHECK (q.have == 25);
+	cancel = true;
+	TileStream::Progress c;
+	CHECK (TileStream::Prefetch (o, "Earth", TileStream::RegionKeys (45.0, 45.0, 50.0, 9), c, cancel, 20.0) == 1);
+	o.cfgfile = (t.root / "nothing.cfg").string();
+	cancel = false;
+	CHECK (TileStream::Prefetch (o, "Earth", keys, c, cancel, 20.0) == 3);
+}

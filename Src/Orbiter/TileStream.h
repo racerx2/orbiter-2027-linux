@@ -4,6 +4,7 @@
 #define __TILESTREAM_H
 
 #include <array>
+#include <atomic> // not upstream: Progress
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -163,6 +164,18 @@ public:
 
 	size_t Pending () const; // tests
 	void Evict ();           // tests: the size cap on the caller's thread
+
+	// not upstream: Launchpad cache controls and region prefetch (TabStream.cpp)
+	struct TileKey { int L, ilat, ilng; };
+	struct Progress { std::atomic<int> total {0}, done {0}, have {0}, none {0}; std::atomic<uint64_t> bytes {0}; };
+	// bytes of the tiles listed in written.idx; total: every loose file in Surf, Mask and Elev
+	static uint64_t CacheBytes (const std::string &bodyDir, uint64_t *total = nullptr, size_t *tiles = nullptr);
+	// deletes the files of written.idx (L <= 8 kept with keepBase) and rewrites the indexes; tiles removed
+	static size_t Clear (const std::string &bodyDir, bool keepBase);
+	// tiles within radiusKm of (lat, lng) degrees, L1..maxL, coarse to fine
+	static std::vector<TileKey> RegionKeys (double lat, double lng, double radiusKm, int maxL);
+	// a headless stream fetching keys coarse to fine; 0 done, 1 cancelled, 2 no progress for stallSec, 3 no stream
+	static int Prefetch (Options opt, const std::string &body, const std::vector<TileKey> &keys, Progress &p, const std::atomic<bool> &cancel, double stallSec = 120.0);
 
 	struct Impl;
 private:
