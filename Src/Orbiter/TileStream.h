@@ -3,6 +3,7 @@
 #ifndef __TILESTREAM_H
 #define __TILESTREAM_H
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -29,7 +30,36 @@ struct TsBodyCfg {
 	double waterGrey = 101.5;  // water at or above this grey
 	int fill[3] = {24, 44, 78}; // EOX open-ocean fill colour
 	std::vector<std::string> credit;
+	std::string cloudSmall, cloudBig; // not upstream (earth-sky): CLOUD equirect images, L1-L5 and up to cloudMax
+	int cloudMax = 7;
 };
+
+// not upstream (earth-sky): a surface base's footprint for Elev_mod flattening
+struct TsBase {
+	struct Part { double n0, e0, n1, e1, r; }; // capsule, metres north/east of the base point
+	std::string name;
+	double lng = 0.0, lat = 0.0; // radians
+	std::vector<Part> parts;
+	double ext = 0.0;            // reach of the furthest part, metres
+};
+bool TsReadBase (const std::string &file, TsBase &b);
+
+namespace TsSky {
+	QImage Cloud (const QImage &src, int L, int ilat, int ilng);  // RGBA white, alpha = density
+	std::string Dds5 (const QImage &img);                          // DXT5, full mip chain
+	double ElvAt (const std::string &elv, double lng, double lat);  // radians; NaN outside
+	double TerrAt (const QImage &tile, int z, int row, int col, double lng, double lat); // degrees
+	void TerrTile (double lng, double lat, int z, int &row, int &col);
+	bool Hits (const TsBase &b, double R, int L, int ilat, int ilng, double blend);
+	std::string ElevMod (int L, int ilat, int ilng, const std::vector<std::pair<const TsBase *, double>> &bases, double R, double scale, const std::string &elev, double blend);
+}
+
+namespace TsTrack {
+	struct Pt { double lng, lat, t; };
+	std::vector<Pt> Propagate (const double r0[3], const double v0[3], double mu, double omega, double horizon, int n);
+	std::vector<std::array<int, 3>> Keys (const std::vector<Pt> &pts, int L, int half);
+	int Level (double alt, int lmin, int lmax);
+}
 
 bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::string &err);
 
@@ -68,6 +98,9 @@ public:
 		std::function<Clock::time_point ()> now;                  // tests
 		int maxActive = 12;                                        // tests: 0 holds every job
 		double staleSec = 2.0;
+		std::function<std::string (const std::string &)> baseDir; // not upstream (earth-sky): Config/<Body>/Base, resolved
+		std::function<double (const std::string &)> radius;       // metres
+		int cloudWait = 15;                                        // seconds for the small cloud image at startup
 	};
 
 	explicit TileStream (const Options &opt);
@@ -81,6 +114,10 @@ public:
 	int Want (const std::string &body, int L, int ilat, int ilng, int flags);
 	int Done (const std::string &body, int *keys, int nmax); // (L, ilat, ilng) triples
 	std::string Credit (const std::string &body) const;
+
+	// not upstream (earth-sky): a ground-track tile, below camera wants and above refetches; 1 queued or there, 0 queue full, -1 never
+	int Prefetch (const std::string &body, int L, int ilat, int ilng);
+	size_t Prefetching () const; // tests
 
 	size_t Pending () const; // tests
 	void Evict ();           // tests: the size cap on the caller's thread

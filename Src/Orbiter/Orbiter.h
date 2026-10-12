@@ -387,6 +387,7 @@ private:
 	std::string snote_stream_body;         // not upstream: whose credits snote_stream holds
 	void StartTileStream ();               // not upstream
 	void StopTileStream ();                // not upstream
+	void StreamPrefetch ();                // not upstream: ground-track tiles at high time acceleration
 	ScriptInterface *script;
 	INTERPRETERHANDLE hScnInterp;
 

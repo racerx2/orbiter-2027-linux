@@ -1123,6 +1123,7 @@ void Orbiter::SingleFrame ()
 		if (bAllowInput) bActive = true, bAllowInput = false;
 		if (BeginTimeStep (bRunning)) {
 			UpdateWorld();
+			StreamPrefetch (); // not upstream
 			EndTimeStep (bRunning);
 			if (bVisible) {
 				if (bActive) UserInput ();
@@ -1821,6 +1822,12 @@ void Orbiter::StartTileStream ()
 	o.offline = pConfig->bTileStreamOffline;
 	o.userAgent = "OrbiterLinux/" + std::to_string (oapiGetOrbiterVersion()) + " (+https://github.com/racerx2/orbiter-2027-linux)";
 	o.log = [] (const std::string &s) { LOGOUT ("%s", s.c_str()); };
+	o.baseDir = [this] (const std::string &name) { return oapiResolvePath ((std::string (pConfig->CfgDirPrm.ConfigDir) + name + "/Base").c_str()); }; // not upstream (earth-sky)
+	o.radius = [] (const std::string &name) {
+		for (size_t i = 0; i < g_psys->nPlanet(); i++)
+			if (name == g_psys->GetPlanet ((int)i)->Name()) return g_psys->GetPlanet ((int)i)->Size();
+		return 6.37101e6;
+	};
 	m_pTileStream = new TileStream (o);
 	snote_stream = gclient->clbkCreateAnnotation ();
 	if (snote_stream) {
@@ -1835,6 +1842,55 @@ void Orbiter::StopTileStream ()
 {
 	if (snote_stream) { delete snote_stream; snote_stream = NULL; }
 	if (m_pTileStream) { delete m_pTileStream; m_pTileStream = NULL; }
+}
+
+// not upstream (earth-sky): once a real second at 10x or more, the Surf tiles under the focus vessel's
+// ground track for the next 45 real seconds (one orbit at most), queued below the camera's wants
+void Orbiter::StreamPrefetch ()
+{
+	static std::chrono::steady_clock::time_point next;
+	static std::vector<TsTrack::Pt> prev;
+	static double prevT = 0.0;
+	static int calls = 0;
+	if (!m_pTileStream || !g_focusobj || td.Warp() < 10.0) { prev.clear(); return; }
+	auto now = std::chrono::steady_clock::now();
+	if (now < next) return;
+	next = now + std::chrono::seconds (1);
+	const CelestialBody *cb = g_focusobj->ElRef();
+	if (!cb || cb->Type() != OBJTP_PLANET || !m_pTileStream->Enabled (cb->Name())) return;
+	Vector p = tmul (cb->GRot(), g_focusobj->GPos() - cb->GPos()), v = tmul (cb->GRot(), g_focusobj->GVel() - cb->GVel());
+	double r0[3] = {p.x, p.y, p.z}, v0[3] = {v.x, v.y, v.z};
+	double mu = 6.67259e-11 * cb->Mass(), r = p.length(), a = 1.0 / (2.0 / r - v.length2() / mu);
+	double horizon = 45.0 * td.Warp();
+	if (a > 0) horizon = std::min (horizon, 2.0 * PI * sqrt (a * a * a / mu));
+	int L = TsTrack::Level (r - cb->Size(), 6, 14);
+	double span = PI / (1 << (L - 4)), rate = std::max (v.length() / r, 1e-6);
+	int n = std::clamp ((int)(horizon * rate / (0.25 * span)), 8, 2000);
+	std::vector<TsTrack::Pt> pts = TsTrack::Propagate (r0, v0, mu, 2.0 * PI / cb->RotT(), horizon, n);
+	if (pts.empty()) return;
+	std::string body = cb->Name();
+	int queued = 0;
+	for (int lv : {L - 2, L}) {
+		for (const auto &k : TsTrack::Keys (pts, lv, 1)) {
+			int q = m_pTileStream->Prefetch (body, k[0], k[1], k[2]);
+			if (!q) break;
+			queued += q > 0;
+		}
+	}
+	if (!prev.empty() && ++calls % 10 == 1) { // the last track against where the vessel is now
+		double dt = td.SimT0 - prevT, err = -1.0;
+		for (size_t i = 1; i < prev.size(); i++)
+			if (prev[i].t >= dt) {
+				double f = (dt - prev[i - 1].t) / std::max (1e-9, prev[i].t - prev[i - 1].t);
+				double lng = prev[i - 1].lng + f * remainder (prev[i].lng - prev[i - 1].lng, 2.0 * PI), lat = prev[i - 1].lat + f * (prev[i].lat - prev[i - 1].lat);
+				err = cb->Size() * 1e-3 * std::hypot (remainder (lng - pts[0].lng, 2.0 * PI) * cos (lat), lat - pts[0].lat);
+				break;
+			}
+		LOGOUT ("TileStream: prefetch %s L%d/L%d over %.0f s, %d tiles queued or there, %d waiting, track error %.1f km after %.0f s",
+			body.c_str(), L - 2, L, horizon, queued, (int)m_pTileStream->Prefetching(), err, dt);
+	}
+	prev = pts;
+	prevT = td.SimT0;
 }
 
 //-----------------------------------------------------------------------------

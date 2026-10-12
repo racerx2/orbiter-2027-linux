@@ -12,6 +12,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <thread>
 #include <unistd.h>
 
@@ -294,8 +295,12 @@ TEST_CASE ("The tile stream config reads its body and rejects bad lines", "[Tile
 	CHECK (b[0].elev.nmax == 15);
 	CHECK (b[0].elev.lmax == 16);
 	CHECK (b[0].elevScale == 0.5);
-	REQUIRE (b[0].credit.size() == 3);
+	REQUIRE (b[0].credit.size() == 4);
 	CHECK (b[0].credit[2] == "Elevation: Terrain Tiles on AWS (Mapzen, with SRTM, GMTED2010, ETOPO1 and others)");
+	CHECK (b[0].credit[3] == "Clouds: NASA Visible Earth");
+	CHECK (b[0].cloudSmall.find ("cloud_combined_2048.jpg") != std::string::npos);
+	CHECK (b[0].cloudBig.find ("cloud_combined_8192.tif") != std::string::npos);
+	CHECK (b[0].cloudMax == 7);
 	CHECK (b[0].credit[0].find ("EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016 & 2017)") != std::string::npos);
 	CHECK (b[0].credit[1].find ("OpenStreetMap contributors") != std::string::npos);
 	Tmp t;
@@ -682,4 +687,197 @@ TEST_CASE ("Refetches wait their turn and never block what the client asks for",
 	CHECK (ts.Pending() == 5); // the required set only
 	CHECK (ts.Want ("Earth", 14, 5, 5, 0) == 0);
 	CHECK (ts.Pending() == 6);
+}
+
+// earth-sky ---------------------------------------------------------------
+
+TEST_CASE ("The ground track follows a circular orbit and the planet turning under it", "[TileStream]")
+{
+	const double mu = 3.986e14, R = 6.371e6, r = R + 400e3, vc = std::sqrt (mu / r), T = 2 * M_PI * std::sqrt (r * r * r / mu);
+	double r0[3] = {r, 0, 0}, v0[3] = {0, 0, vc}; // equatorial, eastward (lng = atan2 (z, x))
+	auto still = TsTrack::Propagate (r0, v0, mu, 0.0, T / 4, 100);
+	REQUIRE (still.size() == 101);
+	CHECK (std::fabs (still[0].lng) < 1e-9);
+	CHECK (std::fabs (still.back().lng - M_PI / 2) < 1e-6);
+	CHECK (std::fabs (still.back().lat) < 1e-9);
+	double w = 2 * M_PI / 86164.1;
+	auto turning = TsTrack::Propagate (r0, v0, mu, w, T / 4, 100);
+	CHECK (std::fabs (turning.back().lng - (M_PI / 2 - w * T / 4)) < 1e-6);
+	double v1[3] = {0, vc * std::sin (0.9), vc * std::cos (0.9)}; // 51.6 deg inclined: the top of the track at that latitude
+	auto incl = TsTrack::Propagate (r0, v1, mu, 0.0, T / 4, 100);
+	CHECK (std::fabs (incl.back().lat - 0.9) < 1e-6);
+	double ve[3] = {0, 0, vc * 1.5}; // escape: stepped, still moving east
+	auto esc = TsTrack::Propagate (r0, ve, mu, 0.0, 600, 60);
+	CHECK (esc.back().lng > 0.1);
+	CHECK (TsTrack::Level (400e3, 6, 14) == 11);
+	CHECK (TsTrack::Level (100e6, 6, 14) == 6);
+	CHECK (TsTrack::Level (100.0, 6, 14) == 14);
+}
+
+TEST_CASE ("Ground-track keys run nearest first, one tile to each side, wrapping in longitude", "[TileStream]")
+{
+	std::vector<TsTrack::Pt> pts;
+	for (int i = 0; i <= 40; i++) pts.push_back ({remainder (M_PI - 0.05 + i * 0.0025, 2 * M_PI), 0.001, (double)i});
+	auto k = TsTrack::Keys (pts, 8, 1); // L8: 16 x 32 tiles, 11.25 deg
+	REQUIRE (!k.empty());
+	CHECK (k[0][0] == 8);
+	CHECK (k[0][1] == 6);
+	CHECK (k[0][2] == 30); // 177 deg east is tile 31; one to the west first
+	bool wrapped = false;
+	std::set<std::array<int, 3>> s (k.begin(), k.end());
+	CHECK (s.size() == k.size());
+	for (auto &x : k) { CHECK (x[1] >= 6); CHECK (x[1] <= 8); wrapped |= x[2] == 0; }
+	CHECK (wrapped); // across 180 deg to tile 0
+	CHECK (TsTrack::Keys (pts, 3, 1).empty());
+}
+
+TEST_CASE ("Prefetch waits below the camera's wants, never goes stale, and is capped", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	std::string cfg = (t.root / "ts.cfg").string();
+	std::ofstream (cfg) << "BODY Earth\nSURF eox file:///none/{z}/{row}/{col} 1 16\nLIGHTS gibs file:///none/{n}/{row}/{col} 7\nWATER gibs file:///none/{n}/{row}/{col} 8\nEND\n";
+	std::atomic<int64_t> ms {0};
+	auto t0 = std::chrono::steady_clock::now();
+	TileStream::Options o;
+	o.cfgfile = cfg;
+	o.bodyDir = [&] (const std::string &) { return (t.root / "Earth").string(); };
+	o.bodies = {"Earth"};
+	o.maxActive = 0;
+	o.now = [&] { return t0 + std::chrono::milliseconds (ms.load()); };
+	TileStream ts (o);
+	size_t base = ts.Pending();
+	for (int i = 0; i < 64; i++) CHECK (ts.Prefetch ("Earth", 12, 10, i) == 1);
+	CHECK (ts.Prefetch ("Earth", 12, 10, 64) == 0); // full
+	CHECK (ts.Prefetch ("Earth", 12, 10, 3) == 1);  // already queued
+	CHECK (ts.Prefetch ("Earth", 3, 0, 0) == -1);
+	CHECK (ts.Prefetch ("Mars", 12, 0, 0) == -1);
+	CHECK (ts.Prefetching() == 64);
+	CHECK (ts.Want ("Earth", 12, 10, 5, 0) == 0); // a want takes the prefetch over
+	CHECK (ts.Prefetching() == 63);
+	ms = 3000;
+	CHECK (WaitFor ([&] { return ts.Pending() == base + 63; }, 2.0)); // the want went stale, the prefetches stay
+	for (int i = 0; i < 300; i++) ts.Want ("Earth", 14, 0, i, 0);
+	CHECK (ts.Pending() == 256);
+	CHECK (ts.Prefetching() == 0); // the cap takes prefetches before wants
+}
+
+TEST_CASE ("Prefetch never takes every slot from the camera's wants", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	std::string cfg = (t.root / "ts.cfg").string();
+	std::ofstream (cfg) << "BODY Earth\nSURF eox http://127.0.0.1:9/{z}/{row}/{col} 1 16\nLIGHTS gibs http://127.0.0.1:9/{n}/{row}/{col} 7\nWATER gibs http://127.0.0.1:9/{n}/{row}/{col} 8\nEND\n";
+	fs::create_directories (t.root / "Earth" / "Surf");
+	for (int L = 1; L <= 4; L++)
+		for (int c = 0; c < (L == 4 ? 2 : 1); c++) {
+			fs::path p = t.root / "Earth" / "Surf" / (L < 10 ? "0" + std::to_string (L) : std::to_string (L)) / "000000" / ("00000" + std::to_string (c) + ".dds");
+			fs::create_directories (p.parent_path());
+			std::ofstream (p) << "x";
+		}
+	TileStream::Options o;
+	o.cfgfile = cfg;
+	o.bodyDir = [&] (const std::string &) { return (t.root / "Earth").string(); };
+	o.bodies = {"Earth"};
+	o.maxActive = 6;
+	o.staleSec = 1e9;
+	TileStream ts (o);
+	for (int i = 0; i < 20; i++) ts.Prefetch ("Earth", 12, 10, i);
+	CHECK (ts.Prefetching() >= 18); // at most 6 / 3 = 2 started, the rest wait (and none time out yet)
+	CHECK (ts.Want ("Earth", 12, 11, 0, 0) == 0);
+	CHECK (ts.Pending() >= 19);
+}
+
+TEST_CASE ("A base cfg becomes discs and runway capsules round its point", "[TileStream]")
+{
+	Tmp t;
+	std::string f = (t.root / "B.cfg").string();
+	std::ofstream (f) << "BASE-V2.0\nName = B\nLocation = -80.0 +28.0\nSize = 1000\nBEGIN_OBJECTLIST\nBLOCK\n\tPOS 100 0 200\n\tSCALE 30 20 40\nEND\n"
+		"LPAD2\n\tPOS -500 0 0\n\tSCALE 2\nEND\nRUNWAY\n\tEND1 0 0 -1000\n\tEND2 0 0 1000\n\tWIDTH 60\nEND\nEND_OBJECTLIST\n";
+	TsBase b;
+	REQUIRE (TsReadBase (f, b));
+	CHECK (std::fabs (b.lng * 180 / M_PI + 80.0) < 1e-9);
+	CHECK (std::fabs (b.lat * 180 / M_PI - 28.0) < 1e-9);
+	REQUIRE (b.parts.size() == 4);
+	CHECK (b.parts[0].n0 == -100); // x is south
+	CHECK (b.parts[0].e0 == 200);  // z is east
+	CHECK (std::fabs (b.parts[0].r - (25.0 + 15.0)) < 1e-9);
+	CHECK (b.parts[1].n0 == 500);
+	CHECK (b.parts[1].r == 95.0); // a pad, scaled
+	CHECK (b.parts[2].e0 == -1000);
+	CHECK (b.parts[2].e1 == 1000);
+	CHECK (b.parts[2].r == 50.0);
+	CHECK (b.ext >= 1050.0);
+	CHECK (!TsReadBase ((t.root / "none.cfg").string(), b));
+}
+
+static std::string FlatElv (int L, int ilat, int ilng, double m)
+{
+	double dh = 180.0 / (1 << (L - 4)), n = 90.0 - ilat * dh, w = -180.0 + ilng * dh;
+	std::string out (100, '\0');
+	auto i32 = [&out] (size_t at, int32_t v) { memcpy (&out[at], &v, 4); };
+	auto f64 = [&out] (size_t at, double v) { memcpy (&out[at], &v, 8); };
+	out[0] = 'E'; out[1] = 'L'; out[2] = 'E'; out[3] = 1;
+	i32 (4, 100); i32 (8, -16); i32 (12, 259); i32 (16, 259); i32 (20, 1); i32 (24, 1);
+	f64 (28, 0.5); f64 (36, 0.0);
+	f64 (44, (n - dh) * M_PI / 180); f64 (52, n * M_PI / 180); f64 (60, w * M_PI / 180); f64 (68, (w + dh) * M_PI / 180);
+	std::vector<int16_t> z (259 * 259, (int16_t)std::lround (m / 0.5));
+	out.append ((const char *)z.data(), z.size() * 2);
+	return out;
+}
+
+TEST_CASE ("Elev_mod lays a base flat at its height, blends to the terrain and keeps the rest", "[TileStream]")
+{
+	const double R = 6.37101e6;
+	int L = 14, ilat = 400, ilng = 1000;
+	double dh = 180.0 / (1 << (L - 4));
+	TsBase b;
+	b.lat = (90.0 - ilat * dh - 120.5 * dh / 256.0) * M_PI / 180.0; // inside the tile, about 20 deg north
+	b.lng = (-180.0 + ilng * dh + 99.5 * dh / 256.0) * M_PI / 180.0;
+	b.parts.push_back ({0, 0, 0, 0, 300.0});
+	b.ext = 300.0;
+	std::string elv = FlatElv (L, ilat, ilng, 100.0);
+	CHECK (std::fabs (TsSky::ElvAt (elv, b.lng, b.lat) - 100.0) < 1e-9);
+	CHECK (TsSky::Hits (b, R, L, ilat, ilng, 150.0));
+	CHECK (!TsSky::Hits (b, R, L, ilat, ilng + 2, 150.0));
+	std::string m = TsSky::ElevMod (L, ilat, ilng, {{&b, 20.0}}, R, 0.5, elv, 150.0);
+	REQUIRE (m.size() == 100 + 259 * 259 * 2);
+	int32_t dt;
+	memcpy (&dt, &m[8], 4);
+	CHECK (dt == -16);
+	auto node = [&] (int i, int j) { int16_t q; memcpy (&q, &m[100 + ((size_t)i * 259 + j) * 2], 2); return q; };
+	// the node nearest the base: row from the south, column from the west
+	double spacing = dh / 256.0 * M_PI / 180.0 * R;
+	int ci = (int)std::lround ((b.lat * 180 / M_PI - (90.0 - (ilat + 1) * dh)) / (dh / 256.0)) + 1, cj = (int)std::lround ((b.lng * 180 / M_PI + 180.0 - ilng * dh) / (dh / 256.0)) + 1;
+	CHECK (node (ci, cj) == 40); // 20 m
+	CHECK (node (ci, cj + (int)(250.0 / (spacing * std::cos (b.lat)))) == 40);
+	int ring = (int)std::lround (375.0 / spacing);
+	int16_t mid = node (ci + ring, cj);
+	CHECK (mid > 40);
+	CHECK (mid < 200);
+	CHECK (node (ci + (int)std::lround (600.0 / spacing), cj) == SHRT_MAX);
+	CHECK (node (0, 258) == SHRT_MAX);
+	CHECK (TsSky::ElevMod (L, ilat, ilng + 5, {{&b, 20.0}}, R, 0.5, elv, 150.0).empty());
+	CHECK (std::isnan (TsSky::ElvAt (elv, b.lng + 1.0, b.lat)));
+}
+
+TEST_CASE ("Cloud tiles are white DXT5 with the image's density in alpha", "[TileStream]")
+{
+	QImage src (2048, 1024, QImage::Format_Grayscale8);
+	for (int y = 0; y < 1024; y++) memset (src.scanLine (y), y < 512 ? 230 : 0, 2048);
+	QImage l1 = TsSky::Cloud (src, 1, 0, 0);
+	CHECK (l1.width() == 128);
+	QImage l5 = TsSky::Cloud (src, 5, 0, 1), l5s = TsSky::Cloud (src, 5, 1, 1), l9 = TsSky::Cloud (src, 9, 3, 7);
+	CHECK (l5.width() == 512);
+	CHECK (qAlpha (l5.pixel (100, 100)) > 200);
+	CHECK (qRed (l5.pixel (100, 100)) == 255);
+	CHECK (qAlpha (l5s.pixel (100, 100)) == 0);
+	CHECK (l9.width() == 512); // upsampled
+	std::string d = TsSky::Dds5 (l1);
+	CHECK (d.compare (84, 4, "DXT5") == 0);
+	CHECK (U32 (d, 28) == 8);
+	size_t sz = 128;
+	for (int s = 128; s >= 1; s /= 2) sz += (size_t)std::max (1, s / 4) * std::max (1, s / 4) * 16;
+	CHECK (d.size() == sz);
+	CHECK ((uchar)d[128] > 200); // the north half's first block: alpha endpoints high
 }

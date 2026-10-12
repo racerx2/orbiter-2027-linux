@@ -6,7 +6,9 @@
 #include <QFile>
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <condition_variable>
+#include <iterator>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -36,7 +38,7 @@ uint64_t Id (int body, uint64_t k) { return (uint64_t)body << 56 | k; }
 std::string Tile (const std::string &dir, const char *layer, uint64_t k)
 {
 	char b[48];
-	snprintf (b, sizeof b, "/%s/%02d/%06d/%06d.%s", layer, KL (k), KLat (k), KLng (k), strcmp (layer, "Elev") ? "dds" : "elv");
+	snprintf (b, sizeof b, "/%s/%02d/%06d/%06d.%s", layer, KL (k), KLat (k), KLng (k), strncmp (layer, "Elev", 4) ? "dds" : "elv");
 	return dir + b;
 }
 
@@ -59,6 +61,10 @@ struct TileStream::Impl {
 		std::vector<uint64_t> hits;
 		std::deque<uint64_t> refetchQueue; // fed in slowly when nothing else waits
 		std::unordered_set<uint64_t> elevSeen, noElev; // this session: checked for an Elev file, Elev failed
+		std::unordered_set<uint64_t> cloud, mod;        // earth-sky: Cloud and Elev_mod files this stream wrote
+		std::vector<TsBase> bases;
+		std::vector<double> baseH;                      // flat height per base, NaN until known
+		double radius = 6.37101e6;
 	};
 	struct Src {
 		std::string url;
@@ -70,6 +76,9 @@ struct TileStream::Impl {
 		uint64_t id = 0, key = 0;
 		int body = 0, stage = 0, tries = 0, waiting = 0; // stage 0 queued, 1 fetching, 2 building
 		bool required = false, low = false, fallback = false, elevOnly = false;
+		bool pre = false;            // earth-sky: ground-track prefetch
+		uint64_t seq = 0;
+		std::vector<int> baseIdx;    // earth-sky: bases whose centre tiles follow the grid in elev
 		Clock::time_point want, retry;
 		std::vector<Src> surf, lights, water, elev;
 	};
@@ -180,11 +189,24 @@ struct TileStream::Impl {
 	void MarkNone (Body &B, uint64_t k);
 	void CleanTmp ();
 	void Evict ();
+	// earth-sky: prefetch, clouds, base flattening (end of this file)
+	uint64_t preSeq = 0;
+	int Prefetch (const std::string &name, int L, int ilat, int ilng);
+	QByteArray Fetch (const std::string &url, int sec);
+	QByteArray Source (Body &B, const std::string &url, const char *file, int sec);
+	void Clouds (Body &B);
+	void BakeClouds (Body &B, const QImage &src, int l0, int l1);
+	void LoadBases (Body &B);
+	void BaseSrcs (Body &B, Job &J);
+	void BaseHeights (Body &B, const Job &J, const std::vector<QImage> &et);
+	bool Mods (Body &B, uint64_t k, const std::string &elv);
 };
 
 static bool Better (const TileStream::Impl::Job &a, const TileStream::Impl::Job &b)
 {
 	if (a.low != b.low) return !a.low;
+	if (a.pre != b.pre) return !a.pre; // earth-sky: prefetch below wants, above refetches
+	if (a.pre) return a.seq < b.seq;  // along the track, nearest first
 	if (a.required != b.required) return a.required;
 	if (a.elevOnly != b.elevOnly) return !a.elevOnly;
 	if (KL (a.key) != KL (b.key)) return KL (a.key) < KL (b.key);
@@ -213,7 +235,7 @@ TileStream::Impl::Impl (const Options &o)
 		while (b->dir.size() > 1 && b->dir.back() == '/') b->dir.pop_back();
 		std::error_code ec;
 		bool ok = !b->dir.empty();
-		for (const char *s : {"/Surf", "/Mask", "/Elev", "/TileStream/tmp"})
+		for (const char *s : {"/Surf", "/Mask", "/Elev", "/TileStream/tmp", "/Cloud", "/Elev_mod"}) // earth-sky: Cloud, Elev_mod
 			if (ok) { fs::create_directories (b->dir + s, ec); ok = !ec; }
 		if (!ok) {
 			Log ("TileStream: cannot create the tile folders in " + b->dir);
@@ -225,6 +247,7 @@ TileStream::Impl::Impl (const Options &o)
 	}
 	if (bodies.empty()) return;
 	if (!opt.offline) net = std::make_unique<TsNet> (opt.userAgent);
+	for (auto &b : bodies) { LoadBases (*b); Clouds (*b); } // earth-sky: before the planet visuals load their tiles
 	Clock::time_point now = opt.now();
 	nextHits = now + std::chrono::seconds (5);
 	nextEvict = now + std::chrono::seconds (300);
@@ -308,7 +331,7 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 	auto j = jobs.find (id);
 	if (j != jobs.end() && !j->second.elevOnly) {
 		j->second.want = now;
-		j->second.low = false;
+		j->second.low = j->second.pre = false; // earth-sky: a want takes over a prefetch
 		return 0;
 	}
 	if (!(flags & 1)) {
@@ -321,7 +344,7 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 		j = jobs.find (id);
 		if (j != jobs.end()) {
 			j->second.want = now;
-			j->second.low = false;
+			j->second.low = j->second.pre = false;
 			return 0; // an Elev job in the way: asked again when it is done
 		}
 	}
@@ -341,8 +364,9 @@ void TileStream::Impl::Trim ()
 		for (auto it = jobs.begin(); it != jobs.end(); ++it) {
 			const Job &J = it->second;
 			if (J.stage || J.required) continue;
-			bool jl = J.low || J.elevOnly, wl = worst != jobs.end() && (worst->second.low || worst->second.elevOnly);
-			if (worst == jobs.end() || (jl && !wl) || (jl == wl && J.want < worst->second.want)) worst = it;
+			auto rank = [] (const Job &x) { return x.low || x.elevOnly ? 2 : x.pre ? 1 : 0; }; // earth-sky: prefetch goes before wants
+			int jl = rank (J), wl = worst != jobs.end() ? rank (worst->second) : -1;
+			if (worst == jobs.end() || jl > wl || (jl == wl && J.want < worst->second.want)) worst = it;
 		}
 		if (worst == jobs.end()) return;
 		if (worst->second.low) bodies[worst->second.body]->refetchQueue.push_back (worst->second.key);
@@ -532,14 +556,14 @@ bool TileStream::Impl::AddLow (Clock::time_point now)
 
 void TileStream::Impl::StartJobs (Clock::time_point now)
 {
-	int active = 0;
-	for (auto &p : jobs) if (p.second.stage) active++;
+	int active = 0, preActive = 0, preCap = std::max (1, opt.maxActive / 3); // earth-sky: prefetch never takes every slot
+	for (auto &p : jobs) if (p.second.stage) { active++; preActive += p.second.pre; }
 	while (active < opt.maxActive) {
 		Job *best = nullptr;
 		int how = 0;
 		for (auto &p : jobs) {
 			Job &J = p.second;
-			if (J.stage || J.retry > now) continue;
+			if (J.stage || J.retry > now || (J.pre && preActive >= preCap)) continue;
 			int s = Startable (J, now);
 			if (s && (!best || Better (J, *best))) { best = &J; how = s; }
 		}
@@ -548,6 +572,7 @@ void TileStream::Impl::StartJobs (Clock::time_point now)
 			return;
 		}
 		if (how == 2) best->fallback = true;
+		preActive += best->pre;
 		Start (*best, now);
 		active++;
 	}
@@ -577,6 +602,7 @@ void TileStream::Impl::Start (Job &J, Clock::time_point now)
 		J.water = Srcs (B.cfg.water, L, la, ln);
 	}
 	if (J.elevOnly) J.elev = Srcs (B.cfg.elev, L, la, ln); // a Surf job never waits on Terrarium
+	if (J.elevOnly) BaseSrcs (B, J); // earth-sky: base centre heights still unknown
 	J.stage = 1;
 	J.waiting = 0;
 	for (std::vector<Src> *v : {&J.surf, &J.lights, &J.water, &J.elev})
@@ -617,7 +643,7 @@ void TileStream::Impl::DropStale (Clock::time_point now)
 	std::chrono::duration<double> stale (opt.staleSec);
 	for (auto it = jobs.begin(); it != jobs.end(); ) {
 		const Job &J = it->second;
-		if (!J.stage && !J.required && !J.low && !J.elevOnly && now - J.want > stale) it = jobs.erase (it);
+		if (!J.stage && !J.required && !J.low && !J.elevOnly && !J.pre && now - J.want > stale) it = jobs.erase (it);
 		else ++it;
 	}
 }
@@ -690,9 +716,10 @@ void TileStream::Impl::Build (Job J)
 	if (elevOk) {
 		std::vector<QImage> et;
 		if (decode (J.elev, et)) elv = TsImg::Elev (L, la, ln, TsImg::SrcGrid (C.elev, L, la, ln), et, C.elevScale);
+		if (!elv.empty()) BaseHeights (B, J, et); // earth-sky
 	}
 	if (J.elevOnly) {
-		bool ok = !elv.empty() && Write (B, Tile (B.dir, "Elev", J.key), elv);
+		bool ok = !elv.empty() && Mods (B, J.key, elv) && Write (B, Tile (B.dir, "Elev", J.key), elv); // earth-sky: its Elev_mod first
 		std::lock_guard<std::mutex> lk (mx);
 		if (!ok) {
 			B.noElev.insert (J.key);
@@ -986,7 +1013,7 @@ void TileStream::PrepareDirs (const std::string &cfgfile, const std::function<st
 		while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
 		if (dir.empty()) continue;
 		std::error_code ec;
-		for (const char *s : {"/Surf", "/Mask", "/Elev", "/TileStream/tmp"}) fs::create_directories (dir + s, ec);
+		for (const char *s : {"/Surf", "/Mask", "/Elev", "/TileStream/tmp", "/Cloud", "/Elev_mod"}) fs::create_directories (dir + s, ec); // earth-sky: Cloud, Elev_mod
 	}
 }
 
@@ -1035,4 +1062,279 @@ size_t TileStream::Pending () const
 void TileStream::Evict ()
 {
 	d->Evict();
+}
+
+// -----------------------------------------------------------------------
+// earth-sky: ground-track prefetch, clouds, base flattening
+
+int TileStream::Prefetch (const std::string &body, int L, int ilat, int ilng)
+{
+	return d->Prefetch (body, L, ilat, ilng);
+}
+
+size_t TileStream::Prefetching () const
+{
+	std::lock_guard<std::mutex> lk (d->mx);
+	size_t n = 0;
+	for (auto &p : d->jobs) n += p.second.pre;
+	return n;
+}
+
+int TileStream::Impl::Prefetch (const std::string &name, int L, int ilat, int ilng)
+{
+	int b = FindBody (name);
+	if (b < 0) return -1;
+	Body &B = *bodies[b];
+	if (!net || L < 4 || L > B.cfg.surf.lmax || ilat < 0 || ilng < 0 || ilat >= 1 << (L - 4) || ilng >= 1 << (L - 3)) return -1;
+	uint64_t k = Key (L, ilat, ilng), id = Id (b, k);
+	auto count = [this] { int n = 0; for (auto &p : jobs) n += p.second.pre; return n; };
+	std::unique_lock<std::mutex> lk (mx);
+	if (stop || Ocean (B, k) || hold.count (id) || B.none.count (k)) return -1;
+	if (jobs.count (id)) return 1;
+	if (count() >= 64 || jobs.size() >= 200) return 0; // room left for the camera's wants
+	lk.unlock();
+	std::error_code ec;
+	bool have = fs::exists (Tile (B.dir, "Surf", k), ec);
+	lk.lock();
+	if (stop) return -1;
+	if (have || jobs.count (id)) return 1;
+	Job &J = NewJob (b, k, opt.now());
+	J.pre = true;
+	J.seq = ++preSeq;
+	kick = true;
+	cv.notify_all();
+	return 1;
+}
+
+// a GET on the net thread, waited for here up to sec (0: until stop)
+QByteArray TileStream::Impl::Fetch (const std::string &url, int sec)
+{
+	if (!net) return QByteArray();
+	struct W { std::mutex m; std::condition_variable c; bool done = false; int st = 0; QByteArray body; };
+	auto w = std::make_shared<W>();
+	net->Get (url, [w] (int st, QByteArray body, int) {
+		std::lock_guard<std::mutex> l (w->m);
+		w->st = st;
+		w->body = std::move (body);
+		w->done = true;
+		w->c.notify_all();
+	});
+	Clock::time_point until = Clock::now() + std::chrono::seconds (sec);
+	std::unique_lock<std::mutex> l (w->m);
+	while (!w->done && !quit && (!sec || Clock::now() < until)) w->c.wait_for (l, std::chrono::milliseconds (200));
+	return w->done && w->st == 200 ? w->body : QByteArray();
+}
+
+// a cloud source image: kept in TileStream/src, fetched once
+QByteArray TileStream::Impl::Source (Body &B, const std::string &url, const char *file, int sec)
+{
+	std::string p = B.dir + "/TileStream/src/" + file;
+	QFile f (QString::fromStdString (p));
+	if (f.open (QIODevice::ReadOnly)) return f.readAll();
+	QByteArray d = Fetch (url, sec);
+	if (!d.isEmpty()) {
+		std::error_code ec;
+		fs::create_directories (B.dir + "/TileStream/src", ec);
+		Write (B, p, d.toStdString());
+	}
+	return d;
+}
+
+// Cloud L1-L5 now from the small image when L1-L4 are missing; the large image's levels on a worker
+void TileStream::Impl::Clouds (Body &B)
+{
+	if (B.cfg.cloudSmall.empty()) return;
+	{
+		std::ifstream f (Idx (B, "cloud"));
+		int L, a, c;
+		while (f >> L >> a >> c) B.cloud.insert (Key (L, a, c));
+	}
+	auto missing = [&B] (int l0, int l1) {
+		for (int L = l0; L <= l1; L++)
+			for (int a = 0; a < (L < 4 ? 1 : 1 << (L - 4)); a++)
+				for (int c = 0; c < (L < 4 ? 1 : 1 << (L - 3)); c++) {
+					std::error_code ec;
+					if (!fs::exists (Tile (B.dir, "Cloud", Key (L, a, c)), ec)) return true;
+				}
+		return false;
+	};
+	if (missing (1, 4)) {
+		QImage im;
+		if (im.loadFromData (Source (B, B.cfg.cloudSmall, "cloud_small.jpg", opt.cloudWait)) && !im.isNull()) BakeClouds (B, im, 1, 5);
+		else Log ("TileStream: no cloud image for " + B.cfg.name);
+	}
+	if (B.cfg.cloudMax < 6 || !missing (6, B.cfg.cloudMax)) return;
+	Body *pb = &B;
+	work.push_back ([this, pb] {
+		QImage im;
+		if (!im.loadFromData (Source (*pb, pb->cfg.cloudBig, "cloud_large.tif", 0)) || im.isNull()) {
+			Log ("TileStream: the large cloud image did not load, upper cloud levels from the small one");
+			im.loadFromData (Source (*pb, pb->cfg.cloudSmall, "cloud_small.jpg", 30));
+		}
+		if (!im.isNull() && !quit) BakeClouds (*pb, im, 6, pb->cfg.cloudMax);
+	});
+}
+
+// every tile of levels l0..l1 that isn't someone else's file
+void TileStream::Impl::BakeClouds (Body &B, const QImage &src, int l0, int l1)
+{
+	QImage g = src.convertToFormat (QImage::Format_Grayscale8);
+	int n = 0;
+	for (int L = l0; L <= l1 && !quit; L++)
+		for (int a = 0; a < (L < 4 ? 1 : 1 << (L - 4)); a++)
+			for (int c = 0; c < (L < 4 ? 1 : 1 << (L - 3)) && !quit; c++) {
+				uint64_t k = Key (L, a, c);
+				std::string p = Tile (B.dir, "Cloud", k);
+				bool ours;
+				{
+					std::lock_guard<std::mutex> lk (mx);
+					ours = B.cloud.count (k) > 0;
+				}
+				std::error_code ec;
+				if (fs::exists (p, ec) && !ours) continue;
+				if (!Write (B, p, TsSky::Dds5 (TsSky::Cloud (g, L, a, c)))) continue;
+				n++;
+				if (ours) continue;
+				std::lock_guard<std::mutex> lk (mx);
+				B.cloud.insert (k);
+				Append (B, "cloud", k, -1);
+			}
+	Log ("TileStream: " + std::to_string (n) + " cloud tiles L" + std::to_string (l0) + "-L" + std::to_string (l1) + " for " + B.cfg.name);
+}
+
+namespace {
+const int ModLevel = 11;    // Elev_mod from this level up; below, a base is under a node or two
+const double Blend = 150.0; // metres from flat to the terrain
+std::string ReadAll (const std::string &p)
+{
+	std::ifstream f (p, std::ios::binary);
+	return std::string (std::istreambuf_iterator<char> (f), std::istreambuf_iterator<char>());
+}
+}
+
+// the body's bases, their known heights, and Elev_mod for Elev tiles already on disk (before the client loads them)
+void TileStream::Impl::LoadBases (Body &B)
+{
+	if (opt.radius) B.radius = opt.radius (B.cfg.name);
+	if (B.cfg.elev.kind.empty() || !opt.baseDir) return;
+	std::string dir = opt.baseDir (B.cfg.name);
+	std::error_code ec;
+	std::vector<fs::path> files;
+	for (fs::directory_iterator it (dir, ec), end; !ec && it != end; it.increment (ec))
+		if (it->path().extension() == ".cfg") files.push_back (it->path());
+	std::sort (files.begin(), files.end());
+	for (const fs::path &p : files) {
+		TsBase b;
+		if (!TsReadBase (p.string(), b)) continue;
+		b.name = p.stem().string();
+		B.bases.push_back (b);
+		B.baseH.push_back (NAN);
+	}
+	{
+		std::ifstream f (Idx (B, "bases"));
+		std::string n;
+		double h;
+		while (f >> n >> h)
+			for (size_t i = 0; i < B.bases.size(); i++)
+				if (B.bases[i].name == n) B.baseH[i] = h;
+		std::ifstream m (Idx (B, "mod"));
+		int L, a, c;
+		while (m >> L >> a >> c) B.mod.insert (Key (L, a, c));
+	}
+	int made = 0;
+	for (size_t i = 0; i < B.bases.size(); i++) {
+		const TsBase &b = B.bases[i];
+		double lng = b.lng * 180.0 / M_PI, lat = b.lat * 180.0 / M_PI;
+		for (int L = B.cfg.elev.lmax; std::isnan (B.baseH[i]) && L >= 14; L--) { // a fine Elev tile at the base point
+			double span = 180.0 / (1 << (L - 4));
+			uint64_t k = Key (L, std::clamp ((int)((90.0 - lat) / span), 0, (1 << (L - 4)) - 1), std::clamp ((int)((lng + 180.0) / span), 0, (1 << (L - 3)) - 1));
+			double h = TsSky::ElvAt (ReadAll (Tile (B.dir, "Elev", k)), b.lng, b.lat);
+			if (!std::isnan (h)) {
+				B.baseH[i] = std::max (0.0, h);
+				std::ofstream (Idx (B, "bases"), std::ios::app) << b.name << ' ' << B.baseH[i] << '\n';
+			}
+		}
+		if (std::isnan (B.baseH[i])) continue;
+		for (int L = ModLevel; L <= B.cfg.elev.lmax; L++) {
+			double span = 180.0 / (1 << (L - 4)), r = (b.ext + Blend) / B.radius * 180.0 / M_PI, rl = r / std::max (0.05, cos (b.lat));
+			int a0 = std::max (0, (int)((90.0 - lat - r) / span)), a1 = std::min ((1 << (L - 4)) - 1, (int)((90.0 - lat + r) / span));
+			int c0 = std::max (0, (int)((lng + 180.0 - rl) / span)), c1 = std::min ((1 << (L - 3)) - 1, (int)((lng + 180.0 + rl) / span));
+			for (int a = a0; a <= a1; a++)
+				for (int c = c0; c <= c1; c++) {
+					uint64_t k = Key (L, a, c);
+					if (!fs::exists (Tile (B.dir, "Elev", k), ec) || fs::exists (Tile (B.dir, "Elev_mod", k), ec)) continue;
+					made += Mods (B, k, ReadAll (Tile (B.dir, "Elev", k))) ? 1 : 0;
+				}
+		}
+	}
+	Log ("TileStream: " + std::to_string (B.bases.size()) + " bases for " + B.cfg.name + ", " + std::to_string (made) + " Elev_mod tiles made for Elev on disk");
+}
+
+// with mx held: base centre tiles appended to an Elev job's sources, for the bases it touches whose height isn't known
+void TileStream::Impl::BaseSrcs (Body &B, Job &J)
+{
+	J.baseIdx.clear();
+	int L = KL (J.key), z = std::min (13, B.cfg.elev.nmax);
+	if (L < ModLevel) return;
+	for (size_t i = 0; i < B.bases.size(); i++) {
+		if (!std::isnan (B.baseH[i]) || !TsSky::Hits (B.bases[i], B.radius, L, KLat (J.key), KLng (J.key), Blend)) continue;
+		int row, col;
+		TsSky::TerrTile (B.bases[i].lng * 180.0 / M_PI, B.bases[i].lat * 180.0 / M_PI, z, row, col);
+		Src s;
+		s.url = TsImg::Url (B.cfg.elev.url, z, row, col);
+		s.host = TERR;
+		J.elev.push_back (s);
+		J.baseIdx.push_back ((int)i);
+	}
+}
+
+// the heights from those tiles, kept in bases.idx
+void TileStream::Impl::BaseHeights (Body &B, const Job &J, const std::vector<QImage> &et)
+{
+	size_t n0 = et.size() - std::min (et.size(), J.baseIdx.size());
+	int z = std::min (13, B.cfg.elev.nmax);
+	for (size_t j = 0; j < J.baseIdx.size() && n0 + j < et.size(); j++) {
+		const TsBase &b = B.bases[(size_t)J.baseIdx[j]];
+		double lng = b.lng * 180.0 / M_PI, lat = b.lat * 180.0 / M_PI;
+		int row, col;
+		TsSky::TerrTile (lng, lat, z, row, col);
+		double h = TsSky::TerrAt (et[n0 + j], z, row, col, lng, lat);
+		if (std::isnan (h)) continue;
+		h = std::round (std::max (0.0, h) / B.cfg.elevScale) * B.cfg.elevScale;
+		std::lock_guard<std::mutex> lk (mx);
+		double &H = B.baseH[(size_t)J.baseIdx[j]];
+		if (!std::isnan (H)) continue;
+		H = h;
+		std::ofstream (Idx (B, "bases"), std::ios::app) << b.name << ' ' << H << '\n';
+		Log ("TileStream: base " + b.name + " flat at " + std::to_string (H) + " m");
+	}
+}
+
+// the Elev_mod of tile k over elv, written before elv; false while a base it touches has no height yet
+bool TileStream::Impl::Mods (Body &B, uint64_t k, const std::string &elv)
+{
+	int L = KL (k);
+	if (B.bases.empty() || L < ModLevel) return true;
+	std::vector<std::pair<const TsBase *, double>> hit;
+	bool ours;
+	{
+		std::lock_guard<std::mutex> lk (mx);
+		for (size_t i = 0; i < B.bases.size(); i++) {
+			if (!TsSky::Hits (B.bases[i], B.radius, L, KLat (k), KLng (k), Blend)) continue;
+			if (std::isnan (B.baseH[i])) return false;
+			hit.push_back ({&B.bases[i], B.baseH[i]});
+		}
+		ours = B.mod.count (k) > 0;
+	}
+	if (hit.empty()) return true;
+	std::string path = Tile (B.dir, "Elev_mod", k);
+	std::error_code ec;
+	if (!ours && fs::exists (path, ec)) return true; // someone else's Elev_mod: left alone
+	std::string m = TsSky::ElevMod (L, KLat (k), KLng (k), hit, B.radius, B.cfg.elevScale, elv, Blend);
+	if (m.empty()) return true;
+	if (!Write (B, path, m)) return false;
+	if (ours) return true;
+	std::lock_guard<std::mutex> lk (mx);
+	if (B.mod.insert (k).second) Append (B, "mod", k, -1);
+	return true;
 }

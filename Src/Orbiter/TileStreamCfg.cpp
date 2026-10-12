@@ -48,6 +48,7 @@ bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::st
 		else if (w == "LIGHTS_BLACK") ok = (bool)(is >> cur.black[0] >> cur.black[1] >> cur.black[2]);
 		else if (w == "WATER_GREY") ok = (bool)(is >> cur.waterGrey);
 		else if (w == "EOX_FILL_RGB") ok = (bool)(is >> cur.fill[0] >> cur.fill[1] >> cur.fill[2]);
+		else if (w == "CLOUD") ok = (is >> cur.cloudSmall >> cur.cloudBig >> cur.cloudMax) && cur.cloudMax >= 5 && cur.cloudMax <= 9; // earth-sky
 		else if (w == "CREDIT") {
 			std::string t;
 			std::getline (is >> std::ws, t);
