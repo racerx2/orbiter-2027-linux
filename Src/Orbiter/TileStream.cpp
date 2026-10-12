@@ -2153,12 +2153,10 @@ std::vector<uint64_t> ReadIdx (const std::string &dir, const std::string &idx)
 }
 
 // the Elev files the stream wrote: elev.idx, or before it the Elev of every key in written.idx
-std::vector<uint64_t> ElevIdx (const std::string &dir, bool *had = nullptr)
+std::vector<uint64_t> ElevIdx (const std::string &dir)
 {
 	std::error_code ec;
-	bool h = fs::exists (dir + "/TileStream/elev.idx", ec);
-	if (had) *had = h;
-	return ReadIdx (dir, h ? "elev" : "written");
+	return ReadIdx (dir, fs::exists (dir + "/TileStream/elev.idx", ec) ? "elev" : "written");
 }
 
 // to <file>.new, then renamed over it

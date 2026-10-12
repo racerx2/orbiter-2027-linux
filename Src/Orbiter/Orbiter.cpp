@@ -1851,6 +1851,9 @@ void Orbiter::StreamPrefetch ()
 	} catch (const std::exception &e) {
 		LOGOUT ("TileStream: ground-track prefetch stopped: %s", e.what());
 		m_pStreamTrack->failed = true;
+	} catch (...) {
+		LOGOUT ("TileStream: ground-track prefetch stopped");
+		m_pStreamTrack->failed = true;
 	}
 }
 
