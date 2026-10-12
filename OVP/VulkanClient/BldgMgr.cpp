@@ -86,7 +86,7 @@ void BldgMgr::Drop (Tile &t)
 double BldgMgr::Ground (double lat, double lng) const
 {
 	double e = 0.0;
-	if (vp->GetElevation (lng, lat, &e) >= 1) return e;
+	if (vp->GetElevation (lng, lat, &e) == 1) return e; // 2: the tile has no elevation yet, not sea level
 	return oapiSurfaceElevation (hObj, lng, lat);
 }
 
@@ -128,6 +128,7 @@ void BldgMgr::Update ()
 				Tile &T = tiles[got.first];
 				T.x = x; T.y = y;
 				Make (T, got.second);
+				settle = (int)tiles.size(); // placed on the terrain loaded so far
 			}
 			oapiTileStreamBldgFree (got.second); // the D3D9Mesh has its own copy
 		}
@@ -169,11 +170,12 @@ void BldgMgr::Update ()
 		} else ++it;
 	}
 	if (t >= tGround && !tiles.empty()) { // the terrain under them refines as the camera comes down: one tile a pass
-		tGround = t + 0.25;
 		auto it = tiles.upper_bound (lastGround);
 		if (it == tiles.end()) it = tiles.begin();
 		lastGround = it->first;
-		Reground (it->second);
+		if (Reground (it->second)) settle = (int)tiles.size(); // still refining: every frame until a round moves nothing
+		else if (settle > 0) settle--;
+		tGround = settle > 0 ? t : t + 0.25;
 	}
 }
 
@@ -270,9 +272,9 @@ void BldgMgr::Make (Tile &t, const TSBLDGMESH *m)
 }
 
 // buildings whose ground moved more than 0.25 m are lifted in the mesh's own vertex copy: one EditGroup a group, one upload
-void BldgMgr::Reground (Tile &t)
+bool BldgMgr::Reground (Tile &t)
 {
-	if (!t.mesh) return;
+	if (!t.mesh) return false;
 	std::map<DWORD, std::pair<std::vector<WORD>, std::vector<float>>> ed; // per group: vertices, their lift
 	for (size_t b = 0; b < t.ground.size(); b++) {
 		double g = Ground (t.lat[b], t.lng[b]), d = g - t.ground[b];
@@ -299,6 +301,7 @@ void BldgMgr::Reground (Tile &t)
 		ges.Vtx = v.data(); ges.nVtx = (DWORD)v.size(); ges.vIdx = p.second.first.data();
 		t.mesh->EditGroup (p.first, &ges);
 	}
+	return !ed.empty();
 }
 
 // each cell's materials carry its own terrain sun: the sun light stays the tile's

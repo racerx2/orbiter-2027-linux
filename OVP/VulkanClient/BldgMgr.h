@@ -42,7 +42,7 @@ private:
 		TerrainSunCache ts[NC * NC];
 	};
 	void Make (Tile &t, const TSBLDGMESH *m);
-	void Reground (Tile &t);
+	bool Reground (Tile &t);
 	void Sun (Tile &t, const MATRIX3 &rot);
 	void Drop (Tile &t);
 	bool Near (int x, int y) const;
@@ -57,6 +57,7 @@ private:
 	std::set<long long> bad;     // tiles whose file did not load
 	std::set<long long> busy;    // render thread: given to the worker, result not taken yet
 	long long lastGround = -1;   // the last tile re-grounded
+	int settle = 0;              // tiles left to re-ground every frame while the terrain under them refines
 	double tWant = 0.0, tGround = 0.0;
 	double camLat = 0.0, camLng = 0.0, range = 0.0;
 
