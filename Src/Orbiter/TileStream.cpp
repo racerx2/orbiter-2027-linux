@@ -5,6 +5,7 @@
 #include <QColor>
 #include <QFile>
 #include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
@@ -54,6 +55,7 @@ struct TileStream::Impl {
 		std::unordered_map<uint64_t, int64_t> none; // key -> day
 		std::deque<uint64_t> done;
 		std::vector<uint64_t> hits;
+		std::deque<uint64_t> refetchQueue; // fed in slowly when nothing else waits
 	};
 	struct Src {
 		std::string url;
@@ -85,6 +87,7 @@ struct TileStream::Impl {
 	mutable std::mutex mx;
 	std::condition_variable cv, wcv;
 	bool stop = false, kick = false;
+	std::atomic<bool> quit {false}; // read by long scans without the lock
 	std::vector<std::unique_ptr<Body>> bodies;
 	std::unordered_map<uint64_t, Job> jobs;
 	std::unordered_map<uint64_t, Clock::time_point> hold;
@@ -140,10 +143,18 @@ struct TileStream::Impl {
 	void Work ();
 	void Queue (std::function<void ()> fn) { work.push_back (std::move (fn)); wcv.notify_one(); }
 	void OnResult (Result &r, Clock::time_point now);
+	void Deliver (const std::string &url, int status, const std::shared_ptr<const QByteArray> &data, Clock::time_point now);
+	void Pause (int h, Clock::time_point until, Clock::time_point now);
 	void Fetched (Job &J, Clock::time_point now);
 	void Retry (Job &J, Clock::time_point now, int sec);
 	bool Paused (int h, Clock::time_point now) const { return now < host[h].paused; }
-	bool Startable (Job &J, Clock::time_point now);
+	bool CanFallback (const Body &B, int L) const
+	{
+		const TsSource &fb = B.cfg.fallback;
+		return !fb.kind.empty() && L >= fb.lmin && L <= fb.lmax;
+	}
+	int Startable (const Job &J, Clock::time_point now) const;
+	bool AddLow (Clock::time_point now);
 	void StartJobs (Clock::time_point now);
 	void Start (Job &J, Clock::time_point now);
 	std::vector<Src> Srcs (const TsSource &s, int L, int la, int ln);
@@ -158,7 +169,7 @@ struct TileStream::Impl {
 	QImage Ancestor (int body, int L, int la, int ln);
 	void Remember (uint64_t id, const QImage &img);
 	QImage Recall (uint64_t id);
-	bool Write (const std::string &path, const std::string &bytes);
+	bool Write (const Body &B, const std::string &path, const std::string &bytes);
 	std::string Idx (const Body &B, const char *name) const { return B.dir + "/TileStream/" + name + ".idx"; }
 	void LoadIdx (Body &B);
 	void Append (const Body &B, const char *name, uint64_t k, int64_t t);
@@ -197,7 +208,7 @@ TileStream::Impl::Impl (const Options &o)
 		while (b->dir.size() > 1 && b->dir.back() == '/') b->dir.pop_back();
 		std::error_code ec;
 		bool ok = !b->dir.empty();
-		for (const char *s : {"/Surf", "/Mask", "/TileStream"})
+		for (const char *s : {"/Surf", "/Mask", "/TileStream/tmp"})
 			if (ok) { fs::create_directories (b->dir + s, ec); ok = !ec; }
 		if (!ok) {
 			Log ("TileStream: cannot create the tile folders in " + b->dir);
@@ -220,7 +231,8 @@ TileStream::Impl::Impl (const Options &o)
 				std::error_code ec;
 				if (!fs::exists (Tile (B.dir, "Surf", k), ec)) NewJob (b, k, now).required = true;
 			}
-			for (uint64_t k : B.refetch) NewJob (b, k, now).low = true;
+			for (uint64_t k : B.refetch)
+				if (B.written.count (k)) B.refetchQueue.push_back (k);
 		}
 	}
 	for (int i = 0; i < 2; i++) workers.emplace_back ([this] { Work (); });
@@ -233,6 +245,7 @@ TileStream::Impl::~Impl ()
 		std::lock_guard<std::mutex> lk (mx);
 		stop = true;
 	}
+	quit = true;
 	cv.notify_all();
 	wcv.notify_all();
 	if (ctl.joinable()) ctl.join();
@@ -272,12 +285,13 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 	Clock::time_point now = opt.now();
 	auto h = hold.find (id);
 	if (h != hold.end()) {
-		if (now < h->second) return -1;
+		if (now < h->second) return 0; // still wanted, asked again once the hold ends
 		hold.erase (h);
 	}
 	auto j = jobs.find (id);
 	if (j != jobs.end()) {
 		j->second.want = now;
+		j->second.low = false;
 		return 0;
 	}
 	if (!(flags & 1)) {
@@ -290,6 +304,7 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 		j = jobs.find (id);
 		if (j != jobs.end()) {
 			j->second.want = now;
+			j->second.low = false;
 			return 0;
 		}
 	}
@@ -300,16 +315,18 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 	return 0;
 }
 
+// over the cap: queued refetches go first, then the stalest want
 void TileStream::Impl::Trim ()
 {
 	while (jobs.size() > 256) {
 		auto worst = jobs.end();
 		for (auto it = jobs.begin(); it != jobs.end(); ++it) {
 			const Job &J = it->second;
-			if (J.stage || J.required || J.low) continue;
-			if (worst == jobs.end() || J.want < worst->second.want) worst = it;
+			if (J.stage || J.required) continue;
+			if (worst == jobs.end() || (J.low && !worst->second.low) || (J.low == worst->second.low && J.want < worst->second.want)) worst = it;
 		}
 		if (worst == jobs.end()) return;
+		if (worst->second.low) bodies[worst->second.body]->refetchQueue.push_back (worst->second.key);
 		jobs.erase (worst);
 	}
 }
@@ -359,23 +376,37 @@ void TileStream::Impl::OnResult (Result &r, Clock::time_point now)
 {
 	Host &h = host[r.host];
 	h.inflight = std::max (0, h.inflight - 1);
-	if (r.status == 200 || r.status == 404 || r.status == 400) {
-		h.fails = 0;
-		h.backoff = 60.0;
-	} else if (r.status == 429 || r.status == 503) {
-		h.paused = now + std::chrono::seconds (r.retryAfter > 0 ? std::min (r.retryAfter, 3600) : 30);
-	} else if (++h.fails >= 5) {
-		h.paused = now + std::chrono::milliseconds ((int64_t)(h.backoff * 1000.0));
-		Log (std::string ("TileStream: ") + (r.host == EOX ? "EOX" : "GIBS") + " is not answering, paused for " + std::to_string ((int)h.backoff) + " s");
-		h.backoff = std::min (h.backoff * 2.0, 600.0);
-		h.fails = 0;
-	}
 	std::shared_ptr<const QByteArray> data;
 	if (r.status == 200) {
 		data = std::make_shared<const QByteArray> (std::move (r.body));
 		CachePut (r.url, data);
 	}
-	auto it = inflight.find (r.url);
+	if (r.status == 200 || r.status == 404 || r.status == 400) {
+		h.fails = 0;
+		h.backoff = 60.0;
+	} else if (r.status == 429 || r.status == 503) {
+		Pause (r.host, now + std::chrono::seconds (r.retryAfter > 0 ? std::min (r.retryAfter, 3600) : 30), now);
+	} else if (++h.fails >= 5) {
+		Log (std::string ("TileStream: ") + (r.host == EOX ? "EOX" : "GIBS") + " is not answering, paused for " + std::to_string ((int)h.backoff) + " s");
+		Pause (r.host, now + std::chrono::milliseconds ((int64_t)(h.backoff * 1000.0)), now);
+		h.backoff = std::min (h.backoff * 2.0, 600.0);
+		h.fails = 0;
+	}
+	Deliver (r.url, r.status, data, now);
+}
+
+// a host that pauses gives its queued requests back at once, so their jobs fall back or wait in the queue, not in a slot
+void TileStream::Impl::Pause (int h, Clock::time_point until, Clock::time_point now)
+{
+	host[h].paused = until;
+	std::deque<std::string> q;
+	q.swap (host[h].queue);
+	for (const std::string &url : q) Deliver (url, 0, nullptr, now);
+}
+
+void TileStream::Impl::Deliver (const std::string &url, int status, const std::shared_ptr<const QByteArray> &data, Clock::time_point now)
+{
+	auto it = inflight.find (url);
 	if (it == inflight.end()) return;
 	std::vector<uint64_t> ids = std::move (it->second);
 	inflight.erase (it);
@@ -385,8 +416,8 @@ void TileStream::Impl::OnResult (Result &r, Clock::time_point now)
 		Job &J = j->second;
 		for (std::vector<Src> *v : {&J.surf, &J.lights, &J.water})
 			for (Src &s : *v)
-				if (s.status < 0 && s.url == r.url) {
-					s.status = r.status;
+				if (s.status < 0 && s.url == url) {
+					s.status = status;
 					s.data = data;
 					J.waiting--;
 				}
@@ -407,26 +438,26 @@ void TileStream::Impl::Retry (Job &J, Clock::time_point now, int sec)
 // all sources answered: build, fall back, retry or give up
 void TileStream::Impl::Fetched (Job &J, Clock::time_point now)
 {
-	bool miss[3] = {false, false, false}, fail = false;
+	bool miss[3] = {false, false, false}, fail[3] = {false, false, false};
 	int i = 0;
 	for (std::vector<Src> *v : {&J.surf, &J.lights, &J.water}) {
 		for (const Src &s : *v) {
 			if (s.status == 404 || s.status == 400) miss[i] = true;
-			else if (s.status != 200) fail = true;
+			else if (s.status != 200) fail[i] = true;
 		}
 		i++;
 	}
 	Body &B = *bodies[J.body];
 	int L = KL (J.key);
-	if (fail) {
-		if (++J.tries > 5 && !J.required) jobs.erase (J.id);
-		else Retry (J, now, 10);
-		return;
-	}
-	const TsSource &fb = B.cfg.fallback;
-	if (miss[0] && !J.fallback && !fb.kind.empty() && L >= fb.lmin && L <= fb.lmax) {
+	bool surfHost = !J.fallback && HostOf (B.cfg.surf) == EOX && CanFallback (B, L);
+	if ((miss[0] || (fail[0] && Paused (EOX, now))) && surfHost) {
 		J.fallback = true;
 		Retry (J, now, 0);
+		return;
+	}
+	if (fail[0] || fail[1] || fail[2]) {
+		if (++J.tries > 5 && !J.required) jobs.erase (J.id);
+		else Retry (J, now, 10);
 		return;
 	}
 	if (miss[0] || miss[1] || miss[2]) {
@@ -439,16 +470,30 @@ void TileStream::Impl::Fetched (Job &J, Clock::time_point now)
 	Queue ([this, copy] { Build (copy); });
 }
 
-bool TileStream::Impl::Startable (Job &J, Clock::time_point now)
+// 0: not now, 1: from its own source, 2: from the fallback while EOX is paused
+int TileStream::Impl::Startable (const Job &J, Clock::time_point now) const
 {
 	const Body &B = *bodies[J.body];
-	if (Paused (GIBS, now)) return false; // the mask needs GIBS
-	if (J.fallback || HostOf (B.cfg.surf) != EOX || !Paused (EOX, now)) return true;
-	const TsSource &fb = B.cfg.fallback;
-	int L = KL (J.key);
-	if (fb.kind.empty() || L < fb.lmin || L > fb.lmax) return false;
-	J.fallback = true;
-	return true;
+	if (Paused (GIBS, now)) return 0; // the mask needs GIBS
+	if (J.fallback || HostOf (B.cfg.surf) != EOX || !Paused (EOX, now)) return 1;
+	return CanFallback (B, KL (J.key)) ? 2 : 0;
+}
+
+// one refetch of a fallback tile at a time, when nothing else is queued
+bool TileStream::Impl::AddLow (Clock::time_point now)
+{
+	for (auto &p : jobs) if (p.second.low) return false;
+	for (int b = 0; b < (int)bodies.size(); b++) {
+		Body &B = *bodies[b];
+		while (!B.refetchQueue.empty()) {
+			uint64_t k = B.refetchQueue.front();
+			B.refetchQueue.pop_front();
+			if (!B.refetch.count (k) || !B.written.count (k) || jobs.count (Id (b, k))) continue;
+			NewJob (b, k, now).low = true;
+			return true;
+		}
+	}
+	return false;
 }
 
 void TileStream::Impl::StartJobs (Clock::time_point now)
@@ -457,12 +502,18 @@ void TileStream::Impl::StartJobs (Clock::time_point now)
 	for (auto &p : jobs) if (p.second.stage) active++;
 	while (active < opt.maxActive) {
 		Job *best = nullptr;
+		int how = 0;
 		for (auto &p : jobs) {
 			Job &J = p.second;
-			if (J.stage || J.retry > now || !Startable (J, now)) continue;
-			if (!best || Better (J, *best)) best = &J;
+			if (J.stage || J.retry > now) continue;
+			int s = Startable (J, now);
+			if (s && (!best || Better (J, *best))) { best = &J; how = s; }
 		}
-		if (!best) return;
+		if (!best) {
+			if (!Paused (EOX, now) && !Paused (GIBS, now) && AddLow (now)) continue;
+			return;
+		}
+		if (how == 2) best->fallback = true;
 		Start (*best, now);
 		active++;
 	}
@@ -624,7 +675,12 @@ void TileStream::Impl::Build (Job J)
 		QImage lights = TsImg::Build (C.lights, L, la, ln, TsImg::SrcGrid (C.lights, L, la, ln), lt);
 		QImage water = TsImg::Build (C.water, L, la, ln, TsImg::SrcGrid (C.water, L, la, ln), wt);
 		QImage mask = TsImg::Mask (lights, water, C.black, C.waterGrey);
-		ok = Write (Tile (B.dir, "Mask", J.key), TsImg::Dds (mask, true)) && Write (Tile (B.dir, "Surf", J.key), TsImg::Dds (surf, false));
+		std::string mpath = Tile (B.dir, "Mask", J.key);
+		ok = Write (B, mpath, TsImg::Dds (mask, true));
+		if (ok && !(ok = Write (B, Tile (B.dir, "Surf", J.key), TsImg::Dds (surf, false)))) {
+			std::error_code ec;
+			fs::remove (mpath, ec); // no Mask without its Surf
+		}
 		if (ok && L >= 4) Remember (Id (J.body, J.key), surf);
 	}
 	std::lock_guard<std::mutex> lk (mx);
@@ -697,8 +753,8 @@ QImage TileStream::Impl::Recall (uint64_t id)
 	return QImage();
 }
 
-// to a unique .tmp, then renamed: the client never reads half a file
-bool TileStream::Impl::Write (const std::string &path, const std::string &bytes)
+// to a unique file in TileStream/tmp, then renamed into place: the client never reads half a file
+bool TileStream::Impl::Write (const Body &B, const std::string &path, const std::string &bytes)
 {
 	std::error_code ec;
 	fs::create_directories (fs::path (path).parent_path(), ec);
@@ -707,7 +763,7 @@ bool TileStream::Impl::Write (const std::string &path, const std::string &bytes)
 		std::lock_guard<std::mutex> lk (imx);
 		seq = ++tmpSeq;
 	}
-	std::string tmp = path + "." + std::to_string (getpid()) + "." + std::to_string (seq) + ".tmp";
+	std::string tmp = B.dir + "/TileStream/tmp/" + std::to_string (getpid()) + "." + std::to_string (seq) + ".tmp";
 	{
 		std::ofstream o (tmp, std::ios::binary);
 		o.write (bytes.data(), (std::streamsize)bytes.size());
@@ -754,15 +810,24 @@ void TileStream::Impl::Append (const Body &B, const char *name, uint64_t k, int6
 	f << '\n';
 }
 
+// the old index stays when the new one can't be written whole
 void TileStream::Impl::Rewrite (const Body &B, const char *name, const std::unordered_set<uint64_t> &s)
 {
 	std::string p = Idx (B, name), tmp = p + ".new";
+	bool ok;
 	{
 		std::ofstream f (tmp, std::ios::trunc);
 		for (uint64_t k : s) f << KL (k) << ' ' << KLat (k) << ' ' << KLng (k) << '\n';
+		f.close();
+		ok = !f.fail();
 	}
 	std::error_code ec;
-	fs::rename (tmp, p, ec);
+	if (ok) fs::rename (tmp, p, ec);
+	if (!ok || ec) {
+		std::error_code rc;
+		fs::remove (tmp, rc);
+		Log ("TileStream: cannot rewrite " + p);
+	}
 }
 
 void TileStream::Impl::MarkNone (Body &B, uint64_t k)
@@ -772,27 +837,27 @@ void TileStream::Impl::MarkNone (Body &B, uint64_t k)
 	Append (B, "none", k, t);
 }
 
-// .tmp left by an earlier run that was killed mid-write
+// .tmp files of an earlier run that was killed mid-write
 void TileStream::Impl::CleanTmp ()
 {
-	std::string mine = "." + std::to_string (getpid()) + ".";
-	for (auto &b : bodies)
-		for (const char *layer : {"/Surf", "/Mask"}) {
-			std::error_code ec;
-			for (fs::recursive_directory_iterator it (b->dir + layer, ec), end; !ec && it != end; it.increment (ec)) {
-				std::string n = it->path().filename().string();
-				if (n.size() > 8 && !n.compare (n.size() - 4, 4, ".tmp") && n.find (".dds.") != std::string::npos && n.find (mine) == std::string::npos) {
-					std::error_code rc;
-					fs::remove (it->path(), rc);
-				}
+	std::string mine = std::to_string (getpid()) + ".";
+	for (auto &b : bodies) {
+		std::error_code ec;
+		for (fs::directory_iterator it (b->dir + "/TileStream/tmp", ec), end; !ec && it != end && !quit; it.increment (ec)) {
+			std::string n = it->path().filename().string();
+			if (n.compare (0, mine.size(), mine)) {
+				std::error_code rc;
+				fs::remove (it->path(), rc);
 			}
 		}
+	}
 }
 
 // the size cap: oldest written tiles first, never L <= 8, never a file this stream didn't write
 void TileStream::Impl::Evict ()
 {
 	uint64_t cap = opt.capMB << 20;
+	if (!cap) return;
 	for (auto &bp : bodies) {
 		Body &B = *bp;
 		std::vector<uint64_t> keys;
@@ -805,6 +870,7 @@ void TileStream::Impl::Evict ()
 		std::vector<uint64_t> gone;
 		uint64_t total = 0;
 		for (uint64_t k : keys) {
+			if (quit) return;
 			std::error_code e1, e2;
 			std::string s = Tile (B.dir, "Surf", k), m = Tile (B.dir, "Mask", k);
 			uint64_t ss = fs::file_size (s, e1);
@@ -827,8 +893,13 @@ void TileStream::Impl::Evict ()
 		}
 		if (gone.empty()) continue;
 		std::lock_guard<std::mutex> lk (mx);
-		for (uint64_t k : gone) B.written.erase (k);
+		bool refetch = false;
+		for (uint64_t k : gone) {
+			B.written.erase (k);
+			refetch |= B.refetch.erase (k) > 0;
+		}
 		Rewrite (B, "written", B.written);
+		if (refetch) Rewrite (B, "refetch", B.refetch);
 	}
 }
 

@@ -1434,6 +1434,13 @@ void TileManager2<SurfTile>::StreamRead ()
 		if (mask) {
 			snprintf(path, MAX_PATH, "%s\\Mask\\%02d\\%06d\\%06d.dds", DataRootDir().c_str(), s.L, s.ilat, s.ilng);
 			t0->LoadTextureFile(path, &s.mask);
+			if (!s.mask) { // a streamed Surf always comes with its Mask: have the pair made again
+				oapiTileStreamWant(Cbody(), s.L, s.ilat, s.ilng, 1);
+				delete s.surf;
+				s.surf = NULL;
+				s.L = 0;
+				continue;
+			}
 		}
 		taken++;
 	}

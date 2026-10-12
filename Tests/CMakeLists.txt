@@ -120,6 +120,7 @@ add_unit_test(TileStream.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOU
 target_link_libraries(TileStream.Test Qt6::Network Qt6::Gui stb_dxt)
 target_compile_options(TileStream.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 target_link_options(TileStream.Test PRIVATE -fsanitize=address)
+set_tests_properties(TileStream.Test PROPERTIES TIMEOUT 120) # the outage case waits out a 10 s retry
 
 if (BUILD_ORBITER_SERVER)
 

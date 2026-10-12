@@ -195,18 +195,15 @@ TEST_CASE ("The mask takes off the night light background and keeps water transp
 	std::string d = TsImg::Dds (m, true);
 	REQUIRE (d.size() == 174904);
 	size_t at = 128;
-	int water0 = 0;
-	for (int by = 0; by < 128; by++)
-		for (int bx = 0; bx < 64; bx++)
-			if (AllWater (d, at + ((size_t)by * 128 + bx) * 8, 1)) water0++;
-	CHECK (water0 == 128 * 64);
-	at += 131072;
-	int water1 = 0;
-	for (int by = 0; by < 64; by++)
-		for (int bx = 0; bx < 32; bx++)
-			if (AllWater (d, at + ((size_t)by * 64 + bx) * 8, 1)) water1++;
-	CHECK (water1 == 64 * 32);
-	CHECK_FALSE (AllWater (d, 128 + 100 * 8, 1)); // land block, 4-colour mode
+	for (int lv = 0; lv <= 6; lv++) { // 512 px down to 8 px: the west half stays water
+		int bw = 128 >> lv, water = 0;
+		for (int by = 0; by < bw; by++)
+			for (int bx = 0; bx < bw / 2; bx++)
+				if (AllWater (d, at + ((size_t)by * bw + bx) * 8, 1)) water++;
+		CHECK (water == bw * bw / 2);
+		CHECK_FALSE (AllWater (d, at + (size_t)(bw - 1) * 8, 1)); // east edge block: land, 4-colour mode
+		at += (size_t)bw * bw * 8;
+	}
 }
 
 TEST_CASE ("An ancestor's sub-area is cut and scaled to a tile", "[TileStream]")
@@ -416,6 +413,11 @@ TEST_CASE ("The service writes stock tiles from file:// sources", "[TileStream]"
 	}, 5.0));
 	CHECK (fs::exists (tex / "TileStream" / "written.idx"));
 
+	// a file of ours that failed to load is made again
+	fs::resize_file (l14, 1000);
+	CHECK (ts.Want ("Earth", 14, 1000, 1500, 1) == 0);
+	REQUIRE (WaitFor ([&] { ts.Want ("Earth", 14, 1000, 1500, 0); std::error_code ec; return fs::file_size (l14, ec) == 174904; }, 20.0));
+
 	// open ocean: no file, and nothing below it is asked for
 	REQUIRE (WaitFor ([&] { return ts.Want ("Earth", 12, 100, 100, 0) == -1; }, 20.0));
 	CHECK_FALSE (fs::exists (tex / "Surf" / "12" / "000100" / "000100.dds"));
@@ -426,4 +428,183 @@ TEST_CASE ("The service writes stock tiles from file:// sources", "[TileStream]"
 	REQUIRE (WaitFor ([&] { return ts.Want ("Earth", 13, 50, 50, 0) == -1; }, 20.0));
 	CHECK_FALSE (fs::exists (tex / "Surf" / "13" / "000050" / "000050.dds"));
 	CHECK (Read (tex / "TileStream" / "none.idx").find ("13 50 50") == 0);
+}
+
+// file:// sources in a temp folder: EOX tiles, GIBS lights, water and Blue Marble
+struct Srv {
+	fs::path root;
+	std::string url;
+	explicit Srv (const fs::path &r): root (r / "srv"), url ("file://" + (r / "srv").string()) {}
+	fs::path Eox (int z, int r, int c) const { return root / "eox" / std::to_string (z) / std::to_string (r) / (std::to_string (c) + ".png"); }
+	fs::path Gibs (const char *l, int n, int r, int c) const { return root / l / std::to_string (n) / std::to_string (r) / (std::to_string (c) + ".png"); }
+	void Layer (const char *l, int L, int la, int ln, int nmax, QColor col) const
+	{
+		TsImg::Grid g = TsImg::GibsGrid (L, la, ln, nmax);
+		for (int r = 0; r < g.nrow; r++)
+			for (int c = 0; c < g.ncol; c++) Png (Gibs (l, g.z, g.row0 + r, g.col0 + c), 512, col);
+	}
+	void Masks (int L, int la, int ln) const
+	{
+		Layer ("lights", L, la, ln, 7, QColor (100, 90, 80));
+		Layer ("water", L, la, ln, 8, QColor (75, 75, 75));
+	}
+	void EoxTile (int L, int la, int ln, QColor col) const
+	{
+		TsImg::Grid g = TsImg::EoxGrid (L, la, ln);
+		for (int r = 0; r < g.nrow; r++)
+			for (int c = 0; c < g.ncol; c++) Png (Eox (g.z, g.row0 + r, g.col0 + c), 256, col);
+	}
+	void Required (bool eox) const
+	{
+		for (int L = 1; L <= 4; L++)
+			for (int ln = 0; ln < (L == 4 ? 2 : 1); ln++) {
+				if (eox) EoxTile (L, 0, ln, QColor (50, 60, 70));
+				Masks (L, 0, ln);
+				Layer ("bmng", L, 0, ln, 7, QColor (30, 90, 30));
+			}
+	}
+	std::string Cfg (const fs::path &file, const std::string &eoxurl) const
+	{
+		std::ofstream (file) << "BODY Earth\n"
+			"SURF eox " << eoxurl << "/{z}/{row}/{col}.png 1 16\n"
+			"SURF_FALLBACK gibs " << url << "/bmng/{n}/{row}/{col}.png 7 10\n"
+			"LIGHTS gibs " << url << "/lights/{n}/{row}/{col}.png 7\n"
+			"WATER gibs " << url << "/water/{n}/{row}/{col}.png 8\nEND\n";
+		return file.string();
+	}
+};
+
+static QColor Pixel (const fs::path &dds, int x, int y)
+{
+	std::string d = Read (dds);
+	QImage im = TsImg::DdsImage (QByteArray (d.data(), (qsizetype)d.size()));
+	return im.isNull() ? QColor() : im.pixelColor (x, y);
+}
+
+static bool Near (QColor a, QColor b)
+{
+	return std::abs (a.red() - b.red()) <= 8 && std::abs (a.green() - b.green()) <= 8 && std::abs (a.blue() - b.blue()) <= 8;
+}
+
+TEST_CASE ("EOX not answering: the host pauses and Blue Marble stands in, marked for a refetch", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	s.Required (false);
+	s.Masks (6, 3, 5);
+	s.Layer ("bmng", 6, 3, 5, 7, QColor (30, 90, 30));
+	fs::path tex = t.root / "Earth";
+	TileStream::Options o;
+	o.cfgfile = s.Cfg (t.root / "ts.cfg", "bogus://eox"); // no such scheme: nothing answers
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	TileStream ts (o);
+	fs::path f = tex / "Surf" / "06" / "000003" / "000005.dds";
+	REQUIRE (WaitFor ([&] { ts.Want ("Earth", 6, 3, 5, 0); return fs::exists (f); }, 25.0));
+	CHECK (Near (Pixel (f, 256, 256), QColor (30, 90, 30)));
+	CHECK (fs::exists (tex / "Surf" / "04" / "000000" / "000001.dds"));
+	REQUIRE (WaitFor ([&] { return Read (tex / "TileStream" / "refetch.idx").find ("6 3 5") != std::string::npos; }, 5.0));
+	CHECK (ts.Want ("Earth", 12, 100, 100, 0) == 0); // above the fallback's levels: waits for EOX
+}
+
+TEST_CASE ("Coarse levels go first; ocean quarters are filled from the ancestor", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	s.Required (true);
+	s.EoxTile (8, 10, 20, QColor (200, 100, 50));
+	s.Masks (8, 10, 20);
+	s.EoxTile (10, 42, 85, QColor (100, 200, 50));
+	s.Masks (10, 42, 85);
+	// L12 (150, 300): north-west and south-east quarters are EOX ocean fill
+	TsImg::Grid g = TsImg::EoxGrid (12, 150, 300);
+	FillPng (s.Eox (g.z, g.row0, g.col0));
+	Png (s.Eox (g.z, g.row0, g.col0 + 1), 256, QColor (220, 220, 220));
+	Png (s.Eox (g.z, g.row0 + 1, g.col0), 256, QColor (220, 220, 220));
+	FillPng (s.Eox (g.z, g.row0 + 1, g.col0 + 1));
+	s.Masks (12, 150, 300);
+	fs::path tex = t.root / "Earth";
+	QImage anc (512, 512, QImage::Format_RGB888);
+	anc.fill (QColor (90, 160, 30));
+	fs::path ap = tex / "Surf" / "11" / "000075" / "000150.dds"; // an installed ancestor
+	fs::create_directories (ap.parent_path());
+	std::string ad = TsImg::Dds (anc, false);
+	std::ofstream (ap, std::ios::binary).write (ad.data(), (std::streamsize)ad.size());
+	TileStream::Options o;
+	o.cfgfile = s.Cfg (t.root / "ts.cfg", s.url + "/eox");
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	o.maxActive = 1;
+	TileStream ts (o);
+	CHECK (ts.Want ("Earth", 10, 42, 85, 0) == 0);
+	CHECK (ts.Want ("Earth", 8, 10, 20, 0) == 0);
+	CHECK (ts.Want ("Earth", 12, 150, 300, 0) == 0);
+	std::vector<int> order;
+	REQUIRE (WaitFor ([&] {
+		for (int L : {8, 10, 12}) ts.Want ("Earth", L, L == 8 ? 10 : L == 10 ? 42 : 150, L == 8 ? 20 : L == 10 ? 85 : 300, 0);
+		int k[3 * 16];
+		int n = ts.Done ("Earth", k, 16);
+		for (int i = 0; i < n; i++) if (k[3 * i] >= 8) order.push_back (k[3 * i]);
+		return order.size() == 3;
+	}, 20.0));
+	CHECK (order == std::vector<int> {8, 10, 12});
+	fs::path f = tex / "Surf" / "12" / "000150" / "000300.dds";
+	CHECK (Near (Pixel (f, 100, 100), QColor (90, 160, 30)));   // fill: the ancestor
+	CHECK (Near (Pixel (f, 400, 100), QColor (220, 220, 220))); // picture
+	CHECK (Near (Pixel (f, 400, 400), QColor (90, 160, 30)));
+	CHECK (Read (tex / "TileStream" / "written.idx").find ("11 75 150") == std::string::npos); // the installed one isn't ours
+}
+
+TEST_CASE ("A tile that can't be written is held and still wanted, with no Mask left behind", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	s.Required (true);
+	s.EoxTile (13, 61, 61, QColor (10, 200, 10));
+	s.Masks (13, 61, 61);
+	fs::path tex = t.root / "Earth", lock = tex / "Surf" / "13" / "000061";
+	fs::create_directories (lock);
+	fs::permissions (lock, fs::perms::owner_read | fs::perms::owner_exec);
+	TileStream::Options o;
+	o.cfgfile = s.Cfg (t.root / "ts.cfg", s.url + "/eox");
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	{
+		TileStream ts (o);
+		CHECK (ts.Want ("Earth", 13, 61, 61, 0) == 0);
+		REQUIRE (WaitFor ([&] { ts.Want ("Earth", 13, 61, 61, 0); return ts.Pending() == 0; }, 20.0));
+		CHECK (ts.Want ("Earth", 13, 61, 61, 0) == 0);
+		CHECK_FALSE (fs::exists (tex / "Mask" / "13" / "000061" / "000061.dds"));
+		CHECK_FALSE (fs::exists (lock / "000061.dds"));
+	}
+	fs::permissions (lock, fs::perms::owner_all);
+}
+
+TEST_CASE ("Refetches wait their turn and never block what the client asks for", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	fs::path tex = t.root / "Earth";
+	fs::create_directories (tex / "TileStream");
+	{
+		std::ofstream w (tex / "TileStream" / "written.idx"), r (tex / "TileStream" / "refetch.idx");
+		for (int i = 0; i < 300; i++) {
+			w << "10 0 " << i << "\n";
+			r << "10 0 " << i << "\n";
+		}
+	}
+	Srv s (t.root);
+	TileStream::Options o;
+	o.cfgfile = s.Cfg (t.root / "ts.cfg", s.url + "/eox");
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	o.maxActive = 0;
+	TileStream ts (o);
+	std::this_thread::sleep_for (std::chrono::milliseconds (200));
+	CHECK (ts.Pending() == 5); // the required set only
+	CHECK (ts.Want ("Earth", 14, 5, 5, 0) == 0);
+	CHECK (ts.Pending() == 6);
 }
