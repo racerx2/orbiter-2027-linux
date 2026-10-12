@@ -359,7 +359,7 @@ QImage DdsImage (const QByteArray &d)
 	return out;
 }
 
-// Orbiter .elv: 259x259 int16 nodes, row 0 south, one node of padding round the tile, metres = value * scale
+// Orbiter .elv: 259x259 int16 nodes, row 0 south, one node of padding round the tile, metres = value * scale; all at sea level: flat (dtype 0)
 std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QImage> &tiles, double scale)
 {
 	const int N = 259;
@@ -398,13 +398,13 @@ std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QI
 			sum += m;
 		}
 	}
-	if (emax <= 0.0) return std::string();
+	bool flat = emax <= 0.0; // sea level: a header-only flat tile, so it isn't fetched again
 	std::string out (100, '\0');
 	auto i32 = [&out] (size_t at, int32_t v) { memcpy (&out[at], &v, 4); };
 	auto f64 = [&out] (size_t at, double v) { memcpy (&out[at], &v, 8); };
 	out[0] = 'E'; out[1] = 'L'; out[2] = 'E'; out[3] = 1;
 	i32 (4, 100);
-	i32 (8, -16);
+	i32 (8, flat ? 0 : -16);
 	i32 (12, N); i32 (16, N);
 	i32 (20, 1); i32 (24, 1);
 	f64 (28, scale);
@@ -412,7 +412,7 @@ std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QI
 	f64 (44, (n - dh) * M_PI / 180.0); f64 (52, n * M_PI / 180.0);
 	f64 (60, w * M_PI / 180.0); f64 (68, (w + dw) * M_PI / 180.0);
 	f64 (76, emin); f64 (84, emax); f64 (92, sum / ((double)N * N));
-	out.append ((const char*)z.data(), z.size() * sizeof (int16_t));
+	if (!flat) out.append ((const char*)z.data(), z.size() * sizeof (int16_t));
 	return out;
 }
 

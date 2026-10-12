@@ -245,7 +245,9 @@ TEST_CASE ("Terrarium heights become a 259x259 .elv, row 0 south, nothing for se
 	int16_t v;
 	memcpy (&v, &e[100 + 2 * (130 * 259 + 130)], 2);
 	CHECK (v == 200);
-	CHECK (TsImg::Elev (14, 1000, 1500, g, tiles (g, [] (int) { return QColor (127, 206, 0); }), 0.5).empty()); // -50 m: sea
+	std::string sea = TsImg::Elev (14, 1000, 1500, g, tiles (g, [] (int) { return QColor (127, 206, 0); }), 0.5); // -50 m
+	REQUIRE (sea.size() == 100); // flat, header only
+	CHECK (U32 (sea, 8) == 0);
 	TsImg::Grid h = TsImg::TerrGrid (4, 0, 0, 15); // z1: north row 1000 m, south row 10 m
 	REQUIRE (h.nrow == 2);
 	std::string w = TsImg::Elev (4, 0, 0, h, tiles (h, [] (int row) { return row ? QColor (128, 10, 0) : QColor (131, 232, 0); }), 0.5);
@@ -293,7 +295,7 @@ TEST_CASE ("The tile stream config reads its body and rejects bad lines", "[Tile
 	CHECK (b[0].elev.lmax == 16);
 	CHECK (b[0].elevScale == 0.5);
 	REQUIRE (b[0].credit.size() == 3);
-	CHECK (b[0].credit[2].find ("Terrain Tiles on AWS") != std::string::npos);
+	CHECK (b[0].credit[2] == "Elevation: Terrain Tiles on AWS (Mapzen, with SRTM, GMTED2010, ETOPO1 and others)");
 	CHECK (b[0].credit[0].find ("EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016 & 2017)") != std::string::npos);
 	CHECK (b[0].credit[1].find ("OpenStreetMap contributors") != std::string::npos);
 	Tmp t;
@@ -475,14 +477,10 @@ TEST_CASE ("The service writes stock tiles from file:// sources", "[TileStream]"
 	}, 5.0));
 	CHECK (fs::exists (tex / "TileStream" / "written.idx"));
 
-	// its elevation came with it; a cache hit on it without one has it made
+	// its elevation follows as a job of its own
 	fs::path elv = tex / "Elev" / "14" / "001000" / "001500.elv";
-	REQUIRE (fs::exists (elv));
-	CHECK (fs::file_size (elv) == 134262);
+	REQUIRE (WaitFor ([&] { std::error_code ec; return fs::file_size (elv, ec) == 134262; }, 20.0));
 	CHECK_FALSE (fs::exists (tex / "Elev" / "04" / "000000" / "000000.elv")); // no Terrarium tile served: no Elev, the Surf still came
-	fs::remove (elv);
-	CHECK (ts.Want ("Earth", 14, 1000, 1500, 2) == 1);
-	REQUIRE (WaitFor ([&] { return fs::exists (elv); }, 20.0));
 
 	// a file of ours that failed to load is made again
 	fs::resize_file (l14, 1000);
@@ -499,6 +497,12 @@ TEST_CASE ("The service writes stock tiles from file:// sources", "[TileStream]"
 	REQUIRE (WaitFor ([&] { return ts.Want ("Earth", 13, 50, 50, 0) == -1; }, 20.0));
 	CHECK_FALSE (fs::exists (tex / "Surf" / "13" / "000050" / "000050.dds"));
 	CHECK (Read (tex / "TileStream" / "none.idx").find ("13 50 50") == 0);
+
+	// next session: a cache hit on a tile of ours without Elev has it made
+	fs::remove (elv);
+	TileStream ts2 (o);
+	CHECK (ts2.Want ("Earth", 14, 1000, 1500, 2) == 1);
+	REQUIRE (WaitFor ([&] { return fs::exists (elv); }, 20.0));
 }
 
 // file:// sources in a temp folder: EOX tiles, GIBS lights, water and Blue Marble

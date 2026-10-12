@@ -186,6 +186,7 @@ static bool Better (const TileStream::Impl::Job &a, const TileStream::Impl::Job 
 {
 	if (a.low != b.low) return !a.low;
 	if (a.required != b.required) return a.required;
+	if (a.elevOnly != b.elevOnly) return !a.elevOnly;
 	if (KL (a.key) != KL (b.key)) return KL (a.key) < KL (b.key);
 	return a.want > b.want;
 }
@@ -305,7 +306,7 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 		hold.erase (h);
 	}
 	auto j = jobs.find (id);
-	if (j != jobs.end()) {
+	if (j != jobs.end() && !j->second.elevOnly) {
 		j->second.want = now;
 		j->second.low = false;
 		return 0;
@@ -321,9 +322,10 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 		if (j != jobs.end()) {
 			j->second.want = now;
 			j->second.low = false;
-			return 0;
+			return 0; // an Elev job in the way: asked again when it is done
 		}
 	}
+	if (jobs.count (id)) return 0;
 	NewJob (b, k, now);
 	Trim ();
 	kick = true;
@@ -344,6 +346,7 @@ void TileStream::Impl::Trim ()
 		}
 		if (worst == jobs.end()) return;
 		if (worst->second.low) bodies[worst->second.body]->refetchQueue.push_back (worst->second.key);
+		if (worst->second.elevOnly) bodies[worst->second.body]->elevSeen.erase (worst->second.key);
 		jobs.erase (worst);
 	}
 }
@@ -573,8 +576,7 @@ void TileStream::Impl::Start (Job &J, Clock::time_point now)
 		J.lights = Srcs (B.cfg.lights, L, la, ln);
 		J.water = Srcs (B.cfg.water, L, la, ln);
 	}
-	const TsSource &es = B.cfg.elev;
-	if (!es.kind.empty() && L >= 4 && L <= es.lmax && !Paused (TERR, now)) J.elev = Srcs (es, L, la, ln); // optional for a Surf job
+	if (J.elevOnly) J.elev = Srcs (B.cfg.elev, L, la, ln); // a Surf job never waits on Terrarium
 	J.stage = 1;
 	J.waiting = 0;
 	for (std::vector<Src> *v : {&J.surf, &J.lights, &J.water, &J.elev})
@@ -690,9 +692,12 @@ void TileStream::Impl::Build (Job J)
 		if (decode (J.elev, et)) elv = TsImg::Elev (L, la, ln, TsImg::SrcGrid (C.elev, L, la, ln), et, C.elevScale);
 	}
 	if (J.elevOnly) {
-		bool ok = elv.empty() || Write (B, Tile (B.dir, "Elev", J.key), elv);
+		bool ok = !elv.empty() && Write (B, Tile (B.dir, "Elev", J.key), elv);
 		std::lock_guard<std::mutex> lk (mx);
-		if (!elevOk || !ok) B.noElev.insert (J.key);
+		if (!ok) {
+			B.noElev.insert (J.key);
+			for (const Src &s : J.elev) CacheDrop (s.url);
+		}
 		jobs.erase (J.id);
 		kick = true;
 		cv.notify_all();
@@ -752,6 +757,9 @@ void TileStream::Impl::Build (Job J)
 		hold[J.id] = opt.now() + std::chrono::seconds (60);
 	}
 	jobs.erase (J.id);
+	const TsSource &es = C.elev;
+	if (ok && !ocean && net && !es.kind.empty() && L >= 4 && L <= es.lmax && B.elevSeen.insert (J.key).second)
+		NewJob (J.body, J.key, opt.now()).elevOnly = true; // its Elev, a job of its own
 	kick = true;
 	cv.notify_all();
 }

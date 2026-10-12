@@ -50,7 +50,7 @@ namespace TsImg {
 	QImage Region (const QImage &anc, int depth, int ilat, int ilng);
 	std::string Dds (const QImage &img, bool alpha);   // DXT1, full mip chain
 	QImage DdsImage (const QByteArray &dds);             // level 0 of a DXT1 DDS
-	std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QImage> &tiles, double scale); // .elv, empty when all at sea level
+	std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QImage> &tiles, double scale); // .elv, header only (dtype 0) at sea level
 }
 
 class TileStream {
