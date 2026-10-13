@@ -34,9 +34,10 @@ struct SceneFx::CloudBox {
 SceneFx::SceneFx (oapi::D3D9Client *_gc, Scene *_scn, DWORD w, DWORD h)
 	: gc(_gc), scn(_scn), dev(_gc->GetDevice()), W(w), H(h)
 {
-	if (Config->SSAO || Config->VolClouds) InitDepth();
+	if (Config->SSAO || Config->VolClouds || Config->TAA) InitDepth(); // TAA: every main frame (design-visual-batch 3)
 	if (Config->SSAO) InitSSAO();
 	if (Config->VolClouds) InitClouds();
+	if (Config->VolClouds && Config->VolCloudShadows && pVol) InitVolShadow(); // not upstream: compiled at start, not mid-flight
 	if (Config->AutoExposure) InitExposure();
 }
 
@@ -52,6 +53,11 @@ void SceneFx::InitDepth ()
 	pTerrain = new ShaderClass(dev, "Modules/VulkanClient/SceneDepth.glsl", "TerrainDepthVS", "TerrainDepthPS", "TerrainDepth", "");
 	depthOK = tDepth->img && sDepthDS->tex->img;
 	if (!depthOK) LogErr("SceneFx: SceneDepth targets failed, SSAO and volume clouds off");
+	if (depthOK && Config->TAA) {
+		tFlag = new VkTex(dev, W, H, 1, VK_FORMAT_R8_UNORM, RTUsage);
+		sFlag = new VkSurf(tFlag, 0);
+		if (!tFlag->img) { LogErr("SceneFx: TAA flag target failed"); SAFE_DELETE(sFlag); SAFE_DELETE(tFlag); }
+	}
 }
 
 void SceneFx::InitSSAO ()
@@ -60,7 +66,7 @@ void SceneFx::InitSSAO ()
 		tAO[i] = new VkTex(dev, std::max(1u, W / 2), std::max(1u, H / 2), 1, VK_FORMAT_R8_UNORM, RTUsage);
 		sAO[i] = new VkSurf(tAO[i], 0);
 	}
-	pAO = new ImageProcessing(dev, "Modules/VulkanClient/SSAO.glsl", "PSAO");
+	pAO = new ImageProcessing(dev, "Modules/VulkanClient/SSAO.glsl", "PSAO", Config->TAA ? "_TAA" : NULL); // _TAA: the jittered ray
 	pAO->CompileShader("PSBlur");
 	pAO->CompileShader("PSComposite");
 	if (!depthOK || !tAO[0]->img || !tAO[1]->img || !pAO->IsOK()) {
@@ -75,12 +81,17 @@ void SceneFx::InitClouds ()
 		tVol[i] = new VkTex(dev, std::max(1u, W / 2), std::max(1u, H / 2), 1, VK_FORMAT_R16G16B16A16_SFLOAT, RTUsage);
 		sVol[i] = new VkSurf(tVol[i], 0);
 	}
-	std::string vf = std::string(Config->bAtmoQuality ? "" : "_PERFORMANCE ") + (Config->Filmic ? "_FILMIC " : "");
+	bool taa = Config->TAA != 0;
+	if (taa) { // the cloud distance for the TAA reprojection, VolMarch's second target
+		tVolD = new VkTex(dev, tVol[0]->w, tVol[0]->h, 1, VK_FORMAT_R32_SFLOAT, RTUsage);
+		sVolD = new VkSurf(tVolD, 0);
+	}
+	std::string vf = std::string(Config->bAtmoQuality ? "" : "_PERFORMANCE ") + (Config->Filmic ? "_FILMIC " : "") + (taa ? "_TAA " : "");
 	pVol = new ImageProcessing(dev, "Modules/VulkanClient/VolCloud.glsl", "VolMarch", vf.empty() ? NULL : vf.c_str());
 	pVol->CompileShader("VolBlur");
 	pVol->CompileShader("VolComposite");
 	cbox = std::make_shared<CloudBox>();
-	if (!depthOK || !tVol[0]->img || !tVol[1]->img || !pVol->IsOK()) {
+	if (!depthOK || !tVol[0]->img || !tVol[1]->img || (taa && !tVolD->img) || !pVol->IsOK()) {
 		LogErr("SceneFx: volume cloud targets or shaders failed, volume clouds off");
 		SAFE_DELETE(pVol);
 	}
@@ -131,6 +142,10 @@ SceneFx::~SceneFx ()
 	SAFE_DELETE(pAO);
 	SAFE_DELETE(pTerrain);
 	for (int i = 0; i < 2; i++) { SAFE_DELETE(sAO[i]); SAFE_DELETE(tAO[i]); }
+	SAFE_DELETE(sVolD);
+	SAFE_DELETE(tVolD);
+	SAFE_DELETE(sFlag);
+	SAFE_DELETE(tFlag);
 	SAFE_DELETE(sDepthDS);
 	SAFE_DELETE(sDepth);
 	SAFE_DELETE(tDepth);
@@ -255,9 +270,11 @@ void SceneFx::AfterOpaque (const std::list<vVessel*> &vessels, VkSurf *target)
 	clouds = clouds && tShape && tDetail && tCov && mapValid && mapObj == vp->Object();
 	cloudFade = clouds ? wV : 0.0f; // the 2D layer near the camera fades from the next frame on
 	bool ssao = WantSSAO(vessels);
-	if (!ssao && !clouds) { volShdFade = 0.0f; return; }
+	bool taa = depthOK && scn->TaaActive(); // not upstream: TAA reprojects from tDepth every main frame it runs
+	if (!ssao && !clouds && !taa) { volShdFade = 0.0f; return; }
 	VkDev::State st = dev->GetState();
 	DepthPass(vessels);
+	if (taa && sFlag) FlagPass(vessels);
 	if (ssao) Ssao(target);
 	if (clouds && Config->VolCloudShadows) VolShadow(target, vp, wV); // not upstream: before the clouds, so they cover their own shadow
 	else volShdFade = 0.0f;
@@ -280,7 +297,46 @@ void SceneFx::DepthPass (const std::list<vVessel*> &vessels)
 	gc->PopRenderTargets();
 	scn->PopPass();
 	scn->PopCameraFrustumLimits();
+	depthFrame = scn->GetFrameId();
 }
+
+// the camera target vessel again, depth tested against the pass above: its visible pixels get SceneDepth_PS's distance, saturated to 1 in R8
+void SceneFx::FlagPass (const std::list<vVessel*> &vessels)
+{
+	std::vector<OBJHANDLE> rigid; // the camera target and what is docked or attached to it, recursively: one rigid body
+	OBJHANDLE hT = oapiCameraTarget();
+	if (hT && oapiGetObjectType(hT) == OBJTP_VESSEL) rigid.push_back(hT);
+	for (size_t k = 0; k < rigid.size() && rigid.size() < 64; k++) {
+		VESSEL *v = oapiGetVesselInterface(rigid[k]);
+		if (!v) continue;
+		auto add = [&](OBJHANDLE h) { if (h && std::find(rigid.begin(), rigid.end(), h) == rigid.end()) rigid.push_back(h); };
+		for (UINT i = 0; i < v->DockCount(); i++) add(v->GetDockStatus(v->GetDockHandle(i)));
+		for (int p = 0; p < 2; p++)
+			for (DWORD i = 0; i < v->AttachmentCount(p == 1); i++) add(v->GetAttachmentStatus(v->GetAttachmentHandle(p == 1, i)));
+	}
+	std::vector<vVessel *> tvs;
+	for (vVessel *v : vessels) if (std::find(rigid.begin(), rigid.end(), v->Object()) != rigid.end()) tvs.push_back(v);
+	vVessel *tv = tvs.empty() ? NULL : tvs.front();
+	scn->PushCameraFrustumLimits(std::min(0.5f, scn->GetCameraNearPlane()), 1e6f);
+	scn->BeginPass(RENDERPASS_SCENE_DEPTH);
+	gc->PushRenderTarget(sFlag, sDepthDS, RENDERPASS_SCENE_DEPTH);
+	dev->Clear(true, false, false, 0, 1.0f, 0);
+	if (tv) {
+		dev->SetCullMode(VK_CULL_MODE_BACK_BIT);
+		dev->SetDepthFunc(VK_COMPARE_OP_LESS_OR_EQUAL);
+		for (vVessel *v : tvs) v->Render(dev, false);
+	}
+	gc->PopRenderTargets();
+	scn->PopPass();
+	scn->PopCameraFrustumLimits();
+	flagFrame = scn->GetFrameId();
+}
+
+bool SceneFx::DepthValid () const { return depthOK && depthFrame == scn->GetFrameId(); }
+VkTex *SceneFx::Depth () const { return DepthValid() ? tDepth : NULL; }
+VkTex *SceneFx::VolumeTex () const { return (pVol && volFrame == scn->GetFrameId()) ? tVol[1] : NULL; }
+VkTex *SceneFx::Flag () const { return (tFlag && DepthValid() && flagFrame == scn->GetFrameId()) ? tFlag : NULL; }
+VkTex *SceneFx::VolumeDist () const { return (tVolD && VolumeTex()) ? tVolD : NULL; }
 
 void SceneFx::Ssao (VkSurf *target)
 {
@@ -300,6 +356,10 @@ void SceneFx::Ssao (VkSurf *target)
 	pAO->SetFloat("vFade", &fade, sizeof(fade));
 	pAO->SetFloat("vSun", &vsun, sizeof(vsun));
 	pAO->SetFloat("vAOTexel", &aot, sizeof(aot));
+	if (Config->TAA) { // the projection's jitter off the rebuilt view ray (design-visual-batch S13)
+		D3DXVECTOR2 jit(P->_31 / P->_11, P->_32 / P->_22);
+		pAO->SetFloat("vJit", &jit, sizeof(jit));
+	}
 	pAO->SetTextureNative("tDepth", tDepth, IPF_POINT | IPF_CLAMP);
 	pAO->SetOutputNative(0, sAO[0]);
 	if (!pAO->Execute(true)) return;
@@ -328,10 +388,17 @@ void SceneFx::CameraRays (D3DXVECTOR4 &camX, D3DXVECTOR4 &camY, D3DXVECTOR4 &cam
 	camX = D3DXVECTOR4(cx->x, cx->y, cx->z, 1.0f / P->_11);
 	camY = D3DXVECTOR4(cy->x, cy->y, cy->z, 1.0f / P->_22);
 	camZ = D3DXVECTOR4(cz->x, cz->y, cz->z, 0.0f);
+	if (scn->IsJittered()) { // ndc = view / z * scale + jitter: the ray through uv takes the jitter off (design-visual-batch S13)
+		float kx = P->_31 / P->_11, ky = P->_32 / P->_22;
+		camZ.x -= cx->x * kx + cy->x * ky;
+		camZ.y -= cx->y * kx + cy->y * ky;
+		camZ.z -= cx->z * kx + cy->z * ky;
+	}
 }
 
 // march at half resolution, blur, then over the scene
-void SceneFx::Clouds (VkSurf *target, vPlanet *vp, float wV)
+// VolCloud.glsl's VolPS fields of the cloud layer this frame, shared by the march and the shadow pass
+void SceneFx::VolParams (vPlanet *vp, VolPrm &v) const
 {
 	OBJHANDLE hP = vp->Object();
 	MATRIX3 R;
@@ -339,35 +406,45 @@ void SceneFx::Clouds (VkSurf *target, vPlanet *vp, float wV)
 	double rot = vp->prm.cloudrot, ca = cos(rot), sa = sin(rot);
 	auto ToGlobal = [&](const double *c) { return mul(R, _V(c[0] * ca + c[2] * sa, c[1], c[2] * ca - c[0] * sa)); }; // cloud frame to global
 	auto V4 = [](const VECTOR3 &v, double w) { return D3DXVECTOR4(float(v.x), float(v.y), float(v.z), float(w)); };
-
-	D3DXVECTOR4 camX, camY, camZ;
-	CameraRays(camX, camY, camZ);
-	D3DXVECTOR4 mapE = V4(ToGlobal(mapFrame.E), 1.0 / VolCloud::MAPHALF), mapN = V4(ToGlobal(mapFrame.N), 0.0), mapU = V4(ToGlobal(mapFrame.U), 0.0);
-	D3DXVECTOR4 clA = V4(mul(R, _V(ca, 0, -sa)), 0.0), clB = V4(mul(R, _V(0, 1, 0)), 0.0), clC = V4(mul(R, _V(sa, 0, ca)), 0.0);
+	CameraRays(v.camX, v.camY, v.camZ);
+	v.mapE = V4(ToGlobal(mapFrame.E), 1.0 / VolCloud::MAPHALF); v.mapN = V4(ToGlobal(mapFrame.N), 0.0); v.mapU = V4(ToGlobal(mapFrame.U), 0.0);
+	v.clA = V4(mul(R, _V(ca, 0, -sa)), 0.0); v.clB = V4(mul(R, _V(0, 1, 0)), 0.0); v.clC = V4(mul(R, _V(sa, 0, ca)), 0.0);
 	double Rp = vp->GetSize(), base = vp->prm.cloudalt - 1000.0;
-	D3DXVECTOR4 slab(float(Rp + base), float(Rp + base + 3000.0), float(Rp), float(base));
+	v.slab = D3DXVECTOR4(float(Rp + base), float(Rp + base + 3000.0), float(Rp), float(base));
+	v.fade = D3DXVECTOR4(35e3f, 60e3f, 80e3f, 0.04f);
+	v.noise = D3DXVECTOR4(1.0f / 12000.0f, 1.0f / 1500.0f, 0.35f, 1.0f);
+}
+
+void SceneFx::SetVolParams (ImageProcessing *ip, const VolPrm &v) const
+{
+	ip->SetFloat("vCamX", &v.camX, sizeof(v.camX));
+	ip->SetFloat("vCamY", &v.camY, sizeof(v.camY));
+	ip->SetFloat("vCamZ", &v.camZ, sizeof(v.camZ));
+	ip->SetFloat("vMapE", &v.mapE, sizeof(v.mapE));
+	ip->SetFloat("vMapN", &v.mapN, sizeof(v.mapN));
+	ip->SetFloat("vMapU", &v.mapU, sizeof(v.mapU));
+	ip->SetFloat("vClA", &v.clA, sizeof(v.clA));
+	ip->SetFloat("vClB", &v.clB, sizeof(v.clB));
+	ip->SetFloat("vClC", &v.clC, sizeof(v.clC));
+	ip->SetFloat("vSlab", &v.slab, sizeof(v.slab));
+	ip->SetFloat("vFade", &v.fade, sizeof(v.fade));
+	ip->SetFloat("vNoise", &v.noise, sizeof(v.noise));
+}
+
+void SceneFx::Clouds (VkSurf *target, vPlanet *vp, float wV)
+{
+	VolPrm v;
+	VolParams(vp, v);
+	double base = vp->prm.cloudalt - 1000.0;
 	float side = float(std::min(1.0, std::max(0.0, (vp->CameraAltitude() - base) / 3000.0)));
 	float steps = Config->VolCloudQuality <= 0 ? 32.0f : (Config->VolCloudQuality >= 2 ? 96.0f : 64.0f);
 	D3DXVECTOR4 march(steps, float(frame % 64), wV, side);
-	D3DXVECTOR4 fade(35e3f, 60e3f, 80e3f, 0.04f);
-	D3DXVECTOR4 noise(1.0f / 12000.0f, 1.0f / 1500.0f, 0.35f, 1.0f);
 	D3DXVECTOR4 tex(1.0f / float(W), 1.0f / float(H), 1.0f / float(tVol[0]->w), 1.0f / float(tVol[0]->h));
 
 	pVol->Activate("VolMarch");
 	pVol->SetStruct("Const", vp->GetScatterConst(), sizeof(ConstParams));
-	pVol->SetFloat("vCamX", &camX, sizeof(camX));
-	pVol->SetFloat("vCamY", &camY, sizeof(camY));
-	pVol->SetFloat("vCamZ", &camZ, sizeof(camZ));
-	pVol->SetFloat("vMapE", &mapE, sizeof(mapE));
-	pVol->SetFloat("vMapN", &mapN, sizeof(mapN));
-	pVol->SetFloat("vMapU", &mapU, sizeof(mapU));
-	pVol->SetFloat("vClA", &clA, sizeof(clA));
-	pVol->SetFloat("vClB", &clB, sizeof(clB));
-	pVol->SetFloat("vClC", &clC, sizeof(clC));
-	pVol->SetFloat("vSlab", &slab, sizeof(slab));
+	SetVolParams(pVol, v);
 	pVol->SetFloat("vMarch", &march, sizeof(march));
-	pVol->SetFloat("vFade", &fade, sizeof(fade));
-	pVol->SetFloat("vNoise", &noise, sizeof(noise));
 	pVol->SetFloat("vTex", &tex, sizeof(tex));
 	pVol->SetTextureNative("tSun", vp->GetScatterTable(SUN_COLOR), IPF_LINEAR | IPF_CLAMP);
 	pVol->SetTextureNative("tLndRay", vp->GetScatterTable(RAY_LAND), IPF_LINEAR | IPF_CLAMP);
@@ -378,7 +455,10 @@ void SceneFx::Clouds (VkSurf *target, vPlanet *vp, float wV)
 	pVol->SetTextureNative("tShape", tShape, IPF_LINEAR | IPF_WRAP);
 	pVol->SetTextureNative("tDetail", tDetail, IPF_LINEAR | IPF_WRAP);
 	pVol->SetOutputNative(0, sVol[0]);
-	if (!pVol->Execute(true)) return;
+	pVol->SetOutputNative(1, sVolD); // TAA: the cloud distance (MRT), NULL without
+	bool marched = pVol->Execute(true);
+	pVol->SetOutputNative(1, NULL);
+	if (!marched) return;
 
 	pVol->Activate("VolBlur");
 	pVol->SetFloat("vTex", &tex, sizeof(tex));
@@ -393,6 +473,7 @@ void SceneFx::Clouds (VkSurf *target, vPlanet *vp, float wV)
 	pVol->SetTextureNative("tVol", tVol[1], IPF_POINT | IPF_CLAMP);
 	pVol->SetOutputNative(0, target);
 	pVol->Execute(1, true);
+	volFrame = scn->GetFrameId();
 }
 
 float SceneFx::BeginFrame ()

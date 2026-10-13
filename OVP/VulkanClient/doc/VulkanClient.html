@@ -628,6 +628,59 @@
     </p>
 </ul>
 
+<h2 id="_effects">Effects</h2>
+<p>
+  The Effects group of the Advanced Setup dialog (VulkanClient.cfg keys in
+  brackets, 1 on, 0 off). Each one can be switched off on its own; off gives
+  the image as before. The 2D panel, the HUD and the MFDs are never changed.
+</p>
+<ul>
+  <li>Lens flare (<code>LensFlare</code> 1)</li>
+    <p>
+      Ghosts and a halo ring along the line from the sun through the centre of
+      the view. They fade when the sun is hidden by terrain, clouds or a
+      vessel. Not shown in the 2D panel cockpit.
+    </p>
+  <li>Light shafts (<code>LightShafts</code> 1)</li>
+    <p>
+      Rays of sunlight in the air around objects in front of a low sun.
+    </p>
+  <li>Temporal anti-aliasing (<code>TAA</code> 1)</li>
+    <p>
+      Smooths edges, the far forest and the noise of the ambient occlusion and
+      the volumetric clouds over several frames. In-scene labels are drawn
+      after it and stay sharp.
+    </p>
+  <li>Water effects (<code>WaterFx</code> 1)</li>
+    <p>
+      Two layers of waves, sun glitter that widens with distance, a reflection
+      of the sky that depends on the view angle, also from orbit, deeper water
+      colour and a thin line of foam along shores.
+    </p>
+  <li>3D cloud shadows (<code>VolCloudShadows</code> 1)</li>
+    <p>
+      The volumetric clouds shadow the ground, buildings, trees and vessels in
+      the direction of the sun. Needs volumetric clouds.
+    </p>
+  <li>Filmic tone curve (<code>Filmic</code> 0)</li>
+    <p>
+      A film-like curve for the planet, sky, clouds and trees: deeper shadows,
+      softer highlights.
+    </p>
+  <li>Vignette (<code>Vignette</code> 1)</li>
+    <p>
+      Slightly darker corners.
+    </p>
+  <li>Sharpen (<code>Sharpen</code> 1)</li>
+    <p>
+      Contrast-adaptive sharpening of the finished 3D image.
+    </p>
+  <li>Heat haze (<code>HeatHaze</code> 1)</li>
+    <p>
+      The air shimmers behind running engines, in an atmosphere.
+    </p>
+</ul>
+
 <h2>Generic configuration</h2>
 <p>
   The generic configuration contains options that will change the general

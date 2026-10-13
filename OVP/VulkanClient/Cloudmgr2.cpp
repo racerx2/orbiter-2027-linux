@@ -346,7 +346,7 @@ void CloudTile::PreLoad()
 
 	owntex = true;
 
-	if (pSysSrf && Config->VolClouds && lvl + 4 >= 5) { // not upstream: before the pixels go; none from level 4 and below, 40 km pixels and coarser
+	if (pSysSrf && (Config->VolClouds || Config->LensFlare) && lvl + 4 >= 5) { // not upstream: before the pixels go; none from level 4 and below, 40 km pixels and coarser
 		dens = CloudDensity(*pSysSrf);
 		densReady.store(true, std::memory_order_release);
 	}
@@ -437,6 +437,10 @@ void CloudTile::Render()
 
 
 // =======================================================================
+// not upstream: the lens flare's cloud test (design-visual-batch 6, S5)
+
+static struct { const void *mgr = nullptr; DWORD frame = 0; float alpha = 0.0f; } cloudSun; // the main camera's, render thread
+
 // =======================================================================
 
 template<>
@@ -531,6 +535,15 @@ void TileManager2<CloudTile>::Render (MATRIX4 &dwmat, bool use_zbuf, const vPlan
 	// render the tree
 	for (i = 0; i < 2; i++)
 		RenderNode (tiletree+i);
+
+	if (Config->LensFlare && scene->GetRenderPass() == RENDERPASS_MAINSCENE && vp == scene->GetCameraProxyVisual()) { // not upstream: the flare's cloud test, under the mutex (design-visual-batch S5)
+		VECTOR3 gsun;
+		oapiGetGlobalPos(oapiGetObjectByIndex(0), &gsun);
+		VECTOR3 cam = scene->GetCameraGPos();
+		cloudSun.mgr = this;
+		cloudSun.frame = scene->GetFrameId();
+		cloudSun.alpha = CloudAlphaToward(this, cam, gsun - cam);
+	}
 	
 	loader->ReleaseMutex ();
 
@@ -645,4 +658,54 @@ int TileManager2<CloudTile>::VolTiles (double lat, double lng, double half, std:
 	}
 	loader->ReleaseMutex();
 	return int(out.size());
+}
+
+// -----------------------------------------------------------------------
+// not upstream: the finest loaded density over a planet-local direction; loader mutex held
+static float CloudDensityAt (TileManager2<CloudTile> *m, const VECTOR3 &dl, double cloudrot)
+{
+	double r = length(dl);
+	if (r <= 0.0) return 0.0f;
+	double lat = std::clamp(asin(std::clamp(dl.y / r, -1.0, 1.0)), -PI05 + 1e-6, PI05 - 1e-6);
+	double lng = VolCloud::CloudLng(atan2(dl.z, dl.x), cloudrot);
+	const CloudTile *t = (const CloudTile *)m->SearchTile(lng, lat, 32, true);
+	while (t && !t->Density()) t = (t->GetNode() && t->GetNode()->Parent()) ? t->GetNode()->Parent()->Entry() : nullptr;
+	if (!t) return 0.0f;
+	VolCloud::Src s;
+	s.minlat = t->bnd.minlat; s.maxlat = t->bnd.maxlat;
+	s.minlng = t->bnd.minlng; s.maxlng = t->bnd.maxlng;
+	s.d = t->Density();
+	double u, v;
+	return s.Covers(lat, lng, &u, &v) ? s.At(u, v) : 0.0f;
+}
+
+// not upstream: the lens flare's cloud alpha (design-visual-batch S5)
+float CloudAlphaToward (TileManager2<CloudTile> *m, const VECTOR3 &cameraPos, const VECTOR3 &sunDir)
+{
+	vPlanet *vp = m->GetPlanet();
+	if (!vp || !vp->prm.bCloud) return 0.0f;
+	MATRIX3 R;
+	VECTOR3 P;
+	oapiGetRotationMatrix(vp->Object(), &R);
+	oapiGetGlobalPos(vp->Object(), &P);
+	VECTOR3 p = tmul(R, cameraPos - P), d = tmul(R, unit(sunDir)); // planet-local
+	double Rp = vp->GetSize(), alt = vp->prm.cloudalt, rc = Rp + alt, r = length(p), h = r - Rp;
+	if (h >= alt + 1000.0) return 0.0f; // above the layer
+	auto step = [](double e0, double e1, double x) { double t = std::clamp((x - e0) / (e1 - e0), 0.0, 1.0); return t * t * (3.0 - 2.0 * t); };
+	double wV = m->GetScene()->GetVolCloudFade(); // the volume clouds replace the layer near the camera, as CloudPS fades it
+	auto fVol = [&](double dist) { return 1.0 - wV + wV * step(35e3, 60e3, dist); };
+	double inside = 0.0, below = 0.0;
+	if (h > alt - 1000.0) inside = 0.5 * CloudDensityAt(m, p, vp->prm.cloudrot) * fVol(0.0);
+	if (h < alt) { // from below: where the ray meets the layer
+		double b = dotp(p, d), c = r * r - rc * rc, t = -b + sqrt(std::max(0.0, b * b - c));
+		below = CloudDensityAt(m, p + d * t, vp->prm.cloudrot) * fVol(t);
+		return float(below + (inside - below) * step(alt - 1000.0, alt, h));
+	}
+	return float(inside * (1.0 - step(alt, alt + 1000.0, h)));
+}
+
+// not upstream: the lens flare's cloud alpha (design-visual-batch S5)
+float CloudSunAlpha (const TileManager2<CloudTile> *m, DWORD frame)
+{
+	return (m && cloudSun.mgr == m && cloudSun.frame == frame) ? cloudSun.alpha : 0.0f;
 }

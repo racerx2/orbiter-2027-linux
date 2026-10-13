@@ -1593,7 +1593,7 @@ void Scene::RenderMainScene()
 
 	bJitter = false; jitX = jitY = 0.0f; // not upstream: TAA picks this frame's jitter, the main pass only
 	if (pTaa) pTaa->BeginFrame(&bJitter, &jitX, &jitY);
-	bLabelsLate = bJitter;
+	bLabelsLate = TaaActive(); // reset frames too: their labels must not enter the history
 
 	UpdateCameraFromOrbiter(RENDERPASS_MAINSCENE);
 	UpdateCamVis();
@@ -3413,6 +3413,12 @@ DWORD Scene::GetRenderPass() const
 float Scene::GetVolCloudFade() const
 {
 	return pFx ? pFx->CloudFade() : 0.0f;
+}
+
+// not upstream
+bool Scene::TaaActive() const
+{
+	return pTaa && pTaa->Active();
 }
 
 // not upstream

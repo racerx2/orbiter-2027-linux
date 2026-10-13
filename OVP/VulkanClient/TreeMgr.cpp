@@ -107,7 +107,8 @@ void TreeMgr::MakeMeshes ()
 		{1, 20, VK_FORMAT_R8G8B8A8_UNORM, DECL_TEXCOORD, 2},
 		{1, 24, VK_FORMAT_R8G8B8A8_UNORM, DECL_TEXCOORD, 3}};
 	decl = new VkVertexDecl (el, 7, sizeof (TreeGeom::Vtx), sizeof (Inst), true);
-	sh = new ShaderClass (dev, "Modules/VulkanClient/Tree.glsl", "TreeVS", "TreePS", "Trees", Config->Filmic ? "_FILMIC " : ""); // not upstream: _FILMIC
+	std::string fl = std::string(Config->Filmic ? "_FILMIC " : "") + (Config->TAA ? "_TAA " : ""); // not upstream: _FILMIC, _TAA (the dither moves per frame)
+	sh = new ShaderClass (dev, "Modules/VulkanClient/Tree.glsl", "TreeVS", "TreePS", "Trees", fl.c_str());
 }
 
 // cell key: L16 tile row and column, cell column and row inside it
@@ -544,6 +545,7 @@ void TreeMgr::DrawCells (VkDev *dev, int depth, const D3DXMATRIX *mVPd)
 			prm.trans = D3DXVECTOR4 (s.Transmission.x, s.Transmission.y, s.Transmission.z, 0.0f);
 			prm.insc = D3DXVECTOR4 (s.Incatter.x, s.Incatter.y, s.Incatter.z, 0.0f);
 		}
+		if (scn->IsJittered()) prm.insc.w = float(scn->GetFrameId() % 8); // not upstream: the TAA dither phase while TAA runs, the same in the distance pass
 		float w[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 		double az = atan2 (sc.z, sc.x) / (PI / 4.0); // east 0, counter-clockwise, as the horizon maps
 		if (az < 0.0) az += 8.0;

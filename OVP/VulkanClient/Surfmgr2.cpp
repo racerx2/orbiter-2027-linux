@@ -1157,6 +1157,16 @@ void SurfTile::Render ()
 	sp->mWorld = mWorld;
 	sp->fTgtScale = tgtscale;
 
+	{ // not upstream: foam mask mip with ~20 m texels and a 40 m tap ring in mask uv (texel size from the tile, its texrange and 512 texels), on every tile
+		double R = vPlanet->GetSize();
+		double tv = std::max(1e-3, (bnd.maxlat - bnd.minlat) * R / (512.0 * std::max(1e-9, double(texrange.tvmax - texrange.tvmin))));
+		double tu = std::max(1e-3, (bnd.maxlng - bnd.minlng) * R * std::cos(0.5 * (bnd.minlat + bnd.maxlat)) / (512.0 * std::max(1e-9, double(texrange.tumax - texrange.tumin))));
+		double mip = std::min(9.0, std::max(0.0, std::log2(20.0 / std::max(tu, tv))));
+		sp->vWaterFx = FVECTOR4(float(mip), float(std::min(0.05, 40.0 / (512.0 * tu))), float(std::min(0.05, 40.0 / (512.0 * tv))), 0.0f);
+	}
+	bool bVolShd = scene->GetRenderPass() == RENDERPASS_MAINSCENE && vPlanet == scene->GetCameraProxyVisual(); // not upstream: the 2D cloud shadow fades where the volume shadow drew last frame
+	sp->vVolCld = FVECTOR4(35e3f, 60e3f, bVolShd ? scene->GetVolShadowFade() : 0.0f, 0.0f);
+
 	if (has_lights) sp->fBeta = float(mgr->Cprm().lightfac);
 	else sp->fBeta = 0.0f;
 

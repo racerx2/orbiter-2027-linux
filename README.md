@@ -218,6 +218,13 @@ Ground graphics group of the VulkanClient Advanced Setup dialog;
 `TreeDensity` (1), `AutoExposure` (1), `AutoExpMinEV` (-1.5), `AutoExpMaxEV`
 (2.5), `CloudAtlas` (1, cloud layer without tile seams).
 
+The Effects group of the same dialog switches the look passes, each on its
+own; `VulkanClient.cfg` keys (defaults): `LensFlare` (1), `LightShafts` (1),
+`TAA` (1, temporal anti-aliasing), `WaterFx` (1, waves, glitter, sky
+reflection, foam), `VolCloudShadows` (1, shadows of the volumetric clouds),
+`Filmic` (0, filmic tone curve), `Vignette` (1), `Sharpen` (1), `HeatHaze`
+(1, shimmer behind engines).
+
 Privacy: each tile request tells the server which part of Earth is shown. Its
 only headers are `Host`, `User-Agent: OrbiterLinux/<version>`,
 `Accept-Language: en`, `Accept-Encoding` and `Connection`, and `Range` for a

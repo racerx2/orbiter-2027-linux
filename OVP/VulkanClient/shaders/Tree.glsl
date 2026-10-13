@@ -17,7 +17,7 @@ struct TreePrmS
 	vec4 vSunCol;	// sun colour (rgb), planet exposure (w)
 	vec4 vAmb;		// ambient (rgb), 1 for the distance pass (w)
 	vec4 vTrans;	// atmospheric transmission (rgb)
-	vec4 vInsc;		// inscatter (rgb)
+	vec4 vInsc;		// inscatter (rgb), TAA frame % 8 (w)
 };
 
 layout(binding = 0, row_major, scalar) uniform TreeBlock { TreePrmS Prm; };
@@ -109,7 +109,11 @@ void main()
 	}
 	// cross-fade the bands with a screen-door
 	float fade = imp ? smoothstep(Prm.vBand.y, Prm.vBand.y + Prm.vBand.z, d) : 1.0 - smoothstep(Prm.vBand.x, Prm.vBand.x + Prm.vBand.z, d);
+#ifdef _TAA
+	float nz = IGNt(gl_FragCoord.xy + Prm.vInsc.w * 5.588238); // frame % 8 moves the pattern, TAA averages it (Jimenez 2014)
+#else
 	float nz = IGNt(gl_FragCoord.xy);
+#endif
 	if (fade < (imp ? 1.0 - nz : nz)) discard; // complementary, one of the two at each pixel
 	if (Prm.vAmb.w > 0.5) { oColor = vec4(length(frg.posW)); return; } // distance pass
 

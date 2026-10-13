@@ -107,7 +107,7 @@ struct ShaderParams
 	float4   vVolCld;			// not upstream: 2D cloud fade start, end (m), volume weight
 	float4   vCldAtlas;			// not upstream: cloud atlas uv offset (xy) and scale (zw)
 	float4   vCldAtlasW;		// not upstream: x 1 with the atlas, y max anisotropy, z 1 when the texture is at or below the atlas level
-	float4   vWaterFx;			// not upstream: water effects, x mask mip for the foam, yzw spare
+	float4   vWaterFx;			// not upstream: water effects, x foam mask mip, yz foam ring radius in uv, w spare
 };
 static_assert(sizeof(ShaderParams) == 464, "ShaderParams must match NewPlanet.glsl PerObjectParams"); // not upstream
 static_assert(offsetof(ShaderParams, vCldAtlas) == 416 && offsetof(ShaderParams, vWaterFx) == 448, "ShaderParams must match NewPlanet.glsl PerObjectParams"); // not upstream

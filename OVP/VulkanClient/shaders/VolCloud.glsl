@@ -138,6 +138,10 @@ vec3 PixelRay(vec2 uv)
 	return normalize(vCamX.xyz * ((uv.x * 2.0 - 1.0) * vCamX.w) + vCamY.xyz * ((1.0 - uv.y * 2.0) * vCamY.w) + vCamZ.xyz);
 }
 
+#ifdef _TAA
+float volDist = 0.0;	// VolMarch's alpha-weighted cloud distance, 0 none (the TAA reprojection)
+#endif
+
 vec4 VolMarch(float x, float y)
 {
 	vec2 uv = vec2(x, y);
@@ -189,6 +193,9 @@ vec4 VolMarch(float x, float y)
 	}
 	float alpha = 1.0 - T;
 	if (alpha < 1e-3) return vec4(0.0);
+#ifdef _TAA
+	volDist = tw / max(ts, 1e-6);
+#endif
 	vec3 col = L / alpha;
 	vec3 pm = o + d * (tw / max(ts, 1e-6));	// haze to the cloud's mean distance, as the 2D layer
 	LandOut sct = GetLandView(length(pm), normalize(pm));
@@ -239,7 +246,12 @@ layout(location = 1) in float iY;	// TEXCOORD1
 layout(location = 0) out vec4 oColor;
 #endif
 #ifdef PS_VolMarch
+#ifdef _TAA
+layout(location = 1) out vec4 oDist;	// the cloud distance for the TAA reprojection (R32F)
+void main() { oColor = VolMarch(iX, iY); oDist = vec4(volDist); }
+#else
 void main() { oColor = VolMarch(iX, iY); }
+#endif
 #endif
 #ifdef PS_VolBlur
 void main() { oColor = VolBlur(iX, iY); }

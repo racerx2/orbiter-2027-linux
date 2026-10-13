@@ -14,6 +14,9 @@ vec4	vFade;		// fade start m, fade end m, frame number, samples
 vec4	vSun;		// sun direction in camera space, sun up 0..1
 vec2	vDir;		// blur step in uv
 vec2	vAOTexel;	// 1/width, 1/height of the AO buffer
+#ifdef _TAA
+vec2	vJit;		// the projection's jitter over its scale, x and y (_31/_11, _32/_22)
+#endif
 };
 
 layout(binding = 4) uniform sampler2D tDepth;	// camera distance, 0 none
@@ -28,6 +31,9 @@ vec2 Snap(vec2 uv) { return (floor(uv / vProj.zw) + 0.5) * vProj.zw; }	// depth 
 vec3 ViewPos(vec2 uv, float d)
 {
 	vec3 r = vec3((uv.x * 2.0 - 1.0) * vProj.x, (1.0 - uv.y * 2.0) * vProj.y, 1.0);
+#ifdef _TAA
+	r.xy -= vJit;	// the ray of the jittered pixel
+#endif
 	return normalize(r) * d;
 }
 

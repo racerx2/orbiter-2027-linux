@@ -118,7 +118,7 @@ struct PerObjectParams
 	vec4	 vVolCld;			// not upstream: 2D cloud fade start, end (m), volume weight
 	vec4	 vCldAtlas;			// not upstream: cloud atlas uv offset (xy) and scale (zw)
 	vec4	 vCldAtlasW;		// not upstream: x 1 with the atlas, y max anisotropy, z 1 when the texture is at or below the atlas level
-	vec4	 vWaterFx;			// not upstream: water effects, x mask mip for the foam, yzw spare
+	vec4	 vWaterFx;			// not upstream: water effects, x foam mask mip, yz foam ring radius in uv, w spare
 };
 
 // uniform extern: vertex shader constants at binding 0 (the pixel shaders read Prm too), pixel shader constants at 2 (Scatter.glsl's are 1)
@@ -484,6 +484,14 @@ vec4 TerrainPS(TileVS frg)
 	vec2 vUVWtr = frg.texUV.xy * Prm.vMicroOff.zw + Prm.vMicroOff.xy;
 	vec2 vUVCld = frg.texUV.xy * Prm.vCloudOff.zw + Prm.vCloudOff.xy;
 
+#if defined(_WATERFX)
+	vec2 vUVWt0 = vUVWtr; // not upstream: the unscrolled ocean uv, whole repeats per L14 tile
+	float fFoam = 0.0; // not upstream: surf foam share, lit as white ground below
+	float fFoamW = 0.0; // not upstream: the foam noise's cells per pixel, so it fades to its mean before it aliases
+#ifdef STAGE_PS
+	fFoamW = length(fwidth(vUVWt0 * 64.0));
+#endif
+#endif
 	vUVWtr.x += Const.Time / 180.0f;
 
 	vec3 cNrm = vec3(0.5, 0.5, 1.0);
@@ -494,6 +502,10 @@ vec4 TerrainPS(TileVS frg)
 
 #if defined(_RIPPLES)
 	if (Flow.bTexture) cNrm = texture(tOcean, vUVWtr).xyz;
+#if defined(_WATERFX)
+	vec3 cNrm2 = vec3(0.5, 0.5, 1.0); // not upstream: second layer on the (2u + v, 2v - u) lattice, 26.6 deg turned and sqrt5 finer, 24 and 18 repeats per 3600 s
+	if (Flow.bTexture) cNrm2 = texture(tOcean, vec2(2.0 * vUVWt0.x + vUVWt0.y, 2.0 * vUVWt0.y - vUVWt0.x) + vec2(24.0, 18.0) * (Const.Time / 3600.0)).xyz;
+#endif
 #endif
 
 	// Fetch Main Textures
@@ -596,6 +608,12 @@ vec4 TerrainPS(TileVS frg)
 	// Compute world space normal for water rendering
 	//
 	cNrm.xy = (cNrm.xy - 0.5f) * 2.0f;
+#if defined(_WATERFX)
+	vec3 cN1 = normalize(cNrm), cN2 = normalize(vec3((cNrm2.xy - 0.5) * 2.0, cNrm2.z)); // not upstream: whiteout blend of the two layers as unit normals
+	vec3 cWo = vec3(cN1.xy + cN2.xy, cN1.z * cN2.z);
+	cNrm.xy = cWo.xy * (cNrm.z / cWo.z); // back to upstream's stored z, so wNrmStr acts as today
+	cNrm.xy *= mix(1.0, 0.15, smoothstep(2e3, 30e3, dst)); // not upstream: far waves flatten, the roughness takes over
+#endif
 	cNrm.z *= Const.wNrmStr;
 	cNrm = normalize(cNrm);
 
@@ -614,9 +632,27 @@ vec4 TerrainPS(TileVS frg)
 	vec3 fF = (0.15f + fFresnel4 * 0.85f) * fMask * Const.wSpec;
 
 	// Compute specular reflection intensity
+#if defined(_WATERFX)
+	vec2 fS = 1.0 - vec2(fDCH, fDCN); // not upstream: Schlick with F0 0.02, x the glint on V.H, y the sky on V.N
+	vec2 fFS = (0.02 + 0.98 * fS * fS * fS * fS * fS) * fMask * Const.wSpec;
+	float fRgh = min(mix(0.08, 0.35, smoothstep(1e3, 80e3, dst)), 0.2); // not upstream: the glitter path widens with distance
+#ifdef STAGE_PS
+	vec3 dNx = dFdx(wnrmW), dNy = dFdy(wnrmW); // not upstream: specular AA, the normal's spread over a pixel widens the lobe (Kaplanyan 2016)
+	fRgh = sqrt(fRgh * fRgh + min(0.5 * (dot(dNx, dNx) + dot(dNy, dNy)), 0.18));
+#endif
+	fSpe = GGX_NDF(fDHN, fRgh) * fFS.x * 6.2832; // not upstream: the lit ground here has no 1/pi and a x2, so 2pi keeps the glint to water ratio physical
+#else
 	fSpe = GGX_NDF(fDHN, 0.1f + clamp(fDWS, 0.0, 1.0) * 0.1f) * fF.y;
+#endif
 	fSpe /= (4.0f * fDCH * max(fDWS, fDCN) + 1e-3);
 
+#if defined(_WATERFX)
+	vec4 cUp = AmbientApprox(vPlN); // not upstream: the sky from orbit, without fSrf
+	cRfl = cUp.rgb * cUp.a * 0.6 * fFS.y;
+	if (!Flow.bInSpace) cRfl = mix(cRfl, GetAmbient(reflect(-vRay, wnrmW)) * fFS.y, fSrf); // not upstream: the sky in air as upstream, Schlick on V.N; meets the orbit term at the top of the air
+	cTex.rgb = mix(cTex.rgb, vec3(0.012, 0.045, 0.075), 0.25 * fMask) + vec3(0.0, 0.08, 0.07) * max(fDPS, 0.0) * fMask * 0.3; // not upstream: deep water and a sun-facing subsurface
+	cTex.rgb *= 1.0 - fFS.y; // not upstream: the reflected share does not enter the water
+#else
 	// Apply fresnel water only if close enough to a surface
 	//
 	if (!Flow.bInSpace)
@@ -627,11 +663,27 @@ vec4 TerrainPS(TileVS frg)
 	}
 
 	cTex.rgb = clamp(cTex.rgb + vec3(0, 0.55, 1.0) * Const.wBrightness * fMask, 0.0, 1.0);
+#endif
 
 #else
 	// Fallback to simple specular reflection
 	float fDHN = dot(hlvW, nvrW);
 	fSpe = pow(clamp(fDHN, 0.0, 1.0), 60.0f) * fMask * 5.0f;
+#endif
+#if defined(_WATERFX)
+	if (fMask > 0.0 && dst < 8e3) { // not upstream: surf foam where a ring of 8 mask taps at ~20 m texels, 40 m out (Prm.vWaterFx), finds a little land
+		float fLnd = 0.0;
+		for (int i = 0; i < 8; i++) fLnd += textureLod(tMask, vUVSrf + vec2(cos(float(i) * 0.7853982), sin(float(i) * 0.7853982)) * Prm.vWaterFx.yz, Prm.vWaterFx.x).a;
+		fLnd *= 0.125;
+		float fTm = Const.Time / 3600.0; // whole noise periods per wrap of Time
+		float fVis = 1.0 - smoothstep(0.25, 0.6, fFoamW); // the big octave resolved
+		float fN1 = mix(0.5, ClsNoise(vUVWt0 * 64.0 + vec2(64.0, 128.0) * fTm, 64.0), fVis); // each octave goes to its mean below ~2 px per cell
+		float fN2 = mix(0.5, ClsNoise(vUVWt0 * 256.0 - vec2(512.0, 256.0) * fTm, 256.0), 1.0 - smoothstep(0.25, 0.6, 4.0 * fFoamW));
+		float fN = fN1 * 0.6 + fN2 * 0.4;
+		fFoam = 0.7 * fMask * smoothstep(0.02, 0.12, fLnd) * (1.0 - smoothstep(0.25, 0.5, fLnd)) * smoothstep(0.35, 0.65, fN) * mix(0.35, 1.0, fVis) * (1.0 - smoothstep(3e3, 8e3, dst)); // a thin broken line at the waterline, faint where its breaks are too small to see
+		fSpe *= 1.0 - fFoam;
+		cRfl *= 1.0 - fFoam;
+	}
 #endif
 #endif
 
@@ -802,6 +854,9 @@ vec4 TerrainPS(TileVS frg)
 	//					  Color					   Distance				  Altitude factor		   Particle Density		
 	vec3 cA = normalize(cAmb.rgb + cSF * 4.0f) * cAmb.a * cAmb.g * fM * exp(-alt * Const.iH.r) * Const.rmI.r * 6e5 * Const.TW_Terrain;
 
+#if defined(_VOLSHD)
+	fShd = mix(fShd, 1.0, Prm.vVolCld.z * (1.0 - smoothstep(35e3, 60e3, dst))); // not upstream: the volume cloud shadow replaces the 2D one near the camera
+#endif
 	fShd = clamp(fShd + (1.0f - fX), 0.0, 1.0);
 
 	// Bake light and shadow terms
@@ -812,12 +867,19 @@ vec4 TerrainPS(TileVS frg)
 
 	cTex.rgb = max(vec3(0, 0, 0), cTex.rgb);
 
+#if defined(_WATERFX)
+	cTex.rgb = mix(cTex.rgb, vec3(pow(0.8, Const.TrGamma) * Const.TrExpo) * (cSF * fX * fShadow * fShd * 2.0f + cA + Const.cAmbient * Const.Ambient), fFoam); // not upstream: foam as white ground, not as water
+#endif
 	// Add Reflection
 	cTex.rgb += cRfl * 0.75f;
 
 	// Add Specular component
+#if defined(_WATERFX)
+	cTex.rgb += cSun * fSpe * smoothstep(-0.001f, 0.03f, fDPS) * fShadow * fShd; // not upstream: the glint under cloud, terrain (fH is in fShadow) and shadow-map shadows
+#else
 	if (Flow.bHorizon) cTex.rgb += cSun * fSpe * smoothstep(-0.001f, 0.03f, fDPS) * fH; // not upstream: the else is upstream's line
 	else cTex.rgb += cSun * fSpe * smoothstep(-0.001f, 0.03f, fDPS);
+#endif
 
 	// Amplify cloud shadows for orbital views
 	float fOrbShd = 1.0f - (1.0f - fShd) * Const.CamSpace * 0.5f;

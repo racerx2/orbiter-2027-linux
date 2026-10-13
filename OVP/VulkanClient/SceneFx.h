@@ -31,6 +31,13 @@ public:
 	float CloudFade () const { return cloudFade; } // volume weight drawn last frame (the proxy's 2D layer fades by it)
 	float VolShadowFade () const { return volShdFade; } // volume shadow weight drawn last frame (the proxy's 2D cloud shadow fades by it)
 	ShaderClass *TerrainDepth () const { return pTerrain; }
+	bool DepthOK () const { return depthOK; }   // the SceneDepth targets exist
+	bool DepthValid () const;                   // tDepth was written this frame (design-visual-batch S4)
+	VkTex *Depth () const;                      // tDepth when written this frame, else NULL
+	VkTex *VolumeTex () const;                  // the volume clouds, premultiplied, half res, when they drew this frame, else NULL
+	VkTex *Flag () const;                       // TAA: 1 on the camera target vessel, when written this frame, else NULL
+	VkTex *VolumeDist () const;                 // TAA: the volume clouds' mean distance, half res, when written this frame, else NULL
+	void CameraRays (D3DXVECTOR4 &camX, D3DXVECTOR4 &camY, D3DXVECTOR4 &camZ) const; // VolCloud.glsl PixelRay's vCamX/Y/Z; the TAA jitter folded into camZ
 
 private:
 	void InitDepth ();
@@ -43,10 +50,14 @@ private:
 	void DepthPass (const std::list<vVessel*> &vessels);
 	void Ssao (VkSurf *target);
 	void Clouds (VkSurf *target, vPlanet *vp, float wV);
-	void CameraRays (D3DXVECTOR4 &camX, D3DXVECTOR4 &camY, D3DXVECTOR4 &camZ) const; // VolCloud.glsl PixelRay's vCamX/Y/Z
+	void FlagPass (const std::list<vVessel*> &vessels); // TAA: the camera target vessel's pixels
 	void VolShadow (VkSurf *target, vPlanet *vp, float wV); // SceneFxShadow.cpp: ground shadows of the volume clouds (design-visual-batch 8)
 	struct VolShadowState;
 	static void FreeVolShadow (VolShadowState *s); // SceneFxShadow.cpp
+	void InitVolShadow ();                  // SceneFxShadow.cpp
+	struct VolPrm { D3DXVECTOR4 camX, camY, camZ, mapE, mapN, mapU, clA, clB, clC, slab, fade, noise; };
+	void VolParams (vPlanet *vp, VolPrm &v) const;       // VolCloud.glsl's VolPS fields of the cloud layer, shared by the march and the shadow
+	void SetVolParams (ImageProcessing *ip, const VolPrm &v) const; // all but vMarch and vTex
 
 	oapi::D3D9Client *gc;
 	Scene *scn;
@@ -58,6 +69,11 @@ private:
 	VkSurf *sDepth = nullptr, *sDepthDS = nullptr;
 	ShaderClass *pTerrain = nullptr;       // SceneDepth.glsl: tiles
 	bool depthOK = false;
+	DWORD depthFrame = 0, volFrame = 0, flagFrame = 0; // scene frame of the last write
+	VkTex *tFlag = nullptr;                // TAA: camera target vessel, R8
+	VkSurf *sFlag = nullptr;
+	VkTex *tVolD = nullptr;                // TAA: volume cloud distance, half res R32F (VolMarch MRT)
+	VkSurf *sVolD = nullptr;
 
 	VkTex *tAO[2] = {};                    // half resolution, ping-pong
 	VkSurf *sAO[2] = {};

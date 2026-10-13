@@ -385,6 +385,7 @@ public:
 	float			GetVolCloudFade() const;	// not upstream: weight of the volume clouds drawn last frame, fades the proxy's 2D layer near the camera
 	float			GetVolShadowFade() const;	// not upstream: weight of the volume cloud shadow drawn last frame, fades the proxy's 2D cloud shadow near the camera
 	bool			IsJittered() const { return bJitter; } // not upstream: the main pass projection carries the TAA jitter
+	bool			TaaActive() const;	// not upstream: TAA runs this main frame (after its BeginFrame)
 
 	const D3DXVECTOR3 *GetCameraX() const { return &Camera.x; }
 	const D3DXVECTOR3 *GetCameraY() const { return &Camera.y; }
