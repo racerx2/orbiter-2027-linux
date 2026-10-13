@@ -189,12 +189,10 @@ double Shoelace (const std::vector<Wall> &ring)
 	return 0.5 * a;
 }
 
-} // namespace
-
-void Build (const float *vtx, uint32_t nv, const uint32_t *idx, uint32_t ni, float hmin, float hmax, uint32_t hash, Out &o)
+// the wall quads in order, split into rings where a wall does not start at the last one's end
+std::vector<std::vector<Wall>> WallRings (const float *vtx, uint32_t nv, uint32_t &nw)
 {
-	o = Out();
-	uint32_t nw = 0;
+	nw = 0;
 	while (nw * 4 + 3 < nv && vtx[(size_t)nw * 4 * 6 + 4] < 0.5f) nw++;
 	std::vector<std::vector<Wall>> rings;
 	for (uint32_t j = 0; j < nw; j++) {
@@ -203,6 +201,26 @@ void Build (const float *vtx, uint32_t nv, const uint32_t *idx, uint32_t ni, flo
 		if (rings.empty() || Len (rings.back().back().p1, w.p0) > 0.01) rings.emplace_back();
 		rings.back().push_back (w);
 	}
+	return rings;
+}
+
+} // namespace
+
+void Rings (const float *vtx, uint32_t nv, std::vector<std::vector<std::array<double, 2>>> &rings)
+{
+	uint32_t nw;
+	rings.clear();
+	for (const std::vector<Wall> &r : WallRings (vtx, nv, nw)) {
+		rings.emplace_back();
+		for (const Wall &w : r) rings.back().push_back ({w.p0.x, w.p0.z});
+	}
+}
+
+void Build (const float *vtx, uint32_t nv, const uint32_t *idx, uint32_t ni, float hmin, float hmax, uint32_t hash, Out &o)
+{
+	o = Out();
+	uint32_t nw = 0;
+	std::vector<std::vector<Wall>> rings = WallRings (vtx, nv, nw);
 	double area = 0;
 	for (size_t r = 0; r < rings.size(); r++) area += (r ? -1 : 1) * std::fabs (Shoelace (rings[r]));
 	area = std::max (0.0, area);
@@ -297,7 +315,7 @@ void BaseIndex::Add (const double a[3], const double b[3], const double c[3])
 	double n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
 	double l = std::sqrt (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
 	double y0 = std::min ({a[1], b[1], c[1]}), y1 = std::max ({a[1], b[1], c[1]});
-	if (!(l > 1e-9) || std::fabs (n[1] / l) >= 0.7 || y1 - y0 <= 1.5) return;
+	if (!(l > 1e-9) || (!all && (std::fabs (n[1] / l) >= 0.7 || y1 - y0 <= 1.5))) return;
 	T t {{a[0], b[0], c[0]}, {a[2], b[2], c[2]}, (a[0] + b[0] + c[0]) / 3, (a[2] + b[2] + c[2]) / 3};
 	if (!std::isfinite (t.cx) || !std::isfinite (t.cz)) return;
 	uint32_t id = (uint32_t)tris.size();
@@ -321,6 +339,22 @@ bool BaseIndex::Near (double x, double z, double m) const
 				if (d <= m) return true;
 			}
 		}
+	return false;
+}
+
+bool BaseIndex::Covers (double x, double z, double m) const
+{
+	if (Near (x, z, m)) return true;
+	auto it = cells.find (Key ((int64_t)std::floor (x / Cell), (int64_t)std::floor (z / Cell)));
+	if (it == cells.end()) return false;
+	for (uint32_t id : it->second) {
+		const T &t = tris[id];
+		double d1 = (x - t.x[1]) * (t.z[0] - t.z[1]) - (t.x[0] - t.x[1]) * (z - t.z[1]);
+		double d2 = (x - t.x[2]) * (t.z[1] - t.z[2]) - (t.x[1] - t.x[2]) * (z - t.z[2]);
+		double d3 = (x - t.x[0]) * (t.z[2] - t.z[0]) - (t.x[2] - t.x[0]) * (z - t.z[0]);
+		bool neg = d1 < 0 || d2 < 0 || d3 < 0, pos = d1 > 0 || d2 > 0 || d3 > 0;
+		if (!(neg && pos)) return true; // inside, either winding
+	}
 	return false;
 }
 

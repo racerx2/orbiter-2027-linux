@@ -22,6 +22,7 @@
 #include "DebugControls.h"
 #include "IProcess.h"
 #include "VectorHelpers.h"
+#include "SceneFx.h" // not upstream
 #include "D3D9Frame.h" // not upstream: GetDepthFormat
 #include <algorithm>
 #include <sstream>
@@ -111,6 +112,7 @@ Scene::Scene(D3D9Client *_gc, DWORD w, DWORD h)
 	pLocalCompute = NULL;
 	pRenderGlares = NULL;
 	pCreateGlare = NULL;
+	pFx = NULL; // not upstream
 	viewH = h;
 	viewW = w;
 	nLights = 0;
@@ -334,6 +336,8 @@ Scene::Scene(D3D9Client *_gc, DWORD w, DWORD h)
 
 	for (int i = 0; i < (int)std::size(ptgBuffer);i++)  if (ptgBuffer[i]) psgBuffer[i] = new VkSurf(ptgBuffer[i], 0); // GetSurfaceLevel
 
+	pFx = new SceneFx(gc, this, viewW, viewH); // not upstream: ground graphics passes
+
 
 	if (Config->GDIOverlay) {
 		// Clear the GDI Overlay with transparency
@@ -365,6 +369,7 @@ Scene::~Scene ()
 	SAFE_DELETE(m_celSphere);
 	SAFE_DELETE(pLocalCompute);
 	SAFE_DELETE(pRenderGlares);
+	SAFE_DELETE(pFx); // not upstream
 	SAFE_DELETE(pCreateGlare);
 
 	SAFE_DELETE(pOffscreenTarget);
@@ -1302,6 +1307,9 @@ void Scene::RenderMainScene()
 	//
 	if (gc->BeginScene() < 0) return; // FAILED
 
+	fExposure = pFx ? pFx->BeginFrame() : 1.0f; // not upstream: auto-exposure
+	D3D9Effect::FX->SetFloat(D3D9Effect::eExposure, 1.0f); // the custom camera, env and irradiance turns
+
 
 
 	// -------------------------------------------------------------------------------------------------------
@@ -1408,6 +1416,8 @@ void Scene::RenderMainScene()
 
 	VOBJREC* pv = NULL;
 	VkTex *pShdMap = NULL;
+
+	D3D9Effect::FX->SetFloat(D3D9Effect::eExposure, fExposure); // not upstream: the main pass
 
 	UpdateCameraFromOrbiter(RENDERPASS_MAINSCENE);
 	UpdateCamVis();
@@ -1893,6 +1903,8 @@ void Scene::RenderMainScene()
 		RenderList.pop_front();
 	}
 
+	if (pFx) pFx->AfterOpaque(RenderMarkers, pBackBuffer); // not upstream: SceneDepth, SSAO, clouds over the opaque scene
+
 	D3D9Pad* pSketch = GetPooledSketchpad(SKETCHPAD_LABELS);
 	if (pSketch) {
 		m_celSphere->EnsureMarkerDrawingContext((oapi::Sketchpad**)&pSketch, 0, m_celSphere->MarkerColor(0), m_celSphere->MarkerPen(0));
@@ -2007,6 +2019,10 @@ void Scene::RenderMainScene()
 
 	pDevice->SetFillMode(VK_POLYGON_MODE_FILL);
 
+	bool bMeasureLate = pOffscreenTarget && pLightBlur && pLightBlur->IsOK(); // not upstream: post-processed, measured after LightBlur's tone curve
+	if (pFx && !bMeasureLate) pFx->Measure(pBackBuffer); // not upstream: auto-exposure measure of the finished 3D scene
+	D3D9Effect::FX->SetFloat(D3D9Effect::eExposure, 1.0f); // not upstream: 2D, panels and sketchpad meshes as before
+
 
 	// End Of Main Scene Rendering ---------------------------------------------
 	//
@@ -2089,6 +2105,7 @@ void Scene::RenderMainScene()
 			pLightBlur->SetOutputNative(0, gc->GetBackBuffer());
 
 			if (!pLightBlur->Execute(true)) LogErr("pLightBlur Execute Failed");
+			else if (pFx && bMeasureLate) pFx->Measure(gc->GetBackBuffer()); // not upstream: display values, as without post-processing
 		}
 		else {
 			LogErr("pLightBlur is not o.k.");
@@ -3259,6 +3276,13 @@ DWORD Scene::GetRenderPass() const
 {
 	if (PassStack.empty()) return RENDERPASS_MAINSCENE;
 	return PassStack.top();
+}
+
+// ===========================================================================================
+// not upstream
+float Scene::GetVolCloudFade() const
+{
+	return pFx ? pFx->CloudFade() : 0.0f;
 }
 
 // ===========================================================================================

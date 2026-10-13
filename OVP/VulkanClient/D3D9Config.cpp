@@ -98,6 +98,18 @@ void D3D9Config::Reset ()
 	bIrradiance			= 1;
 	bAtmoQuality		= 1;
 	NoPlanetAA			= 0;
+	HorizonShadows		= 1; // not upstream: ground graphics
+	SSAO				= 1;
+	SSAOStrength		= 0.8f;
+	SSAORadius			= 1.5f;
+	VolClouds			= 1;
+	VolCloudQuality		= 1;
+	Trees				= 1;
+	TreeRange			= 2500.0f;
+	TreeDensity			= 1.0f;
+	AutoExposure		= 1;
+	AutoExpMinEV		= -1.5f;
+	AutoExpMaxEV		= 2.5f;
 	
 	GFXIntensity = 0.5;
 	GFXDistance = 0.8;
@@ -200,6 +212,18 @@ bool D3D9Config::ReadParams ()
 	if (oapiReadItem_int   (hFile, (char*)"ShaderCacheUse", i))				ShaderCacheUse = max(0, min(1, i));
 	if (oapiReadItem_int   (hFile, (char*)"NoPlanetAA", i))					NoPlanetAA = max(0, min(1, i));
 	if (oapiReadItem_float (hFile, (char*)"OrbitalShadowMult", d))			    OrbitalShadowMult = max(0.5, min(10.0, d));
+	if (oapiReadItem_int   (hFile, (char*)"HorizonShadows", i))				HorizonShadows = max(0, min(1, i)); // not upstream: ground graphics
+	if (oapiReadItem_int   (hFile, (char*)"SSAO", i))							SSAO = max(0, min(1, i));
+	if (oapiReadItem_float (hFile, (char*)"SSAOStrength", d))					SSAOStrength = float(max(0.0, min(1.0, d)));
+	if (oapiReadItem_float (hFile, (char*)"SSAORadius", d))					SSAORadius = float(max(0.25, min(8.0, d)));
+	if (oapiReadItem_int   (hFile, (char*)"VolClouds", i))					VolClouds = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"VolCloudQuality", i))				VolCloudQuality = max(0, min(2, i));
+	if (oapiReadItem_int   (hFile, (char*)"Trees", i))						Trees = max(0, min(1, i));
+	if (oapiReadItem_float (hFile, (char*)"TreeRange", d))					TreeRange = float(max(500.0, min(4000.0, d)));
+	if (oapiReadItem_float (hFile, (char*)"TreeDensity", d))					TreeDensity = float(max(0.1, min(2.0, d)));
+	if (oapiReadItem_int   (hFile, (char*)"AutoExposure", i))					AutoExposure = max(0, min(1, i));
+	if (oapiReadItem_float (hFile, (char*)"AutoExpMinEV", d))					AutoExpMinEV = float(max(-4.0, min(0.0, d)));
+	if (oapiReadItem_float (hFile, (char*)"AutoExpMaxEV", d))					AutoExpMaxEV = float(max(0.0, min(4.0, d)));
 
 	if (oapiReadItem_float (hFile, (char*)"GFXIntensity", d))					GFXIntensity = max(0.0, min(1.0, d));
 	if (oapiReadItem_float (hFile, (char*)"GFXDistance", d))					GFXDistance = max(0.0, min(1.0, d));
@@ -299,6 +323,19 @@ void D3D9Config::WriteParams ()
 	oapiWriteItem_float (hFile, (char*)"GFXSunIntensity", GFXSunIntensity);
 	oapiWriteItem_float (hFile, (char*)"GFXLocalMax", GFXLocalMax);
 	oapiWriteItem_float (hFile, (char*)"GFXGlare", GFXGlare);
+
+	oapiWriteItem_int   (hFile, (char*)"HorizonShadows", HorizonShadows); // not upstream: ground graphics
+	oapiWriteItem_int   (hFile, (char*)"SSAO", SSAO);
+	oapiWriteItem_float (hFile, (char*)"SSAOStrength", SSAOStrength);
+	oapiWriteItem_float (hFile, (char*)"SSAORadius", SSAORadius);
+	oapiWriteItem_int   (hFile, (char*)"VolClouds", VolClouds);
+	oapiWriteItem_int   (hFile, (char*)"VolCloudQuality", VolCloudQuality);
+	oapiWriteItem_int   (hFile, (char*)"Trees", Trees);
+	oapiWriteItem_float (hFile, (char*)"TreeRange", TreeRange);
+	oapiWriteItem_float (hFile, (char*)"TreeDensity", TreeDensity);
+	oapiWriteItem_int   (hFile, (char*)"AutoExposure", AutoExposure);
+	oapiWriteItem_float (hFile, (char*)"AutoExpMinEV", AutoExpMinEV);
+	oapiWriteItem_float (hFile, (char*)"AutoExpMaxEV", AutoExpMaxEV);
 
 	oapiWriteItem_string (hFile,(char*) "SolCfg", SolCfg);
 	oapiWriteItem_string (hFile,(char*) "DebugLineFont", DebugFont);

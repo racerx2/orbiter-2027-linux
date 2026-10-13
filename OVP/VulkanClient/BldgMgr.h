@@ -25,6 +25,7 @@ public:
 	~BldgMgr ();
 	void Update ();             // main scene, camera below 15 km: want, load, place, unload
 	void Render (VkDev *dev);   // after the base structures, depth tested: main scene, custom cameras, env maps near by
+	void RenderDepth (VkDev *dev, const D3DXMATRIX &mVP); // SceneFx distance pass: the cells in range and view
 
 private:
 	static const int NC = 4;              // a tile's buildings in NC x NC cells, a mesh each, lit by its own terrain sun

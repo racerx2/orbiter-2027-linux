@@ -17,6 +17,7 @@
 #include "OapiExtension.h"
 
 #include "VkTexFile.h"
+#include "GfxPool.h" // not upstream
 
 #include <stack>
 // io.h left out: _findfirst is std::filesystem::exists
@@ -1114,6 +1115,7 @@ TileManager2Base::~TileManager2Base ()
 	LogAlw("Deleting TileManagerBase %s ...", _PTR(this));
 	if (loader) loader->Unqueue(this);
 	for (StreamLoad &s : streamKeys) { delete s.surf; delete s.mask; delete s.cls; } // not upstream
+	HorizonStateFree(horizon); // not upstream
 }
 
 // -----------------------------------------------------------------------
@@ -1175,6 +1177,7 @@ void TileManager2Base::GlobalExit ()
 	SAFE_DELETE(hCloudMicro);
 	SAFE_DELETE(hCloudMicroNorm);
 	delete loader;
+	GfxPool::Shutdown(); // not upstream: ground graphics jobs, after every planet is gone
 }
 
 // -----------------------------------------------------------------------

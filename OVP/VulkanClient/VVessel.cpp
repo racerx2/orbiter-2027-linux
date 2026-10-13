@@ -791,6 +791,7 @@ bool vVessel::Render(VkDev *dev, bool internalpass)
 		{
 			meshlist[i].mesh->RenderShadowMap(pWT, pVP, 1);
 		}
+		else if (scn->GetRenderPass() == RENDERPASS_SCENE_DEPTH) meshlist[i].mesh->RenderShadowMap(pWT, pVP, 2); // not upstream: SceneFx, see-through groups left out
 		else {
 			if (internalpass) meshlist[i].mesh->Render(pWT, RENDER_VC, NULL, 0);
 			else 			  meshlist[i].mesh->Render(pWT, RENDER_VESSEL, pEnv, nEnv);

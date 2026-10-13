@@ -35,16 +35,23 @@ struct Out {
 // one .bld building: vtx 6 floats a vertex (x east, y up, z north, normal), idx its triangles; walls are quads before the roof
 void Build (const float *vtx, uint32_t nv, const uint32_t *idx, uint32_t ni, float hmin, float hmax, uint32_t hash, Out &out);
 
+// not upstream (trees): the footprint rings Build finds, outer ring first, x east, z north
+void Rings (const float *vtx, uint32_t nv, std::vector<std::vector<std::array<double, 2>>> &rings);
+
 // a base's structures in its own frame (y up): steep triangles taller than 1.5 m; flat or sloped pads never count
 class BaseIndex {
 public:
+	BaseIndex () : all(false) {}
+	explicit BaseIndex (bool every) : all(every) {}               // not upstream: every triangle (pads, aprons, roads), for the trees
 	void Add (const double a[3], const double b[3], const double c[3]);
 	bool Near (double x, double z, double margin) const;           // a structure within margin of the point
+	bool Covers (double x, double z, double margin) const;         // not upstream: on a triangle, or within margin of one
 	bool Inside (const std::vector<std::array<double, 2>> &poly) const; // a structure's centroid inside the polygon
 	bool Empty () const { return tris.empty(); }
 	size_t Count () const { return tris.size(); }
 private:
 	struct T { double x[3], z[3], cx, cz; };
+	bool all;
 	std::vector<T> tris;
 	std::unordered_map<int64_t, std::vector<uint32_t>> cells; // 64 m buckets
 };

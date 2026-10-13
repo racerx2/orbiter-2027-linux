@@ -40,6 +40,7 @@
 #include "VkTexFile.h"
 #include "OrbiterResource.h"
 #include "BldgMgr.h" // not upstream
+#include "TreeMgr.h" // not upstream
 #include <filesystem>
 
 using namespace oapi;
@@ -412,6 +413,7 @@ vPlanet::vPlanet (OBJHANDLE _hObj, const Scene *scene) :
 		int patchlvl = 1 << (4 + Config->MeshRes);
 		surfmgr2 = new TileManager2<SurfTile> (this, max_patchres, patchlvl);
 		bldgmgr = oapiTileStreamEnabled (_hObj) ? new BldgMgr (this, _hObj, scn) : NULL; // not upstream
+		treemgr = (Config->Trees && oapiTileStreamEnabled (_hObj)) ? new TreeMgr (this, _hObj, scn) : NULL; // not upstream
 		prm.horizon_excess = *(double*)oapiGetObjectParam (_hObj, OBJPRM_PLANET_HORIZONEXCESS);
 		prm.tilebb_excess = *(double*)oapiGetObjectParam (_hObj, OBJPRM_PLANET_TILEBBEXCESS);
 	}
@@ -558,6 +560,8 @@ vPlanet::~vPlanet ()
 		delete []vbase;
 		vbase = NULL;
 	}
+	delete treemgr; // not upstream: first, its worker reads the surface manager
+	treemgr = NULL;
 	if (surfmgr) delete surfmgr;
 	else if (surfmgr2) delete surfmgr2;
 	delete bldgmgr; // not upstream
@@ -821,6 +825,7 @@ bool vPlanet::Update (bool bMainScene)
 	vObject::Update(bMainScene);
 
 	if (bldgmgr && bMainScene) bldgmgr->Update (); // not upstream
+	if (treemgr && bMainScene) treemgr->Update (); // not upstream
 
 	if (patchres==0) return true;
 
@@ -1056,6 +1061,7 @@ bool vPlanet::Render(VkDev *dev)
 		SetupEclipse();
 
 		if (scn->GetRenderPass() == RENDERPASS_MAINSCENE) UpdateScatter();
+		ApplyExposure(); // not upstream: UpdateScatter runs once a frame, the pass sets e
 
 		if (ringmgr) {
 			ringmgr->Render(dev, mWorld, false);
@@ -1127,6 +1133,7 @@ bool vPlanet::Render(VkDev *dev)
 
 		if (nbase) RenderBaseStructures (dev);
 		if (bldgmgr) bldgmgr->Render (dev); // not upstream
+		if (treemgr) treemgr->Render (dev); // not upstream
 
 		if (prm.bCloud && (prm.cloudvis & 2))
 			RenderCloudLayer (dev, VK_CULL_MODE_BACK_BIT);	  // render clouds from above
@@ -1318,6 +1325,18 @@ void vPlanet::RenderBaseShadows(VkDev *dev, float depth)
 			VkDev::State s = dev->GetState(); s.stencil = false; dev->SetState(s); // SetRenderState(D3DRS_STENCILENABLE, FALSE)
 		}
 	}
+}
+
+// ==============================================================
+// not upstream: the SceneFx distance pass (design-ground-graphics 3)
+
+void vPlanet::RenderDepth (VkDev *dev, ShaderClass *pTerrain, const D3DXMATRIX &mVP)
+{
+	if (surfmgr2 && pTerrain) surfmgr2->RenderDepth(pTerrain, mVP);
+	if (hObj == oapiCameraProxyGbody() && (scn->GetRenderFlags() & 0x20))
+		for (DWORD i = 0; i < nbase; i++) if (vbase[i]) vbase[i]->RenderDepth(dev, mVP);
+	if (bldgmgr) bldgmgr->RenderDepth(dev, mVP);
+	if (treemgr) treemgr->RenderDepth(dev, mVP);
 }
 
 // ==============================================================

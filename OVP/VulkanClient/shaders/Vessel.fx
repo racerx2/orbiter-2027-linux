@@ -255,6 +255,7 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 	cTex = cTex * (1 - gColor*0.5f) + gColor;
 #endif
 
+	cTex.rgb *= gExposure; // not upstream: auto-exposure
 	cTex.rgb *= gSun.Transmission;
 	cTex.rgb += gSun.Inscatter;
 

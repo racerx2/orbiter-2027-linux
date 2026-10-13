@@ -566,6 +566,16 @@ bool vPlanet::SphericalShadow()
 
 
 // ===========================================================================================
+// not upstream: auto-exposure e in the main pass, 1 in the others
+void vPlanet::ApplyExposure()
+{
+	if (mesh) return;
+	float e = (scn->GetRenderPass() == RENDERPASS_MAINSCENE) ? scn->GetExposure() : 1.0f;
+	if (HasAtmosphere() && surfmgr2) { if (expoBase > 0.0f) cp.Expo = expoBase * e; } // 0: UpdateScatter not run yet
+	else if (trBase > 0.0f) cp.TrExpo = trBase * e;
+}
+
+// ===========================================================================================
 //
 void vPlanet::UpdateScatter()
 {
@@ -653,6 +663,8 @@ void vPlanet::UpdateScatter()
 	cp.Time = fmod(oapiGetSimTime(), 3600.0f);
 	cp.TrGamma = 1.0f / float(atmo->tgamma);
 	cp.TrExpo = float(atmo->trb);
+	trBase = cp.TrExpo; // not upstream: auto-exposure
+	ApplyExposure();
 	cp.Ambient = fAmbient;
 	cp.CosAlpha = min(1.0f, cp.PlanetRad / cp.CamRad);
 	cp.SinAlpha = sqrt(1.0f - cp.CosAlpha * cp.CosAlpha);
@@ -691,6 +703,8 @@ void vPlanet::UpdateScatter()
 	cp.iH.x = 1.0f / float(atmo->rheight * 1000.0);
 	cp.iH.y = 1.0f / float(atmo->mheight * 1000.0);
 	cp.Expo = atmo->aux3;
+	expoBase = cp.Expo; // not upstream: auto-exposure
+	ApplyExposure();
 	//cp.HG = FVECTOR4(1.5f * (1.0f - g * g) / (2.0f + g * g), 1.0f + g * g, 2.0f * g, float(atmo->mphaseb));
 	cp.HG = FVECTOR4(pow(1.0f - g * g, 0.75f), g, 0.0f, float(atmo->mphaseb));
 

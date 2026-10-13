@@ -101,6 +101,10 @@ struct ShaderParams
 	float	 fAlpha;
 	float	 fBeta;
 	float	 fTgtScale;
+	float	 fPad0;				// not upstream: keeps the float4s below 16-byte aligned (float4 is aligned, the struct is packed)
+	float4   vHorOff;			// not upstream: horizon map uv offset (xy) and scale (zw), left half
+	float4   vHorW[2];			// not upstream: sun weights of azimuths 0-3 and 4-7
+	float4   vVolCld;			// not upstream: 2D cloud fade start, end (m), volume weight
 };
 
 // Bools for NewPlanet.hlsl
@@ -120,6 +124,7 @@ struct FlowControlPS
 	BOOL bEclipse;				// Eclipse is occuring
 	BOOL bTexture;				// Surface texture exists
 	BOOL bClass;				// not upstream: land class weights (tClass) for micro detail, repeat in vMSc[0]
+	BOOL bHorizon;				// not upstream: horizon map (tHorizon) for terrain shadows
 };
 
 struct FlowControlVS
@@ -251,6 +256,7 @@ public:
 	void			CheckResolution ();
 	void			RenderZRange (double *nplane, double *fplane);
 	bool			Render(VkDev *dev);
+	void			RenderDepth(VkDev *dev, ShaderClass *pTerrain, const D3DXMATRIX &mVP); // not upstream: SceneFx distance pass, what the main pass drew
 	void			RenderBeacons(VkDev *dev);
 	void            RenderVectors (VkDev *dev, D3D9Pad* pSkp);
 	bool			CameraInAtmosphere() const;
@@ -297,6 +303,7 @@ public:
 	FlowControlPS*	GetFlowControl() { return &fcp; }
 	FlowControlVS*	GetFlowControlVS() { return &fcv; }
 	void			UpdateScatter();
+	void			ApplyExposure();		// not upstream: cp.Expo or cp.TrExpo for this pass
 	int				GetAtmoMode() { return atm_mode; }
 	FVECTOR4		SunLightColor(VECTOR3 pos, double rf = 1.0);	// For a point in anywhere
 	FVECTOR3		SunLightColor(float ang, float alt);	// For a point in atmosphere
@@ -402,6 +409,7 @@ private:
 	static VkTex *ptEclipse;
 	VkTex *ptEclipseOwn = NULL; // not upstream: D3DLOCK_DISCARD renaming, so each eclipsed planet drawn in a frame keeps its own table
 	static int Qc, Wc, Nc;
+	float expoBase = 0.0f, trBase = 0.0f; // not upstream: cp.Expo and cp.TrExpo before the auto-exposure
 
 	float dist_scale;         // planet rescaling factor
 	double maxdist,           // ???
@@ -424,6 +432,7 @@ private:
 	SurfaceManager *surfmgr;  // planet surface tile manager
 	TileManager2<SurfTile> *surfmgr2;   // planet surface tile manager (v2)
 	class BldgMgr *bldgmgr = nullptr;          // not upstream: streamed 3D buildings (BldgMgr.h)
+	class TreeMgr *treemgr = nullptr;          // not upstream: 3D trees on the land class (TreeMgr.h)
 	TileManager2<CloudTile> *cloudmgr2; // planet cloud layer tile manager (v2)
 	mutable class SurfTile *tile_cache;
 	HazeManager *hazemgr;     // horizon haze rendering

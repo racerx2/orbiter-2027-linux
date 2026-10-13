@@ -110,6 +110,16 @@ cache size, clears the streamed tiles (only files the stream wrote, listed in
 or a position, for flying offline. A region download is refused while Offline
 is ticked or while the tiles are being cleared.
 
+The VulkanClient draws 3D trees from the streamed land cover where it shows
+forest or shrub, below 3 km above the ground. With the terrain horizon
+shadows, ambient occlusion, volumetric clouds and auto exposure they are the
+Ground graphics group of the VulkanClient Advanced Setup dialog;
+`VulkanClient.cfg` keys (defaults): `HorizonShadows` (1), `SSAO` (1),
+`SSAOStrength` (0.8), `SSAORadius` (1.5 m), `VolClouds` (1),
+`VolCloudQuality` (1, 0 low to 2 high), `Trees` (1), `TreeRange` (2500 m),
+`TreeDensity` (1), `AutoExposure` (1), `AutoExpMinEV` (-1.5), `AutoExpMaxEV`
+(2.5).
+
 Privacy: each tile request tells the server which part of Earth is shown. Its
 only headers are `Host`, `User-Agent: OrbiterLinux/<version>`,
 `Accept-Language: en`, `Accept-Encoding` and `Connection`, and `Range` for a

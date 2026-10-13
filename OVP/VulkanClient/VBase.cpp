@@ -435,6 +435,18 @@ bool vBase::RenderStructures(VkDev *dev)
 
 
 // ===========================================================================================
+// not upstream: the SceneFx distance pass, the meshes the main pass drew
+void vBase::RenderDepth(VkDev *dev, const D3DXMATRIX &mVP)
+{
+	if (!active || !IsVisible()) return;
+	D3DXMATRIX VP = mVP;
+	if (tilemesh) tilemesh->RenderShadowMap(&mWorld, &VP, 2);
+	for (DWORD i = 0; i < nstructure_bs; i++) structure_bs[i]->RenderShadowMap(&mWorld, &VP, 2);
+	for (DWORD i = 0; i < nstructure_as; i++) structure_as[i]->RenderShadowMap(&mWorld, &VP, 2);
+}
+
+
+// ===========================================================================================
 //
 void vBase::RenderRunwayLights(VkDev *dev)
 {

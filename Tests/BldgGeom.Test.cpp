@@ -266,6 +266,58 @@ TEST_CASE ("A sliver of a building part is plain wall, not a squashed floor", "[
 	}
 }
 
+TEST_CASE ("The trees' footprint rings are the rings Build walls, outer first", "[BldgGeom]")
+{
+	for (int courtyard = 0; courtyard < 2; courtyard++) {
+		TsBldg::Feature f;
+		f.rings = {Ring (Box (40, 30))};
+		if (courtyard) f.rings.push_back (Ring (Box (16, 10), true));
+		f.height = 18;
+		TsBldg::Mesh m = TsBldg::Build (TZ, TX, TY, {f}, 4096);
+		REQUIRE (m.b.size() == 1);
+		const TsBldg::Building &b = m.b[0];
+		Out o;
+		Build (m.vtx.data() + (size_t)b.v0 * 6, b.nv, m.idx.data() + b.i0, b.ni, b.hmin, b.hmax, 1, o);
+		std::vector<std::vector<std::array<double, 2>>> rings;
+		Rings (m.vtx.data() + (size_t)b.v0 * 6, b.nv, rings);
+		CAPTURE (courtyard);
+		REQUIRE (rings.size() == size_t(1 + courtyard));
+		REQUIRE (rings[0].size() == o.ring.size());
+		for (size_t k = 0; k < o.ring.size(); k++) {
+			CHECK (rings[0][k][0] == o.ring[k][0]);
+			CHECK (rings[0][k][1] == o.ring[k][1]);
+		}
+		for (const auto &p : rings[0]) {
+			CHECK (std::fabs (std::fabs (p[0]) - 20.0) < 1.0);
+			CHECK (std::fabs (std::fabs (p[1]) - 15.0) < 1.0);
+		}
+		if (courtyard)
+			for (const auto &p : rings[1]) {
+				CHECK (std::fabs (std::fabs (p[0]) - 8.0) < 1.0);
+				CHECK (std::fabs (std::fabs (p[1]) - 5.0) < 1.0);
+			}
+	}
+}
+
+TEST_CASE ("The trees' base index keeps every triangle; Covers is on one or within the margin", "[BldgGeom]")
+{
+	BaseIndex b (true);
+	double p0[3] = {-50, 0, -50}, p1[3] = {50, 0, -50}, p2[3] = {50, 0, 50};
+	b.Add (p0, p1, p2); // a flat pad: z <= x inside the square
+	double q0[3] = {0, 0, 0}, q1[3] = {10, 0, 0}, q2[3] = {10, 1.2, 0};
+	b.Add (q0, q1, q2); // a kerb
+	CHECK (b.Count() == 2);
+	CHECK (b.Covers (30, -20, 0.0));
+	CHECK_FALSE (b.Covers (-30, 20, 6.0));
+	CHECK (b.Covers (-10, -4, 6.0));      // 4.2 m off the pad's long edge
+	CHECK_FALSE (b.Covers (-10, -4, 3.0));
+	CHECK_FALSE (b.Covers (200, 200, 6.0));
+	BaseIndex walls;                       // the default index never takes the pad
+	walls.Add (p0, p1, p2);
+	CHECK (walls.Empty());
+	CHECK_FALSE (walls.Covers (30, -20, 6.0));
+}
+
 #ifdef BLDGTEX_DIR
 TEST_CASE ("The build drew every texture: DXT1 with the full mip chain at its size", "[BldgGeom]")
 {

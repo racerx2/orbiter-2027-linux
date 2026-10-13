@@ -372,6 +372,7 @@ vec4 PBR_PS(vec4 sc, PBRData frg)	// sc : VPOS
 	cDiff = cDiff * (1 - gColor*0.5f) + gColor;
 #endif
 
+	cDiff.rgb *= gExposure; // not upstream: auto-exposure
 	cDiff.rgb *= gSun.Transmission;
 	cDiff.rgb += gSun.Inscatter;
 
@@ -529,6 +530,7 @@ vec4 FAST_PS(vec4 sc, FASTData frg)	// sc : VPOS
 
 	cDiff.a *= gMtrlAlpha;
 
+	if (!gFullyLit) cDiff.rgb *= gExposure; // not upstream: auto-exposure, lit groups only; fully lit ones (displays, signs) keep their own brightness
 	cDiff.rgb *= gSun.Transmission;
 	cDiff.rgb += gSun.Inscatter;
 

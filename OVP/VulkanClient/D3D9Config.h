@@ -98,6 +98,18 @@ public:
 	int bIrradiance;
 	int bAtmoQuality;
 	int NoPlanetAA;					///< Disable planet surface anti-aliasing to prevent white pixels at horizon 
+	int HorizonShadows;				// not upstream: terrain shadows from horizon maps (0,1)
+	int SSAO;						// not upstream: screen space ambient occlusion (0,1)
+	float SSAOStrength;				// not upstream: 0...1
+	float SSAORadius;				// not upstream: m, 0.25...8
+	int VolClouds;					// not upstream: volumetric clouds near the camera (0,1)
+	int VolCloudQuality;			// not upstream: 0 low, 1 medium, 2 high
+	int Trees;						// not upstream: 3D trees from the land class tiles (0,1)
+	float TreeRange;				// not upstream: m, 500...4000
+	float TreeDensity;				// not upstream: 0.1...2
+	int AutoExposure;				// not upstream: eye adaptation (0,1)
+	float AutoExpMinEV;				// not upstream: -4...0
+	float AutoExpMaxEV;				// not upstream: 0...4
 	char *DebugFont;				///< Font face for debug lines (default="Fixed")
 	char *SolCfg;					///< Solar system to use (default="Sol")
 	float GFXIntensity;			///< Post Processing | Light glow intensity (0.0...1.0, default=0.5)

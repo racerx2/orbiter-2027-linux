@@ -2744,10 +2744,10 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 	if (bGlobalTF) D3DXMatrixMultiply(&mWorldMesh, &mTransform, pW);
 	else mWorldMesh = *pW;
 
-	if (opt == 1) {
-		// Screenspace Depth and Normal buffer rendering
+	if (opt == 1 || opt == 2) {
+		// Screenspace Depth and Normal buffer rendering; not upstream: opt 2, the SceneDepth distance
 		pDev->SetStreamSource(0, pBuf->pVB, 0, sizeof(NMVERTEX));
-		pShader = s_pShader[SHADER_NORMAL_DEPTH];
+		pShader = s_pShader[opt == 2 ? SHADER_SCENE_DEPTH : SHADER_NORMAL_DEPTH];
 		pShader->Setup(pMeshVertexDecl, true, 0);
 	}
 	else {
@@ -2777,7 +2777,15 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 		
 		MeshShader::ps_bools.bOIT = (Grp[g].UsrFlag & 0x20) != 0;
 
-		if (MeshShader::ps_bools.bOIT) {
+		if (opt == 2) { // not upstream: see-through groups (glass) left out, textured ones alpha tested
+			DWORD ti = Grp[g].TexIdx;
+			VkTex *hTex = (ti && Tex[ti]) ? Tex[ti]->GetTexture() : NULL;
+			const D3D9MatExt *m = (Grp[g].MtrlIdx == SPEC_DEFAULT) ? &defmat : &Mtrl[Grp[g].MtrlIdx];
+			if ((bModulateMatAlpha || !hTex) && m->Diffuse.w < 0.5f) continue;
+			MeshShader::ps_bools.bOIT = (hTex != NULL);
+			if (hTex) pShader->SetTexture(pShader->hPST[0], hTex, IPF_WRAP | IPF_POINT);
+		}
+		else if (MeshShader::ps_bools.bOIT) {
 			DWORD ti = Grp[g].TexIdx;
 			if (ti) {
 				auto hTex = Tex[ti]->GetTexture();
@@ -3416,6 +3424,7 @@ void D3D9Mesh::GlobalInit(VkDev *pDev)
 	s_pShader[SHADER_SHADOWMAP] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "ShdMapVS", "ShdMapPS");
 	s_pShader[SHADER_SHADOWMAP_OIT] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "ShdMapOIT_VS", "ShdMapOIT_PS");
 	s_pShader[SHADER_NORMAL_DEPTH] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "NormalDepth_VS", "NormalDepth_PS");
+	s_pShader[SHADER_SCENE_DEPTH] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "NormalDepth_VS", "SceneDepth_PS"); // not upstream
 }
 
 

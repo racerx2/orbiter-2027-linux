@@ -464,6 +464,31 @@ void BldgMgr::Edit (Tile &t, Cell &c, double now)
 	}
 }
 
+// the SceneFx distance pass: the cells the main pass draws, see-through groups left out by opt 2
+void BldgMgr::RenderDepth (VkDev *dev, const D3DXMATRIX &mVP)
+{
+	if (tiles.empty()) return;
+	MATRIX3 rot;
+	oapiGetRotationMatrix (hObj, &rot);
+	VECTOR3 cam = vp->CameraPos();
+	D3DXVECTOR4 F = D9LinearFieldOfView (scn->GetProjectionMatrix());
+	D3DXMATRIX VP = mVP;
+	for (auto &kv : tiles) {
+		Tile &t = kv.second;
+		VECTOR3 e = mul (rot, t.e0), u = mul (rot, t.u0), n = mul (rot, t.n0), o = mul (rot, t.p0) - cam;
+		if (length (o) > range + 6000.0) continue;
+		D3DXMATRIX W, WV;
+		D3DXMatrixIdentity (&W);
+		W._11 = (float)e.x; W._12 = (float)e.y; W._13 = (float)e.z;
+		W._21 = (float)u.x; W._22 = (float)u.y; W._23 = (float)u.z;
+		W._31 = (float)n.x; W._32 = (float)n.y; W._33 = (float)n.z;
+		W._41 = (float)o.x; W._42 = (float)o.y; W._43 = (float)o.z;
+		D3DXMatrixMultiply (&WV, &W, scn->GetViewMatrix());
+		for (Cell &c : t.cell)
+			if (c.mesh && D9IsAABBVisible (c.mesh->GetAABB(), &WV, &F)) c.mesh->RenderShadowMap (&W, &VP, 2);
+	}
+}
+
 // each cell's mesh is lit by the tile's sun times the cell's terrain sun, its materials stay as made
 void BldgMgr::Render (VkDev *dev)
 {

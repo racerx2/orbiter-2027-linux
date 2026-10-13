@@ -54,6 +54,7 @@ class D3D9Pad;
 #define RENDERPASS_SKETCHPAD	0x0006
 #define RENDERPASS_MAINOVERLAY	0x0007
 #define RENDERPASS_NORMAL_DEPTH	0x0008
+#define RENDERPASS_SCENE_DEPTH	0x0009 // not upstream: camera distance for SSAO and the cloud march (SceneFx)
 
 #define RESTORE ((VkSurf*)(-1))
 #define CURRENT ((VkSurf*)(-2))
@@ -377,6 +378,8 @@ public:
 	bool			WorldToScreenSpace2(const VECTOR3& rdir, oapi::FVECTOR2* pt, D3DXMATRIX* pVP = NULL, float clip = 1.0f);
 
 	DWORD			GetFrameId() const { return dwFrameId; }
+	float			GetExposure() const { return fExposure; } // not upstream: auto-exposure e of the main pass
+	float			GetVolCloudFade() const;	// not upstream: weight of the volume clouds drawn last frame, fades the proxy's 2D layer near the camera
 
 	const D3DXVECTOR3 *GetCameraX() const { return &Camera.x; }
 	const D3DXVECTOR3 *GetCameraY() const { return &Camera.y; }
@@ -508,6 +511,8 @@ private:
 
 	class ImageProcessing *pLightBlur, *pBlur, *pGDIOverlay, *pIrradiance, *pVisDepth, *pCreateGlare;
 	class ShaderClass *pLocalCompute, *pRenderGlares;
+	class SceneFx *pFx; // not upstream: SceneDepth, SSAO, volumetric clouds, exposure measure
+	float fExposure = 1.0f; // not upstream: auto-exposure e of the main pass
 
 	class vVessel *vFocus;
 	VOBJREC *vobjEnv, *vobjIrd;
