@@ -38,6 +38,11 @@ public:
 	VkTex *Flag () const;                       // TAA: 1 on the camera target vessel, when written this frame, else NULL
 	VkTex *VolumeDist () const;                 // TAA: the volume clouds' mean distance, half res, when written this frame, else NULL
 	void CameraRays (D3DXVECTOR4 &camX, D3DXVECTOR4 &camY, D3DXVECTOR4 &camZ) const; // VolCloud.glsl PixelRay's vCamX/Y/Z; the TAA jitter folded into camZ
+	static bool DepthWanted ();                 // a feature reads tDepth: the depth targets exist and the terrain records for it (ue5-integration INT-4)
+	bool DepthRanThisFrame () const { return depthFrame != 0 && DepthValid(); }
+	float FogAlongRay (const VECTOR3 &from, const VECTOR3 &dir, double dist) const; // SceneFxFog.cpp: fog transmittance along a ray (global frame), 1 without fog
+	float FogTowardSun () const;                // SceneFxFog.cpp: fog transmittance from the camera toward the sun, 1 without fog
+	VkTex *FogTex () const;                     // SceneFxFog.cpp: half-res fog (rgb in-scatter premultiplied, a opacity) when drawn this frame, else NULL
 
 private:
 	void InitDepth ();
@@ -55,6 +60,14 @@ private:
 	struct VolShadowState;
 	static void FreeVolShadow (VolShadowState *s); // SceneFxShadow.cpp
 	void InitVolShadow ();                  // SceneFxShadow.cpp
+	void Gi (VkSurf *target, vPlanet *vp);  // SceneFxGi.cpp: screen-space GI (design-ssgi), after VolShadow
+	struct GiState;
+	static void FreeGi (GiState *s);        // SceneFxGi.cpp
+	void InitGi ();                         // SceneFxGi.cpp, at start when SSGI is on
+	void FogAndClouds (VkSurf *target, vPlanet *vp, bool clouds, float wV); // SceneFxFog.cpp: the height fog and the volume clouds, in the order the camera altitude needs
+	struct FogState;
+	static void FreeFog (FogState *s);      // SceneFxFog.cpp
+	void InitFog ();                        // SceneFxFog.cpp, at start when HeightFog is on
 	struct VolPrm { D3DXVECTOR4 camX, camY, camZ, mapE, mapN, mapU, clA, clB, clC, slab, fade, noise; };
 	void VolParams (vPlanet *vp, VolPrm &v) const;       // VolCloud.glsl's VolPS fields of the cloud layer, shared by the march and the shadow
 	void SetVolParams (ImageProcessing *ip, const VolPrm &v) const; // all but vMarch and vTex
@@ -94,6 +107,8 @@ private:
 	size_t mapSig = 0;
 	float cloudFade = 0.0f;
 	VolShadowState *vsh = nullptr;         // SceneFxShadow.cpp's targets and shaders
+	GiState *gi = nullptr;                 // SceneFxGi.cpp
+	FogState *fog = nullptr;               // SceneFxFog.cpp
 	float volShdFade = 0.0f;
 
 	VkTex *tHalf[3] = {};                  // w/2, w/4, w/8 of the scene, RGBA16F

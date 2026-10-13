@@ -224,6 +224,18 @@ target_include_directories(PostMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanC
 add_unit_test(LookMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/LookMath.cpp)
 target_include_directories(LookMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 
+# not upstream: UE5 batch maths (ue5-integration)
+add_unit_test(CsmMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/CsmMath.cpp)
+target_include_directories(CsmMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+add_unit_test(SsrMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/SsrMath.cpp)
+target_include_directories(SsrMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+add_unit_test(SsgiMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/SsgiMath.cpp)
+target_include_directories(SsgiMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+add_unit_test(FogMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/FogMath.cpp)
+target_include_directories(FogMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+add_unit_test(PlumeMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/PlumeMath.cpp)
+target_include_directories(PlumeMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+
 if (BUILD_ORBITER_SERVER)
 
 	# Sanity check for scenario tests

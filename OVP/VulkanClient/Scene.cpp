@@ -25,6 +25,9 @@
 #include "SceneFx.h" // not upstream
 #include "PostTaa.h" // not upstream
 #include "PostLook.h" // not upstream
+#include "SceneShadows.h" // not upstream
+#include "SceneSsr.h" // not upstream
+#include "PostPlume.h" // not upstream
 #include "D3D9Frame.h" // not upstream: GetDepthFormat
 #include "PbrRender.h" // custom: PBR materials (design-pbr 7, 8)
 #include <algorithm>
@@ -346,6 +349,9 @@ Scene::Scene(D3D9Client *_gc, DWORD w, DWORD h)
 	pFx = new SceneFx(gc, this, viewW, viewH); // not upstream: ground graphics passes
 	if (Config->TAA) pTaa = new PostTaa(gc, this, viewW, viewH); // not upstream
 	if (Config->HeatHaze || Config->LightShafts || Config->LensFlare || Config->Sharpen || Config->Vignette) pLook = new PostLook(gc, this, viewW, viewH); // not upstream
+	if (Config->SceneShadows) pShadows = new SceneShadows(gc, this, viewW, viewH); // not upstream
+	if (Config->SSR) pSsr = new SceneSsr(gc, this, viewW, viewH); // not upstream
+	if (Config->VolPlumes) pPlume = new PostPlume(gc, this, viewW, viewH); // not upstream
 
 
 	if (Config->GDIOverlay) {
@@ -378,6 +384,9 @@ Scene::~Scene ()
 	SAFE_DELETE(m_celSphere);
 	SAFE_DELETE(pLocalCompute);
 	SAFE_DELETE(pRenderGlares);
+	SAFE_DELETE(pPlume); // not upstream
+	SAFE_DELETE(pSsr); // not upstream
+	SAFE_DELETE(pShadows); // not upstream
 	SAFE_DELETE(pLook); // not upstream
 	SAFE_DELETE(pTaa); // not upstream
 	SAFE_DELETE(pFx); // not upstream
@@ -1593,7 +1602,7 @@ void Scene::RenderMainScene()
 
 	bJitter = false; jitX = jitY = 0.0f; // not upstream: TAA picks this frame's jitter, the main pass only
 	if (pTaa) pTaa->BeginFrame(&bJitter, &jitX, &jitY);
-	bLabelsLate = TaaActive(); // reset frames too: their labels must not enter the history
+	bLabelsLate = TaaActive() || Config->SSR || Config->SSGI || Config->HeightFog; // reset frames too; labels never enter the history, reflections, GI or fog
 
 	UpdateCameraFromOrbiter(RENDERPASS_MAINSCENE);
 	UpdateCamVis();
@@ -1659,6 +1668,8 @@ void Scene::RenderMainScene()
 
 	// Push main render target and depth surfaces
 	//
+	if (pShadows) pShadows->BeforeMain(); // not upstream: the sun shadow cascades, after RenderFlags is set (design-scene-shadows)
+
 	gc->PushRenderTarget(pBackBuffer, gc->GetDepthStencil(), RENDERPASS_MAINSCENE);	// Main Scene
 
 
@@ -1951,8 +1962,11 @@ void Scene::RenderMainScene()
 	}
 
 	PbrRender::SetPhase(PbrRender::PHASE_ALL); // custom
+	if (pPlume) pPlume->Collect(); // not upstream: plumes, smoke and plasma this frame (design-volumetric-plumes)
 	if (pFx) pFx->AfterOpaque(RenderMarkers, pBackBuffer); // not upstream: SceneDepth, SSAO, clouds over the opaque scene
 	if (pTaa) pTaa->Resolve(pBackBuffer); // not upstream: TAA of the opaque scene (design-visual-batch 2 A)
+	if (pSsr) pSsr->Capture(pBackBuffer); // not upstream: what the reflections trace next frame (design-ssr)
+	if (pShadows) pShadows->AfterResolve(); // not upstream
 	if (bJitter) { bJitter = false; SetCameraAperture(Camera.aperture, Camera.aspect); } // not upstream: no jitter for the rest of the frame
 	if (bLabelsLate) { // not upstream: the in-scene labels and art over the resolved image
 		for (DWORD i = 0; i < nplanets; i++) RenderPlanetLabels(i, mkrmode);
@@ -1960,6 +1974,7 @@ void Scene::RenderMainScene()
 		RenderSurfaceLabels(mkrmode);
 	}
 	if (pLook) pLook->Haze(pBackBuffer); // not upstream: heat haze behind the exhausts, before they draw (design-visual-batch 2 A2)
+	if (pPlume) pPlume->Render(pBackBuffer); // not upstream: volumetric plumes, smoke and plasma (design-volumetric-plumes)
 
 	D3D9Pad* pSketch = GetPooledSketchpad(SKETCHPAD_LABELS);
 	if (pSketch) {
@@ -2014,6 +2029,7 @@ void Scene::RenderMainScene()
 	for (DWORD n = 0; n < nstream; n++) pstream[n]->Render(pDevice);
 
 	RenderPbrDeferred(false); // custom: transparent PBR groups of the exterior, over the opaque scene copy (design-pbr 8)
+	if (pShadows) pShadows->BeforeCockpit(); // not upstream
 
 
 	// -------------------------------------------------------------------------------------------------------

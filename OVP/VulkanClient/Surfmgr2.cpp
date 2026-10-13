@@ -25,6 +25,7 @@
 #include "VkTexFile.h"
 #include "GfxPool.h" // not upstream
 #include "CloudAtlas.h" // not upstream
+#include "SceneFx.h" // not upstream: DepthWanted
 #include <deque> // not upstream
 #include <filesystem> // not upstream
 #include <mutex> // not upstream
@@ -1970,7 +1971,7 @@ void TileManager2<SurfTile>::Render (MATRIX4 &dwmat, bool use_zbuf, const vPlane
 	if (scene->GetRenderPass() == RENDERPASS_MAINSCENE) { // not upstream: horizon maps in, tiles recorded for SceneFx
 		HorizonUpload();
 		depthTiles.clear();
-		depthRec = (Config->SSAO || Config->VolClouds) && vp == scene->GetCameraProxyVisual() && use_zbuf && !fcv->bSpherical;
+		depthRec = SceneFx::DepthWanted() && vp == scene->GetCameraProxyVisual() && use_zbuf && !fcv->bSpherical; // not upstream: every reader of tDepth (TAA included)
 		depthFrame = scene->GetFrameId();
 	}
 	else depthRec = false; // not upstream

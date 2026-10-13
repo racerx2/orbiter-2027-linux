@@ -16,7 +16,7 @@
 
 class GfxPool {
 public:
-	enum Kind { CLOUDATLAS = 0, CLOUDMAP = 1, NOISE = 2, HORIZON = 3, NKIND = 4 }; // run in this order; the atlas is one job per planet
+	enum Kind { CLOUDATLAS = 0, CLOUDMAP = 1, NOISE = 2, HORIZON = 3, FOGMAP = 4, NKIND = 5 }; // run in this order; the atlas is one job per planet
 	struct Job {
 		int owner = 0;                   // Register() id
 		int kind = HORIZON;

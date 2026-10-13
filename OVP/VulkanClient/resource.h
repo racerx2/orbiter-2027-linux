@@ -194,6 +194,12 @@
 #define IDC_FX_VIGNETTE                 3051 // not upstream
 #define IDC_FX_SHARPEN                  3052 // not upstream
 #define IDC_FX_HAZE                     3053 // not upstream
+#define IDC_FX_SCENESHD                 3054 // not upstream
+#define IDC_FX_SSR                      3055 // not upstream
+#define IDC_FX_PLUMES                   3056 // not upstream
+#define IDC_FX_SSGI                     3057 // not upstream
+#define IDC_FX_FOG                      3058 // not upstream
+#define IDC_FX_NIGHT                    3059 // not upstream
 #define IDC_ATM_S1                              4000
 #define IDC_ATM_S2                              4001
 #define IDC_ATM_S3                              4002

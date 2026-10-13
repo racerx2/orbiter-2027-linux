@@ -120,6 +120,13 @@ void D3D9Config::Reset ()
 	Vignette			= 1;
 	Sharpen				= 1;
 	HeatHaze			= 1;
+	SceneShadows		= 1;
+	SSR		= 1;
+	VolPlumes		= 1;
+	SSGI		= 1;
+	HeightFog		= 0;
+	NightLook		= 1;
+	SSGIStrength	= 1.0f;
 	
 	GFXIntensity = 0.5;
 	GFXDistance = 0.8;
@@ -244,6 +251,13 @@ bool D3D9Config::ReadParams ()
 	if (oapiReadItem_int   (hFile, (char*)"Vignette", i))					Vignette = max(0, min(1, i));
 	if (oapiReadItem_int   (hFile, (char*)"Sharpen", i))					Sharpen = max(0, min(1, i));
 	if (oapiReadItem_int   (hFile, (char*)"HeatHaze", i))					HeatHaze = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"SceneShadows", i))					SceneShadows = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"SSR", i))					SSR = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"VolPlumes", i))					VolPlumes = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"SSGI", i))					SSGI = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"HeightFog", i))					HeightFog = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"NightLook", i))					NightLook = max(0, min(1, i));
+	if (oapiReadItem_float (hFile, (char*)"SSGIStrength", d))				SSGIStrength = float(max(0.0, min(2.0, d)));
 
 	if (oapiReadItem_float (hFile, (char*)"GFXIntensity", d))					GFXIntensity = max(0.0, min(1.0, d));
 	if (oapiReadItem_float (hFile, (char*)"GFXDistance", d))					GFXDistance = max(0.0, min(1.0, d));
@@ -366,6 +380,13 @@ void D3D9Config::WriteParams ()
 	oapiWriteItem_int   (hFile, (char*)"Vignette", Vignette);
 	oapiWriteItem_int   (hFile, (char*)"Sharpen", Sharpen);
 	oapiWriteItem_int   (hFile, (char*)"HeatHaze", HeatHaze);
+	oapiWriteItem_int   (hFile, (char*)"SceneShadows", SceneShadows);
+	oapiWriteItem_int   (hFile, (char*)"SSR", SSR);
+	oapiWriteItem_int   (hFile, (char*)"VolPlumes", VolPlumes);
+	oapiWriteItem_int   (hFile, (char*)"SSGI", SSGI);
+	oapiWriteItem_int   (hFile, (char*)"HeightFog", HeightFog);
+	oapiWriteItem_int   (hFile, (char*)"NightLook", NightLook);
+	oapiWriteItem_float (hFile, (char*)"SSGIStrength", double(SSGIStrength));
 
 	oapiWriteItem_string (hFile,(char*) "SolCfg", SolCfg);
 	oapiWriteItem_string (hFile,(char*) "DebugLineFont", DebugFont);

@@ -934,6 +934,12 @@ void VideoTab::InitSetupDialog(QWidget *hWnd)
 	DlgItem<QAbstractButton>(hWnd, IDC_FX_VIGNETTE)->setChecked(Config->Vignette == 1);
 	DlgItem<QAbstractButton>(hWnd, IDC_FX_SHARPEN)->setChecked(Config->Sharpen == 1);
 	DlgItem<QAbstractButton>(hWnd, IDC_FX_HAZE)->setChecked(Config->HeatHaze == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_SCENESHD)->setChecked(Config->SceneShadows == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_SSR)->setChecked(Config->SSR == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_PLUMES)->setChecked(Config->VolPlumes == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_SSGI)->setChecked(Config->SSGI == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_FOG)->setChecked(Config->HeightFog == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_NIGHT)->setChecked(Config->NightLook == 1);
 	DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ)->setCurrentIndex(Config->VolCloudQuality);
 	DlgItem<QComboBox>(hWnd, IDC_GG_TREERANGE)->setCurrentIndex(Config->TreeRange < 1750.0f ? 0 : Config->TreeRange < 3250.0f ? 1 : 2);
 
@@ -1031,6 +1037,12 @@ void VideoTab::SaveSetupState(QWidget *hWnd)
 	Config->Vignette = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_VIGNETTE)->isChecked();
 	Config->Sharpen = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_SHARPEN)->isChecked();
 	Config->HeatHaze = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_HAZE)->isChecked();
+	Config->SceneShadows = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_SCENESHD)->isChecked();
+	Config->SSR = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_SSR)->isChecked();
+	Config->VolPlumes = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_PLUMES)->isChecked();
+	Config->SSGI = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_SSGI)->isChecked();
+	Config->HeightFog = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_FOG)->isChecked();
+	Config->NightLook = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_NIGHT)->isChecked();
 	Config->VolCloudQuality = std::max(0, (int)DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ)->currentIndex());
 	{
 		static const float range[3] = { 1000.0f, 2500.0f, 4000.0f };

@@ -245,7 +245,7 @@ void PostLook::Final (VkSurf *bb)
 		D3DXVECTOR4 tex(1.0f / float(W), 1.0f / float(H), float(W) / float(H), time);
 		D3DXVECTOR4 sun(float(su), float(sv), shafts, flare);
 		D3DXVECTOR4 flags(dep ? 1.0f : 0.0f, gbuf ? 1.0f : 0.0f, vol ? 1.0f : 0.0f, vis ? 1.0f : 0.0f);
-		D3DXVECTOR4 sharp(scn->bLabelsLate ? 0.18f : 0.12f, 0.0f, 0.0f, 0.0f); // more after TAA's softening (jittered this frame)
+		D3DXVECTOR4 sharp(scn->TaaActive() ? 0.18f : 0.12f, 0.0f, 0.0f, 0.0f); // more after TAA's softening
 
 		bool rays = false;
 		if (shafts >= 1e-3f) {

@@ -34,10 +34,12 @@ struct SceneFx::CloudBox {
 SceneFx::SceneFx (oapi::D3D9Client *_gc, Scene *_scn, DWORD w, DWORD h)
 	: gc(_gc), scn(_scn), dev(_gc->GetDevice()), W(w), H(h)
 {
-	if (Config->SSAO || Config->VolClouds || Config->TAA) InitDepth(); // TAA: every main frame (design-visual-batch 3)
+	if (DepthWanted()) InitDepth(); // every reader of tDepth (ue5-integration INT-4)
 	if (Config->SSAO) InitSSAO();
 	if (Config->VolClouds) InitClouds();
 	if (Config->VolClouds && Config->VolCloudShadows && pVol) InitVolShadow(); // not upstream: compiled at start, not mid-flight
+	if (Config->SSGI && depthOK) InitGi();
+	if (Config->HeightFog && depthOK) InitFog();
 	if (Config->AutoExposure) InitExposure();
 }
 
@@ -127,6 +129,8 @@ void SceneFx::InitExposure ()
 SceneFx::~SceneFx ()
 {
 	FreeVolShadow(vsh);
+	FreeGi(gi);
+	FreeFog(fog);
 	if (poolId) if (GfxPool *p = GfxPool::Peek()) p->Unregister(poolId);
 	SAFE_DELETE(pVol);
 	SAFE_DELETE(tCov);
@@ -271,14 +275,16 @@ void SceneFx::AfterOpaque (const std::list<vVessel*> &vessels, VkSurf *target)
 	cloudFade = clouds ? wV : 0.0f; // the 2D layer near the camera fades from the next frame on
 	bool ssao = WantSSAO(vessels);
 	bool taa = depthOK && scn->TaaActive(); // not upstream: TAA reprojects from tDepth every main frame it runs
-	if (!ssao && !clouds && !taa) { volShdFade = 0.0f; return; }
+	bool more = depthOK && (gi || fog || Config->SSR || Config->VolPlumes); // the batch's other readers of tDepth (ue5-integration INT-4)
+	if (!ssao && !clouds && !taa && !more) { volShdFade = 0.0f; return; }
 	VkDev::State st = dev->GetState();
 	DepthPass(vessels);
 	if (taa && sFlag) FlagPass(vessels);
 	if (ssao) Ssao(target);
 	if (clouds && Config->VolCloudShadows) VolShadow(target, vp, wV); // not upstream: before the clouds, so they cover their own shadow
 	else volShdFade = 0.0f;
-	if (clouds) Clouds(target, vp, wV);
+	if (gi) Gi(target, vp); // not upstream: one bounce from the lit opaque scene (design-ssgi)
+	FogAndClouds(target, vp, clouds, wV); // not upstream: the height fog under or over the volume clouds (design-height-fog)
 	gc->PushRenderTarget(target, gc->GetDepthStencil(), RENDERPASS_MAINSCENE); // the main target, viewport and depth back
 	gc->PopRenderTargets();
 	dev->SetState(st);
@@ -330,6 +336,11 @@ void SceneFx::FlagPass (const std::list<vVessel*> &vessels)
 	scn->PopPass();
 	scn->PopCameraFrustumLimits();
 	flagFrame = scn->GetFrameId();
+}
+
+bool SceneFx::DepthWanted ()
+{
+	return Config->SSAO || Config->VolClouds || Config->TAA || Config->SSGI || Config->SSR || Config->HeightFog || Config->VolPlumes;
 }
 
 bool SceneFx::DepthValid () const { return depthOK && depthFrame == scn->GetFrameId(); }

@@ -55,6 +55,8 @@ class D3D9Pad;
 #define RENDERPASS_MAINOVERLAY	0x0007
 #define RENDERPASS_NORMAL_DEPTH	0x0008
 #define RENDERPASS_SCENE_DEPTH	0x0009 // not upstream: camera distance for SSAO and the cloud march (SceneFx)
+#define RENDERPASS_SCENESHADOW	0x000A // not upstream: the sun shadow cascades (SceneShadows)
+#define RENDERPASS_FLOWMAP		0x000B // not upstream: a vessel seen along its airflow (PostPlume)
 
 #define RESTORE ((VkSurf*)(-1))
 #define CURRENT ((VkSurf*)(-2))
@@ -76,6 +78,9 @@ class Scene {
 	friend class D3D9CelestialSphere;
 	friend class PostTaa;  // not upstream: TAA reads the camera (design-visual-batch 3)
 	friend class PostLook; // not upstream: haze, shafts, flare, sharpen, vignette (design-visual-batch 4-7)
+	friend class SceneShadows; // not upstream: the UE5 batch (ue5-integration)
+	friend class SceneSsr;
+	friend class PostPlume;
 
 	// Visual record ===================================================================
 	//
@@ -527,6 +532,9 @@ private:
 	class SceneFx *pFx; // not upstream: SceneDepth, SSAO, volumetric clouds, exposure measure
 	class PostTaa *pTaa = nullptr;   // not upstream: temporal anti-aliasing
 	class PostLook *pLook = nullptr; // not upstream: heat haze and the final look pass
+	class SceneShadows *pShadows = nullptr; // not upstream: whole-scene sun shadows
+	class SceneSsr *pSsr = nullptr;         // not upstream: screen-space reflection capture
+	class PostPlume *pPlume = nullptr;      // not upstream: volumetric plumes, smoke, plasma
 	bool bJitter = false;            // not upstream: SetCameraAperture adds the TAA jitter
 	float jitX = 0.0f, jitY = 0.0f;  // not upstream: jitter in pixels
 	bool bLabelsLate = false;        // not upstream: with TAA the in-scene labels are drawn after the resolve, unjittered

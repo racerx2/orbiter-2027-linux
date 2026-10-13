@@ -78,6 +78,16 @@ set(SourceFiles
 	PostMath.cpp # not upstream
 	PostLook.cpp # not upstream
 	LookMath.cpp # not upstream
+	SceneShadows.cpp # not upstream
+	CsmMath.cpp # not upstream
+	SceneSsr.cpp # not upstream
+	SsrMath.cpp # not upstream
+	SceneFxGi.cpp # not upstream
+	SsgiMath.cpp # not upstream
+	SceneFxFog.cpp # not upstream
+	FogMath.cpp # not upstream
+	PostPlume.cpp # not upstream
+	PlumeMath.cpp # not upstream
 	AutoExpo.cpp # not upstream
 	VolCloudMap.cpp # not upstream
 	CloudAtlas.cpp # not upstream
