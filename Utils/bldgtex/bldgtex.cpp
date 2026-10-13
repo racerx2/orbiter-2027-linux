@@ -1,6 +1,7 @@
 // not upstream: draws Textures/Bldg for the streamed buildings: facade atlas with its night and normal maps, flat roof; our own procedural drawing, nothing downloaded
 
 #include "BldgGeom.h"
+#include "AutoExpo.h" // NightLook::NiteHalf, NiteNest: the night look map's mips
 #include <QImage>
 #include <algorithm>
 #include <cmath>
@@ -48,26 +49,27 @@ C operator+ (C a, C b) { return {a.r + b.r, a.g + b.g, a.b + b.b}; }
 C Mix (C a, C b, float t) { return {a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t}; }
 const C Black {0, 0, 0};
 
-struct Px { C dif; float h; C emi; };
+struct Px { C dif; float h; C emi; C nite = Black; float thr = 0.0f; }; // nite, thr: the night look map's colour and on-time (design-night-look 6); dark texels 0
 
 // one image of w x h with diffuse, height and night colour
 struct Canvas {
 	int w, h;
-	std::vector<uint8_t> dif, emi; // RGBA
+	std::vector<uint8_t> dif, emi, nite; // RGBA; nite's alpha is the window's on-time
 	std::vector<float> hgt;
-	Canvas (int W, int Hh) : w(W), h(Hh), dif ((size_t)W * Hh * 4, 255), emi ((size_t)W * Hh * 4, 255), hgt ((size_t)W * Hh, 0.5f) {}
+	Canvas (int W, int Hh) : w(W), h(Hh), dif ((size_t)W * Hh * 4, 255), emi ((size_t)W * Hh * 4, 255), nite ((size_t)W * Hh * 4, 0), hgt ((size_t)W * Hh, 0.5f) {}
 	void Set (int x, int y, const Px &p)
 	{
 		size_t i = (size_t)y * w + x;
 		auto b = [] (float v) { return (uint8_t)std::clamp ((int)std::lround (v), 0, 255); };
 		dif[i * 4] = b (p.dif.r); dif[i * 4 + 1] = b (p.dif.g); dif[i * 4 + 2] = b (p.dif.b);
 		emi[i * 4] = b (p.emi.r); emi[i * 4 + 1] = b (p.emi.g); emi[i * 4 + 2] = b (p.emi.b);
+		nite[i * 4] = b (p.nite.r); nite[i * 4 + 1] = b (p.nite.g); nite[i * 4 + 2] = b (p.nite.b); nite[i * 4 + 3] = b (p.thr * 255.0f);
 		hgt[i] = p.h;
 	}
 	void Copy (int x, int y, int sx, int sy)
 	{
 		size_t i = (size_t)y * w + x, s = (size_t)sy * w + sx;
-		memcpy (&dif[i * 4], &dif[s * 4], 4); memcpy (&emi[i * 4], &emi[s * 4], 4); hgt[i] = hgt[s];
+		memcpy (&dif[i * 4], &dif[s * 4], 4); memcpy (&emi[i * 4], &emi[s * 4], 4); memcpy (&nite[i * 4], &nite[s * 4], 4); hgt[i] = hgt[s];
 	}
 	// the gutter round the area x0..x1, y0..y1 from its edge pixels, gt above and gb below
 	void Pad (int x0, int y0, int x1, int y1, int g, int gt, int gb)
@@ -184,6 +186,27 @@ C NightLight (const Look &L, float t, uint32_t wh, int y)
 	return c * (k * (0.8f + 0.2f * t));
 }
 
+// the night look map (design-night-look 6): blackbody white points in sRGB (CIE 1931), share lit at full night, on-time 0.05..0.85
+const C K2700 {255, 167, 87}, K3000 {255, 180, 107}, K3500 {255, 196, 137}, K4000 {255, 209, 163}, K5000 {255, 228, 206}, TvBlue {70, 85, 128};
+
+float NiteLit (const Look &L) { return L.ground == Industrial ? 0.12f : (L.win == Curtain ? 0.40f : (L.cool ? 0.45f : 0.40f)); }
+
+float NiteThr (float u, float lit) { return u < lit ? 0.05f + 0.80f * u / lit : 0.0f; } // never lit: 0, its colour is black
+
+float WinThr (const Look &L, uint32_t wh) { return NiteThr (F01 (H (wh * 7u + 3u)), NiteLit (L)); } // the legacy lit hash, so a lit window stays one
+
+C NiteLight (const Look &L, float t, uint32_t wh, int y)
+{
+	float lit = NiteLit (L);
+	if (F01 (H (wh * 7u + 3u)) >= lit) return Black;
+	float k = 0.40f + 0.60f * F01 (H (wh + 11u)), r = F01 (H (wh + 5u));
+	C c = L.cool ? (r < 0.5f ? K4000 : (r < 0.9f ? K5000 : K3500)) : (r < 0.45f ? K2700 : (r < 0.75f ? K3000 : (r < 0.9f ? K3500 : (r < 0.97f ? K4000 : TvBlue))));
+	uint32_t kind = (wh >> 8) % 10;
+	if (kind < 2 && t < 0.35f) k *= 1.2f;
+	if (kind == 2 && (y % 5) < 2) k *= 0.5f;
+	return c * (k * (0.8f + 0.2f * t));
+}
+
 // one pixel of an upper floor, cx 0..125 across the bay, cy 0..121 down the floor
 Px Upper (const Look &L, int reg, int bay, int floor, int cx, int cy, int x, int y)
 {
@@ -191,6 +214,7 @@ Px Upper (const Look &L, int reg, int bay, int floor, int cx, int cy, int x, int
 	p.emi = Black;
 	p.dif = Wall (L.mat, L.wall, x, y, reg * 17, p.h);
 	uint32_t wh = H3 (reg, bay, floor);
+	p.thr = WinThr (L, wh); // the window's on-time on its whole cell, so BC3 alpha blocks hold one value
 	auto inWin = [&] (int x0, int x1, int y0, int y1) { return cx >= x0 && cx < x1 && cy >= y0 && cy < y1; };
 	if (L.win == Curtain) {
 		bool mull = cx < L.fw || cx >= 126 - L.fw || (L.bars == 1 && std::abs (cx - 63) < L.fw) || (L.bars == 4 && (cx % 42) < L.fw);
@@ -199,15 +223,18 @@ Px Upper (const Look &L, int reg, int bay, int floor, int cx, int cy, int x, int
 		float t = (float)cy / L.wy1;
 		p.dif = Glass (L, t, wh, x, y); p.h = 0.4f;
 		p.emi = NightLight (L, t, wh, cy);
+		p.nite = NiteLight (L, t, wh, cy);
 		return p;
 	}
 	if (L.win == Ribbon || L.win == Strip) {
 		if (!inWin (L.wx0, L.wx1, L.wy0, L.wy1)) return p;
 		int lx = cx - L.wx0, ly = cy - L.wy0, w = L.wx1 - L.wx0, h = L.wy1 - L.wy0;
+		p.thr = WinThr (L, wh + (uint32_t)(lx / 42) * 131u); // the segment's own window
 		if (lx < L.fw || ly < L.fw || ly >= h - L.fw || (lx % 42) < L.fw || lx >= w - L.fw) { p.dif = L.frame; p.h = 0.35f; return p; }
 		float t = (float)ly / h;
 		p.dif = Glass (L, t, wh + (uint32_t)(lx / 42), x, y); p.h = 0.15f;
 		p.emi = NightLight (L, t, wh + (uint32_t)(lx / 42) * 131u, cy);
+		p.nite = NiteLight (L, t, wh + (uint32_t)(lx / 42) * 131u, cy);
 		return p;
 	}
 	// punched windows: lintel, sill, shutters, balcony
@@ -233,6 +260,7 @@ Px Upper (const Look &L, int reg, int bay, int floor, int cx, int cy, int x, int
 	p.dif = Glass (L, t, wh, x, y); p.h = ly < 6 ? 0.14f : 0.2f;
 	if (ly < 6) p.dif = p.dif * 0.65f; // the reveal's shadow under the lintel
 	p.emi = NightLight (L, t, wh, cy);
+	p.nite = NiteLight (L, t, wh, cy);
 	return p;
 }
 
@@ -247,12 +275,15 @@ Px Ground1 (const Look &L, int reg, int bay, int cx, int cy, int x, int y)
 	uint32_t wh = H3 (reg, bay, 999);
 	switch (L.ground) {
 	case Shops: {
+		float us = F01 (H (wh + 1u)); // night look: the shop lit at night with 75 %, its sign always
+		p.thr = NiteThr (us, 0.75f);
 		if (cx < 10 || cx >= 116) return p; // piers
 		if (cy < 28) {                      // sign band
 			C s = SignColours[wh % 6];
 			bool inner = cx > 18 && cx < 108 && cy > 6 && cy < 22;
 			p.dif = inner ? Mix (s, White, 0.25f) : s * 0.85f; p.h = 0.6f;
 			if ((wh >> 4) % 2) p.emi = inner ? s * 1.1f : s * 0.5f;
+			if ((wh >> 4) % 2) { p.nite = inner ? s : s * 0.45f; p.thr = 0.05f + 0.80f * F01 (H (wh + 31u)); }
 			return p;
 		}
 		if (cy >= 150) { p.dif = StoneC * 0.8f; p.h = 0.55f; return p; } // stall riser
@@ -262,15 +293,19 @@ Px Ground1 (const Look &L, int reg, int bay, int cx, int cy, int x, int y)
 		float t = (float)ly / 122;
 		p.dif = Glass (L, t, wh, x, y) * (door ? 0.75f : 1.0f); p.h = 0.2f;
 		if (F01 (H (wh + 1u)) < 0.72f) p.emi = C {255, 232, 190} * (0.6f + 0.2f * t);
+		if (us < 0.75f) p.nite = (F01 (H (wh + 21u)) < 0.5f ? K3000 : K4000) * (0.7f + 0.2f * t);
 		return p;
 	}
 	case Lobby: {
 		if (cy < 10) { p.dif = DarkFrame * 1.4f; p.h = 0.55f; return p; }
 		bool door = (bay == 3 || bay == 4) && cy >= 60;
+		float ul = door ? 0.2f * F01 (H (wh + 41u)) : F01 (H (wh + (uint32_t)(cx / 42) * 7u)); // night look: doors early, panes at 60 %
+		p.thr = NiteThr (ul, 0.6f);
 		if ((cx % 42) < 3 || cy < 13 || (door && (cx % 63) < 4)) { p.dif = DarkFrame; p.h = 0.4f; return p; }
 		float t = (float)(cy - 10) / 154;
 		p.dif = Glass (L, t, wh + (uint32_t)(cx / 42), x, y) * (door ? 0.8f : 1.0f); p.h = 0.2f;
 		if (door || F01 (H (wh + (uint32_t)(cx / 42) * 7u)) < 0.6f) p.emi = C {240, 230, 205} * (0.45f + 0.15f * F01 (H (wh + (uint32_t)(cx / 42))));
+		if (ul < 0.6f) p.nite = K4000 * (0.5f + 0.2f * F01 (H (wh + (uint32_t)(cx / 42))));
 		return p;
 	}
 	case House: {
@@ -297,6 +332,7 @@ Px Ground1 (const Look &L, int reg, int bay, int cx, int cy, int x, int y)
 	}
 	// residential ground floor: windows like above, an entrance in bay 3 with a canopy
 	if (bay == 3 && cx >= 36 && cx < 90) {
+		p.thr = NiteThr (F01 (H (wh + 2u)), 0.7f);
 		if (cy >= 26 && cy < 34) { p.dif = DarkFrame * 1.2f; p.h = 0.8f; return p; }
 		if (cy >= 34) {
 			bool glass = cx >= 46 && cx < 80 && cy >= 44 && cy < 100;
@@ -304,6 +340,7 @@ Px Ground1 (const Look &L, int reg, int bay, int cx, int cy, int x, int y)
 			p.dif = glass ? Glass (L, (cy - 44) / 56.0f, wh, x, y) : C {95, 65, 45} * (0.9f + 0.1f * Fbm (x / 3.0f, y / 40.0f, 3, 2));
 			p.h = 0.25f;
 			if (glass && F01 (H (wh + 2u)) < 0.7f) p.emi = C {255, 200, 140} * 0.7f;
+			if (glass && F01 (H (wh + 2u)) < 0.7f) p.nite = K3000 * 0.7f;
 			return p;
 		}
 		return p;
@@ -435,6 +472,50 @@ bool WriteDds (const std::string &path, std::vector<uint8_t> img, int w, int h, 
 	return fclose (f) == 0 && ok;
 }
 
+// the night look map (design-night-look 6): BC3 with the on-time in alpha; levels 1-3 the box, from 4 each texel one of its children (points stay points)
+bool WriteNite (const std::string &path, const std::vector<uint8_t> &l0, int w, int h, const std::vector<Area> *areas, int scale)
+{
+	int levels = 1;
+	while (std::max (w, h) >> levels) levels++;
+	std::string out (128, '\0');
+	memcpy (&out[0], "DDS ", 4);
+	Put32 (out, 4, 124);
+	Put32 (out, 8, 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000 | 0x80000);
+	Put32 (out, 12, (uint32_t)h); Put32 (out, 16, (uint32_t)w);
+	Put32 (out, 20, (uint32_t)(std::max (1, (w + 3) / 4) * std::max (1, (h + 3) / 4) * 16));
+	Put32 (out, 28, (uint32_t)levels);
+	Put32 (out, 76, 32); Put32 (out, 80, 0x4);
+	memcpy (&out[84], "DXT5", 4);
+	Put32 (out, 108, 0x1000 | 0x8 | 0x400000);
+	std::vector<uint8_t> img = l0, nxt;
+	int lw = w, lh = h;
+	for (int L = 0; L < levels; L++) {
+		if (L) {
+			if (L < 4) NightLook::NiteHalf (img, lw, lh, nxt);
+			else NightLook::NiteNest (img, lw, lh, L, nxt);
+			img.swap (nxt);
+			lw = std::max (1, lw / 2); lh = std::max (1, lh / 2); scale *= 2;
+			if (L < 4 && areas) RePad (img, lw, scale, *areas);
+		}
+		int bw = std::max (1, (lw + 3) / 4), bh = std::max (1, (lh + 3) / 4);
+		size_t at = out.size();
+		out.resize (at + (size_t)bw * bh * 16);
+		unsigned char blk[64];
+		for (int by = 0; by < bh; by++)
+			for (int bx = 0; bx < bw; bx++) {
+				for (int i = 0; i < 16; i++) {
+					int x = std::min (bx * 4 + (i & 3), lw - 1), y = std::min (by * 4 + (i >> 2), lh - 1);
+					memcpy (blk + 4 * i, &img[((size_t)y * lw + x) * 4], 4);
+				}
+				stb_compress_dxt_block ((unsigned char *)&out[at + ((size_t)by * bw + bx) * 16], blk, 1, STB_DXT_HIGHQUAL);
+			}
+	}
+	FILE *f = fopen (path.c_str(), "wb");
+	if (!f) return false;
+	bool ok = fwrite (out.data(), 1, out.size(), f) == out.size();
+	return fclose (f) == 0 && ok;
+}
+
 // tangent-space normals from heights: r g from -1..1, b the z as it is (PBR.fx remaps only rg)
 std::vector<uint8_t> Normals (const std::vector<float> &h, int w, int hh, float k, bool wrap)
 {
@@ -500,9 +581,13 @@ int main (int argc, char **argv)
 	std::vector<uint8_t> nrm = Normals (A.hgt, Atlas, Atlas, 3.0f, false);
 	std::vector<uint8_t> emiH = Half (A.emi, Atlas, Atlas), nrmH = Half (nrm, Atlas, Atlas);
 	RePad (emiH, Atlas / 2, 2, areas); RePad (nrmH, Atlas / 2, 2, areas);
+	std::vector<uint8_t> niteH;
+	NightLook::NiteHalf (A.nite, Atlas, Atlas, niteH);
+	RePad (niteH, Atlas / 2, 2, areas);
 	bool ok = WriteDds (out + "/facade.dds", A.dif, Atlas, Atlas, &areas, 1)
 		&& WriteDds (out + "/facade_emis.dds", emiH, Atlas / 2, Atlas / 2, &areas, 2)
-		&& WriteDds (out + "/facade_norm.dds", nrmH, Atlas / 2, Atlas / 2, &areas, 2);
+		&& WriteDds (out + "/facade_norm.dds", nrmH, Atlas / 2, Atlas / 2, &areas, 2)
+		&& WriteNite (out + "/facade_nite.dds", niteH, Atlas / 2, Atlas / 2, &areas, 2);
 
 	const int S = 1024;
 	Canvas Rf (S, S);
@@ -514,6 +599,7 @@ int main (int argc, char **argv)
 	if (!png.empty()) {
 		Png (png + "/facade.png", A.dif, Atlas, Atlas, 2);
 		Png (png + "/facade_emis.png", A.emi, Atlas, Atlas, 2);
+		Png (png + "/facade_nite.png", A.nite, Atlas, Atlas, 2);
 		Png (png + "/facade_norm.png", nrm, Atlas, Atlas, 2);
 		Png (png + "/roof.png", Rf.dif, S, S, 1);
 	}

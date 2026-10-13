@@ -223,7 +223,13 @@ own; `VulkanClient.cfg` keys (defaults): `LensFlare` (1), `LightShafts` (1),
 `TAA` (1, temporal anti-aliasing), `WaterFx` (1, waves, glitter, sky
 reflection, foam), `VolCloudShadows` (1, shadows of the volumetric clouds),
 `Filmic` (0, filmic tone curve), `Vignette` (1), `Sharpen` (1), `HeatHaze`
-(1, shimmer behind engines).
+(1, shimmer behind engines), and in its third row `SceneShadows` (1, sun
+shadows of terrain, buildings, trees and vessels), `SSR` (1, reflections of
+the scene in water, runways and glossy hulls), `VolPlumes` (1, volumetric
+engine plumes, lit smoke and re-entry plasma), `SSGI` (1, one bounce of light
+from nearby surfaces), `SSGIStrength` (1.0, 0 to 2), `HeightFog` (0, valley
+fog and haze layers), `NightLook` (1, street lamps, lit windows and a darker
+night exposure).
 
 Privacy: each tile request tells the server which part of Earth is shown. Its
 only headers are `Host`, `User-Agent: OrbiterLinux/<version>`,

@@ -30,7 +30,7 @@
 
 struct VkPixels; // VkTexFile.h
 namespace VolCloud { struct Src; } // not upstream: VolCloudMap.h
-namespace Horizon { struct Map; }  // not upstream: HorizonMap.h
+namespace Horizon { struct Map; struct Grid; }  // not upstream: HorizonMap.h
 #include <memory> // not upstream
 
 #define NPOOLS 32
@@ -535,8 +535,10 @@ public:
 	void HorizonSubmit ();                               // not upstream: under the loader mutex, after the main pass drew; the job for the nearest
 	void HorizonUpload ();                               // not upstream: under the loader mutex
 	void RenderDepth (ShaderClass *sh, const D3DXMATRIX &mVP); // not upstream: the recorded tiles' camera distance
+	void RenderCasters (ShaderClass *sh, MATRIX4 &dwmat, const vPlanet::RenderPrm &rprm, const class SceneShadows &s, double minSpacing); // not upstream: scene shadow casters from the loaded tiles
 	int VolTiles (double lat, double lng, double half, std::vector<VolCloud::Src> &out); // not upstream: cloud tiles with density under a box (cloud frame), takes the loader mutex
 	std::shared_ptr<const Horizon::Map> HorizonAt (double lat, double lng, double bnd[4]); // not upstream: the horizon map over a point and its owner's bounds (minlat, maxlat, minlng, maxlng), takes the loader mutex
+	int ElevGrids (double lat0, double lat1, double lng0, double lng1, int lvl, int maxn, bool heights, const std::vector<unsigned> &have, std::vector<Horizon::Grid> &out, std::vector<unsigned> &keys); // not upstream: height fog: the ready elevation grids at lvl over a box, else the finest ready ancestor; keys are horGen, heights only when asked and not in have; -1 above maxn tiles; takes the loader mutex
 };
 
 #endif // !__TILEMGR2_H

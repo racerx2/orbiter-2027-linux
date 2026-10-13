@@ -43,6 +43,9 @@ public:
 	float FogAlongRay (const VECTOR3 &from, const VECTOR3 &dir, double dist) const; // SceneFxFog.cpp: fog transmittance along a ray (global frame), 1 without fog
 	float FogTowardSun () const;                // SceneFxFog.cpp: fog transmittance from the camera toward the sun, 1 without fog
 	VkTex *FogTex () const;                     // SceneFxFog.cpp: half-res fog (rgb in-scatter premultiplied, a opacity) when drawn this frame, else NULL
+	VkTex *FogDist () const;                    // SceneFxFog.cpp: half-res R32F, the fog's transmittance-weighted distance (m, 0 none), with FogTex
+	VkTex *Normal () const;                     // SceneFxGi.cpp: W x H A2B10G10R10, rg oct(world normal)*0.5+0.5, a class round(a*3) 0 terrain 1 tree 2 base 3 vessel; when written this frame, else NULL
+	VkTex *Albedo () const;                     // SceneFxGi.cpp: W x H A2B10G10R10, rgb albedo/4, a family round(a*3) 0 legacy 1 metalness 2 pbr 3 base tile; when written this frame, else NULL
 
 private:
 	void InitDepth ();
@@ -64,6 +67,7 @@ private:
 	struct GiState;
 	static void FreeGi (GiState *s);        // SceneFxGi.cpp
 	void InitGi ();                         // SceneFxGi.cpp, at start when SSGI is on
+	void GiBind (int phase, const std::list<vVessel*> &vessels); // SceneFxGi.cpp, DepthPass only: 0 gate and bind the albedo and normal MRT, 1 vessels next, 2 unbind
 	void FogAndClouds (VkSurf *target, vPlanet *vp, bool clouds, float wV); // SceneFxFog.cpp: the height fog and the volume clouds, in the order the camera altitude needs
 	struct FogState;
 	static void FreeFog (FogState *s);      // SceneFxFog.cpp
@@ -113,6 +117,7 @@ private:
 
 	VkTex *tHalf[3] = {};                  // w/2, w/4, w/8 of the scene, RGBA16F
 	VkSurf *sHalf[3] = {};
+	VkTex *tFull = nullptr; VkSurf *sFull = nullptr; // not upstream: NightLook, a single-sample copy of an unsampleable target for the full-res near-saturated count
 	VkTex *tBlocks = nullptr, *tTotal = nullptr; // 16x9 sums, 1x1 result
 	VkSurf *sBlocks = nullptr, *sTotal = nullptr;
 	ImageProcessing *pExpo = nullptr;      // Exposure.glsl: PSBlocks, PSTotal

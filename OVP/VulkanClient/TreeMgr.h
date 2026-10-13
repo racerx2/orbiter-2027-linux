@@ -33,6 +33,7 @@ public:
 	void Update ();             // main scene: want, results, uploads
 	void Render (VkDev *dev);   // after BldgMgr: main scene and custom cameras
 	void RenderDepth (VkDev *dev, const D3DXMATRIX &mVP); // SceneFx distance pass
+	void RenderCasters (VkDev *dev, const class SceneShadows &s); // scene shadow casters in the cascade being drawn (design-scene-shadows)
 
 	struct Inst { float x, y, z, s; uint8_t yaw, kind, t0, t1; uint8_t h[8]; }; // 28 bytes, stream 1
 	struct Base {               // a base's structures, every triangle; planet-local to its frame through rp, then rb

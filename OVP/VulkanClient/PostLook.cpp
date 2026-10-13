@@ -15,6 +15,7 @@
 #include "VVessel.h"
 #include "Cloudmgr2.h"
 #include "LookMath.h"
+#include "PostPlume.h"
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -112,14 +113,15 @@ int PostLook::Exhausts (D3DXVECTOR4 *seg, int rect[4])
 			if (lvl <= 0.02) continue;
 			EXHAUSTSPEC es;
 			if (!v->GetExhaustSpec(i, &es) || !es.lpos || !es.ldir) continue;
-			VECTOR3 ref = *es.lpos - *es.ldir * es.lofs, end = ref - *es.ldir * (es.lsize * lvl);
+			double hwA = 1.2 * es.wsize, hwB = 2.0 * es.wsize, hl = es.lsize * lvl; // the plume's half-width at the nozzle and the end, its length, m
+			PostPlume::HazeShape(vv, i, &hwA, &hwB, &hl); // the volumetric plume's when it draws this exhaust (design-volumetric-plumes 10)
+			VECTOR3 ref = *es.lpos - *es.ldir * es.lofs, end = ref - *es.ldir * hl;
 			D3DXVECTOR3 la(float(ref.x), float(ref.y), float(ref.z)), lb(float(end.x), float(end.y), float(end.z)), wa, wb;
 			D3DXVec3TransformCoord(&wa, &la, M); // camera-relative
 			D3DXVec3TransformCoord(&wb, &lb, M);
 			const double a[3] = { wa.x, wa.y, wa.z }, b[3] = { wb.x, wb.y, wb.z };
 			LookMath::Seg s;
 			if (!LookMath::ProjectSegment(vp, a, b, W, H, 0.05, s)) continue;
-			double hwA = 1.2 * es.wsize, hwB = 2.0 * es.wsize; // the plume's half-width at the nozzle and the end, m
 			double w0 = std::min(0.25 * H, (hwA + (hwB - hwA) * s.t0) * pxs / s.w0);
 			double w1 = std::min(0.25 * H, (hwA + (hwB - hwA) * s.t1) * pxs / s.w1);
 			if (std::max(w0, w1) < 1.5) continue; // too far to show

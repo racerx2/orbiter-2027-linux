@@ -52,7 +52,7 @@ void SceneFx::InitDepth ()
 		delete sDepthDS;
 		sDepthDS = new VkSurf(dev, W, H, gc->GetFramework()->GetDepthFormat(), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
 	}
-	pTerrain = new ShaderClass(dev, "Modules/VulkanClient/SceneDepth.glsl", "TerrainDepthVS", "TerrainDepthPS", "TerrainDepth", "");
+	pTerrain = new ShaderClass(dev, "Modules/VulkanClient/SceneDepth.glsl", "TerrainDepthVS", "TerrainDepthPS", "TerrainDepth", Config->SSGI ? "_SSGI" : ""); // not upstream: _SSGI, the albedo and normal MRT
 	depthOK = tDepth->img && sDepthDS->tex->img;
 	if (!depthOK) LogErr("SceneFx: SceneDepth targets failed, SSAO and volume clouds off");
 	if (depthOK && Config->TAA) {
@@ -101,7 +101,7 @@ void SceneFx::InitClouds ()
 
 void SceneFx::InitExposure ()
 {
-	const VkImageUsageFlags blit = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+	const VkImageUsageFlags blit = Config->NightLook ? RTUsage : (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT); // NightLook: PSHalfSat draws the W/2 level (design-night-look Rev 2 M2)
 	UINT w = W, h = H;
 	bool ok = true;
 	for (int i = 0; i < 3; i++) {
@@ -116,9 +116,11 @@ void SceneFx::InitExposure ()
 	sTotal = new VkSurf(tTotal, 0);
 	pExpo = new ImageProcessing(dev, "Modules/VulkanClient/Exposure.glsl", "PSBlocks");
 	pExpo->CompileShader("PSTotal");
+	if (Config->NightLook) { pExpo->CompileShader("PSHalfSat"); pExpo->CompileShader("PSBlocksSat"); } // NightLook: the near-saturated share (design-night-look Rev 2 M2)
 	AutoExpo::Params p;
 	p.minEV = Config->AutoExpMinEV;
 	p.maxEV = Config->AutoExpMaxEV;
+	p.night = Config->NightLook != 0; // the night rules (design-night-look 4)
 	expo.SetParams(p);
 	if (!ok || !tBlocks->img || !tTotal->img || !pExpo->IsOK()) {
 		LogErr("SceneFx: exposure targets or shaders failed, auto-exposure off");
@@ -143,6 +145,7 @@ SceneFx::~SceneFx ()
 	SAFE_DELETE(sBlocks);
 	SAFE_DELETE(tBlocks);
 	for (int i = 0; i < 3; i++) { SAFE_DELETE(sHalf[i]); SAFE_DELETE(tHalf[i]); }
+	SAFE_DELETE(sFull); SAFE_DELETE(tFull); // not upstream: NightLook
 	SAFE_DELETE(pAO);
 	SAFE_DELETE(pTerrain);
 	for (int i = 0; i < 2; i++) { SAFE_DELETE(sAO[i]); SAFE_DELETE(tAO[i]); }
@@ -295,11 +298,14 @@ void SceneFx::DepthPass (const std::list<vVessel*> &vessels)
 	scn->PushCameraFrustumLimits(std::min(0.5f, scn->GetCameraNearPlane()), 1e6f);
 	scn->BeginPass(RENDERPASS_SCENE_DEPTH);
 	gc->PushRenderTarget(sDepth, sDepthDS, RENDERPASS_SCENE_DEPTH);
+	if (gi) GiBind(0, vessels); // not upstream: SSGI albedo and normal MRT, cleared with tDepth (ue5-integration INT-4)
 	dev->Clear(true, true, true, 0, 1.0f, 0);
 	dev->SetCullMode(VK_CULL_MODE_BACK_BIT);
 	D3DXMATRIX mVP = *scn->GetProjectionViewMatrix();
 	if (vPlanet *vp = scn->GetCameraProxyVisual()) vp->RenderDepth(dev, pTerrain, mVP);
+	if (gi) GiBind(1, vessels); // not upstream: vessel class
 	for (vVessel *v : vessels) v->Render(dev, false);
+	if (gi) GiBind(2, vessels); // not upstream: the MRT unbound before the pass returns
 	gc->PopRenderTargets();
 	scn->PopPass();
 	scn->PopCameraFrustumLimits();
@@ -497,6 +503,11 @@ float SceneFx::BeginFrame ()
 		expoFocus = f;
 		expoInternal = in;
 	}
+	if (Config->NightLook) { // the sun over the camera's own horizon (design-night-look 4)
+		vPlanet *pn = scn->GetCameraProxyVisual();
+		VECTOR3 cn = pn ? pn->CameraPos() : _V(0, 0, 0), sn = pn ? pn->SunDirection() : _V(0, 0, 0);
+		expo.SetNight(pn ? AutoExpo::NightWeightAt(cn.x, cn.y, cn.z, sn.x, sn.y, sn.z, pn->GetSize()) : 0.0f, in); // cockpit: the brake only (Rev 2 S2)
+	}
 	float m[4];
 	uint32_t stamp = 0;
 	if (dev->ReadbackGet(m, sizeof(m), &stamp)) {
@@ -513,11 +524,32 @@ void SceneFx::Measure (VkSurf *target)
 {
 	if (!pExpo || !target) return;
 	VkDev::State st = dev->GetState();
-	dev->StretchRect(target, NULL, sHalf[0], NULL, VK_FILTER_LINEAR);
+	bool sat = false;
+	if (Config->NightLook && expo.Night() > 0.0f) { // not upstream: night look, W/2 with the share of near-saturated full-res pixels in alpha (design-night-look Rev 2 M2)
+		VkTex *src = target->tex;
+		if (!src || src->samples != VK_SAMPLE_COUNT_1_BIT || !(src->usage & VK_IMAGE_USAGE_SAMPLED_BIT)) { // MSAA or not sampleable: a single-sample copy
+			if (!tFull || tFull->w != target->w || tFull->h != target->h || (src && tFull->fmt != src->fmt)) {
+				SAFE_DELETE(sFull); SAFE_DELETE(tFull);
+				tFull = new VkTex(dev, target->w, target->h, 1, src ? src->fmt : VK_FORMAT_R16G16B16A16_SFLOAT, RTUsage);
+				sFull = new VkSurf(tFull, 0);
+			}
+			src = tFull->img ? tFull : nullptr;
+			if (src) dev->StretchRect(target, NULL, sFull, NULL, VK_FILTER_NEAREST);
+		}
+		if (src) {
+			D3DXVECTOR4 sp(0.0f, 0.0f, 0.0f, expo.SatThreshold());
+			pExpo->Activate("PSHalfSat");
+			pExpo->SetFloat("vPrm", &sp, sizeof(sp));
+			pExpo->SetTextureNative("tSrc", src, IPF_POINT | IPF_CLAMP);
+			pExpo->SetOutputNative(0, sHalf[0]);
+			sat = pExpo->Execute(true);
+		}
+	}
+	if (!sat) dev->StretchRect(target, NULL, sHalf[0], NULL, VK_FILTER_LINEAR);
 	dev->StretchRect(sHalf[0], NULL, sHalf[1], NULL, VK_FILTER_LINEAR);
 	dev->StretchRect(sHalf[1], NULL, sHalf[2], NULL, VK_FILTER_LINEAR);
-	D3DXVECTOR4 prm(16.0f, 9.0f, 0.002f, 254.0f / 255.0f);
-	pExpo->Activate("PSBlocks");
+	D3DXVECTOR4 prm(16.0f, 9.0f, 0.002f, expo.SatThreshold());
+	pExpo->Activate(sat ? "PSBlocksSat" : "PSBlocks");
 	pExpo->SetFloat("vPrm", &prm, sizeof(prm));
 	pExpo->SetTextureNative("tSrc", tHalf[2], IPF_POINT | IPF_CLAMP);
 	pExpo->SetOutputNative(0, sBlocks);

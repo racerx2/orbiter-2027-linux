@@ -20,7 +20,14 @@ struct TreePrmS
 	vec4 vInsc;		// inscatter (rgb), TAA frame % 8 (w)
 };
 
+#include "SceneShadow.glsl" // not upstream: CsmPrm (_CSM)
+#if defined(_CSM)
+layout(binding = 0, row_major, scalar) uniform TreeBlock { TreePrmS Prm; CsmPrm gCsm; }; // not upstream: gCsm, the scene shadow cascades (design-scene-shadows Rev 2)
+layout(binding = 4) uniform sampler2D tCsm; // not upstream: their atlas
+#include "SceneShadow.glsl" // not upstream: CsmVis (pixel stage)
+#else
 layout(binding = 0, row_major, scalar) uniform TreeBlock { TreePrmS Prm; };
+#endif
 
 struct TreeVS
 {
@@ -43,10 +50,16 @@ layout(location = 3) in vec4 iCol;		// yaw, kind, tint r, tint g
 layout(location = 7) in vec4 iHor0;
 layout(location = 8) in vec4 iHor1;
 layout(location = 0) out TreeVS oVS;
+#if defined(_CSM)
+layout(location = 6) out float oHgt; // not upstream: the tree's height, its own crown's shadow bias
+#endif
 void main()
 {
 	vec3 ip = iInst.xyz;
 	float s = iInst.w;
+#if defined(_CSM)
+	oHgt = s; // not upstream
+#endif
 	float d = length(ip - Prm.vCam.xyz);
 	bool imp = Prm.vSun.w > 0.5;
 	float kind = floor(iCol.y * 255.0 + 0.5);
@@ -84,7 +97,14 @@ void main()
 
 #ifdef PS_TreePS
 layout(location = 0) in TreeVS frg;
+#if defined(_CSM)
+layout(location = 6) in float iHgt; // not upstream
+#endif
 layout(location = 0) out vec4 oColor;
+#if defined(_SSGI)
+layout(location = 1) out vec4 oAlbG;	// not upstream: SSGI albedo / 4 (distance pass only)
+layout(location = 2) out vec4 oNrmG;	// not upstream: SSGI octahedral world normal, class
+#endif
 void main()
 {
 	bool imp = Prm.vSun.w > 0.5;
@@ -115,7 +135,23 @@ void main()
 	float nz = IGNt(gl_FragCoord.xy);
 #endif
 	if (fade < (imp ? 1.0 - nz : nz)) discard; // complementary, one of the two at each pixel
+#if defined(_SSGI)
+	if (Prm.vAmb.w > 0.5) { // not upstream: the distance pass with the SSGI albedo and normal (design-ssgi 4.1)
+		vec3 lf = kind < 1.5 ? vec3(0.09, 0.17, 0.08) : (kind > 3.5 ? vec3(0.17, 0.22, 0.09) : vec3(0.13, 0.22, 0.08));
+		lf *= 0.8 + 0.4 * vec3(frg.tint.x, frg.tint.y, 0.5 * (frg.tint.x + frg.tint.y));
+		float gr = 0.85 + 0.3 * fract(sin(dot(floor(frg.obj * 3.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+		vec3 ab = part > 0.5 ? lf * gr : vec3(0.20, 0.15, 0.11);
+		vec3 nw = normalize((vec4(n, 0.0) * Prm.mW).xyz);
+		nw /= abs(nw.x) + abs(nw.y) + abs(nw.z);
+		vec2 oc = nw.z >= 0.0 ? nw.xy : (1.0 - abs(nw.yx)) * vec2(nw.x >= 0.0 ? 1.0 : -1.0, nw.y >= 0.0 ? 1.0 : -1.0);
+		oColor = vec4(length(frg.posW));
+		oAlbG = vec4(ab * 0.25, 0.0);
+		oNrmG = vec4(oc * 0.5 + 0.5, 0.0, 1.0 / 3.0); // class 1 trees
+		return;
+	}
+#else
 	if (Prm.vAmb.w > 0.5) { oColor = vec4(length(frg.posW)); return; } // distance pass
+#endif
 
 	vec3 leaf = kind < 1.5 ? vec3(0.09, 0.17, 0.08) : (kind > 3.5 ? vec3(0.17, 0.22, 0.09) : vec3(0.13, 0.22, 0.08));
 	leaf *= 0.8 + 0.4 * vec3(frg.tint.x, frg.tint.y, 0.5 * (frg.tint.x + frg.tint.y));
@@ -125,6 +161,9 @@ void main()
 	float ndl = dot(n, L);
 	float dif = part > 0.5 ? pow(clamp(ndl * 0.5 + 0.5, 0.0, 1.0), 1.5) : clamp(ndl, 0.0, 1.0); // leaves wrap the light
 	float fH = smoothstep(frg.info.w - 0.012, frg.info.w + 0.012, L.y); // terrain horizon at the tree
+#if defined(_CSM)
+	fH = min(fH, CsmVis(tCsm, frg.posW, gCsm.vL.xyz, 1.0, 0.5 * iHgt, 0.0)); // not upstream: neighbours, buildings, relief and vessels; the own crown within half a height ignored (design-scene-shadows 7.2)
+#endif
 	float ao = imp ? 0.6 + 0.4 * frg.uv.y : frg.info.y;
 	vec3 c = alb * (Prm.vSunCol.rgb * dif * fH + Prm.vAmb.rgb * ao);
 #if defined(_FILMIC)

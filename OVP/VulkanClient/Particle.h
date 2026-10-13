@@ -80,7 +80,19 @@ public:
 
 	ParticleSpec * GetPlast() const { return plast; }
 
+	// not upstream: read and claimed by PostPlume (design-volumetric-plumes 6)
+	bool Diffuse () const { return diffuse; }
+	const ParticleSpec *First () const { return pfirst; }
+	double Alpha (const ParticleSpec *p, double simt) const { double a = p->alpha0 * (1.0 - (simt - p->t0) * ipht2); return a > 0.1 ? a : 0.1; } // RenderDiffuse's
+	SURFHANDLE Texture () const { return tex; }
+	bool DefaultTexture () const { return tex == deftex; }
+	OBJHANDLE Owner () const { return hRef; }
+	virtual bool IsReentry () const { return false; }
+	void Claim (DWORD frame) { plumeFrame = frame + 1; } // the main pass of that frame draws it as volumetric puffs
+	void Unclaim () { plumeFrame = 0; }
+
 protected:
+	DWORD plumeFrame = 0; // not upstream: frame + 1 of PostPlume's claim
 
 	void SetSpecs (PARTICLESTREAMSPEC *pss);
 	void SetParticleHalflife (double pht);
@@ -147,6 +159,7 @@ public:
 	ReentryStream (oapi::GraphicsClient *_gc, OBJHANDLE hV,
 		PARTICLESTREAMSPEC *pss = 0);
 	void Update ();
+	bool IsReentry () const override { return true; } // not upstream: stays legacy, owns the plasma (design review M3)
 
 protected:
 	void SetMaterial (D3DCOLORVALUE &col);

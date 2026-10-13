@@ -262,6 +262,7 @@ public:
 	void			RenderZRange (double *nplane, double *fplane);
 	bool			Render(VkDev *dev);
 	void			RenderDepth(VkDev *dev, ShaderClass *pTerrain, const D3DXMATRIX &mVP); // not upstream: SceneFx distance pass, what the main pass drew
+	void			RenderCasters(VkDev *dev, const class SceneShadows &s); // not upstream: scene shadow casters in the cascade being drawn
 	void			RenderBeacons(VkDev *dev);
 	void            RenderVectors (VkDev *dev, D3D9Pad* pSkp);
 	bool			CameraInAtmosphere() const;

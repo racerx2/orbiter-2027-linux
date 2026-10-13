@@ -29,6 +29,8 @@ MeshShader* D3D9Mesh::s_pShader[16] = {};
 MeshShader::VSConst MeshShader::vs_const = {};
 MeshShader::PSConst MeshShader::ps_const = {};
 MeshShader::PSBools MeshShader::ps_bools = { FALSE, 0.75f, FALSE }; // custom: fCutoff, the legacy alpha test level
+MeshShader::PSGi MeshShader::ps_gi = {}; // not upstream: SSGI
+int D3D9Mesh::giCls = -1; // not upstream: SSGI
 
 
 int compare_lights(const void * a, const void * b)
@@ -267,6 +269,7 @@ D3D9Mesh::D3D9Mesh(DWORD groups, const MESHGROUPEX **hGroup, const SURFHANDLE *h
 	for (DWORD i=0;i<nGrp;i++) CopyVertices(&Grp[i], hGroup[i]);
 
 	pGrpTF = new D3DXMATRIX[nGrp];
+	bGiTile = true; // not upstream: only vBase's tile mesh is made here (SSGI family 3)
 
 	D3DXMatrixIdentity(&mTransform);
 	D3DXMatrixIdentity(&mTransformInv);
@@ -3084,6 +3087,7 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 
 	bool bInit = true;
 	bool bCurrentState = false;
+	bool bGi = opt == 2 && giCls >= 0 && pShader->hPSG; // not upstream: SSGI albedo, inside SceneFx::DepthPass only (design-ssgi Rev 2)
 
 	for (DWORD g = 0; g < nGrp; g++)
 	{
@@ -3106,6 +3110,15 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 			MeshShader::ps_bools.fCutoff = cut;
 			MeshShader::ps_bools.bClip = TRUE;
 			if (MeshShader::ps_bools.bOIT) pShader->SetTexture(pShader->hPST[0], t, IPF_WRAP | IPF_POINT);
+			if (bGi) { // not upstream: SSGI, linear base colour times 1 - metal; fully lit groups get none (design-ssgi M6, S2)
+				VkTex *mr = m->map[PBR_METALROUGH].get();
+				bool tex = t && !(Grp[g].UsrFlag & 0x10);
+				MeshShader::ps_gi.vMat = (Grp[g].UsrFlag & 0x4) ? float4(0, 0, 0, 0) : float4(m->baseColor[0], m->baseColor[1], m->baseColor[2], tex ? 1.0f : 0.0f);
+				MeshShader::ps_gi.vMtl = float4(m->metallic, mr ? 1.0f : 0.0f, 1.0f, (tex && PbrRender::NeedsDecode(t)) ? 1.0f : 0.0f);
+				MeshShader::ps_gi.vCls = float4(float(giCls), IsPbrGroup(g) ? 2.0f : 0.0f, 0.0f, 0.0f);
+				if (t) pShader->SetTexture(pShader->hPST[0], t, IPF_WRAP | IPF_POINT);
+				if (mr) pShader->SetTexture(pShader->hPST[1], mr, IPF_WRAP | IPF_POINT);
+			}
 		}
 		else {
 
@@ -3118,6 +3131,14 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 			if ((bModulateMatAlpha || !hTex) && m->Diffuse.w < 0.5f) continue;
 			MeshShader::ps_bools.bOIT = (hTex != NULL);
 			if (hTex) pShader->SetTexture(pShader->hPST[0], hTex, IPF_WRAP | IPF_POINT);
+			if (bGi) { // not upstream: SSGI, texture times material diffuse; Metalness groups times 1 - metal (design-ssgi M3, M6)
+				int fam = bGiTile ? 3 : (Grp[g].Shader == SHADER_METALNESS ? 1 : 0);
+				VkTex *mt = (fam == 1 && ti && Tex[ti]) ? Tex[ti]->GetMap(MAP_METALNESS) : NULL;
+				MeshShader::ps_gi.vMat = (Grp[g].UsrFlag & 0x4) ? float4(0, 0, 0, 0) : float4(m->Diffuse.x, m->Diffuse.y, m->Diffuse.z, (hTex && !(Grp[g].UsrFlag & 0x10)) ? 1.0f : 0.0f); // 0x10: no texture colour, as the legacy shaders' bNoC
+				MeshShader::ps_gi.vMtl = float4(fam == 1 ? (mt ? 1.0f : m->Metalness) : 0.0f, mt ? 1.0f : 0.0f, 0.0f, 0.0f);
+				MeshShader::ps_gi.vCls = float4(float(giCls), float(fam), 0.0f, 0.0f);
+				if (mt) pShader->SetTexture(pShader->hPST[1], mt, IPF_WRAP | IPF_POINT);
+			}
 		}
 		else if (MeshShader::ps_bools.bOIT) {
 			DWORD ti = Grp[g].TexIdx;
@@ -3143,6 +3164,7 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 		if (pShader->hVSC) pShader->SetVSConstants(pShader->hVSC, &MeshShader::vs_const, sizeof(MeshShader::vs_const));
 		if (pShader->hPSC) pShader->SetPSConstants(pShader->hPSC, &MeshShader::ps_const, sizeof(MeshShader::ps_const));
 		if (pShader->hPSB) pShader->SetPSConstants(pShader->hPSB, &MeshShader::ps_bools, sizeof(MeshShader::ps_bools));
+		if (bGi) pShader->SetPSConstants(pShader->hPSG, &MeshShader::ps_gi, sizeof(MeshShader::ps_gi)); // not upstream: SSGI
 		pShader->UpdateTextures();
 
 		pDev->DrawIndexedPrimitive(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, Grp[g].VertOff, Grp[g].IdexOff, VkPrimVerts(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, Grp[g].nFace));
@@ -3761,7 +3783,7 @@ void D3D9Mesh::GlobalInit(VkDev *pDev)
 	s_pShader[SHADER_SHADOWMAP] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "ShdMapVS", "ShdMapPS");
 	s_pShader[SHADER_SHADOWMAP_OIT] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "ShdMapOIT_VS", "ShdMapOIT_PS");
 	s_pShader[SHADER_NORMAL_DEPTH] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "NormalDepth_VS", "NormalDepth_PS");
-	s_pShader[SHADER_SCENE_DEPTH] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "NormalDepth_VS", "SceneDepth_PS"); // not upstream
+	s_pShader[SHADER_SCENE_DEPTH] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "NormalDepth_VS", "SceneDepth_PS", Config->SSGI ? "_SSGI" : NULL); // not upstream; _SSGI: albedo and normal MRT
 }
 
 

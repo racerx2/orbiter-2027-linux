@@ -18,6 +18,9 @@
 #include "DebugControls.h"
 #include "D3D9Util.h"
 #include "MaterialMgr.h"
+#include "SceneShadows.h" // not upstream
+#include "PostPlume.h" // not upstream
+#include "SceneSsr.h" // not upstream
 
 using namespace oapi;
 
@@ -662,6 +665,7 @@ bool vVessel::Render(VkDev *dev, bool internalpass)
 	_TRACE;
 	if (!active) return false;
 	if (scn->GetRenderPass() == RENDERPASS_SHADOWMAP && terrainSun <= 0.0f) return true; // not upstream: behind a mountain it casts no shadow
+	if (scn->GetRenderPass() == RENDERPASS_SCENESHADOW && terrainSun <= 0.0f) return true; // not upstream: nor into the scene shadow cascades
 
 	UINT i, mfd;
 
@@ -681,6 +685,8 @@ bool vVessel::Render(VkDev *dev, bool internalpass)
 	// Always render exterior view for envmaps
 
 	if (scn->GetRenderPass() == RENDERPASS_SHADOWMAP) bCockpit = bVC = false;
+	if (scn->GetRenderPass() == RENDERPASS_SCENESHADOW) bCockpit = bVC = false; // not upstream: the exterior casts in the cockpit view too
+	if (scn->GetRenderPass() == RENDERPASS_FLOWMAP) bCockpit = bVC = false; // not upstream: the exterior along the airflow (PostPlume)
 	// Always render exterior view for envmaps
 
 	// if (scn->GetRenderPass() == RENDERPASS_NORMAL_DEPTH) bCockpit = bVC = false;
@@ -714,6 +720,7 @@ bool vVessel::Render(VkDev *dev, bool internalpass)
 
 	// custom: PBR groups of this visual read its prefiltered environment (design-pbr 7, 8); none in the cockpit, as the legacy groups there
 	struct PbrEnvScope { explicit PbrEnvScope(const PbrEnv *e) { PbrRender::SetEnvironment(e); } ~PbrEnvScope() { PbrRender::SetEnvironment(NULL); } } pbrEnvScope(internalpass ? NULL : &pbrEnv);
+	SceneSsr::Scope ssrScope(scn, hObj, SceneSsr::VESSEL, internalpass); // not upstream: what this vessel's reflections trace, main pass exterior only (design-ssr)
 	bool bPbrDefer = false, bPbrTransmission = false;
 
 	// Check VC MFD screen resolutions ------------------------------------------------
@@ -797,6 +804,8 @@ bool vVessel::Render(VkDev *dev, bool internalpass)
 			meshlist[i].mesh->RenderShadowMap(pWT, pVP, 1);
 		}
 		else if (scn->GetRenderPass() == RENDERPASS_SCENE_DEPTH) meshlist[i].mesh->RenderShadowMap(pWT, pVP, 2); // not upstream: SceneFx, see-through groups left out
+		else if (scn->GetRenderPass() == RENDERPASS_SCENESHADOW) { if (SceneShadows::Get()) meshlist[i].mesh->RenderShadowMap(pWT, SceneShadows::Get()->CasterVP(), 1); } // not upstream: depth into the cascade, alpha-tested groups discard, glass left out
+		else if (scn->GetRenderPass() == RENDERPASS_FLOWMAP) { if (const D3DXMATRIX *fvp = PostPlume::FlowVP()) meshlist[i].mesh->RenderShadowMap(pWT, (LPD3DXMATRIX)fvp, 0); } // not upstream: the hull along its airflow (design-volumetric-plumes 7.3)
 		else {
 			if (internalpass) meshlist[i].mesh->Render(pWT, RENDER_VC, NULL, 0);
 			else 			  meshlist[i].mesh->Render(pWT, RENDER_VESSEL, pEnv, nEnv);
@@ -977,8 +986,12 @@ bool vVessel::RenderExhaust()
 	for (DWORD i=0;i<nexhaust;i++) {
 		if (vessel->GetExhaustLevel(i)==0.0) continue;
 		vessel->GetExhaustSpec(i, &es);
-		D3D9Effect::RenderExhaust(&mWorld, cdir, &es, defexhausttex);
 		if (es.lsize>ExhaustLength) ExhaustLength = float(es.lsize);
+		double lw = PostPlume::LegacyWeight(this, i); // not upstream: 0 the volumetric plume draws it, between 0 and 1 a crossfade (design-volumetric-plumes 5.6)
+		if (lw <= 0.0) continue;
+		double lv = (es.level ? *es.level : 0.0) * lw;
+		if (lw < 1.0) es.level = &lv;
+		D3D9Effect::RenderExhaust(&mWorld, cdir, &es, defexhausttex);
 	}
 	return true;
 }
@@ -1053,7 +1066,9 @@ void vVessel::RenderGrapplePoints (VkDev *dev)
 //
 void vVessel::RenderGroundShadow(VkDev *dev, OBJHANDLE hPlanet, float alpha)
 {
-	if (!bStencilShadow && scn->GetRenderPass() == RENDERPASS_MAINSCENE) return;
+	SceneShadows *ss = SceneShadows::Get(); // not upstream: while the cascades receive, coverage alone decides (the terrain no longer takes the legacy focus map)
+	if (scn->GetRenderPass() == RENDERPASS_MAINSCENE && ss && ss->ReceiversOn(scn->GetCameraProxyVisual())) { if (ss->Covered(this)) return; }
+	else if (!bStencilShadow && scn->GetRenderPass() == RENDERPASS_MAINSCENE) return;
 	if (Config->TerrainShadowing == 0) return;
 	if (terrainSun <= 0.0f) return; // not upstream: no sun on it, no shadow from it
 	alpha *= terrainSun;            // not upstream: fades as the sun goes behind terrain
@@ -1769,6 +1784,7 @@ void vVessel::RenderReentry(VkDev *dev)
 	float ints = max(0.0f,(www-lim)) / (5.0f*lim);
 
 	if (ints>1.0f) ints = 1.0f;
+	ints *= PostPlume::LegacyReentry(this); // not upstream: off while the plasma draws this vessel (design review M2)
 	if (ints<0.01f) return;
 
 	VECTOR3 d;
@@ -1862,6 +1878,9 @@ void vVessel::UpdateBoundingBox()
 			meshlist[i].mesh->UpdateBoundingBox();
 		}
 	}
+
+	HullBox = BBox; // not upstream: the hull without the exhaust points (PostPlume's plasma)
+	D9UpdateAABB(&HullBox);
 
 	DWORD nexhaust = vessel->GetExhaustCount();
 

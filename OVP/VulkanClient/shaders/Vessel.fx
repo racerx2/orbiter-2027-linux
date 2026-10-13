@@ -128,7 +128,15 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 	// Add vessel self-shadows
 	// ----------------------------------------------------------------------
 
+#if defined(_CSM)
+	{ // not upstream: the legacy map and the scene cascades, the darker of the two (design-scene-shadows 7.2)
+		float fS = 1.0;
 #if SHDMAP > 0
+		fS = ComputeShadow(frg.shdH, dLN, sc);
+#endif
+		cSun.rgb *= min(fS, CsmVis(CsmS, -frg.camW, normalize(frg.nrmW), gShadowsEnabled ? 3.0 : 1.0, 0.0, gBaseBuilding ? 1.0 : 0.0));
+	}
+#elif SHDMAP > 0
 	cSun.rgb *= ComputeShadow(frg.shdH, dLN, sc);
 #endif
 
@@ -197,6 +205,14 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 	// Compute environment map/fresnel effects --------------------------------
 	//
 	if (gEnvMapEnable) {
+#if defined(_SSR)
+		SsrHit hE = SsrNone(); // not upstream: what the reflection ray finds on screen replaces the cube's, vessels only (design-ssr 6)
+		if (gSsr.vSurf.x < 0.5 && fRefl + (gFresnel ? gMtrl.fresnel.y : 0.0) >= 0.01) {
+			vec3 nG = normalize(frg.nrmW);
+			float aE = (1.0 - clamp(fRghn, 0.0, 1.0)) * (1.0 - clamp(fRghn, 0.0, 1.0)); // fRghn is the smoothness here
+			hE = SsrTrace(-frg.camW, nG, SsrKeepAbove(SsrDir(nrmW, CamD, aE, gl_FragCoord.xy), nG, 0.01), aE);
+		}
+#endif
 
 		// Do we need fresnel code for this render pass ?
 
@@ -206,6 +222,9 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 
 			// Get mirror reflection for fresnel
 			vec3 cEnvFres = textureLod(EnvMapAS, RflW, 0).rgb;
+#if defined(_SSR)
+			if (hE.conf > 0.0) cEnvFres = mix(cEnvFres, SsrMeshDecode(textureLod(tSsrCol, hE.uv, 0.0).rgb, false), hE.conf); // not upstream
+#endif
 
 			float  dCN = clamp(dot(CamD, nrmW), 0.0, 1.0);
 
@@ -230,6 +249,9 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 		float fLOD = (1.0f - fRghn) * 10.0f;
 
 		vec3 cEnv = textureLod(EnvMapAS, RflW, fLOD).rgb;
+#if defined(_SSR)
+		if (hE.conf > 0.0) cEnv = mix(cEnv, SsrMeshDecode(SsrFetch(hE), false), hE.conf); // not upstream
+#endif
 
 		// Compute total reflected light, accummulate in cSpec
 		cSpec.rgb += cRefl.rgb * cEnv;

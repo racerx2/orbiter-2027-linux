@@ -12,6 +12,7 @@
 #include "D3D9Config.h"
 #include "Mesh.h"
 #include "VectorHelpers.h"
+#include "SceneShadows.h" // not upstream
 #include <QMessageBox>
 
 D3D9Client  * D3D9Effect::gc = 0;
@@ -326,6 +327,9 @@ VkMacros D3D9Effect::BaseMacros()
 	if (Config->EnvMapMode) macro.push_back({ "_ENVMAP", "" }); 
 	if (Config->PostProcess == PP_DEFAULT) macro.push_back({ "_LIGHTGLOW", "" });
 	if (Config->bIrradiance && Config->EnvMapMode) macro.push_back({ "_IRRADIANCE", "" });
+	if (SceneShadows::Enabled()) macro.push_back({ "_CSM", "" }); // not upstream: scene shadow receivers (design-scene-shadows)
+	if (Config->SSR) macro.push_back({ "_SSR", "" }); // not upstream: screen-space reflections (design-ssr)
+	if (Config->NightLook) macro.push_back({ "_NIGHTLOOK", "" }); // not upstream: streamed building windows (design-night-look 6)
 	return macro;
 }
 
@@ -347,6 +351,7 @@ void D3D9Effect::D3D9TechInit(D3D9Client *_gc, VkDev *_pDev, const char *folder)
 	snprintf(name,256,"Modules/VulkanClient/D3D9Client.fx");
 
 	if (Config->ShadowMapMode == 0) Config->ShadowFilter = -1;
+	SceneShadows::Probe(pDev); // not upstream: the sampled D32 check, before any shader compiles (design-scene-shadows Rev 2)
 
 	VkMacros macro = BaseMacros(); // D3DXMACRO[18]; custom: built in BaseMacros, shared with the PBR effects
 	

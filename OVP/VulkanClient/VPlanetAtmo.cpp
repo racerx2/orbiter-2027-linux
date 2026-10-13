@@ -18,6 +18,7 @@
 #include "AtmoControls.h"
 #include "VectorHelpers.h"
 #include "IProcess.h"
+#include "SceneShadows.h" // not upstream
 
 using namespace oapi;
 
@@ -147,6 +148,7 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	if (Config->EnableMeshDbg) flags += "_DEVTOOLS ";
 	if (!Config->bAtmoQuality) flags += "_PERFORMANCE ";
 	if (Config->Filmic) flags += "_FILMIC "; // not upstream
+	if (SceneShadows::Enabled()) flags += "_CSM "; // not upstream: scene shadow receivers (design-scene-shadows)
 
 	pRender[PLT_MARS] = new PlanetShader(pDev, "Modules/VulkanClient/NewPlanet.glsl", "TerrainVS", "TerrainPS", "Mars", (flags + blend).c_str());
 
@@ -163,14 +165,17 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	if (bShadows) flags += "_CLOUDSHD ";
 	if (bShadows && Config->CloudAtlas) flags += "_CLOUDATLAS "; // not upstream: seamless cloud shadows
 	if (bWater && Config->WaterFx) flags += "_WATERFX "; // not upstream: waves, glitter, sky, foam
+	if (bWater && bRiples && Config->SSR && !Config->EnableMeshDbg) flags += "_SSR "; // not upstream: screen-space reflections on the water; samplers 26/27 are _DEVTOOLS' (design-ssr)
 	if (bShadows && Config->VolClouds && Config->VolCloudShadows) flags += "_VOLSHD "; // not upstream: the 2D cloud shadow fades under the volume
 	if (bNightLights) flags += "_NIGHTLIGHTS ";
+	if (bNightLights && Config->NightLook) flags += "_NIGHTLOOK "; // not upstream: night city look (design-night-look 5)
 	if (bLocals) flags += "_LOCALLIGHTS ";
 
 	if (Config->ShadowMapMode) flags += "_SHDMAP ";
 	if (Config->EnableMeshDbg) flags += "_DEVTOOLS ";
 	if (!Config->bAtmoQuality) flags += "_PERFORMANCE ";
 	if (Config->Filmic) flags += "_FILMIC "; // not upstream
+	if (SceneShadows::Enabled()) flags += "_CSM "; // not upstream: scene shadow receivers (design-scene-shadows)
 
 	pRender[PLT_EARTH] = new PlanetShader(pDev, "Modules/VulkanClient/NewPlanet.glsl", "TerrainVS", "TerrainPS", "Earth", (flags + blend).c_str());
 }

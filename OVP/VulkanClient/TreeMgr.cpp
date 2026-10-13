@@ -14,6 +14,7 @@
 #include "D3D9Config.h"
 #include "HorizonMap.h"
 #include "VkTexFile.h"
+#include "SceneShadows.h"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -107,7 +108,8 @@ void TreeMgr::MakeMeshes ()
 		{1, 20, VK_FORMAT_R8G8B8A8_UNORM, DECL_TEXCOORD, 2},
 		{1, 24, VK_FORMAT_R8G8B8A8_UNORM, DECL_TEXCOORD, 3}};
 	decl = new VkVertexDecl (el, 7, sizeof (TreeGeom::Vtx), sizeof (Inst), true);
-	std::string fl = std::string(Config->Filmic ? "_FILMIC " : "") + (Config->TAA ? "_TAA " : ""); // not upstream: _FILMIC, _TAA (the dither moves per frame)
+	std::string fl = std::string(Config->Filmic ? "_FILMIC " : "") + (Config->TAA ? "_TAA " : "") + (Config->SSGI ? "_SSGI " : ""); // not upstream: _FILMIC, _TAA (the dither moves per frame), _SSGI (albedo and normal in the distance pass)
+	if (SceneShadows::Enabled ()) fl += "_CSM "; // not upstream: scene shadow receivers (design-scene-shadows)
 	sh = new ShaderClass (dev, "Modules/VulkanClient/Tree.glsl", "TreeVS", "TreePS", "Trees", fl.c_str());
 }
 
@@ -511,6 +513,11 @@ void TreeMgr::DrawCells (VkDev *dev, int depth, const D3DXMATRIX *mVPd)
 	float time = (float)fmod (oapiGetSimTime(), 3600.0);
 	prm.band = D3DXVECTOR4 ((float)MeshEnd, (float)MeshEnd, (float)FadeW, (float)range);
 	sh->Setup (decl, true, 0);
+	if (SceneShadows *ss = SceneShadows::Get ()) { // not upstream: the cascades in the main colour pass of the proxy, off in every other draw (design-scene-shadows Rev 2)
+		bool on = !depth && ss->ReceiversOn (vp);
+		sh->SetPSConstants ("gCsm", (void *)ss->Block (on), sizeof (CsmGpu));
+		if (on) { sh->SetTexture ("tCsm", ss->Atlas (), IPF_CLAMP | IPF_POINT); sh->UpdateTextures (); }
+	}
 	dev->SetCullMode (VK_CULL_MODE_NONE);
 	dev->SetStreamSource (0, vb, 0, sizeof (TreeGeom::Vtx));
 	dev->SetIndices (ib);
@@ -588,4 +595,61 @@ void TreeMgr::RenderDepth (VkDev *dev, const D3DXMATRIX &mVP)
 {
 	if (!active) return;
 	DrawCells (dev, 1, &mVP);
+}
+
+// scene shadow casters: the cells in the cascade's light box, meshes near the camera (C0 to 350 m, C1 to 150 m), sun-facing cards beyond, C2 cards only (design-scene-shadows 5, 7.3)
+void TreeMgr::RenderCasters (VkDev *dev, const SceneShadows &s)
+{
+	ShaderClass *shc = s.TreeShader ();
+	int ci = s.Cascade ();
+	if (!active || cells.empty () || !shc || !decl || ci < 0 || ci > 2) return;
+	static const double thr[3] = { MeshEnd, 150.0, 0.0 }, spread[3] = { FadeW, 50.0, 0.0 };
+	struct { D3DXMATRIX mW, mVP; D3DXVECTOR4 cam, band, sun; } prm;
+	MATRIX3 rot;
+	oapiGetRotationMatrix (hObj, &rot);
+	VECTOR3 cam = vp->CameraPos();
+	prm.mVP = *s.CasterVP ();
+	double range = Config->TreeRange, cr = 0.75 * CellSpan() * R + 40.0;
+	float time = (float)fmod (oapiGetSimTime(), 3600.0);
+	prm.band = D3DXVECTOR4 ((float)thr[ci], (float)spread[ci], (float)range, 0.0f);
+	VECTOR3 ls = _V(s.ToSun ().x, s.ToSun ().y, s.ToSun ().z);
+	shc->Setup (decl, true, 0);
+	dev->SetCullMode (VK_CULL_MODE_NONE);
+	dev->SetStreamSource (0, vb, 0, sizeof (TreeGeom::Vtx));
+	dev->SetIndices (ib);
+	for (auto &kv : cells) {
+		Cell &c = kv.second;
+		if (!c.buf) continue;
+		VECTOR3 e = mul (rot, c.e0), u = mul (rot, c.u0), n = mul (rot, c.n0), o = mul (rot, c.p0) - cam;
+		double dc = length (o);
+		if (dc - cr > range) continue;
+		VECTOR3 bc = o + u * 15.0;
+		if (!s.Cull (D3DXVECTOR3 ((float)bc.x, (float)bc.y, (float)bc.z), (float)cr)) continue;
+		D3DXMATRIX &W = prm.mW;
+		D3DXMatrixIdentity (&W);
+		W._11 = (float)e.x; W._12 = (float)e.y; W._13 = (float)e.z;
+		W._21 = (float)u.x; W._22 = (float)u.y; W._23 = (float)u.z;
+		W._31 = (float)n.x; W._32 = (float)n.y; W._33 = (float)n.z;
+		W._41 = (float)o.x; W._42 = (float)o.y; W._43 = (float)o.z;
+		prm.cam = D3DXVECTOR4 ((float)-dotp (o, e), (float)-dotp (o, u), (float)-dotp (o, n), time);
+		prm.sun = D3DXVECTOR4 ((float)dotp (ls, e), (float)dotp (ls, u), (float)dotp (ls, n), 0.0f);
+		dev->SetStreamSource (1, c.buf, 0, sizeof (Inst));
+		if (thr[ci] > 0.0 && dc - cr < thr[ci] + spread[ci]) { // meshes
+			prm.sun.w = 0.0f;
+			shc->SetVSConstants ("Prm", &prm, sizeof prm);
+			shc->SetPSConstants ("Prm", &prm, sizeof prm);
+			for (int k = 0; k < TreeGeom::NKIND; k++) {
+				UINT nk = c.first[k + 1] - c.first[k];
+				if (nk) dev->DrawIndexedPrimitiveInstanced (VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, baseV[k], startI[k], countI[k], nk, c.first[k]);
+			}
+		}
+		if (dc + cr > thr[ci]) { // cards
+			prm.sun.w = 1.0f;
+			shc->SetVSConstants ("Prm", &prm, sizeof prm);
+			shc->SetPSConstants ("Prm", &prm, sizeof prm);
+			int k = TreeGeom::NKIND;
+			UINT nk = c.first[TreeGeom::NKIND];
+			if (nk) dev->DrawIndexedPrimitiveInstanced (VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, baseV[k], startI[k], countI[k], nk, 0);
+		}
+	}
 }

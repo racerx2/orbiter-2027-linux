@@ -6,6 +6,7 @@
 // custom: glTF 2.0 metal-rough material path with the KHR extensions (design-pbr 6); legacy mesh shaders are not involved
 
 #include "PbrBRDF.glsl"
+#include "SceneShadow.glsl" // not upstream: CsmPrm (_CSM, design-scene-shadows)
 
 #define Range   0
 #define Falloff 1
@@ -79,6 +80,10 @@ struct PbrMtrl
 	float iridescence; float iridIor; float iridThickMin; float iridThickMax;
 };
 
+#if defined(_SSR)
+#include "SsrPrm.glsl" // not upstream: screen-space reflections (design-ssr)
+#endif
+
 layout(binding = 0, row_major, scalar) uniform PbrShared
 {
 vec3      kernel[KERNEL_SIZE];
@@ -107,6 +112,12 @@ float     gWorldScale;     // world size of one mesh unit (volume thickness)
 int       gEnvMode;        // 0 none, 1 legacy cube, 2 prefiltered cubes
 int       gIrrMode;        // 0 earth glow, 1 legacy irradiance map, 2 irradiance cube
 bool      gSceneCopy;      // the opaque scene copy is bound
+#if defined(_CSM)
+CsmPrm    gCsm;            // not upstream: scene shadow cascades, shared from D3D9Client.fx (design-scene-shadows Rev 2)
+#endif
+#if defined(_SSR)
+SsrPrm    gSsr;            // not upstream: screen-space reflections of this draw, shared from D3D9Client.fx (design-ssr), after the shadows' gCsm (ue5-integration INT-2)
+#endif
 };
 
 layout(binding = 1, row_major, scalar) uniform PbrMaterialBlock
@@ -140,8 +151,19 @@ sampler2D AnisoS = sampler_state { MinFilter = ANISOTROPIC; MagFilter = LINEAR; 
 sampler2D IridescenceS = sampler_state { MinFilter = ANISOTROPIC; MagFilter = LINEAR; MipFilter = LINEAR; MaxAnisotropy = ANISOTROPY_MACRO; AddressU = WRAP; AddressV = WRAP; };
 sampler2D IridThickS = sampler_state { MinFilter = ANISOTROPIC; MagFilter = LINEAR; MipFilter = LINEAR; MaxAnisotropy = ANISOTROPY_MACRO; AddressU = WRAP; AddressV = WRAP; };
 
+#if defined(_CSM) // not upstream: the scene shadow atlas, binding 29, before SSR's (ue5-integration INT-3)
+sampler2D CsmS = sampler_state { MinFilter = POINT; MagFilter = POINT; MipFilter = NONE; AddressU = CLAMP; AddressV = CLAMP; };
+#endif
+
 // Light and shadow functions of the legacy shaders (ComputeShadow, Paraboloidal_LVLH)
 #include "Common.glsl"
+#include "SceneShadow.glsl" // not upstream: CsmVis (_CSM, pixel stage)
+
+#if defined(_SSR) // not upstream: screen-space reflections (design-ssr); after the shadows' CsmS in the text, so 30 and 31 (ue5-integration INT-3)
+sampler2D tSsrCol = sampler_state { MinFilter = LINEAR; MagFilter = LINEAR; MipFilter = LINEAR; AddressU = CLAMP; AddressV = CLAMP; };
+sampler2D tSsrHiZ = sampler_state { MinFilter = POINT; MagFilter = POINT; MipFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };
+#include "Ssr.glsl"
+#endif
 
 
 // ============================================================================
@@ -346,7 +368,25 @@ vec3 EvalIBL (Surf s, float ao)
 #else
 	vec3 R = reflect(-s.V, s.N);
 #endif
+#if defined(_SSR)
+	vec3 Lenv = Prefiltered(R, s.perceptual);
+	bool ccRay = false; // not upstream: one traced ray a pixel, the coat's when it is the smoother lobe on top (design-ssr 6)
+#ifdef PBR_CLEARCOAT
+	ccRay = s.cc > 0.5 && s.ccPerc < s.perceptual;
+#endif
+	if (!ccRay && Max3(mix(Fd, Fm, s.metallic)) * ao >= 0.01) {
+#ifdef PBR_ANISOTROPY
+		vec3 Nr = s.Nbent;
+#else
+		vec3 Nr = s.N;
+#endif
+		SsrHit hS = SsrTrace(s.posW, s.Ng, SsrKeepAbove(SsrDir(Nr, s.V, s.a, gl_FragCoord.xy), s.Ng, 0.01), s.a);
+		if (hS.conf > 0.0) Lenv = mix(Lenv, Decode(SsrMeshDecode(SsrFetch(hS), SSR_CURVE)), hS.conf);
+	}
+	vec3 spec = Lenv * mix(Fd, Fm, s.metallic);
+#else
 	vec3 spec = Prefiltered(R, s.perceptual) * mix(Fd, Fm, s.metallic);
+#endif
 	vec3 diffuse = Irradiance(s.N) * s.base;
 #ifdef PBR_TRANSMISSION
 	diffuse = mix(diffuse, Transmitted(s), s.trans);
@@ -358,7 +398,16 @@ vec3 EvalIBL (Surf s, float ao)
 #ifdef PBR_CLEARCOAT
 	vec2 lc = texture(LutS, vec2(s.NcV, s.ccPerc)).rg;
 	float Fcv = FSchlick1(0.04, 1.0, s.NcV);
+#if defined(_SSR)
+	vec3 Lc = Prefiltered(reflect(-s.V, s.Nc), s.ccPerc);
+	if (ccRay) { // not upstream: the coat's traced ray (design-ssr 6)
+		SsrHit hC = SsrTrace(s.posW, s.Ng, SsrKeepAbove(SsrDir(s.Nc, s.V, s.cca, gl_FragCoord.xy), s.Ng, 0.01), s.cca);
+		if (hC.conf > 0.0) Lc = mix(Lc, Decode(SsrMeshDecode(SsrFetch(hC), SSR_CURVE)), hC.conf);
+	}
+	c = c * (1.0 - s.cc * Fcv) + s.cc * Lc * ((0.04 * lc.x + lc.y) * ao);
+#else
 	c = c * (1.0 - s.cc * Fcv) + s.cc * Prefiltered(reflect(-s.V, s.Nc), s.ccPerc) * ((0.04 * lc.x + lc.y) * ao);
+#endif
 #endif
 	return c;
 }
@@ -510,7 +559,15 @@ vec4 PbrMeshPS (PbrVS f)
 	else {
 		vec3 L = -gSun.Dir;
 		vec3 sun = Decode(gSun.Color);
+#if defined(_CSM)
+		{ // not upstream: the legacy map and the scene cascades, the darker of the two (design-scene-shadows 7.2)
+			float fS = 1.0;
 #if SHDMAP > 0
+			fS = smoothstep(0.0, 0.72, ComputeShadow(f.shdH, clamp(dot(Ng, L), 0.0, 1.0), vec4(gl_FragCoord.xy - 0.5, 0, 0)));
+#endif
+			sun *= min(fS, CsmVis(CsmS, -f.camW, Ng, gShadowsEnabled ? 3.0 : 1.0, 0.0, 0.0));
+		}
+#elif SHDMAP > 0
 		sun *= smoothstep(0.0, 0.72, ComputeShadow(f.shdH, clamp(dot(Ng, L), 0.0, 1.0), vec4(gl_FragCoord.xy - 0.5, 0, 0)));
 #endif
 		color = EvalLight(s, L, sun);

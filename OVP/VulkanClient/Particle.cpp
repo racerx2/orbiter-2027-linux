@@ -411,6 +411,10 @@ void D3D9ParticleStream::CalcNormals(const VECTOR3 &ppos, NTVERTEX *vtx)
 void D3D9ParticleStream::Render(VkDev *dev)
 {
 	if (!pfirst) return;
+	if (plumeFrame) { // not upstream: PostPlume drew this stream as lit puffs in this main pass
+		Scene *scn = pGC->GetScene();
+		if (plumeFrame == scn->GetFrameId() + 1 && scn->GetRenderPass() == RENDERPASS_MAINSCENE) return;
+	}
 	if (diffuse) RenderDiffuse(dev);
 	else         RenderEmissive(dev);
 }

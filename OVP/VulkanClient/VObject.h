@@ -104,6 +104,7 @@ public:
 	inline bool IsActive () const { return active; }
 
 	inline const D3DXMATRIX * MWorld() const { return &mWorld; }
+	inline const D3D9Sun * GetSunLight() const { return &sunLight; } // not upstream: the light and haze at the object (PostPlume)
 
 	inline Scene * GetScene() const { return scn; }
 	inline oapi::D3D9Client * GetClient() const { return gc; }

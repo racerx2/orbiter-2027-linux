@@ -8,6 +8,8 @@
 #include "Surfmgr2.h"
 #include "D3D9Client.h"
 #include "D3D9Surface.h"
+#include "SceneShadows.h" // scene shadow casters
+#include "AutoExpo.h" // NightLook::CellDusk (design-night-look 6)
 #include <cmath>
 #include <cstring>
 
@@ -53,6 +55,8 @@ BldgMgr::BldgMgr (vPlanet *_vp, OBJHANDLE _hObj, const Scene *_scn)
 {
 	R = oapiGetSize (hObj);
 	texFacade = oapiLoadTexture ("Bldg/facade.dds"); // with its _emis and _norm maps
+	if (texFacade && Config->NightLook) // NightLook: the night map with each window's colour and on-time replaces _emis (design-night-look 6)
+		if (VkTex *nm = NatLoadSpecialTexture ("Bldg/facade.dds", "nite")) { SURFACE(texFacade)->AddMap (MAP_EMISSION, nm); nite = true; }
 	texRoof = oapiLoadTexture ("Bldg/roof.dds");
 	if (!texFacade || !texRoof) oapiWriteLog ("TileStream: no Textures/Bldg, buildings are drawn untextured");
 	worker = std::thread (&BldgMgr::Work, this);
@@ -404,6 +408,14 @@ void BldgMgr::Night ()
 		for (Cell &c : p.second.cell) {
 			if (!c.mesh) continue;
 			double el = asin (std::clamp (dotp (sd, c.up), -1.0, 1.0)) * DEG;
+			if (nite) { // NightLook: the cell's dusk progress in SpecialFX (0, D, intensity, 0.75 tag); the windows come on by their own on-times (design-night-look 6)
+				float D = NightLook::CellDusk ((float)el, c.nightAt / 0.6f);
+				if (std::fabs (D - c.night) < 0.003f && !(D == 0.0f && c.night != 0.0f) && !(D == 1.0f && c.night != 1.0f)) continue; // fine steps: a close window's step is 0.06 of D wide
+				c.night = D;
+				oapi::FVECTOR4 fx (0.0f, D, 1.0f, 0.75f);
+				c.mesh->SetMaterialEx (0, MatProp::SpecialFX, &fx);
+				continue;
+			}
 			float dusk = (float)std::clamp ((2.0 - el) / 8.0, 0.0, 1.0);
 			float lit = std::clamp ((dusk - c.nightAt) / 0.4f, 0.0f, 1.0f);
 			if (std::fabs (lit - c.night) < 0.02f && !(lit == 0.0f && c.night != 0.0f) && !(lit == 1.0f && c.night != 1.0f)) continue;
@@ -486,6 +498,33 @@ void BldgMgr::RenderDepth (VkDev *dev, const D3DXMATRIX &mVP)
 		D3DXMatrixMultiply (&WV, &W, scn->GetViewMatrix());
 		for (Cell &c : t.cell)
 			if (c.mesh && D9IsAABBVisible (c.mesh->GetAABB(), &WV, &F)) c.mesh->RenderShadowMap (&W, &VP, 2);
+	}
+}
+
+// scene shadow casters: the cells in the cascade's light box, in view or not; opt 1 tests the alpha of 0x20 groups (design-scene-shadows 5)
+void BldgMgr::RenderCasters (VkDev *dev, const SceneShadows &s)
+{
+	if (tiles.empty()) return;
+	MATRIX3 rot;
+	oapiGetRotationMatrix (hObj, &rot);
+	VECTOR3 cam = vp->CameraPos();
+	for (auto &kv : tiles) {
+		Tile &t = kv.second;
+		VECTOR3 e = mul (rot, t.e0), u = mul (rot, t.u0), n = mul (rot, t.n0), o = mul (rot, t.p0) - cam;
+		if (!s.Cull (D3DXVECTOR3 ((float)o.x, (float)o.y, (float)o.z), (float)t.rad + 50.0f)) continue;
+		D3DXMATRIX W;
+		D3DXMatrixIdentity (&W);
+		W._11 = (float)e.x; W._12 = (float)e.y; W._13 = (float)e.z;
+		W._21 = (float)u.x; W._22 = (float)u.y; W._23 = (float)u.z;
+		W._31 = (float)n.x; W._32 = (float)n.y; W._33 = (float)n.z;
+		W._41 = (float)o.x; W._42 = (float)o.y; W._43 = (float)o.z;
+		for (Cell &c : t.cell) {
+			if (!c.mesh) continue;
+			const D9BBox *bb = c.mesh->GetAABB();
+			D3DXVECTOR3 bc;
+			D3DXVec3TransformCoord (&bc, (const D3DXVECTOR3 *)&bb->bs, &W);
+			if (s.Cull (bc, bb->bs.w)) c.mesh->RenderShadowMap (&W, s.CasterVP(), 1);
+		}
 	}
 }
 

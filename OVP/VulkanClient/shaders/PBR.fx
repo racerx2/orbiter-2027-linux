@@ -206,7 +206,15 @@ vec4 PBR_PS(vec4 sc, PBRData frg)	// sc : VPOS
 	// Add vessel self-shadows
 	// ----------------------------------------------------------------------
 
+#if defined(_CSM)
+	{ // not upstream: the legacy map and the scene cascades, the darker of the two (design-scene-shadows 7.2)
+		float fS = 1.0;
 #if SHDMAP > 0
+		fS = smoothstep(0, 0.72, ComputeShadow(frg.shdH, dLN, sc));
+#endif
+		cSun *= min(fS, CsmVis(CsmS, -frg.camW, normalize(frg.nrmW), gShadowsEnabled ? 3.0 : 1.0, 0.0, gBaseBuilding ? 1.0 : 0.0));
+	}
+#elif SHDMAP > 0
 	cSun *= smoothstep(0, 0.72, ComputeShadow(frg.shdH, dLN, sc));
 #endif
 
@@ -307,6 +315,14 @@ vec4 PBR_PS(vec4 sc, PBRData frg)	// sc : VPOS
 #if defined(_ENVMAP)
 
 	if (gEnvMapEnable) {
+#if defined(_SSR)
+		SsrHit hE = SsrNone(); // not upstream: what the reflection ray finds on screen replaces the cube's, vessels only (design-ssr 6)
+		if (gSsr.vSurf.x < 0.5 && cmax(cRefl3) * (1.0 - iFrsl) + iFrsl >= 0.01) {
+			vec3 nG = normalize(frg.nrmW);
+			float aE = (1.0 - fRghn) * (1.0 - fRghn); // fRghn is the smoothness here
+			hE = SsrTrace(-frg.camW, nG, SsrKeepAbove(SsrDir(nrmW, CamD, aE, gl_FragCoord.xy), nG, 0.01), aE);
+		}
+#endif
 
 #if defined(_GLASS)
 
@@ -319,7 +335,13 @@ vec4 PBR_PS(vec4 sc, PBRData frg)	// sc : VPOS
 			fLOD *= (1.0f - fFrsl);
 
 			// Fresnel based environment reflections
+#if defined(_SSR)
+			vec3 cE0 = textureLod(EnvMapAS, RflW, fLOD).rgb; // not upstream
+			if (hE.conf > 0.0) cE0 = mix(cE0, SsrMeshDecode(textureLod(tSsrCol, hE.uv, 0.0).rgb, false), hE.conf);
+			cEnv = (cFrsl * fFrsl) * cE0;
+#else
 			cEnv = (cFrsl * fFrsl) * textureLod(EnvMapAS, RflW, fLOD).rgb;
+#endif
 		}
 #endif
 
@@ -327,7 +349,13 @@ vec4 PBR_PS(vec4 sc, PBRData frg)	// sc : VPOS
 		float fLOD = (1.0f - fRghn) * 8.0f;
 
 		// Add a metallic reflections from a base material
+#if defined(_SSR)
+		vec3 cE1 = textureLod(EnvMapAS, RflW, fLOD).rgb; // not upstream
+		if (hE.conf > 0.0) cE1 = mix(cE1, SsrMeshDecode(SsrFetch(hE), false), hE.conf);
+		cEnv += cRefl3 * (1.0f-iFrsl) * cE1;
+#else
 		cEnv += cRefl3 * (1.0f-iFrsl) * textureLod(EnvMapAS, RflW, fLOD).rgb;
+#endif
 	}
 
 #endif
@@ -365,7 +393,26 @@ vec4 PBR_PS(vec4 sc, PBRData frg)	// sc : VPOS
 	cDiff.rgb += cSpec.rgb;
 
 	// Add emission texture to output, modulate with material
+#if defined(_NIGHTLOOK)
+	bool bNite = false; // not upstream: streamed building windows (SpecialFX.w 0.75), each on at its own dusk progress in the night map's alpha (design-night-look 6)
+	if (gCfg.Emis) bNite = abs(gMtrl.specialfx.w - 0.75) < 0.01;
+	if (bNite) {
+		vec4 cNite = texture(EmisS, frg.tex0.xy);
+		float fNW = clamp(0.03 + 0.03 * max(textureQueryLod(EmisS, frg.tex0.xy).y, 0.0), 0.03, 0.15); // wider where the mips average on-times
+		cDiff.rgb += cNite.rgb * (smoothstep(cNite.a - fNW, cNite.a + fNW, gMtrl.specialfx.y) * smoothstep(0.0, 0.05, gMtrl.specialfx.y) * gMtrl.specialfx.z);
+	}
+	else
+#endif
 	cDiff.rgb = max(cDiff.rgb, cEmis * gMtrl.emission2.rgb);
+#if defined(_SSR)
+	{ // not upstream: base surface meshes reflect like the base tiles (design-ssr Rev 2 M4)
+		SsrHit hB;
+		float aB;
+		float wB = SsrBase(nrmW, CamD, -frg.camW, gl_FragCoord.xy, hB, aB);
+		cDiff.rgb *= aB;
+		if (wB > 0.0) cDiff.rgb = mix(cDiff.rgb, SsrMeshDecode(SsrFetch(hB), false), wB);
+	}
+#endif
 
 #if defined(_DEBUG)
 	//if (gDebugHL) cDiff = cDiff*0.5f + gColor;
@@ -481,7 +528,14 @@ vec4 FAST_PS(vec4 sc, FASTData frg)	// sc : VPOS
 		// Add vessel self-shadows
 		// ----------------------------------------------------------------------
 
+#if defined(_CSM)
+		float fShadow = 1.0; // not upstream: the legacy map and the scene cascades, the darker of the two (design-scene-shadows 7.2)
 #if SHDMAP > 0
+		fShadow = smoothstep(0, 0.72, ComputeShadow(frg.shdH, dLN, sc));
+#endif
+		fShadow = min(fShadow, CsmVis(CsmS, -frg.camW, nrmW, gShadowsEnabled ? 3.0 : 1.0, 0.0, gBaseBuilding ? 1.0 : 0.0));
+		dLN *= fShadow;
+#elif SHDMAP > 0
 		float fShadow = smoothstep(0, 0.72, ComputeShadow(frg.shdH, dLN, sc));
 		dLN *= fShadow;
 #endif
@@ -506,7 +560,7 @@ vec4 FAST_PS(vec4 sc, FASTData frg)	// sc : VPOS
 		vec3 HlfW = normalize(CamD - gSun.Dir);
 		float  fSun = pow(clamp(dot(HlfW, nrmW), 0.0, 1.0), gMtrl.specular.a);
 
-#if SHDMAP > 0
+#if SHDMAP > 0 || defined(_CSM)
 		fSun *= fShadow;
 #endif
 
@@ -521,6 +575,13 @@ vec4 FAST_PS(vec4 sc, FASTData frg)	// sc : VPOS
 		cDiff.rgb += (cSpec.rgb * specLight);
 
 		cDiff.rgb += cEmis;
+#if defined(_SSR)
+		SsrHit hB; // not upstream: base surface meshes reflect like the base tiles (design-ssr Rev 2 M4)
+		float aB;
+		float wB = SsrBase(nrmW, CamD, -frg.camW, gl_FragCoord.xy, hB, aB);
+		cDiff.rgb *= aB;
+		if (wB > 0.0) cDiff.rgb = mix(cDiff.rgb, SsrMeshDecode(SsrFetch(hB), false), wB);
+#endif
 	}
 
 #if defined(_DEBUG)

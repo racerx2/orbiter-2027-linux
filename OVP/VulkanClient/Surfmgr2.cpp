@@ -26,6 +26,10 @@
 #include "GfxPool.h" // not upstream
 #include "CloudAtlas.h" // not upstream
 #include "SceneFx.h" // not upstream: DepthWanted
+#include "FogMath.h" // not upstream: ElevGrids' tile range
+#include "SceneShadows.h" // not upstream: scene shadow casters and receivers
+#include "SceneSsr.h" // not upstream: the water's reflections
+#include <functional> // not upstream
 #include <deque> // not upstream
 #include <filesystem> // not upstream
 #include <mutex> // not upstream
@@ -40,6 +44,7 @@ template<> void TileManager2<SurfTile>::HorizonRequest (SurfTile *o, double dist
 template<> void TileManager2<SurfTile>::HorizonSubmit ();
 template<> void TileManager2<SurfTile>::HorizonUpload ();
 template<> void TileManager2<SurfTile>::RenderDepth (ShaderClass *sh, const D3DXMATRIX &mVP);
+template<> void TileManager2<SurfTile>::RenderCasters (ShaderClass *sh, MATRIX4 &dwmat, const vPlanet::RenderPrm &rprm, const SceneShadows &s, double minSpacing);
 template<> std::shared_ptr<const Horizon::Map> TileManager2<SurfTile>::HorizonAt (double lat, double lng, double bnd[4]);
 
 #pragma pack(push, 4)
@@ -1178,7 +1183,9 @@ void SurfTile::Render ()
 	// Setup shadow maps
 	// ---------------------------------------------------------------------
 
-	if (pShader->bShdMap)
+	bool bCsm = SceneShadows::Get() && SceneShadows::Get()->ReceiversOn(vPlanet); // not upstream: the cascades carry the focus vessel's shadow on binding 25 (design-scene-shadows 7.2)
+
+	if (pShader->bShdMap && !bCsm)
 	{
 		const Scene::SHADOWMAPPARAM* shd = scene->GetSMapData();
 
@@ -1836,8 +1843,15 @@ template<>
 void TileManager2<SurfTile>::RenderDepth (ShaderClass *sh, const D3DXMATRIX &mVP)
 {
 	if (depthTiles.empty() || depthFrame != GetScene()->GetFrameId()) return;
-	struct { D3DXMATRIX mW, mVP; } prm;
+	struct { D3DXMATRIX mW, mVP; FVECTOR4 vTexOff, vAlb; } prm; // not upstream: vTexOff, vAlb only in the _SSGI block
 	prm.mVP = mVP;
+	VkConstHandle hDiff = sh->GetPSHandle("tDiff"); // not upstream: SSGI, the shader was compiled with _SSGI (design-ssgi S8)
+	UINT nPrm = hDiff ? UINT(sizeof(prm)) : UINT(2 * sizeof(D3DXMATRIX));
+	if (hDiff) {
+		const ConstParams *cp = vp->GetScatterConst();
+		bool air = vp->GetShaderID() != PLT_MOON && cp; // NewPlanet's terrain albedo: pow(tex, TrGamma) * TrExpo with air, tex without
+		prm.vAlb = FVECTOR4(air ? cp->TrGamma : 1.0f, air ? cp->TrExpo : 1.0f, 0.0f, 0.0f);
+	}
 	VkDev *dev = Dev();
 	loader->WaitForMutex();
 	sh->Setup(pPatchVertexDecl, true, 0);
@@ -1846,12 +1860,59 @@ void TileManager2<SurfTile>::RenderDepth (ShaderClass *sh, const D3DXMATRIX &mVP
 		SurfTile *t = static_cast<SurfTile *>(r.first);
 		if (!t->mesh) continue;
 		prm.mW = r.second;
-		sh->SetVSConstants("Prm", &prm, sizeof(prm));
+		if (hDiff) { // not upstream: SSGI, the tile's texture as its main pass reads it
+			VkTex *tx = vp->HasTextures() ? t->Tex() : NULL;
+			prm.vTexOff = t->GetTexRangeDX(t->GetTexRange());
+			prm.vAlb.z = tx ? 1.0f : 0.0f;
+			if (tx) sh->SetTexture(hDiff, tx, IPF_LINEAR | IPF_CLAMP);
+		}
+		sh->SetVSConstants("Prm", &prm, nPrm);
 		sh->UpdateTextures();
 		dev->SetStreamSource(0, t->mesh->pVB, 0, sizeof(VERTEX_2TEX));
 		dev->SetIndices(t->mesh->pIB);
 		dev->DrawIndexedPrimitive(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 0, 0, VkPrimVerts(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, t->mesh->nf));
 	}
+	loader->ReleaseMutex();
+}
+
+// not upstream: scene shadow casters from the loaded tiles, not the last pass's states: down while all four children are loaded and not finer than the cut (design-scene-shadows Rev 2 MUST 3)
+template<>
+void TileManager2<SurfTile>::RenderCasters (ShaderClass *sh, MATRIX4 &dwmat, const vPlanet::RenderPrm &rprm, const SceneShadows &s, double minSpacing)
+{
+	SetRenderPrm(dwmat, 0, true, rprm); // this frame's tile matrices; the main pass sets them again
+	struct { D3DXMATRIX mW, mVP; } cp;
+	cp.mVP = *s.CasterVP();
+	VkConstHandle hPrm = sh->GetVSHandle("Prm");
+	VkDev *dev = Dev();
+	double span = PI * obj_size / double(GridRes());
+	loader->WaitForMutex();
+	sh->Setup(pPatchVertexDecl, true, 0);
+	std::function<void(QuadTreeNode<SurfTile> *)> walk = [&](QuadTreeNode<SurfTile> *node) {
+		SurfTile *t = node->Entry();
+		if (!t || !(t->State() & TILE_VALID) || !t->mesh) return;
+		D3DXMATRIX W;
+		MATRIX4toD3DMATRIX(WorldMatrix(t), W);
+		D3DXVECTOR3 bc;
+		D3DXVec3TransformCoord(&bc, &t->mesh->bsCnt, &W);
+		if (!s.Cull(bc, t->mesh->bsRad * 1.1f + 50.0f)) return; // the margin holds the children's relief
+		bool down = 0.5 * span / double(1 << t->Level()) >= minSpacing;
+		for (int k = 0; k < 4 && down; k++) {
+			QuadTreeNode<SurfTile> *c = node->Child(k);
+			SurfTile *ct = c ? c->Entry() : NULL;
+			if (!ct || !(ct->State() & TILE_VALID) || !ct->mesh) down = false;
+		}
+		if (down) {
+			for (int k = 0; k < 4; k++) walk(node->Child(k));
+			return;
+		}
+		if (!s.Cull(bc, t->mesh->bsRad)) return;
+		cp.mW = W;
+		sh->SetVSConstants(hPrm, &cp, sizeof(cp));
+		dev->SetStreamSource(0, t->mesh->pVB, 0, sizeof(VERTEX_2TEX));
+		dev->SetIndices(t->mesh->pIB);
+		dev->DrawIndexedPrimitive(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 0, 0, VkPrimVerts(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, t->mesh->nf));
+	};
+	for (int i = 0; i < 2; i++) walk(tiletree + i);
 	loader->ReleaseMutex();
 }
 
@@ -1899,6 +1960,11 @@ void TileManager2<SurfTile>::Render (MATRIX4 &dwmat, bool use_zbuf, const vPlane
 	pShader->ClearTextures();
 	pShader->Setup(pPatchVertexDecl, bUseZ, 0);
 	pShader->GetDevice()->SetCullMode(VK_CULL_MODE_BACK_BIT); // D3DCULL_CCW
+	if (SceneShadows *ss = SceneShadows::Get()) { // not upstream: the cascades on the proxy in the main pass, off in every other draw; the atlas on binding 25 (design-scene-shadows Rev 2)
+		bool on = ss->ReceiversOn(vp);
+		pShader->SetPSConstants("gCsm", (void *)ss->Block(on), sizeof(CsmGpu));
+		if (on) pShader->SetTexture(pShader->tShadowMap, ss->Atlas(), IPF_CLAMP | IPF_POINT);
+	}
 
 	ShaderParams* sp = vp->GetTerrainParams();
 	FlowControlPS* fc = vp->GetFlowControl();
@@ -1975,6 +2041,7 @@ void TileManager2<SurfTile>::Render (MATRIX4 &dwmat, bool use_zbuf, const vPlane
 		depthFrame = scene->GetFrameId();
 	}
 	else depthRec = false; // not upstream
+	SceneSsr::PlanetBind(scene, vp, pShader, depthRec); // not upstream: the water's reflection parameters, every pass (design-ssr)
 
 	// update the tree
 	for (i = 0; i < 2; i++)
@@ -2456,4 +2523,39 @@ std::shared_ptr<const Horizon::Map> TileManager2<SurfTile>::HorizonAt (double la
 	}
 	loader->ReleaseMutex();
 	return m;
+}
+
+// -----------------------------------------------------------------------
+// not upstream: height fog maps (design-height-fog 6, Rev 2): the ready elevation grids over a box at one level, else the finest ready ancestor
+
+template<>
+int TileManager2<SurfTile>::ElevGrids (double lat0, double lat1, double lng0, double lng1, int lvl, int maxn, bool heights, const std::vector<unsigned> &have, std::vector<Horizon::Grid> &out, std::vector<unsigned> &keys)
+{
+	out.clear();
+	keys.clear();
+	if (lvl < 0) return 0;
+	int ia, ib, ja, jb, nlng = 2 << lvl;
+	FogMath::TileRange(lat0, lat1, lng0, lng1, lvl, &ia, &ib, &ja, &jb);
+	if (ib < ia || (ib - ia + 1) * (jb - ja + 1) > maxn) return -1;
+	auto ready = [](const SurfTile *t) { return t && t->elevReady.load(std::memory_order_acquire) && t->elev; };
+	loader->WaitForMutex();
+	for (int i = ia; i <= ib; i++)
+		for (int j = ja; j <= jb; j++) {
+			const SurfTile *t = NULL;
+			int a = i, b = ((j % nlng) + nlng) % nlng;
+			for (int l = lvl; l >= 0 && !t; l--, a >>= 1, b >>= 1) {
+				SurfTile *c = NodeAt(l, a, b);
+				if (ready(c)) t = c;
+			}
+			if (!t || std::find(keys.begin(), keys.end(), t->horGen) != keys.end()) continue;
+			keys.push_back(t->horGen);
+			Horizon::Grid g;
+			g.lvl = t->lvl;
+			g.minlat = t->bnd.minlat; g.maxlat = t->bnd.maxlat;
+			g.minlng = t->bnd.minlng; g.maxlng = t->bnd.maxlng;
+			if (heights && std::find(have.begin(), have.end(), t->horGen) == have.end()) g.h.assign(t->elev, t->elev + Horizon::STRIDE * Horizon::STRIDE);
+			out.push_back(std::move(g));
+		}
+	loader->ReleaseMutex();
+	return int(out.size());
 }

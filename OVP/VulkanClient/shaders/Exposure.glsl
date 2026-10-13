@@ -28,7 +28,11 @@ vec4 PSBlocks()
 			float w = (L < vPrm.z) ? 0.0 : 1.0 - 0.5 * smoothstep(0.3, 1.0, length(r)); // centre bias 0.5-1
 			acc.x += w * log2(max(L, vPrm.z));
 			acc.y += w;
+#if defined(PS_PSBlocksSat)
+			acc.z += texelFetch(tSrc, ivec2(x, y), 0).a; // not upstream: night look, the near-saturated share PSHalfSat counted (design-night-look Rev 2 M2)
+#else
 			acc.z += max(c.r, max(c.g, c.b)) >= vPrm.w ? 1.0 : 0.0;
+#endif
 			acc.w += 1.0;
 		}
 	return acc;
@@ -45,7 +49,21 @@ vec4 PSTotal()
 	return vec4(acc.y > 0.0 ? acc.x / acc.y : 0.0, acc.y / n, acc.z / n, 1.0);
 }
 
-#if defined(PS_PSBlocks) || defined(PS_PSTotal)
+#if defined(PS_PSHalfSat)
+// not upstream: night look (design-night-look Rev 2 M2): W/2 from the full-res frame, alpha the share of its 4 pixels with max >= vPrm.w
+vec4 PSHalfSat()
+{
+	ivec2 sz = textureSize(tSrc, 0), p = ivec2(gl_FragCoord.xy) * 2;
+	vec4 acc = vec4(0.0);
+	for (int k = 0; k < 4; k++) {
+		vec3 c = texelFetch(tSrc, min(p + ivec2(k & 1, k >> 1), sz - 1), 0).rgb;
+		acc += vec4(c, max(c.r, max(c.g, c.b)) >= vPrm.w ? 1.0 : 0.0);
+	}
+	return acc * 0.25;
+}
+#endif
+
+#if defined(PS_PSBlocks) || defined(PS_PSTotal) || defined(PS_PSHalfSat) || defined(PS_PSBlocksSat)
 layout(location = 0) in float iX;	// TEXCOORD0 of IPI.glsl
 layout(location = 1) in float iY;	// TEXCOORD1
 layout(location = 0) out vec4 oColor;
@@ -55,4 +73,10 @@ void main() { oColor = PSBlocks(); }
 #endif
 #ifdef PS_PSTotal
 void main() { oColor = PSTotal(); }
+#endif
+#ifdef PS_PSHalfSat
+void main() { oColor = PSHalfSat(); }
+#endif
+#ifdef PS_PSBlocksSat
+void main() { oColor = PSBlocks(); }
 #endif

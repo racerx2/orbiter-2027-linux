@@ -1,0 +1,104 @@
+# Look passes: heat haze, light shafts, lens flare, sharpening, vignette (agent "look")
+
+Repo /home/racerx/Projects/Orbiter-linux-custom, branch visual-fx, on top of 6189b7a9 (uncommitted). Final build BUILD EXIT=0; LookMath.Test: all 1451 assertions in 7 test cases pass.
+
+## Files
+- **OVP/VulkanClient/PostLook.h/.cpp** (stubs filled)
+  - Ctor, per switch:
+    - HeatHaze: IPI `PSHaze`.
+    - LightShafts: two half-res R16F targets and IPI `PSShaftMask` + `PSShaftBlur` (ppf `_SHAFTS`).
+    - IPI `PSFinal`, compiled with `_SHAFTS` / `_FLARE` / `_SHARPEN` / `_VIGNETTE` only for the switches that are on.
+    - Each IPI fails on its own (LogErr, that part off). The scene copies are made lazily.
+    - Logs `PostLook: haze 1, final [...], SceneFx depth 1, volume 1`.
+  - `Haze(target)`:
+    - Off in vacuum (CameraInSpace() >= 0.9).
+    - `Exhausts()` walks Scene's vobj list with the exhaust loop's filter. Per exhaust with GetExhaustLevel > 0.02:
+      - `ref = lpos - ldir*lofs`, `end = ref - ldir*lsize*level`;
+      - through vVessel::MWorld, then Camera.mProjView (unjittered: TAA cleared the jitter before Haze);
+      - LookMath::ProjectSegment clips the ends at w = 0.05 m.
+    - Half-widths: 1.2 x wsize at the nozzle, 2 x at the end, projected per end and capped at H/4.
+    - Strength = level x near fade (camera within 1-4 nozzle widths of the plume) x size fade (half-width / 30 px).
+    - Keeps the 32 nearest, as 3 vec4 each (`vSeg[96]`), and their pixel bounding rect.
+    - StretchRect copy of the target (resolves MSAA), then PSHaze drawn only in that rect (SetTemplate). The main target, viewport and state are restored as SceneFx does.
+  - `Final(bb)`:
+    - Skipped when pOffscreenTarget exists and LightBlur is not OK.
+    - Sun point from WorldToScreenSpace2 (unjittered).
+    - Shafts when the camera is in air (CameraInSpace < 0.9), the sun is over the local horizon (dip included, smooth over -0.6..1.7 deg) and the sun point is within 1.5 widths of the centre (fades 1.0-1.5). Strength 0.35 x (1 - CameraInSpace).
+    - Flare visibility, CPU part = TerrainSunVisibility (own TerrainSunCache, from the camera, vNear as the glare) x (1 - CloudSunAlpha) x EdgeFade. Strength = 0.25 x that x maxRGB(SunLightColor(…, 2.0)) x e (e clamped 0.25-2).
+    - Returns with no pass when shafts and flare are both 0 and Sharpen and Vignette are off.
+    - Otherwise: a copy of the backbuffer, then the shaft mask, the shaft blur, then PSFinal into the backbuffer. Sharpen amount 0.18 when the frame was jittered (Scene::bLabelsLate), else 0.12.
+  - SceneFx `Depth()` and `VolumeTex()` are used through a C++20 requires-check, so the code compiled before agent TAA added them. They are present now (log: depth 1, volume 1).
+- **OVP/VulkanClient/shaders/PostLook.glsl** (new). One LookPS block at binding 1. Samplers 4-9: tScene, tDepthL, tGbuf, tShaft, tVis, tVolL.
+  - `PSHaze`:
+    - The segment with the largest s = level*(1-d/w)^2*(1-t)^0.5 (t mapped to the unclipped plume).
+    - Offset = s*0.006*(n-0.5) screen heights. n is value noise (own integer hash: Teschner primes, Murmur3 finaliser) in plume-aligned coordinates, scrolled along the plume.
+    - With Depth(): a pixel nearer than the nozzle is not bent, and an offset sample nearer than the nozzle falls back to the pixel itself (margin 2 % + 1 m).
+  - `PSShaftMask` (half res): smoothstep(0.6, 0.95, luma) x sky (Depth() == 0 when valid, GBUF_DEPTH.a == 0) x (1 - smoothstep(0, 0.3, r))^2 around the sun.
+  - `PSShaftBlur`: 48 taps toward the sun, decay 0.965, normalised by the weight sum. The march covers 90 % of the way, at most one screen height, with an IGN start offset. Taps off screen count as 0.
+  - `PSFinal`, in order:
+    - sharpening: 5-tap cross, w = -a*sqrt(saturate(min(mn,1-mx)/mx)), c' = (c+w*sum)/(1+4w). It is applied to the scene before the smooth additions, which is equivalent and keeps their slopes out of the weight;
+    - shafts x sun colour x strength, added as a screen (x (1-c)), so a bright sky does not clip to white (see Notes);
+    - flare, additive:
+      - 6 ghosts at t = -0.6, -0.3, 0.2, 0.45, 0.8, 1.1 (t=0 centre, 1 the sun's mirror), radii 0.02-0.09 screen heights, tinted, RGB at +-1.5 % for fringes;
+      - halo ring at radius 0.42 with weight smoothstep(0.1,0.3,d)*(1-smoothstep(0.6,0.9,d)), brighter on the sun's side;
+      - multiplied by the GPU visibility: tVis texel 0 at u = 0.5/32, point, smoothstep(0.5,1), as GlareVS; x the share of 5 Depth() taps around the sun point that are 0; x (1 - VolumeTex alpha at the sun point);
+    - vignette: c *= 1 - 0.18*smoothstep(0.45, 1.05, r), r = |(uv-0.5)(W/H,1)| / |(0.5 W/H, 0.5)|.
+- **OVP/VulkanClient/LookMath.h/.cpp** (pure, no Vulkan):
+  - Filmic (kept), Smoothstep;
+  - GhostT / GhostPos, HaloWeight, EdgeFade;
+  - ProjectSegment (row-vector view-projection, clip at wmin, kept t0/t1), SegDist, HazeStrength;
+  - SharpenWeight, Sharpen, Vignette.
+- **Tests/LookMath.Test.cpp**: the filmic test kept, plus:
+  - ghosts collinear with the sun and the centre (t=-1 the sun, t=1 the mirror);
+  - halo and edge fade bounds;
+  - segment projection to pixels, clipping either end behind the camera, wholly behind gives false;
+  - pixel-segment distance;
+  - haze strength monotonic and 0 at the edge and at the plume end;
+  - sharpen weight in [-a, 0], 1+4w > 0.25, flat input unchanged, peaks up and pits down, output >= 0;
+  - vignette 1 in the middle, 0.82 at the corners, symmetric.
+- **OVP/VulkanClient/Cloudmgr2.h/.cpp** (cloud alpha query only; atlas code untouched):
+  - CloudTile::PreLoad keeps the 256x256 density when `VolClouds || LensFlare`.
+  - New `float CloudAlphaToward(TileManager2<CloudTile>*, cameraPos, sunDir)`, loader mutex held. In planet-local space:
+    - below the layer: the finest loaded density where the ray meets the cloudalt shell, through VolCloud::CloudLng(lng, cloudrot) and VolCloud::Src::Covers/At;
+    - inside (cloudalt ±1 km): 0.5 x the density over the camera;
+    - above: 0;
+    - smooth blends between the three;
+    - x the CloudPS volume fade mix(1, smoothstep(35, 60 km, dist), GetVolCloudFade()), so the volume clouds (tested on the GPU) are not counted twice.
+  - `TileManager2<CloudTile>::Render`, under its mutex, for the main pass and the camera's proxy with LensFlare on, stores it per frame. `CloudSunAlpha(mgr, frame)` returns it, or 0 for another frame.
+  - The new functions sit after the SearchTile specialisation, to avoid "specialisation after instantiation".
+- **Build tree only** (Scenarios/Tests, not in git):
+  - `Look KSC Sunset.scn`: a ground camera 13 m up, SE of a DG on the SLF, sun 7 deg up in the upper left;
+  - `Look KSC Sunset Cockpit.scn`: DG cockpit facing the sun;
+  - `Look DG Engines.scn`: main at 25 %, close behind;
+  - `Look DG Engines Side.scn`: main at 60 %, rear quarter, KSC buildings behind.
+  - The window is 1920x1080 and run.sh crops the top-left 1280x720, so the scenes put the sun up and to the left.
+
+## Tests (shots /tmp/earth/shots/<tag>-NN.png; diffs /tmp/earth/look/d*.png made with /tmp/earth/look/diff.py)
+- **KSC sunset**, all on vs all off, TAA=0: lookS4 / lookS6 / lookS7 (final shader) vs lookS4off.
+  - Ghosts on the sun-centre line at (605,355), (1077,600) and (1225,680), and the halo arc. Matches the debug values: sun uv (0.196, 0.217), shafts 0.333, flare 0.143 (maxRGB 0.57, e 1.0, terrain 1, cloud 0, Depth and VolumeTex valid).
+  - Shaft glow and rays toward the horizon, vignette at the corners, sharpening on edges. HUD text unchanged.
+  - Final lookS7 vs off: mean abs diff 5.9.
+- **SunGlare=0** (lookS4g): the flare is still drawn. Its diff vs off matches lookS4's block by block (within 1.3).
+- **Cockpit** (lookC1 vs lookC1off, TAA on): ghosts, halo and shafts under the glass HUD. The HUD pixels are unchanged (they draw after Final).
+- **PostProcess=1** (lookS5pp): LightBlur runs, then Final (shafts, flare). No errors.
+- **TAA on** (lookS5taa): works. Sharpen amount 0.18.
+- **Orbit** (lookO1 vs lookO1off, Gfx Clouds Orbit Alps): CameraInSpace 1.0, so no shafts. The sun is behind the camera, so no flare. Only sharpening (detail edges) and vignette (corner -25/255 on bright cloud).
+- **DG main engines** (lookD1 vs lookD1off, lookE2 vs lookE1off; only HeatHaze differs):
+  - 2 segments, rect (199,439)-(878,757) at 1080p; segment 0 is (742,576)->(392,621), half-width 62->129 px, s 0.6, nozzle 28.8 m.
+  - lookD1 vs off: only the plume region changed (mean abs 0.066, 2794 px > 2, all at the nozzles).
+  - Shimmer is visible on the wing edge behind the plume. Parts nearer than the nozzle are not pulled in (no ghosting).
+- **Each switch off**:
+  - HeatHaze=0 leaves the image identical outside the plume (lookD1off);
+  - all five off: PostLook is not created (Scene.cpp), so no pass, buffer or shader (lookS2off, lookS4off, lookO1off, lookC1off);
+  - LensFlare=0 also leaves Cloudmgr2 as before (no density kept unless VolClouds, no lookup).
+- **Cloud query** (VolClouds=0, temporary debug log, since removed): CloudSunAlpha read 0.154 under the thin layer in Gfx Clouds Land Germany Under (lookK1, 1.8 km), 0.62 in Gfx Clouds South Under (lookK2, 1.5 km), and 0.003 in Gfx Clouds Inside (lookK3, 7.5 km, near the top). With VolClouds on, it is ~0 near the camera by design.
+- **Client logs**: no shader or PostLook errors. The only [ERROR] lines are the "UnDeleted Surfaces" list at exit, the same 84 lines in the all-off runs.
+
+## Notes / left
+- Shafts composite: the design's plain add of 0.35 x the normalised rays turned the low sunset sky white over ~0.4 screen heights (lookS3/S4/S6, +20..27/255 around the sun). I kept 0.35 and the knee, tightened the mask's radial falloff to (1-smoothstep(0,0.3,r))^2, and add as a screen, c += s*(1-c). Dark occluders get the full rays and the bright sky stays unclipped. Revert to a plain add in PSFinal if the old look is wanted.
+- The haze is subtle by design (0.006): at most 0.003 screen heights (about 3 px at 1080p) at full throttle.
+- With the volume clouds on, the CPU cloud alpha is ~0 near the camera by design (the GPU VolumeTex term covers it).
+- The debug logging used during testing is removed. Final build b7: BUILD EXIT=0. The build-tree PostLook.glsl is identical to the source.
+- Requests for other owners:
+  - (Scene.cpp, integrator, optional) NIT 13 "TerrainSunVisibility once per frame": RenderGlares keeps its own static cache and PostLook has its own (both cached, cheap). Sharing one needs a Scene member.
+  - Frame time per switch was not measured; no GPU timer is reachable from here.

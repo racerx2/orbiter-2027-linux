@@ -346,7 +346,7 @@ void CloudTile::PreLoad()
 
 	owntex = true;
 
-	if (pSysSrf && (Config->VolClouds || Config->LensFlare) && lvl + 4 >= 5) { // not upstream: before the pixels go; none from level 4 and below, 40 km pixels and coarser
+	if (pSysSrf && (Config->VolClouds || Config->LensFlare || Config->HeightFog) && lvl + 4 >= 5) { // not upstream: before the pixels go; none from level 4 and below, 40 km pixels and coarser; the height fog's deck and cloud shadow
 		dens = CloudDensity(*pSysSrf);
 		densReady.store(true, std::memory_order_release);
 	}

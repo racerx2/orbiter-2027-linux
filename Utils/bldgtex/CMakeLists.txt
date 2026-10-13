@@ -3,13 +3,14 @@
 add_executable(bldgtex
 	bldgtex.cpp
 	${CMAKE_SOURCE_DIR}/OVP/VulkanClient/BldgGeom.cpp
+	${CMAKE_SOURCE_DIR}/OVP/VulkanClient/AutoExpo.cpp # the night look map's mips (design-night-look 6)
 )
 target_include_directories(bldgtex PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 target_link_libraries(bldgtex Qt6::Gui stb_dxt)
 set_target_properties(bldgtex PROPERTIES FOLDER Tools)
 
 set(BLDGTEX_DIR ${ORBITER_BINARY_TEXTURES_DIR}/Bldg)
-set(BLDGTEX_FILES ${BLDGTEX_DIR}/facade.dds ${BLDGTEX_DIR}/facade_emis.dds ${BLDGTEX_DIR}/facade_norm.dds ${BLDGTEX_DIR}/roof.dds ${BLDGTEX_DIR}/roof_norm.dds)
+set(BLDGTEX_FILES ${BLDGTEX_DIR}/facade.dds ${BLDGTEX_DIR}/facade_emis.dds ${BLDGTEX_DIR}/facade_norm.dds ${BLDGTEX_DIR}/facade_nite.dds ${BLDGTEX_DIR}/roof.dds ${BLDGTEX_DIR}/roof_norm.dds)
 add_custom_command(
 	OUTPUT ${BLDGTEX_FILES}
 	COMMAND ${CMAKE_COMMAND} -E make_directory ${BLDGTEX_DIR}

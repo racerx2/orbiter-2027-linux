@@ -45,6 +45,7 @@ typedef struct {
 class vVessel: public vObject {
 public:
 	friend class D3D9Client;
+	friend class PostPlume; // not upstream: reads the hull box and the terrain sun
 	/**
 	 * \brief Creates a new vessel visual for a scene
 	 * \param _hObj vessel object handle
@@ -224,6 +225,7 @@ private:
 	ANIMATION *anim;		// list of animations (defined in the vessel object)
 	double tCheckLight;		// time for next lighting check
 	float terrainSun = 1.0f;	// not upstream: share of the sun above the terrain, see vPlanet::TerrainSunVisibility
+	D9BBox HullBox = {};		// not upstream: the exterior meshes' box without the exhaust points (PostPlume's plasma)
 	TerrainSunCache tsCache; // not upstream: reused while the vessel and the sun keep still
 	float ExhaustLength;
 

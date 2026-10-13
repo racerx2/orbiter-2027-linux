@@ -633,6 +633,8 @@
   The Effects group of the Advanced Setup dialog (VulkanClient.cfg keys in
   brackets, 1 on, 0 off). Each one can be switched off on its own; off gives
   the image as before. The 2D panel, the HUD and the MFDs are never changed.
+  The third row of the group holds the last six, from Scene shadows to Night
+  look.
 </p>
 <ul>
   <li>Lens flare (<code>LensFlare</code> 1)</li>
@@ -678,6 +680,49 @@
   <li>Heat haze (<code>HeatHaze</code> 1)</li>
     <p>
       The air shimmers behind running engines, in an atmosphere.
+    </p>
+  <li>Scene shadows (<code>SceneShadows</code> 1)</li>
+    <p>
+      Sun shadows that the terrain, bases, buildings, trees and vessels cast
+      on each other: sharp near the camera, softer out to about 42 km. Below
+      42 km above the ground, on bodies with elevation data.
+    </p>
+  <li>Reflections (<code>SSR</code> 1)</li>
+    <p>
+      Water, runways and glossy vessel surfaces reflect what is on screen;
+      where nothing is found, the sky or the environment map as before. On
+      water it needs Specular ripples (Visual settings).
+    </p>
+  <li>Volumetric plumes (<code>VolPlumes</code> 1)</li>
+    <p>
+      Engine exhausts become glowing volumes shaped by the air pressure, with
+      shock diamonds at sea level and a wide faint cone in vacuum, and
+      coloured by the propellant. Smoke and steam are lit by the sun, a cloud
+      of steam or dust rises where a plume hits the ground, and fast vessels
+      entering an atmosphere glow in a plasma sheath. A file per vessel class,
+      <code>Config/GC/Plume/&lt;class&gt;.cfg</code>, can set each engine's
+      propellant (hydrolox, methalox, kerolox, hypergolic, solid, or the
+      add-on's own flame texture), the smoke and the ground cloud (steam, dust
+      or none); Atlantis, its boosters and the Delta-glider come with one.
+    </p>
+  <li>Global illumination (<code>SSGI</code> 1, <code>SSGIStrength</code> 1.0 (0...2))</li>
+    <p>
+      Sunlit ground, walls and hulls on screen light the surfaces near them
+      with one bounce, such as a runway under a vessel's belly. Below about
+      20 km above the ground, or near a vessel.
+    </p>
+  <li>Height fog (<code>HeightFog</code> 0)</li>
+    <p>
+      Ground fog and haze that collect in valleys and over water, most around
+      dawn and on long nights, lit by the sun and shadowed by ridges and
+      clouds. Fades out between 12 and 30 km altitude.
+    </p>
+  <li>Night look (<code>NightLook</code> 1)</li>
+    <p>
+      At night, city lights become streets of lamps with dark blocks between,
+      building windows light up one by one through dusk, and the exposure
+      keeps a night scene dark instead of pushing the lights to white. Daytime
+      is unchanged.
     </p>
 </ul>
 

@@ -289,7 +289,15 @@ vec4 MetalnessPS(vec4 sc, PBRData frg)	// sc : VPOS
 	// ======================================================================
 	// Add vessel self-shadows
 	// ======================================================================
+#if defined(_CSM)
+	{ // not upstream: the legacy map and the scene cascades, the darker of the two (design-scene-shadows 7.2)
+		float fS = 1.0;
 #if SHDMAP > 0
+		fS = smoothstep(0, 0.72, ComputeShadow(frg.shdH, dLN, sc));
+#endif
+		cSun *= min(fS, CsmVis(CsmS, -frg.camW, normalize(frg.nrmW), gShadowsEnabled ? 3.0 : 1.0, 0.0, gBaseBuilding ? 1.0 : 0.0));
+	}
+#elif SHDMAP > 0
 	cSun *= smoothstep(0, 0.72, ComputeShadow(frg.shdH, dLN, sc));
 #endif
 	
@@ -343,6 +351,15 @@ vec4 MetalnessPS(vec4 sc, PBRData frg)	// sc : VPOS
 	float  R = 0.1f * fSmth;
 	float  frP = R + (1.0f - R) * fFrs;
 
+#if defined(_SSR) && defined(_ENVMAP)
+	vec3 cEw = cF * mix(frP, 1.0f, fMetal); // not upstream: what the reflection ray finds on screen replaces the cube's, vessels only, where it shows (design-ssr 6)
+	if (gEnvMapEnable && gSsr.vSurf.x < 0.5 && max(max(cEw.r, cEw.g), cEw.b) >= 0.01) {
+		vec3 nG = normalize(frg.nrmW);
+		float aE = mix(0.01, 1.0, fRgh3); // this shader's own GGX lobe
+		SsrHit hE = SsrTrace(-frg.camW, nG, SsrKeepAbove(SsrDir(nrmW, camW, aE, gl_FragCoord.xy), nG, 0.01), aE);
+		if (hE.conf > 0.0) cEnv = mix(cEnv, SsrMeshDecode(SsrFetch(hE), SSR_CURVE), hE.conf);
+	}
+#endif
 	vec3 cE = (cEnv * cF * mix(frP, 1.0f, fMetal));
 
 	// Attennuate diffuse color for Metals & Fresnel

@@ -26,6 +26,7 @@ public:
 	void Update ();             // main scene, camera below 15 km: want, load, place, unload
 	void Render (VkDev *dev);   // after the base structures, depth tested: main scene, custom cameras, env maps near by
 	void RenderDepth (VkDev *dev, const D3DXMATRIX &mVP); // SceneFx distance pass: the cells in range and view
+	void RenderCasters (VkDev *dev, const class SceneShadows &s); // scene shadow casters: the cells in the cascade's light box
 
 private:
 	static const int NC = 4;              // a tile's buildings in NC x NC cells, a mesh each, lit by its own terrain sun
@@ -69,6 +70,7 @@ private:
 	const Scene *scn;
 	double R;
 	SURFHANDLE texFacade = nullptr, texRoof = nullptr; // Textures/Bldg, made by Utils/bldgtex
+	bool nite = false;           // NightLook: texFacade's emission map is facade_nite.dds, windows on by Night()'s dusk progress
 	std::map<long long, Tile> tiles;
 	std::map<OBJHANDLE, BaseRec> bases;
 	std::set<long long> bad;     // tiles whose file did not load

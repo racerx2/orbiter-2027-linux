@@ -41,6 +41,7 @@
 #include "OrbiterResource.h"
 #include "BldgMgr.h" // not upstream
 #include "TreeMgr.h" // not upstream
+#include "SceneShadows.h" // not upstream
 #include <filesystem>
 
 using namespace oapi;
@@ -1337,6 +1338,20 @@ void vPlanet::RenderDepth (VkDev *dev, ShaderClass *pTerrain, const D3DXMATRIX &
 		for (DWORD i = 0; i < nbase; i++) if (vbase[i]) vbase[i]->RenderDepth(dev, mVP);
 	if (bldgmgr) bldgmgr->RenderDepth(dev, mVP);
 	if (treemgr) treemgr->RenderDepth(dev, mVP);
+}
+
+// ==============================================================
+// not upstream: this body's scene shadow casters in the cascade being drawn: relief, base structures, buildings and trees in C0-C2 (design-scene-shadows 5)
+
+void vPlanet::RenderCasters (VkDev *dev, const SceneShadows &s)
+{
+	if (surfmgr2 && s.TerrainShader()) surfmgr2->RenderCasters(s.TerrainShader(), dmWorld, prm, s, s.TerrainCut());
+	if (vbase && hObj == oapiCameraProxyGbody())
+		for (DWORD i = 0; i < nbase; i++) if (vbase[i]) vbase[i]->RenderCasters(dev, s);
+	if (s.Cascade() < 3) {
+		if (bldgmgr) bldgmgr->RenderCasters(dev, s);
+		if (treemgr) treemgr->RenderCasters(dev, s);
+	}
 }
 
 // ==============================================================

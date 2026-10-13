@@ -10,6 +10,7 @@
 
 #include "VObject.h"
 #include "Mesh.h"
+#include <vector> // not upstream
 
 class RunwayLights;
 class TaxiLights;
@@ -57,6 +58,7 @@ public:
 	bool RenderSurface (VkDev *dev);
 	bool RenderStructures (VkDev *dev);
 	void RenderDepth (VkDev *dev, const D3DXMATRIX &mVP); // not upstream: SceneFx distance pass
+	void RenderCasters (VkDev *dev, const class SceneShadows &s); // not upstream: the structures as scene shadow casters
 	void RenderGroundShadow (VkDev *dev, float alpha);
 
 	const SurftileSpec *GetTileDesc() const { return tspec; }
@@ -80,6 +82,10 @@ private:
 	double Tlghtchk;           // next lighting update
 	TerrainSunCache tsCache;   // not upstream: the sun behind terrain (vPlanet::TerrainSunVisibility)
 	float terrainSun = 1.0f;   // not upstream
+	std::vector<char> buried;  // not upstream: per structure above shadows, its top lies under the loaded terrain
+	int nBuried = -1;          // not upstream: last logged count
+	double Tburied = -1e9;     // not upstream: system time of the last buried check
+	void UpdateBuried();       // not upstream
 	double csun_lights;
 	DWORD ntile;               // number of surface tiles
 	const SurftileSpec *tspec; // list of tile specs

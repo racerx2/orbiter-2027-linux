@@ -1815,6 +1815,7 @@ void ShaderClass::UpdateTextures()
 void ShaderClass::Setup(const VkVertexDecl *pDecl, bool bZ, int blend)
 {
 	VkSurf *pTgt = pDev->GetRenderTarget(); // GetRenderTarget(0)
+	if (!pTgt) pTgt = pDev->GetDepthStencil(); // not upstream: depth-only targets (SceneShadows)
 
 	if (!pTgt) {
 		LogErr("ShaderClass::Setup No render target is set");

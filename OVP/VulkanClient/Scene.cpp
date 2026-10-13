@@ -3990,6 +3990,7 @@ void Scene::RenderGlares()
 					glare *= pow(clr.MaxRGB(), 0.33f) * cis;
 					static TerrainSunCache tsCam; // not upstream: the glare hides behind mountains
 					glare *= vp->TerrainSunVisibility(Camera.pos, tsCam);
+					if (pFx) glare *= pFx->FogTowardSun(); // not upstream: a sun hidden in thick fog makes no glare (design-height-fog 2)
 				}
 							
 				float cd = length(pt - FVECTOR2(viewW, viewH) * 0.5f) / float(viewW); // Glare distance from a screen center

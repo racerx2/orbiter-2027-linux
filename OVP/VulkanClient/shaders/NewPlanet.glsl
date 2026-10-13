@@ -6,6 +6,7 @@
 // ============================================================================
 
 #include "Scatter.glsl"
+#include "SceneShadow.glsl" // not upstream: CsmPrm (_CSM)
 
 struct _Light
 {
@@ -121,12 +122,22 @@ struct PerObjectParams
 	vec4	 vWaterFx;			// not upstream: water effects, x foam mask mip, yz foam ring radius in uv, w spare
 };
 
+#if defined(_SSR)
+#include "SsrPrm.glsl" // not upstream: screen-space reflections (design-ssr)
+#endif
+
 // uniform extern: vertex shader constants at binding 0 (the pixel shaders read Prm too), pixel shader constants at 2 (Scatter.glsl's are 1)
 layout(binding = 0, row_major, scalar) uniform PlanetVSBlock { PerObjectParams Prm; FlowControlVS FlowVS; };
 layout(binding = 2, row_major, scalar) uniform PlanetPSBlock {
 	FlowControlPS Flow;
 	_Light Lights;			// Note: DX9 doesn't tolerate structure arrays outside FX framework
 	BOOL Spotlight[4];
+#if defined(_CSM)
+	CsmPrm gCsm;			// not upstream: scene shadow cascades (design-scene-shadows Rev 2)
+#endif
+#if defined(_SSR)
+	SsrPrm gSsr;			// not upstream: screen-space reflections of the water (design-ssr), after the shadows' gCsm (ue5-integration INT-2)
+#endif
 };
 
 
@@ -149,6 +160,30 @@ layout(binding = 28) uniform sampler2D	tElvOverlay;
 layout(binding = 29) uniform sampler2D	tEclipse;
 layout(binding = 30) uniform sampler2D	tClass;				// not upstream: R trees, G grass / crops, B bare / built-up
 layout(binding = 31) uniform sampler2D	tHorizon;			// not upstream: sin of the horizon, 8 azimuths in 2 halves; the last free binding
+#include "SceneShadow.glsl" // not upstream: CsmVis (_CSM, pixel stage); tShadowMap carries the atlas
+
+#if defined(_SSR) // not upstream: screen-space reflections of the water (design-ssr); the _DEVTOOLS overlays' bindings (ue5-integration INT-3)
+#if defined(_DEVTOOLS)
+#error "_SSR takes the _DEVTOOLS overlay bindings 26 and 27"
+#endif
+layout(binding = 26) uniform sampler2D	tSsrCol;			// not upstream: last frame's scene, mip chain
+layout(binding = 27) uniform sampler2D	tSsrHiZ;			// not upstream: its 1/z pyramid
+#define SSR_PLANET
+#include "Ssr.glsl"
+
+// not upstream: Scatter.glsl HDR() inverted at this frame's exposure: a captured display value back to the terrain's radiance (clamped, design-ssr Rev 2 S2)
+vec3 SsrPlanetDecode(vec3 y)
+{
+	y = clamp(y, 0.0, 0.985);
+#if defined(_FILMIC)
+	vec3 a = 2.43 * y - 2.51, b = 0.59 * y - 0.03, c = 0.14 * y;
+	vec3 t = (-b - sqrt(max(b * b - 4.0 * a * c, vec3(0.0)))) / (2.0 * a);
+	return t / (0.568 * Const.Expo) * gSsr.vDecode.x;
+#else
+	return -log(1.0 - y) / Const.Expo * gSsr.vDecode.x;
+#endif
+}
+#endif
 
 #if defined(_CLOUDATLAS)
 layout(binding = 24) uniform sampler2D	tCloudAtlas;		// not upstream: R8 cloud alpha; shares 24 with tGlare, which only HorizonPS reads
@@ -477,6 +512,57 @@ float ClsNoise(vec2 p, float P)
 	return mix(mix(ClsHash(a), ClsHash(vec2(b.x, a.y)), f.x), mix(ClsHash(vec2(a.x, b.y)), ClsHash(b), f.x), f.y);
 }
 
+#if defined(_NIGHTLOOK)
+// not upstream: night look street lamps (design-night-look 5, Rev 2 M4); profile exp(-r^2/s^2); qw warped 128 m blocks, fq its footprint a pixel; AutoExpo.cpp NightLook::LampField is the tested copy
+const vec3 NL_PAL0 = vec3(1.0, 0.54, 0.07), NL_PAL1 = vec3(1.0, 0.71, 0.42), NL_PAL2 = vec3(1.0, 0.82, 0.64); // sodium 2000 K, LED 3000 K, LED 4000 K
+const vec3 NL_PALM = NL_PAL0 * 0.5 + NL_PAL1 * 0.3 + NL_PAL2 * 0.2;
+const float NL_KAMB = 0.06, NL_KPOOL = 2.0, NL_KSPILL = 0.24, NL_KHEAD = 4.0; // with the planet's light factor 0.5 in fNgt
+vec3 NightPal(float t) { return t < 0.5 ? NL_PAL0 : (t < 0.8 ? NL_PAL1 : NL_PAL2); }
+vec2 NightWarp(vec2 q) { return q + 0.5 * (vec2(ClsNoise(q * 0.125, 128.0), ClsNoise(q * 0.125 + vec2(37.0, 71.0), 128.0)) - 0.5); } // streets bend by up to ~30 m over ~1 km
+
+// per street family: lamp points, a band along the line once they are under 2 px apart, the area mean once lines are 3 px apart; each feature no thinner than a pixel, energy kept
+void NightLamps(vec2 qw, vec2 fq, float pSeg, out vec3 cPool, out vec3 cHead, out vec3 cSpill)
+{
+	const float Sp = 0.07, Sh = 0.012, Hw = 0.04, E = 0.85, PB = 4.0, PI = 3.14159265, RPI = 1.7724539;
+	float n = PB * pSeg * E; // a family's lamps a block^2
+	vec3 mPool = NL_PALM * (n * PI * Sp * Sp), mHead = NL_PALM * (n * PI * Sh * Sh), mSpill = NL_PALM * (3.0 * Hw * pSeg);
+	cPool = vec3(0.0); cHead = vec3(0.0); cSpill = vec3(0.0);
+	for (int k = 0; k < 2; k++) {
+		float u = k == 0 ? qw.x : qw.y, v = k == 0 ? qw.y : qw.x, fu = k == 0 ? fq.x : fq.y, fv = k == 0 ? fq.y : fq.x;
+		float tA = smoothstep(0.2, 0.35, fu), tL = smoothstep(0.0625, 0.125, fv);
+		vec3 p = vec3(0.0), h = vec3(0.0), s = vec3(0.0);
+		if (tA < 1.0) {
+			float fk = float(k), li = floor(u + 0.5), dp = u - li;
+			li = mod(li, 1024.0);
+			float hs = ClsHash(vec2(li + 1031.0 * fk + 0.5, mod(floor(v), 1024.0) + 0.5));
+			float sxp = min(max(Sp, fu), 0.25), sxh = min(max(Sh, fu), 0.25), hw = min(max(Hw, fu), 0.25); // half a block at most: only the nearest line is evaluated
+			if (hs < pSeg) {
+				vec3 c = NightPal(hs / pSeg);
+				s = c * ((1.0 - smoothstep(hw, 2.0 * hw, abs(dp))) * (Hw / hw));
+				if (tL > 0.0) { // the segment's lamps as a band across the line, the same energy a unit length
+					p += c * (tL * PB * E * PI * Sp * Sp / (RPI * sxp) * exp(-dp * dp / (sxp * sxp)));
+					h += c * (tL * PB * E * PI * Sh * Sh / (RPI * sxh) * exp(-dp * dp / (sxh * sxh)));
+				}
+			}
+			if (tL < 1.0) {
+				float syp = max(Sp, fv), syh = max(Sh, fv);
+				float a = v * PB, j = floor(a), f = a - j;
+				for (int i = 0; i < 2; i++) { // the lamp and the nearer neighbour
+					float jj = j + (i == 0 ? 0.0 : (f > 0.5 ? 1.0 : -1.0)), jm = mod(jj, 4096.0);
+					float hl = ClsHash(vec2(li + 1031.0 * fk + 0.5, floor(jm * 0.25) + 0.5)); // the lamp's own segment
+					if (hl >= pSeg || ClsHash(vec2(jm + 4099.0 * fk + 0.25, li + 0.25)) >= E) continue;
+					float dx = dp - (mod(jm, 2.0) < 0.5 ? 0.035 : -0.035), dy = (a - jj - 0.5) / PB;
+					vec3 c = NightPal(hl / pSeg) * ((1.0 - tL) * (0.8 + 0.4 * ClsHash(vec2(li + 0.75, jm + 8209.0 * fk + 0.75))));
+					p += c * (exp(-dx * dx / (sxp * sxp) - dy * dy / (syp * syp)) * Sp * Sp / (sxp * syp));
+					h += c * (exp(-dx * dx / (sxh * sxh) - dy * dy / (syh * syh)) * Sh * Sh / (sxh * syh));
+				}
+			}
+		}
+		cPool += mix(p, mPool, tA); cHead += mix(h, mHead, tA); cSpill += mix(s, mSpill, tA);
+	}
+}
+#endif
+
 vec4 TerrainPS(TileVS frg)
 {
 
@@ -562,6 +648,9 @@ vec4 TerrainPS(TileVS frg)
 		fH = smoothstep(s - 0.012, s + 0.012, dot(normalize(Const.CamPos - frg.camW.xyz), Const.toSun));
 		fShadow *= fH;
 	}
+#if defined(_CSM) && defined(STAGE_PS)
+	fShadow = min(fShadow, CsmVis(tShadowMap, -frg.camW.xyz, normalize(frg.nrmW), 1.0, 0.0, 1.0)); // not upstream: relief, structures, buildings, trees and vessels near the camera; the horizon map beyond (design-scene-shadows 10)
+#endif
 
 	vec3 cFar, cMed, cLow;
 
@@ -600,6 +689,10 @@ vec4 TerrainPS(TileVS frg)
 	float fAmpf = 1.0f;
 	float fDRS = dot(vRay, Const.toSun);
 	float fDPS = dot(vPlN, Const.toSun);		// Mean normal dot sun
+#if defined(_SSR)
+	SsrHit ssrH = SsrNone(); // not upstream: the water's traced reflection and its Fresnel weight (design-ssr)
+	float fSsrF = 0.0;
+#endif
 
 
 #if defined(_WATER)
@@ -663,6 +756,18 @@ vec4 TerrainPS(TileVS frg)
 	}
 
 	cTex.rgb = clamp(cTex.rgb + vec3(0, 0.55, 1.0) * Const.wBrightness * fMask, 0.0, 1.0);
+#endif
+#if defined(_SSR) && defined(STAGE_PS)
+	if (fMask > 0.0 && gSsr.vMode.x > 0.5) { // not upstream: the mirror ray traced over last frame's screen, kept above the mean plane (design-ssr)
+#if defined(_WATERFX)
+		fSsrF = fFS.y;
+		float aSsr = 0.35 * fRgh; // the waves are in wnrmW already; this is the sub-pixel spread (design-ssr NIT 8)
+#else
+		fSsrF = Flow.bInSpace ? 0.0 : fF.y * fSrf;
+		float aSsr = 0.35 * (0.1 + clamp(fDWS, 0.0, 1.0) * 0.1);
+#endif
+		if (0.75 * fSsrF * SsrFade(aSsr) >= 0.01) ssrH = SsrTrace(-frg.camW.xyz, vPlN, SsrKeepAbove(SsrDir(normalize(wnrmW), vRay, aSsr, gl_FragCoord.xy), vPlN, 0.01), aSsr);
+	}
 #endif
 
 #else
@@ -812,8 +917,35 @@ vec4 TerrainPS(TileVS frg)
 
 	cMsk.b = (cMsk.b > 0.15f ? cMsk.b : 0.0f); // Blue dirt filter
 
+#if defined(_NIGHTLOOK)
+	// not upstream: night look (design-night-look 5, Rev 2): the light map as a level with contrast, street lamps light the ground and glow; the orbital term only from ~11 km up
+	float fNI = max(max(cMsk.r, cMsk.g), cMsk.b);
+	float fNC = pow(fNI, 2.2); // suburbs and city fringes darker, cores full
+	float fNS = 0.45 + 0.5 * fNC; // the share of lit street segments
+	vec3 cNH = mix(vec3(1.0), cMsk.rgb / max(fNI, 1e-3), 0.5); // the map's own hue
+	float fNP = 8.0 * fNS * 0.85 * 3.14159265;
+	vec3 cNPl = NL_PALM * (fNP * 0.0049), cNHd = NL_PALM * (fNP * 0.000144), cNSp = NL_PALM * (0.24 * fNS); // the area means
+	float fNU = 1.0;
+	if (Flow.bClass) { // the 8 m lattice is set
+		vec2 q = (frg.texUV.xy * Prm.vMSc[0].xy + Prm.vMSc[0].zw) * 0.0625; // 128 m blocks
+		vec2 fq = vec2(1.0), gNx = vec2(0.0), gNy = vec2(0.0);
+#ifdef STAGE_PS
+		fq = fwidth(q); gNx = dFdx(vUVSrf); gNy = dFdy(vUVSrf); // in uniform flow; the warp's slope is under ~0.1, so q's footprint is qw's
+#endif
+		if (fNgt > 0.0) { // by day nothing of the night look runs
+			vec3 wN = textureGrad(tClass, vUVSrf, gNx, gNy).rgb;
+			fNU = 1.0 - 0.75 * clamp(max(wN.r, wN.g) - wN.b, 0.0, 1.0); // trees, grass and fields dim; built-up and bare full
+			if (min(fq.x, fq.y) < 0.35) NightLamps(NightWarp(q), fq, fNS, cNPl, cNHd, cNSp);
+		}
+	}
+	float fNL = fNgt * (1.0 - Const.CamSpace) * fNC * fNU;
+	cNgt = cNH * fNL * (NL_KAMB * NL_PALM + NL_KPOOL * cNPl + NL_KSPILL * cNSp); // lamp light on the ground's albedo
+	cNgt2 = cMsk.rgb * Const.CamSpace * 4.0f * fNgt * smoothstep(0.35, 0.8, Const.CamSpace); // the orbital term from ~11 km up
+	vec3 cNGl = cNH * fNL * NL_KHEAD * cNHd; // lamp glare, added through the air with sct.atn after the haze
+#else
 	cNgt = cMsk.rgb * (1 - Const.CamSpace) * fNgt; // Nightlights surface texture illumination term
 	cNgt2 = cMsk.rgb * Const.CamSpace * 4.0f * fNgt; // Nightlights orbital visibility
+#endif
 #endif
 
 	float fNoise = (textureLod(tNoise, frg.texUV.xy * 4.0f * Prm.fTgtScale, 0.0).r - 0.5f) * ATMNOISE;
@@ -870,12 +1002,24 @@ vec4 TerrainPS(TileVS frg)
 #if defined(_WATERFX)
 	cTex.rgb = mix(cTex.rgb, vec3(pow(0.8, Const.TrGamma) * Const.TrExpo) * (cSF * fX * fShadow * fShd * 2.0f + cA + Const.cAmbient * Const.Ambient), fFoam); // not upstream: foam as white ground, not as water
 #endif
+#if defined(_SSR)
+	if (ssrH.conf > 0.0) { // not upstream: the traced reflection over the sky term; finite hits lose the camera-to-water haze, added again below (design-ssr Rev 2 S1)
+		vec3 cHit = SsrPlanetDecode(SsrFetch(ssrH));
+		if (!ssrH.sky) cHit = max(cHit - (sct.ray.rgb * RayPhase(-fDRS) + sct.mie.rgb * MiePhase(-fDRS)) * (1.0 - (1.0 - fShd) * Const.CamSpace * 0.5) * (1.0 + fNoise), vec3(0.0)) / max(sct.atn.rgb, vec3(1e-3)); // fOrbShd's factor, as the haze line below
+#if defined(_WATERFX)
+		cHit *= 1.0 - fFoam;
+#endif
+		cRfl = mix(cRfl, cHit * fSsrF, ssrH.conf);
+	}
+#endif
 	// Add Reflection
 	cTex.rgb += cRfl * 0.75f;
 
 	// Add Specular component
 #if defined(_WATERFX)
 	cTex.rgb += cSun * fSpe * smoothstep(-0.001f, 0.03f, fDPS) * fShadow * fShd; // not upstream: the glint under cloud, terrain (fH is in fShadow) and shadow-map shadows
+#elif defined(_CSM)
+	cTex.rgb += cSun * fSpe * smoothstep(-0.001f, 0.03f, fDPS) * fShadow; // not upstream: fH and the cascades are in fShadow (design-scene-shadows 10)
 #else
 	if (Flow.bHorizon) cTex.rgb += cSun * fSpe * smoothstep(-0.001f, 0.03f, fDPS) * fH; // not upstream: the else is upstream's line
 	else cTex.rgb += cSun * fSpe * smoothstep(-0.001f, 0.03f, fDPS);
@@ -890,6 +1034,9 @@ vec4 TerrainPS(TileVS frg)
 
 	cTex.rgb *= fECL;	// Apply eclipse
 	cTex.rgb += cNgt2;
+#if defined(_NIGHTLIGHTS) && defined(_NIGHTLOOK)
+	cTex.rgb += cNGl * sct.atn.rgb; // not upstream: lamp glare through the air to the camera (design-night-look 5)
+#endif
 
 	return vec4(HDR(cTex.rgb), 1.0f);
 #endif

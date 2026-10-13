@@ -36,6 +36,7 @@ struct PbrVariant {
 	VkFxHandle hEnvLegacyS = nullptr, hLutS = nullptr, hSceneS = nullptr;
 	VkFxHandle hSlot[PBR_SLOT_COUNT] = {};
 	std::vector<std::pair<VkFxHandle, VkFxHandle>> shared;   // legacy effect handle, this effect's handle
+	std::vector<std::pair<VkFxHandle, VkFxHandle>> sharedTex; // not upstream: samplers taken from the legacy effect each variant begin (screen-space reflections)
 };
 
 class PbrRender {
