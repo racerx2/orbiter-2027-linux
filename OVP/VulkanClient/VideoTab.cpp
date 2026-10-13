@@ -925,6 +925,15 @@ void VideoTab::InitSetupDialog(QWidget *hWnd)
 	DlgItem<QAbstractButton>(hWnd, IDC_GG_TREES)->setChecked(Config->Trees == 1);
 	DlgItem<QAbstractButton>(hWnd, IDC_GG_AUTOEXP)->setChecked(Config->AutoExposure == 1);
 	DlgItem<QAbstractButton>(hWnd, IDC_GG_CLOUDATLAS)->setChecked(Config->CloudAtlas == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_FLARE)->setChecked(Config->LensFlare == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_SHAFTS)->setChecked(Config->LightShafts == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_TAA)->setChecked(Config->TAA == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_WATER)->setChecked(Config->WaterFx == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_VOLSHD)->setChecked(Config->VolCloudShadows == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_FILMIC)->setChecked(Config->Filmic == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_VIGNETTE)->setChecked(Config->Vignette == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_SHARPEN)->setChecked(Config->Sharpen == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_HAZE)->setChecked(Config->HeatHaze == 1);
 	DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ)->setCurrentIndex(Config->VolCloudQuality);
 	DlgItem<QComboBox>(hWnd, IDC_GG_TREERANGE)->setCurrentIndex(Config->TreeRange < 1750.0f ? 0 : Config->TreeRange < 3250.0f ? 1 : 2);
 
@@ -1013,6 +1022,15 @@ void VideoTab::SaveSetupState(QWidget *hWnd)
 	Config->Trees         = (int)DlgItem<QAbstractButton>(hWnd, IDC_GG_TREES)->isChecked();
 	Config->AutoExposure  = (int)DlgItem<QAbstractButton>(hWnd, IDC_GG_AUTOEXP)->isChecked();
 	Config->CloudAtlas    = (int)DlgItem<QAbstractButton>(hWnd, IDC_GG_CLOUDATLAS)->isChecked();
+	Config->LensFlare = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_FLARE)->isChecked();
+	Config->LightShafts = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_SHAFTS)->isChecked();
+	Config->TAA = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_TAA)->isChecked();
+	Config->WaterFx = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_WATER)->isChecked();
+	Config->VolCloudShadows = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_VOLSHD)->isChecked();
+	Config->Filmic = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_FILMIC)->isChecked();
+	Config->Vignette = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_VIGNETTE)->isChecked();
+	Config->Sharpen = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_SHARPEN)->isChecked();
+	Config->HeatHaze = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_HAZE)->isChecked();
 	Config->VolCloudQuality = std::max(0, (int)DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ)->currentIndex());
 	{
 		static const float range[3] = { 1000.0f, 2500.0f, 4000.0f };

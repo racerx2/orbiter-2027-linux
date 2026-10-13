@@ -23,6 +23,8 @@
 #include "IProcess.h"
 #include "VectorHelpers.h"
 #include "SceneFx.h" // not upstream
+#include "PostTaa.h" // not upstream
+#include "PostLook.h" // not upstream
 #include "D3D9Frame.h" // not upstream: GetDepthFormat
 #include "PbrRender.h" // custom: PBR materials (design-pbr 7, 8)
 #include <algorithm>
@@ -223,7 +225,7 @@ Scene::Scene(D3D9Client *_gc, DWORD w, DWORD h)
 	// ------------------------------------------------------------------------------
 	// Initialize a shaders for local lights visibility checks and rendering 
 
-	if (Config->bGlares || Config->bLocalGlares)
+	if (Config->bGlares || Config->bLocalGlares || Config->LensFlare || Config->LightShafts) // not upstream: the flare and shafts read the sun visibility
 	{
 		pRenderGlares = new ShaderClass(pDevice, "Modules/VulkanClient/Glare.glsl", "GlareVS", "GlarePS", "RenderGlares", "");
 		pLocalCompute = new ShaderClass(pDevice, "Modules/VulkanClient/Glare.glsl", "VisibilityVS", "VisibilityPS", "LocalVisCheck", "");
@@ -280,7 +282,7 @@ Scene::Scene(D3D9Client *_gc, DWORD w, DWORD h)
 
 	// Create an auxiliary screen space normal and depth buffer (i.e. Shader readable depth buffer)
 	//
-	if (Config->bGlares || Config->bLocalGlares) {
+	if (Config->bGlares || Config->bLocalGlares || Config->LensFlare || Config->LightShafts) { // not upstream: flare and shafts too
 		pDepthNormalDS = new VkSurf(pDevice, viewW, viewH, gc->GetFramework()->GetDepthFormat(), DSUsage); // CreateDepthStencilSurface D3DFMT_D24S8
 		ptgBuffer[GBUF_DEPTH] = new VkTex(pDevice, viewW, viewH, 1, VK_FORMAT_R16G16B16A16_SFLOAT, RTUsage); // D3DUSAGE_RENDERTARGET, D3DFMT_A16B16G16R16F
 	}
@@ -342,6 +344,8 @@ Scene::Scene(D3D9Client *_gc, DWORD w, DWORD h)
 	for (int i = 0; i < (int)std::size(ptgBuffer);i++)  if (ptgBuffer[i]) psgBuffer[i] = new VkSurf(ptgBuffer[i], 0); // GetSurfaceLevel
 
 	pFx = new SceneFx(gc, this, viewW, viewH); // not upstream: ground graphics passes
+	if (Config->TAA) pTaa = new PostTaa(gc, this, viewW, viewH); // not upstream
+	if (Config->HeatHaze || Config->LightShafts || Config->LensFlare || Config->Sharpen || Config->Vignette) pLook = new PostLook(gc, this, viewW, viewH); // not upstream
 
 
 	if (Config->GDIOverlay) {
@@ -374,6 +378,8 @@ Scene::~Scene ()
 	SAFE_DELETE(m_celSphere);
 	SAFE_DELETE(pLocalCompute);
 	SAFE_DELETE(pRenderGlares);
+	SAFE_DELETE(pLook); // not upstream
+	SAFE_DELETE(pTaa); // not upstream
 	SAFE_DELETE(pFx); // not upstream
 	SAFE_DELETE(pCreateGlare);
 
@@ -1274,6 +1280,164 @@ void Scene::RecallDefaultState()
 
 
 // ===========================================================================================
+// not upstream: the labels and markers of plist[i], from the planets loop of RenderMainScene
+void Scene::RenderPlanetLabels(DWORD i, DWORD mkrmode)
+{
+	OBJHANDLE hObj = plist[i].vo->Object();
+	bool isActive = plist[i].vo->IsActive();
+
+	D3D9Pad *pSketch = GetPooledSketchpad(SKETCHPAD_LABELS);
+
+	if (pSketch) {
+
+		if (isActive) plist[i].vo->RenderVectors(pDevice, pSketch);
+
+		if (mkrmode & MKR_ENABLE) {
+
+			if (mkrmode & MKR_CMARK) {
+				VECTOR3 pp;
+				char name[256];
+				oapiGetObjectName(hObj, name, 256);
+				oapiGetGlobalPos(hObj, &pp);
+
+				m_celSphere->EnsureMarkerDrawingContext((oapi::Sketchpad**)&pSketch, 0, m_celSphere->MarkerColor(0), m_celSphere->MarkerPen(0));
+				RenderObjectMarker(pSketch, pp, std::string(name), std::string(), 0, viewH / 80);
+			}
+
+			if (isActive && (mkrmode & MKR_SURFMARK) && (oapiGetObjectType(hObj) == OBJTP_PLANET))
+			{
+				int label_format = *(int*)oapiGetObjectParam(hObj, OBJPRM_PLANET_LABELENGINE);
+				if (label_format < 2 && (mkrmode & MKR_LMARK)) // user-defined planetary surface labels
+				{
+					double rad = oapiGetSize(hObj);
+					double apprad = rad / (plist[i].dist * tan(GetCameraAperture()));
+					const GraphicsClient::LABELLIST *list;
+					DWORD n, nlist;
+					MATRIX3 prot;
+					VECTOR3 ppos, cpos;
+
+					nlist = gc->GetSurfaceMarkers(hObj, &list);
+
+					oapiGetRotationMatrix(hObj, &prot);
+					oapiGetGlobalPos(hObj, &ppos);
+					VECTOR3 cp = GetCameraGPos();
+					cpos = tmul(prot, cp - ppos); // camera in local planet coords
+
+					for (n = 0; n < nlist; n++) {
+
+						if (list[n].active && apprad*list[n].distfac > LABEL_DISTLIMIT) {
+
+							int size = (int)(viewH / 80.0*list[n].size + 0.5);
+							int col = list[n].colour;
+
+							m_celSphere->EnsureMarkerDrawingContext((oapi::Sketchpad**)&pSketch, 0, m_celSphere->MarkerColor(col), m_celSphere->MarkerPen(col));
+							const std::vector<oapi::GraphicsClient::LABELSPEC>& ls = list[n].marker;
+							VECTOR3 sp;
+							for (int j = 0; j < ls.size(); j++) {
+								if (dotp(ls[j].pos, cpos - ls[j].pos) >= 0.0) { // surface point visible?
+									sp = mul(prot, ls[j].pos) + ppos;
+									RenderObjectMarker(pSketch, sp, ls[j].label[0], ls[j].label[1], list[n].shape, size);
+								}
+							}
+						}
+					}
+				}
+
+				if (mkrmode & MKR_BMARK) {
+
+					DWORD n = oapiGetBaseCount(hObj);
+					MATRIX3 prot;
+					oapiGetRotationMatrix(hObj, &prot);
+					int size = (int)(viewH / 80.0);
+
+					m_celSphere->EnsureMarkerDrawingContext((oapi::Sketchpad**)&pSketch, 0, m_celSphere->MarkerColor(0), m_celSphere->MarkerPen(0));
+
+					for (DWORD i = 0; i < n; i++) {
+
+						OBJHANDLE hBase = oapiGetBaseByIndex(hObj, i);
+
+						VECTOR3 ppos, cpos, bpos;
+
+						oapiGetGlobalPos(hObj, &ppos);
+						oapiGetGlobalPos(hBase, &bpos);
+						VECTOR3 cp = GetCameraGPos();
+						cpos = tmul(prot, cp - ppos); // camera in local planet coords
+						bpos = tmul(prot, bpos - ppos);
+
+						double apprad = 8000e3 / (length(cpos - bpos) * tan(GetCameraAperture()));
+
+						if (dotp(bpos, cpos - bpos) >= 0.0 && apprad > LABEL_DISTLIMIT) { // surface point visible?
+							char name[64]; oapiGetObjectName(hBase, name, 63);
+							VECTOR3 sp = mul(prot, bpos) + ppos;
+							RenderObjectMarker(pSketch, sp, std::string(name), std::string(), 0, size);
+						}
+					}
+				}
+			}
+		}
+
+		pSketch->EndDrawing();	// SKETCHPAD_LABELS
+	}
+}
+
+// ===========================================================================================
+// not upstream: planetarium and exterior art, from RenderMainScene
+void Scene::RenderSceneArt(DWORD plnmode)
+{
+	if (plnmode & PLN_ENABLE) {
+		D3D9Pad *pSketch = GetPooledSketchpad(SKETCHPAD_PLANETARIUM);
+		gc->MakeRenderProcCall(pSketch, RENDERPROC_PLANETARIUM, GetViewMatrix(), GetProjectionMatrix());
+		pSketch->EndDrawing(); // SKETCHPAD_PLANETARIUM
+	}
+
+
+	// -------------------------------------------------------------------------------------------------------
+	// render a user defined exterior art
+	// -------------------------------------------------------------------------------------------------------
+
+	if (oapiCameraInternal() == false) {
+		D3D9Pad *pSketch = GetPooledSketchpad(SKETCHPAD_PLANETARIUM);
+		gc->MakeRenderProcCall(pSketch, RENDERPROC_EXTERIOR, GetViewMatrix(), GetProjectionMatrix());
+		pSketch->EndDrawing(); // SKETCHPAD_PLANETARIUM
+	}
+}
+
+// ===========================================================================================
+// not upstream: new-style surface labels, from RenderMainScene
+void Scene::RenderSurfaceLabels(DWORD mkrmode)
+{
+	if ((mkrmode & MKR_ENABLE) && (mkrmode & MKR_LMARK))
+	{
+		D3D9Pad* pSketch = GetPooledSketchpad(SKETCHPAD_LABELS);
+		m_celSphere->EnsureMarkerDrawingContext((oapi::Sketchpad**)&pSketch, 0, 0, m_celSphere->MarkerPen(6));
+
+		int fontidx = -1;
+		for (DWORD i = 0; i < nplanets; ++i)
+		{
+			OBJHANDLE hObj = plist[i].vo->Object();
+			if (oapiGetObjectType(hObj) != OBJTP_PLANET) { continue; }
+			if (!surfLabelsActive) {
+				static_cast<vPlanet*>( plist[i].vo )->ActivateLabels(true);
+			}
+
+			int label_format = *(int*)oapiGetObjectParam(hObj, OBJPRM_PLANET_LABELENGINE);
+
+			if (label_format == 2)
+			{
+				static_cast<vPlanet*>(plist[i].vo)->RenderLabels(pDevice, pSketch, label_font, &fontidx);
+			}
+		}
+
+		pSketch->EndDrawing();	// SKETCHPAD_LABELS
+
+		surfLabelsActive = true;
+	}
+	else {
+		surfLabelsActive = false;
+	}
+}
+
+// ===========================================================================================
 //
 void Scene::RenderMainScene()
 {
@@ -1426,6 +1590,10 @@ void Scene::RenderMainScene()
 	VkTex *pShdMap = NULL;
 
 	D3D9Effect::FX->SetFloat(D3D9Effect::eExposure, fExposure); // not upstream: the main pass
+
+	bJitter = false; jitX = jitY = 0.0f; // not upstream: TAA picks this frame's jitter, the main pass only
+	if (pTaa) pTaa->BeginFrame(&bJitter, &jitX, &jitY);
+	bLabelsLate = bJitter;
 
 	UpdateCameraFromOrbiter(RENDERPASS_MAINSCENE);
 	UpdateCamVis();
@@ -1651,98 +1819,7 @@ void Scene::RenderMainScene()
 		else		  plist[i].vo->RenderDot(pDevice);
 
 
-		D3D9Pad *pSketch = GetPooledSketchpad(SKETCHPAD_LABELS);
-
-		if (pSketch) {
-
-			if (isActive) plist[i].vo->RenderVectors(pDevice, pSketch);
-
-			if (mkrmode & MKR_ENABLE) {
-
-				if (mkrmode & MKR_CMARK) {
-					VECTOR3 pp;
-					char name[256];
-					oapiGetObjectName(hObj, name, 256);
-					oapiGetGlobalPos(hObj, &pp);
-
-					m_celSphere->EnsureMarkerDrawingContext((oapi::Sketchpad**)&pSketch, 0, m_celSphere->MarkerColor(0), m_celSphere->MarkerPen(0));
-					RenderObjectMarker(pSketch, pp, std::string(name), std::string(), 0, viewH / 80);
-				}
-
-				if (isActive && (mkrmode & MKR_SURFMARK) && (oapiGetObjectType(hObj) == OBJTP_PLANET))
-				{
-					int label_format = *(int*)oapiGetObjectParam(hObj, OBJPRM_PLANET_LABELENGINE);
-					if (label_format < 2 && (mkrmode & MKR_LMARK)) // user-defined planetary surface labels
-					{
-						double rad = oapiGetSize(hObj);
-						double apprad = rad / (plist[i].dist * tan(GetCameraAperture()));
-						const GraphicsClient::LABELLIST *list;
-						DWORD n, nlist;
-						MATRIX3 prot;
-						VECTOR3 ppos, cpos;
-
-						nlist = gc->GetSurfaceMarkers(hObj, &list);
-
-						oapiGetRotationMatrix(hObj, &prot);
-						oapiGetGlobalPos(hObj, &ppos);
-						VECTOR3 cp = GetCameraGPos();
-						cpos = tmul(prot, cp - ppos); // camera in local planet coords
-
-						for (n = 0; n < nlist; n++) {
-
-							if (list[n].active && apprad*list[n].distfac > LABEL_DISTLIMIT) {
-
-								int size = (int)(viewH / 80.0*list[n].size + 0.5);
-								int col = list[n].colour;
-
-								m_celSphere->EnsureMarkerDrawingContext((oapi::Sketchpad**)&pSketch, 0, m_celSphere->MarkerColor(col), m_celSphere->MarkerPen(col));
-								const std::vector<oapi::GraphicsClient::LABELSPEC>& ls = list[n].marker;
-								VECTOR3 sp;
-								for (int j = 0; j < ls.size(); j++) {
-									if (dotp(ls[j].pos, cpos - ls[j].pos) >= 0.0) { // surface point visible?
-										sp = mul(prot, ls[j].pos) + ppos;
-										RenderObjectMarker(pSketch, sp, ls[j].label[0], ls[j].label[1], list[n].shape, size);
-									}
-								}
-							}
-						}
-					}
-
-					if (mkrmode & MKR_BMARK) {
-
-						DWORD n = oapiGetBaseCount(hObj);
-						MATRIX3 prot;
-						oapiGetRotationMatrix(hObj, &prot);
-						int size = (int)(viewH / 80.0);
-
-						m_celSphere->EnsureMarkerDrawingContext((oapi::Sketchpad**)&pSketch, 0, m_celSphere->MarkerColor(0), m_celSphere->MarkerPen(0));
-
-						for (DWORD i = 0; i < n; i++) {
-
-							OBJHANDLE hBase = oapiGetBaseByIndex(hObj, i);
-
-							VECTOR3 ppos, cpos, bpos;
-
-							oapiGetGlobalPos(hObj, &ppos);
-							oapiGetGlobalPos(hBase, &bpos);
-							VECTOR3 cp = GetCameraGPos();
-							cpos = tmul(prot, cp - ppos); // camera in local planet coords
-							bpos = tmul(prot, bpos - ppos);
-
-							double apprad = 8000e3 / (length(cpos - bpos) * tan(GetCameraAperture()));
-
-							if (dotp(bpos, cpos - bpos) >= 0.0 && apprad > LABEL_DISTLIMIT) { // surface point visible?
-								char name[64]; oapiGetObjectName(hBase, name, 63);
-								VECTOR3 sp = mul(prot, bpos) + ppos;
-								RenderObjectMarker(pSketch, sp, std::string(name), std::string(), 0, size);
-							}
-						}
-					}
-				}
-			}
-
-			pSketch->EndDrawing();	// SKETCHPAD_LABELS
-		}
+		if (!bLabelsLate) RenderPlanetLabels(i, mkrmode); // not upstream: moved into a function, drawn after TAA when it runs
 	}
 
 
@@ -1750,22 +1827,7 @@ void Scene::RenderMainScene()
 	// render a user defined planetarium art
 	// -------------------------------------------------------------------------------------------------------
 
-	if (plnmode & PLN_ENABLE) {
-		D3D9Pad *pSketch = GetPooledSketchpad(SKETCHPAD_PLANETARIUM);
-		gc->MakeRenderProcCall(pSketch, RENDERPROC_PLANETARIUM, GetViewMatrix(), GetProjectionMatrix());
-		pSketch->EndDrawing(); // SKETCHPAD_PLANETARIUM
-	}
-
-
-	// -------------------------------------------------------------------------------------------------------
-	// render a user defined exterior art
-	// -------------------------------------------------------------------------------------------------------
-
-	if (oapiCameraInternal() == false) {
-		D3D9Pad *pSketch = GetPooledSketchpad(SKETCHPAD_PLANETARIUM);
-		gc->MakeRenderProcCall(pSketch, RENDERPROC_EXTERIOR, GetViewMatrix(), GetProjectionMatrix());
-		pSketch->EndDrawing(); // SKETCHPAD_PLANETARIUM
-	}
+	if (!bLabelsLate) RenderSceneArt(plnmode); // not upstream: planetarium and exterior art, after TAA when it runs
 
 	/*for (DWORD i = 0; i < nplanets; ++i)
 	{
@@ -1783,35 +1845,7 @@ void Scene::RenderMainScene()
 	// render new-style surface markers
 	// -------------------------------------------------------------------------------------------------------
 
-	if ((mkrmode & MKR_ENABLE) && (mkrmode & MKR_LMARK))
-	{
-		D3D9Pad* pSketch = GetPooledSketchpad(SKETCHPAD_LABELS);
-		m_celSphere->EnsureMarkerDrawingContext((oapi::Sketchpad**)&pSketch, 0, 0, m_celSphere->MarkerPen(6));
-
-		int fontidx = -1;
-		for (DWORD i = 0; i < nplanets; ++i)
-		{
-			OBJHANDLE hObj = plist[i].vo->Object();
-			if (oapiGetObjectType(hObj) != OBJTP_PLANET) { continue; }
-			if (!surfLabelsActive) {
-				static_cast<vPlanet*>( plist[i].vo )->ActivateLabels(true);
-			}
-
-			int label_format = *(int*)oapiGetObjectParam(hObj, OBJPRM_PLANET_LABELENGINE);
-
-			if (label_format == 2)
-			{
-				static_cast<vPlanet*>(plist[i].vo)->RenderLabels(pDevice, pSketch, label_font, &fontidx);
-			}
-		}
-
-		pSketch->EndDrawing();	// SKETCHPAD_LABELS
-
-		surfLabelsActive = true;
-	}
-	else {
-		surfLabelsActive = false;
-	}
+	if (!bLabelsLate) RenderSurfaceLabels(mkrmode); // not upstream: new-style surface labels, after TAA when it runs
 
 
 	// -------------------------------------------------------------------------------------------------------
@@ -1918,6 +1952,14 @@ void Scene::RenderMainScene()
 
 	PbrRender::SetPhase(PbrRender::PHASE_ALL); // custom
 	if (pFx) pFx->AfterOpaque(RenderMarkers, pBackBuffer); // not upstream: SceneDepth, SSAO, clouds over the opaque scene
+	if (pTaa) pTaa->Resolve(pBackBuffer); // not upstream: TAA of the opaque scene (design-visual-batch 2 A)
+	if (bJitter) { bJitter = false; SetCameraAperture(Camera.aperture, Camera.aspect); } // not upstream: no jitter for the rest of the frame
+	if (bLabelsLate) { // not upstream: the in-scene labels and art over the resolved image
+		for (DWORD i = 0; i < nplanets; i++) RenderPlanetLabels(i, mkrmode);
+		RenderSceneArt(plnmode);
+		RenderSurfaceLabels(mkrmode);
+	}
+	if (pLook) pLook->Haze(pBackBuffer); // not upstream: heat haze behind the exhausts, before they draw (design-visual-batch 2 A2)
 
 	D3D9Pad* pSketch = GetPooledSketchpad(SKETCHPAD_LABELS);
 	if (pSketch) {
@@ -2131,6 +2173,8 @@ void Scene::RenderMainScene()
 		}
 	}
 
+
+	if (pLook) pLook->Final(gc->GetBackBuffer()); // not upstream: shafts, flare, sharpen, vignette (design-visual-batch 2 B)
 
 	// -------------------------------------------------------------------------------------------------------
 	// Render glares for the Sun and local lights
@@ -3371,6 +3415,12 @@ float Scene::GetVolCloudFade() const
 	return pFx ? pFx->CloudFade() : 0.0f;
 }
 
+// not upstream
+float Scene::GetVolShadowFade() const
+{
+	return pFx ? pFx->VolShadowFade() : 0.0f;
+}
+
 // ===========================================================================================
 //
 D3DXVECTOR3 Scene::GetPickingRay(short xpos, short ypos)
@@ -3459,6 +3509,10 @@ void Scene::SetCameraAperture(float ap, float as)
 	Camera.mProj._22 = (1.0f / tanap);
 	Camera.mProj._43 = (Camera.mProj._33 = Camera.farplane / (Camera.farplane-Camera.nearplane)) * (-Camera.nearplane);
 	Camera.mProj._34 = 1.0f;
+	if (bJitter) { // not upstream: TAA sub-pixel offset of the main pass, in NDC
+		Camera.mProj._31 += 2.0f * jitX / float(viewW);
+		Camera.mProj._32 -= 2.0f * jitY / float(viewH);
+	}
 
 	float x = tanap / as;
 	float y = tanap;

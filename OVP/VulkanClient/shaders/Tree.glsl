@@ -123,7 +123,12 @@ void main()
 	float fH = smoothstep(frg.info.w - 0.012, frg.info.w + 0.012, L.y); // terrain horizon at the tree
 	float ao = imp ? 0.6 + 0.4 * frg.uv.y : frg.info.y;
 	vec3 c = alb * (Prm.vSunCol.rgb * dif * fH + Prm.vAmb.rgb * ao);
+#if defined(_FILMIC)
+	c *= Prm.vSunCol.w * 0.568; // the planet's filmic curve, as the ground
+	c = clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
+#else
 	c = 1.0 - exp(-Prm.vSunCol.w * c); // the planet curve, as the ground
+#endif
 	c = c * Prm.vTrans.rgb + Prm.vInsc.rgb;
 	oColor = vec4(c, 1.0);
 }

@@ -117,7 +117,8 @@ struct PerObjectParams
 	vec4	 vHorW[2];			// not upstream: sun weights of azimuths 0-3 and 4-7
 	vec4	 vVolCld;			// not upstream: 2D cloud fade start, end (m), volume weight
 	vec4	 vCldAtlas;			// not upstream: cloud atlas uv offset (xy) and scale (zw)
-	vec4	 vCldAtlasW;		// not upstream: x 1 with the atlas, y max anisotropy, z 1 when the texture is from file level <= 5
+	vec4	 vCldAtlasW;		// not upstream: x 1 with the atlas, y max anisotropy, z 1 when the texture is at or below the atlas level
+	vec4	 vWaterFx;			// not upstream: water effects, x mask mip for the foam, yzw spare
 };
 
 // uniform extern: vertex shader constants at binding 0 (the pixel shaders read Prm too), pixel shader constants at 2 (Scatter.glsl's are 1)

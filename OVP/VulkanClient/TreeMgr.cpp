@@ -107,7 +107,7 @@ void TreeMgr::MakeMeshes ()
 		{1, 20, VK_FORMAT_R8G8B8A8_UNORM, DECL_TEXCOORD, 2},
 		{1, 24, VK_FORMAT_R8G8B8A8_UNORM, DECL_TEXCOORD, 3}};
 	decl = new VkVertexDecl (el, 7, sizeof (TreeGeom::Vtx), sizeof (Inst), true);
-	sh = new ShaderClass (dev, "Modules/VulkanClient/Tree.glsl", "TreeVS", "TreePS", "Trees", "");
+	sh = new ShaderClass (dev, "Modules/VulkanClient/Tree.glsl", "TreeVS", "TreePS", "Trees", Config->Filmic ? "_FILMIC " : ""); // not upstream: _FILMIC
 }
 
 // cell key: L16 tile row and column, cell column and row inside it

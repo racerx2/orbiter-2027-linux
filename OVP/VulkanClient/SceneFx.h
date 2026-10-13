@@ -29,6 +29,7 @@ public:
 	void AfterOpaque (const std::list<vVessel*> &vessels, VkSurf *target); // after the opaque vessels, main pass
 	void Measure (VkSurf *target);         // after the cockpit, main pass
 	float CloudFade () const { return cloudFade; } // volume weight drawn last frame (the proxy's 2D layer fades by it)
+	float VolShadowFade () const { return volShdFade; } // volume shadow weight drawn last frame (the proxy's 2D cloud shadow fades by it)
 	ShaderClass *TerrainDepth () const { return pTerrain; }
 
 private:
@@ -42,6 +43,10 @@ private:
 	void DepthPass (const std::list<vVessel*> &vessels);
 	void Ssao (VkSurf *target);
 	void Clouds (VkSurf *target, vPlanet *vp, float wV);
+	void CameraRays (D3DXVECTOR4 &camX, D3DXVECTOR4 &camY, D3DXVECTOR4 &camZ) const; // VolCloud.glsl PixelRay's vCamX/Y/Z
+	void VolShadow (VkSurf *target, vPlanet *vp, float wV); // SceneFxShadow.cpp: ground shadows of the volume clouds (design-visual-batch 8)
+	struct VolShadowState;
+	static void FreeVolShadow (VolShadowState *s); // SceneFxShadow.cpp
 
 	oapi::D3D9Client *gc;
 	Scene *scn;
@@ -72,6 +77,8 @@ private:
 	double mapTime = -1e9;
 	size_t mapSig = 0;
 	float cloudFade = 0.0f;
+	VolShadowState *vsh = nullptr;         // SceneFxShadow.cpp's targets and shaders
+	float volShdFade = 0.0f;
 
 	VkTex *tHalf[3] = {};                  // w/2, w/4, w/8 of the scene, RGBA16F
 	VkSurf *sHalf[3] = {};

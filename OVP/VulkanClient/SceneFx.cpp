@@ -75,7 +75,8 @@ void SceneFx::InitClouds ()
 		tVol[i] = new VkTex(dev, std::max(1u, W / 2), std::max(1u, H / 2), 1, VK_FORMAT_R16G16B16A16_SFLOAT, RTUsage);
 		sVol[i] = new VkSurf(tVol[i], 0);
 	}
-	pVol = new ImageProcessing(dev, "Modules/VulkanClient/VolCloud.glsl", "VolMarch", Config->bAtmoQuality ? NULL : "_PERFORMANCE");
+	std::string vf = std::string(Config->bAtmoQuality ? "" : "_PERFORMANCE ") + (Config->Filmic ? "_FILMIC " : "");
+	pVol = new ImageProcessing(dev, "Modules/VulkanClient/VolCloud.glsl", "VolMarch", vf.empty() ? NULL : vf.c_str());
 	pVol->CompileShader("VolBlur");
 	pVol->CompileShader("VolComposite");
 	cbox = std::make_shared<CloudBox>();
@@ -114,6 +115,7 @@ void SceneFx::InitExposure ()
 
 SceneFx::~SceneFx ()
 {
+	FreeVolShadow(vsh);
 	if (poolId) if (GfxPool *p = GfxPool::Peek()) p->Unregister(poolId);
 	SAFE_DELETE(pVol);
 	SAFE_DELETE(tCov);
@@ -253,10 +255,12 @@ void SceneFx::AfterOpaque (const std::list<vVessel*> &vessels, VkSurf *target)
 	clouds = clouds && tShape && tDetail && tCov && mapValid && mapObj == vp->Object();
 	cloudFade = clouds ? wV : 0.0f; // the 2D layer near the camera fades from the next frame on
 	bool ssao = WantSSAO(vessels);
-	if (!ssao && !clouds) return;
+	if (!ssao && !clouds) { volShdFade = 0.0f; return; }
 	VkDev::State st = dev->GetState();
 	DepthPass(vessels);
 	if (ssao) Ssao(target);
+	if (clouds && Config->VolCloudShadows) VolShadow(target, vp, wV); // not upstream: before the clouds, so they cover their own shadow
+	else volShdFade = 0.0f;
 	if (clouds) Clouds(target, vp, wV);
 	gc->PushRenderTarget(target, gc->GetDepthStencil(), RENDERPASS_MAINSCENE); // the main target, viewport and depth back
 	gc->PopRenderTargets();
@@ -317,6 +321,15 @@ void SceneFx::Ssao (VkSurf *target)
 	pAO->Execute(1, true);
 }
 
+void SceneFx::CameraRays (D3DXVECTOR4 &camX, D3DXVECTOR4 &camY, D3DXVECTOR4 &camZ) const
+{
+	const D3DXMATRIX *P = scn->GetProjectionMatrix();
+	const D3DXVECTOR3 *cx = scn->GetCameraX(), *cy = scn->GetCameraY(), *cz = scn->GetCameraZ();
+	camX = D3DXVECTOR4(cx->x, cx->y, cx->z, 1.0f / P->_11);
+	camY = D3DXVECTOR4(cy->x, cy->y, cy->z, 1.0f / P->_22);
+	camZ = D3DXVECTOR4(cz->x, cz->y, cz->z, 0.0f);
+}
+
 // march at half resolution, blur, then over the scene
 void SceneFx::Clouds (VkSurf *target, vPlanet *vp, float wV)
 {
@@ -327,9 +340,8 @@ void SceneFx::Clouds (VkSurf *target, vPlanet *vp, float wV)
 	auto ToGlobal = [&](const double *c) { return mul(R, _V(c[0] * ca + c[2] * sa, c[1], c[2] * ca - c[0] * sa)); }; // cloud frame to global
 	auto V4 = [](const VECTOR3 &v, double w) { return D3DXVECTOR4(float(v.x), float(v.y), float(v.z), float(w)); };
 
-	const D3DXMATRIX *P = scn->GetProjectionMatrix();
-	const D3DXVECTOR3 *cx = scn->GetCameraX(), *cy = scn->GetCameraY(), *cz = scn->GetCameraZ();
-	D3DXVECTOR4 camX(cx->x, cx->y, cx->z, 1.0f / P->_11), camY(cy->x, cy->y, cy->z, 1.0f / P->_22), camZ(cz->x, cz->y, cz->z, 0.0f);
+	D3DXVECTOR4 camX, camY, camZ;
+	CameraRays(camX, camY, camZ);
 	D3DXVECTOR4 mapE = V4(ToGlobal(mapFrame.E), 1.0 / VolCloud::MAPHALF), mapN = V4(ToGlobal(mapFrame.N), 0.0), mapU = V4(ToGlobal(mapFrame.U), 0.0);
 	D3DXVECTOR4 clA = V4(mul(R, _V(ca, 0, -sa)), 0.0), clB = V4(mul(R, _V(0, 1, 0)), 0.0), clC = V4(mul(R, _V(sa, 0, ca)), 0.0);
 	double Rp = vp->GetSize(), base = vp->prm.cloudalt - 1000.0;

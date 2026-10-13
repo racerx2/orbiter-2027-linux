@@ -74,6 +74,8 @@ class D3D9Pad;
 class Scene {
 
 	friend class D3D9CelestialSphere;
+	friend class PostTaa;  // not upstream: TAA reads the camera (design-visual-batch 3)
+	friend class PostLook; // not upstream: haze, shafts, flare, sharpen, vignette (design-visual-batch 4-7)
 
 	// Visual record ===================================================================
 	//
@@ -381,6 +383,8 @@ public:
 	DWORD			GetFrameId() const { return dwFrameId; }
 	float			GetExposure() const { return fExposure; } // not upstream: auto-exposure e of the main pass
 	float			GetVolCloudFade() const;	// not upstream: weight of the volume clouds drawn last frame, fades the proxy's 2D layer near the camera
+	float			GetVolShadowFade() const;	// not upstream: weight of the volume cloud shadow drawn last frame, fades the proxy's 2D cloud shadow near the camera
+	bool			IsJittered() const { return bJitter; } // not upstream: the main pass projection carries the TAA jitter
 
 	const D3DXVECTOR3 *GetCameraX() const { return &Camera.x; }
 	const D3DXVECTOR3 *GetCameraY() const { return &Camera.y; }
@@ -520,6 +524,14 @@ private:
 	class ImageProcessing *pLightBlur, *pBlur, *pGDIOverlay, *pIrradiance, *pVisDepth, *pCreateGlare;
 	class ShaderClass *pLocalCompute, *pRenderGlares;
 	class SceneFx *pFx; // not upstream: SceneDepth, SSAO, volumetric clouds, exposure measure
+	class PostTaa *pTaa = nullptr;   // not upstream: temporal anti-aliasing
+	class PostLook *pLook = nullptr; // not upstream: heat haze and the final look pass
+	bool bJitter = false;            // not upstream: SetCameraAperture adds the TAA jitter
+	float jitX = 0.0f, jitY = 0.0f;  // not upstream: jitter in pixels
+	bool bLabelsLate = false;        // not upstream: with TAA the in-scene labels are drawn after the resolve, unjittered
+	void RenderPlanetLabels (DWORD i, DWORD mkrmode); // not upstream: from the planets loop
+	void RenderSceneArt (DWORD plnmode);              // not upstream: planetarium and exterior art
+	void RenderSurfaceLabels (DWORD mkrmode);         // not upstream: new-style surface labels
 	float fExposure = 1.0f; // not upstream: auto-exposure e of the main pass
 
 	class vVessel *vFocus;

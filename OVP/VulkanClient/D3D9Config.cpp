@@ -111,6 +111,15 @@ void D3D9Config::Reset ()
 	AutoExpMinEV		= -1.5f;
 	AutoExpMaxEV		= 2.5f;
 	CloudAtlas			= 1;
+	LensFlare			= 1;
+	LightShafts			= 1;
+	TAA					= 1;
+	WaterFx				= 1;
+	VolCloudShadows		= 1;
+	Filmic				= 0;
+	Vignette			= 1;
+	Sharpen				= 1;
+	HeatHaze			= 1;
 	
 	GFXIntensity = 0.5;
 	GFXDistance = 0.8;
@@ -226,6 +235,15 @@ bool D3D9Config::ReadParams ()
 	if (oapiReadItem_float (hFile, (char*)"AutoExpMinEV", d))					AutoExpMinEV = float(max(-4.0, min(0.0, d)));
 	if (oapiReadItem_float (hFile, (char*)"AutoExpMaxEV", d))					AutoExpMaxEV = float(max(0.0, min(4.0, d)));
 	if (oapiReadItem_int   (hFile, (char*)"CloudAtlas", i))					CloudAtlas = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"LensFlare", i))					LensFlare = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"LightShafts", i))					LightShafts = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"TAA", i))					TAA = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"WaterFx", i))					WaterFx = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"VolCloudShadows", i))					VolCloudShadows = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"Filmic", i))					Filmic = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"Vignette", i))					Vignette = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"Sharpen", i))					Sharpen = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"HeatHaze", i))					HeatHaze = max(0, min(1, i));
 
 	if (oapiReadItem_float (hFile, (char*)"GFXIntensity", d))					GFXIntensity = max(0.0, min(1.0, d));
 	if (oapiReadItem_float (hFile, (char*)"GFXDistance", d))					GFXDistance = max(0.0, min(1.0, d));
@@ -339,6 +357,15 @@ void D3D9Config::WriteParams ()
 	oapiWriteItem_float (hFile, (char*)"AutoExpMinEV", AutoExpMinEV);
 	oapiWriteItem_float (hFile, (char*)"AutoExpMaxEV", AutoExpMaxEV);
 	oapiWriteItem_int   (hFile, (char*)"CloudAtlas", CloudAtlas);
+	oapiWriteItem_int   (hFile, (char*)"LensFlare", LensFlare);
+	oapiWriteItem_int   (hFile, (char*)"LightShafts", LightShafts);
+	oapiWriteItem_int   (hFile, (char*)"TAA", TAA);
+	oapiWriteItem_int   (hFile, (char*)"WaterFx", WaterFx);
+	oapiWriteItem_int   (hFile, (char*)"VolCloudShadows", VolCloudShadows);
+	oapiWriteItem_int   (hFile, (char*)"Filmic", Filmic);
+	oapiWriteItem_int   (hFile, (char*)"Vignette", Vignette);
+	oapiWriteItem_int   (hFile, (char*)"Sharpen", Sharpen);
+	oapiWriteItem_int   (hFile, (char*)"HeatHaze", HeatHaze);
 
 	oapiWriteItem_string (hFile,(char*) "SolCfg", SolCfg);
 	oapiWriteItem_string (hFile,(char*) "DebugLineFont", DebugFont);

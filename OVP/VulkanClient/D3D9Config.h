@@ -111,6 +111,15 @@ public:
 	float AutoExpMinEV;				// not upstream: -4...0
 	float AutoExpMaxEV;				// not upstream: 0...4
 	int CloudAtlas;					// not upstream: seamless cloud layer and shadows (0,1)
+	int LensFlare;			// not upstream: ghosts and halo along the sun line (0,1)
+	int LightShafts;		// not upstream: screen-space sun shafts in air (0,1)
+	int TAA;				// not upstream: temporal anti-aliasing of the 3D world (0,1)
+	int WaterFx;			// not upstream: waves, glitter, Fresnel, sky and foam on water (0,1)
+	int VolCloudShadows;	// not upstream: ground shadows from the volumetric clouds (0,1)
+	int Filmic;				// not upstream: filmic tone curve (0,1)
+	int Vignette;			// not upstream: soft corner darkening (0,1)
+	int Sharpen;			// not upstream: contrast-adaptive sharpening (0,1)
+	int HeatHaze;			// not upstream: refraction behind engine exhausts (0,1)
 	char *DebugFont;				///< Font face for debug lines (default="Fixed")
 	char *SolCfg;					///< Solar system to use (default="Sol")
 	float GFXIntensity;			///< Post Processing | Light glow intensity (0.0...1.0, default=0.5)

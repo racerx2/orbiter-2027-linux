@@ -73,6 +73,11 @@ set(SourceFiles
 	GfxPool.cpp # not upstream: ground graphics
 	HorizonMap.cpp # not upstream
 	SceneFx.cpp # not upstream
+	SceneFxShadow.cpp # not upstream
+	PostTaa.cpp # not upstream
+	PostMath.cpp # not upstream
+	PostLook.cpp # not upstream
+	LookMath.cpp # not upstream
 	AutoExpo.cpp # not upstream
 	VolCloudMap.cpp # not upstream
 	CloudAtlas.cpp # not upstream

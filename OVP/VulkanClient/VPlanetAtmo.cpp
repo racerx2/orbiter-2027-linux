@@ -123,6 +123,7 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	string blend = "";
 	string flags = "";
 	if (!Config->bAtmoQuality) flags += "_PERFORMANCE ";
+	if (Config->Filmic) flags += "_FILMIC "; // not upstream
 
 	pRender[PLT_GIANT] = new PlanetShader(pDev, "Modules/VulkanClient/NewPlanet.glsl", "GiantVS", "GiantPS", "Giant", flags.c_str());
 	if (Config->CloudAtlas) flags += "_CLOUDATLAS "; // not upstream: seamless cloud alpha
@@ -145,6 +146,7 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	if (Config->ShadowMapMode) flags += "_SHDMAP ";
 	if (Config->EnableMeshDbg) flags += "_DEVTOOLS ";
 	if (!Config->bAtmoQuality) flags += "_PERFORMANCE ";
+	if (Config->Filmic) flags += "_FILMIC "; // not upstream
 
 	pRender[PLT_MARS] = new PlanetShader(pDev, "Modules/VulkanClient/NewPlanet.glsl", "TerrainVS", "TerrainPS", "Mars", (flags + blend).c_str());
 
@@ -160,12 +162,15 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	if (bWater && bRiples) flags += "_RIPPLES ";
 	if (bShadows) flags += "_CLOUDSHD ";
 	if (bShadows && Config->CloudAtlas) flags += "_CLOUDATLAS "; // not upstream: seamless cloud shadows
+	if (bWater && Config->WaterFx) flags += "_WATERFX "; // not upstream: waves, glitter, sky, foam
+	if (bShadows && Config->VolClouds && Config->VolCloudShadows) flags += "_VOLSHD "; // not upstream: the 2D cloud shadow fades under the volume
 	if (bNightLights) flags += "_NIGHTLIGHTS ";
 	if (bLocals) flags += "_LOCALLIGHTS ";
 
 	if (Config->ShadowMapMode) flags += "_SHDMAP ";
 	if (Config->EnableMeshDbg) flags += "_DEVTOOLS ";
 	if (!Config->bAtmoQuality) flags += "_PERFORMANCE ";
+	if (Config->Filmic) flags += "_FILMIC "; // not upstream
 
 	pRender[PLT_EARTH] = new PlanetShader(pDev, "Modules/VulkanClient/NewPlanet.glsl", "TerrainVS", "TerrainPS", "Earth", (flags + blend).c_str());
 }

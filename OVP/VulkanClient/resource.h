@@ -185,6 +185,15 @@
 #define IDC_GG_CLOUDQ                           3042 // not upstream
 #define IDC_GG_TREERANGE                        3043 // not upstream
 #define IDC_GG_CLOUDATLAS                       3044 // not upstream
+#define IDC_FX_FLARE                    3045 // not upstream
+#define IDC_FX_SHAFTS                   3046 // not upstream
+#define IDC_FX_TAA                      3047 // not upstream
+#define IDC_FX_WATER                    3048 // not upstream
+#define IDC_FX_VOLSHD                   3049 // not upstream
+#define IDC_FX_FILMIC                   3050 // not upstream
+#define IDC_FX_VIGNETTE                 3051 // not upstream
+#define IDC_FX_SHARPEN                  3052 // not upstream
+#define IDC_FX_HAZE                     3053 // not upstream
 #define IDC_ATM_S1                              4000
 #define IDC_ATM_S2                              4001
 #define IDC_ATM_S3                              4002

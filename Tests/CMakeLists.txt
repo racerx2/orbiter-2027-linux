@@ -218,6 +218,12 @@ target_include_directories(CloudAtlas.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/Vulka
 target_compile_options(CloudAtlas.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 target_link_options(CloudAtlas.Test PRIVATE -fsanitize=address)
 
+# not upstream: visual batch maths (design-visual-batch 13)
+add_unit_test(PostMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/PostMath.cpp)
+target_include_directories(PostMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+add_unit_test(LookMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/LookMath.cpp)
+target_include_directories(LookMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+
 if (BUILD_ORBITER_SERVER)
 
 	# Sanity check for scenario tests

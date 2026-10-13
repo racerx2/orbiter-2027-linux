@@ -132,10 +132,16 @@ float DepthW(float a, float b)
 	return exp(-abs(a - b) / (0.02 * a + 1.0));
 }
 
+// the view ray through screen uv, geocentric axes
+vec3 PixelRay(vec2 uv)
+{
+	return normalize(vCamX.xyz * ((uv.x * 2.0 - 1.0) * vCamX.w) + vCamY.xyz * ((1.0 - uv.y * 2.0) * vCamY.w) + vCamZ.xyz);
+}
+
 vec4 VolMarch(float x, float y)
 {
 	vec2 uv = vec2(x, y);
-	vec3 d = normalize(vCamX.xyz * ((uv.x * 2.0 - 1.0) * vCamX.w) + vCamY.xyz * ((1.0 - uv.y * 2.0) * vCamY.w) + vCamZ.xyz);
+	vec3 d = PixelRay(uv);
 	vec3 o = Const.CamPos;
 	float t0, t1;
 	if (!Slab(o, d, t0, t1)) return vec4(0.0);
