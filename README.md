@@ -65,6 +65,7 @@ An add-on that makes ships collide with each other, with base buildings and with
 - Structures break apart live in the simulation with NVIDIA Blast, on the CPU (no special graphics card needed).
   Pieces that come off fly away as debris.
 - Crashes into buildings and into the ground do the same damage.
+- The streamed 3D buildings are solid too, with the shape they are drawn with: ships crash into them and can land on their roofs.
 - Damage and debris are saved with the scenario and play back in flight recordings.
 - A ship that absorbs more than 1 kJ per kg is destroyed (it loses thrust when the Damage model option is on).
 

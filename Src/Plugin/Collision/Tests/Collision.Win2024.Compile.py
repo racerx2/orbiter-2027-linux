@@ -17,8 +17,9 @@ BLAST_INCLUDE = ('include', 'include/shared/NvFoundation', 'include/lowlevel', '
 
 def clang_cmd(clang, a, extra, nominmax=True):
     blast = ['-DNDEBUG'] + ['-isystem' + os.path.join(a.blast, d) for d in BLAST_INCLUDE] if a.blast else []  # headers only: the Blast sources are not compiled here
+    bldg = ['-DCOLL_HAVE_BLDGGEOM=1', '-I' + a.bldggeom] if a.bldggeom else []  # bldg: BldgGeom.h after the addon and SDK folders, as the build
     return [clang, '--target=x86_64-w64-mingw32', '-fms-extensions', '-std=c++20', '-fsyntax-only', '-ferror-limit=0',
-            '-DCOLL_ADDON_VERSION="0.0.0"', '-I' + a.src, '-I' + a.headers] + blast + (['-DNOMINMAX'] if nominmax else []) + extra
+            '-DCOLL_ADDON_VERSION="0.0.0"', '-I' + a.src, '-I' + a.headers] + blast + bldg + (['-DNOMINMAX'] if nominmax else []) + extra
 
 
 def errors(out):
@@ -39,6 +40,7 @@ def main():
     ap.add_argument('--src', required=True)
     ap.add_argument('--imgui', default='')  # a folder with imgui.h for the negative case
     ap.add_argument('--blast', default='')  # Extern/Blast, for CollBlastA.cpp
+    ap.add_argument('--bldggeom', default='')  # bldg: OVP/VulkanClient with BldgGeom.h and BldgGeom.cpp; empty: CollBldgA idle, as a build without it
     ap.add_argument('--clang', default='clang++')
     a = ap.parse_args()
     if not shutil.which(a.clang):
@@ -59,6 +61,11 @@ def main():
         fails.append('COLL_HAVE_IMGUI is not 0 with these headers:\n' + macro.stderr)
 
     sources = sorted(glob.glob(os.path.join(a.src, '*.cpp')))
+    if a.bldggeom:  # bldg: the client's BldgGeom.cpp as the addon builds it (M_PI on request)
+        bg = os.path.join(a.bldggeom, 'BldgGeom.cpp')
+        r = subprocess.run([a.clang, '--target=x86_64-w64-mingw32', '-std=c++20', '-fsyntax-only', '-D_USE_MATH_DEFINES', '-I' + a.bldggeom, bg], capture_output=True, text=True)
+        if r.returncode:
+            fails.append('%s does not compile:\n%s' % (bg, r.stderr))
     hit = set()
     ok = 0
     for src in sources:

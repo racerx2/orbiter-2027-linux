@@ -6345,6 +6345,7 @@ OAPIFUNC int  oapiTileStreamWant (OBJHANDLE hBody, int lvl, int ilat, int ilng, 
 OAPIFUNC int  oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax);
 
 // not upstream: streamed 3D buildings, z14 Web Mercator tiles (x east from 180W, y south from the top)
+#define OAPI_TILESTREAM_BLDG 1 // not upstream: TSBLDG, TSBLDGMESH and the oapiTileStreamBldg* calls are there (feature test for add-ons)
 typedef struct { double lat, lng; float hmin, hmax; DWORD v0, nv, i0, ni; } TSBLDG; // anchor (rad), vertex and index ranges
 typedef struct {
 	int z, x, y;

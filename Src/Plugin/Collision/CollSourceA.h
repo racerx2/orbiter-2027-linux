@@ -15,6 +15,7 @@
 #include "CollShape.h"
 
 class CollBaseA;
+class CollBldgA;
 struct CollBaseRec;
 struct CollBaseObjView;
 
@@ -147,6 +148,7 @@ public:
 	CollMeshCache cache;
 	CollTemplateCache tpl;
 	std::unique_ptr<CollBaseA> bases;
+	std::unique_ptr<CollBldgA> bldg;               // bldg: streamed 3D buildings near the vessels
 	bool started = false, absAnim = false;
 	uint32_t frame = 0;
 	CollVesselSrc *Rec (uint32_t id) const;

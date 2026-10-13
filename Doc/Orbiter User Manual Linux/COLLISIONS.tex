@@ -22,6 +22,7 @@ Vessel destruction stops a vessel's engines only when the Launchpad option \text
 \item \textbf{Vessels:} each vessel's collider is made from the triangles of its own meshes, so open cargo bays, gaps and overhangs stay open. Moving parts (doors, gear, robot arms) move their colliders with them. Docked and attached vessels respond as one body, and every impact conserves momentum.
 \item \textbf{Base buildings:} blocks, hangars, tanks and mesh buildings of surface bases collide. Runways, landing pads and objects that follow the terrain do not. A building keeps the energy it has absorbed and is destroyed when it reaches its limit, but it is not drawn dented.
 \item \textbf{The ground:} a vessel that hits the terrain at 5 m/s or more dents and breaks as in a crash with another vessel. Slower touchdowns, landing and rolling are left to Orbiter's own ground contact, as before.
+\item \textbf{Streamed buildings:} the 3D buildings of the tile stream are solid with the shape they are drawn with, gable roofs included: a vessel crashes into their walls and can rest on their roofs. Buildings the graphics client hides next to base structures are not solid. They take no damage and nothing of them is saved; the vessel is damaged as usual. They exist only with the graphics client (the tile stream needs it) and below 2 km above the ground.
 \end{itemize}
 
 \noindent
@@ -75,6 +76,8 @@ The module reads Config/Collision.cfg once at the start of each simulation sessi
 	CollisionGround & Bool & Vessels that hit the terrain dent and break as in a crash with another vessel. Default: TRUE\\
 	\hline\rule{0pt}{2ex}
 	CollisionGroundMinSpeed & Float & Slowest approach to the terrain that damages [m/s]. Default: 5\\
+	\hline\rule{0pt}{2ex}
+	CollisionStreamBuildings & Bool & The streamed 3D buildings are solid: vessels crash into them and rest on their roofs. Default: TRUE\\
 	\hline
 	\multicolumn{3}{|c|}{\rule{0pt}{2ex}\textbf{\textit{Damage}}}\\
 	\hline\rule{0pt}{2ex}
@@ -130,7 +133,7 @@ The module reads Config/Collision.cfg once at the start of each simulation sessi
 	\hline
 	\multicolumn{3}{|c|}{\rule{0pt}{2ex}\textbf{\textit{Advanced and debugging}}}\\
 	\hline\rule{0pt}{2ex}
-	CollisionCfgVersion & Int & Version of the file's defaults, kept by the update. Default: 2\\
+	CollisionCfgVersion & Int & Version of the file's defaults, kept by the update. Default: 3\\
 	\hline\rule{0pt}{2ex}
 	CollisionLog & Int & Detail of the module's lines in Orbiter.log, 0 to 4: 1 events, 2 also state writes, 3 also distances, 4 also poses. Default: 1\\
 	\hline\rule{0pt}{2ex}

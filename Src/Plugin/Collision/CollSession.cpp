@@ -5,6 +5,7 @@
 #include <functional>
 #include "CollSession.h"
 #include "CollBaseA.h"
+#include "CollBldgA.h"
 #include "CollDamageA.h"
 #include "CollDmgHost.h"
 #include "CollBreakA.h"
@@ -106,6 +107,21 @@ public:
 				p.partKey = 0; p.version = sh.version; p.mesh = (uint16_t)o.obj; p.mask = nullptr;
 				B.parts.push_back (p);
 			}
+			out.push_back (B);
+		}
+		if (!geom.bldg) return;
+		for (const CollBldgA::Body &t : geom.bldg->Bodies ()) { // bldg: a streamed building tile, kinematic like a base; its parts the buildings near a vessel
+			Vector pp, pv; Matrix pR;
+			sdk.GlobalState (t.hPlanet, pp, pv, pR);
+			Vector ap = PlanetAcc (t.hPlanet, pv, h);
+			Vector xg = pp + mul (pR, t.rposP);
+			Matrix Rg = pR * t.rrotP;
+			double T = sdk.PlanetPeriod (t.hPlanet);
+			Vector w = std::fabs (T) > 0 ? mul (pR, Vector (0, 1, 0)) * (2.0 * 3.14159265358979323846 / T) : Vector ();
+			CollABody B;
+			CollBldgA::Emit (t, B); // id, kind, rmax, the entry bit of a building gained over a vessel, the parts
+			B.x = xg; B.v = CollSurfaceVel (pp, pv, w, xg); B.q.Set (Rg); B.wb = tmul (Rg, w);
+			CollKinMotion (B, CollSurfaceAcc (pp, ap, w, xg), w, h);
 			out.push_back (B);
 		}
 	}
@@ -357,6 +373,8 @@ std::string CollSession::Who (const CollOwnerRef &o)
 		return h ? sdk->Name ((CollH)h) : "#" + std::to_string (o.vesselId);
 	}
 	if (CollGroundSide (o)) return "ground";
+	std::string s;
+	if (o.base <= -2 && geom->bldg && geom->bldg->Name (o.planet, o.base, o.obj, s)) return s; // bldg: a streamed building
 	const CollBaseObjView *v = geom->bases ? geom->BaseObject (o.planet, o.base, o.obj) : nullptr;
 	if (v) return v->planet + ":" + v->base + " " + v->type + " #" + std::to_string (o.obj);
 	return "building " + std::to_string (o.planet) + ":" + std::to_string (o.base) + " #" + std::to_string (o.obj);
@@ -500,6 +518,7 @@ void CollSession::Close ()
 	}
 	CollLogF ("Collision perf: prestep_mean_us=%.3f prestep_max_us=%.3f e2_us=%.3f e1_us=%.3f e3_us=%.3f post_us=%.3f build_ms=%.3f first_frame_ms=%.3f",
 		t.prestep / f, t.prestepMax, t.e2 / f, t.e1 / f, t.e3 / f, t.post / p, t.build * 1e-3, t.firstFrame * 1e-3);
+	if (geom->bldg) geom->bldg->Summary (); // bldg: tiles loaded, buildings built and freed, load and build times
 	phys->End ();
 	geom->EndSession ();
 	sdk->ForgetAnnotation (); // the core deleted the note before clbkSimulationEnd

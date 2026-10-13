@@ -201,6 +201,12 @@ VISHANDLE *oapiObjectVisualPtr (OBJHANDLE) { WorldCall (); return nullptr; }
 void oapiAnnotationSetPos (NOTEHANDLE, double, double, double, double) {}
 NOTEHANDLE oapiCreateAnnotation (bool, double, const VECTOR3 &) { return nullptr; }
 double oapiSurfaceElevation (OBJHANDLE, double, double) { WorldCall (); return 0; }
+#ifdef OAPI_TILESTREAM_BLDG
+bool oapiTileStreamEnabled (OBJHANDLE) { WorldCall (); return false; } // bldg: streamed buildings, none here
+int oapiTileStreamBldgWant (OBJHANDLE, int, int) { WorldCall (); return -1; }
+TSBLDGMESH *oapiTileStreamBldgLoad (OBJHANDLE, int, int) { WorldCall (); return nullptr; }
+void oapiTileStreamBldgFree (TSBLDGMESH *) { Bug ("oapiTileStreamBldgFree of a mesh never loaded"); }
+#endif
 void oapiAnnotationSetText (NOTEHANDLE, char *) {}
 void oapiGetRotationMatrix (OBJHANDLE, MATRIX3 *m) { WorldCall (); *m = _M (1, 0, 0, 0, 1, 0, 0, 0, 1); }
 double oapiGetTimeAcceleration () { WorldCall (); return 1; }

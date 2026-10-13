@@ -34,6 +34,27 @@ struct CollStateWrite { CollH rbody; Vector rpos, rvel, vrot, arot; }; // DefSet
 struct CollTplGroup { const CollVtx *vtx; const uint16_t *idx; uint32_t nvtx, nidx, usrflag; }; // MESHGROUPEX view, no copy
 struct CollPortInfo { Vector pos, dir, rot; CollH mate; };          // vessel frame
 struct CollAttInfo  { Vector pos, dir, rot; CollH mate; char id[9]; };
+struct CollBldgRec { double lat, lng; float hmin, hmax; uint32_t v0, nv, i0, ni; }; // bldg: one streamed building as TSBLDG (anchor rad, ranges)
+struct CollBldgTile {                        // bldg: a z14 tile of streamed buildings; vtx and idx view the core's TSBLDGMESH until BldgFree
+	int x = 0, y = 0;
+	uint32_t nv = 0, ni = 0;
+	std::vector<CollBldgRec> b;              // the building table, copied
+	const float *vtx = nullptr;              // 6 floats a vertex: x east, y up, z north (m from its anchor), normal
+	const uint32_t *idx = nullptr;           // triangles relative to the building's v0, clockwise from the front
+	const void *handle = nullptr;            // the TSBLDGMESH, NULL once freed
+	CollBldgTile () = default;
+	CollBldgTile (const CollBldgTile &) = delete;            // it owns the handle: a copy freed too would free the mesh twice
+	CollBldgTile &operator= (const CollBldgTile &) = delete;
+	CollBldgTile (CollBldgTile &&o) noexcept { *this = static_cast<CollBldgTile &&> (o); }
+	CollBldgTile &operator= (CollBldgTile &&o) noexcept      // the source keeps no view and no handle
+	{
+		if (this == &o) return *this;
+		x = o.x; y = o.y; nv = o.nv; ni = o.ni; b.swap (o.b); o.b.clear ();
+		vtx = o.vtx; idx = o.idx; handle = o.handle;
+		o.nv = o.ni = 0; o.vtx = nullptr; o.idx = nullptr; o.handle = nullptr;
+		return *this;
+	}
+};
 
 typedef void (*CollFailFn) (const char *where, const char *what);
 inline CollFailFn g_collFail = nullptr;      // E4: logs once and turns the session off; NULL: the error is dropped
@@ -211,6 +232,11 @@ public: // dmg3 area F
 	virtual bool   FxDel (CollH, CollH) { return false; }            // DelExhaustStream (v, ps); false: unknown or detached handle
 	virtual double FxAtm (CollH) { return 0; }                       // GetAtmDensity [kg/m^3]
 	virtual bool   FxGround (CollH, Vector &vLoc, Vector &upLoc, double &alt) { vLoc = upLoc = Vector (); alt = 0; return false; } // GroundContact; ground speed and up in the vessel frame, altitude over ground
+public: // bldg: streamed 3D buildings (OAPI_TILESTREAM_BLDG); the defaults are a core without them
+	virtual int    BldgWant (CollH, int, int) { return -1; }          // oapiTileStreamBldgWant: 1 file there, 0 wanted, -1 not now (offline and not on disk, or none)
+	virtual bool   BldgLoad (CollH, int, int, CollBldgTile &) { return false; } // oapiTileStreamBldgLoad; false if not there
+	virtual void   BldgFree (CollBldgTile &t) { t = CollBldgTile (); } // oapiTileStreamBldgFree; the views go
+	virtual bool   BldgStream (CollH) { return false; }               // oapiTileStreamEnabled: the planet's tiles are streamed
 private:
 	CollSdkCount cnt;
 	double noteUntil = -1;                                      // system time the annotation expires, -1 none

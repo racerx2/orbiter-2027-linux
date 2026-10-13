@@ -417,6 +417,33 @@ public: // dmg3 area F
 		alt = v->GetAltitude (ALTMODE_GROUND);
 		return v->GroundContact ();
 	}
+public: // bldg: streamed 3D buildings, only with a core that has them (as COLL_HAVE_IMGUI keys on OAPINOTIF_WARNING)
+#ifdef OAPI_TILESTREAM_BLDG
+	int BldgWant (CollH planet, int x, int y) override { return oapiTileStreamBldgWant (H (planet), x, y); }
+	bool BldgStream (CollH planet) override { return oapiTileStreamEnabled (H (planet)); }
+	bool BldgLoad (CollH planet, int x, int y, CollBldgTile &out) override
+	{
+		static_assert (sizeof (DWORD) == sizeof (uint32_t), "TSBLDGMESH indices are 32 bit");
+		out = CollBldgTile ();
+		TSBLDGMESH *m = oapiTileStreamBldgLoad (H (planet), x, y);
+		if (!m) return false;
+		try {
+			out.b.resize (m->nb);
+			for (DWORD i = 0; i < m->nb; i++) {
+				const TSBLDG &s = m->b[i];
+				out.b[i] = { s.lat, s.lng, s.hmin, s.hmax, (uint32_t)s.v0, (uint32_t)s.nv, (uint32_t)s.i0, (uint32_t)s.ni };
+			}
+		} catch (...) { oapiTileStreamBldgFree (m); out = CollBldgTile (); throw; }
+		out.x = x; out.y = y; out.nv = (uint32_t)m->nv; out.ni = (uint32_t)m->ni;
+		out.vtx = m->vtx; out.idx = (const uint32_t *)m->idx; out.handle = m;
+		return true;
+	}
+	void BldgFree (CollBldgTile &t) override
+	{
+		if (t.handle) oapiTileStreamBldgFree ((TSBLDGMESH *)t.handle);
+		t = CollBldgTile ();
+	}
+#endif
 };
 } // namespace
 

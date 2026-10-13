@@ -7,6 +7,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <tuple>
 #include <vector>
 #include "CollSdk.h"
 #include "CollGeom.h"
@@ -267,5 +268,30 @@ public: // ground area G
 	double periodG = 86164;                    // PlanetPeriod of every body; 0: not rotating
 	double Elevation (CollH planet, double lng, double lat) override { elevCalls++; return elevG ? elevG (lng, lat) : ((const Body *)planet)->elev; }
 	double PlanetPeriod (CollH) override { return periodG; }
+public: // bldg area B: streamed building tiles "on disk" by planet, x, y
+	struct BldgT { std::vector<CollBldgRec> b; std::vector<float> vtx; std::vector<uint32_t> idx; int held = 0; };
+	std::map<std::tuple<CollH, int, int>, BldgT> bldgB;
+	std::vector<CollH> bldgBodyB;                  // planets whose stream serves buildings
+	int bldgWantB = 0, bldgLoadB = 0, bldgFreeB = 0, bldgStreamB = 0;
+	bool Serves (CollH p) const { for (CollH b : bldgBodyB) if (b == p) return true; return false; }
+	int BldgWant (CollH p, int x, int y) override { bldgWantB++; return !Serves (p) ? -1 : bldgB.count ({ p, x, y }) ? 1 : 0; }
+	bool BldgStream (CollH p) override { bldgStreamB++; return Serves (p); }
+	bool BldgLoad (CollH p, int x, int y, CollBldgTile &out) override
+	{
+		bldgLoadB++;
+		out = CollBldgTile ();
+		auto it = bldgB.find ({ p, x, y });
+		if (!Serves (p) || it == bldgB.end ()) return false;
+		BldgT &t = it->second;
+		t.held++;
+		out.x = x; out.y = y; out.b = t.b; out.nv = (uint32_t)(t.vtx.size () / 6); out.ni = (uint32_t)t.idx.size ();
+		out.vtx = t.vtx.data (); out.idx = t.idx.data (); out.handle = &t;
+		return true;
+	}
+	void BldgFree (CollBldgTile &t) override
+	{
+		if (t.handle) { bldgFreeB++; ((BldgT *)t.handle)->held--; }
+		t = CollBldgTile ();
+	}
 };
 #endif
