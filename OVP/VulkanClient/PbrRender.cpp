@@ -47,7 +47,7 @@ static std::map<std::pair<std::string, bool>, std::weak_ptr<VkTex>> texCache;
 
 // values the PBR effect reads from the legacy effect, where the client already sets them
 static const char *SharedNames[] = { "kernel", "gLVP", "gVP", "gColor", "gAtmColor", "gRadius", "gSHD", "gCameraPos", "gNorth", "gEast",
-	"gSun", "gLights", "gLightsEnabled", "gShadowsEnabled", "gProxySize", "gInvProxySize", "gGlowConst" };
+	"gSun", "gLights", "gLightsEnabled", "gShadowsEnabled", "gProxySize", "gInvProxySize", "gGlowConst", "gExposure" };
 
 static const char *SlotSamplers[PBR_SLOT_COUNT] = { "BaseS", "MetalRoughS", "NormalS", "OcclusionS", "EmissiveS", "SpecularS", "SpecularColorS",
 	"TransmissionS", "ThicknessS", "ClearcoatS", "ClearcoatRoughS", "ClearcoatNormalS", "SheenColorS", "SheenRoughS", "AnisoS",

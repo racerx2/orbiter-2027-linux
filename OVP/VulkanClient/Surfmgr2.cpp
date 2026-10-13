@@ -23,9 +23,22 @@
 #include "gcCore.h"
 #include "D3D9Surface.h"
 #include "VkTexFile.h"
+#include "GfxPool.h" // not upstream
+#include <deque> // not upstream
+#include <filesystem> // not upstream
+#include <mutex> // not upstream
+#include <sys/stat.h> // not upstream
 
 // =======================================================================
 extern void FilterElevationGraphics(OBJHANDLE hPlanet, int lvl, int ilat, int ilng, float *elev);
+
+// not upstream: g++, specializations declared before their use below
+template<> SurfTile *TileManager2<SurfTile>::NodeAt (int ilvl, int ilat, int ilng);
+template<> void TileManager2<SurfTile>::HorizonRequest (SurfTile *o, double dist);
+template<> void TileManager2<SurfTile>::HorizonSubmit ();
+template<> void TileManager2<SurfTile>::HorizonUpload ();
+template<> void TileManager2<SurfTile>::RenderDepth (ShaderClass *sh, const D3DXMATRIX &mVP);
+template<> std::shared_ptr<const Horizon::Map> TileManager2<SurfTile>::HorizonAt (double lat, double lng, double bnd[4]);
 
 #pragma pack(push, 4)
 struct LightF
@@ -67,6 +80,15 @@ static bool ElevNodeOk (const BYTE *buf, DWORD ndata, int ndat) // not upstream:
 	return ndata - (DWORD)hdr.hdrsize >= (DWORD)ndat * (hdr.dtype == 8 ? 1 : hdr.dtype == -16 ? 2 : 0);
 }
 
+static uint64_t FileStamp (const char *path) // not upstream: inode, mtime and size, 0 when missing; each new stream file is renamed into place
+{
+	struct stat st;
+	if (stat(oapiResolvePath(path).c_str(), &st) != 0) return 0;
+	uint64_t t = (uint64_t)st.st_mtim.tv_sec * 1000000000u + (uint64_t)st.st_mtim.tv_nsec;
+	uint64_t h = (t * 1000003u + (uint64_t)st.st_size) ^ ((uint64_t)st.st_ino * 0x9E3779B97F4A7C15ull);
+	return h ? h : 1;
+}
+
 
 // =======================================================================
 // =======================================================================
@@ -76,10 +98,24 @@ SurfTile::SurfTile (TileManager2Base *_mgr, int _lvl, int _ilat, int _ilng)
 {
 	smgr = static_cast<TileManager2<SurfTile>* > (_mgr);
 	node = 0;
+	streamWait = false; // not upstream
+	looseTex = false; // not upstream
+	texStamp = 0; // not upstream
+	touchT = -1e9; // not upstream
+	touchF = 0; // not upstream
+	static std::atomic<unsigned> horGens{0}; // not upstream: horizon maps
+	elevReady.store(false);
+	horGen = ++horGens;
+	htex = NULL;
+	horAsk = -1.0;
+	horCheck = 0.0;
+	horMissing = 0;
+	horRedone = false;
 	elev = NULL;
 	ggelev = NULL;
 	elev_file = NULL;
 	ltex = NULL;
+	ctex = NULL; // not upstream
 	has_elevfile = false;
 	label = NULL;
 	imicrolvl = 14;	// Water resolution level
@@ -99,6 +135,8 @@ SurfTile::~SurfTile ()
 	if (elev_file) g_pMemgr_i->Free(elev_file);	
 	if (tex && owntex) g_pTexmgr_tt->Free(tex);
 	if (ltex && owntex) g_pTexmgr_tt->Free(ltex);
+	if (ctex && owntex) g_pTexmgr_tt->Free(ctex); // not upstream
+	delete htex; // not upstream
 		
 	DeleteLabels();
 }
@@ -114,6 +152,7 @@ void SurfTile::PreLoad()
 
 	assert(tex == nullptr);
 	assert(ltex == nullptr);
+	assert(ctex == nullptr); // not upstream
 
 	VkDev *pDev = mgr->Dev();
 	VkPixels *pSysSrf = nullptr; // D3DPOOL_SYSTEMMEM texture
@@ -124,10 +163,14 @@ void SurfTile::PreLoad()
 
 	// Load surface texture
 
+	uint64_t stamp = 0; // not upstream
 	if (smgr->DoLoadIndividualFiles(0)) { // try loading from individual tile file
 		snprintf(path, MAX_PATH, "%s\\Surf\\%02d\\%06d\\%06d.dds", mgr->DataRootDir().c_str(), lvl + 4, ilat, ilng);
+		if (smgr->bStream) stamp = FileStamp(path); // not upstream: before the read, so a rewrite after it is not taken as read
 		LoadTextureFile(path, &pSysSrf);
+		if (pSysSrf && smgr->bStream && lvl >= 0) oapiTileStreamWant(mgr->Cbody(), lvl + 4, ilat, ilng, 2); // not upstream: in use, the size cap takes it later
 	}
+	bool loose = pSysSrf != nullptr; // not upstream
 	if (!pSysSrf && smgr->ZTreeManager(0)) { // try loading from compressed archive
 		BYTE *buf;
 		DWORD ndata = smgr->ZTreeManager(0)->ReadData(lvl+4, ilat, ilng, &buf);
@@ -136,6 +179,17 @@ void SurfTile::PreLoad()
 			smgr->ZTreeManager(0)->ReleaseData(buf);
 		}
 	}
+	if (!pSysSrf && smgr->bStream && lvl >= 0) { // not upstream: the core's tile stream writes this tile into the tile folder
+		int r = oapiTileStreamWant(mgr->Cbody(), lvl + 4, ilat, ilng, 0);
+		if (r > 0) { // arrived since the read above
+			snprintf(path, MAX_PATH, "%s\\Surf\\%02d\\%06d\\%06d.dds", mgr->DataRootDir().c_str(), lvl + 4, ilat, ilng);
+			stamp = FileStamp(path);
+			LoadTextureFile(path, &pSysSrf);
+			if (!pSysSrf) r = oapiTileStreamWant(mgr->Cbody(), lvl + 4, ilat, ilng, 1);
+			loose = pSysSrf != nullptr;
+		}
+		streamWait = (r >= 0 && !pSysSrf);
+	}
 	
 	if (CreateTexture(pDev, pSysSrf, &tex) != true) {
 		if (GetParentSubTexRange(&texrange)) {
@@ -143,9 +197,20 @@ void SurfTile::PreLoad()
 			owntex = false;
 		}
 	}
+	looseTex = smgr->bStream && loose && tex && owntex; // not upstream: a rewrite of the loose file is swapped in (StreamApply)
+	texStamp = looseTex ? stamp : 0; // not upstream
 	
 	SAFE_DELETE(pSysSrf); // Release
 
+	if (smgr->bStream && tex) { // not upstream: the tile stream's land class weights go with the Surf tile, L >= 12
+		if (owntex && lvl + 4 >= 12) {
+			snprintf(path, MAX_PATH, "%s\\Class\\%02d\\%06d\\%06d.dds", mgr->DataRootDir().c_str(), lvl + 4, ilat, ilng);
+			LoadTextureFile(path, &pSysSrf);
+			if (pSysSrf) CreateTexture(pDev, pSysSrf, &ctex);
+			SAFE_DELETE(pSysSrf);
+		}
+		else if (!owntex && node && node->Parent()) ctex = getSurfParent()->ctex;
+	}
 
 	// Load mask texture
 
@@ -580,6 +645,7 @@ bool SurfTile::LoadElevationData ()
 	if (has_elevfile) LogClr("Teal", "TileCreatedFromFile: Level=%d, ilat=%d, ilng=%d", lvl, ilat, ilng);
 	else LogClr("Teal", "TileInterpolatedFromParent: Level=%d, ilat=%d, ilng=%d", lvl, ilat, ilng);
 
+	if (elev) elevReady.store(true, std::memory_order_release); // not upstream: horizon jobs copy it from the render thread
 	return (elev != 0);
 }
 
@@ -741,6 +807,55 @@ double SurfTile::GetCameraDistance()
 }
 
 // -----------------------------------------------------------------------
+// not upstream: horizon maps (design-ground-graphics 2)
+
+SurfTile *SurfTile::ElevOwner ()
+{
+	int dl = 3;
+	while (1 << (8 - dl) < mgr->GridRes()) dl--;
+	if (lvl < dl) return NULL; // GlobalTile path, not in the tree
+	QuadTreeNode<SurfTile> *a = node;
+	for (int blockRes = TILE_FILERES; blockRes > mgr->GridRes() && a; blockRes >>= 1) a = a->Parent();
+	return a ? a->Entry() : NULL;
+}
+
+void SurfTile::HorizonParams ()
+{
+	vPlanet *vp = mgr->GetPlanet();
+	FlowControlPS *fc = vp->GetFlowControl();
+	fc->bHorizon = false;
+	if (!Config->HorizonShadows || !mgr->Cprm().elevMode) return;
+	SurfTile *o = ElevOwner();
+	if (!o || o->lvl + 4 < 8) return;
+	if (mgr->GetScene()->GetRenderPass() == RENDERPASS_MAINSCENE) {
+		double d = GetCameraDistance();
+		if (d < 400e3) smgr->HorizonRequest(o, d);
+	}
+	if (!o->htex) return;
+
+	ShaderParams *sp = vp->GetTerrainParams();
+	int nb = 1 << (lvl - o->lvl), mask = nb - 1;
+	double sc = 1.0 / nb, u0 = (ilng & mask) * sc, v0 = (ilat & mask) * sc; // v0 from the north
+	const double W = Horizon::W, N = Horizon::N;
+	sp->vHorOff = FVECTOR4(float((u0 * 256.0 + 0.5) / W), float((v0 * 256.0 + 0.5) / N), float(sc * 256.0 / W), float(sc * 256.0 / N));
+
+	double lat = 0.5 * (bnd.minlat + bnd.maxlat), lng = 0.5 * (bnd.minlng + bnd.maxlng);
+	double sl = sin(lat), cl = cos(lat), sg = sin(lng), cg = cos(lng);
+	VECTOR3 E = _V(-sg, 0.0, cg), Nr = _V(-sl * cg, cl, -sl * sg); // planet frame, as Tile::Centre
+	const VECTOR3 &s = mgr->prm.sdir;
+	double k = atan2(dotp(s, Nr), dotp(s, E)) / (PI / 4.0);
+	if (k < 0.0) k += 8.0;
+	int k0 = int(k) % 8, k1 = (k0 + 1) % 8;
+	float f = float(k - floor(k)), w[8] = {};
+	w[k0] += 1.0f - f;
+	w[k1] += f;
+	sp->vHorW[0] = FVECTOR4(w[0], w[1], w[2], w[3]);
+	sp->vHorW[1] = FVECTOR4(w[4], w[5], w[6], w[7]);
+	mgr->GetShader()->SetTexture("tHorizon", o->htex, IPF_CLAMP | IPF_LINEAR);
+	fc->bHorizon = true;
+}
+
+// -----------------------------------------------------------------------
 
 FVECTOR4 SurfTile::MicroTexRange(SurfTile *pT, int ml) const
 {
@@ -780,6 +895,23 @@ void SurfTile::StepIn ()
 void SurfTile::Render ()
 {
 	Tile::Render();
+
+	if (smgr->bStream) { // not upstream: keep the tile stream's wants fresh for this tile and the ancestors whose texture it borrows
+		DWORD pass = mgr->GetScene()->GetRenderPass();
+		if (pass == RENDERPASS_MAINSCENE || pass == RENDERPASS_CUSTOMCAM) {
+			for (SurfTile *t = this; t; t = t->getSurfParent()) {
+				if (t->touchF == smgr->streamFrame) break; // walked this frame from another descendant, and its ancestors with it
+				t->touchF = smgr->streamFrame;
+				if (t->streamWait && smgr->streamNow - t->touchT >= 0.25) { // well inside the core's 2 s stale time
+					t->touchT = smgr->streamNow;
+					int r = oapiTileStreamWant(mgr->Cbody(), t->lvl + 4, t->ilat, t->ilng, 0);
+					if (r > 0) smgr->StreamQueue(t->lvl + 4, t->ilat, t->ilng);
+					else if (r < 0) t->streamWait = false;
+				}
+				if (t->owntex) break;
+			}
+		}
+	}
 
 	if (!mesh) return; // DEBUG : TEMPORARY
 
@@ -986,12 +1118,25 @@ void SurfTile::Render ()
 		else pShader->SetTexture(pShader->tMask, NULL, IPF_CLAMP | IPF_ANISOTROPIC, Config->Anisotrophy);
 	}
 
+	fc->bClass = false; // not upstream: land class detail where the stream made a Class tile and no micro texture is set
+	if (ctex && tex && !has_microtex && vPlanet->HasTextures() && vPlanet->CameraAltitude() < 20e3) {
+		double rep = height * vPlanet->GetSize() / 8.0; // 8 m cells, a power of two per tile: the same lattice on every level
+		rep = std::max(1.0, std::exp2(std::round(std::log2(std::max(rep, 1.0)))));
+		double P = 16384.0;
+		sp->vMSc[0] = FVECTOR4(float(rep), float(rep), float(std::fmod(ilng * rep, P)), float(std::fmod(ilat * rep, P)));
+		pShader->SetTexture("tClass", ctex, IPF_CLAMP | IPF_LINEAR);
+		fc->bClass = true;
+	}
+
+	HorizonParams(); // not upstream: terrain shadows from the owner's horizon map
+
 	if (tex == nullptr || !vPlanet->HasTextures())
 	{
 		fc->bTexture = false;
 		fc->bMask = false;
 		fc->bCloudShd = false;
 		fc->bMicroTex = false;
+		fc->bClass = false; // not upstream
 	}
 
 	sp->vTexOff = GetTexRangeDX(&texrange);
@@ -1127,6 +1272,9 @@ void SurfTile::Render ()
 	pDev->SetStreamSource(0, mesh->pVB, 0, sizeof(VERTEX_2TEX));
 	pDev->SetIndices(mesh->pIB);
 	pDev->DrawIndexedPrimitive(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 0, 0, VkPrimVerts(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, mesh->nf));
+
+	// not upstream: kept for the SceneFx distance pass, within 150 km
+	if (smgr->depthRec && D3DXVec3Length(&bs_pos) - mesh->bsRad < 150e3f) smgr->depthTiles.push_back({this, mWorld});
 	
 	// Render tile bounding box
 	//
@@ -1372,6 +1520,317 @@ void SurfTile::RenderLabels(D3D9Pad *skp, oapi::Font **labelfont, int *fontidx)
 
 
 // =======================================================================
+// not upstream: tiles the core's tile stream has written (TileStream.cpp) replace the ancestor texture a tile shows
+
+static QuadTreeNode<SurfTile> *StreamNode (QuadTreeNode<SurfTile> *tree, int L, int ilat, int ilng)
+{
+	int lvl = L - 4;
+	if (lvl < 0 || (ilng >> lvl) > 1) return NULL;
+	QuadTreeNode<SurfTile> *n = &tree[ilng >> lvl];
+	for (int d = 1; n && d <= lvl; d++)
+		n = n->Child(((ilat >> (lvl - d)) & 1) * 2 + ((ilng >> (lvl - d)) & 1)); // LoadChildNode's index
+	return n && n->Entry() ? n : NULL;
+}
+
+// render thread, outside the loader mutex: the disk reads
+template<>
+void TileManager2<SurfTile>::StreamRead ()
+{
+	int k[3 * 16];
+	int n = oapiTileStreamDone(Cbody(), k, 16);
+	for (int i = 0; i < n; i++) StreamQueue(k[3 * i], k[3 * i + 1], k[3 * i + 2]);
+	SurfTile *t0 = tiletree[0].Entry(); // a root always exists; LoadTextureFile only reads its mipmap flag
+	bool mask = cprm.bSpecular || cprm.bLights;
+	char path[MAX_PATH];
+	int taken = 0;
+	for (StreamLoad &s : streamKeys) {
+		if (s.surf || !s.checked) continue; // StreamApply checks first that the tile can take it
+		if (taken == 4) break;
+		if (!StreamNode(tiletree, s.L, s.ilat, s.ilng)) { s.L = 0; continue; } // the tree only changes on this thread
+		snprintf(path, MAX_PATH, "%s\\Surf\\%02d\\%06d\\%06d.dds", DataRootDir().c_str(), s.L, s.ilat, s.ilng);
+		s.stamp = FileStamp(path);
+		t0->LoadTextureFile(path, &s.surf);
+		if (!s.surf) {
+			oapiTileStreamWant(Cbody(), s.L, s.ilat, s.ilng, 1);
+			s.L = 0;
+			continue;
+		}
+		if (mask) {
+			snprintf(path, MAX_PATH, "%s\\Mask\\%02d\\%06d\\%06d.dds", DataRootDir().c_str(), s.L, s.ilat, s.ilng);
+			t0->LoadTextureFile(path, &s.mask);
+			if (!s.mask) { // a streamed Surf always comes with its Mask: have the pair made again
+				oapiTileStreamWant(Cbody(), s.L, s.ilat, s.ilng, 1);
+				delete s.surf;
+				s.surf = NULL;
+				s.L = 0;
+				continue;
+			}
+		}
+		if (s.L >= 12) { // land class weights, when the stream made them
+			snprintf(path, MAX_PATH, "%s\\Class\\%02d\\%06d\\%06d.dds", DataRootDir().c_str(), s.L, s.ilat, s.ilng);
+			t0->LoadTextureFile(path, &s.cls);
+		}
+		taken++;
+	}
+	streamKeys.erase(std::remove_if(streamKeys.begin(), streamKeys.end(), [](const StreamLoad &s) { return s.L == 0; }), streamKeys.end());
+}
+
+// under the loader mutex: swap the texture in, and point the descendants that borrowed the old one at it
+template<>
+void TileManager2<SurfTile>::StreamApply ()
+{
+	static const TEXCRDRANGE2 full = {0, 1, 0, 1};
+	std::vector<StreamLoad> keep;
+	for (StreamLoad &s : streamKeys) {
+		QuadTreeNode<SurfTile> *node = StreamNode(tiletree, s.L, s.ilat, s.ilng);
+		SurfTile *t = node ? node->Entry() : NULL;
+		bool use = t && (t->state & TILE_VALID) && (t->streamWait || t->looseTex); // others read the file in their own PreLoad
+		if (!s.surf) { // not read yet: only what can be applied is read
+			if (use && !s.checked && !t->streamWait && t->texStamp) { // a Done key for the very file the tile read in PreLoad is dropped
+				char path[MAX_PATH];
+				snprintf(path, MAX_PATH, "%s\\Surf\\%02d\\%06d\\%06d.dds", DataRootDir().c_str(), s.L, s.ilat, s.ilng);
+				if (FileStamp(path) == t->texStamp) use = false;
+			}
+			if (use) { s.checked = true; keep.push_back(s); }
+			continue;
+		}
+		std::vector<QuadTreeNode<SurfTile>*> set;
+		if (use) {
+			set.push_back(node);
+			for (size_t i = 0; i < set.size(); i++)
+				for (int c = 0; c < 4; c++) {
+					QuadTreeNode<SurfTile> *ch = set[i]->Child(c);
+					SurfTile *e = ch ? ch->Entry() : NULL;
+					if (e && (e->state & TILE_VALID) && !e->owntex) set.push_back(ch);
+				}
+			bool busy = false; // a loading child reads its parent's texture without the mutex
+			for (QuadTreeNode<SurfTile> *m : set)
+				for (int c = 0; c < 4; c++) {
+					QuadTreeNode<SurfTile> *ch = m->Child(c);
+					if (ch && ch->Entry() && ch->Entry()->state == Tile::Loading) busy = true;
+				}
+			if (busy) { keep.push_back(s); continue; }
+		}
+		VkTex *nt = NULL, *nl = NULL, *nc = NULL;
+		if (use && t->CreateTexture(Dev(), s.surf, &nt)) {
+			if (s.mask) t->CreateTexture(Dev(), s.mask, &nl);
+			if (s.cls) t->CreateTexture(Dev(), s.cls, &nc);
+			if (t->owntex) {
+				if (t->tex) g_pTexmgr_tt->Free(t->tex);
+				if (t->ltex) g_pTexmgr_tt->Free(t->ltex);
+				if (t->ctex) g_pTexmgr_tt->Free(t->ctex);
+			}
+			t->tex = nt;
+			t->ltex = nl;
+			t->ctex = nc;
+			t->owntex = true;
+			t->texrange = full;
+			t->streamWait = false;
+			t->looseTex = true;
+			t->texStamp = s.stamp;
+			for (size_t i = 1; i < set.size(); i++) {
+				SurfTile *e = set[i]->Entry(), *p = e->getSurfParent();
+				e->tex = p->tex;
+				e->ltex = p->ltex;
+				e->ctex = p->ctex;
+				e->GetParentSubTexRange(&e->texrange);
+			}
+		}
+		delete s.surf;
+		delete s.mask;
+		delete s.cls;
+	}
+	streamKeys.swap(keep);
+}
+
+// =======================================================================
+// not upstream: horizon map jobs (design-ground-graphics 2.3)
+
+struct HorizonState {
+	struct Result { int lvl, ilat, ilng; unsigned gen; std::shared_ptr<const Horizon::Map> map; int missing; bool redo; }; // map NULL: dropped
+	struct Box { std::mutex mx; std::deque<Result> done; };
+	int id = 0;
+	std::shared_ptr<Box> box = std::make_shared<Box>();
+	SurfTile *cand = nullptr; // this main pass's nearest owner wanting a job
+	double candPrio = 0.0;
+	bool candRedo = false;
+};
+
+void HorizonStateFree (HorizonState *h)
+{
+	if (!h) return;
+	if (GfxPool *p = GfxPool::Peek()) p->Unregister(h->id);
+	delete h;
+}
+
+template<>
+SurfTile *TileManager2<SurfTile>::NodeAt (int ilvl, int ilat, int ilng)
+{
+	if (ilvl < 0 || ilat < 0 || ilat >= (1 << ilvl)) return NULL;
+	int nlng = 2 << ilvl;
+	ilng = ((ilng % nlng) + nlng) % nlng;
+	QuadTreeNode<SurfTile> *n = &tiletree[ilng >> ilvl];
+	for (int d = 1; n && d <= ilvl; d++)
+		n = n->Child(((ilat >> (ilvl - d)) & 1) * 2 + ((ilng >> (ilvl - d)) & 1)); // LoadChildNode's index
+	return n ? n->Entry() : NULL;
+}
+
+template<>
+void TileManager2<SurfTile>::HorizonRequest (SurfTile *o, double dist)
+{
+	if (!horizon) {
+		horizon = new HorizonState;
+		horizon->id = GfxPool::Get().Register();
+	}
+	auto ready = [](const SurfTile *t) { return t && t->elevReady.load(std::memory_order_acquire) && t->elev; };
+	double now = oapiGetSysTime();
+	bool redo = false;
+	if (o->hor) {
+		if (!o->horMissing || o->horRedone || o->horAsk >= 0.0 || now - o->horCheck < 2.0) return;
+		o->horCheck = now;
+		for (int a = -1; a <= 1; a++)
+			for (int b = -1; b <= 1; b++) {
+				if ((!a && !b) || o->ilat + a < 0 || o->ilat + a >= (1 << o->lvl)) continue;
+				if (!ready(NodeAt(o->lvl, o->ilat + a, o->ilng + b))) return;
+			}
+		redo = true;
+	}
+	else if (o->horAsk >= 0.0 && now - o->horAsk < 10.0) return; // pending; a lost job expires
+	if (!ready(o)) return;
+	double prio = dist + (redo ? 1e9 : 0.0);
+	if (horizon->cand && prio >= horizon->candPrio) return;
+	horizon->cand = o;
+	horizon->candPrio = prio;
+	horizon->candRedo = redo;
+}
+
+template<>
+void TileManager2<SurfTile>::HorizonSubmit ()
+{
+	if (!horizon || !horizon->cand) return;
+	SurfTile *o = horizon->cand;
+	double prio = horizon->candPrio, now = oapiGetSysTime();
+	bool redo = horizon->candRedo;
+	horizon->cand = nullptr;
+	auto ready = [](const SurfTile *t) { return t && t->elevReady.load(std::memory_order_acquire) && t->elev; };
+	if (!GfxPool::Get().Wants(GfxPool::HORIZON, prio)) return; // queue full of nearer ones: no grids copied to be dropped
+
+	auto in = std::make_shared<Horizon::Input>();
+	auto grid = [](const SurfTile *t) {
+		Horizon::Grid g;
+		g.lvl = t->lvl;
+		g.minlat = t->bnd.minlat; g.maxlat = t->bnd.maxlat;
+		g.minlng = t->bnd.minlng; g.maxlng = t->bnd.maxlng;
+		g.h.assign(t->elev, t->elev + Horizon::STRIDE * Horizon::STRIDE);
+		return g;
+	};
+	int missing = 0;
+	auto neighbours = [&](const SurfTile *c, bool count) {
+		for (int a = -1; a <= 1; a++)
+			for (int b = -1; b <= 1; b++) {
+				if ((!a && !b) || c->ilat + a < 0 || c->ilat + a >= (1 << c->lvl)) continue;
+				SurfTile *t = NodeAt(c->lvl, c->ilat + a, c->ilng + b);
+				if (ready(t)) in->grids.push_back(grid(t));
+				else if (count) missing++;
+			}
+	};
+	in->owner = grid(o);
+	in->R = obj_size;
+	in->dmax = Horizon::DmaxFor((o->bnd.maxlat - o->bnd.minlat) * obj_size);
+	neighbours(o, true);
+	SurfTile *a3 = o, *a6;
+	for (int k = 0; k < 3 && a3; k++) a3 = a3->getSurfParent();
+	a6 = a3;
+	for (int k = 0; k < 3 && a6; k++) a6 = a6->getSurfParent();
+	if (ready(a3)) { in->grids.push_back(grid(a3)); neighbours(a3, false); }
+	if (ready(a6)) in->grids.push_back(grid(a6));
+	if (!ready(a3) || !ready(a6)) { // else the coarsest ready ancestor
+		SurfTile *c = NULL;
+		for (SurfTile *t = o->getSurfParent(); t; t = t->getSurfParent())
+			if (t != a3 && t != a6 && ready(t)) c = t;
+		if (c) in->grids.push_back(grid(c));
+	}
+
+	o->horAsk = now;
+	auto box = horizon->box;
+	int lv = o->lvl, la = o->ilat, ln = o->ilng;
+	unsigned gen = o->horGen;
+	GfxPool::Job j;
+	j.owner = horizon->id;
+	j.kind = GfxPool::HORIZON;
+	j.prio = prio;
+	j.run = [in, box, lv, la, ln, gen, missing, redo]() {
+		auto m = std::make_shared<Horizon::Map>();
+		Horizon::Compute(*in, *m);
+		std::lock_guard<std::mutex> lk(box->mx);
+		box->done.push_back({lv, la, ln, gen, m, missing, redo});
+	};
+	j.dropped = [box, lv, la, ln, gen]() {
+		std::lock_guard<std::mutex> lk(box->mx);
+		box->done.push_back({lv, la, ln, gen, nullptr, 0, false});
+	};
+	GfxPool::Get().Submit(std::move(j));
+}
+
+template<>
+void TileManager2<SurfTile>::HorizonUpload ()
+{
+	if (!horizon) return;
+	horizon->cand = nullptr;
+	for (int n = 0; n < 2; n++) { // uploads per frame
+		HorizonState::Result r;
+		{
+			std::lock_guard<std::mutex> lk(horizon->box->mx);
+			if (horizon->box->done.empty()) return;
+			r = std::move(horizon->box->done.front());
+			horizon->box->done.pop_front();
+		}
+		SurfTile *t = NodeAt(r.lvl, r.ilat, r.ilng);
+		if (!t || t->horGen != r.gen) { n--; continue; } // gone or made again
+		t->horAsk = -1.0;
+		if (!r.map) { n--; continue; } // dropped: asked again later
+		VkPixels px;
+		px.w = Horizon::W;
+		px.h = Horizon::N;
+		px.levels = 1;
+		px.layers = 1;
+		px.fmt = VK_FORMAT_R8G8B8A8_UNORM;
+		px.data.push_back(r.map->px);
+		VkTex *nt = VkCreateTexture(Dev(), px, VK_IMAGE_USAGE_SAMPLED_BIT);
+		if (!nt) continue;
+		delete t->htex;
+		t->htex = nt;
+		t->hor = r.map;
+		t->horMissing = r.missing;
+		if (r.redo) t->horRedone = true; // set here: a dropped redo is asked again
+		t->horCheck = oapiGetSysTime();
+	}
+}
+
+// not upstream: the SceneFx distance pass, the tiles this frame's main pass drew
+template<>
+void TileManager2<SurfTile>::RenderDepth (ShaderClass *sh, const D3DXMATRIX &mVP)
+{
+	if (depthTiles.empty() || depthFrame != GetScene()->GetFrameId()) return;
+	struct { D3DXMATRIX mW, mVP; } prm;
+	prm.mVP = mVP;
+	VkDev *dev = Dev();
+	loader->WaitForMutex();
+	sh->Setup(pPatchVertexDecl, true, 0);
+	dev->SetCullMode(VK_CULL_MODE_BACK_BIT);
+	for (auto &r : depthTiles) {
+		SurfTile *t = static_cast<SurfTile *>(r.first);
+		if (!t->mesh) continue;
+		prm.mW = r.second;
+		sh->SetVSConstants("Prm", &prm, sizeof(prm));
+		sh->UpdateTextures();
+		dev->SetStreamSource(0, t->mesh->pVB, 0, sizeof(VERTEX_2TEX));
+		dev->SetIndices(t->mesh->pIB);
+		dev->DrawIndexedPrimitive(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 0, 0, VkPrimVerts(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, t->mesh->nf));
+	}
+	loader->ReleaseMutex();
+}
+
 // =======================================================================
 
 template<>
@@ -1478,7 +1937,20 @@ void TileManager2<SurfTile>::Render (MATRIX4 &dwmat, bool use_zbuf, const vPlane
 	// ------------------------------------------------------------------
 	// TODO: render full sphere for levels < 4
 
+	bool bStreamPass = bStream && scene->GetRenderPass() == RENDERPASS_MAINSCENE; // not upstream
+	if (bStreamPass) StreamRead(); // not upstream
+	if (bStream) { streamFrame++; streamNow = oapiGetSysTime(); } // not upstream
+
 	loader->WaitForMutex();
+
+	if (bStreamPass) StreamApply(); // not upstream
+	if (scene->GetRenderPass() == RENDERPASS_MAINSCENE) { // not upstream: horizon maps in, tiles recorded for SceneFx
+		HorizonUpload();
+		depthTiles.clear();
+		depthRec = (Config->SSAO || Config->VolClouds) && vp == scene->GetCameraProxyVisual() && use_zbuf && !fcv->bSpherical;
+		depthFrame = scene->GetFrameId();
+	}
+	else depthRec = false; // not upstream
 
 	// update the tree
 	for (i = 0; i < 2; i++)
@@ -1489,6 +1961,8 @@ void TileManager2<SurfTile>::Render (MATRIX4 &dwmat, bool use_zbuf, const vPlane
 	// render the tree
 	for (i = 0; i < 2; i++)
 		RenderNode (tiletree+i);
+
+	if (scene->GetRenderPass() == RENDERPASS_MAINSCENE) HorizonSubmit(); // not upstream
 
 	loader->ReleaseMutex();
 
@@ -1617,6 +2091,32 @@ int TileManager2<SurfTile>::GetElevation(double lng, double lat, double *elev, F
 	else	   rv = tiletree[1].Entry()->GetElevation(lng, lat, elev, nrm, cache);
 	loader->ReleaseMutex();
 	return rv;
+}
+
+// -----------------------------------------------------------------------
+// not upstream: elevation from the deepest loaded tile, also for tiles out of view (sun behind terrain)
+
+template<>
+int TileManager2<SurfTile>::GetLoadedElevation(double lng, double lat, double *elev)
+{
+	loader->WaitForMutex();
+	const SurfTile *t = static_cast<const SurfTile *>(SearchTile(lng, lat, 32, false));
+	int rv = t ? t->GetElevation(lng, lat, elev, NULL, NULL, true, true) : 0;
+	loader->ReleaseMutex();
+	return rv;
+}
+
+template<>
+void TileManager2<SurfTile>::GetLoadedElevations(int n, const double *lng, const double *lat, double *elev, int *rc)
+{
+	loader->WaitForMutex();
+	for (int i = 0; i < n; i++) {
+		const SurfTile *t = static_cast<const SurfTile *>(SearchTile(lng[i], lat[i], 32, false));
+		int r = t ? t->GetElevation(lng[i], lat[i], elev + i, NULL, NULL, true, true) : 0;
+		if (r != 1) elev[i] = 0.0;
+		if (rc) rc[i] = r;
+	}
+	loader->ReleaseMutex();
 }
 
 // -----------------------------------------------------------------------
@@ -1910,3 +2410,26 @@ float* TileManager2<SurfTile>::BrowseElevationData(int lvl, int ilat, int ilng, 
 	return elev;
 }
 
+
+// -----------------------------------------------------------------------
+// not upstream: the horizon map over a point for the trees: the deepest loaded tile's owner, else the first ancestor with a map
+
+template<>
+std::shared_ptr<const Horizon::Map> TileManager2<SurfTile>::HorizonAt (double lat, double lng, double bnd[4])
+{
+	std::shared_ptr<const Horizon::Map> m;
+	loader->WaitForMutex();
+	SurfTile *t = static_cast<SurfTile *>(SearchTile(lng, lat, 32, false));
+	SurfTile *o = t ? t->ElevOwner() : nullptr;
+	while (o && !o->hor) {
+		QuadTreeNode<SurfTile> *n = o->node ? o->node->Parent() : nullptr;
+		o = n ? n->Entry() : nullptr;
+	}
+	if (o) {
+		m = o->hor;
+		bnd[0] = o->bnd.minlat; bnd[1] = o->bnd.maxlat;
+		bnd[2] = o->bnd.minlng; bnd[3] = o->bnd.maxlng;
+	}
+	loader->ReleaseMutex();
+	return m;
+}

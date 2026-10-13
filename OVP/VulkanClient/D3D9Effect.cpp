@@ -469,6 +469,7 @@ void D3D9Effect::D3D9TechInit(D3D9Client *_gc, VkDev *_pDev, const char *folder)
 	eAtmColor	  = FX->GetParameterByName(0,"gAtmColor");
 	eHazeMode	  = FX->GetParameterByName(0,"gHazeMode");
 	eNight		  = FX->GetParameterByName(0, "gNightTime");
+	eExposure	  = FX->GetParameterByName(0, "gExposure"); // not upstream: auto-exposure
 
 	// Initialize default values --------------------------------------
 	//
@@ -477,6 +478,7 @@ void D3D9Effect::D3D9TechInit(D3D9Client *_gc, VkDev *_pDev, const char *folder)
 	FX->SetVector(eAttennuate, ptr(D3DXVECTOR4(1,1,1,1))); 
 	FX->SetVector(eInScatter,  ptr(D3DXVECTOR4(0,0,0,0)));
 	FX->SetVector(eColor, ptr(D3DXVECTOR4(0, 0, 0, 0)));
+	FX->SetFloat(eExposure, 1.0f); // not upstream
 
 	//if (Config->ShadowFilter>=3) FX->SetValue(eKernel, &shadow_kernel2, sizeof(shadow_kernel2));
 	FX->SetValue(eKernel, &shadow_kernel, sizeof(shadow_kernel));

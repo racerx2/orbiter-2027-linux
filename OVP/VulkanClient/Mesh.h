@@ -49,6 +49,7 @@ const DWORD SPEC_INHERIT = (DWORD)(-2); // "inherit" material/texture flag
 #define SHADER_SHADOWMAP		10
 #define SHADER_SHADOWMAP_OIT	11
 #define SHADER_NORMAL_DEPTH		12
+#define SHADER_SCENE_DEPTH		13 // not upstream: SceneFx distance pass
 
 #define VCLASS_AMSO			1
 #define VCLASS_XR2			2

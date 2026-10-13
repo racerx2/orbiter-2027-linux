@@ -150,6 +150,7 @@ float 	  gMtrlAlpha;
 float	  gGlowConst;
 float	  gNightTime;		// 1 for nighttime, 0 for daytime
 Flow	  gCfg;
+float	  gExposure;		// not upstream: auto-exposure, 1 off the main pass
 };
 
 // Textures -----------------------------------------------------------------

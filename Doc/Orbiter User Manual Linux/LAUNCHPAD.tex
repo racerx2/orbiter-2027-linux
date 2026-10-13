@@ -442,6 +442,54 @@ The orientation of the coordinate axes for the local frames of vessels, celestia
 \end{itemize}
 
 
+\subsubsection{Earth streaming}
+\label{sssec:launchpad_earth_streaming}
+Earth is not part of the planet texture download. While a simulation runs, the Earth tiles Orbiter needs are fetched on demand from free servers that need no account or key, converted to Orbiter tiles and kept in Textures/Earth, where they are used like any installed tile. The sources are listed in Config/TileStream.cfg:
+\begin{itemize}
+\item \textbf{Imagery} (Surf, levels 1 to 16): EOX Sentinel-2 cloudless 2016 from \texttt{tiles.maps.eox.at}. At levels 10 and below, NASA Blue Marble: Next Generation from NASA GIBS (\texttt{gibs.earthdata.nasa.gov}) stands in while EOX does not answer, and the tile is fetched from EOX again later.
+\item \textbf{Night lights and water mask} (Mask): NASA Black Marble 2016 and the OpenStreetMap land and water map, both from NASA GIBS (\texttt{gibs.earthdata.nasa.gov}).
+\item \textbf{10 m water mask and land detail} (Mask and Class, from level 12): ESA WorldCover 2021 from \texttt{esa-worldcover.s3.eu-central-1.amazonaws.com}. Its water class gives the coastlines, rivers and lakes; its land classes (trees, grass, crops, bare ground, built-up areas and so on) choose the ground detail the graphics client draws close up.
+\item \textbf{Elevation} (Elev, up to level 16): Terrain Tiles on AWS from \texttt{s3.amazonaws.com} (elevation-tiles-prod).
+\item \textbf{Clouds} (Cloud, levels 1 to 7): the NASA Visible Earth cloud map from \texttt{eoimages.gsfc.nasa.gov}. Levels 1 to 5 are made from the small image at the start of a session, levels 6 and 7 from the large one in the background. The two images are kept in Textures/Earth/TileStream/src.
+\item \textbf{Buildings} (Bldg): OpenMapTiles vector tiles from OpenFreeMap (\texttt{tiles.openfreemap.org}). Below 15 km altitude, the buildings within 3 to 6 km of the camera are fetched and set on the terrain, drawn with generated textures: walls with windows on every floor and a ground floor of shops, doors or garages in 14 styles picked by the building's size, flat roofs with a roof surface, and gable roofs on small houses; at night their windows light up. The textures are drawn by Orbiter's own build (Textures/Bldg), nothing is downloaded for them. A streamed building that stands in or against a surface base's own buildings is left out, so the base's models show alone. They have no control on this page: TileStreamBuildings = FALSE in Orbiter.cfg turns them off (default TRUE).
+\end{itemize}
+The ground under the runways and pads of the Earth surface bases is laid flat at the base's height: from level 11, an Elev\_mod tile made next to each Elev tile under a base levels the ground there and blends it into the terrain around.\\
+Elevation below sea level is raised to 0 m, except in the boxes of the FLOOR lines in Config/TileStream.cfg, where it stops at the box's own floor instead: the Sea of Galilee, the Dead Sea with the lower Jordan and Yarmouk valleys, the Caspian Sea and its shore, the Karagiye Depression (132 m below sea level, beside the Caspian), the Salton Sea, Lake Assal, Lake Qarun, Lake Eyre, Death Valley, and the Qattara, Turpan and Danakil depressions. The boxes reach past each depression's edge, so its slopes are not cut off by a straight cliff. The Netherlands polders, about 7 m below sea level, stay at 0 m, because their coast cannot be boxed without taking in the sea. Elev tiles streamed before a FLOOR line was added keep their old heights until they are cleared (\textit{Clear streamed tiles} with \textit{including base levels}).\\
+The \textit{Sources and credits} box at the bottom of the page shows the credit lines of Config/TileStream.cfg, with links to the sources and their licences. The same credits are in the Credits section of this manual; nothing is drawn over the simulation window.\\
+
+\noindent
+\textbf{Streaming}
+\begin{itemize}
+\item \textbf{Stream Earth imagery and elevation:} fetch missing Earth tiles while the simulation runs (Orbiter.cfg: TileStream, default TRUE).
+\item \textbf{Offline:} the simulation makes no tile requests and shows only the tiles already on disk (TileStreamOffline, default FALSE). While it is ticked, \textit{Download a region} is refused.
+\item \textbf{Cache limit:} the size the streamed tiles may take on disk (TileStreamCacheMB, default 2048 MB; \textit{No limit} is 0). At the start of a session and every five minutes, the tiles used longest ago are removed until the cache is under the limit. Levels 8 and below, which show the whole globe, are always kept. A larger value set in Orbiter.cfg is kept as it is unless you change it here.
+\end{itemize}
+
+\noindent
+\textbf{Streamed tiles}
+\begin{itemize}
+\item Shows the size of the files the stream has written, which it lists in Textures/Earth/TileStream (written.idx for imagery, masks, land cover and elevation; bldg.idx, mod.idx and cloud.idx for buildings, Elev\_mod and clouds), and of all loose Earth tiles, including any you installed yourself. The count runs while the page is shown and on \textit{Refresh}, at most once every 10 seconds.
+\item \textbf{Clear streamed tiles:} after a confirmation, deletes the files the stream has written (Surf, Mask, Elev, Class, Elev\_mod, Cloud and Bldg). Levels 8 and below are kept unless \textbf{including base levels} is ticked. Tiles you installed yourself, texture packs and the Archive folder are never touched. The clear runs in the background, after a count that is still running; until it has finished, \textit{Download a region} is refused. While another Orbiter uses the same Earth tiles, nothing is deleted and the page says \textit{Not cleared}, also for a clear that was still waiting for its count when you pressed \textit{Launch}.
+\end{itemize}
+
+\noindent
+\textbf{Download a region}\\
+Fetches a region ahead of time, for example a launch site you want to fly from while offline: the imagery, masks, land cover and elevation of every level down to \textit{Max level}. Buildings and clouds are left to the session, and the next session flattens the bases in the region.
+\begin{itemize}
+\item \textbf{Centre:} an Earth surface base (from Config/Earth/Base), or a custom latitude and longitude.
+\item \textbf{Radius:} the region's radius in km.
+\item \textbf{Max level:} the finest tile level to fetch (default 16). A level 14 tile is about 20 km across, level 16 about 5 km. The imagery currently ends at level 16.
+\item \textbf{Download:} shows the number of tiles and an upper estimate of their size, then fetches them coarse to fine with a progress bar. Open ocean and tiles already on disk take no space. \textbf{Cancel} stops the download; the tiles fetched so far are kept.
+\end{itemize}
+A download is refused while \textbf{Offline} is ticked, while the streamed tiles are being cleared, while a simulation runs, and while another Orbiter uses the same Earth tiles; one in progress stops when a simulation starts. Downloaded regions count towards the cache limit: raise the limit if the next session should keep them.\\
+
+\noindent
+\textbf{Privacy:} with the shipped Config/TileStream.cfg, tile requests go to \texttt{tiles.maps.eox.at} (EOX), \texttt{gibs.earthdata.nasa.gov} (NASA GIBS), \texttt{s3.amazonaws.com} (Terrain Tiles on AWS), \texttt{esa-worldcover.s3.eu-central-1.amazonaws.com} (ESA WorldCover), \texttt{eoimages.gsfc.nasa.gov} (NASA Visible Earth) and \texttt{tiles.openfreemap.org} (OpenFreeMap). Each request tells the server which part of Earth is shown, as with any online map. It carries only these headers: the server's name (Host), the program and its version (User-Agent: OrbiterLinux/<version>), Accept-Language: en, the compressions it accepts (Accept-Encoding) and Connection, and for a WorldCover read the byte range (Range). No cookies are kept or sent. With \textbf{Offline} ticked, the simulation makes no requests and a region download is refused.\\
+
+\noindent
+\textbf{Orbiter.cfg keys:} TileStream (default TRUE), TileStreamOffline (FALSE), TileStreamCacheMB (2048) and TileStreamBuildings (TRUE).
+
+
 \subsection{Modules tab}
 \label{ssec:launchpad_modules}
 The \textit{Modules} tab allows the activation and deactivation of plug-in modules for Orbiter which can extend the functionality of the core simulator. Plug-ins can contain additional instruments, dialogs, interfaces to external programs etc.
@@ -504,7 +552,7 @@ Orbiter does not change the display mode: full screen uses the current resolutio
 With \textit{Multiple displays} ticked, a \textit{Full Screen Window} covers the whole desktop across all screens.\newline
 In addition, you can select the \textit{Disable vertical sync} option. This allows Orbiter to update a frame without waiting for a synchronisation signal from the monitor. This can improve frame rates, but may lead to visual artefacts (tearing).
 \item \textbf{Window:} Select this option to run Orbiter in a window. You can specify the size of the render window here. Selecting one of the available \textit{fixed aspect ratio} options (4:3 normal, 16:10 widescreen or 16:9 widescreen) automatically adjusts the window width or height to maintain the aspect ratio. Large window sizes can reduce simulation performance. The desktop may reduce a window larger than the screen to fit its work area.
-\item \textbf{Advanced:} Opens the VulkanClient setup dialog with advanced rendering options. See the VulkanClient manual (Doc/VulkanClient/VulkanClient.html) for details.
+\item \textbf{Advanced:} Opens the VulkanClient setup dialog with advanced rendering options. See the VulkanClient manual (Doc/VulkanClient/VulkanClient.html) for details. Its \textit{Ground graphics} group switches the terrain horizon shadows, ambient occlusion, volumetric clouds, 3D trees and auto exposure on or off, and sets the cloud quality and the tree range.
 \end{itemize}
 
 

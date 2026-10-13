@@ -85,6 +85,8 @@ struct FlowControlPS
 	BOOL bPlanetShadow;			// Use spherical approximation for shadow
 	BOOL bEclipse;				// Eclipse is occuring
 	BOOL bTexture;				// Surface texture exists
+	BOOL bClass;				// not upstream: land class weights (tClass) for micro detail, repeat in vMSc[0]
+	BOOL bHorizon;				// not upstream: horizon map (tHorizon) for terrain shadows
 };
 
 struct FlowControlVS
@@ -110,6 +112,10 @@ struct PerObjectParams
 	float	 fAlpha;
 	float	 fBeta;
 	float	 fTgtScale;
+	float	 fPad0;				// not upstream: matches the client struct's padding
+	vec4	 vHorOff;			// not upstream: horizon map uv offset (xy) and scale (zw), left half
+	vec4	 vHorW[2];			// not upstream: sun weights of azimuths 0-3 and 4-7
+	vec4	 vVolCld;			// not upstream: 2D cloud fade start, end (m), volume weight
 };
 
 // uniform extern: vertex shader constants at binding 0 (the pixel shaders read Prm too), pixel shader constants at 2 (Scatter.glsl's are 1)
@@ -138,6 +144,8 @@ layout(binding = 26) uniform sampler2D	tOverlay;
 layout(binding = 27) uniform sampler2D	tMskOverlay;
 layout(binding = 28) uniform sampler2D	tElvOverlay;
 layout(binding = 29) uniform sampler2D	tEclipse;
+layout(binding = 30) uniform sampler2D	tClass;				// not upstream: R trees, G grass / crops, B bare / built-up
+layout(binding = 31) uniform sampler2D	tHorizon;			// not upstream: sin of the horizon, 8 azimuths in 2 halves; the last free binding
 
 
 
@@ -421,6 +429,22 @@ float GGX_NDF(float dHN, float rgh)
 }
 
 
+// not upstream: periodic value noise for the land class detail; period P keeps it seamless over tiles of any level
+float ClsHash(vec2 p) // hash12 of "Hash without Sine", Dave Hoskins, MIT (CREDITS)
+{
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
+float ClsNoise(vec2 p, float P)
+{
+	vec2 i = floor(p), f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	vec2 a = mod(i, P), b = mod(i + 1.0, P);
+	return mix(mix(ClsHash(a), ClsHash(vec2(b.x, a.y)), f.x), mix(ClsHash(vec2(a.x, b.y)), ClsHash(b), f.x), f.y);
+}
+
 vec4 TerrainPS(TileVS frg)
 {
 
@@ -475,6 +499,15 @@ vec4 TerrainPS(TileVS frg)
 		fShadow = 1.0f - SampleShadows(sp, pd);
 	}
 #endif
+
+	float fH = 1.0f; // not upstream: sun above the terrain horizon
+	if (Flow.bHorizon) {
+		vec2 uvH = frg.texUV.xy * Prm.vHorOff.zw + Prm.vHorOff.xy;
+		float s = dot(texture(tHorizon, uvH), Prm.vHorW[0]) + dot(texture(tHorizon, uvH + vec2(257.0 / 514.0, 0.0)), Prm.vHorW[1]);
+		s = s * 1.25 - 0.25;
+		fH = smoothstep(s - 0.012, s + 0.012, dot(normalize(Const.CamPos - frg.camW.xyz), Const.toSun));
+		fShadow *= fH;
+	}
 
 	vec3 cFar, cMed, cLow;
 
@@ -604,6 +637,22 @@ vec4 TerrainPS(TileVS frg)
 	}
 #endif
 
+	// not upstream: land class micro detail, 8 m and 2 m cells, fading in below 5 km
+	if (Flow.bClass)
+	{
+		float fade = 1.0 - smoothstep(800.0, 5000.0, dst);
+		vec3 w = texture(tClass, vUVSrf).rgb;	// outside the per-pixel branch: defined mip level
+		if (fade > 0.0) {
+			vec2 p = frg.texUV.xy * Prm.vMSc[0].xy + Prm.vMSc[0].zw;
+			float n1 = ClsNoise(p, 16384.0) * 0.6 + ClsNoise(p * 2.0, 32768.0) * 0.4;
+			float n2 = ClsNoise(p * 4.0, 65536.0);
+			float fT = (n1 - 0.5) * 0.9 + (n2 - 0.5) * 0.2;	// canopy clumps and gaps
+			float fG = (n2 - 0.5) * 0.3 + (n1 - 0.5) * 0.15;	// grass and crop texture
+			float fB = (n2 - 0.5) * 0.35 + (n1 - 0.5) * 0.1;	// grit
+			cTex.rgb *= 1.0 + (w.r * fT + w.g * fG + w.b * fB) * fade;
+		}
+	}
+
 
 	// Render Eclipse ------------------------------------------------------------
 	//
@@ -722,7 +771,8 @@ vec4 TerrainPS(TileVS frg)
 	cTex.rgb += cRfl * 0.75f;
 
 	// Add Specular component
-	cTex.rgb += cSun * fSpe * smoothstep(-0.001f, 0.03f, fDPS);
+	if (Flow.bHorizon) cTex.rgb += cSun * fSpe * smoothstep(-0.001f, 0.03f, fDPS) * fH; // not upstream: the else is upstream's line
+	else cTex.rgb += cSun * fSpe * smoothstep(-0.001f, 0.03f, fDPS);
 
 	// Amplify cloud shadows for orbital views
 	float fOrbShd = 1.0f - (1.0f - fShd) * Const.CamSpace * 0.5f;
@@ -785,8 +835,9 @@ void main() { oVS = CloudVS(TILEVERTEX(iPosL, iNrmL, iTex0, iElev)); gl_Position
 // 
 vec4 CloudPS(CldVS frg)
 {
-	vec2 vUVTex = frg.texUV.xy;
+	vec2 vUVTex = frg.texUV.xy * Prm.vCloudOff.zw + Prm.vCloudOff.xy; // not upstream: a tile without its own file shows its part of the parent's texture
 	vec4 cTex = texture(tDiff, vUVTex);
+	float fVol = mix(1.0, smoothstep(Prm.vVolCld.x, Prm.vVolCld.y, length(frg.posW)), Prm.vVolCld.z); // not upstream: the volume clouds replace the layer near the camera
 	vec3 vRay;
 	vec3 vPxl;
 	float  dRC;
@@ -909,7 +960,7 @@ vec4 CloudPS(CldVS frg)
 		cTex.rgb += sct.ray.rgb * 2.0f;
 		cTex.rgb *= fECL;
 
-		return vec4(HDR(cTex.rgb), clamp(cTex.a, 0.0, 1.0));
+		return vec4(HDR(cTex.rgb), clamp(cTex.a, 0.0, 1.0) * fVol); // not upstream: fVol
 	}
 	else {
 
@@ -929,7 +980,7 @@ vec4 CloudPS(CldVS frg)
 		cTex.rgb += sct.ray.rgb;
 		cTex.rgb *= fECL;
 
-		return vec4(sqr(HDR(cTex.rgb * 4.0f)), cTex.a * cAmb.a * cAmb.a);
+		return vec4(sqr(HDR(cTex.rgb * 4.0f)), cTex.a * cAmb.a * cAmb.a * fVol); // not upstream: fVol
 	}	
 }
 
@@ -1023,7 +1074,7 @@ void main() { oColor = GiantPS(frg); }
 
 vec4 GiantCloudPS(CldVS frg)
 {
-	vec4 cTex = texture(tDiff, frg.texUV.xy);
+	vec4 cTex = texture(tDiff, frg.texUV.xy * Prm.vCloudOff.zw + Prm.vCloudOff.xy); // not upstream: parent's sub-range
 	vec3 vPlN = normalize(frg.nrmW);
 	vec3 vRay = normalize(frg.posW);
 	vec3 vVrt = Const.CamPos + frg.posW.xyz;	// Geo-centric pixel position

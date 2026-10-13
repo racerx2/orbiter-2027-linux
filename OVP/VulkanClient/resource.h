@@ -177,6 +177,13 @@
 #define IDC_ESCACHE                             3034
 #define IDC_EAQUALITY                           3035
 #define IDC_TILECOUNT                           3036
+#define IDC_GG_HORIZON                          3037 // not upstream: ground graphics
+#define IDC_GG_SSAO                             3038 // not upstream
+#define IDC_GG_VOLCLOUDS                        3039 // not upstream
+#define IDC_GG_TREES                            3040 // not upstream
+#define IDC_GG_AUTOEXP                          3041 // not upstream
+#define IDC_GG_CLOUDQ                           3042 // not upstream
+#define IDC_GG_TREERANGE                        3043 // not upstream
 #define IDC_ATM_S1                              4000
 #define IDC_ATM_S2                              4001
 #define IDC_ATM_S3                              4002

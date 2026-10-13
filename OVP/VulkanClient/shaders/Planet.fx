@@ -81,7 +81,7 @@ vec4 PlanetTechPS(TileVS frg)
 	vec3 cTex = texture(Planet0S, frg.tex0).rgb;
 	vec3 color = diff.rgb * cTex.rgb + frg.aux.a*vEff.rgb + vSpe.rgb;
 
-	return vec4(color*frg.atten.rgb+gColor.rgb+frg.insca.rgb, 1.0f);
+	return vec4((color*frg.atten.rgb+gColor.rgb+frg.insca.rgb)*gExposure, 1.0f); // not upstream: auto-exposure
 }
 
 
@@ -95,12 +95,12 @@ vec4 CloudTechPS(TileVS frg)
 
 	if (dot(frg.normalW, frg.toCamW)<0) {    // Render cloud layer from below
 		vec4 diff = (min(1,frg.aux.g*2) * frg.diffuse) * gMat.diffuse + data;
-		return vec4(color.rgb*diff.rgb, alpha);
+		return vec4(color.rgb*diff.rgb*gExposure, alpha); // not upstream: auto-exposure
 	}
 
 	else { // Render cloud layer from above
 		vec4 diff = (min(1,frg.aux.g*1.5) * frg.diffuse) * gMat.diffuse + data;
-		return vec4(color.rgb*diff.rgb, alpha);
+		return vec4(color.rgb*diff.rgb*gExposure, alpha); // not upstream: auto-exposure
 	}
 }
 

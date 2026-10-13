@@ -27,7 +27,6 @@ static QString MB (uint64_t b)
 
 bool TexInstallCheck (QWidget *parent, Config *cfg)
 {
-	if (!cfg->bPlanetTexCheck) return true;
 	TexPackList list;
 	std::string err;
 	if (!TexPackRead (cfg->ConfigPath ("TexturePacks"), list, err)) {
@@ -37,6 +36,8 @@ bool TexInstallCheck (QWidget *parent, Config *cfg)
 	char ptx[256];
 	if (!cfg->PTexPath (ptx, sizeof ptx, "")) return true;
 	std::string texdir = ptx;
+	for (const std::string &f : TexPackClean (list, texdir)) LOGOUT ("Planet texture packs: removed the leftover %s", f.c_str());
+	if (!cfg->bPlanetTexCheck) return true;
 	std::vector<TexPack> miss = TexPackMissing (list, texdir);
 	if (miss.empty()) return true;
 

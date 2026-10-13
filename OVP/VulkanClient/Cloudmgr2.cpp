@@ -14,6 +14,30 @@
 #include "D3D9Catalog.h"
 #include "D3D9Config.h"
 #include "VkTexFile.h"
+#include "VolCloudMap.h"
+#include <algorithm>
+
+// not upstream: the tile's alpha, box-filtered to 256x256, for the volume clouds
+static std::shared_ptr<const std::vector<uint8_t>> CloudDensity (const VkPixels &px)
+{
+	VkPixels rgba;
+	if (!VkConvertPixels(px, rgba, VK_FORMAT_B8G8R8A8_UNORM, SWZ_NONE, 0, 0, 1) || rgba.w < 1 || rgba.h < 1 || rgba.data.empty()) return nullptr;
+	const int n = VolCloud::DENSN;
+	const std::vector<BYTE> &s = rgba.Level(0);
+	if (s.size() < size_t(rgba.w) * rgba.h * 4) return nullptr;
+	auto d = std::make_shared<std::vector<uint8_t>>(size_t(n) * n);
+	for (int j = 0; j < n; j++) {
+		UINT y0 = j * rgba.h / n, y1 = std::max(y0 + 1, (j + 1) * rgba.h / n);
+		for (int i = 0; i < n; i++) {
+			UINT x0 = i * rgba.w / n, x1 = std::max(x0 + 1, (i + 1) * rgba.w / n);
+			UINT sum = 0, cnt = 0;
+			for (UINT y = y0; y < y1; y++)
+				for (UINT x = x0; x < x1; x++, cnt++) sum += s[(size_t(y) * rgba.w + x) * 4 + 3];
+			(*d)[size_t(j) * n + i] = uint8_t(sum / cnt);
+		}
+	}
+	return d;
+}
 
 // =======================================================================
 // =======================================================================
@@ -63,6 +87,11 @@ void CloudTile::PreLoad()
 	}
 
 	owntex = true;
+
+	if (pSysSrf && Config->VolClouds && lvl + 4 >= 5) { // not upstream: before the pixels go; none from level 4 and below, 40 km pixels and coarser
+		dens = CloudDensity(*pSysSrf);
+		densReady.store(true, std::memory_order_release);
+	}
 
 	if (CreateTexture(pDev, pSysSrf, &tex) != true) {
 		if (GetParentSubTexRange(&texrange)) {
@@ -125,6 +154,9 @@ void CloudTile::Render()
 		sp->fAlpha = 1.0f;
 		sp->fBeta = 1.0f;
 		sp->mWorld = mWorld;
+		Scene *scene = mgr->GetScene(); // not upstream: the volume replaces the layer near the camera, main pass only
+		bool bVol = scene->GetRenderPass() == RENDERPASS_MAINSCENE && vPlanet == scene->GetCameraProxyVisual();
+		sp->vVolCld = FVECTOR4(35e3f, 60e3f, bVol ? scene->GetVolCloudFade() : 0.0f, 0.0f);
 
 		// -------------------------------------------------------------------
 		// render surface mesh
@@ -300,3 +332,49 @@ void TileManager2<CloudTile>::Unload(int lvl)
 	tiletree[1].DelAbove(lvl);
 }
 
+
+// -----------------------------------------------------------------------
+// not upstream: the finest tiles with density under a box around (lat, lng) in the cloud frame, at most 16
+
+template<>
+int TileManager2<CloudTile>::VolTiles (double lat, double lng, double half, std::vector<VolCloud::Src> &out)
+{
+	out.clear();
+	std::vector<const CloudTile*> seen;
+	double dlng = half / std::max(0.05, cos(lat));
+	loader->WaitForMutex();
+	for (int j = -3; j <= 3 && out.size() < 16; j++)
+		for (int i = -3; i <= 3 && out.size() < 16; i++) {
+			double la = std::max(-PI05 + 1e-6, std::min(PI05 - 1e-6, lat + half * j / 3.0));
+			const CloudTile *t = (const CloudTile *)SearchTile(wrap(lng + dlng * i / 3.0), la, 32, true);
+			while (t && !t->Density()) t = (const CloudTile *)t->getParent();
+			if (!t || std::find(seen.begin(), seen.end(), t) != seen.end()) continue;
+			seen.push_back(t);
+			VolCloud::Src s;
+			s.lvl = t->Level();
+			s.minlat = t->bnd.minlat; s.maxlat = t->bnd.maxlat;
+			s.minlng = t->bnd.minlng; s.maxlng = t->bnd.maxlng;
+			s.d = t->Density();
+			out.push_back(s);
+		}
+	// the finest ancestor with density over the whole box: fine tiles the probes missed leave no holes
+	double la0 = std::max(-PI05, lat - half), la1 = std::min(PI05, lat + half), lc = wrap(lng);
+	auto covers = [&](const CloudTile *t) {
+		if (t->bnd.minlat > la0 || t->bnd.maxlat < la1) return false;
+		for (int w = -1; w <= 1; w++)
+			if (t->bnd.minlng <= lc - dlng + w * 2.0 * PI && t->bnd.maxlng >= lc + dlng + w * 2.0 * PI) return true;
+		return false;
+	};
+	const CloudTile *c = (const CloudTile *)SearchTile(lc, std::max(-PI05 + 1e-6, std::min(PI05 - 1e-6, lat)), 32, true);
+	while (c && !(c->Density() && covers(c))) c = (const CloudTile *)c->getParent();
+	if (c && std::find(seen.begin(), seen.end(), c) == seen.end()) {
+		VolCloud::Src s;
+		s.lvl = c->Level();
+		s.minlat = c->bnd.minlat; s.maxlat = c->bnd.maxlat;
+		s.minlng = c->bnd.minlng; s.maxlng = c->bnd.maxlng;
+		s.d = c->Density();
+		out.push_back(s);
+	}
+	loader->ReleaseMutex();
+	return int(out.size());
+}

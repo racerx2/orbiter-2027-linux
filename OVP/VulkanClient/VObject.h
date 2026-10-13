@@ -43,6 +43,9 @@ class D3D9Pad;
  * environments, a single logical object may have multiple vObjects
  * associated with it.
  */
+// not upstream: a terrain sun test kept while the observer and the sun keep still (vPlanet::TerrainSunVisibility)
+struct TerrainSunCache { VECTOR3 pos = {0, 0, 0}, dir = {0, 0, 0}; double t = -1e9, margin = 0.0; float vis = 1.0f; const void *owner = nullptr; };
+
 class vObject: public oapi::VisObject {
 public:
 

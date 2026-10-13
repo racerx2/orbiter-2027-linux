@@ -39,6 +39,8 @@
 #include "IProcess.h"
 #include "VkTexFile.h"
 #include "OrbiterResource.h"
+#include "BldgMgr.h" // not upstream
+#include "TreeMgr.h" // not upstream
 #include <filesystem>
 
 using namespace oapi;
@@ -404,11 +406,14 @@ vPlanet::vPlanet (OBJHANDLE _hObj, const Scene *scene) :
 	if (tilever < 2) {
 		surfmgr = new SurfaceManager (gc, this);
 		surfmgr2 = NULL;
+		bldgmgr = NULL; // not upstream
 	} else {
 		LoadAtmoConfig();
 		surfmgr = NULL;
 		int patchlvl = 1 << (4 + Config->MeshRes);
 		surfmgr2 = new TileManager2<SurfTile> (this, max_patchres, patchlvl);
+		bldgmgr = oapiTileStreamEnabled (_hObj) ? new BldgMgr (this, _hObj, scn) : NULL; // not upstream
+		treemgr = (Config->Trees && oapiTileStreamEnabled (_hObj)) ? new TreeMgr (this, _hObj, scn) : NULL; // not upstream
 		prm.horizon_excess = *(double*)oapiGetObjectParam (_hObj, OBJPRM_PLANET_HORIZONEXCESS);
 		prm.tilebb_excess = *(double*)oapiGetObjectParam (_hObj, OBJPRM_PLANET_TILEBBEXCESS);
 	}
@@ -555,8 +560,11 @@ vPlanet::~vPlanet ()
 		delete []vbase;
 		vbase = NULL;
 	}
+	delete treemgr; // not upstream: first, its worker reads the surface manager
+	treemgr = NULL;
 	if (surfmgr) delete surfmgr;
 	else if (surfmgr2) delete surfmgr2;
+	delete bldgmgr; // not upstream
 	if (cloudmgr2) delete cloudmgr2;
 
 	// overlays' y->Release() left out: the textures belong to their SURFHANDLEs (upstream released a reference it didn't own)
@@ -720,6 +728,56 @@ int vPlanet::GetElevation(double lng, double lat, double *elv, FVECTOR3 *nrm) co
 }
 
 // ==============================================================
+// not upstream: march the ray to the sun over the loaded terrain; 0 hidden, 1 clear
+
+float vPlanet::TerrainSunVisibility(const VECTOR3 &gpos, TerrainSunCache &tc, int *left)
+{
+	if (!surfmgr2) return 1.0f;
+	OBJHANDLE hSun = oapiGetObjectByIndex(0);
+	VECTOR3 gsun; oapiGetGlobalPos(hSun, &gsun);
+	VECTOR3 d = gsun - gpos;
+	double sd = length(d);
+	if (sd <= 0.0) return 1.0f;
+	d /= sd;
+	VECTOR3 p0 = gpos - GlobalPos();
+	const double rsun = oapiGetSize(hSun) / sd;          // angular radius of the disc
+	const double R = size, top = R + std::max(maxelev, 9000.0) + 500.0;
+	double b = dotp(p0, d), c = dotp(p0, p0) - top * top, disc = b * b - c;
+	if (disc <= 0.0 || -b + sqrt(disc) <= 0.0) return tc.vis = 1.0f; // above every summit, or above them and climbing
+
+	VECTOR3 lpos = ToLocal(p0), ldir = ToLocal(d);       // the planet frame: still when nothing moves on the ground
+	double now = oapiGetSysTime();
+	if (tc.owner == this && length(lpos - tc.pos) < 1.0 && length(ldir - tc.dir) < std::max(2e-4, tc.margin) && now < tc.t) return tc.vis;
+	if (left && *left <= 0) { *left = -1; return tc.vis; } // over the caller's budget: the last value meanwhile
+	if (left) (*left)--;
+
+	double lng, lat, rad, e0 = 0.0;
+	oapiGlobalToEqu(hObj, gpos, &lng, &lat, &rad);
+	if (surfmgr2->GetLoadedElevation(lng, lat, &e0) != 1) return 1.0f; // no terrain yet: asked again next time
+	if (rad - R < e0 + 2.0) p0 += unit(p0) * (e0 + 2.0 - (rad - R)); // on the drawn ground, not under it
+	b = dotp(p0, d); c = dotp(p0, p0) - top * top; disc = b * b - c;
+	double s0 = std::max(-b - sqrt(std::max(disc, 0.0)), 30.0), s1 = -b + sqrt(std::max(disc, 0.0));
+
+	const int N = 32;
+	double low = 1e9, ss[N], hh[N], lo[N], la[N], ee[N];
+	double s = s0;
+	while (s < s1 && low >= -rsun) {
+		int n = 0;
+		for (; n < N && s < s1; n++, s += std::max(10.0, s * 0.015)) {
+			oapiGlobalToEqu(hObj, GlobalPos() + p0 + d * s, lo + n, la + n, &rad);
+			ss[n] = s; hh[n] = rad - R;
+		}
+		surfmgr2->GetLoadedElevations(n, lo, la, ee);
+		for (int i = 0; i < n && low >= -rsun; i++) low = std::min(low, (hh[i] - ee[i]) / ss[i]);
+	}
+	float vis = low < -rsun ? 0.0f : float(saturate((low + rsun) / (2.0 * rsun)));
+	double margin = vis <= 0.0f ? -low - rsun : vis >= 1.0f ? low - rsun : 0.0; // how far the sun can move before it matters
+	tc.owner = this; tc.pos = lpos; tc.dir = ldir; tc.margin = std::max(0.0, margin);
+	tc.t = now + (margin > 0.01 ? 5.0 : 1.0) + 0.5 * std::rand() / RAND_MAX; // refined terrain rechecked; staggered between observers
+	return tc.vis = vis;
+}
+
+// ==============================================================
 
 SurfTile * vPlanet::FindTile(double lng, double lat, int maxlvl)
 {
@@ -765,6 +823,9 @@ bool vPlanet::Update (bool bMainScene)
 	if (!active) return false;
 
 	vObject::Update(bMainScene);
+
+	if (bldgmgr && bMainScene) bldgmgr->Update (); // not upstream
+	if (treemgr && bMainScene) treemgr->Update (); // not upstream
 
 	if (patchres==0) return true;
 
@@ -1000,6 +1061,7 @@ bool vPlanet::Render(VkDev *dev)
 		SetupEclipse();
 
 		if (scn->GetRenderPass() == RENDERPASS_MAINSCENE) UpdateScatter();
+		ApplyExposure(); // not upstream: UpdateScatter runs once a frame, the pass sets e
 
 		if (ringmgr) {
 			ringmgr->Render(dev, mWorld, false);
@@ -1070,6 +1132,8 @@ bool vPlanet::Render(VkDev *dev)
 		}
 
 		if (nbase) RenderBaseStructures (dev);
+		if (bldgmgr) bldgmgr->Render (dev); // not upstream
+		if (treemgr) treemgr->Render (dev); // not upstream
 
 		if (prm.bCloud && (prm.cloudvis & 2))
 			RenderCloudLayer (dev, VK_CULL_MODE_BACK_BIT);	  // render clouds from above
@@ -1261,6 +1325,18 @@ void vPlanet::RenderBaseShadows(VkDev *dev, float depth)
 			VkDev::State s = dev->GetState(); s.stencil = false; dev->SetState(s); // SetRenderState(D3DRS_STENCILENABLE, FALSE)
 		}
 	}
+}
+
+// ==============================================================
+// not upstream: the SceneFx distance pass (design-ground-graphics 3)
+
+void vPlanet::RenderDepth (VkDev *dev, ShaderClass *pTerrain, const D3DXMATRIX &mVP)
+{
+	if (surfmgr2 && pTerrain) surfmgr2->RenderDepth(pTerrain, mVP);
+	if (hObj == oapiCameraProxyGbody() && (scn->GetRenderFlags() & 0x20))
+		for (DWORD i = 0; i < nbase; i++) if (vbase[i]) vbase[i]->RenderDepth(dev, mVP);
+	if (bldgmgr) bldgmgr->RenderDepth(dev, mVP);
+	if (treemgr) treemgr->RenderDepth(dev, mVP);
 }
 
 // ==============================================================

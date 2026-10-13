@@ -79,7 +79,7 @@ struct VkDeclElement {
 
 class VkVertexDecl {
 public:
-	VkVertexDecl (const VkDeclElement *elem, int n, UINT stride0 = 0, UINT stride1 = 0);
+	VkVertexDecl (const VkDeclElement *elem, int n, UINT stride0 = 0, UINT stride1 = 0, bool inst1 = false); // not upstream: inst1, stream 1 per instance
 	std::vector<VkVertexInputBindingDescription2EXT> bind;
 	std::vector<VkVertexInputAttributeDescription2EXT> attr;
 	static UINT Location (VkDeclUsage usage, BYTE index); // shader input location of a semantic
@@ -245,6 +245,7 @@ public:
 	VkConstBuffer *GetConstantSource () const { return cbActive; }
 	void DrawPrimitive (VkPrimitiveTopology t, UINT startVertex, UINT vertexCount);
 	void DrawIndexedPrimitive (VkPrimitiveTopology t, int baseVertex, UINT startIndex, UINT indexCount);
+	void DrawIndexedPrimitiveInstanced (VkPrimitiveTopology t, int baseVertex, UINT startIndex, UINT indexCount, UINT instances, UINT firstInstance); // not upstream: trees
 	void DrawPrimitiveUP (VkPrimitiveTopology t, UINT vertexCount, const void *vtx, UINT stride);
 	void DrawIndexedPrimitiveUP (VkPrimitiveTopology t, UINT vertexCount, UINT indexCount, const void *idx, VkIndexType it, const void *vtx, UINT stride);
 	void PrepareSample (VkTex *tex);                 // a texture read by the next draw must be in SHADER_READ_ONLY layout
@@ -254,6 +255,10 @@ public:
 	void StretchRect (VkSurf *src, const RECT *sr, VkSurf *dst, const RECT *dr, VkFilter filter);
 	void CopySurface (VkSurf *src, const RECT *sr, VkSurf *dst, const POINT *dp);
 	void ColorFill (VkSurf *s, const RECT *r, DWORD argb);
+
+	// not upstream: small readbacks with no wait (auto-exposure), one slot per frame in flight
+	void ReadbackCopy (VkTex *t, uint32_t stamp);          // texel (0,0) of t (at most 16 bytes) into this frame's slot
+	bool ReadbackGet (void *out, UINT n, uint32_t *stamp); // the slot of the frame BeginFrame waited on; false: none
 
 	struct State {
 		bool depthTest, depthWrite, blend, blendSeparate, stencil;
@@ -313,6 +318,8 @@ private:
 		uint64_t done;                               // timeline value signalled when this frame's work is complete
 		VkBuf *transient;
 		VkDeviceSize transientUsed;
+		VkBuf *rb = NULL;                            // not upstream: ReadbackCopy slot
+		uint32_t rbStamp = 0, rbReady = 0;           // stamp recorded in this frame; stamp readable after the wait
 	} frame[NFRAMES];
 	int iFrame;
 	bool recording;

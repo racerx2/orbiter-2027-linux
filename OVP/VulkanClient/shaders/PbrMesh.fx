@@ -99,6 +99,7 @@ bool      gShadowsEnabled;
 float     gProxySize;
 float     gInvProxySize;
 float     gGlowConst;
+float     gExposure;       // auto-exposure, 1 off the main pass (shared from D3D9Client.fx)
 vec4      gScreen;         // scene copy size: w, h, 1/w, 1/h
 float     gEnvMips;        // GGX cube: highest mip
 float     gSheenMips;      // sheen cube: highest mip
@@ -273,6 +274,7 @@ vec3 Transmitted (Surf s)
 		c = clamp(c, 0.0, 0.99);
 		c = c / pow(vec3(1.0) - c * c * c * c, vec3(0.25));
 #endif
+		c /= max(gExposure, 1e-3); // the copy holds e already: not twice behind glass
 		bg = Decode(c);
 	}
 	else bg = Prefiltered(dir, s.perceptual);
@@ -533,7 +535,7 @@ vec4 PbrMeshPS (PbrVS f)
 		color += EvalIBL(s, ao) + emis;
 	}
 
-	vec3 g = LinearToSrgb(color);
+	vec3 g = LinearToSrgb(color) * gExposure; // auto-exposure on the display value, as the legacy shaders; inscatter holds e already
 #if !defined(_LIGHTGLOW)
 	vec3 h2 = g * g;
 	g *= pow(max(vec3(0.0), 1.0 + h2 * h2), vec3(-0.25));

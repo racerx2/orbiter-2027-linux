@@ -661,6 +661,7 @@ bool vVessel::Render(VkDev *dev, bool internalpass)
 {
 	_TRACE;
 	if (!active) return false;
+	if (scn->GetRenderPass() == RENDERPASS_SHADOWMAP && terrainSun <= 0.0f) return true; // not upstream: behind a mountain it casts no shadow
 
 	UINT i, mfd;
 
@@ -795,6 +796,7 @@ bool vVessel::Render(VkDev *dev, bool internalpass)
 		{
 			meshlist[i].mesh->RenderShadowMap(pWT, pVP, 1);
 		}
+		else if (scn->GetRenderPass() == RENDERPASS_SCENE_DEPTH) meshlist[i].mesh->RenderShadowMap(pWT, pVP, 2); // not upstream: SceneFx, see-through groups left out
 		else {
 			if (internalpass) meshlist[i].mesh->Render(pWT, RENDER_VC, NULL, 0);
 			else 			  meshlist[i].mesh->Render(pWT, RENDER_VESSEL, pEnv, nEnv);
@@ -1053,6 +1055,8 @@ void vVessel::RenderGroundShadow(VkDev *dev, OBJHANDLE hPlanet, float alpha)
 {
 	if (!bStencilShadow && scn->GetRenderPass() == RENDERPASS_MAINSCENE) return;
 	if (Config->TerrainShadowing == 0) return;
+	if (terrainSun <= 0.0f) return; // not upstream: no sun on it, no shadow from it
+	alpha *= terrainSun;            // not upstream: fades as the sun goes behind terrain
 
 	static const double eps = 1e-2;
 	static const double shadow_elev_limit = 0.07;
@@ -1499,7 +1503,7 @@ bool vVessel::ModLighting()
 
 	// we only test the closest celestial body for shadowing
 	OBJHANDLE hP = vessel->GetSurfaceRef();
-	if (hP==NULL) {	LogErr("Vessel's surface reference is NULL"); return false;	}
+	if (hP==NULL) {	terrainSun = 1.0f; LogErr("Vessel's surface reference is NULL"); return false;	} // not upstream: terrainSun
 
 	vObject *vO = GetScene()->GetVisObject(hP);
 
@@ -1508,10 +1512,14 @@ bool vVessel::ModLighting()
 			vPlanet* vP = (vPlanet*)vO;	
 			VECTOR3 rpos = gpos - vP->GlobalPos();
 			sunLight = vP->GetObjectAtmoParams(rpos);
+			// not upstream: a vessel behind a mountain is in its shadow
+			terrainSun = vP->TerrainSunVisibility(gpos, tsCache);
+			sunLight.Color *= terrainSun;
 			return true;		
 		}
 	}
 	
+	terrainSun = 1.0f; // not upstream: no planet under it, no terrain in the way
 	DWORD ambient = *(DWORD*)gc->GetConfigParam(CFGPRM_AMBIENTLEVEL);
 	sunLight.Ambient = float(ambient) * 0.0039f;
 	sunLight.Transmission = 1.0f;

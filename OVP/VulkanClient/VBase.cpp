@@ -352,6 +352,7 @@ bool vBase::Update (bool bMainScene)
 	if (fabs(simt-Tlghtchk)>0.1 || oapiGetPause()) {
 		VECTOR3 rpos = gpos - vP->GlobalPos();
 		sunLight = vP->GetObjectAtmoParams(rpos);
+		terrainSun = vP->TerrainSunVisibility(gpos, tsCache); // not upstream: structures above shadows only, the ground meshes match the terrain
 		Tlghtchk = simt;
 	}
 
@@ -424,11 +425,24 @@ bool vBase::RenderStructures(VkDev *dev)
 		FVECTOR3 bs = structure_as[i]->GetBoundingSpherePos();
 		FVECTOR3 qw = TransformCoord(bs, mWorld);
 		D3D9Sun sp = vP->GetObjectAtmoParams(qw._V() + vP->CameraPos());
+		sp.Color *= terrainSun; // not upstream
 		structure_as[i]->SetSunLight(&sp);
 		structure_as[i]->Render(&mWorld, RENDER_BASE);
 		++uCurrentMesh;
 	}
 	return true;
+}
+
+
+// ===========================================================================================
+// not upstream: the SceneFx distance pass, the meshes the main pass drew
+void vBase::RenderDepth(VkDev *dev, const D3DXMATRIX &mVP)
+{
+	if (!active || !IsVisible()) return;
+	D3DXMATRIX VP = mVP;
+	if (tilemesh) tilemesh->RenderShadowMap(&mWorld, &VP, 2);
+	for (DWORD i = 0; i < nstructure_bs; i++) structure_bs[i]->RenderShadowMap(&mWorld, &VP, 2);
+	for (DWORD i = 0; i < nstructure_as; i++) structure_as[i]->RenderShadowMap(&mWorld, &VP, 2);
 }
 
 
@@ -471,6 +485,8 @@ void vBase::RenderGroundShadow(VkDev *dev, float alpha)
 	if (!active) return;
 	if (!IsVisible()) return;
 	if (Config->TerrainShadowing == 0) return;
+	if (terrainSun <= 0.0f) return; // not upstream: no sun on it, no shadow from it
+	alpha *= terrainSun;            // not upstream
 
 	pCurrentVisual = this;
 

@@ -29,6 +29,9 @@
 #include <list>
 
 struct VkPixels; // VkTexFile.h
+namespace VolCloud { struct Src; } // not upstream: VolCloudMap.h
+namespace Horizon { struct Map; }  // not upstream: HorizonMap.h
+#include <memory> // not upstream
 
 #define NPOOLS 32
 #define MAXQUEUE2 20
@@ -277,6 +280,9 @@ namespace eElevMode {
 };
 
 
+struct HorizonState;
+void HorizonStateFree (HorizonState *h); // not upstream: Surfmgr2.cpp, NULL is fine
+
 /**
  * \brief Base class for tile management classes.
  *
@@ -400,7 +406,18 @@ public:
 	/// \brief Return the root directory containing the body's texture data (surface, elevation, mask, cloud tiles)
 	inline const std::string& DataRootDir() const { return m_dataRootDir; }
 
+	bool bStream; // not upstream: the tile stream fills this body's tile folders (TileStream.cpp in the core)
+	void StreamQueue (int L, int ilat, int ilng); // not upstream: a streamed tile to swap in
+	DWORD streamFrame = 0;  // not upstream: counts Render calls, SurfTile::Render's walk stamp
+	double streamNow = 0.0; // not upstream: sys time of this Render call
+	struct HorizonState *horizon = nullptr; // not upstream: horizon map jobs (Surfmgr2.cpp)
+	std::vector<std::pair<Tile*, D3DXMATRIX>> depthTiles; // not upstream: tiles the main pass drew, for the SceneFx distance pass
+	bool depthRec = false;                  // not upstream: record them this pass
+	DWORD depthFrame = 0;                   // not upstream: the frame they were drawn in
+
 protected:
+	struct StreamLoad { int L, ilat, ilng; VkPixels *surf, *mask, *cls; bool checked; uint64_t stamp; }; // not upstream: checked, StreamApply found a tile to take it; stamp, the Surf file read
+	std::vector<StreamLoad> streamKeys; // not upstream: tiles to swap in, pixels read once taken
 	MATRIX4 WorldMatrix (int ilng, int nlng, int ilat, int nlat);
 	MATRIX4 WorldMatrix(Tile *tile);
 
@@ -447,6 +464,8 @@ public:
 	void Render (MATRIX4 &dwmat, bool use_zbuf, const vPlanet::RenderPrm &rprm);
 
 	int GetElevation(double lng, double lat, double *elev, FVECTOR3 *nrm, SurfTile **cache);
+	int GetLoadedElevation(double lng, double lat, double *elev); // not upstream: the deepest loaded tile, in view or not
+	void GetLoadedElevations(int n, const double *lng, const double *lat, double *elev, int *rc = nullptr); // not upstream: n points, one lock; elev 0 where rc is not 1
 	void Unload(int lvl);
 
 	void Pick(D3DXVECTOR3 &vRay, TILEPICK *pPick);
@@ -501,6 +520,18 @@ protected:
 	void LoadZTrees();
 	void InitHasIndividualFiles();
 	Tile *SearchTileSub (const QuadTreeNode<TileType> *node, double lng, double lat, int maxlvl, bool bOwntex) const;
+
+	void StreamRead ();  // not upstream: read the next streamed tiles' files, outside the loader mutex
+	void StreamApply (); // not upstream: swap them in, under the loader mutex
+
+public:
+	TileType *NodeAt (int ilvl, int ilat, int ilng); // not upstream: the tile at exactly that internal level, any state; lng wraps
+	void HorizonRequest (TileType *owner, double dist);  // not upstream: under the loader mutex, main pass; the nearest is kept
+	void HorizonSubmit ();                               // not upstream: under the loader mutex, after the main pass drew; the job for the nearest
+	void HorizonUpload ();                               // not upstream: under the loader mutex
+	void RenderDepth (ShaderClass *sh, const D3DXMATRIX &mVP); // not upstream: the recorded tiles' camera distance
+	int VolTiles (double lat, double lng, double half, std::vector<VolCloud::Src> &out); // not upstream: cloud tiles with density under a box (cloud frame), takes the loader mutex
+	std::shared_ptr<const Horizon::Map> HorizonAt (double lat, double lng, double bnd[4]); // not upstream: the horizon map over a point and its owner's bounds (minlat, maxlat, minlng, maxlng), takes the loader mutex
 };
 
 #endif // !__TILEMGR2_H

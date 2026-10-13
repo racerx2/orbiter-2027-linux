@@ -22,6 +22,7 @@
 #include "DebugControls.h"
 #include "IProcess.h"
 #include "VectorHelpers.h"
+#include "SceneFx.h" // not upstream
 #include "D3D9Frame.h" // not upstream: GetDepthFormat
 #include "PbrRender.h" // custom: PBR materials (design-pbr 7, 8)
 #include <algorithm>
@@ -112,6 +113,7 @@ Scene::Scene(D3D9Client *_gc, DWORD w, DWORD h)
 	pLocalCompute = NULL;
 	pRenderGlares = NULL;
 	pCreateGlare = NULL;
+	pFx = NULL; // not upstream
 	viewH = h;
 	viewW = w;
 	nLights = 0;
@@ -339,6 +341,8 @@ Scene::Scene(D3D9Client *_gc, DWORD w, DWORD h)
 
 	for (int i = 0; i < (int)std::size(ptgBuffer);i++)  if (ptgBuffer[i]) psgBuffer[i] = new VkSurf(ptgBuffer[i], 0); // GetSurfaceLevel
 
+	pFx = new SceneFx(gc, this, viewW, viewH); // not upstream: ground graphics passes
+
 
 	if (Config->GDIOverlay) {
 		// Clear the GDI Overlay with transparency
@@ -370,6 +374,7 @@ Scene::~Scene ()
 	SAFE_DELETE(m_celSphere);
 	SAFE_DELETE(pLocalCompute);
 	SAFE_DELETE(pRenderGlares);
+	SAFE_DELETE(pFx); // not upstream
 	SAFE_DELETE(pCreateGlare);
 
 	SAFE_DELETE(pOffscreenTarget);
@@ -1310,6 +1315,9 @@ void Scene::RenderMainScene()
 	//
 	if (gc->BeginScene() < 0) return; // FAILED
 
+	fExposure = pFx ? pFx->BeginFrame() : 1.0f; // not upstream: auto-exposure
+	D3D9Effect::FX->SetFloat(D3D9Effect::eExposure, 1.0f); // the custom camera, env and irradiance turns
+
 
 
 	// -------------------------------------------------------------------------------------------------------
@@ -1416,6 +1424,8 @@ void Scene::RenderMainScene()
 
 	VOBJREC* pv = NULL;
 	VkTex *pShdMap = NULL;
+
+	D3D9Effect::FX->SetFloat(D3D9Effect::eExposure, fExposure); // not upstream: the main pass
 
 	UpdateCameraFromOrbiter(RENDERPASS_MAINSCENE);
 	UpdateCamVis();
@@ -1907,6 +1917,7 @@ void Scene::RenderMainScene()
 	}
 
 	PbrRender::SetPhase(PbrRender::PHASE_ALL); // custom
+	if (pFx) pFx->AfterOpaque(RenderMarkers, pBackBuffer); // not upstream: SceneDepth, SSAO, clouds over the opaque scene
 
 	D3D9Pad* pSketch = GetPooledSketchpad(SKETCHPAD_LABELS);
 	if (pSketch) {
@@ -2027,6 +2038,10 @@ void Scene::RenderMainScene()
 
 	pDevice->SetFillMode(VK_POLYGON_MODE_FILL);
 
+	bool bMeasureLate = pOffscreenTarget && pLightBlur && pLightBlur->IsOK(); // not upstream: post-processed, measured after LightBlur's tone curve
+	if (pFx && !bMeasureLate) pFx->Measure(pBackBuffer); // not upstream: auto-exposure measure of the finished 3D scene
+	D3D9Effect::FX->SetFloat(D3D9Effect::eExposure, 1.0f); // not upstream: 2D, panels and sketchpad meshes as before
+
 
 	// End Of Main Scene Rendering ---------------------------------------------
 	//
@@ -2109,6 +2124,7 @@ void Scene::RenderMainScene()
 			pLightBlur->SetOutputNative(0, gc->GetBackBuffer());
 
 			if (!pLightBlur->Execute(true)) LogErr("pLightBlur Execute Failed");
+			else if (pFx && bMeasureLate) pFx->Measure(gc->GetBackBuffer()); // not upstream: display values, as without post-processing
 		}
 		else {
 			LogErr("pLightBlur is not o.k.");
@@ -3349,6 +3365,13 @@ DWORD Scene::GetRenderPass() const
 }
 
 // ===========================================================================================
+// not upstream
+float Scene::GetVolCloudFade() const
+{
+	return pFx ? pFx->CloudFade() : 0.0f;
+}
+
+// ===========================================================================================
 //
 D3DXVECTOR3 Scene::GetPickingRay(short xpos, short ypos)
 {
@@ -3888,7 +3911,9 @@ void Scene::RenderGlares()
 					VECTOR3 crp = vp->CameraPos();
 					clr = vp->SunLightColor(crp, 2.0);
 					cis = CameraInSpace();
-					glare *= pow(clr.MaxRGB(), 0.33f) * cis;				
+					glare *= pow(clr.MaxRGB(), 0.33f) * cis;
+					static TerrainSunCache tsCam; // not upstream: the glare hides behind mountains
+					glare *= vp->TerrainSunVisibility(Camera.pos, tsCam);
 				}
 							
 				float cd = length(pt - FVECTOR2(viewW, viewH) * 0.5f) / float(viewW); // Glare distance from a screen center

@@ -56,6 +56,7 @@ public:
 	void RenderRunwayLights (VkDev *dev);
 	bool RenderSurface (VkDev *dev);
 	bool RenderStructures (VkDev *dev);
+	void RenderDepth (VkDev *dev, const D3DXMATRIX &mVP); // not upstream: SceneFx distance pass
 	void RenderGroundShadow (VkDev *dev, float alpha);
 
 	const SurftileSpec *GetTileDesc() const { return tspec; }
@@ -77,6 +78,8 @@ private:
 
 	double Tchk;               // next update
 	double Tlghtchk;           // next lighting update
+	TerrainSunCache tsCache;   // not upstream: the sun behind terrain (vPlanet::TerrainSunVisibility)
+	float terrainSun = 1.0f;   // not upstream
 	double csun_lights;
 	DWORD ntile;               // number of surface tiles
 	const SurftileSpec *tspec; // list of tile specs

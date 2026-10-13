@@ -385,6 +385,10 @@ public:
 	bool bEchoAll;          // echo all configuration parameters (or only non-default ones)?
 	RECT rLaunchpad;        // launchpad dialog position
 	bool bPlanetTexCheck;   // not upstream: offer missing planet textures at launch (TexInstall.cpp)
+	bool bTileStream;       // not upstream: stream planet tiles into their tile folders (TileStream.cpp)
+	bool bTileStreamOffline;// not upstream: the tile stream makes no requests
+	int  TileStreamCacheMB; // not upstream: size cap of the streamed tiles, 0 = none
+	bool bTileStreamBuildings; // not upstream: stream 3D buildings where the cfg has them
 
 	// directory information
 	char *Root;             // master config file

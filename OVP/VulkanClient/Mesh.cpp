@@ -864,6 +864,7 @@ int D3D9Mesh::EditGroup(DWORD grp, GROUPEDITSPEC *ges)
 
 			if (g->nVert>0) BoundingBox(vtx, g->nVert, &g->BBox);
 			else D9ZeroAABB(&g->BBox);
+			g->bUpdate = true; // not upstream: the group's bounding sphere follows the moved vertices
 		}
 	}
 
@@ -3058,10 +3059,10 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 	if (bGlobalTF) D3DXMatrixMultiply(&mWorldMesh, &mTransform, pW);
 	else mWorldMesh = *pW;
 
-	if (opt == 1) {
-		// Screenspace Depth and Normal buffer rendering
+	if (opt == 1 || opt == 2) {
+		// Screenspace Depth and Normal buffer rendering; not upstream: opt 2, the SceneDepth distance
 		pDev->SetStreamSource(0, pBuf->pVB, 0, sizeof(NMVERTEX));
-		pShader = s_pShader[SHADER_NORMAL_DEPTH];
+		pShader = s_pShader[opt == 2 ? SHADER_SCENE_DEPTH : SHADER_NORMAL_DEPTH];
 		pShader->Setup(pMeshVertexDecl, true, 0);
 	}
 	else {
@@ -3095,6 +3096,7 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 		if (Grp[g].bPbr) { // custom: PBR groups cast by their alpha mode (design-pbr 5)
 			const PbrMaterial *m = GetPbrMaterial(Grp[g].MtrlIdx);
 			if (!m || m->transmission > 0) continue;
+			if (opt == 2 && m->alphaMode == PBR_BLEND) continue; // not upstream: see-through, not in SceneDepth
 			bool test = (m->alphaMode != PBR_OPAQUE);
 			float cut = (m->alphaMode == PBR_MASK ? m->alphaCutoff : 0.5f) / std::max(m->baseColor[3], 0.001f);
 			VkTex *t = m->map[PBR_BASECOLOR].get();
@@ -3109,7 +3111,15 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 
 		MeshShader::ps_bools.bOIT = (Grp[g].UsrFlag & 0x20) != 0;
 
-		if (MeshShader::ps_bools.bOIT) {
+		if (opt == 2) { // not upstream: see-through groups (glass) left out, textured ones alpha tested
+			DWORD ti = Grp[g].TexIdx;
+			VkTex *hTex = (ti && Tex[ti]) ? Tex[ti]->GetTexture() : NULL;
+			const D3D9MatExt *m = (Grp[g].MtrlIdx == SPEC_DEFAULT) ? &defmat : &Mtrl[Grp[g].MtrlIdx];
+			if ((bModulateMatAlpha || !hTex) && m->Diffuse.w < 0.5f) continue;
+			MeshShader::ps_bools.bOIT = (hTex != NULL);
+			if (hTex) pShader->SetTexture(pShader->hPST[0], hTex, IPF_WRAP | IPF_POINT);
+		}
+		else if (MeshShader::ps_bools.bOIT) {
 			DWORD ti = Grp[g].TexIdx;
 			if (ti) {
 				auto hTex = Tex[ti]->GetTexture();
@@ -3751,6 +3761,7 @@ void D3D9Mesh::GlobalInit(VkDev *pDev)
 	s_pShader[SHADER_SHADOWMAP] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "ShdMapVS", "ShdMapPS");
 	s_pShader[SHADER_SHADOWMAP_OIT] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "ShdMapOIT_VS", "ShdMapOIT_PS");
 	s_pShader[SHADER_NORMAL_DEPTH] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "NormalDepth_VS", "NormalDepth_PS");
+	s_pShader[SHADER_SCENE_DEPTH] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "NormalDepth_VS", "SceneDepth_PS"); // not upstream
 }
 
 

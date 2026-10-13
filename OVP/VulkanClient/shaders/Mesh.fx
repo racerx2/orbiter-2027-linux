@@ -120,6 +120,8 @@ vec4 RingTechPS(MeshVS frg)
 
 	if (da<0) sh = 1.0f;
 
+	sh *= gExposure; // not upstream: auto-exposure
+
 	if ((dot(frg.nrmW, frg.CamW)*dot(frg.nrmW, gSun.Dir))>0) return vec4(color.rgb*0.35f*sh, color.a);
 	return vec4(color.rgb*sh, color.a);
 }
@@ -142,7 +144,7 @@ vec4 RingTech2PS(MeshVS frg)
 
 	if (da<0) sh = 1.0f;
 
-	color.rgb *= sh;
+	color.rgb *= sh * gExposure; // not upstream: auto-exposure
 
 	if ((dot(frg.nrmW, frg.CamW)*dot(frg.nrmW, gSun.Dir))>0) return vec4(color.rgb*0.35f, color.a);
 	return vec4(color.rgb, color.a);
@@ -220,7 +222,7 @@ vec4 BaseTilePS(TileMeshVS frg)
 
 	if (gNight) clr += texture(Tex1S, frg.tex0).rgb;
 
-	return vec4(clr.rgb*frg.atten.rgb+frg.insca.rgb, cTex.a);
+	return vec4((clr.rgb*frg.atten.rgb+frg.insca.rgb)*gExposure, cTex.a); // not upstream: auto-exposure
 	//return float4(clr.rgb*frg.atten.rgb+frg.insca.rgb, cTex.a*(1-frg.insca.a));	// Make basetiles transparent during night
 }
 

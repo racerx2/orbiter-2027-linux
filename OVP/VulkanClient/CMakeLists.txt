@@ -68,6 +68,15 @@ set(SourceFiles
 	TileMgr.cpp
 	Tilemgr2.cpp
 	VBase.cpp
+	BldgMgr.cpp # not upstream
+	BldgGeom.cpp # not upstream
+	GfxPool.cpp # not upstream: ground graphics
+	HorizonMap.cpp # not upstream
+	SceneFx.cpp # not upstream
+	AutoExpo.cpp # not upstream
+	VolCloudMap.cpp # not upstream
+	TreeGeom.cpp # not upstream
+	TreeMgr.cpp # not upstream
 	VideoTab.cpp
 	VObject.cpp
 	VPlanet.cpp

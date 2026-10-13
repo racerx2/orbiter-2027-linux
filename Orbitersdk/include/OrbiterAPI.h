@@ -4776,6 +4776,8 @@ OAPIFUNC void oapiReleaseTexture (SURFHANDLE hTex);
 	*  to retrieve a \c MESHGROUP pointer, and modify the TexIdx entry.
 	*/
 OAPIFUNC bool oapiSetTexture (MESHHANDLE hMesh, DWORD texidx, SURFHANDLE tex);
+// not upstream: adds tex to the mesh, which takes its own reference; returns the index for MESHGROUP::TexIdx, (DWORD)-1 if none
+OAPIFUNC DWORD oapiAddMeshTexture (MESHHANDLE hMesh, SURFHANDLE tex);
 OAPIFUNC bool oapiSetTexture (DEVMESHHANDLE hMesh, DWORD texidx, SURFHANDLE tex);
 
 	/**
@@ -6334,6 +6336,28 @@ OAPIFUNC void       oapiCloseFile (FILEHANDLE file, FileAccessMode mode);
 
 // not upstream: on-disk spelling of a '\'-separated, any-case path; an unmatched tail is kept so new files work too
 OAPIFUNC std::string oapiResolvePath (const char *path);
+
+// not upstream: the planet tile stream (TileStream.cpp) fills Textures/<body>/Surf and Mask while the sim runs
+OAPIFUNC bool oapiTileStreamEnabled (OBJHANDLE hBody);
+// lvl: file level; flags 1: the file failed to load, 2: loaded from the cache; returns 1 file there, 0 wanted, -1 never
+OAPIFUNC int  oapiTileStreamWant (OBJHANDLE hBody, int lvl, int ilat, int ilng, int flags);
+// finished tiles as (lvl, ilat, ilng) triples, keys holds 3*nmax; returns the count
+OAPIFUNC int  oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax);
+
+// not upstream: streamed 3D buildings, z14 Web Mercator tiles (x east from 180W, y south from the top)
+typedef struct { double lat, lng; float hmin, hmax; DWORD v0, nv, i0, ni; } TSBLDG; // anchor (rad), vertex and index ranges
+typedef struct {
+	int z, x, y;
+	DWORD nb, nv, ni;
+	const TSBLDG *b;
+	const float *vtx;  // per vertex x east, y up, z north (m from its building's anchor), nx, ny, nz
+	const DWORD *idx;  // triangles, clockwise from the front, relative to the building's v0
+} TSBLDGMESH;
+// returns 1 the tile file is there, 0 wanted, -1 never (no buildings for this body, or off)
+OAPIFUNC int  oapiTileStreamBldgWant (OBJHANDLE hBody, int x, int y);
+// the tile's buildings, NULL if not there; free with oapiTileStreamBldgFree
+OAPIFUNC TSBLDGMESH *oapiTileStreamBldgLoad (OBJHANDLE hBody, int x, int y);
+OAPIFUNC void oapiTileStreamBldgFree (TSBLDGMESH *mesh);
 
 	/**
 	* \brief Writes the current simulation state to a scenario file.

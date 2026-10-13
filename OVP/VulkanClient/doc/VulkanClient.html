@@ -581,6 +581,46 @@
     </p>
 </ul>
 
+<!-- not upstream: ground graphics -->
+<h2 id="_ground_graphics">Ground graphics</h2>
+<p>
+  Effects for views near the ground. Each can be switched off here; with all
+  of them off the picture is the same as without them. The keys are in
+  <code>VulkanClient.cfg</code>.
+</p>
+<ul>
+  <li>Terrain horizon shadows (<code>HorizonShadows</code>, default 1)</li>
+    <p>
+      Mountains and ridges shadow the ground, from horizon maps made in the
+      background from the elevation tiles. Trees in the shadow lose their
+      sunlight too. On every body with elevation data.
+    </p>
+  <li>Ambient occlusion (<code>SSAO</code> 1, <code>SSAOStrength</code> 0.8 (0...1), <code>SSAORadius</code> 1.5 m (0.25...8))</li>
+    <p>
+      Darkens creases and contact areas of vessels, buildings, trees and
+      terrain in the ambient light.
+    </p>
+  <li>Volumetric clouds (<code>VolClouds</code> 1), Cloud quality (<code>VolCloudQuality</code> 0 low, 1 medium, 2 high)</li>
+    <p>
+      Within about 60 km of the camera the cloud layer becomes a volume you can
+      fly into, shaped from the planet's cloud tiles. Needs the cloud layer
+      (Visual settings) and an atmosphere. Higher quality takes more ray
+      steps.
+    </p>
+  <li>3D trees (<code>Trees</code> 1), Tree range (<code>TreeRange</code> 2500 m (500...4000), <code>TreeDensity</code> 1 (0.1...2))</li>
+    <p>
+      Trees and bushes where the streamed land cover shows forest or shrub,
+      below 3 km above the ground; not on water, steep slopes, buildings or
+      bases. Needs Earth streaming (land class tiles).
+    </p>
+  <li>Auto exposure (<code>AutoExposure</code> 1, <code>AutoExpMinEV</code> -1.5 (-4...0), <code>AutoExpMaxEV</code> 2.5 (0...4))</li>
+    <p>
+      The view adapts to dark and bright scenes, as the eye does: night and
+      shadow brighten, glare darkens. Daylight stays as before. The 2D panel,
+      HUD and MFDs are not changed.
+    </p>
+</ul>
+
 <h2>Generic configuration</h2>
 <p>
   The generic configuration contains options that will change the general

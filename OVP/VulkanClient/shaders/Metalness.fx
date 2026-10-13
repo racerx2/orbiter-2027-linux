@@ -383,6 +383,8 @@ vec4 MetalnessPS(vec4 sc, PBRData frg)	// sc : VPOS
 	cDiff = cDiff * (1.0f - gColor*0.5f) + gColor;
 #endif
 
+	cDiff.rgb *= gExposure; // not upstream: auto-exposure, before either curve
+
 #if defined(_LIGHTGLOW)
 	cDiff.rgb *= gSun.Transmission;
 	cDiff.rgb += gSun.Inscatter;

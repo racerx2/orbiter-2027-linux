@@ -223,3 +223,14 @@ layout(location = 0) in NormalTexVS frg;
 layout(location = 0) out vec4 oColor;
 void main() { oColor = NormalDepth_PS(frg); }
 #endif
+
+// not upstream: camera distance for the SceneDepth pass (SSAO, cloud march); textured groups alpha tested
+#ifdef PS_SceneDepth_PS
+layout(location = 0) in NormalTexVS frg;
+layout(location = 0) out vec4 oColor;
+void main()
+{
+	if (ps_bools.bOIT && texture(tDiff, frg.tex0.xy).a < ps_bools.fCutoff) discard; // custom: 0.75 legacy, the material's for PBR
+	oColor = vec4(length(frg.posW));
+}
+#endif

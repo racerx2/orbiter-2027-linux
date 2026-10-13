@@ -1471,6 +1471,17 @@ DLLEXPORT bool oapiSetTexture (MESHHANDLE hMesh, DWORD texidx, SURFHANDLE tex)
 	return mesh->SetTexture (texidx-1, tex);
 }
 
+DLLEXPORT DWORD oapiAddMeshTexture (MESHHANDLE hMesh, SURFHANDLE tex) // not upstream: the mesh's ReleaseTextures gives the reference back
+{
+	if (!hMesh || !tex) return (DWORD)-1;
+	Mesh *mesh = (Mesh*)hMesh;
+	for (DWORD i = 0; i < mesh->nTexture(); i++)
+		if (mesh->GetTexture (i) == tex) return i;
+	oapi::GraphicsClient *gc = g_pOrbiter->GetGraphicsClient();
+	if (gc) gc->clbkIncrSurfaceRef (tex);
+	return (DWORD)mesh->AddTexture (tex);
+}
+
 DLLEXPORT bool oapiSetTexture (DEVMESHHANDLE hMesh, DWORD texidx, SURFHANDLE tex)
 {
 	oapi::GraphicsClient *gc = g_pOrbiter->GetGraphicsClient();
