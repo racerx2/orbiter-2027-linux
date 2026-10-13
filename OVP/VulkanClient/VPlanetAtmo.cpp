@@ -125,6 +125,7 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	if (!Config->bAtmoQuality) flags += "_PERFORMANCE ";
 
 	pRender[PLT_GIANT] = new PlanetShader(pDev, "Modules/VulkanClient/NewPlanet.glsl", "GiantVS", "GiantPS", "Giant", flags.c_str());
+	if (Config->CloudAtlas) flags += "_CLOUDATLAS "; // not upstream: seamless cloud alpha
 	pRender[PLT_G_CLOUDS] = new PlanetShader(pDev, "Modules/VulkanClient/NewPlanet.glsl", "CloudVS", "GiantCloudPS", "GiantCloud", flags.c_str());
 
 	if (Config->CloudMicro) flags += "_CLOUDMICRO ";
@@ -158,6 +159,7 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	if (bWater) flags += "_WATER ";
 	if (bWater && bRiples) flags += "_RIPPLES ";
 	if (bShadows) flags += "_CLOUDSHD ";
+	if (bShadows && Config->CloudAtlas) flags += "_CLOUDATLAS "; // not upstream: seamless cloud shadows
 	if (bNightLights) flags += "_NIGHTLIGHTS ";
 	if (bLocals) flags += "_LOCALLIGHTS ";
 

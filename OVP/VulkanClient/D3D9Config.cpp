@@ -110,6 +110,7 @@ void D3D9Config::Reset ()
 	AutoExposure		= 1;
 	AutoExpMinEV		= -1.5f;
 	AutoExpMaxEV		= 2.5f;
+	CloudAtlas			= 1;
 	
 	GFXIntensity = 0.5;
 	GFXDistance = 0.8;
@@ -224,6 +225,7 @@ bool D3D9Config::ReadParams ()
 	if (oapiReadItem_int   (hFile, (char*)"AutoExposure", i))					AutoExposure = max(0, min(1, i));
 	if (oapiReadItem_float (hFile, (char*)"AutoExpMinEV", d))					AutoExpMinEV = float(max(-4.0, min(0.0, d)));
 	if (oapiReadItem_float (hFile, (char*)"AutoExpMaxEV", d))					AutoExpMaxEV = float(max(0.0, min(4.0, d)));
+	if (oapiReadItem_int   (hFile, (char*)"CloudAtlas", i))					CloudAtlas = max(0, min(1, i));
 
 	if (oapiReadItem_float (hFile, (char*)"GFXIntensity", d))					GFXIntensity = max(0.0, min(1.0, d));
 	if (oapiReadItem_float (hFile, (char*)"GFXDistance", d))					GFXDistance = max(0.0, min(1.0, d));
@@ -336,6 +338,7 @@ void D3D9Config::WriteParams ()
 	oapiWriteItem_int   (hFile, (char*)"AutoExposure", AutoExposure);
 	oapiWriteItem_float (hFile, (char*)"AutoExpMinEV", AutoExpMinEV);
 	oapiWriteItem_float (hFile, (char*)"AutoExpMaxEV", AutoExpMaxEV);
+	oapiWriteItem_int   (hFile, (char*)"CloudAtlas", CloudAtlas);
 
 	oapiWriteItem_string (hFile,(char*) "SolCfg", SolCfg);
 	oapiWriteItem_string (hFile,(char*) "DebugLineFont", DebugFont);

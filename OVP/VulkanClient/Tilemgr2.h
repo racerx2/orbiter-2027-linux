@@ -282,6 +282,10 @@ namespace eElevMode {
 
 struct HorizonState;
 void HorizonStateFree (HorizonState *h); // not upstream: Surfmgr2.cpp, NULL is fine
+struct CloudAtlasState;
+void CloudAtlasFree (CloudAtlasState *a); // not upstream: Cloudmgr2.cpp, NULL is fine
+VkTex *CloudAtlasTex (const CloudAtlasState *a); // not upstream: NULL until built
+int CloudAtlasLevel (const CloudAtlasState *a); // not upstream: file level of its source tiles, 0 until built
 
 /**
  * \brief Base class for tile management classes.
@@ -411,6 +415,7 @@ public:
 	DWORD streamFrame = 0;  // not upstream: counts Render calls, SurfTile::Render's walk stamp
 	double streamNow = 0.0; // not upstream: sys time of this Render call
 	struct HorizonState *horizon = nullptr; // not upstream: horizon map jobs (Surfmgr2.cpp)
+	struct CloudAtlasState *atlas = nullptr; // not upstream: the cloud layer's seamless atlas (Cloudmgr2.cpp)
 	std::vector<std::pair<Tile*, D3DXMATRIX>> depthTiles; // not upstream: tiles the main pass drew, for the SceneFx distance pass
 	bool depthRec = false;                  // not upstream: record them this pass
 	DWORD depthFrame = 0;                   // not upstream: the frame they were drawn in

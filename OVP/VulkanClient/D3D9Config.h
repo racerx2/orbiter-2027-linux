@@ -110,6 +110,7 @@ public:
 	int AutoExposure;				// not upstream: eye adaptation (0,1)
 	float AutoExpMinEV;				// not upstream: -4...0
 	float AutoExpMaxEV;				// not upstream: 0...4
+	int CloudAtlas;					// not upstream: seamless cloud layer and shadows (0,1)
 	char *DebugFont;				///< Font face for debug lines (default="Fixed")
 	char *SolCfg;					///< Solar system to use (default="Sol")
 	float GFXIntensity;			///< Post Processing | Light glow intensity (0.0...1.0, default=0.5)

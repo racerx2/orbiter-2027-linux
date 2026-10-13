@@ -75,6 +75,7 @@ set(SourceFiles
 	SceneFx.cpp # not upstream
 	AutoExpo.cpp # not upstream
 	VolCloudMap.cpp # not upstream
+	CloudAtlas.cpp # not upstream
 	TreeGeom.cpp # not upstream
 	TreeMgr.cpp # not upstream
 	VideoTab.cpp

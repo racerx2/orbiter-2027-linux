@@ -184,6 +184,7 @@
 #define IDC_GG_AUTOEXP                          3041 // not upstream
 #define IDC_GG_CLOUDQ                           3042 // not upstream
 #define IDC_GG_TREERANGE                        3043 // not upstream
+#define IDC_GG_CLOUDATLAS                       3044 // not upstream
 #define IDC_ATM_S1                              4000
 #define IDC_ATM_S2                              4001
 #define IDC_ATM_S3                              4002

@@ -924,6 +924,7 @@ void VideoTab::InitSetupDialog(QWidget *hWnd)
 	DlgItem<QAbstractButton>(hWnd, IDC_GG_VOLCLOUDS)->setChecked(Config->VolClouds == 1);
 	DlgItem<QAbstractButton>(hWnd, IDC_GG_TREES)->setChecked(Config->Trees == 1);
 	DlgItem<QAbstractButton>(hWnd, IDC_GG_AUTOEXP)->setChecked(Config->AutoExposure == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_GG_CLOUDATLAS)->setChecked(Config->CloudAtlas == 1);
 	DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ)->setCurrentIndex(Config->VolCloudQuality);
 	DlgItem<QComboBox>(hWnd, IDC_GG_TREERANGE)->setCurrentIndex(Config->TreeRange < 1750.0f ? 0 : Config->TreeRange < 3250.0f ? 1 : 2);
 
@@ -1011,6 +1012,7 @@ void VideoTab::SaveSetupState(QWidget *hWnd)
 	Config->VolClouds     = (int)DlgItem<QAbstractButton>(hWnd, IDC_GG_VOLCLOUDS)->isChecked();
 	Config->Trees         = (int)DlgItem<QAbstractButton>(hWnd, IDC_GG_TREES)->isChecked();
 	Config->AutoExposure  = (int)DlgItem<QAbstractButton>(hWnd, IDC_GG_AUTOEXP)->isChecked();
+	Config->CloudAtlas    = (int)DlgItem<QAbstractButton>(hWnd, IDC_GG_CLOUDATLAS)->isChecked();
 	Config->VolCloudQuality = std::max(0, (int)DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ)->currentIndex());
 	{
 		static const float range[3] = { 1000.0f, 2500.0f, 4000.0f };

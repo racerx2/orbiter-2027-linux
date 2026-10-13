@@ -216,7 +216,7 @@ Ground graphics group of the VulkanClient Advanced Setup dialog;
 `SSAOStrength` (0.8), `SSAORadius` (1.5 m), `VolClouds` (1),
 `VolCloudQuality` (1, 0 low to 2 high), `Trees` (1), `TreeRange` (2500 m),
 `TreeDensity` (1), `AutoExposure` (1), `AutoExpMinEV` (-1.5), `AutoExpMaxEV`
-(2.5).
+(2.5), `CloudAtlas` (1, cloud layer without tile seams).
 
 Privacy: each tile request tells the server which part of Earth is shown. Its
 only headers are `Host`, `User-Agent: OrbiterLinux/<version>`,

@@ -105,7 +105,11 @@ struct ShaderParams
 	float4   vHorOff;			// not upstream: horizon map uv offset (xy) and scale (zw), left half
 	float4   vHorW[2];			// not upstream: sun weights of azimuths 0-3 and 4-7
 	float4   vVolCld;			// not upstream: 2D cloud fade start, end (m), volume weight
+	float4   vCldAtlas;			// not upstream: cloud atlas uv offset (xy) and scale (zw)
+	float4   vCldAtlasW;		// not upstream: x 1 with the atlas, y max anisotropy, z 1 when the texture is from file level <= 5
 };
+static_assert(sizeof(ShaderParams) == 448, "ShaderParams must match NewPlanet.glsl PerObjectParams"); // not upstream
+static_assert(offsetof(ShaderParams, vCldAtlas) == 416, "ShaderParams must match NewPlanet.glsl PerObjectParams"); // not upstream
 
 // Bools for NewPlanet.hlsl
 struct FlowControlPS

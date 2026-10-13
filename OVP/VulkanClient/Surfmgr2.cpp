@@ -24,6 +24,7 @@
 #include "D3D9Surface.h"
 #include "VkTexFile.h"
 #include "GfxPool.h" // not upstream
+#include "CloudAtlas.h" // not upstream
 #include <deque> // not upstream
 #include <filesystem> // not upstream
 #include <mutex> // not upstream
@@ -956,6 +957,7 @@ void SurfTile::Render ()
 	has_atmosphere &= pShader->bAtmosphere;
 
 	sp->vCloudOff = FVECTOR4(0, 0, 1, 1);
+	sp->vCldAtlasW = FVECTOR4(0, 0, 0, 0); // not upstream: set again below when the shadow uses the cloud atlas
 
 	D3DXVECTOR3 bs_pos;
 	D3DXVec3TransformCoord(&bs_pos, &mesh->bsCnt, &mWorld);
@@ -985,6 +987,7 @@ void SurfTile::Render ()
 	if (render_shadows)
 	{
 		VkTex *pCloud = NULL, *pCloud2 = NULL;
+		CloudTile *pCloudTile = NULL; // not upstream: the tile the shadow uses, for its file level
 
 		const TileManager2<CloudTile> *cmgr = vPlanet->CloudMgr2();
 		int maxlvl = min(lvl,9);
@@ -1028,6 +1031,7 @@ void SurfTile::Render ()
 							// Rendering with dual texture
 							pCloud2 = ctile2->Tex();
 							has_shadows = true;
+							pCloudTile = ctile; // not upstream
 							break;
 						}
 						else {
@@ -1041,6 +1045,7 @@ void SurfTile::Render ()
 				else {
 					// Just one texture in use
 					has_shadows = true;
+					pCloudTile = ctile; // not upstream
 					break;
 				}
 			}
@@ -1048,6 +1053,14 @@ void SurfTile::Render ()
 
 		pShader->SetTexture(pShader->tCloud, pCloud, IPF_CLAMP | IPF_ANISOTROPIC, Config->Anisotrophy);
 		pShader->SetTexture(pShader->tCloud2, pCloud2, IPF_CLAMP | IPF_ANISOTROPIC, Config->Anisotrophy);
+
+		VkTex *atl = CloudAtlasTex(cmgr->atlas); // not upstream: seamless cloud shadows (design-cloud-seams)
+		if (atl && has_shadows && pCloudTile) {
+			CloudAtlas::Range ar = lvl ? CloudAtlas::Quad(bnd.minlat, bnd.maxlat, bnd.minlng, bnd.maxlng, rot) : CloudAtlas::Hemi(ilng, rot);
+			sp->vCldAtlas = FVECTOR4(ar.x, ar.y, ar.z, ar.w);
+			sp->vCldAtlasW = FVECTOR4(1.0f, float(max(1, Config->Anisotrophy)), pCloudTile->Level() + 4 <= CloudAtlasLevel(cmgr->atlas) ? 1.0f : 0.0f, 0.0f);
+			pShader->SetTexture("tCloudAtlas", atl, IPF_ANISOTROPIC | IPF_CLAMP_V, Config->Anisotrophy);
+		}
 	}
 
 	

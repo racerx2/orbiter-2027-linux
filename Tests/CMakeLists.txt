@@ -212,6 +212,11 @@ add_unit_test(TreeGeom.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/TreeGeom.cpp)
 target_include_directories(TreeGeom.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 target_compile_options(TreeGeom.Test PRIVATE -O2 -fsanitize=address -fno-omit-frame-pointer)
 target_link_options(TreeGeom.Test PRIVATE -fsanitize=address)
+# not upstream: seamless far cloud layer (design-cloud-seams)
+add_unit_test(CloudAtlas.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/CloudAtlas.cpp)
+target_include_directories(CloudAtlas.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+target_compile_options(CloudAtlas.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(CloudAtlas.Test PRIVATE -fsanitize=address)
 
 if (BUILD_ORBITER_SERVER)
 

@@ -116,6 +116,8 @@ struct PerObjectParams
 	vec4	 vHorOff;			// not upstream: horizon map uv offset (xy) and scale (zw), left half
 	vec4	 vHorW[2];			// not upstream: sun weights of azimuths 0-3 and 4-7
 	vec4	 vVolCld;			// not upstream: 2D cloud fade start, end (m), volume weight
+	vec4	 vCldAtlas;			// not upstream: cloud atlas uv offset (xy) and scale (zw)
+	vec4	 vCldAtlasW;		// not upstream: x 1 with the atlas, y max anisotropy, z 1 when the texture is from file level <= 5
 };
 
 // uniform extern: vertex shader constants at binding 0 (the pixel shaders read Prm too), pixel shader constants at 2 (Scatter.glsl's are 1)
@@ -147,6 +149,35 @@ layout(binding = 29) uniform sampler2D	tEclipse;
 layout(binding = 30) uniform sampler2D	tClass;				// not upstream: R trees, G grass / crops, B bare / built-up
 layout(binding = 31) uniform sampler2D	tHorizon;			// not upstream: sin of the horizon, 8 azimuths in 2 halves; the last free binding
 
+#if defined(_CLOUDATLAS)
+layout(binding = 24) uniform sampler2D	tCloudAtlas;		// not upstream: R8 cloud alpha; shares 24 with tGlare, which only HorizonPS reads
+
+// not upstream: anisotropic filtering's LOD of uv on a texture of s texels
+float AnisoLod(vec2 uv, vec2 s)
+{
+#ifdef STAGE_PS
+	float a = length(dFdx(uv) * s), b = length(dFdy(uv) * s);
+	float pmax = max(max(a, b), 1e-12), pmin = max(min(a, b), 1e-12);
+	return log2(pmax / min(pmax / pmin, Prm.vCldAtlasW.y));
+#else
+	return -16.0;
+#endif
+}
+
+// not upstream: atlas weight, 0 where the atlas is magnified 2x, 1 at 1.19x or when the tile is no finer than the atlas
+float AtlasW(vec2 uv)
+{
+	return max(smoothstep(-1.0, -0.25, AnisoLod(uv, Prm.vCldAtlas.zw * vec2(textureSize(tCloudAtlas, 0)))), Prm.vCldAtlasW.z);
+}
+
+// not upstream: 1 at a 512 px tile texture's edge, 0 from 3 texels of its mip lt in; 0 where the tile is magnified
+float AtlasEdge(vec2 uvT, float lt)
+{
+	vec2 e = min(uvT, 1.0 - uvT) * 512.0;
+	float b = exp2(max(lt, 0.0));
+	return (1.0 - smoothstep(0.5 * b, 3.0 * b, min(e.x, e.y))) * smoothstep(0.25, 1.0, lt);
+}
+#endif
 
 
 
@@ -456,6 +487,9 @@ vec4 TerrainPS(TileVS frg)
 
 	vec3 cNrm = vec3(0.5, 0.5, 1.0);
 	float fChA = 0.0f, fChB = 0.0f;
+#if defined(_CLOUDATLAS)
+	float fChAtl = 0.0, fAtlW = 0.0; // not upstream: atlas shadow and its weight
+#endif
 
 #if defined(_RIPPLES)
 	if (Flow.bTexture) cNrm = texture(tOcean, vUVWtr).xyz;
@@ -485,6 +519,13 @@ vec4 TerrainPS(TileVS frg)
 	if (Flow.bCloudShd) {
 		fChA = texture(tCloud, vUVCld).a;
 		fChB = texture(tCloud2, vUVCld - vec2(1, 0)).a;
+#if defined(_CLOUDATLAS)
+		if (Prm.vCldAtlasW.x > 0.0) {
+			vec2 uvT = vec2(vUVCld.x < 1.0 ? vUVCld.x : vUVCld.x - 1.0, vUVCld.y); // in the shadow's own cloud texture
+			fAtlW = max(AtlasW(frg.texUV.xy), AtlasEdge(uvT, AnisoLod(vUVCld, vec2(512.0))));
+			fChAtl = texture(tCloudAtlas, frg.texUV.xy * Prm.vCldAtlas.zw + Prm.vCldAtlas.xy).r;
+		}
+#endif
 	}
 #endif
 
@@ -700,6 +741,9 @@ vec4 TerrainPS(TileVS frg)
 	// Do we render cloud shadows ?
 	if (Flow.bCloudShd) {
 		fShd = (vUVCld.x < 1.0 ? fChA : fChB);
+#if defined(_CLOUDATLAS)
+		if (Prm.vCldAtlasW.x > 0.0) fShd = mix(fShd, fChAtl, fAtlW);
+#endif
 		fShd = clamp(1.0 - fShd * Prm.fAlpha, 0.0, 1.0);
 	}
 #endif
@@ -837,6 +881,16 @@ vec4 CloudPS(CldVS frg)
 {
 	vec2 vUVTex = frg.texUV.xy * Prm.vCloudOff.zw + Prm.vCloudOff.xy; // not upstream: a tile without its own file shows its part of the parent's texture
 	vec4 cTex = texture(tDiff, vUVTex);
+#if defined(_CLOUDATLAS)
+	vec2 vUVAtl = frg.texUV.xy * Prm.vCldAtlas.zw + Prm.vCldAtlas.xy; // not upstream: the seamless cloud alpha atlas
+	float fAtlF = 0.0, fAtlW = 0.0, fLodT = 0.0;
+	if (Prm.vCldAtlasW.x > 0.0) {
+		fAtlF = AtlasW(frg.texUV.xy);
+		fLodT = AnisoLod(vUVTex, vec2(512.0));
+		fAtlW = max(fAtlF, AtlasEdge(vUVTex, fLodT));
+		cTex.a = mix(cTex.a, texture(tCloudAtlas, vUVAtl).r, fAtlW);
+	}
+#endif
 	float fVol = mix(1.0, smoothstep(Prm.vVolCld.x, Prm.vVolCld.y, length(frg.posW)), Prm.vVolCld.z); // not upstream: the volume clouds replace the layer near the camera
 	vec3 vRay;
 	vec3 vPxl;
@@ -897,6 +951,17 @@ vec4 CloudPS(CldVS frg)
 	float y1 = texture(tDiff, vUVTex + vec2(0, -d)).a;
 	float y2 = texture(tDiff, vUVTex + vec2(0, +d)).a;
 	nrm.y = (y1 * y1 - y2 * y2);
+#if defined(_CLOUDATLAS)
+	if (Prm.vCldAtlasW.x > 0.0) { // not upstream: the same taps on the atlas
+		vec2 da = Prm.vCldAtlasW.z > 0.0 ? 2.0 / vec2(textureSize(tCloudAtlas, 0)) : d * Prm.vCldAtlas.zw / Prm.vCloudOff.zw; // 2 texels of what is sampled
+		x1 = mix(x1, texture(tCloudAtlas, vUVAtl + vec2(-da.x, 0)).r, max(fAtlF, AtlasEdge(vUVTex + vec2(-d, 0), fLodT)));
+		x2 = mix(x2, texture(tCloudAtlas, vUVAtl + vec2(+da.x, 0)).r, max(fAtlF, AtlasEdge(vUVTex + vec2(+d, 0), fLodT)));
+		y1 = mix(y1, texture(tCloudAtlas, vUVAtl + vec2(0, -da.y)).r, max(fAtlF, AtlasEdge(vUVTex + vec2(0, -d), fLodT)));
+		y2 = mix(y2, texture(tCloudAtlas, vUVAtl + vec2(0, +da.y)).r, max(fAtlF, AtlasEdge(vUVTex + vec2(0, +d), fLodT)));
+		nrm.x = (x1 * x1 - x2 * x2);
+		nrm.y = (y1 * y1 - y2 * y2);
+	}
+#endif
 
 	// Blend in cloud normals only on moderately thick clouds, allowing the highest cloud tops to be smooth.
 	nrm.xy = (nrm.xy + clamp((cTex.a * 10.0f) - 3.0f, 0.0, 1.0) * clamp(((1.0f - cTex.a) * 10.0f) - 1.0f, 0.0, 1.0) * (cMicNorm.rg - 0.5f)); // new
@@ -1075,6 +1140,12 @@ void main() { oColor = GiantPS(frg); }
 vec4 GiantCloudPS(CldVS frg)
 {
 	vec4 cTex = texture(tDiff, frg.texUV.xy * Prm.vCloudOff.zw + Prm.vCloudOff.xy); // not upstream: parent's sub-range
+#if defined(_CLOUDATLAS)
+	if (Prm.vCldAtlasW.x > 0.0) { // not upstream
+		vec2 uvT = frg.texUV.xy * Prm.vCloudOff.zw + Prm.vCloudOff.xy;
+		cTex.a = mix(cTex.a, texture(tCloudAtlas, frg.texUV.xy * Prm.vCldAtlas.zw + Prm.vCldAtlas.xy).r, max(AtlasW(frg.texUV.xy), AtlasEdge(uvT, AnisoLod(uvT, vec2(512.0)))));
+	}
+#endif
 	vec3 vPlN = normalize(frg.nrmW);
 	vec3 vRay = normalize(frg.posW);
 	vec3 vVrt = Const.CamPos + frg.posW.xyz;	// Geo-centric pixel position
