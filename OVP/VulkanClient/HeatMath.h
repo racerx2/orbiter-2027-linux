@@ -33,6 +33,7 @@ struct Tune {
 	static constexpr double edgeExpose = 0.25;	// [V] share of hemisphere rays that escape: an exposed face
 	static constexpr double edgeRho = 0.015;	// [V] neighbourhood radius per metre of mesh size (finds edges up to about 1.5 % of it in radius)
 	static constexpr double edgeBeta = 15.0;	// [V] deg: an attachment line off the feature switches its edge heating off over this angle
+	static constexpr double edgeSonic = 20.0;	// [D] deg from the end of the feature's turn below which the sonic line sits on the face beyond: edge off, full at edgeTurn/2
 	static constexpr double edgeBand = 0.2;		// [V] floor of the band half-width over R_n
 	static constexpr double edgeRmin = 0.05;	// [V] floor of the edge radius over R_n
 	static constexpr double shieldH = 0.005;	// [D] protrusion per metre of mesh size below which a feature sits in the shock and boundary layers of the body upstream
@@ -78,7 +79,7 @@ private:
 	double lo[3] = { 0.0, 0.0, 0.0 };
 	int dim[3] = { 0, 0, 0 };
 	std::vector<uint64_t> occ;
-	struct Edge { double a[3], b[3], t[3], p1[3], q[3]; double arc, rl; uint32_t va, vb, nb0, nb1; bool face1, face2; };	// faceN: a plain face on that side (no parallel neighbour within rho)
+	struct Edge { double a[3], b[3], t[3], p1[3], q[3]; double arc, rl, flo, fth; uint32_t va, vb, nb0, nb1; bool face1, face2; };	// faceN: a plain face on that side (no parallel neighbour within rho); flo, fth: the feature's turn from p1 towards q
 	std::vector<Edge> edges;
 	std::vector<uint32_t> nbr;
 	bool Occ (const double p[3]) const;

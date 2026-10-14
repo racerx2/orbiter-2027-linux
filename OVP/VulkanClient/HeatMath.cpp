@@ -294,7 +294,7 @@ void EdgeSet::Features ()
 	std::vector<uint32_t> fStamp(nf, 0), eStamp(ok.size(), 0), realOf(ok.size(), UINT32_MAX);
 	std::vector<std::vector<uint32_t>> nbOk(ok.size());
 	std::vector<char> isReal(ok.size(), 0);
-	std::vector<double> rls(ok.size(), 0.0);
+	std::vector<double> rls(ok.size(), 0.0), fLo(ok.size(), 0.0), fTh(ok.size(), 0.0);
 	std::vector<char> plain1(ok.size(), 0), plain2(ok.size(), 0);
 	uint32_t stamp = 0;
 	std::vector<uint32_t> seen, front, nfront;
@@ -362,9 +362,11 @@ void EdgeSet::Features ()
 			if (dl > 1e-3) { if (Dot(dv, s1) > 0.0) w1 = std::min(w1, dl); else w2 = std::min(w2, dl); }
 		}
 		std::sort(ang.begin(), ang.end());
-		double gap = ang.front() + 2.0 * HPI - ang.back();
-		for (size_t k = 1; k < ang.size(); k++) gap = std::max(gap, ang[k] - ang[k - 1]);
+		double gap = ang.front() + 2.0 * HPI - ang.back(), lo = ang.front();
+		for (size_t k = 1; k < ang.size(); k++) if (ang[k] - ang[k - 1] > gap) { gap = ang[k] - ang[k - 1]; lo = ang[k]; }
 		double th = 2.0 * HPI - gap;
+		fLo[m] = lo;
+		fTh[m] = th;
 		rls[m] = 0.5 * (w1 + w2) / std::max(e.d, 1e-3);
 		plain1[m] = w1 >= 4.0 * rho;
 		plain2[m] = w2 >= 4.0 * rho;
@@ -382,7 +384,9 @@ void EdgeSet::Features ()
 		if (!Unit(E.p1) || !Unit(p2)) continue;
 		Cross(E.t, E.p1, E.q);
 		E.arc = std::atan2(Dot(p2, E.q), Dot(p2, E.p1));
-		if (E.arc < 0.0) { E.arc = -E.arc; for (double &v : E.q) v = -v; }
+		E.flo = fLo[m];
+		E.fth = fTh[m];
+		if (E.arc < 0.0) { E.arc = -E.arc; for (double &v : E.q) v = -v; E.flo = -(fLo[m] + fTh[m]); }
 		E.rl = rls[m];
 		E.va = e.a; E.vb = e.b;
 		E.nb0 = E.nb1 = 0;
@@ -436,15 +440,18 @@ void EdgeSet::Attach (const double f[3], double Rn, std::vector<EdgeSeg> &out) c
 		for (int j = 0; j < 3; j++) b.u[j] = -fp[j];
 		b.cL = std::sqrt(std::max(0.0, 1.0 - fa * fa));
 		double au = std::atan2(Dot(b.u, E.q), Dot(b.u, E.p1)), bR = Tune::edgeBeta * HPI / 180.0;
+		double fd = au - E.flo;
+		fd -= 2.0 * HPI * std::floor(fd / (2.0 * HPI));
+		double son = Smooth(Tune::edgeSonic * HPI / 180.0, 0.5 * Tune::edgeTurn * HPI / 180.0, fd <= E.fth ? std::min(fd, E.fth - fd) : 0.0); // both sonic points on the feature (windward ridge: off)
 		if (au >= 0.0 && au <= E.arc) { // on the edge; near the end of a plain face the attachment line moves onto that face
 			b.beta = 0.0;
-			b.plain = (E.face1 ? Smooth(0.0, bR, au) : 1.0) * (E.face2 ? Smooth(0.0, bR, E.arc - au) : 1.0);
+			b.plain = son * (E.face1 ? Smooth(0.0, bR, au) : 1.0) * (E.face2 ? Smooth(0.0, bR, E.arc - au) : 1.0);
 			for (int j = 0; j < 3; j++) b.n[j] = b.u[j];
 			continue;
 		}
 		double e0 = au < 0.0 ? -au : 2.0 * HPI - au, e1 = au < 0.0 ? au + 2.0 * HPI - E.arc : au - E.arc;
 		b.beta = std::min(e0, e1);
-		b.plain = (e0 <= e1 ? E.face1 : E.face2) ? 0.0 : 1.0; // past a plain face: that face's corner, not an edge
+		b.plain = (e0 <= e1 ? E.face1 : E.face2) ? 0.0 : son; // past a plain face: that face's corner, not an edge
 		double ae = e0 <= e1 ? 0.0 : E.arc;
 		for (int j = 0; j < 3; j++) b.n[j] = std::cos(ae) * E.p1[j] + std::sin(ae) * E.q[j];
 	}

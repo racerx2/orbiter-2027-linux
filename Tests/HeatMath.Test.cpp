@@ -220,9 +220,10 @@ TEST_CASE("HeatMath: real edges of a wing", "[heatmath]")
 		es.Attach(f, Rn, s);
 		for (auto &e : s) CHECK(!(e.a[2] > -1.8 && e.a[2] < -1.2 && e.b[2] > -1.8 && e.b[2] < -1.2));
 		for (auto &e : s) CHECK(std::isfinite(e.level));
+		for (auto &e : s) if (e.a[2] > 0.4 && e.b[2] > 0.4) CHECK(e.level <= (std::fabs(al) < 62.0 ? 0.25 * Tune::edge : 0.0)); // the leading edge 25 deg or less from a face's normal: the line lies on the face
 	}
 	double prev = -1.0; // continuous in the attitude
-	for (double al = -30.0; al <= 30.0; al += 0.5) {
+	for (double al = -80.0; al <= 80.0; al += 0.5) {
 		s.clear();
 		Flow(al, 0.0, f);
 		es.Attach(f, Rn, s);
