@@ -38,7 +38,7 @@ vec3 SsrVndf (vec3 V, vec3 N, float a, vec2 u)
 	return T1 * Hl.x + T2 * Hl.y + N * Hl.z;
 }
 
-// the mirror ray, or one visible-normal sample a frame while TAA averages them (smooth surfaces stay the mirror)
+// the mirror ray, or one visible-normal sample a frame while TAA averages them; the sampled branch is unused while SceneSsr writes vMode.y = 0 (r3-ssr2), kept for a later spatial resolve
 vec3 SsrDir (vec3 N, vec3 V, float a, vec2 frag)
 {
 	vec3 R = reflect(-V, N);
@@ -54,6 +54,18 @@ vec3 SsrKeepAbove (vec3 R, vec3 Ng, float c)
 	float d = dot(R, Ng);
 	return d >= c ? R : normalize(R + Ng * (c - d));
 }
+
+#ifdef STAGE_PS
+// the drawn triangle's own normal toward the camera from the derivatives of the camera-relative position, the plane the depth holds; call it in uniform control flow (r3-ssr2)
+vec3 SsrFaceN (vec3 P, vec3 Nv)
+{
+	vec3 n = cross(dFdx(P), dFdy(P));
+	float l = dot(n, n);
+	if (!(l > 1e-24)) return Nv; // degenerate: the vertex normal
+	n *= inversesqrt(l);
+	return dot(n, P) > 0.0 ? -n : n;
+}
+#endif
 
 float SsrFade (float a) { return gSsr.vMode.x * (1.0 - smoothstep(gSsr.vThick.z, gSsr.vThick.w, a)); } // validity and the roughness fade
 
@@ -123,12 +135,21 @@ SsrHit SsrTrace (vec3 P, vec3 Ng, vec3 R, float a)
 			}
 			t = tx; // behind a thin object: on
 		}
+		if (!hit && t < tB) { // the budget ran out, mostly on a ray that hugs the surface it leaves (grazing water): 16 level-0 point samples finish the segment (r3-ssr2)
+			float t0 = t;
+			for (int i = 0; i < 16; i++) {
+				float ti = mix(t0, tB, (float(i) + 0.5) / 16.0), si = s0 + ti * ds;
+				float Si = texelFetch(tSsrHiZ, clamp(ivec2(floor(X0 + ti * D + jit)), ivec2(0), size0 - 1), 0).r;
+				if (Si > 0.0 && si <= Si && 1.0 / si <= 1.0 / Si + gSsr.vThick.x + gSsr.vThick.y / Si) { hit = true; tHit = ti; break; }
+			}
+			t = tB;
+		}
 		end = !hit && full && t >= tB;
 	}
 	float k = gSsr.vMode.y > 0.5 ? 0.3 : 1.0; // the sampled direction already spreads the lobe
 	if (hit) {
 		h.uv = (X0 + tHit * D) / S;
-		h.conf = fade * SsrEdge(h.uv) * (1.0 - smoothstep(0.75 * float(nIt), float(nIt), float(it)));
+		h.conf = fade * SsrEdge(h.uv); // every segment is finished, so no fade by the iteration count (r3-ssr2)
 		h.lod = clamp(log2(max(1.0, tHit * len * a * k)), 0.0, gSsr.vDecode.z);
 		return h;
 	}
@@ -171,7 +192,7 @@ vec3 SsrMeshDecode (vec3 y, bool curve)
 }
 
 // base surfaces (kind 1): the rough split-sum weight of the traced radiance over the lit colour; nothing where the ray misses (design-ssr Rev 2 M4)
-float SsrBase (vec3 N, vec3 V, vec3 P, vec2 frag, out SsrHit h, out float alb)
+float SsrBase (vec3 N, vec3 Ng, vec3 V, vec3 P, vec2 frag, out SsrHit h, out float alb)
 {
 	h = SsrNone();
 	alb = 1.0;
@@ -180,7 +201,7 @@ float SsrBase (vec3 N, vec3 V, vec3 P, vec2 frag, out SsrHit h, out float alb)
 	float a = gSsr.vSurf.y;
 	float F = SsrEnvBRDF(gSsr.vSurf.z, sqrt(a), clamp(dot(N, V), 0.0, 1.0));
 	if (F * SsrFade(a) < 0.03) return 0.0; // the most the blend can reach: grazing views only on dry ground
-	h = SsrTrace(P, N, SsrKeepAbove(SsrDir(N, V, a, frag), N, 0.01), a);
+	h = SsrTrace(P, Ng, SsrKeepAbove(SsrDir(N, V, a, frag), Ng, 0.01), a); // Ng: the drawn face (SsrFaceN), so a normal map cannot start the ray inside it
 	return F * h.conf;
 }
 #endif

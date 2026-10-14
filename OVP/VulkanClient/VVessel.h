@@ -46,6 +46,7 @@ class vVessel: public vObject {
 public:
 	friend class D3D9Client;
 	friend class PostPlume; // not upstream: reads the hull box and the terrain sun
+	friend class HullHeat; // not upstream: reads the meshes and the hull box (re-entry hull heating)
 	/**
 	 * \brief Creates a new vessel visual for a scene
 	 * \param _hObj vessel object handle

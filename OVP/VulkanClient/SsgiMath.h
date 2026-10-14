@@ -68,13 +68,17 @@ int PopCount (unsigned m);
 unsigned SampleBits (const V3 &P, const V3 &S, double thick, const V3 &V, const V3 &T, double g, double jit = 0.5);
 double SliceGamma (const V3 &N, const V3 &V, const V3 &T, double *np); // angle of N projected into the slice (clamped to +-pi/2), np its length
 
-// march radius: R = max(R0, k d), its half-res pixel radius clamped, R back from it
+// march radius: R = max(R0, k d), its half-res pixel radius clamped; the sender falloff keeps the world R (r3-gi2)
 double Radius (double d, double R0, double k);
 double PixelRadius (double R, double d, double tanY, double H2, double pmin, double pmax);
 double RadiusFromPixels (double px, double d, double tanY, double H2);
+double Falloff (double dist, double R);     // 1 - smoothstep(0.6 R, R, dist)
 
-// sender weights for vessel receivers lit by irradiance probes (Metalness, PbrMesh): terrain, trees, bases, vessels
-void ProbeWeights (int envMapMode, bool irradiance, bool probesExist, double w[4]);
+// probe-lit hulls (r3-gi2): what their ambient holds of a sender already, per display unit of the sender
+double ProbeGain (double glow);             // the Metalness paraboloid (IrradianceInteg.glsl PSInteg): 0.7 glow times the kernel's mean weight
+void ProbeParams (int envMapMode, bool irradiance, bool probesExist, double glow, double out[4]); // Metalness gain, PbrMesh gain (IBL cube 1), terrain and trees drawn, bases drawn
+double ProbeHeld (int rcls, int rfam, int scls, double y, double e, const double pp[4]); // in exposed units; 0 when the receiver has no probe or it does not draw the sender
+double SectorExcess (double L, double amb, double held); // max(L - max(amb, held), 0)
 
 // GetObjectAtmoParams' sky ambient at geocentric p (VPlanetAtmo.cpp), plus the config level
 struct Atmo {

@@ -339,3 +339,83 @@ TEST_CASE("SsrMath: cone level, edge fade, base surface weight, wet model, jumps
 	CHECK(JumpTest(5000.0, 130.0, 0.0));
 	CHECK(JumpTest(1.0, 1.0, 1.0));
 }
+
+TEST_CASE("SsrMath: grazing water rays are finished within the budget", "[ssrmath]") // r3-ssr2: a sea seen from 1.4 m, a vessel at 25 m, a pole at 50 m
+{
+	const int W = 960, H = 540;
+	const double tanAp = std::tan(0.5236), aspect = double(H) / W, h = 1.4, pix = 2.0 * tanAp / H;
+	Mat3 rot = LookAt({ 0, 0, 0 }, { 0, 0, 1 }, { 0, 1, 0 });
+	Mat4 VP = Mul(View(rot), Proj(tanAp, aspect, 0.1, 1e6, 0, 0));
+	struct B { Vec3 a, b; } box[2] = { { { -9.0, -0.2, 24.0 }, { 9.0, 2.5, 26.0 } }, { { -12.0, -h, 50.0 }, { -11.7, 6.6, 50.3 } } };
+	auto ray = [&](double px, double py) {
+		double nx = px / W * 2.0 - 1.0, ny = 1.0 - py / H * 2.0;
+		return Unit(Add(Add(Scale(Col(rot, 0), nx * tanAp / aspect), Scale(Col(rot, 1), ny * tanAp)), Col(rot, 2)));
+	};
+	auto cast = [&](const Vec3 &d, double *tOut, bool *water) {
+		double best = 1e30;
+		bool wt = false;
+		if (d.y < -1e-9) { best = -h / d.y; wt = true; }
+		for (const B &b : box) {
+			double t0 = 0.0, t1 = 1e30;
+			bool ok = true;
+			const double dd[3] = { d.x, d.y, d.z }, lo[3] = { b.a.x, b.a.y, b.a.z }, hi[3] = { b.b.x, b.b.y, b.b.z };
+			for (int i = 0; i < 3 && ok; i++) {
+				if (std::fabs(dd[i]) < 1e-12) { ok = lo[i] <= 0.0 && hi[i] >= 0.0; continue; }
+				double ta = lo[i] / dd[i], tb = hi[i] / dd[i];
+				if (ta > tb) std::swap(ta, tb);
+				t0 = std::max(t0, ta);
+				t1 = std::min(t1, tb);
+				ok = t0 <= t1;
+			}
+			if (ok && t0 < best) { best = t0; wt = false; }
+		}
+		if (best > 1e29) return false;
+		*tOut = best;
+		*water = wt;
+		return true;
+	};
+	std::vector<float> s(size_t(W) * H, 0.0f);
+	for (int y = 0; y < H; y++)
+		for (int x = 0; x < W; x++) {
+			Vec3 d = ray(x + 0.5, y + 0.5);
+			double t;
+			bool wt;
+			if (cast(d, &t, &wt)) s[size_t(y) * W + x] = float(1.0 / (t * Dot(d, Col(rot, 2))));
+		}
+	HiZ z;
+	BuildHiZ(s, W, H, z);
+	std::mt19937 rng(5);
+	std::uniform_real_distribution<double> u(-1.0, 1.0);
+	WalkPrm p, q;
+	p.maxIt = q.maxIt = 48;
+	q.finish = 0;
+	int n = 0, cut = 0, finished = 0, agreeP = 0, agreeQ = 0, hits = 0;
+	for (int y = 0; y < H; y += 2)
+		for (int x = 0; x < W; x += 2) {
+			Vec3 d = ray(x + 0.5, y + 0.5);
+			double t;
+			bool wt;
+			if (!cast(d, &t, &wt) || !wt) continue;
+			Vec3 N = Unit({ u(rng) * 0.08, 1.0, u(rng) * 0.08 }); // wave facets up to 4.6 degrees
+			Vec3 R = KeepAbove(Reflect(d, N), { 0, 1, 0 }, 0.01);
+			Seg g;
+			if (!Segment(VP, Lift(Scale(d, t), { 0, 1, 0 }, 1.5 * pix), R, W, H, 0.1, 1e6, g)) continue;
+			n++;
+			WalkOut a = Walk(z, g, p), b = Walk(z, g, q), m = March(z, g, p, 0.25);
+			REQUIRE(a.it <= p.maxIt);
+			cut += !b.hit && !b.end && b.it >= q.maxIt;
+			finished += a.finished;
+			hits += a.hit;
+			auto same = [&](const WalkOut &w) { return w.hit == m.hit && (!w.hit || (std::fabs(w.X - m.X) <= 2.0 && std::fabs(w.Y - m.Y) <= 2.0)) && (w.hit || w.end == m.end); };
+			agreeP += same(a);
+			agreeQ += same(b);
+		}
+	INFO("rays " << n << " cut by the budget " << cut << " finished " << finished << " hits " << hits << " agree " << agreeP << " (no finish " << agreeQ << ")");
+	REQUIRE(n >= 20000);
+	CHECK(cut >= n / 50);             // the budget does cut grazing rays here
+	CHECK(finished <= cut);           // the rest of the cut rays had reached the screen edge
+	CHECK(finished >= cut - cut / 50);
+	CHECK(hits >= n / 50);            // the vessel and the pole are seen in the water
+	CHECK(agreeP >= int(0.995 * n));  // with the finish the walk ends as the dense march does
+	CHECK(agreeP > agreeQ);
+}

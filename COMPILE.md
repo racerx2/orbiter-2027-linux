@@ -115,3 +115,8 @@ thread-safe.
 * Running under Xvfb (e.g. for tests): set `QT_QPA_PLATFORM=xcb`. On a machine without a
 Vulkan capable GPU, the software driver lavapipe can be used with
 `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json`.
+
+* Screenshots of Xvfb with an NVIDIA GPU (`import`, `xwd`): start Xvfb with `-maxbigreqsize 32`.
+The NVIDIA driver (seen with 615.71) sends each frame to a non-NVIDIA X server as several image requests, each at most
+a quarter of the server's maximum request size (4 MiB by default, 546 rows at 1920 pixels wide). A
+capture taken between two of them shows two different frames joined at that row.

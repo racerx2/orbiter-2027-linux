@@ -21,6 +21,7 @@
 #include "SceneShadows.h" // not upstream
 #include "PostPlume.h" // not upstream
 #include "SceneSsr.h" // not upstream
+#include "HullHeat.h" // not upstream
 
 using namespace oapi;
 
@@ -122,6 +123,7 @@ void vVessel::GlobalInit(D3D9Client *gc)
 	_TRACE;
 	defreentrytex = SURFACE(gc->clbkLoadTexture("Reentry.dds", 0));
 	defexhausttex = SURFACE(gc->clbkLoadTexture("Exhaust.dds", 0));
+	HullHeat::GlobalInit(); // not upstream: re-entry hull heating (VolPlumes)
 }
 
 
@@ -131,6 +133,7 @@ void vVessel::GlobalExit ()
 {
 	DELETE_SURFACE(defexhausttex);
 	DELETE_SURFACE(defreentrytex);
+	HullHeat::GlobalExit(); // not upstream
 }
 
 
@@ -252,6 +255,7 @@ void vVessel::PreInitObject()
 bool vVessel::Update(bool bMainScene)
 {
 	_TRACE;
+	HullHeat::Step(this); // not upstream: the hull's wall temperatures in sim time, also while too far to draw (design-reentry-heat)
 	if (!active) return false;
 	vObject::Update(bMainScene);
 
@@ -721,6 +725,7 @@ bool vVessel::Render(VkDev *dev, bool internalpass)
 	// custom: PBR groups of this visual read its prefiltered environment (design-pbr 7, 8); none in the cockpit, as the legacy groups there
 	struct PbrEnvScope { explicit PbrEnvScope(const PbrEnv *e) { PbrRender::SetEnvironment(e); } ~PbrEnvScope() { PbrRender::SetEnvironment(NULL); } } pbrEnvScope(internalpass ? NULL : &pbrEnv);
 	SceneSsr::Scope ssrScope(scn, hObj, SceneSsr::VESSEL, internalpass); // not upstream: what this vessel's reflections trace, main pass exterior only (design-ssr)
+	HullHeat::Scope heatScope(this, internalpass); // not upstream: the hull glow of this vessel's exterior draws, none in the cockpit pass (design-reentry-heat)
 	bool bPbrDefer = false, bPbrTransmission = false;
 
 	// Check VC MFD screen resolutions ------------------------------------------------

@@ -165,7 +165,7 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	if (bShadows) flags += "_CLOUDSHD ";
 	if (bShadows && Config->CloudAtlas) flags += "_CLOUDATLAS "; // not upstream: seamless cloud shadows
 	if (bWater && Config->WaterFx) flags += "_WATERFX "; // not upstream: waves, glitter, sky, foam
-	if (bWater && bRiples && Config->SSR && !Config->EnableMeshDbg) flags += "_SSR "; // not upstream: screen-space reflections on the water; samplers 26/27 are _DEVTOOLS' (design-ssr)
+	if (bWater && bRiples && Config->SSR) flags += "_SSR "; // not upstream: screen-space reflections on the water, on the micro texture samplers 21/22 that the Earth flags never use (r3-ssr2)
 	if (bShadows && Config->VolClouds && Config->VolCloudShadows) flags += "_VOLSHD "; // not upstream: the 2D cloud shadow fades under the volume
 	if (bNightLights) flags += "_NIGHTLIGHTS ";
 	if (bNightLights && Config->NightLook) flags += "_NIGHTLOOK "; // not upstream: night city look (design-night-look 5)

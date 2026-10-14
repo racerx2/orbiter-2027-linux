@@ -6,6 +6,7 @@
 // ==============================================================
 // not upstream: screen-space global illumination, one diffuse bounce from the lit opaque scene (design-ssgi, Rev 2)
 
+#include "SsgiMath.h" // first: D3D9Util.h defines PI as a macro
 #include "SceneFx.h"
 #include "Scene.h"
 #include "AtmoControls.h"
@@ -212,7 +213,6 @@ void SceneFx::Gi (VkSurf *target, vPlanet *vp)
 	float tw = 0.0f;
 	if (air) if (ScatterParams *sp = vp->GetAtmoParams()) tw = float(sp->tw_bld); // the call UpdateScatter makes each frame
 	const D3D9Sun *sun = scn->GetSun();
-	bool probes = Config->EnvMapMode && Config->bIrradiance && scn->GetIrradianceDepthStencil();
 	VkTex *tF = Flag();
 	UINT w2 = gi->tGi[0]->w, h2 = gi->tGi[0]->h;
 	int nx = gi->cur ^ 1;
@@ -220,12 +220,14 @@ void SceneFx::Gi (VkSurf *target, vPlanet *vp)
 	D3DXVECTOR4 camX, camY, camZ;
 	CameraRays(camX, camY, camZ);
 	D3DXVECTOR4 tex(1.0f / float(W), 1.0f / float(H), 1.0f / float(w2), 1.0f / float(h2));
-	D3DXVECTOR4 rad(25.0f, 0.06f, 4.0f, 0.25f * float(h2));
+	D3DXVECTOR4 rad(25.0f, 0.06f, 4.0f, 0.35f * float(h2)); // the march reaches 35 % of the screen height (r3-gi2)
 	D3DXVECTOR4 fade(15e3f, 25e3f, float(frame % 64), air ? 1.0f : 0.0f);
 	D3DXVECTOR4 curve(cp->TrGamma > 0.0f ? cp->TrGamma : 1.0f, sT, e, 3.0f);
 	D3DXVECTOR4 ambc(sun->Ambient.x, sun->Ambient.y, sun->Ambient.z, tw);
-	D3DXVECTOR4 misc(std::min(2.0f, std::max(0.0f, Config->SSGIStrength)), sTree, probes ? 1.0f : 0.0f, float(h2));
-	D3DXVECTOR4 probe(0.0f, 1.0f, Config->EnvMapMode == 2 ? 0.0f : 1.0f, 1.0f); // design-ssgi M3: the probe holds the planet, and the bases in mode 2
+	D3DXVECTOR4 misc(std::min(2.0f, std::max(0.0f, Config->SSGIStrength)), sTree, 0.0f, float(h2)); // z spare
+	double pp[4];
+	SsgiMath::ProbeParams(Config->EnvMapMode, Config->bIrradiance != 0, scn->GetIrradianceDepthStencil() != NULL, Config->PlanetGlow, pp);
+	D3DXVECTOR4 probe((float)pp[0], (float)pp[1], (float)pp[2], (float)pp[3]); // what probe-lit hulls hold already, the march adds only the excess (r3-gi2)
 	D3DXVECTOR4 temp(0.08f, 0.25f, reset ? 1.0f : 0.0f, (!reset && gi->ePrev > 0.0f) ? e / gi->ePrev : 1.0f);
 	D3DXVECTOR4 dir(0.0f, 0.0f, tF ? 1.0f : 0.0f, 0.0f);
 	F16 fP = ToF(mP), fV = ToF(mV), fPrev = ToF(mPrev);

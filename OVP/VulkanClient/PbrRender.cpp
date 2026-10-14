@@ -371,6 +371,11 @@ PbrVariant *PbrRender::Variant (unsigned f)
 		if (((VkConstHandle)a)->sampler) v.sharedTex.push_back ({ a, b });
 		else v.shared.push_back ({ a, b });
 	}
+	if (Config->VolPlumes) { // not upstream: re-entry hull heating, set per vessel on the legacy effect (design-reentry-heat)
+		VkFxHandle a = D3D9Effect::FX->GetParameterByName (0, "gHeat"), b = fx->GetParameterByName (0, "gHeat");
+		if (a && b) v.shared.push_back ({ a, b });
+		else LogErr ("PbrRender: shared value gHeat missing (%s)", a ? "PbrMesh.fx" : "D3D9Client.fx");
+	}
 	if (!v.tech || !v.hMtrl || ((VkConstHandle)v.hMtrl)->size != sizeof(PbrMtrlGPU)) {
 		LogErr ("PbrRender: PbrMesh.fx does not match PbrMtrlGPU (%u bytes)", v.hMtrl ? ((VkConstHandle)v.hMtrl)->size : 0);
 		delete v.fx;

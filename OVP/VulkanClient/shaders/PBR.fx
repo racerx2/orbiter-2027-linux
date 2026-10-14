@@ -80,6 +80,13 @@ vec4 PBR_PS(vec4 sc, PBRData frg)	// sc : VPOS
 	vec3 cSpecLocal;
 
 
+#if defined(_SSR)
+	vec3 nSsrF = SsrFaceN(-frg.camW, normalize(frg.nrmW)); // not upstream: the face the depth holds, before any discard (r3-ssr2)
+#endif
+#if defined(_HEAT)
+	HeatGeo hHg = HeatGeom(frg.nrmW, frg.camW); // not upstream: hull heating curvature, before any discard (design-reentry-heat)
+#endif
+
 	// ----------------------------------------------------------------------
 	// Start fetching texture data
 	// ----------------------------------------------------------------------
@@ -283,6 +290,9 @@ vec4 PBR_PS(vec4 sc, PBRData frg)	// sc : VPOS
 	// Special alpha only texture in use, set the .rgb to 1.0f
 	// Used for panel background lighting in Delta Glider
 	if (gNoColor) cDiff.rgb = vec3(1);
+#if defined(_HEAT)
+	vec3 hAlb = cDiff.rgb * gMtrl.diffuse.rgb; // not upstream: the albedo, for the hull glow's emissivity (design-reentry-heat)
+#endif
 
 	// ------------------------------------------------------------------------
 	cDiff.rgb *= diffBaked;				// Lit the texture
@@ -318,7 +328,7 @@ vec4 PBR_PS(vec4 sc, PBRData frg)	// sc : VPOS
 #if defined(_SSR)
 		SsrHit hE = SsrNone(); // not upstream: what the reflection ray finds on screen replaces the cube's, vessels only (design-ssr 6)
 		if (gSsr.vSurf.x < 0.5 && cmax(cRefl3) * (1.0 - iFrsl) + iFrsl >= 0.01) {
-			vec3 nG = normalize(frg.nrmW);
+			vec3 nG = nSsrF; // the drawn face: a smooth vertex normal can start the ray inside a coarse mesh (r3-ssr2)
 			float aE = (1.0 - fRghn) * (1.0 - fRghn); // fRghn is the smoothness here
 			hE = SsrTrace(-frg.camW, nG, SsrKeepAbove(SsrDir(nrmW, CamD, aE, gl_FragCoord.xy), nG, 0.01), aE);
 		}
@@ -408,10 +418,14 @@ vec4 PBR_PS(vec4 sc, PBRData frg)	// sc : VPOS
 	{ // not upstream: base surface meshes reflect like the base tiles (design-ssr Rev 2 M4)
 		SsrHit hB;
 		float aB;
-		float wB = SsrBase(nrmW, CamD, -frg.camW, gl_FragCoord.xy, hB, aB);
+		float wB = SsrBase(nrmW, nSsrF, CamD, -frg.camW, gl_FragCoord.xy, hB, aB);
 		cDiff.rgb *= aB;
 		if (wB > 0.0) cDiff.rgb = mix(cDiff.rgb, SsrMeshDecode(SsrFetch(hB), false), wB);
 	}
+#endif
+
+#if defined(_HEAT)
+	if (gHeat.vFlow.w > 0.5) cDiff.rgb = HeatAddDisplay(cDiff.rgb, HeatGlow(frg.nrmW, frg.camW, hHg, HeatToLinear(hAlb))); // not upstream: the hull's own glow (design-reentry-heat)
 #endif
 
 #if defined(_DEBUG)
@@ -498,6 +512,13 @@ vec4 FAST_PS(vec4 sc, FASTData frg)	// sc : VPOS
 	vec3 cDiffLocal;
 	vec3 cSpecLocal;
 
+#if defined(_SSR)
+	vec3 nSsrF = SsrFaceN(-frg.camW, normalize(frg.nrmW)); // not upstream: the face the depth holds, before any discard (r3-ssr2)
+#endif
+#if defined(_HEAT)
+	HeatGeo hHg = HeatGeom(frg.nrmW, frg.camW); // not upstream: hull heating curvature, before any discard (design-reentry-heat)
+#endif
+
 	// Start fetching texture data -------------------------------------------
 	//
 	if (gTextured) cDiff = texture(WrapS, frg.tex0.xy);
@@ -523,6 +544,9 @@ vec4 FAST_PS(vec4 sc, FASTData frg)	// sc : VPOS
 		//cSpec.rgb *= 0.33333f;
 
 		if (gNoColor) cDiff.rgb = vec3(1);
+#if defined(_HEAT)
+		vec3 hAlb = cDiff.rgb * gMtrl.diffuse.rgb; // not upstream: the albedo, for the hull glow's emissivity (design-reentry-heat)
+#endif
 
 		// ----------------------------------------------------------------------
 		// Add vessel self-shadows
@@ -578,9 +602,12 @@ vec4 FAST_PS(vec4 sc, FASTData frg)	// sc : VPOS
 #if defined(_SSR)
 		SsrHit hB; // not upstream: base surface meshes reflect like the base tiles (design-ssr Rev 2 M4)
 		float aB;
-		float wB = SsrBase(nrmW, CamD, -frg.camW, gl_FragCoord.xy, hB, aB);
+		float wB = SsrBase(nrmW, nSsrF, CamD, -frg.camW, gl_FragCoord.xy, hB, aB);
 		cDiff.rgb *= aB;
 		if (wB > 0.0) cDiff.rgb = mix(cDiff.rgb, SsrMeshDecode(SsrFetch(hB), false), wB);
+#endif
+#if defined(_HEAT)
+		if (gHeat.vFlow.w > 0.5) cDiff.rgb = HeatAddDisplay(cDiff.rgb, HeatGlow(frg.nrmW, frg.camW, hHg, HeatToLinear(hAlb))); // not upstream: the hull's own glow, lit groups only (design-reentry-heat)
 #endif
 	}
 

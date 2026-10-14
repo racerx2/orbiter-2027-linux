@@ -26,6 +26,18 @@ DLLEXPORT int oapiTileStreamWant (OBJHANDLE hBody, int lvl, int ilat, int ilng, 
 	return ts && hBody ? ts->Want (((Body*)hBody)->Name(), lvl, ilat, ilng, flags) : -1;
 }
 
+// from the cfg, not the running stream: elevmgr decides before the stream starts, and both must agree
+int TsSessionElev (const std::string &body)
+{
+	if (!g_pOrbiter || !g_pOrbiter->GetGraphicsClient() || !g_pOrbiter->Cfg()->bTileStream) return 0;
+	return TsCfgElev (oapiResolvePath (g_pOrbiter->ConfigPath ("TileStream")), body);
+}
+
+DLLEXPORT int oapiTileStreamElev (OBJHANDLE hBody)
+{
+	return hBody ? TsSessionElev (((Body*)hBody)->Name()) : 0;
+}
+
 DLLEXPORT int oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax)
 {
 	TileStream *ts = Stream();

@@ -193,6 +193,12 @@ of `Config/TileStream.cfg` (the Dead Sea, the Caspian Sea, Death Valley, the
 Qattara Depression and other large depressions); the Netherlands polders stay
 at 0 m.
 
+An Orbiter 2016 Earth pack installed in `Textures/Earth/Archive` is still used
+for its imagery, masks and clouds. Its elevation, which includes trees and
+buildings, is replaced with streaming on: a tile takes the streamed heights
+once the stream has the elevation of its parent tile, and shows them the next
+time it is loaded. Nothing has to be deleted for this.
+
 `Orbiter.cfg` keys:
 
 - `TileStream` (default `TRUE`): stream Earth tiles
@@ -226,7 +232,8 @@ reflection, foam), `VolCloudShadows` (1, shadows of the volumetric clouds),
 (1, shimmer behind engines), and in its third row `SceneShadows` (1, sun
 shadows of terrain, buildings, trees and vessels), `SSR` (1, reflections of
 the scene in water, runways and glossy hulls), `VolPlumes` (1, volumetric
-engine plumes, lit smoke and re-entry plasma), `SSGI` (1, one bounce of light
+engine plumes, lit smoke, soft particle trails, re-entry plasma and hulls
+glowing from re-entry heating), `SSGI` (1, one bounce of light
 from nearby surfaces), `SSGIStrength` (1.0, 0 to 2), `HeightFog` (0, valley
 fog and haze layers), `NightLook` (1, street lamps, lit windows and a darker
 night exposure).

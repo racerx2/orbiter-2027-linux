@@ -4,13 +4,13 @@
 \section{Add-on content and the VulkanClient graphics}
 \label{sec:vk_content}
 \begin{sloppypar}
-The VulkanClient, the graphics client of the Linux edition, adds a set of effects to Orbiter's rendering: sun shadows cast by the whole scene, reflections and indirect light taken from the image on screen, volumetric engine plumes with lit smoke and re-entry plasma, volumetric clouds, water effects, height fog and a night look for cities. The VulkanClient manual (Doc/VulkanClient/VulkanClient.html, sections \textit{Ground graphics} and \textit{Effects}) describes them for users, and \textit{Rendering methods of the Vulkan client's effects} in the Orbiter Technical Reference describes how they work.\\
+The VulkanClient, the graphics client of the Linux edition, adds a set of effects to Orbiter's rendering: sun shadows cast by the whole scene, reflections and indirect light taken from the image on screen, volumetric engine plumes with lit smoke, re-entry plasma and hulls glowing from re-entry heating, volumetric clouds, water effects, height fog and a night look for cities. The VulkanClient manual (Doc/VulkanClient/VulkanClient.html, sections \textit{Ground graphics} and \textit{Effects}) describes them for users, and \textit{Rendering methods of the Vulkan client's effects} in the Orbiter Technical Reference describes how they work.\\
 The effects take what they need from the files and calls that add-ons already use: meshes with their materials and textures, the exhaust definitions and particle streams of vessels, the object lists of surface bases and the tiles of planets. Add-ons therefore work with them without changes. This section is for the makers of vessels, meshes, bases, planets and plugins. It describes what each effect reads from an add-on, the optional files and keys that tune it, the glTF meshes and PBR materials the client draws, the API functions of the Linux edition that concern graphics, and how to check content with each effect switched on and off.
 
 
 \subsection{Effect switches}
 \label{ssec:vk_switches}
-Each effect has its own key in Modules/VulkanClient/VulkanClient.cfg, 1 for on and 0 for off. The same switches are in the \textit{Ground graphics} and \textit{Effects} groups of the VulkanClient Advanced Setup dialog (the \textit{Advanced} button on the Video tab of the Launchpad). With a key at 0 the effect is not created at all, and the picture is the one without it. None of the effects changes the 2D panel, the HUD or the MFDs. The effects that work on the finished image are drawn in the main view only, and custom camera views and environment maps show the scene without them; the water effects, horizon shadows, seamless clouds, night look and Filmic are part of the planet and mesh shaders and show there as well.\\
+Each effect has its own key in Modules/VulkanClient/VulkanClient.cfg, 1 for on and 0 for off. The same switches are in the \textit{Ground graphics} and \textit{Effects} groups of the VulkanClient Advanced Setup dialog (the \textit{Advanced} button on the Video tab of the Launchpad). With a key at 0 the effect is not created at all, and the picture is the one without it. None of the effects changes the 2D panel, the HUD or the MFDs. The effects that work on the finished image are drawn in the main view only, and custom camera views and environment maps show the scene without them; the water effects, horizon shadows, seamless clouds, night look, re-entry hull heating and Filmic are part of the planet and mesh shaders and show there as well.\\
 The client reads VulkanClient.cfg when Orbiter starts and writes it back when Orbiter closes, so edit the file only while Orbiter is not running. Changes made in the dialog apply from the next simulation session.
 
 %\begin{table}[H]
@@ -53,7 +53,7 @@ The client reads VulkanClient.cfg when Orbiter starts and writes it back when Or
 	\hline\rule{0pt}{2ex}
 	SSR & 1 & Screen-space reflections on reflective materials, water and base surfaces (section \ref{sssec:vk_mtrl_fx}).\\
 	\hline\rule{0pt}{2ex}
-	VolPlumes & 1 & Volumetric exhausts, lit smoke and steam, ground clouds and re-entry plasma (section \ref{ssec:vk_plumes}).\\
+	VolPlumes & 1 & Volumetric exhausts, lit smoke and steam, ground clouds, soft particle billboards, re-entry plasma and the glow of hulls heated by re-entry (section \ref{ssec:vk_plumes}).\\
 	\hline\rule{0pt}{2ex}
 	SSGI & 1 & One bounce of indirect light between the surfaces on screen, below about 20 km above the ground or with a vessel within 2 km. SSGIStrength: 0 to 2, default 1.\\
 	\hline\rule{0pt}{2ex}
@@ -69,7 +69,7 @@ Some effects also depend on older settings of the client and the Launchpad:
 
 \begin{itemize}
 \item Reflections on vessels, from the environment map and from the screen, need a \textit{Reflection Mode} other than \textit{Disable} (EnvMapMode, default 1).
-\item Reflections on water need the Launchpad's \textit{Specular water reflections} and \textit{Specular ripples} options and SpecularRipple = TRUE in the planet's configuration file. Screen-space reflections on water are also off while \textit{Enable Development Tools} (EnableMeshDbg, default 1) is ticked in the Advanced Setup dialog, because the planet shader's debugging options use the same texture slots.
+\item Reflections on water need the Launchpad's \textit{Specular water reflections} and \textit{Specular ripples} options and SpecularRipple = TRUE in the planet's configuration file. They work with \textit{Enable Development Tools} (EnableMeshDbg) ticked or not.
 \item Lit smoke and the re-entry plasma come from particle streams, which need the Launchpad's \textit{Particle streams} option.
 \item Ground shadows of vessels and base structures need a \textit{Terrain mapping} other than \textit{None} (TerrainShadowing, default 2) and a planet with a ShadowDepth below 0.98.
 \end{itemize}
@@ -468,7 +468,7 @@ By day the windows give no light. Without NightLook, the buildings' windows come
 
 \subsection{Exhausts, particle streams and re-entry}
 \label{ssec:vk_plumes}
-With VolPlumes on, the client draws engine exhausts, smoke and the plasma of re-entry as lit volumes. It builds them from what vessels already define: the exhausts of AddExhaust (section \textit{Defining exhaust flames} of the spacecraft chapter), the particle streams of AddExhaustStream, AddParticleStream and AddReentryStream, and the vessel's meshes. A vessel needs no change for them; the optional file of section \ref{sssec:vk_plumecfg} tunes them per vessel class.
+With VolPlumes on, the client draws engine exhausts, smoke and the plasma of re-entry as lit volumes, and hulls heated by re-entry glow. It builds them from what vessels already define: the exhausts of AddExhaust (section \textit{Defining exhaust flames} of the spacecraft chapter), the particle streams of AddExhaustStream, AddParticleStream and AddReentryStream, and the vessel's meshes. A vessel needs no change for them; the optional file of section \ref{sssec:vk_plumecfg} tunes them per vessel class.
 
 
 \subsubsection{Volumetric exhaust plumes}
@@ -525,7 +525,7 @@ Exhausts smaller than one pixel on screen (by their exit radius) stay legacy fla
 
 \subsubsection{Plume files}
 \label{sssec:vk_plumecfg}
-A vessel class can give its exhausts their classes, and tune its smoke and ground cloud, in Config/GC/Plume/<class>.cfg, where <class> is the class name with each / or $\backslash$ replaced by \_. The file name must match the class name exactly, including upper and lower case. Orbiter comes with plume files for Atlantis, its boosters (Atlantis\_SRB) and the Delta-glider.
+A vessel class can give its exhausts their classes, and tune its smoke, its ground cloud and the heating of its hull, in Config/GC/Plume/<class>.cfg, where <class> is the class name with each / or $\backslash$ replaced by \_. The file name must match the class name exactly, including upper and lower case. Orbiter comes with plume files for Atlantis, its boosters (Atlantis\_SRB) and the Delta-glider.
 
 \begin{lstlisting}[language=OSFS]
 ; Config/GC/Plume/MyRocket.cfg
@@ -536,6 +536,7 @@ EXHAUST 8 solid               ; escape tower motor
 SMOKE 1.5
 GROUND steam
 PUFFS 1
+HEAT nose=1.5 lag=40          ; blunt nose, thick heat shield
 \end{lstlisting}
 
 \noindent
@@ -554,6 +555,8 @@ Each line holds a keyword and its values; a semicolon starts a comment. Keywords
 	GROUND <type> & The ground cloud: steam, dust or none; other values count as steam. Default: dust for the texture class, steam for the others.\\
 	\hline\rule{0pt}{2ex}
 	PUFFS <0|1> & Which of the vessel's diffuse particle streams become lit puffs (section \ref{sssec:vk_puffs}): 1 all of them, 0 none. Default: those with Orbiter's default particle texture.\\
+	\hline\rule{0pt}{2ex}
+	HEAT [off|on] [nose=<m>]\newline [emis=<e>] [lag=<s>]\newline [glow=<g>] & The re-entry hull heating of the class (section \ref{sssec:vk_heat}). Default: on, with the defaults given there.\\
 	\hline
 	\end{longtable}
 %\end{table}
@@ -569,12 +572,14 @@ Selectors of EXHAUST:
 \end{itemize}
 
 \noindent
-A vessel class without a plume file gets the classes of the rules above, smoke scale 1, the default ground cloud and puffs from its default-texture streams. The client's log (Modules/VulkanClient/D3D9ClientLog.html) has a line for each plume file it reads, with its number of EXHAUST rules, and for the first frames with lit engines a line per exhaust with its level, class, exit radius, size on screen and distance, to check what an engine gets.
+A vessel class without a plume file gets the classes of the rules above, smoke scale 1, the default ground cloud, puffs from its default-texture streams and hull heating with the defaults. The client's log (Modules/VulkanClient/D3D9ClientLog.html) has a line for each plume file it reads, with its number of EXHAUST rules, and for the first frames with lit engines a line per exhaust with its level, class, exit radius, size on screen and distance, to check what an engine gets.
 
 
 \subsubsection{Particle streams}
 \label{sssec:vk_puffs}
-With VolPlumes on, every DIFFUSE particle stream (smoke, vapour and contrails) that uses Orbiter's default particle texture (tex = NULL in PARTICLESTREAMSPEC) is drawn as lit, round puffs: lit by the sun and the sky, shadowed by the column of puffs toward the sun, lit by nearby plumes and covered by fog. Each particle keeps its size, growth, lifetime and opacity from the stream's specification; only the drawing changes. A stream with its own texture is drawn as before, unless the vessel's plume file says PUFFS 1; then it too becomes puffs, tinted with the mean colour of its texture. PUFFS 0 keeps all of the vessel's streams as they are. EMISSIVE streams, re-entry streams and the particles' ground shadows are drawn as before.
+With VolPlumes on, every DIFFUSE particle stream (smoke, vapour and contrails) that uses Orbiter's default particle texture (tex = NULL in PARTICLESTREAMSPEC) is drawn as lit, round puffs: lit by the sun and the sky, shadowed by the column of puffs toward the sun, lit by nearby plumes and covered by fog. Each particle keeps its size, growth, lifetime and opacity from the stream's specification; only the drawing changes. A stream with its own texture is drawn as before, unless the vessel's plume file says PUFFS 1; then it too becomes puffs, tinted with the mean colour of its texture. PUFFS 0 keeps all of the vessel's streams as billboards. EMISSIVE streams and re-entry streams never become puffs.\\
+\\
+\textbf{Soft billboards.} The streams that stay billboards keep their texture, colour, size and opacity, but in the main view they no longer cut a hull, a pad or the ground along a hard line. Each billboard is taken as a sphere of the particle's size: its opacity at a pixel is 0 where the surface behind it lies in the billboard's plane and rises to full where that surface lies beyond the far side of the sphere. A re-entry stream starts at its vessel's centre, inside the hull, so its particles are faded only from the far side of their sphere on: they cover what lies beyond the sphere and do not veil the part of the hull inside it. Custom cameras, environment maps and the particles' ground shadows show the billboards as before, and with VolPlumes off all streams are drawn as before.
 
 
 \subsubsection{Re-entry plasma}
@@ -583,8 +588,49 @@ A vessel that owns a re-entry particle stream glows in a plasma sheath when it f
 \begin{itemize}
 \item In an atmosphere with a gas constant within 15\,\% of air's, its colour follows the airspeed: orange up to about 9 km/s, pink at 10 km/s and violet above, at the speeds of a return from the Moon. In other atmospheres it is pink-violet.
 \item Its shape follows the vessel's meshes seen along the airflow (the groups that cast shadows), for the two largest plasma vessels on screen when their radius on screen is at least 48 pixels; the others get an ellipsoid around their mesh bounds. Docked and attached vessels glow as one body. At most four vessels glow at a time.
-\item While the plasma draws a vessel, Orbiter's re-entry flame (the texture of SetReentryTexture) is not drawn for it. The re-entry particle streams are drawn as before.
+\item While the plasma draws a vessel, Orbiter's re-entry flame (the texture of SetReentryTexture) is not drawn for it. The re-entry particle streams stay billboards, soft against the hull (section \ref{sssec:vk_puffs}).
 \end{itemize}
+
+
+\subsubsection{Re-entry hull heating}
+\label{sssec:vk_heat}
+With VolPlumes on, the hull of every vessel that flies fast through an atmosphere also glows from its own temperature, as a hot heat shield does. The client computes the heating of the vessel's skin from its flight state and its meshes; a vessel needs no change for it, and an optional HEAT line in its plume file tunes it.
+
+\begin{itemize}
+\item \textbf{Where it glows.} The nose and the leading edges of wings and fins that face the oncoming air are hottest and glow yellow-white; the windward belly glows dull red to orange, fading toward the sides; the lee side stays dark. The pattern follows the mesh: the point of the hull furthest upstream is the stagnation point, the smoothed vertex normals give the angle of each surface to the flow, and their curvature marks the leading edges. Normal maps are not used for it. The curvature cannot tell a leading edge from a ridge between two panels: when a face meets the flow nearly head-on, far beyond a normal entry attitude, its ridges can show as thin bright lines.
+\item \textbf{When.} The heating follows the density and the airspeed (Sutton-Graves stagnation heating, for air, carbon dioxide or hydrogen-helium atmospheres by the gas constant), and the skin temperature follows the heating with a lag: it builds up over tens of seconds and falls slowly after the hottest part of the entry, so the hull keeps glowing after the plasma has faded. At 7.5 km/s and 75 km, Atlantis' nose reaches about 1700 K. Nothing is drawn while even the hottest parts of a hull are below 650 K.
+\item \textbf{Brightness.} The glow is the light of a body at that temperature, scaled to the scene, so it shows mostly at night and on the nose and edges by day, and it is subject to the exposure like the rest of the scene. Dark surfaces glow more than light ones (the visible emissivity is taken as one minus the albedo, at least 0.2), so markings stay visible.
+\item \textbf{Which groups.} The lit groups of the meshes a vessel shows in the external view, in all three shaders, in the main view, custom cameras and environment maps. The virtual cockpit interior does not glow. The legacy heat glow of Metalness materials (the SpecialFX property and the \_heat map) is kept, and the hull glow adds to it.
+\end{itemize}
+
+\noindent
+The HEAT line of the plume file (section \ref{sssec:vk_plumecfg}) tunes the heating of a vessel class:
+
+\begin{lstlisting}[language=OSFS]
+HEAT nose=0.4 emis=0.8 lag=30 glow=1.5
+\end{lstlisting}
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.2\textwidth}|>{\raggedright\arraybackslash}p{0.3\textwidth}|>{\raggedright\arraybackslash}p{0.42\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Value} & \textbf{Default (range)} & \textbf{Meaning}\\
+	\hline\rule{0pt}{2ex}
+	off, on & on & The word off turns the hull heating off for this class, for add-ons that draw their own glow; on turns it on again after an earlier off.\\
+	\hline\rule{0pt}{2ex}
+	nose=<m> & 0.03 times the largest extent of the hull, at least 0.25 and at most 3 m (0.05 to 20 m) & Nose radius. A larger radius widens the hot region around the stagnation point and lowers its temperature, as the inverse eighth root of the radius; the heating of the belly does not depend on it.\\
+	\hline\rule{0pt}{2ex}
+	emis=<e> & 0.85 (0.05 to 1) & Emissivity of the heat shield: how well it radiates its heat away. A lower value runs hotter.\\
+	\hline\rule{0pt}{2ex}
+	lag=<s> & 25 s (1 to 600 s) & Time constant of the skin temperature at 1500 K: the heat capacity of the shield. Hotter skin follows faster, cooler skin slower; with 25 s the skin cools from 1500 to 1000 K in about 80 s.\\
+	\hline\rule{0pt}{2ex}
+	glow=<g> & 1 (0 to 10) & Brightness factor of the glow; 0 draws none. The temperatures are not changed.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+Values are written as name=value without spaces; names may be written in any case. Values out of range are clamped, and values the client does not understand are reported in its log and skipped. Several HEAT lines apply one after the other. The log has a line for each plume file with a HEAT line, with the values it uses, a line when a vessel first glows (its nose radius, emissivity, lag and glow), and while it glows a line every 2 s of simulation time, up to 60 in all, with its altitude, airspeed, angle of attack and sideslip, stagnation heating, equilibrium temperature and the temperatures of its heating levels.
 
 
 \subsection{Planets and moons}
@@ -651,7 +697,9 @@ The Linux edition adds these functions to OrbiterAPI.h (Orbitersdk/include). The
 	\hline\rule{0pt}{2ex}
 	bool oapiTileStreamEnabled (OBJHANDLE hBody) & TRUE if the planet tile stream serves the body (Earth, while streaming is on).\\
 	\hline\rule{0pt}{2ex}
-	int oapiTileStreamWant (OBJHANDLE hBody, int lvl, int ilat, int ilng, int flags) & Asks the stream for the files of a tile (lvl: file level). flags: 1 the file failed to load, 2 it was loaded from the cache. Returns 1 when the file is there, 0 when it has been requested, $-$1 when it never will be.\\
+	int oapiTileStreamWant (OBJHANDLE hBody, int lvl, int ilat, int ilng, int flags) & Asks the stream for the files of a tile (lvl: file level). flags: 1 the file failed to load, 2 it was loaded from the cache, 4 only its elevation file is wanted. Returns 1 when the file is there, 0 when it has been requested, $-$1 when it never will be.\\
+	\hline\rule{0pt}{2ex}
+	int oapiTileStreamElev (OBJHANDLE hBody) & The last file level for which the stream makes elevation files; 0 when it makes none for the body or the session does not stream (streaming off, or no graphics client). While it is above 0, the client and the core, each when its tile load flags include loose files, do not read a tile above level 4 of the elevation archive (Elev.tree) whose parent tile (past that level, whose ancestor at that level) has a loose elevation file, and they apply the Elev\_mod archive only over the archive's own elevation.\\
 	\hline\rule{0pt}{2ex}
 	int oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax) & Writes up to nmax finished tiles as (lvl, ilat, ilng) triples into keys (3 nmax ints) and returns their number. Each tile is reported once, to the first caller; the graphics client uses it to load new tiles.\\
 	\hline\rule{0pt}{2ex}
@@ -677,8 +725,8 @@ An add-on made for the D3D9 client or for earlier versions of the VulkanClient w
 \begin{itemize}
 \item Its meshes, textures, maps and material files are drawn as before. They cast and receive scene shadows and take part in ambient occlusion, reflections and indirect light.
 \item Its exhausts become volumetric plumes, classed by their specific impulse. Engines with a specific impulse above 5000 or below 2300 m/s, and exhausts without a thruster, keep their own flame texture (texture class); an engine whose specific impulse falls in a propellant range is drawn in that propellant's colours, even if it has its own texture. Add a plume file (section \ref{sssec:vk_plumecfg}) with EXHAUST * texture to keep the add-on's look.
-\item Its diffuse particle streams with Orbiter's default texture become lit smoke; streams with their own texture stay as they are.
-\item It glows in a plasma sheath during re-entry, and its re-entry flame texture is not drawn meanwhile.
+\item Its diffuse particle streams with Orbiter's default texture become lit smoke; streams with their own texture keep their look, with soft edges where they meet surfaces.
+\item It glows in a plasma sheath during re-entry, and its re-entry flame texture is not drawn meanwhile. Its hull glows from the heating, nose and leading edges first, and keeps glowing for a while after the plasma has faded.
 \item Near the ground, its engines raise steam or dust.
 \item Base structures buried under the terrain lose the stray ground shadows they had; streamed buildings and trees keep clear of base structures.
 \end{itemize}
@@ -690,6 +738,7 @@ Points to check in older content:
 \item Window and canopy groups made as legacy glass cast shadows like solid parts; give them flag 0x01.
 \item Groups with flag 0x01 are not in the screen depth: clouds, fog and plumes behind them can show through them (section \ref{sssec:vk_mtrl_fx}).
 \item Emissive textures and materials look brighter or darker with the automatic exposure.
+\item A vessel that draws its own re-entry glow on its hull, for example with emissive textures switched by its module, gets the client's hull heating on top of it; HEAT off in its plume file (section \ref{sssec:vk_heat}) keeps only its own.
 \item A planet without its own Config/GC/<name>.atm.cfg is drawn with the Moon shader.
 \end{itemize}
 
@@ -699,9 +748,10 @@ Points to check in older content:
 \begin{itemize}
 \item \textbf{Each effect on and off.} Set one key of section \ref{ssec:vk_switches} to 0 in VulkanClient.cfg (with Orbiter closed) or untick it in the Advanced Setup dialog, and compare the same scenario with it on and off. With a key at 0 the picture is the one without the effect; whatever changes only with the key on is the effect's work. The effects that the defaults leave off (Filmic, HeightFog) should be tried as well.
 \item \textbf{PBR materials off.} Start Orbiter with the environment variable ORBITER\_PBR\_DISABLE=1: the client ignores all PBR records and draws glTF meshes with their legacy approximation, as other graphics clients do. ORBITER\_PBR\_PRECOMPILE=1 compiles every variant of the PBR shader at start and writes a summary to Orbiter.log.
-\item \textbf{Logs.} Orbiter.log reports each glTF mesh with its warnings. The client's log (Modules/VulkanClient/D3D9ClientLog.html) reports the material files it reads, the PBR textures it loads and any material line it cannot read, the plume files and the class and exit radius of each lit exhaust in the first frames, the cloud atlas level of each body, and the number of buried structures of each base. A higher \textit{Debug level} in the Advanced Setup dialog adds more lines, for example each material record applied to a mesh.
-\item \textbf{Vulkan Debug Controls.} With \textit{Enable Development Tools} ticked, the dialog shows and edits the materials of the selected mesh group, and \textit{Save materials} writes the material file. Untick the option again (and restart the Launchpad) to see the screen-space reflections on water.
-\item \textbf{Cases worth flying.} Engines at full and low thrust at sea level, at altitude and in vacuum, close up and from a distance; a vertical landing or a launch for the ground cloud; a re-entry at orbital speed between 85 and 50 km; the vessel and the base at a low sun for shadows; night with and without NightLook; a custom camera or an environment map view, which shows the scene without the image effects.
+\item \textbf{Hull heating off.} ORBITER\_HULLHEAT\_DISABLE=1 leaves the re-entry hull heating off while the plumes and the plasma stay on, to compare a hull with and without its glow; HEAT off in the plume file does the same for one class.
+\item \textbf{Logs.} Orbiter.log reports each glTF mesh with its warnings. The client's log (Modules/VulkanClient/D3D9ClientLog.html) reports the material files it reads, the PBR textures it loads and any material line it cannot read, the plume files and the class and exit radius of each lit exhaust in the first frames, the hull heating values of each glowing vessel and its wall temperatures, the cloud atlas level of each body, and the number of buried structures of each base. A higher \textit{Debug level} in the Advanced Setup dialog adds more lines, for example each material record applied to a mesh.
+\item \textbf{Vulkan Debug Controls.} With \textit{Enable Development Tools} ticked, the dialog shows and edits the materials of the selected mesh group, and \textit{Save materials} writes the material file.
+\item \textbf{Cases worth flying.} Engines at full and low thrust at sea level, at altitude and in vacuum, close up and from a distance; a vertical landing or a launch for the ground cloud; a re-entry at orbital speed between 85 and 50 km, by day and at night, and the climb or slow-down after it for the hull's afterglow; the vessel and the base at a low sun for shadows; night with and without NightLook; a custom camera or an environment map view, which shows the scene without the image effects.
 \end{itemize}
 
 \end{sloppypar}

@@ -78,3 +78,13 @@ bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::st
 	if (in) { err = file + ": " + cur.name + " has no END"; return false; }
 	return true;
 }
+
+int TsCfgElev (const std::string &file, const std::string &body)
+{
+	std::vector<TsBodyCfg> bodies;
+	std::string err;
+	if (!TsReadCfg (file, bodies, err)) return 0;
+	for (const TsBodyCfg &c : bodies)
+		if (c.name == body) return c.elev.kind.empty() ? 0 : c.elev.lmax;
+	return 0;
+}

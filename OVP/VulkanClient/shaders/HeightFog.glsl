@@ -37,7 +37,7 @@ vec4	vFog2;		// Hinv, Hh, ss, Ds
 vec4	vFog3;		// ground beyond the far map, wF, volume cloud weight, 1 with the camera above the deck
 vec4	vLight;		// 0, sun gain, ambient gain, terrain shadow weight
 vec4	vShell;		// r_in, r_out, body radius, camera altitude
-vec4	vMarch;		// steps, frame (-1: static offset), max distance, 0
+vec4	vMarch;		// steps, frame (-1: static offset), max distance, the main pass's near plane for the planet
 vec4	vTex;		// 1/w, 1/h of SceneDepth; 1/w, 1/h of the march buffer
 };
 
@@ -51,6 +51,7 @@ layout(binding = 19) uniform sampler2D tFH;	// march result
 
 const int SCAN = 16;
 const int MAXP = SCAN + 9;	// FogMath::MAXP
+const float RECR = 100e3;	// inside SurfTile::Render's 150e3 depthTiles cut (Surfmgr2.cpp) and the far map's >= 130 km: the ground met before this is in tDepth
 
 vec3 PixelRay(vec2 uv)
 {
@@ -311,6 +312,7 @@ bool Shell(vec3 o, vec3 d, float zd, out float t0, out float t1)
 	if (dot(o, o) < vShell.x * vShell.x) t0 = max(hi.y, 0.5);
 	else if (hi.x <= hi.y && hi.x > 0.0) t1 = min(t1, hi.x);
 	if (zd > 0.0) t1 = min(t1, zd);
+	else if (hi.x <= hi.y && hi.x > 0.0 && hi.x < RECR) t1 = min(t1, vMarch.w);	// no surface, yet the ground lies in the recorded range: the main pass's near plane clipped it
 	t1 = min(t1, vMarch.z);
 	return t1 > t0;
 }

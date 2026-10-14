@@ -235,6 +235,8 @@ add_unit_test(FogMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/FogMath.cpp)
 target_include_directories(FogMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 add_unit_test(PlumeMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/PlumeMath.cpp)
 target_include_directories(PlumeMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+add_unit_test(HeatMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/HeatMath.cpp) # not upstream: re-entry hull heating maths
+target_include_directories(HeatMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 
 if (BUILD_ORBITER_SERVER)
 

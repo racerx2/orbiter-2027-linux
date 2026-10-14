@@ -102,6 +102,10 @@ struct Tune
 #include "SsrPrm.glsl" // not upstream: screen-space reflections (design-ssr)
 #endif
 
+#if defined(_HEAT)
+#include "HeatPrm.glsl" // not upstream: re-entry hull heating (design-reentry-heat)
+#endif
+
 layout(binding = 0, row_major, scalar) uniform FxParams	// the uniform extern parameters, packed as the client's structs
 {
 vec3      kernel[KERNEL_SIZE];
@@ -162,6 +166,9 @@ CsmPrm    gCsm;				// not upstream: scene shadow cascades, off outside the main 
 #endif
 #if defined(_SSR)
 SsrPrm    gSsr;				// not upstream: screen-space reflections of this draw (design-ssr), after the shadows' gCsm (ue5-integration INT-2)
+#endif
+#if defined(_HEAT)
+HeatPrm   gHeat;			// not upstream: re-entry hull heating of the vessel drawn, zero otherwise (design-reentry-heat), after gSsr (INT-2)
 #endif
 };
 
@@ -695,6 +702,10 @@ void main() { oColor = SpotTechPS(frg PS_ARGS); }
 sampler2D tSsrCol = sampler_state { MinFilter = LINEAR; MagFilter = LINEAR; MipFilter = LINEAR; AddressU = CLAMP; AddressV = CLAMP; };
 sampler2D tSsrHiZ = sampler_state { MinFilter = POINT; MagFilter = POINT; MipFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };
 #include "Ssr.glsl"
+#endif
+
+#if defined(_HEAT)
+#include "HullHeat.glsl" // not upstream: re-entry hull heating, pixel stage (design-reentry-heat)
 #endif
 
 #include "Particle.fx"

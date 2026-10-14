@@ -371,6 +371,8 @@ public:
 	float			GetCameraAspect() const { return (float)Camera.aspect; }
 	float			GetCameraFarPlane() const { return Camera.farplane; }
 	float			GetCameraNearPlane() const { return Camera.nearplane; }
+	float			GetPlanetNearPlane() const { return zNearPlanet; }  // not upstream: the main pass's near plane for the planets this frame (SceneFx::DepthPass, r3 fog2)
+	bool			VesselsZCleared() const { return bZClearVessels; } // not upstream: the main pass cleared z before the vessels this frame
 	float			GetCameraAperture() const { return (float)Camera.aperture; }
 	VECTOR3			GetCameraGPos() const { return Camera.pos; }
 	VECTOR3			GetCameraGDir() const { return Camera.dir; }
@@ -391,6 +393,7 @@ public:
 	float			GetVolShadowFade() const;	// not upstream: weight of the volume cloud shadow drawn last frame, fades the proxy's 2D cloud shadow near the camera
 	bool			IsJittered() const { return bJitter; } // not upstream: the main pass projection carries the TAA jitter
 	bool			TaaActive() const;	// not upstream: TAA runs this main frame (after its BeginFrame)
+	class SceneFx *	GetSceneFx() const { return pFx; } // not upstream: the legacy particle streams read its tDepth (r3 trail)
 
 	const D3DXVECTOR3 *GetCameraX() const { return &Camera.x; }
 	const D3DXVECTOR3 *GetCameraY() const { return &Camera.y; }
@@ -538,6 +541,8 @@ private:
 	bool bJitter = false;            // not upstream: SetCameraAperture adds the TAA jitter
 	float jitX = 0.0f, jitY = 0.0f;  // not upstream: jitter in pixels
 	bool bLabelsLate = false;        // not upstream: with TAA the in-scene labels are drawn after the resolve, unjittered
+	float zNearPlanet = 0.5f;        // not upstream: the near plane the planets drew with in the main pass
+	bool bZClearVessels = false;     // not upstream: the main pass cleared z and took the vessels' near plane before them
 	void RenderPlanetLabels (DWORD i, DWORD mkrmode); // not upstream: from the planets loop
 	void RenderSceneArt (DWORD plnmode);              // not upstream: planetarium and exterior art
 	void RenderSurfaceLabels (DWORD mkrmode);         // not upstream: new-style surface labels

@@ -602,9 +602,41 @@ TEST_CASE ("EOX not answering: the host pauses and Blue Marble stands in, marked
 	fs::path f = tex / "Surf" / "06" / "000003" / "000005.dds";
 	REQUIRE (WaitFor ([&] { ts.Want ("Earth", 6, 3, 5, 0); return fs::exists (f); }, 25.0));
 	CHECK (Near (Pixel (f, 256, 256), QColor (30, 90, 30)));
-	CHECK (fs::exists (tex / "Surf" / "04" / "000000" / "000001.dds"));
+	CHECK (WaitFor ([&] { return fs::exists (tex / "Surf" / "04" / "000000" / "000001.dds"); }, 5.0)); // its ancestor falls back too, well inside the 10 s retry; parallel builds land in any order
 	REQUIRE (WaitFor ([&] { return Read (tex / "TileStream" / "refetch.idx").find ("6 3 5") != std::string::npos; }, 5.0));
 	CHECK (ts.Want ("Earth", 12, 100, 100, 0) == 0); // above the fallback's levels: waits for EOX
+}
+
+TEST_CASE ("A tile whose EOX failures came before the pause falls back when EOX pauses, not after its retry", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	for (int ln : {5, 6}) {
+		s.Masks (6, 3, ln);
+		s.Layer ("bmng", 6, 3, ln, 7, QColor (30, 90, 30));
+	}
+	fs::path tex = t.root / "Earth";
+	for (const char *r : {"01/000000/000000", "02/000000/000000", "03/000000/000000", "04/000000/000000", "04/000000/000001"}) { // no required jobs
+		fs::path p = tex / "Surf" / (std::string (r) + ".dds");
+		fs::create_directories (p.parent_path());
+		std::ofstream (p) << "x";
+	}
+	TileStream::Options o;
+	o.cfgfile = s.Cfg (t.root / "ts.cfg", "bogus://eox");
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	TileStream::Clock::time_point t0 = TileStream::Clock::now();
+	o.now = [t0] { return t0; }; // frozen: a 10 s retry never comes due
+	TileStream ts (o);
+	fs::path a = tex / "Surf" / "06" / "000003" / "000005.dds", b = tex / "Surf" / "06" / "000003" / "000006.dds";
+	CHECK (ts.Want ("Earth", 6, 3, 5, 0) == 0); // four EOX failures: one short of the pause, so a retry
+	std::this_thread::sleep_for (std::chrono::milliseconds (1500));
+	CHECK_FALSE (fs::exists (a));
+	CHECK (ts.Want ("Earth", 6, 3, 6, 0) == 0); // the fifth pauses EOX
+	REQUIRE (WaitFor ([&] { return fs::exists (b); }, 20.0));
+	CHECK (WaitFor ([&] { return fs::exists (a); }, 20.0));
+	CHECK (Near (Pixel (a, 256, 256), QColor (30, 90, 30)));
 }
 
 TEST_CASE ("Coarse levels go first; ocean quarters are filled from the ancestor", "[TileStream]")

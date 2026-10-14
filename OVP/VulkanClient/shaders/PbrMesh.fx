@@ -84,6 +84,10 @@ struct PbrMtrl
 #include "SsrPrm.glsl" // not upstream: screen-space reflections (design-ssr)
 #endif
 
+#if defined(_HEAT)
+#include "HeatPrm.glsl" // not upstream: re-entry hull heating (design-reentry-heat)
+#endif
+
 layout(binding = 0, row_major, scalar) uniform PbrShared
 {
 vec3      kernel[KERNEL_SIZE];
@@ -117,6 +121,9 @@ CsmPrm    gCsm;            // not upstream: scene shadow cascades, shared from D
 #endif
 #if defined(_SSR)
 SsrPrm    gSsr;            // not upstream: screen-space reflections of this draw, shared from D3D9Client.fx (design-ssr), after the shadows' gCsm (ue5-integration INT-2)
+#endif
+#if defined(_HEAT)
+HeatPrm   gHeat;           // not upstream: re-entry hull heating, shared from D3D9Client.fx (design-reentry-heat), after gSsr (INT-2)
 #endif
 };
 
@@ -163,6 +170,10 @@ sampler2D CsmS = sampler_state { MinFilter = POINT; MagFilter = POINT; MipFilter
 sampler2D tSsrCol = sampler_state { MinFilter = LINEAR; MagFilter = LINEAR; MipFilter = LINEAR; AddressU = CLAMP; AddressV = CLAMP; };
 sampler2D tSsrHiZ = sampler_state { MinFilter = POINT; MagFilter = POINT; MipFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };
 #include "Ssr.glsl"
+#endif
+
+#if defined(_HEAT)
+#include "HullHeat.glsl" // not upstream: re-entry hull heating, pixel stage (design-reentry-heat)
 #endif
 
 
@@ -226,6 +237,9 @@ struct Surf
 	vec3  Nc;
 	vec3  sheen;
 	float sheenR, sheenEv;
+#if defined(_SSR)
+	vec3  Nf;		// not upstream: the drawn face toward the camera, where reflection rays start (r3-ssr2)
+#endif
 };
 
 bool HasMap (int s) { return (gPbr.texMask & (1 << s)) != 0; }
@@ -380,7 +394,7 @@ vec3 EvalIBL (Surf s, float ao)
 #else
 		vec3 Nr = s.N;
 #endif
-		SsrHit hS = SsrTrace(s.posW, s.Ng, SsrKeepAbove(SsrDir(Nr, s.V, s.a, gl_FragCoord.xy), s.Ng, 0.01), s.a);
+		SsrHit hS = SsrTrace(s.posW, s.Nf, SsrKeepAbove(SsrDir(Nr, s.V, s.a, gl_FragCoord.xy), s.Nf, 0.01), s.a);
 		if (hS.conf > 0.0) Lenv = mix(Lenv, Decode(SsrMeshDecode(SsrFetch(hS), SSR_CURVE)), hS.conf);
 	}
 	vec3 spec = Lenv * mix(Fd, Fm, s.metallic);
@@ -401,7 +415,7 @@ vec3 EvalIBL (Surf s, float ao)
 #if defined(_SSR)
 	vec3 Lc = Prefiltered(reflect(-s.V, s.Nc), s.ccPerc);
 	if (ccRay) { // not upstream: the coat's traced ray (design-ssr 6)
-		SsrHit hC = SsrTrace(s.posW, s.Ng, SsrKeepAbove(SsrDir(s.Nc, s.V, s.cca, gl_FragCoord.xy), s.Ng, 0.01), s.cca);
+		SsrHit hC = SsrTrace(s.posW, s.Nf, SsrKeepAbove(SsrDir(s.Nc, s.V, s.cca, gl_FragCoord.xy), s.Nf, 0.01), s.cca);
 		if (hC.conf > 0.0) Lc = mix(Lc, Decode(SsrMeshDecode(SsrFetch(hC), SSR_CURVE)), hC.conf);
 	}
 	c = c * (1.0 - s.cc * Fcv) + s.cc * Lc * ((0.04 * lc.x + lc.y) * ao);
@@ -437,6 +451,9 @@ vec4 PbrMeshPS (PbrVS f)
 	T = normalize(T);
 	B = cross(T, Ng) * (f.tanW.w < 0.0 ? -1.0 : 1.0);
 	if (Flag(PBRM_DOUBLESIDED) && !gl_FrontFacing) { Ng = -Ng; T = -T; B = -B; }
+#if defined(_HEAT)
+	HeatGeo hHg = HeatGeom(Ng, f.camW); // not upstream: hull heating curvature, before the discard (design-reentry-heat)
+#endif
 
 	vec3 N = Ng;
 	if (HasMap(T_NORMAL)) {
@@ -446,6 +463,9 @@ vec4 PbrMeshPS (PbrVS f)
 		N = normalize(T * n.x + B * n.y + Ng * n.z);
 	}
 	s.N = N; s.Ng = Ng; s.T = T; s.B = B;
+#if defined(_SSR)
+	s.Nf = SsrFaceN(s.posW, Ng); // not upstream: from derivatives here, before the discard (r3-ssr2)
+#endif
 	s.NdotV = clamp(dot(N, s.V), 1e-4, 1.0);
 
 	float metallic = gPbr.metallic, perc = gPbr.roughness;
@@ -585,6 +605,9 @@ vec4 PbrMeshPS (PbrVS f)
 				if (Max3(lc) > 0.0) color += EvalLight(s, -p, lc);
 			}
 		}
+#endif
+#if defined(_HEAT)
+		if (gHeat.vFlow.w > 0.5) emis += HeatGlow(Ng, f.camW, hHg, s.base) * (1.0 - s.trans); // not upstream: the hull's own glow, linear, under the coat as the emission; not on fully lit groups (design-reentry-heat)
 #endif
 #ifdef PBR_CLEARCOAT
 		emis *= 1.0 - s.cc * FSchlick1(0.04, 1.0, s.NcV); // emission is under the coat

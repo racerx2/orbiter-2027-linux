@@ -274,6 +274,17 @@ void SurfTile::Load ()
 
 // -----------------------------------------------------------------------
 
+// not upstream: the stream's Elev of the parent (past its last level, of the ancestor there) hides the archive's surface model tile; as elevmgr's StreamCovers
+static bool StreamCovers (const TileManager2Base *mgr, int lvl, int ilat, int ilng)
+{
+	int m = mgr->streamElevMax;
+	if (!m || lvl <= 4) return false;
+	int d = lvl > m ? lvl - m : 1;
+	char path[MAX_PATH];
+	snprintf(path, MAX_PATH, "%s\\Elev\\%02d\\%06d\\%06d.elv", mgr->DataRootDir().c_str(), lvl - d, ilat >> d, ilng >> d);
+	return FileExists(path);
+}
+
 INT16 *SurfTile::ReadElevationFile (const char *name, int lvl, int ilat, int ilng)
 {
 	const int ndat = TILE_ELEVSTRIDE*TILE_ELEVSTRIDE;
@@ -326,7 +337,9 @@ INT16 *SurfTile::ReadElevationFile (const char *name, int lvl, int ilat, int iln
 			if (!rd) { g_pMemgr_i->Free(e); e = NULL; g_pMemgr_f->Free(elev); elev = NULL; ehdr = hdr0; } // not upstream: a short file counts as missing, the archive is tried next
 		}
 	}
-	if (!e && smgr->ZTreeManager(2)) { // try loading from compressed archive
+	bool looseElev = e != NULL; // not upstream
+	if (!looseElev && smgr->streamElevMax && lvl >= 4 && lvl <= smgr->streamElevMax) oapiTileStreamWant(mgr->Cbody(), lvl, ilat, ilng, 4); // not upstream: the stream makes it, used when the tile is made again
+	if (!e && smgr->ZTreeManager(2) && !StreamCovers(mgr, lvl, ilat, ilng)) { // try loading from compressed archive; not upstream: StreamCovers
 		BYTE *buf;
 		DWORD ndata = smgr->ZTreeManager(2)->ReadData(lvl, ilat, ilng, &buf);
 		if (ndata && !ElevNodeOk(buf, ndata, ndat)) { smgr->ZTreeManager(2)->ReleaseData(buf); ndata = 0; } // not upstream: a short or corrupt node is no tile, ehdr keeps its value
@@ -435,7 +448,7 @@ INT16 *SurfTile::ReadElevationFile (const char *name, int lvl, int ilat, int iln
 				ok = rd; // not upstream: a short file is not applied, the archive is tried
 			}
 		}
-		if (!ok && smgr->ZTreeManager(3)) { // try loading from compressed archive
+		if (!ok && smgr->ZTreeManager(3) && !(looseElev && smgr->streamElevMax)) { // try loading from compressed archive; not upstream: the archive's Elev_mod only over the archive's Elev
 			BYTE *buf;
 			DWORD ndata = smgr->ZTreeManager(3)->ReadData(lvl, ilat, ilng, &buf);
 			if (ndata && !ElevNodeOk(buf, ndata, ndat)) { smgr->ZTreeManager(3)->ReleaseData(buf); ndata = 0; } // not upstream: a short or corrupt node is no mod

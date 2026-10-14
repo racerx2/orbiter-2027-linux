@@ -225,7 +225,7 @@ vec4 BaseTilePS(TileMeshVS frg)
 #if defined(_SSR) && defined(STAGE_PS)
 	SsrHit hS; // not upstream: base surfaces reflect by the rough split-sum weight, nothing where the ray misses (design-ssr Rev 2 M4)
 	float aS;
-	float wS = SsrBase(nrmW, CamW, -frg.CamW, gl_FragCoord.xy, hS, aS);
+	float wS = SsrBase(nrmW, SsrFaceN(-frg.CamW, nrmW), CamW, -frg.CamW, gl_FragCoord.xy, hS, aS); // the face from derivatives here, in uniform control flow (r3-ssr2)
 	clr *= aS;
 #endif
 

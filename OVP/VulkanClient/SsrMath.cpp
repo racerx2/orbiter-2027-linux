@@ -183,6 +183,23 @@ WalkOut Walk (const HiZ &z, const Seg &g, const WalkPrm &p)
 		}
 		t = tx; // behind a thin object: on
 	}
+	if (t < tB && p.finish > 0) { // the budget ran out (a ray that hugs the surface it leaves): point samples of level 0 finish the segment (r3-ssr2)
+		o.finished = true;
+		double t0 = t;
+		for (int i = 0; i < p.finish; i++) {
+			double ti = t0 + (i + 0.5) / p.finish * (tB - t0), si = g.s0 + ti * ds;
+			double X = g.X0 + ti * Dx, Y = g.Y0 + ti * Dy;
+			double Si = z.At(0, int(std::floor(X + p.jx)), int(std::floor(Y + p.jy)));
+			if (Si > 0.0 && si <= Si && 1.0 / si <= 1.0 / Si + p.tau0 + p.tauRel / Si) {
+				o.hit = true;
+				o.t = ti;
+				o.X = X;
+				o.Y = Y;
+				return o;
+			}
+		}
+		t = tB;
+	}
 	o.end = full && t >= tB;
 	return o;
 }

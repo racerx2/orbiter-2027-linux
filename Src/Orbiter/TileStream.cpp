@@ -277,6 +277,7 @@ struct TileStream::Impl {
 		int body = 0, stage = 0, tries = 0, waiting = 0; // stage 0 queued, 1 fetching, 2 building
 		bool required = false, low = false, fallback = false, elevOnly = false;
 		bool pre = false;            // earth-sky: ground-track prefetch
+		bool eoxWait = false;        // waits out a retry after an EOX failure: falls back at once when EOX pauses
 		uint64_t seq = 0;
 		std::vector<int> baseIdx;    // earth-sky: bases whose centre tiles follow the grid in elev
 		Clock::time_point want, retry;
@@ -367,6 +368,7 @@ struct TileStream::Impl {
 	}
 
 	int Want (const std::string &name, int L, int ilat, int ilng, int flags);
+	int WantElev (int b, int L, int ilat, int ilng);
 	void Trim ();
 	void Run ();
 	void Work ();
@@ -560,6 +562,7 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 {
 	int b = FindBody (name);
 	if (b < 0) return -1;
+	if (flags & 4) return WantElev (b, L, ilat, ilng);
 	Body &B = *bodies[b];
 	if (L < 1 || L > B.cfg.surf.lmax || ilat < 0 || ilng < 0) return -1;
 	if (L < 4 ? (ilat || ilng) : (ilat >= 1 << (L - 4) || ilng >= 1 << (L - 3))) return -1;
@@ -632,6 +635,26 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 	}
 	if (jobs.count (id)) return 0;
 	NewJob (b, k, now);
+	Trim ();
+	kick = true;
+	cv.notify_all();
+	return 0;
+}
+
+// the Elev of a tile whose imagery isn't the stream's (an installed archive's, say): an Elev job of its own
+int TileStream::Impl::WantElev (int b, int L, int ilat, int ilng)
+{
+	Body &B = *bodies[b];
+	const TsSource &es = B.cfg.elev;
+	if (es.kind.empty() || L < 4 || L > es.lmax || ilat < 0 || ilng < 0 || ilat >= 1 << (L - 4) || ilng >= 1 << (L - 3)) return -1;
+	uint64_t k = Key (L, ilat, ilng), id = Id (b, k);
+	std::error_code ec;
+	if (fs::exists (Tile (B.dir, "Elev", k), ec)) return 1;
+	std::lock_guard<std::mutex> lk (mx);
+	if (stop || !net || Ocean (B, k) || B.noElev.count (k)) return -1;
+	if (jobs.count (id)) return 0; // a Surf job of ours queues its Elev when it is built
+	B.elevSeen.insert (k);
+	NewJob (b, k, opt.now()).elevOnly = true;
 	Trim ();
 	kick = true;
 	cv.notify_all();
@@ -794,6 +817,9 @@ void TileStream::Impl::Pause (int h, Clock::time_point until, Clock::time_point 
 		if (h == BLDG) BldgDeliver (url, 0, nullptr, now);
 		else Deliver (url, 0, nullptr, now);
 	}
+	if (h == EOX) // jobs that met EOX failures before the pause don't wait out their retry: StartJobs falls them back now
+		for (auto &p : jobs)
+			if (p.second.eoxWait && !p.second.stage) p.second.retry = now;
 }
 
 void TileStream::Impl::Deliver (const std::string &url, int status, const std::shared_ptr<const QByteArray> &data, Clock::time_point now)
@@ -868,7 +894,10 @@ void TileStream::Impl::Fetched (Job &J, Clock::time_point now)
 		if (++J.tries > 5 && !J.required) {
 			hold[J.id] = now + std::chrono::seconds (HoldSec); // given up: the next want waits out the hold
 			jobs.erase (J.id);
-		} else Retry (J, now, 10);
+		} else {
+			Retry (J, now, 10);
+			J.eoxWait = fail[0] && surfHost;
+		}
 		return;
 	}
 	if (miss[0] || miss[1] || miss[2]) {
@@ -959,6 +988,7 @@ void TileStream::Impl::Start (Job &J, Clock::time_point now)
 	if (J.elevOnly) BaseSrcs (B, J); // earth-sky: base centre heights still unknown
 	J.stage = 1;
 	J.waiting = 0;
+	J.eoxWait = false;
 	for (std::vector<Src> *v : {&J.surf, &J.lights, &J.water, &J.elev})
 		for (Src &s : *v) {
 			if ((s.data = CacheGet (s.url))) {
@@ -1592,11 +1622,13 @@ void TileStream::Impl::Prune ()
 }
 
 // installed archives: their tables of contents, and our loose tiles they hold deleted (they would hide the archive)
+// with an ELEV source the elevation is ours: an Elev archive (Orbiter 2016's is a surface model, canopy and roofs in it) is not read
 void TileStream::Impl::LoadArchives (Body &B)
 {
 	const char *name[NARCH] = {"Surf", "Mask", "Elev", "Cloud"};
 	int n = 0;
-	for (int a = 0; a < NARCH; a++) n += ReadToc (B.dir + "/Archive/" + name[a] + ".tree", B.arch[a]);
+	for (int a = 0; a < NARCH; a++)
+		if (a != A_ELEV || B.cfg.elev.kind.empty()) n += ReadToc (B.dir + "/Archive/" + name[a] + ".tree", B.arch[a]);
 	if (!n || ro) return;
 	size_t dropped = 0;
 	std::error_code ec;
@@ -2475,7 +2507,10 @@ int TileStream::PrefetchKeys (Options opt, const std::string &body, const std::v
 	};
 	auto want = [&] (const TileKey &k) { // -2: given up on after its tries (held)
 		uint64_t key = Key (k.L, k.ilat, k.ilng);
-		if (InGrid (k.L, k.ilat, k.ilng) && B.Arch (A_SURF, key)) return 1; // in the installed archive
+		if (InGrid (k.L, k.ilat, k.ilng) && B.Arch (A_SURF, key)) { // in the installed archive: only its Elev is ours
+			ts.Want (body, k.L, k.ilat, k.ilng, 4);
+			return 1;
+		}
 		int r = ts.Want (body, k.L, k.ilat, k.ilng, 0);
 		return !r && ts.d->Held (b, key) ? -2 : r;
 	};

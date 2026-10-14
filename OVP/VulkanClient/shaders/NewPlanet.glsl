@@ -162,12 +162,12 @@ layout(binding = 30) uniform sampler2D	tClass;				// not upstream: R trees, G gr
 layout(binding = 31) uniform sampler2D	tHorizon;			// not upstream: sin of the horizon, 8 azimuths in 2 halves; the last free binding
 #include "SceneShadow.glsl" // not upstream: CsmVis (_CSM, pixel stage); tShadowMap carries the atlas
 
-#if defined(_SSR) // not upstream: screen-space reflections of the water (design-ssr); the _DEVTOOLS overlays' bindings (ue5-integration INT-3)
-#if defined(_DEVTOOLS)
-#error "_SSR takes the _DEVTOOLS overlay bindings 26 and 27"
+#if defined(_SSR) // not upstream: screen-space reflections of the water (design-ssr); on tMicroA/tMicroB's bindings, which the Earth shader never reads (no _MICROTEX), so _DEVTOOLS keeps 26-28 (r3-ssr2)
+#if defined(_MICROTEX)
+#error "_SSR takes the micro texture bindings 21 and 22"
 #endif
-layout(binding = 26) uniform sampler2D	tSsrCol;			// not upstream: last frame's scene, mip chain
-layout(binding = 27) uniform sampler2D	tSsrHiZ;			// not upstream: its 1/z pyramid
+layout(binding = 21) uniform sampler2D	tSsrCol;			// not upstream: last frame's scene, mip chain
+layout(binding = 22) uniform sampler2D	tSsrHiZ;			// not upstream: its 1/z pyramid
 #define SSR_PLANET
 #include "Ssr.glsl"
 

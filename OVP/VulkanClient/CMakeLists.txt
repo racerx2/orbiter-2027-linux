@@ -88,6 +88,8 @@ set(SourceFiles
 	FogMath.cpp # not upstream
 	PostPlume.cpp # not upstream
 	PlumeMath.cpp # not upstream
+	HullHeat.cpp # not upstream
+	HeatMath.cpp # not upstream
 	AutoExpo.cpp # not upstream
 	VolCloudMap.cpp # not upstream
 	CloudAtlas.cpp # not upstream

@@ -484,7 +484,7 @@ void SceneFx::FogState::Draw (SceneFx &fx, VkSurf *target, vPlanet *vp, float wV
 	float kVt = float(1.0 - FogSmooth(30.0, 100.0, oapiGetTimeAcceleration())); // the shadow heights lag at high warp
 	D3DXVECTOR4 light(0.0f, 1.0f, 2.0f, kVt);
 	D3DXVECTOR4 shell = D3DXVECTOR4(float(rIn), float(rOut), float(size), float(hc)); // from Update
-	D3DXVECTOR4 march(16.0f, fx.scn->TaaActive() ? float(fx.frame % 64) : -1.0f, 200e3f, 0.0f);
+	D3DXVECTOR4 march(16.0f, fx.scn->TaaActive() ? float(fx.frame % 64) : -1.0f, 200e3f, fx.scn->GetPlanetNearPlane()); // w: where a ray that lost its ground to the near plane ends (r3 fog2)
 	D3DXVECTOR4 tex(1.0f / float(fx.W), 1.0f / float(fx.H), 1.0f / float(tFH[0]->w), 1.0f / float(tFH[0]->h));
 	D3DXVECTOR4 camX, camY, camZ;
 	fx.CameraRays(camX, camY, camZ);

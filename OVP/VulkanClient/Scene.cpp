@@ -1814,6 +1814,7 @@ void Scene::RenderMainScene()
 
 	DWORD plnmode = *(DWORD*)gc->GetConfigParam(CFGPRM_PLANETARIUMFLAG);
 	DWORD mkrmode = *(DWORD*)gc->GetConfigParam(CFGPRM_SURFMARKERFLAG);
+	zNearPlanet = Camera.nearplane; bZClearVessels = bClearZBuffer; // not upstream: SceneFx::DepthPass draws with the same near planes (r3 fog2)
 
 	for (DWORD i=0;i<nplanets;i++) {
 

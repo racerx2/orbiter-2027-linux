@@ -14,7 +14,7 @@ struct SsrPrm
 	mat4 mSky;		// direction now to the source clip space (w = 0)
 	vec4 vHiZ;		// screen W, H; top level; iterations
 	vec4 vJit;		// source depth jitter in px (xy); start lift in pixel angles (z); near w in m (w)
-	vec4 vMode;		// valid, stochastic, noise phase, sky weight
+	vec4 vMode;		// valid, stochastic (SceneSsr sets 0: the mirror ray and the cone, r3-ssr2), noise phase, sky weight
 	vec4 vThick;	// thickness m, thickness per m of depth, roughness fade start, end
 	vec4 vDecode;	// planet exposure ratio e_now / e_src, mesh 1 / e_src, colour top mip, edge fade width
 	vec4 vSurf;		// kind (0 vessel, 1 base surface, 2 base building), alpha, F0, albedo factor

@@ -295,7 +295,8 @@ void SceneFx::AfterOpaque (const std::list<vVessel*> &vessels, VkSurf *target)
 
 void SceneFx::DepthPass (const std::list<vVessel*> &vessels)
 {
-	scn->PushCameraFrustumLimits(std::min(0.5f, scn->GetCameraNearPlane()), 1e6f);
+	float nV = scn->GetCameraNearPlane(); // not upstream: the vessels' near plane in the main pass
+	scn->PushCameraFrustumLimits(scn->GetPlanetNearPlane(), 1e6f); // not upstream: the main pass's near planes, so what it clipped is not in tDepth either (r3 fog2)
 	scn->BeginPass(RENDERPASS_SCENE_DEPTH);
 	gc->PushRenderTarget(sDepth, sDepthDS, RENDERPASS_SCENE_DEPTH);
 	if (gi) GiBind(0, vessels); // not upstream: SSGI albedo and normal MRT, cleared with tDepth (ue5-integration INT-4)
@@ -303,6 +304,7 @@ void SceneFx::DepthPass (const std::list<vVessel*> &vessels)
 	dev->SetCullMode(VK_CULL_MODE_BACK_BIT);
 	D3DXMATRIX mVP = *scn->GetProjectionViewMatrix();
 	if (vPlanet *vp = scn->GetCameraProxyVisual()) vp->RenderDepth(dev, pTerrain, mVP);
+	if (scn->VesselsZCleared()) { dev->Clear(false, true, false, 0, 1.0f, 0); scn->SetCameraFrustumLimits(nV, 1e6f); } // not upstream: as the main pass, z cleared and the vessels' near plane (r3 fog2)
 	if (gi) GiBind(1, vessels); // not upstream: vessel class
 	for (vVessel *v : vessels) v->Render(dev, false);
 	if (gi) GiBind(2, vessels); // not upstream: the MRT unbound before the pass returns
@@ -329,7 +331,7 @@ void SceneFx::FlagPass (const std::list<vVessel*> &vessels)
 	std::vector<vVessel *> tvs;
 	for (vVessel *v : vessels) if (std::find(rigid.begin(), rigid.end(), v->Object()) != rigid.end()) tvs.push_back(v);
 	vVessel *tv = tvs.empty() ? NULL : tvs.front();
-	scn->PushCameraFrustumLimits(std::min(0.5f, scn->GetCameraNearPlane()), 1e6f);
+	scn->PushCameraFrustumLimits(scn->VesselsZCleared() ? scn->GetCameraNearPlane() : scn->GetPlanetNearPlane(), 1e6f); // not upstream: the near plane DepthPass drew the vessels with (r3 fog2)
 	scn->BeginPass(RENDERPASS_SCENE_DEPTH);
 	gc->PushRenderTarget(sFlag, sDepthDS, RENDERPASS_SCENE_DEPTH);
 	dev->Clear(true, false, false, 0, 1.0f, 0);

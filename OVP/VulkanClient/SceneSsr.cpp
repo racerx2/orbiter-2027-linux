@@ -133,7 +133,6 @@ void SceneSsr::Prepare ()
 		if (SsrMath::JumpTest(movedNow, last.moved, std::acos(std::min(1.0, std::max(-1.0, c))))) reset = true;
 	}
 	prevOk = !reset;
-	stochastic = scn->TaaActive();
 }
 
 // before this frame's capture: last frame's, through the drawn body's rigid motion; after it (glass): this frame's
@@ -160,7 +159,7 @@ void SceneSsr::Params (OBJHANDLE body, int kind, float skyW, bool planet, SsrPrm
 	float e = scn->GetExposure(), es = std::max(last.e, 1e-3f);
 	Set4(p.vHiZ, float(W), float(H), float(L - 1), 48.0f);
 	Set4(p.vJit, last.jx, last.jy, 1.5f * pix, 0.1f);
-	Set4(p.vMode, 1.0f, (stochastic && !current) ? 1.0f : 0.0f, float(f % 16), skyW);
+	Set4(p.vMode, 1.0f, 0.0f, float(f % 16), skyW); // the mirror ray and the cone's colour level (Uludag 2014): one GGX sample a pixel, with no spatial resolve, left a hit/miss checker under TAA's 10 % blend (r3-ssr2)
 	Set4(p.vThick, 0.25f, 0.015f, 0.20f, 0.36f);
 	Set4(p.vDecode, e / es, 1.0f / es, float(tCol->levels - 1), 0.06f);
 	if (kind == BASE_SURFACE) { // dry (design-ssr Rev 2 M4); a weather hook would set the wetness here

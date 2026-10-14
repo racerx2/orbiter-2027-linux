@@ -1106,6 +1106,7 @@ TileManager2Base::TileManager2Base (vPlanet *vplanet, int _maxres, int _gridres)
 	gc->PlanetTexturePath(cbody_name, path);
 	m_dataRootDir = path;
 	bStream = (cprm.tileLoadFlags & 0x0001) && oapiTileStreamEnabled(obj); // not upstream: streamed tiles are loose files
+	streamElevMax = (cprm.tileLoadFlags & 0x0001) ? oapiTileStreamElev(obj) : 0; // not upstream: the core's elevation manager makes the same choice
 }
 
 // -----------------------------------------------------------------------

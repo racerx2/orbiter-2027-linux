@@ -256,26 +256,65 @@ TEST_CASE("SsgiMath: thickness lets sectors behind thin objects through", "[ssgi
 	CHECK((thick & far) == thick);    // a heightfield post hides every sector of the wall behind it
 }
 
-TEST_CASE("SsgiMath: probe weights, radius", "[ssgimath]")
+TEST_CASE("SsgiMath: radius and sender falloff", "[ssgimath]")
 {
-	double w[4];
-	ProbeWeights(0, false, false, w);
-	CHECK((w[0] == 1.0 && w[1] == 1.0 && w[2] == 1.0 && w[3] == 1.0));
-	ProbeWeights(1, true, true, w);
-	CHECK((w[0] == 0.0 && w[1] == 1.0 && w[2] == 1.0 && w[3] == 1.0));
-	ProbeWeights(2, true, true, w);
-	CHECK((w[0] == 0.0 && w[1] == 1.0 && w[2] == 0.0 && w[3] == 1.0));
-	ProbeWeights(1, true, false, w);
-	CHECK(w[0] == 1.0);
 	double R0 = 25.0, k = 0.06, d0 = R0 / k;
 	CHECK(std::fabs(Radius(d0 * (1 - 1e-9), R0, k) - Radius(d0 * (1 + 1e-9), R0, k)) < 1e-6);
 	double tanY = std::tan(30.0 * DEG), H2 = 540.0;
 	for (double d : { 1.0, 20.0, 400.0, 5000.0, 30000.0 }) {
-		double px = PixelRadius(Radius(d, R0, k), d, tanY, H2, 4.0, 0.25 * H2);
+		double px = PixelRadius(Radius(d, R0, k), d, tanY, H2, 4.0, 0.35 * H2);
 		CHECK(px >= 4.0);
-		CHECK(px <= 0.25 * H2);
-		CHECK(std::fabs(PixelRadius(RadiusFromPixels(px, d, tanY, H2), d, tanY, H2, 4.0, 0.25 * H2) - px) < 1e-9);
+		CHECK(px <= 0.35 * H2);
+		CHECK(std::fabs(PixelRadius(RadiusFromPixels(px, d, tanY, H2), d, tanY, H2, 4.0, 0.35 * H2) - px) < 1e-9);
 	}
+	double R = 10.0, last = 2.0;
+	CHECK(Falloff(0.0, R) == 1.0);
+	CHECK(Falloff(0.6 * R, R) == 1.0);
+	CHECK(Falloff(R, R) == 0.0);
+	for (int i = 0; i <= 100; i++) { double f = Falloff(0.012 * i * R, R); CHECK(f <= last); last = f; }
+	// r3-gi2: a hull 17 m away (70 deg aperture) and the sunlit ground 9.5 m in front of it; the screen cap shortens the march to about 8 m, the falloff keeps the world 25 m
+	double d = 17.0, t70 = std::tan(35.0 * DEG), Rw = Radius(d, R0, k), Rc = RadiusFromPixels(PixelRadius(Rw, d, t70, H2, 4.0, 0.35 * H2), d, t70, H2);
+	CHECK(Rc < 9.0);
+	CHECK(Falloff(9.5, Rc) == 0.0);
+	CHECK(Falloff(9.5, Rw) == 1.0);
+}
+
+TEST_CASE("SsgiMath: probe-lit hulls take only the excess over their probe", "[ssgimath]")
+{
+	// IrradianceInteg.glsl PSInteg on a uniform cube: sqrt(sum y w glow 0.7 / N), squared by Metalness.fx; the kernel's r uniform, z = sqrt(1 - r^2), w = sqrt(z)
+	std::mt19937 rng(7);
+	std::uniform_real_distribution<double> U(0.0, 1.0);
+	const int n = 200000;
+	double y = 0.4, glow = 1.3, sum = 0.0;
+	for (int i = 0; i < n; i++) { double r = U(rng); sum += y * std::sqrt(std::sqrt(1.0 - r * r)); }
+	double amb = std::pow(std::sqrt(sum * glow * 0.7 / n), 2.0);
+	CHECK(std::fabs(amb - ProbeGain(glow) * y) < 0.005 * amb);
+	CHECK(std::fabs(ProbeGain(1.0) - 0.6118) < 1e-3);
+	double pp[4];
+	ProbeParams(0, true, true, 1.0, pp);
+	CHECK((pp[0] == 0.0 && pp[1] == 0.0 && pp[2] == 0.0 && pp[3] == 0.0));
+	ProbeParams(1, true, true, 1.0, pp);
+	CHECK((pp[0] == ProbeGain(1.0) && pp[1] == 1.0 && pp[2] == 1.0 && pp[3] == 0.0));
+	ProbeParams(1, false, true, 1.0, pp);
+	CHECK((pp[0] == 0.0 && pp[1] == 1.0 && pp[2] == 1.0));
+	ProbeParams(2, true, true, 1.0, pp);
+	CHECK((pp[0] == ProbeGain(1.0) && pp[3] == 1.0));
+	// r3g1: a Metalness hull beside the sunlit apron (display 0.553, v 1.343), sky ambient 0.207, e 1, mode 1
+	ProbeParams(1, true, true, 1.0, pp);
+	double h = ProbeHeld(VESSEL, METAL, TERRAIN, 0.553, 1.0, pp);
+	CHECK(std::fabs(h - ProbeGain(1.0) * 0.553) < 1e-12);
+	CHECK(std::fabs(SectorExcess(1.343, 0.207, h) - (1.343 - h)) < 1e-12);
+	CHECK(SectorExcess(1.343, 0.207, h) < SectorExcess(1.343, 0.207, 0.0));
+	CHECK(ProbeHeld(VESSEL, METAL, TERRAIN, 0.553, 2.0, pp) == 2.0 * h);          // exposed units
+	CHECK(ProbeHeld(VESSEL, PBR, TREE, 0.553, 1.0, pp) == 0.553);                // the IBL cube holds the decoded display value
+	CHECK(ProbeHeld(VESSEL, METAL, BASE, 0.553, 1.0, pp) == 0.0);                // mode 1 draws no bases
+	CHECK(ProbeHeld(VESSEL, METAL, VESSEL, 0.9, 1.0, pp) == 0.0);                // nor vessels
+	CHECK(ProbeHeld(VESSEL, LEGACY, TERRAIN, 0.553, 1.0, pp) == 0.0);            // legacy hulls have no probe
+	CHECK(ProbeHeld(BASE, METAL, TERRAIN, 0.553, 1.0, pp) == 0.0);               // nor do buildings
+	ProbeParams(2, true, true, 1.0, pp);
+	CHECK(ProbeHeld(VESSEL, METAL, BASE, 0.553, 1.0, pp) > 0.0);                 // mode 2 draws the bases
+	CHECK(SectorExcess(0.3, 0.207, 0.5) == 0.0);
+	CHECK(SectorExcess(0.9, 0.207, 0.1) == 0.9 - 0.207);
 }
 
 TEST_CASE("SsgiMath: mesh ambient as GetObjectAtmoParams", "[ssgimath]")

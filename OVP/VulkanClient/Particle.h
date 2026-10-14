@@ -105,6 +105,7 @@ protected:
 	virtual void SetMaterial (D3DCOLORVALUE &col) { col.r = col.g = col.b = 1; }
 	void RenderDiffuse (VkDev *dev);
 	void RenderEmissive (VkDev *dev);
+	void RenderSoft (VkDev *dev, VkTex *depth); // not upstream: the same billboards faded by SceneFx's tDepth (r3 trail)
 	//const VECTOR3 *cam_ref;
 	//const VECTOR3 *src_ref;
 	//VECTOR3 src_ofs;
@@ -137,6 +138,7 @@ protected:
 	static SURFHANDLE deftex;		// default particle texture
 	static SURFHANDLE deftexems;	// default particle texture
 	static bool bShadows;					// render particle shadows
+	static ShaderClass *pSoft;				// not upstream: SoftParticle.glsl, made only with VolPlumes (r3 trail)
 };
 
 class ExhaustStream: public D3D9ParticleStream {

@@ -43,8 +43,8 @@ struct HiZ {
 int HiZLevels (int W, int H);                 // min(9, floor(log2 max) + 1)
 void BuildHiZ (const std::vector<float> &s, int W, int H, HiZ &z);
 
-struct WalkPrm { double jx = 0.0, jy = 0.0, startPx = 1.0, tau0 = 0.25, tauRel = 0.015; int maxIt = 40; };
-struct WalkOut { bool hit = false, end = false; double X = 0.0, Y = 0.0, t = 0.0; int it = 0; }; // end: no hit and the segment's far end was reached
+struct WalkPrm { double jx = 0.0, jy = 0.0, startPx = 1.0, tau0 = 0.25, tauRel = 0.015; int maxIt = 40, finish = 16; }; // finish: level-0 point samples over the rest when maxIt runs out (0 none)
+struct WalkOut { bool hit = false, end = false, finished = false; double X = 0.0, Y = 0.0, t = 0.0; int it = 0; }; // end: no hit and the segment's far end was reached; finished: by the point samples
 WalkOut Walk (const HiZ &z, const Seg &g, const WalkPrm &p);        // the Hi-Z walk of Ssr.glsl (Uludag 2014, with the toward-camera rule)
 WalkOut March (const HiZ &z, const Seg &g, const WalkPrm &p, double stepPx); // brute force: dense point samples, the same thickness rule
 bool SkyAt (const HiZ &z, double X, double Y, const WalkPrm &p);   // level 0 is empty at the pixel

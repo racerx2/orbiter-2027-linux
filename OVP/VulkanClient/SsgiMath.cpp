@@ -190,14 +190,36 @@ double Radius (double d, double R0, double k) { return std::max(R0, k * d); }
 double PixelRadius (double R, double d, double tanY, double H2, double pmin, double pmax) { return Clamp(R * H2 / (2.0 * d * tanY), pmin, pmax); }
 double RadiusFromPixels (double px, double d, double tanY, double H2) { return px * 2.0 * d * tanY / H2; }
 
-void ProbeWeights (int envMapMode, bool irradiance, bool probesExist, double w[4])
+double Falloff (double dist, double R)
 {
-	bool on = envMapMode != 0 && irradiance && probesExist;
-	w[TERRAIN] = on ? 0.0 : 1.0;                       // the probe draws the planet
-	w[TREE] = 1.0;
-	w[BASE] = (on && envMapMode == 2) ? 0.0 : 1.0;     // and the base structures in mode 2 (flag 0x20)
-	w[VESSEL] = 1.0;                                   // not the vessel itself
+	double x = std::min(1.0, std::max(0.0, (dist - 0.6 * R) / (0.4 * R)));
+	return 1.0 - x * x * (3.0 - 2.0 * x);
 }
+
+double ProbeGain (double glow)
+{
+	double meanW = 0.5 * std::sqrt(PI) * std::tgamma(1.25) / std::tgamma(1.75); // E[(1 - r^2)^(1/4)], r uniform: the kernel's z = sqrt(1 - r^2), weight sqrt(z)
+	return 0.7 * glow * meanW;                                                // sqrt(sum y w glow 0.7 / N), squared by Metalness.fx
+}
+
+void ProbeParams (int envMapMode, bool irradiance, bool probesExist, double glow, double out[4])
+{
+	bool env = envMapMode != 0, irr = env && irradiance && probesExist;
+	out[0] = irr ? ProbeGain(glow) : 0.0;
+	out[1] = env ? 1.0 : out[0];              // PbrMesh: the cosine mean of the decoded env cube (PbrIBL.glsl PSIrr), else the paraboloid
+	out[2] = env ? 1.0 : 0.0;                 // both probes draw the planets (flag 0x01)
+	out[3] = envMapMode == 2 ? 1.0 : 0.0;     // and the base structures in mode 2 (0x20); never the hull itself
+}
+
+double ProbeHeld (int rcls, int rfam, int scls, double y, double e, const double pp[4])
+{
+	if (rcls != VESSEL || (rfam != METAL && rfam != PBR)) return 0.0;
+	double k = (rfam == METAL ? pp[0] : pp[1]) * e;
+	double drawn = scls <= TREE ? pp[2] : (scls == BASE ? pp[3] : 0.0);
+	return (k > 0.0 && drawn > 0.5) ? k * y : 0.0;
+}
+
+double SectorExcess (double L, double amb, double held) { return std::max(L - std::max(amb, held), 0.0); }
 
 double RayLength (double cosDir, double r0, double r1)
 {

@@ -20,8 +20,8 @@ vec4	vRad;		// R0 m, R per m of distance, min and max radius (half-res px)
 vec4	vFade;		// fade start, fade end (m), frame % 64, atmosphere (1) or not (0)
 vec4	vCurve;		// TrGamma, terrain s (Expo / e, TrExpo / e without air), e, sender cap uMax
 vec4	vAmbC;		// config ambient (rgb, light units), building twilight factor tw_bld (w)
-vec4	vMisc;		// strength, tree s (their Expo / e), probe rule on (1), half-res height px
-vec4	vProbe;		// sender weights for probe-lit vessel receivers: terrain, trees, bases, vessels
+vec4	vMisc;		// strength, tree s (their Expo / e), spare, half-res height px
+vec4	vProbe;		// probe-lit hulls: gain from a sender's display value to what the probe holds, Metalness (x), PbrMesh (y); the probe draws terrain and trees (z), bases (w)
 vec4	vTemp;		// alpha at rest, alpha moving, reset (1), e now / e last frame
 vec4	vDir;		// blur step (uv), TAA flag valid (z)
 mat4	mRigP;		// camera-relative point now to camera-relative a frame back, static in the proxy body's frame
@@ -289,10 +289,10 @@ vec4 PSGiMarch(float x, float y)
 	int rc = ClassOf(nc.a), rf = ClassOf(textureLod(tAlbG, uv0, 0.0).a);
 	vec3 Pg = Const.CamPos + P;
 	vec3 amb = vCurve.z * (rc == 0 ? (vFade.w > 0.5 ? TerrAmb(Pg) : vec3(0.0)) : MeshAmb(Pg));
-	bool probe = rc == 3 && (rf == 1 || rf == 2) && vMisc.z > 0.5;
+	float pk = rc == 3 ? (rf == 1 ? vProbe.x : (rf == 2 ? vProbe.y : 0.0)) * vCurve.z : 0.0;	// a probe-lit hull holds what its probe drew at pk times the display value (r3-gi2)
 	float tanY = vCamY.w, H2 = vMisc.w;
-	float rpx = clamp(max(vRad.x, vRad.y * d) * H2 / (2.0 * d * tanY), vRad.z, vRad.w);
-	float R = rpx * 2.0 * d * tanY / H2;
+	float R = max(vRad.x, vRad.y * d);	// the world radius; the falloff keeps it when the screen cap shortens the march (r3-gi2)
+	float rpx = clamp(R * H2 / (2.0 * d * tanY), vRad.z, vRad.w);
 	float bias = 0.003 * d + 0.02;
 	float fr = vFade.z * 5.588238;
 	float xr = IGN(gl_FragCoord.xy + fr), xs = IGN(gl_FragCoord.yx + 17.0 + fr), xb = IGN(gl_FragCoord.xy + 37.0 + fr);
@@ -338,12 +338,13 @@ vec4 PSGiMarch(float x, float y)
 				float dl = length(D);
 				float face = smoothstep(-0.05, 0.25, dot(OctDec(sn.xy), -D / dl));
 				float fall = 1.0 - smoothstep(0.6 * R, R, dl);
-				float wc = probe ? vProbe[sc] : 1.0;
-				if (face * fall * wc <= 0.0) continue;
+				if (face * fall <= 0.0) continue;
 				float sp = rpx * (2.0 * t + 1.0 / float(NSTEP)) / float(NSTEP);	// tap spacing, half-res px
 				vec4 src = sp < 2.0 ? textureLod(tSrc0, qs, 0.0) : (sp < 4.0 ? textureLod(tSrc1, qs, 0.0) : textureLod(tSrc2, qs, 0.0));
 				vec3 Ls = src.a > 0.05 ? src.rgb / src.a : vec3(0.0);
-				S += float(bitCount(nw)) * (face * fall * wc) * max(Ls - amb, 0.0);
+				vec3 aS = amb;
+				if (pk > 0.0 && (sc <= 1 ? vProbe.z : (sc == 2 ? vProbe.w : 0.0)) > 0.5) aS = max(amb, pk * textureLod(tScnG, qs, 0.0).rgb);	// only the excess over what the probe holds
+				S += float(bitCount(nw)) * (face * fall) * max(Ls - aS, 0.0);
 			}
 		}
 		E += lp * M * S / 32.0;

@@ -88,6 +88,8 @@ namespace TsBldg {
 }
 
 bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::string &err);
+int TsCfgElev (const std::string &file, const std::string &body); // the last level of the body's ELEV source, 0 for none
+int TsSessionElev (const std::string &body); // TileStreamApi.cpp: TsCfgElev when this session streams; Elev archive tiles under the stream's files are not read
 
 namespace TsImg {
 	struct Grid { int z, row0, col0, nrow, ncol; };
@@ -161,6 +163,7 @@ public:
 	bool Enabled (const std::string &body) const;
 	// flags 1: the file failed to load, 2: the client loaded it from the cache
 	// 1: the Surf file is there, 0: wanted, -1: never (an installed archive's tile included)
+	// flags 4: only the tile's Elev (its imagery from elsewhere); 1 the Elev file is there, 0 wanted, -1 never
 	int Want (const std::string &body, int L, int ilat, int ilng, int flags);
 	int Done (const std::string &body, int *keys, int nmax); // (L, ilat, ilng) triples
 	// z14 building tiles: 1 the file is there, 0 wanted, -1 never

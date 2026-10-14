@@ -591,6 +591,48 @@ TEST_CASE ("An installed archive's tiles are never streamed, and our loose copie
 	CHECK (fs::exists (tex / "Archive" / "Surf.tree"));
 }
 
+TEST_CASE ("With an ELEV source the Elev archive is not read: our Elev at its keys stays, and an archive tile's Elev is made when asked", "[TileStreamCore]")
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	fs::path tex = t.root / "Earth", ts = tex / "TileStream";
+	const uint32_t no = (uint32_t)-1;
+	// L1 to L4 and L5 (0, 0) and (0, 1) under the west L4: no required jobs
+	std::vector<Node> n = {{0, 100, {no, no, no, no}}, {0, 100, {no, no, no, no}}, {0, 100, {no, no, no, no}},
+		{0, 100, {5, 6, no, no}}, {0, 100, {no, no, no, no}}, {0, 100, {no, no, no, no}}, {0, 100, {no, no, no, no}}};
+	Tree (tex / "Archive" / "Surf.tree", n, {0, 1, 2, 3, 4});
+	Tree (tex / "Archive" / "Elev.tree", n, {0, 1, 2, 3, 4});
+	Put (tex / "Elev" / Rel (4, 0, 0, "elv"), 10);
+	fs::create_directories (ts);
+	std::ofstream (ts / "elev.idx") << "4 0 0\n";
+	s.Terr (5, 0, 1); // (0, 0) reaches across the date line, a tile not served
+	std::string cfg = s.Cfg (t.root / "ts.cfg", s.url + "/eox", "ELEV terrarium " + s.url + "/terr/{z}/{col}/{row}.png 15 16\n");
+	CHECK (TsCfgElev (cfg, "Earth") == 16);
+	CHECK (TsCfgElev (cfg, "Mars") == 0);
+	CHECK (TsCfgElev (s.Cfg (t.root / "ts2.cfg", s.url + "/eox"), "Earth") == 0);
+	CHECK (TsCfgElev ((t.root / "none.cfg").string(), "Earth") == 0);
+	TileStream a (Opt (cfg, tex));
+	CHECK (a.Pending() == 0);
+	CHECK (fs::exists (tex / "Elev" / Rel (4, 0, 0, "elv"))); // ours, kept though the Elev archive holds that key
+	CHECK (Read (ts / "elev.idx") == "4 0 0\n");
+	CHECK (a.Want ("Earth", 5, 0, 1, 0) == -1); // the imagery stays the archive's
+	CHECK (a.Want ("Earth", 4, 0, 0, 4) == 1);
+	CHECK (a.Want ("Earth", 3, 0, 0, 4) == -1); // below L4 there is no Elev
+	CHECK (a.Want ("Earth", 17, 0, 0, 4) == -1); // past the ELEV levels
+	CHECK (a.Want ("Earth", 5, 16, 0, 4) == -1); // off the grid
+	fs::path e = tex / "Elev" / Rel (5, 0, 1, "elv");
+	CHECK (a.Want ("Earth", 5, 0, 1, 4) == 0);
+	CHECK (a.Want ("Earth", 5, 0, 1, 4) == 0); // one job
+	REQUIRE (WaitFor ([&] { std::error_code ec; return fs::file_size (e, ec) == 134262 && a.Pending() == 0; }, 30.0));
+	CHECK (a.Want ("Earth", 5, 0, 1, 4) == 1);
+	CHECK (Read (ts / "elev.idx").find ("5 0 1\n") != std::string::npos);
+	CHECK (a.Want ("Earth", 5, 0, 0, 4) == 0); // a Terrarium tile not served: the job fails
+	REQUIRE (WaitFor ([&] { return a.Pending() == 0; }, 30.0));
+	CHECK (a.Want ("Earth", 5, 0, 0, 4) == -1); // not asked again this session
+	CHECK_FALSE (fs::exists (tex / "Elev" / Rel (5, 0, 0, "elv")));
+}
+
 TEST_CASE ("A layer folder on another disk is written through a .part beside the target; Clear takes stray .part files", "[TileStreamCore]")
 {
 	App app;

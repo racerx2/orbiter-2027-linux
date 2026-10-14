@@ -75,6 +75,8 @@ protected:
 	INT16 *LoadElevationTile (int lvl, int ilat, int ilng, double tgt_res) const;
 	bool LoadElevationTile_mod (int lvl, int ilat, int ilng, double tgt_res, INT16 *elev) const;
 	bool HasElevationTile(int lvl, int ilat, int ilng) const;
+	bool LooseElev (int lvl, int ilat, int ilng) const;    // not upstream: an Elev tile file is there
+	bool StreamCovers (int lvl, int ilat, int ilng) const; // not upstream: the stream's Elev of the parent (or of the ancestor at its last level) hides this archive tile
 
 private:
 	const CelestialBody *cbody;
@@ -84,6 +86,7 @@ private:
 	DWORD tilesource = 2; // bit 1: try loading from cache, bit 2: try loading from archive
 	ZTreeMgr *treeMgr[5];
 	bool bDirExists, bModExists;
+	int streamMax = 0; // not upstream: the tile stream's last Elev level (TsSessionElev), 0 without it
 	mutable std::vector<ElevationTile> *local_cache = nullptr;
 };
 

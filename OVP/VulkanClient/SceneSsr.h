@@ -80,7 +80,7 @@ private:
 
 	View last;                        // the latest capture
 	DWORD prepFrame = 0;
-	bool active = false, prevOk = false, stochastic = false;
+	bool active = false, prevOk = false;
 	double movedNow = 0.0;
 	OBJHANDLE lastFocus = NULL, lastTarget = NULL;
 	bool lastInternal = false;

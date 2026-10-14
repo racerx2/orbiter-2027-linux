@@ -330,6 +330,7 @@ VkMacros D3D9Effect::BaseMacros()
 	if (SceneShadows::Enabled()) macro.push_back({ "_CSM", "" }); // not upstream: scene shadow receivers (design-scene-shadows)
 	if (Config->SSR) macro.push_back({ "_SSR", "" }); // not upstream: screen-space reflections (design-ssr)
 	if (Config->NightLook) macro.push_back({ "_NIGHTLOOK", "" }); // not upstream: streamed building windows (design-night-look 6)
+	if (Config->VolPlumes) macro.push_back({ "_HEAT", "" }); // not upstream: re-entry hull heating, with the re-entry effects (design-reentry-heat)
 	return macro;
 }
 

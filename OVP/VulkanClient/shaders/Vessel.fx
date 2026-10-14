@@ -70,6 +70,12 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 
 	vec3 cDiffLocal;
 	vec3 cSpecLocal;
+#if defined(_SSR) && defined(_ENVMAP)
+	vec3 nSsrF = SsrFaceN(-frg.camW, normalize(frg.nrmW)); // not upstream: the face the depth holds, before any discard (r3-ssr2)
+#endif
+#if defined(_HEAT)
+	HeatGeo hHg = HeatGeom(frg.nrmW, frg.camW); // not upstream: hull heating curvature, before any discard (design-reentry-heat)
+#endif
 
 	if (gTextured) cTex = texture(WrapS, frg.tex0.xy);
 	else		   cTex = vec4(1);
@@ -122,6 +128,9 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 
 	// Special alpha only texture in use
 	if (gNoColor) cTex.rgb = vec3(1);
+#if defined(_HEAT)
+	vec3 hAlb = cTex.rgb * gMtrl.diffuse.rgb; // not upstream: the albedo, for the hull glow's emissivity (design-reentry-heat)
+#endif
 
 
 	// ----------------------------------------------------------------------
@@ -208,7 +217,7 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 #if defined(_SSR)
 		SsrHit hE = SsrNone(); // not upstream: what the reflection ray finds on screen replaces the cube's, vessels only (design-ssr 6)
 		if (gSsr.vSurf.x < 0.5 && fRefl + (gFresnel ? gMtrl.fresnel.y : 0.0) >= 0.01) {
-			vec3 nG = normalize(frg.nrmW);
+			vec3 nG = nSsrF; // the drawn face: a smooth vertex normal can start the ray inside a coarse mesh (r3-ssr2)
 			float aE = (1.0 - clamp(fRghn, 0.0, 1.0)) * (1.0 - clamp(fRghn, 0.0, 1.0)); // fRghn is the smoothness here
 			hE = SsrTrace(-frg.camW, nG, SsrKeepAbove(SsrDir(nrmW, CamD, aE, gl_FragCoord.xy), nG, 0.01), aE);
 		}
@@ -271,6 +280,9 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 
 	// Add emissive textures to output
 	cTex.rgb += cEmis;
+#if defined(_HEAT)
+	if (gHeat.vFlow.w > 0.5) cTex.rgb = HeatAddDisplay(cTex.rgb, HeatGlow(frg.nrmW, frg.camW, hHg, HeatToLinear(hAlb))); // not upstream: the hull's own glow (design-reentry-heat)
+#endif
 
 #if defined(_DEBUG)
 	//if (gDebugHL) cTex = cTex*0.5f + gColor;

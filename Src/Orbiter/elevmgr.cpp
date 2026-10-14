@@ -6,6 +6,7 @@
 #include "Planet.h"
 #include "Orbiter.h"
 #include "Log.h" // not upstream: LOGOUT_WARN for names that don't fit
+#include "TileStream.h" // not upstream: TsSessionElev
 #include <filesystem>
 
 using std::min;
@@ -55,6 +56,7 @@ ElevationManager::ElevationManager (const CelestialBody *_cbody)
 		// -7: -4 for level offset of quadtree root, -3 for great-grandfather elevation access mode
 		elev_res = ((Planet*)cbody)->ElevationResolution();
 	}
+	streamMax = (tilesource & 0x0001) ? TsSessionElev (cbody->Name()) : 0; // not upstream: as the client's streamElevMax, before Base::Setup reads heights
 	if (tilesource & 0x0002) {
 		char cbuf[256];
 		if (g_pOrbiter->Cfg()->PTexPath (cbuf, sizeof cbuf, cbody->Name())) { // not upstream: sized; a path that doesn't fit gives no archive
@@ -92,6 +94,22 @@ ElevationManager::~ElevationManager ()
 			delete treeMgr[i];
 }
 
+bool ElevationManager::LooseElev (int lvl, int ilat, int ilng) const // not upstream
+{
+	if (!(tilesource & 0x0001) || !bDirExists) return false;
+	char fname[256], path[256];
+	int len = snprintf (fname, sizeof fname, "%s\\Elev\\%02d\\%06d\\%06d.elv", cbody->Name(), lvl, ilat, ilng);
+	std::error_code ec;
+	return (size_t)len < sizeof fname && g_pOrbiter->Cfg()->PTexPath (path, sizeof path, fname) && std::filesystem::exists (oapiResolvePath (path), ec);
+}
+
+bool ElevationManager::StreamCovers (int lvl, int ilat, int ilng) const // not upstream: the stream's Elev of the parent (past its last level, of the ancestor there) hides the archive's surface model tile
+{
+	if (!streamMax || lvl <= 4) return false;
+	int d = lvl > streamMax ? lvl - streamMax : 1;
+	return LooseElev (lvl - d, ilat >> d, ilng >> d);
+}
+
 
 int ElevationManager::Quadrant(double lat, double lng, int lvl) const
 {
@@ -125,7 +143,7 @@ bool ElevationManager::HasElevationTile(int lvl, int ilat, int ilng) const
 			if ((size_t)len >= sizeof fname) LOGOUT_WARN("Path too long: %s", cbody->Name()); // not upstream: the file source is skipped, the tree is tried
 			else if (g_pOrbiter->Cfg()->PTexPath(path, sizeof path, fname) && std::filesystem::exists(oapiResolvePath(path))) return true; // not upstream: sized; a path that doesn't fit skips the file source
 		}
-		if (treeMgr[0]) {
+		if (treeMgr[0] && !StreamCovers (lvl, ilat, ilng)) { // not upstream: StreamCovers
 			if (treeMgr[0]->Idx(lvl, ilat, ilng) != DWORD(-1)) return true;
 		}
 	}
@@ -179,7 +197,7 @@ INT16 *ElevationManager::LoadElevationTile (int lvl, int ilat, int ilng, double 
 				if (!ok) { delete []elev; elev = 0; } // not upstream: then the tree archive is tried, as for a missing file
 			}
 		}
-		if (!elev && treeMgr[0]) {
+		if (!elev && treeMgr[0] && !StreamCovers (lvl, ilat, ilng)) { // not upstream: StreamCovers
 			BYTE *buf;
 			DWORD ndata = treeMgr[0]->ReadData(lvl, ilat, ilng, &buf);
 			if (ndata) {
@@ -287,7 +305,7 @@ bool ElevationManager::LoadElevationTile_mod (int lvl, int ilat, int ilng, doubl
 				if (ok) return true; // not upstream: else try the tree archive, as for a missing file
 			}
 		}
-		if (treeMgr[1]) {
+		if (treeMgr[1] && !(streamMax && LooseElev (lvl, ilat, ilng))) { // not upstream: the archive's Elev_mod only over the archive's Elev
 			BYTE *buf;
 			DWORD ndata = treeMgr[1]->ReadData(lvl, ilat, ilng, &buf);
 			if (ndata) {
