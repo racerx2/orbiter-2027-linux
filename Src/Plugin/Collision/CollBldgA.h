@@ -23,6 +23,7 @@ constexpr double   COLL_BLDG_WANT    = 0.5;    // system time between two want r
 constexpr double   COLL_BLDG_KEEP    = 5000;   // a tile no vessel is this near is dropped [m]
 constexpr double   COLL_BLDG_REACH   = 300;    // a building is built when a vessel bound comes within this + COLL_BLDG_REACH_S x speed of its footprint [m]
 constexpr double   COLL_BLDG_REACH_S = 2;      // [s]
+constexpr double   COLL_BLDG_VMAX    = 2e4;    // ground speed cap for reach and tiles: faster than any entry, so only a runaway state [m/s]
 constexpr double   COLL_BLDG_NEAR    = 100;    // buildings this near are built at once, past the budget [m]
 constexpr uint32_t COLL_BLDG_BUDGET  = 20000;  // building vertices built a frame
 constexpr double   COLL_BLDG_IDLE    = 10;     // a building beyond twice its reach this long is freed [s]

@@ -754,8 +754,8 @@ CollSdk::DebrisCaps CollBreakA::Caps (const Geo &geo, double mass, uint32_t *fnv
 	double xm = 0.5 * (lo.x + hi.x);
 	c.td = { Vector (xm, lo.y, hi.z), Vector (lo.x, lo.y, lo.z), Vector (hi.x, lo.y, lo.z),
 		Vector (lo.x, hi.y, lo.z), Vector (hi.x, hi.y, lo.z), Vector (lo.x, hi.y, hi.z), Vector (hi.x, hi.y, hi.z), Vector (xm, hi.y, hi.z) };
-	c.tdK = 4 * mass * 9.81 / 0.02;
-	c.tdD = 2 * 0.7 * std::sqrt (c.tdK * mass);
+	c.tdK = mass * BRK_TD_K; // per point; the core integrates contact forces explicitly (Vessel.cpp), so all 8 points on the ground stay stable at 20 fps
+	c.tdD = mass * BRK_TD_D;
 	c.mu = 0.5;
 	return c;
 }
@@ -1198,6 +1198,15 @@ void CollBreakA::Post (double simt, double simdt)
 	for (size_t i = freeMesh.size (); i-- > 0;) if (freeMesh[i].dropped) { if (freeMesh[i].mesh) sdk.MeshFree (freeMesh[i].mesh); freeMesh.erase (freeMesh.begin () + (long)i); }
 	for (auto &kv : ves) Assert (kv.first, kv.second);
 	PairCheck (simt);
+	for (size_t i = live.size (); i-- > 0;) { // a contact blow-up (non-finite or a velocity jump no impact gives) would drag every query along: deleted
+		CollDebrisA &d = live[i];
+		if (!d.h || !sdk.IsVessel (d.h) || sdk.Playback (d.h)) { d.vSeen = false; continue; }
+		Vector x, v; Matrix R;
+		sdk.GlobalState (d.h, x, v, R);
+		bool bad = !std::isfinite (x.x + x.y + x.z + v.x + v.y + v.z) || (d.vSeen && (v - d.vLast).length () > BRK_RUNAWAY + 100.0 * std::max (simdt, 0.0));
+		if (bad) { Kill (i, "runaway state"); continue; }
+		d.vLast = v; d.vSeen = true;
+	}
 	for (size_t i = live.size (); i-- > 0;) if (simt - live[i].birth > cfg.debrisLife) Kill (i, "life");
 	while (live.size () > (size_t)std::max (0, cfg.debrisMax)) Kill (0, "cap");
 }

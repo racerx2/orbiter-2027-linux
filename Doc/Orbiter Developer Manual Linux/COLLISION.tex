@@ -156,7 +156,7 @@ Orbiter itself ignores these keys. A building keeps the energy it has absorbed a
 
 
 \subsection{Debris}
-Pieces that break off become vessels of the class CollDebris (Config/Vessels/CollDebris.cfg), which has no module; the Collision module gives each piece its own copy of the broken mesh groups, its mass and its motion. Debris pieces do not collide with the vessel they came from, the vessel that hit it or other debris, and are deleted after CollisionDebrisLife seconds. A vessel module should not treat CollDebris vessels as its own kind.
+Pieces that break off become vessels of the class CollDebris (Config/Vessels/CollDebris.cfg), which has no module; the Collision module gives each piece its own copy of the broken mesh groups, its mass and its motion. Debris pieces do not collide with the vessel they came from, the vessel that hit it or other debris, and are deleted after CollisionDebrisLife seconds, or at once when their state blows up (non-finite, or a velocity jump no impact can give). A vessel module should not treat CollDebris vessels as its own kind.
 
 
 \subsection{Notices to vessel modules}

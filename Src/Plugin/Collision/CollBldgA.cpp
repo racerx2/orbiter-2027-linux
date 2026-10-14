@@ -476,6 +476,8 @@ void CollBldgA::Frame (double simt, const std::vector<Live> &v)
 			if (!(rl > 0) || !(rl - p.R < COLL_BLDG_ALT + 12e3)) continue;
 			Vector w = std::fabs (p.T) > 0 ? mul (p.pR, Vector (0, 1, 0)) * (2.0 * PI_B / p.T) : Vector ();
 			double speed = (u - (p.pv + crossp (x - p.pp, w))).length (); // against the planet-fixed point (CollSurfaceVel)
+			if (!std::isfinite (speed)) break; // a runaway state: no buildings
+			speed = std::min (speed, COLL_BLDG_VMAX);
 			double lat = std::asin (std::max (-1.0, std::min (1.0, loc.y / rl))), lng = std::atan2 (loc.z, loc.x);
 			const VGround *c = nullptr; // the ground asked a moment ago nearby: the height only gates tiles and reach
 			for (const VGround &q : vground) if (q.h == l.h && q.p == &p) c = &q;
@@ -512,18 +514,28 @@ void CollBldgA::Frame (double simt, const std::vector<Live> &v)
 			Vector q = tmul (t.rrotP, x.loc - t.rposP);
 			if (std::hypot (q.x, q.z) - t.rad - x.r > x.reach) continue;
 			double ext = x.reach + x.r + t.maxRb;
-			for (int64_t cx = Cell (q.x - ext); cx <= Cell (q.x + ext); cx++)
-				for (int64_t cz = Cell (q.z - ext); cz <= Cell (q.z + ext); cz++) {
+			if (!std::isfinite (q.x) || !std::isfinite (q.z) || !std::isfinite (ext)) continue;
+			int64_t cx0 = Cell (q.x - ext), cx1 = Cell (q.x + ext), cz0 = Cell (q.z - ext), cz1 = Cell (q.z + ext);
+			auto scan = [&] (const std::vector<uint32_t> &in) {
+				for (uint32_t i : in) {
+					Bldg &b = t.b[i];
+					if (b.state != Bldg::IDLE) continue;
+					double gap = Gap (t, i, q, x.alt, x.r);
+					if (!(gap < x.reach)) continue;
+					if (b.stamp != frameNo) { b.stamp = frameNo; b.best = gap; cand.push_back (Cand { &t, i }); }
+					else b.best = std::min (b.best, gap);
+				}
+			};
+			if ((double)(cx1 - cx0 + 1) * (double)(cz1 - cz0 + 1) > (double)t.grid.size ()) { // window wider than the tile's cells: walk the cells (never more work than the tile holds)
+				for (const auto &kv2 : t.grid) {
+					int64_t cx = kv2.first >> 32, cz = (int32_t)(kv2.first & 0xFFFFFFFF);
+					if (cx >= cx0 && cx <= cx1 && cz >= cz0 && cz <= cz1) scan (kv2.second);
+				}
+			}
+			else for (int64_t cx = cx0; cx <= cx1; cx++)
+				for (int64_t cz = cz0; cz <= cz1; cz++) {
 					auto f = t.grid.find (CellKey (cx, cz));
-					if (f == t.grid.end ()) continue;
-					for (uint32_t i : f->second) {
-						Bldg &b = t.b[i];
-						if (b.state != Bldg::IDLE) continue;
-						double gap = Gap (t, i, q, x.alt, x.r);
-						if (!(gap < x.reach)) continue;
-						if (b.stamp != frameNo) { b.stamp = frameNo; b.best = gap; cand.push_back (Cand { &t, i }); }
-						else b.best = std::min (b.best, gap);
-					}
+					if (f != t.grid.end ()) scan (f->second);
 				}
 		}
 	}
