@@ -67,7 +67,9 @@ An add-on that makes ships collide with each other, with base buildings and with
 - Crashes into buildings and into the ground do the same damage.
 - The streamed 3D buildings are solid too, with the shape they are drawn with: ships crash into them and can land on their roofs.
 - Damage and debris are saved with the scenario and play back in flight recordings.
-- A ship that absorbs more than 1 kJ per kg is destroyed (it loses thrust when the Damage model option is on).
+- A ship that absorbs more than 1 kJ per kg is destroyed: it loses thrust, and the player loses its controls
+  (keys, joystick, panels); its MFDs still work.
+- High-speed crashes don't freeze the game: the dozens of pieces a breakup makes are set up in milliseconds.
 
 Turn it on in the Launchpad's **Modules** tab (Collision). Settings are in `Config/Collision.cfg`.
 
@@ -102,6 +104,27 @@ KTX2 compression.
 
 Try it with the **Delta-glider > DG and DG-S and DGTest** scenario, and **Graphics > PBR material bench**,
 which shows every material on its own sphere.
+
+### Graphics effects
+
+![Re-entry plasma and hull heating, valley fog in the Alps, a ship's shadow and sea reflections, Atlantis' plume at launch](./.github/readme/effects.jpg)
+
+*Re-entry plasma and hull heating; valley fog in the Alps; shadows and sea reflections; Atlantis' plume.*
+
+New in the Vulkan client, each a switch in `Modules/VulkanClient/VulkanClient.cfg` (on by default, fog off):
+
+- **Shadows** (`SceneShadows`): sun shadows of ships, buildings and terrain across the whole view.
+- **Reflections** (`SSR`): water and glossy hulls reflect the scene around them.
+- **Bounce light** (`SSGI`): sunlit ground and hulls light up what is next to them.
+- **Plumes and smoke** (`VolPlumes`): lit volumetric exhaust with shock diamonds, ground clouds and smoke.
+- **Re-entry** (`VolPlumes`): a plasma sheath shaped by the hull, and a hull that heats up and glows from the
+  nose and leading edges, then cools slowly. Works for any ship, no add-on changes needed.
+- **Fog** (`HeightFog`): fog that fills valleys and lies over the sea, by time of day and season.
+- **Night look** (`NightLook`): cities lit by street lamps that light the ground, building windows that come on
+  at dusk, and nights that stay dark.
+
+How they work: the Technical Reference (*Vulkan effects*). For add-on makers: the Developer Manual
+(*Graphics content*).
 
 ### Multiplayer
 
