@@ -2379,6 +2379,7 @@ void Orbiter::KbdInputImmediate_OnRunning (char *kstate)
 {
 	if (g_focusobj->ConsumeDirectKey (kstate)) return;  // key is consumed by focus vessel
 
+	if (!g_focusobj->CtrlLock()) { // not upstream: a locked (destroyed) vessel takes no control keys; its MFDs still work
 	// main/retro/hover thruster settings
 	if (keymap.IsLogicalKey (kstate, OAPI_LKEY_IncMainThrust))   g_focusobj->IncMainRetroLevel ( 0.2*td.SimDT);
 	if (keymap.IsLogicalKey (kstate, OAPI_LKEY_DecMainThrust))   g_focusobj->IncMainRetroLevel (-0.2*td.SimDT);
@@ -2426,6 +2427,7 @@ void Orbiter::KbdInputImmediate_OnRunning (char *kstate)
 	// Wheel brake control
 	if (keymap.IsLogicalKey (kstate, OAPI_LKEY_WheelbrakeLeft))  g_focusobj->SetWBrakeLevel (1.0, 1, false);
 	if (keymap.IsLogicalKey (kstate, OAPI_LKEY_WheelbrakeRight)) g_focusobj->SetWBrakeLevel (1.0, 2, false);
+	} // not upstream: CtrlLock
 
 	// left/right MFD control
 	if (KEYMOD_SHIFT (kstate)) {
@@ -2586,6 +2588,7 @@ void Orbiter::UserJoyInput_System (JoyState *js)
 //-----------------------------------------------------------------------------
 void Orbiter::UserJoyInput_OnRunning (JoyState *js)
 {
+	if (g_focusobj->CtrlLock()) return; // not upstream: a locked (destroyed) vessel takes no joystick input
 	if (bEnableAtt) {
 		if (js->lX) {
 			if (js->rgbButtons[2]) { // emulate rudder control

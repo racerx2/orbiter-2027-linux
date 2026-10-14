@@ -114,6 +114,9 @@ public:
 	virtual bool     Recording (CollH v) = 0;
 	virtual bool     Playback (CollH v) = 0;
 	virtual int      DamageModel (CollH v) = 0;                 // E3 passes Vessel (0); the value is the session setting
+	virtual bool     ControlLock (CollH v, bool lock) { (void)v; (void)lock; return false; } // not upstream: oapiSetVesselControlLock where the core has it; false: no such core
+	virtual int      ADCtrlMode (CollH v) { (void)v; return -1; }        // not upstream: GetADCtrlMode, -1 unknown
+	virtual void     SetADCtrlMode (CollH v, int mode) { (void)v; (void)mode; } // not upstream: SetADCtrlMode
 	// meshes and animations (E2)
 	virtual uint32_t MeshCount (CollH v) = 0;
 	virtual CollH    MeshTemplate (CollH v, uint32_t i) = 0;   // NULL for name slots and holes

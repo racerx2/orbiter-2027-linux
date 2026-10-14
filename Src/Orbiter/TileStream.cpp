@@ -31,6 +31,9 @@
 #include <unistd.h>
 
 namespace fs = std::filesystem;
+
+static std::atomic<unsigned> tsWriteGen {0}; // not upstream: TsWriteGen
+unsigned TsWriteGen () { return tsWriteGen.load (std::memory_order_acquire); }
 using Clock = TileStream::Clock;
 
 int (*TsFlock) (int, int) = flock;
@@ -1325,7 +1328,7 @@ bool TileStream::Impl::Write (const Body &B, const std::string &path, const std:
 	else if (!put (tmp)) ec = std::make_error_code (std::errc::io_error);
 	else if (opt.crossDisk) ec = std::make_error_code (std::errc::cross_device_link);
 	else fs::rename (tmp, path, ec);
-	if (!ec) return true;
+	if (!ec) { tsWriteGen.fetch_add (1, std::memory_order_release); return true; }
 	if (!cross) fs::remove (tmp, rc);
 	if (!cross && ec == std::errc::cross_device_link) {
 		std::lock_guard<std::mutex> lk (imx);
@@ -1335,7 +1338,7 @@ bool TileStream::Impl::Write (const Body &B, const std::string &path, const std:
 	std::error_code pc;
 	if (put (part)) {
 		fs::rename (part, path, pc);
-		if (!pc) return true;
+		if (!pc) { tsWriteGen.fetch_add (1, std::memory_order_release); return true; }
 	} else pc = std::make_error_code (std::errc::io_error);
 	fs::remove (part, rc);
 	if (!writeLogged.exchange (true)) Log ("TileStream: cannot write " + path + " (" + ec.message() + ", then " + pc.message() + ")");

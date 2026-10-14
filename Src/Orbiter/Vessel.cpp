@@ -3655,6 +3655,7 @@ bool Vessel::SetNavMode (int mode, bool fromstream)
 {
 	if (bFRplayback && !fromstream) return false;
 	// ignore manual SetNavMode during playback
+	if (bCtrlLock && mode && !fromstream) return false; // not upstream: a locked vessel's nav modes stay off
 
 	DWORD bitflag = 1 << (mode-1);
 	int i;
@@ -3742,8 +3743,16 @@ double Vessel::GetSpec (VesselSpec which)
 }
 #endif
 
+void Vessel::SetCtrlLock (bool lock) // not upstream
+{
+	if (lock == bCtrlLock) return;
+	bCtrlLock = lock;
+	if (lock) SetNavMode (0); // the nav modes go with the controls
+}
+
 int Vessel::ConsumeDirectKey (char *buffer)
 {
+	if (bCtrlLock) return 0; // not upstream: the module sees no keys; the caller skips the controls
 	if (modIntf.v->Version() >= 1) {
 		return ((VESSEL2*)modIntf.v)->clbkConsumeDirectKey (buffer);
 	} else {
@@ -3755,6 +3764,7 @@ int Vessel::ConsumeBufferedKey (DWORD key, bool down, char *kstate)
 {
 	int res;
 	const Keymap &keymap = g_pOrbiter->keymap;
+	if (bCtrlLock) return 0; // not upstream: neither the module nor the nav-mode keys
 
 	// first offer the key to the module
 	if (modIntf.v->Version() >= 1)
@@ -5661,6 +5671,7 @@ bool Vessel::PanelRedrawEvent (int id, int event, SURFHANDLE surf, void *context
 
 bool Vessel::PanelMouseEvent (int id, int event, int mx, int my, void *context) const
 {
+	if (bCtrlLock) return false; // not upstream: the cockpit's switches are dead
 	if (modIntf.v && modIntf.v->Version() >= 2 && ((VESSEL3*)modIntf.v)->clbkPanelMouseEvent (id, event, mx, my, context))
 		return true;
 	else if (modIntf.v && modIntf.v->Version() >= 1)
@@ -5687,6 +5698,7 @@ bool Vessel::VCRedrawEvent (int id, int event, SURFHANDLE surf) const
 
 bool Vessel::VCMouseEvent (int id, int event, Vector &p) const
 {
+	if (bCtrlLock) return false; // not upstream: the cockpit's switches are dead
 	if (modIntf.v && modIntf.v->Version() >= 1) {
 		VECTOR3 v = _V(p.x,p.y,p.z);
 		return ((VESSEL2*)modIntf.v)->clbkVCMouseEvent (id, event, v);

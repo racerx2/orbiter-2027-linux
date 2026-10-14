@@ -14,7 +14,7 @@ Without help, Orbiter lets spacecraft pass through each other and through the bu
 
 \subsection{Turning collisions on}
 Tick \textit{Collision} in the \textit{Physics} category of the Launchpad's \textit{Modules} tab (see section \ref{ssec:launchpad_modules}). Collisions are on as soon as the module is active. Its settings are in Config/Collision.cfg (see section \ref{ssec:coll_cfg}); \textit{CollisionModel = 0} there turns collisions and new damage off while the module still loads, saves, shows and repairs the damage of a scenario.\\
-Vessel destruction stops a vessel's engines only when the Launchpad option \textit{Damage and failure simulation} (Options tab, Vessel settings) is ticked, or the \textit{Damage model} of the in-flight Options dialog is on. Dents, broken parts and debris appear either way.
+A destroyed vessel is out of your control: its engines stop, its control surfaces go slack, and keys, joystick, cockpit switches and navigation modes no longer reach it. Its MFDs can still be read and switched. This does not depend on the \textit{Damage and failure simulation} option; \textit{CollisionThrustCut = FALSE} in Config/Collision.cfg turns it off. A repair gives the controls back.
 
 
 \subsection{What collides}
@@ -35,7 +35,7 @@ The damage of an impact comes from the kinetic energy that the impact takes out 
 
 \begin{itemize}
 \item \textbf{Dents:} each damaging impact leaves a dent in the vessel's mesh at the point of contact, sized by the energy it absorbed. Thin parts fold, and parts crushed against a flat face of the other body are flattened. The collider is dented with the visual mesh, so later contacts see the dented hull.
-\item \textbf{Destroyed vessels:} a vessel is destroyed when the energy it has absorbed reaches 1 kJ per kg of its empty mass (1000 J/kg, \textit{DestroyEnergy}; a vessel class may set its own value). With the \textit{Damage and failure simulation} option, a destroyed vessel loses the thrust of its engines; a vessel module may handle the destruction in its own way instead. A single impact of more than 40 kJ/kg counts as catastrophic.
+\item \textbf{Destroyed vessels:} a vessel is destroyed when the energy it has absorbed reaches 1 kJ per kg of its empty mass (1000 J/kg, \textit{DestroyEnergy}; a vessel class may set its own value). A destroyed vessel loses its engines and the player's controls (see above); a vessel module may handle the destruction in its own way instead. A single impact of more than 40 kJ/kg counts as catastrophic.
 \item \textbf{Parts breaking off:} on destructive impacts, parts tear off and fly away as debris, glass breaks, and the interior groups of a hull that is broken open are hidden. Torn sections leave a cut edge on the remaining hull.
 \item \textbf{Structural fracture:} the module splits each vessel mesh into structural cells (64 by default) joined by bonds, and runs NVIDIA Blast's stress solver on them. Where an impact overloads the structure, the bonds break and the pieces fly as debris; a vessel loses the mass of the pieces it has lost.
 \item \textbf{Debris:} pieces become vessels of their own (class \textit{CollDebris}) that fly on, fall and come to rest on the ground. They do not collide with the vessel they came from, the vessel that hit it or other debris. At most 48 pieces exist at once; each lives 30 minutes of simulation time.
@@ -85,7 +85,7 @@ The module reads Config/Collision.cfg once at the start of each simulation sessi
 	\hline\rule{0pt}{2ex}
 	BuildingDestroyEnergy & Float & The same for base buildings [J/kg]. Default: 1000\\
 	\hline\rule{0pt}{2ex}
-	CollisionThrustCut & Bool & Destroyed vessels lose thrust (only with the \textit{Damage and failure simulation} option). Default: TRUE\\
+	CollisionThrustCut & Bool & Destroyed vessels lose thrust, control surfaces and the player's controls. Default: TRUE\\
 	\hline\rule{0pt}{2ex}
 	CollisionVisuals & Bool & Dents are shown on the vessel meshes. Default: TRUE\\
 	\hline\rule{0pt}{2ex}

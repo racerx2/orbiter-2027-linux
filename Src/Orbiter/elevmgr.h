@@ -8,6 +8,10 @@
 #include "Vecmat.h"
 #include "ZTreeMgr.h"
 #include <vector>
+#include <cstdint>       // not upstream: the Elev file cache
+#include <mutex>
+#include <string>
+#include <unordered_map>
 
 class CelestialBody;
 
@@ -77,6 +81,9 @@ protected:
 	bool HasElevationTile(int lvl, int ilat, int ilng) const;
 	bool LooseElev (int lvl, int ilat, int ilng) const;    // not upstream: an Elev tile file is there
 	bool StreamCovers (int lvl, int ilat, int ilng) const; // not upstream: the stream's Elev of the parent (or of the ancestor at its last level) hides this archive tile
+	bool LooseFile (int lvl, int ilat, int ilng, std::string *path = nullptr) const; // not upstream: the Elev file is there, from the cache below (vessels query heights many times a frame)
+	void TileBad (int lvl, int ilat, int ilng, bool loose) const;                     // not upstream: a file or archive node that would not load counts as no tile from now on
+	bool NodeBad (int lvl, int ilat, int ilng) const;                                 // not upstream: TileBad's archive nodes
 
 private:
 	const CelestialBody *cbody;
@@ -88,6 +95,12 @@ private:
 	bool bDirExists, bModExists;
 	int streamMax = 0; // not upstream: the tile stream's last Elev level (TsSessionElev), 0 without it
 	mutable std::vector<ElevationTile> *local_cache = nullptr;
+	struct Loose { bool there; bool walked; unsigned gen; std::string path; }; // not upstream: one Elev file: found, the case-insensitive lookup done, TsWriteGen when looked for, its path
+	std::string elevDir;                                      // not upstream: the resolved <body>/Elev folder
+	mutable std::mutex looseMx;                               // not upstream: Elevation is called from more than one thread
+	mutable std::unordered_map<uint64_t, Loose> loose;        // not upstream: by lvl, ilat, ilng
+	mutable std::unordered_map<uint64_t, bool> badNode;       // not upstream: archive nodes that would not load
+	mutable unsigned looseGen = 0;                            // not upstream: TsWriteGen when the missing files were last checked
 };
 
 #endif // !__ELEVMGR_H

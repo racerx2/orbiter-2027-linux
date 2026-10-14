@@ -164,6 +164,8 @@ VESSEL *oapiGetVesselInterface (OBJHANDLE h)
 }
 
 int VESSEL::GetDamageModel () const { WorldCall (); return ((const FakeVessel *)(const void *)this)->damage; } // ASan: a destroyed vessel is poisoned
+DWORD VESSEL::GetADCtrlMode () const { WorldCall (); return 7; } // not upstream: the destroyed-craft lock reads and sets the control surfaces
+void VESSEL::SetADCtrlMode (DWORD) const { WorldCall (); }
 
 // the rest of the SDK the module imports (CollSdkOrbiter.cpp): world reads see an empty, mesh-less world; every one is a world call
 namespace {

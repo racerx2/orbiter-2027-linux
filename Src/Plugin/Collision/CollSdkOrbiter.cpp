@@ -20,6 +20,9 @@
 #include "CollPlatform.h"
 
 static_assert (sizeof (NTVERTEX) == 32, "NTVERTEX must keep the CollVtx layout");
+#if defined (OAPI_VESSEL_CONTROL_LOCK) && !defined (_WIN32)
+extern void oapiSetVesselControlLock (OBJHANDLE hVessel, bool lock) __attribute__ ((weak)); // not upstream: weak, so a host without it still loads the plugin
+#endif
 
 namespace {
 inline Vector V (const VECTOR3 &v) { return Vector (v.x, v.y, v.z); }
@@ -97,6 +100,18 @@ public:
 	bool Recording (CollH v) override { return Ves (v)->Recording (); }
 	bool Playback (CollH v) override { return Ves (v)->Playback (); }
 	int DamageModel (CollH v) override { VESSEL *x = Ves (v); return x ? x->GetDamageModel () : -1; }
+	bool ControlLock (CollH v, bool lock) override
+	{
+#if defined (OAPI_VESSEL_CONTROL_LOCK) && !defined (_WIN32)
+		if (!oapiSetVesselControlLock || !v || !oapiIsVessel (H (v))) return false; // weak: a host without it (tests, an older core) leaves the plugin loadable
+		oapiSetVesselControlLock (H (v), lock);
+		return true;
+#else
+		(void)v; (void)lock; return false; // an upstream core: the thrust cut and the control surfaces only
+#endif
+	}
+	int ADCtrlMode (CollH v) override { VESSEL *x = Ves (v); return x ? (int)x->GetADCtrlMode () : -1; }
+	void SetADCtrlMode (CollH v, int mode) override { VESSEL *x = Ves (v); if (x && mode >= 0) x->SetADCtrlMode ((DWORD)mode); }
 	uint32_t MeshCount (CollH v) override { return Ves (v)->GetMeshCount (); }
 	CollH MeshTemplate (CollH v, uint32_t i) override { return Ves (v)->GetMeshTemplate (i); }
 	const char *MeshName (CollH v, uint32_t i) override { return Ves (v)->GetMeshName (i); }

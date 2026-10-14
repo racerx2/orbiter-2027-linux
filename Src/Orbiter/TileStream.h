@@ -90,6 +90,7 @@ namespace TsBldg {
 bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::string &err);
 int TsCfgElev (const std::string &file, const std::string &body); // the last level of the body's ELEV source, 0 for none
 int TsSessionElev (const std::string &body); // TileStreamApi.cpp: TsCfgElev when this session streams; Elev archive tiles under the stream's files are not read
+unsigned TsWriteGen (); // not upstream: files the streams of this process put in place so far; a new value: a missing file may be there now
 
 namespace TsImg {
 	struct Grid { int z, row0, col0, nrow, ncol; };

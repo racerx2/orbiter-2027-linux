@@ -6346,6 +6346,11 @@ OAPIFUNC int  oapiTileStreamElev (OBJHANDLE hBody);
 // finished tiles as (lvl, ilat, ilng) triples, keys holds 3*nmax; returns the count
 OAPIFUNC int  oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax);
 
+// not upstream: a locked vessel (e.g. destroyed in a collision) takes no player commands: keys, joystick, cockpit panel and VC switches, nav modes; its MFDs still work
+#define OAPI_VESSEL_CONTROL_LOCK 1 // not upstream: feature test for add-ons
+OAPIFUNC void oapiSetVesselControlLock (OBJHANDLE hVessel, bool lock);
+OAPIFUNC bool oapiGetVesselControlLock (OBJHANDLE hVessel);
+
 // not upstream: streamed 3D buildings, z14 Web Mercator tiles (x east from 180W, y south from the top)
 #define OAPI_TILESTREAM_BLDG 1 // not upstream: TSBLDG, TSBLDGMESH and the oapiTileStreamBldg* calls are there (feature test for add-ons)
 typedef struct { double lat, lng; float hmin, hmax; DWORD v0, nv, i0, ni; } TSBLDG; // anchor (rad), vertex and index ranges

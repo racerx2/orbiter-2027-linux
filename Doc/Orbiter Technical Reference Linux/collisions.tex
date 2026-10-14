@@ -69,7 +69,7 @@ is shared between the two sides A and B by their crush strengths $\sigma_{c}$, s
 \[ E_{A} = E_{n} \frac{\sigma_{c,B}}{\sigma_{c,A} + \sigma_{c,B}} \max\left(0, 1 - \left(\frac{v_{el,A}}{v_{n}}\right)^{2}\right) \]
 
 \noindent
-with the material's elastic speed $v_{el}$ (1 m/s, 3 m/s for gear). The energy a side absorbs is $E_{A} + 0.25\,W_{f}$; it is added up over the vessel's life. A vessel is destroyed when its absorbed energy per kg of empty mass reaches \textit{DestroyEnergy} (1000 J/kg, set per vessel class or in Config/Collision.cfg); a building uses \textit{BuildingDestroyEnergy} and a mass estimated from its size and kind. One impact of 40 kJ/kg or more is flagged as catastrophic.
+with the material's elastic speed $v_{el}$ (1 m/s, 3 m/s for gear). The energy a side absorbs is $E_{A} + 0.25\,W_{f}$; it is added up over the vessel's life. A vessel is destroyed when its absorbed energy per kg of empty mass reaches \textit{DestroyEnergy} (1000 J/kg, set per vessel class or in Config/Collision.cfg); a building uses \textit{BuildingDestroyEnergy} and a mass estimated from its size and kind. One impact of 40 kJ/kg or more is flagged as catastrophic. A destroyed vessel is cut off from its propellant, its control surfaces are switched off and it takes no player input until it is repaired.
 
 
 \subsection{Dents}

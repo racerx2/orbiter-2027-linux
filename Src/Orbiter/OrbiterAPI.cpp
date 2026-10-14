@@ -177,6 +177,16 @@ DLLEXPORT bool oapiIsVessel (OBJHANDLE hVessel)
 	return (g_psys ? g_psys->isVessel ((const Vessel*)hVessel) : false);
 }
 
+DLLEXPORT void oapiSetVesselControlLock (OBJHANDLE hVessel, bool lock) // not upstream
+{
+	if (oapiIsVessel (hVessel)) ((Vessel*)hVessel)->SetCtrlLock (lock);
+}
+
+DLLEXPORT bool oapiGetVesselControlLock (OBJHANDLE hVessel) // not upstream
+{
+	return oapiIsVessel (hVessel) && ((Vessel*)hVessel)->CtrlLock ();
+}
+
 DLLEXPORT OBJHANDLE oapiGetStationByName (char *name)
 {
 	static bool bWarning = true;
