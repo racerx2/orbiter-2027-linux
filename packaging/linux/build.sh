@@ -11,6 +11,7 @@ SRC=$OUT/src
 cmake -S "$SRC" -B "$B" -G Ninja -DCMAKE_BUILD_TYPE=Release -DORBITER_MAKE_DOC=OFF -DORBITER_MAKE_TESTS=OFF \
 	-DCMAKE_PREFIX_PATH="$QTDIR;$DEPS" -DVulkan_INCLUDE_DIR="$DEPS/include" -DCMAKE_INSTALL_PREFIX="$STAGE/inst"
 cmake --build "$B" -j "${JOBS:-$(nproc)}"
+[ "${PACK:-1}" = 1 ] || exit 0 # PACK=0: compile only (rc.sh build)
 cmake --install "$B"
 R=$STAGE/$NAME
 mv "$STAGE/inst/Orbiter" "$R" && rm -rf "$STAGE/inst"
