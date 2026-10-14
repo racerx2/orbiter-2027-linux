@@ -21,6 +21,9 @@ const int MAPN = 256;          // map texels per side
 const int SCAN = 16;           // scan intervals per ray (Rev 2, review MUST 1)
 const float LIT = -1e4f;       // Hs of a texel that shadows nothing
 const float DARK = 1e4f;       // Hs with the sun below the horizon
+const float SEAENC = 16.0f;    // the sea weight w rides in F and V: F - SEAENC w, V + SEAENC w (G unchanged)
+const double SEAR = 4000.0;    // m: the box radius of w, the open water around a point; the sea bank thins toward the shore with it
+const double PATCH = 3000.0;   // m: the cells of the radiation fog's patches on flat ground
 
 // tangent plane at a centre, planet-local axes (x = cos lat cos lng, y = sin lat, z = cos lat sin lng), gnomonic
 struct Plane {
@@ -31,7 +34,7 @@ struct Plane {
 	void FromMap (double x, double y, double R, double *lat, double *lng) const;
 };
 
-// one cascade, row 0 north: F floor, V valley depth, Hs sun-shadow height, m strength (m, m, m, 0..3)
+// one cascade, row 0 north: F floor, V valley depth (both with the sea weight, SEAENC), Hs sun-shadow height, m strength (m, m, m, 0..3)
 struct Map {
 	Plane f;
 	double half = 0.0, R = 0.0;
@@ -54,6 +57,9 @@ float Density (const Params &P, const float f[4], float ef, double h, float n);
 float DensitySeg (const Params &P, const float f[4], float ef, double ha, double hb, float n); // mean over a step whose altitude runs from ha to hb (closed form)
 float Bound (const Params &P, const float f[4], float ef, double ha, double hb); // layout weight: the lids at the mid altitude with n = 1, the haze's mean
 float LidTop (const Params &P, const float f[4]);                       // highest lid for these fields
+float SeaW (const float f[4], float ef);                               // the sea fog's density weight from the encoded floor
+float SeaKL (const float f[4]);                                        // the sea bank's height factor: full over open water, low at the shore
+float LidDepth (const Params &P, const float f[4]);                    // the valley fog's lid over the floor: shallow on flat ground, deep in valleys
 
 // drift noise: value noise on planet-local metres, 700 m cells, x periodic over 64 cells; off = the wind offset along x
 uint32_t Hash3 (int x, int y, int z);
@@ -91,6 +97,7 @@ double FogDayProb (double moist, double nightLen);
 double DayNoise (double lat, double lng, double mjd, uint32_t seed, double cell, double days); // 0..1, near uniform at every point
 double FogDay (double lat, double lng, double mjd, double p);          // m_day 0..1.35
 double SeaDay (double lat, double lng, double mjd, double moist);      // 0..1
+double Patch (double lat, double lng, double mjd, double R);           // 0..1: radiation fog patches on flat ground (PATCH cells, 1 day), R the body radius
 
 struct FrameIn {
 	double lat = 0.0, lng = 0.0, mjd = 51544.5;

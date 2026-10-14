@@ -93,6 +93,7 @@ Group components:
 	\hline
 	\end{tabular}
 \end{table}
+The VulkanClient's scene shadows and screen effects read these flags too (section \ref{sssec:vk_mtrl_fx}).
 
 \item The GEOM specification heads the vertex and triangle list for the mesh group. It specifies the lengths of both lists.
 \item A vertex list (see below)
@@ -189,7 +190,7 @@ Additional texture maps are identified by adding an id in the end of texture's f
 \item	\texttt{\_transm} Transmittance map controls the amount of light that passes through a translucent material without being diffused. The effect is very similar to a specular reflection, except that it simulates the bright spot on a semi-transparent material that is directly between the sun and the observer. The (RGBA) channels from a texture are used. The RGB channels provide color and brightness, while the alpha channel changes the size of the bright spot. This is analogous to how the specular map is used.
 \item	\texttt{\_spec} Specular map controls a specular reflection in per pixel basis. Alpha channel is containing a smoothness setting like a smoothness map do.
 \end{itemize}
-The VulkanClient manual (Doc/VulkanClient/VulkanClient.html, section \textit{Advanced Texture Maps}) lists all texture maps the client uses, including \texttt{\_refl} and \texttt{\_heat}.
+The VulkanClient manual (Doc/VulkanClient/VulkanClient.html, section \textit{Advanced Texture Maps}) lists all texture maps the client uses, including \texttt{\_refl} and \texttt{\_heat}. Section \ref{sec:vk_content} lists them with their channels, and describes glTF meshes, PBR materials and how the VulkanClient's shadows and effects use materials and group flags.
 
 \break
 \subsection{Performance optimisation}

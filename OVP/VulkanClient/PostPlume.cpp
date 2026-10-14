@@ -764,7 +764,7 @@ void PostPlume::GatherPuffs ()
 
 	for (DWORD n = 0; n < scn->nstream; n++) {
 		D3D9ParticleStream *s = scn->pstream[n];
-		if (!s || !s->Diffuse() || s->IsReentry() || !s->First()) continue; // re-entry streams stay legacy (design review M3)
+		if (!s || !s->Diffuse() || s->IsReentry() || !s->First()) continue; // re-entry streams stay legacy (design review M3; round 2: as soft puffs Atlantis' trail veils the whole hull)
 		OBJHANDLE h = s->Owner();
 		VESSEL *v = (h && oapiIsVessel(h)) ? oapiGetVesselInterface(h) : nullptr;
 		int rule = v ? CfgOf(v).puffs : -1;
@@ -859,6 +859,7 @@ void PostPlume::GatherPuffs ()
 	// which side of the biggest plume each puff is on (design 6.2)
 	double dMid = 1e30, best = 0.0;
 	for (const Plume &P : plumes) if (P.rpx * P.I > best) { best = P.rpx * P.I; dMid = Len(P.o + P.a * float(0.5 * P.L)); }
+	if (best <= 0.0 && !plasma.empty()) dMid = Len(plasma[0].c); // no plume: smoke behind the biggest plasma sheath goes behind it
 
 	// at most 16 puffs around the camera, a fill budget of 32 half-res screens (design review S6), 8192 puffs
 	std::vector<int> order(pt.size());
@@ -1255,8 +1256,7 @@ void PostPlume::Composite (VkSurf *target, VkTex *dep, bool vol)
 	ipi->SetTemplate(rectF[2], rectF[3], rectF[0], rectF[1]);
 	SetCommon(ipi);
 	ipi->SetTextureNative("tDepthP", dep, IPF_POINT | IPF_CLAMP);
-	ipi->SetTextureNative("tVolP", vol ? tVolP2 : tVolP, IPF_POINT | IPF_CLAMP);
-	ipi->SetTextureNative("tVolPD", tVolPD, IPF_POINT | IPF_CLAMP);
+	ipi->SetTextureNative("tVolP", vol ? tVolP2 : tVolP, IPF_POINT | IPF_CLAMP); // the tap depths come from tDepth, so no tVolPD here
 	ipi->SetTextureNative("tPuffBk", tPuff[0], IPF_POINT | IPF_CLAMP);
 	ipi->SetTextureNative("tPuffFr", tPuff[1], IPF_POINT | IPF_CLAMP);
 	ipi->SetOutputNative(0, target);

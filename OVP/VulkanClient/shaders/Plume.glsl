@@ -307,7 +307,7 @@ vec4 FlowP (int m, vec2 uv)	// bilinear over the covered texels only; z: the cov
 vec4 FlowB (int m, vec2 uv) { return m == 0 ? textureLod(tFlowB0, uv, 0.0) : textureLod(tFlowB1, uv, 0.0); }
 vec4 FlowR (int m) { return m == 0 ? texelFetch(tFlowR0, ivec2(0), 0) : texelFetch(tFlowR1, ivec2(0), 0); }
 
-struct Surf { float zs, zb, cov, w, z; vec2 uv; };
+struct Surf { float zs, zb, cov, w, z; vec2 uv; vec3 n; };	// n: the ellipsoid's outward normal (the map's comes from FlowNormal)
 
 Surf FlowSurf (int k, vec3 p)	// the windward surface on the line through p along the flow
 {
@@ -316,6 +316,7 @@ Surf FlowSurf (int k, vec3 p)	// the windward surface on the line through p alon
 	Surf s;
 	vec3 q = p - Z3.xyz;
 	s.z = dot(q, Z0.xyz) + Z2.w;
+	s.n = -Z0.xyz;
 	if (Z0.w >= 0.0) {
 		s.uv = vec2(0.5 + 0.5 * dot(q, Z1.xyz) / Z1.w, 0.5 - 0.5 * dot(q, Z2.xyz) / Z1.w);
 		vec4 f = FlowP(int(Z0.w + 0.5), s.uv);
@@ -331,10 +332,30 @@ Surf FlowSurf (int k, vec3 p)	// the windward surface on the line through p alon
 		h = sqrt(h);
 		float t0 = (-bq - h) / gg, t1 = (-bq + h) / gg;
 		s.zs = s.z + t0; s.zb = s.z + t1; s.cov = 1.0;
-		vec3 n = normalize(M * (qe + g * t0));
-		s.w = Sq(max(0.0, -dot(n, Z0.xyz)));
+		s.n = normalize(M * (qe + g * t0));
+		s.w = Sq(max(0.0, -dot(s.n, Z0.xyz)));
 	}
 	return s;
+}
+
+float FlowSlope (int m, vec2 uv, vec2 o, float zs, float texel)	// the windward depth's slope along one map axis, one-sided at the outline
+{
+	vec4 a = FlowP(m, uv + o), c = FlowP(m, uv - o);
+	if (a.z > 0.5 && c.z > 0.5) return (a.x - c.x) / (2.0 * texel);
+	if (a.z > 0.5) return (a.x - zs) / texel;
+	if (c.z > 0.5) return (zs - c.x) / texel;
+	return 0.0;
+}
+
+vec3 FlowNormal (int k, Surf s)	// the windward surface's outward normal: (dzs/dx, dzs/dy, -1) in the map's X, Y, f
+{
+	int b = k * PZS;
+	vec4 Z0 = vPz[b];
+	if (Z0.w < 0.0) return s.n;
+	int m = int(Z0.w + 0.5);
+	float tx = vPz[b + 7].w;
+	float gx = FlowSlope(m, s.uv, vec2(1.0 / 128.0, 0.0), s.zs, tx), gy = -FlowSlope(m, s.uv, vec2(0.0, 1.0 / 128.0), s.zs, tx);	// v runs against Y
+	return normalize(gx * vPz[b + 1].xyz + gy * vPz[b + 2].xyz - Z0.xyz);
 }
 
 vec3 PlasmaColour (int k, float w) { vec4 Z4 = vPz[k * PZS + 4]; return mix(Z4.rgb, vec3(1.0), 0.25 * Sq(Sq(w))); }
@@ -366,15 +387,46 @@ PzState PlasmaState (int k)
 
 float RunLength (int k, PzState st, Surf s) { return max(s.zs - st.zmin, 0.0) + length(s.uv - st.stag) * 2.0 * vPz[k * PZS + 1].w; }
 
-vec3 BandAt (int k, PzState st, Surf s, vec3 rd)	// the shock layer crossed once: c I sqrt(w) S(l) front / |cos|
+vec3 BandAt (int k, PzState st, Surf s, vec3 rd, vec3 n, float w)	// the shock layer crossed once: c I sqrt(w) S(l) front / |n.rd|, n and w of the windward face
 {
-	vec4 Z0 = vPz[k * PZS], Z4 = vPz[k * PZS + 4], Z6 = vPz[k * PZS + 6];
+	vec4 Z4 = vPz[k * PZS + 4], Z6 = vPz[k * PZS + 6];
 	float l = RunLength(k, st, s);
 	float lf = 0.1 * st.Rn;
 	float Sl = pow(max(l, lf) / lf, -0.5);	// [U] heat.py: laminar s^-0.5
 	float fr = Ss(st.lfront + 0.1 * st.Lb, st.lfront - 0.05 * st.Lb, l);
-	float c = abs(dot(rd, Z0.xyz));
-	return PlasmaColour(k, s.w) * (3.0 * Z4.w * Z6.w * sqrt(s.w) * Sl * fr * min(1.0 / max(c, 1e-3), 8.0));
+	float c = abs(dot(rd, n));	// the layer lies along the face: the path through it grows toward the limb
+	return PlasmaColour(k, w) * (3.0 * Z4.w * Z6.w * sqrt(w) * Sl * fr * min(1.0 / max(c, 1e-3), 8.0));
+}
+
+vec3 DepthNormal (vec2 hp, vec3 rd)	// the hit face's normal from the full-res distances: the nearest of the 2x2 and its nearer neighbours, toward the eye
+{
+	ivec2 b = ivec2(hp) * 2, m = textureSize(tDepthP, 0) - 1, c = b;
+	vec2 fs = 1.0 / vec2(textureSize(tDepthP, 0));
+	float zc = 1e30;
+	for (int j = 0; j < 2; j++)
+		for (int i = 0; i < 2; i++) {
+			ivec2 q = min(b + ivec2(i, j), m);
+			float z = texelFetch(tDepthP, q, 0).r;
+			if (z > 0.0 && z < zc) { zc = z; c = q; }
+		}
+	if (zc > 1e29) return -rd;
+	vec3 p0 = PixelRay((vec2(c) + 0.5) * fs) * zc;
+	vec3 D[4];
+	bool bg[4];
+	for (int i = 0; i < 4; i++) {
+		ivec2 q = clamp(c + (i == 0 ? ivec2(1, 0) : (i == 1 ? ivec2(-1, 0) : (i == 2 ? ivec2(0, 1) : ivec2(0, -1)))), ivec2(0), m);
+		float z = texelFetch(tDepthP, q, 0).r;
+		bg[i] = z <= 0.0;
+		D[i] = PixelRay((vec2(q) + 0.5) * fs) * (bg[i] ? 1e7 : z) - p0;
+	}
+	if ((bg[0] && bg[1]) || (bg[2] && bg[3])) return -rd;	// a one-pixel sliver: no tangent on that axis, taken face-on
+	vec3 dx = dot(D[0], D[0]) < dot(D[1], D[1]) ? D[0] : -D[1];	// the smoother side: no step across an outline
+	vec3 dy = dot(D[2], D[2]) < dot(D[3], D[3]) ? D[2] : -D[3];
+	vec3 n = cross(dx, dy);
+	float l = length(n);
+	if (l < 1e-12) return -rd;
+	n /= l;
+	return dot(n, rd) > 0.0 ? -n : n;
 }
 
 void PlasmaAt (int k, PzState st, vec3 p, inout vec3 E)	// halo and base wake, per metre
@@ -400,8 +452,8 @@ void PlasmaAt (int k, PzState st, vec3 p, inout vec3 E)	// halo and base wake, p
 	float flick = Z6.w;
 	if (fb.x > 1e-3) {	// halo
 		float zs = fb.y / fb.x, w = fb.w / fb.x;
-		float lh = Z5.z;
-		E += PlasmaColour(k, w) * (0.3 * Z4.w * flick * fb.x * w * exp(-abs(z - zs) / lh) / (2.0 * lh));
+		float lh = Z5.z, dzh = z - zs;
+		E += PlasmaColour(k, w) * (0.3 * Z4.w * flick * fb.x * w * exp(-(dzh < 0.0 ? -dzh : 4.0 * dzh) / lh) / (1.25 * lh));	// upstream of the face; a quarter as deep behind it, so it does not soak through thin wings to the lee (round 2)
 	}
 	float dz = z - st.zbmax;
 	if (dz > 0.0 && Z5.w > 0.0) {	// base wake, widening with the Mach angle
@@ -509,7 +561,7 @@ vec4 PSPlumeMarch (float x, float y)
 						float f = dprev[k] / (dprev[k] - dk);
 						vec3 pc = rd * (t - dt * (1.0 - f));
 						Surf sc = FlowSurf(k, pc);
-						if (sc.cov > 0.5) { L += T * BandAt(k, pst[k], sc, rd) * vPz[k * PZS + 5].x; crossed[k] = true; }	// x: aerial transmission
+						if (sc.cov > 0.5) { L += T * BandAt(k, pst[k], sc, rd, FlowNormal(k, sc), sc.w) * vPz[k * PZS + 5].x; crossed[k] = true; }	// x: aerial transmission
 					}
 					dprev[k] = dk;
 					float wi = 1e-3;
@@ -527,7 +579,9 @@ vec4 PSPlumeMarch (float x, float y)
 			T *= tr;
 		}
 	}
-	for (int k = 0; k < NPZ; k++) {	// the ray ends on the windward hull (design review S2)
+	vec3 nHit = vec3(0.0);
+	bool nhOK = false;
+	for (int k = 0; k < NPZ; k++) {	// the ray ends on the hull: only a face toward the airflow that the map sees as the windward surface gets the layer (design review S2, round 2)
 		if (k >= nz || crossed[k] || dsc > 1e29) continue;
 		vec3 pe = rd * dsc;
 		vec4 A = vPz[k * PZS + 8], B = vPz[k * PZS + 9];
@@ -535,8 +589,12 @@ vec4 PSPlumeMarch (float x, float y)
 		if (dsc < tt.x || dsc > tt.y + 1.0) continue;
 		Surf s = FlowSurf(k, pe);
 		if (s.cov < 0.5) continue;
-		float tol = 1.5 * pst[k].texel / sqrt(max(s.w, 0.01)) + dsc * 2.0 * vCamY.w * vTex.y;	// plus one full-res pixel at that distance
-		if (abs(s.zs - s.z) < tol) { L += T * BandAt(k, pst[k], s, rd) * vPz[k * PZS + 5].x; tw += 1e-3 * dsc; ts += 1e-3; }
+		if (!nhOK) { nHit = DepthNormal(hp, rd); nhOK = true; }
+		float cn = -dot(nHit, vPz[k * PZS].xyz);	// the hit face toward the oncoming air
+		if (cn < 0.1) continue;	// lee and side faces stay dark (design 7.4)
+		float slope = min(sqrt(max(1.0 - cn * cn, 0.0)) / cn, 10.0);	// depth change per metre across the map
+		float tol = (1.0 + 1.5 * slope) * (pst[k].texel + dsc * 2.0 * vCamY.w * vTex.y);	// a map texel and a full-res pixel along that slope
+		if (abs(s.zs - s.z) < tol) { L += T * BandAt(k, pst[k], s, rd, nHit, cn * cn) * vPz[k * PZS + 5].x; tw += 1e-3 * dsc; ts += 1e-3; }
 	}
 	float alpha = 1.0 - T;
 	if (Lum(L) < 1e-5 && alpha < 1e-4) return vec4(0.0);

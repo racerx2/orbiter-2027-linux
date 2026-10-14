@@ -382,7 +382,7 @@ TEST_CASE("FogMath: step layout and transmittance", "[fogmath]")
 	for (int i = 0; i < 16; i++) CHECK(e[i + 1] >= e[i]);
 	CHECK(L.n <= MAXP);
 	// a floor that jumps at every few hundred metres: the crossings never overflow the layout
-	FieldFn comb = [](const double p[3], float f[4], float *ef) { f[0] = (int(std::floor(p[1] / 300.0)) & 1) ? 2600.0f : 0.0f; f[1] = 0.0f; f[2] = LIT; f[3] = 1.0f; *ef = 1.0f; return true; };
+	FieldFn comb = [](const double p[3], float f[4], float *ef) { bool hi = int(std::floor(p[1] / 300.0)) & 1; f[0] = hi ? 2600.0f : -SEAENC; f[1] = hi ? 0.0f : SEAENC; f[2] = LIT; f[3] = 1.0f; *ef = 1.0f; return true; }; // ridges and open sea
 	V.ss = 0.004f; V.Ds = 200.0f;
 	for (double pitch : { -1.0, -14.5 }) {
 		MakeRay(3000.0, pitch, o, d);
@@ -399,7 +399,7 @@ TEST_CASE("FogMath: sun transmittance through a flat fog", "[fogmath]")
 {
 	Params V;
 	V.sf = 0.004f; V.D0 = 200.0f; V.kv = 0.0f; V.Hh = 350.0f; V.Hinv = 400.0f; V.Gmean = 100.0f;
-	FieldFn fld = Flat(100.0f, 0.0f, 1.0f);
+	FieldFn fld = Flat(100.0f, 600.0f, 1.0f); // a deep valley: the full D0, lid at 300 m
 	double o[3], d[3];
 	MakeRay(150.0, 10.0, o, d);
 	double T = Transmittance(V, fld, o, d, RE, 0.0, 30e3, 24, 0.5, -1.0);
@@ -540,4 +540,62 @@ TEST_CASE("FogMath: bake on a synthetic valley", "[fogmath]")
 	REQUIRE(m.Sample(p, s, &r));
 	CHECK(r < 0.01);
 	CHECK(std::fabs(s[0] - c[0]) < 1.0f);
+}
+
+TEST_CASE("FogMath: coast and flat ground", "[fogmath]")
+{
+	auto g = std::make_shared<Horizon::Grid>(); // the sea east of 80.6 W, flat land 3 m high west of it
+	g->lvl = 7;
+	g->minlat = 27.5 * RAD; g->maxlat = 29.5 * RAD; g->minlng = -82.0 * RAD; g->maxlng = -79.0 * RAD;
+	g->h.assign(size_t(Horizon::STRIDE) * Horizon::STRIDE, 0.0f);
+	for (int i = -1; i <= 257; i++)
+		for (int j = -1; j <= 257; j++) {
+			double lng = g->minlng + (g->maxlng - g->minlng) * j / 256.0;
+			g->h[size_t(i + 1) * Horizon::STRIDE + j + 1] = lng < -80.6 * RAD ? 3.0f : 0.0f;
+		}
+	BakeIn in;
+	in.lat = 28.6 * RAD; in.lng = -80.6 * RAD; in.half = 25e3; in.R = RE;
+	in.grids.push_back(g);
+	SunVec(-20.0, -80.6 + 90.0, in.sun); // dawn
+	in.mjd = 51565.51;
+	Map m;
+	Bake(in, m);
+	REQUIRE(m.cover > 0.99f);
+	auto At = [&](double xm) { int i = std::min(MAPN - 1, std::max(0, int((xm + 25e3) / (50e3 / MAPN)))); return &m.px[(size_t(128) * MAPN + i) * 4]; };
+	CHECK(SeaW(At(10e3), 1.0f) > 0.99f);  // open sea: the full bank
+	CHECK(SeaKL(At(10e3)) > 0.99f);
+	CHECK(At(10e3)[3] == 0.0f);           // no radiation fog over it
+	CHECK(SeaW(At(300.0), 1.0f) > 0.8f);  // the shore: dense, but the bank is lower
+	CHECK(SeaKL(At(300.0)) > 0.15f);
+	CHECK(SeaKL(At(300.0)) < 0.6f);
+	CHECK(SeaW(At(-800.0), 1.0f) > 0.0f); // it reaches a little inland, low
+	CHECK(SeaKL(At(-800.0)) < 0.3f);
+	CHECK(SeaW(At(-3e3), 1.0f) == 0.0f);  // and stops
+	int gap = 0, fog = 0, land = 0; // flat land: fog patches and clear gaps
+	for (int j = 0; j < MAPN; j += 4)
+		for (int i = 0; i < 64; i += 2) { float mm = m.px[(size_t(j) * MAPN + i) * 4 + 3]; land++; gap += mm == 0.0f; fog += mm > 1.0f; }
+	CHECK(gap > land / 20); // about 70 cells: the fractions vary with the day's pattern
+	CHECK(fog > land / 6);
+	for (double x : { 10e3, 300.0, -800.0, -3e3, -10e3 }) {
+		const float *o = At(x);
+		CHECK(std::fabs(o[0] + o[1] - (x > 0.0 ? 0.0f : 3.0f)) < 2.0f); // F + V stays the mean ground
+	}
+	CHECK(m.Ltop >= 1.5f * 260.0f + 5.0f - 1e-3f);
+	Params P;
+	P.D0 = 190.0f; P.kv = 0.25f; P.sf = 0.008f;
+	float flat[4] = { 3.0f, 0.0f, LIT, 1.0f }, vale[4] = { 3.0f, 600.0f, LIT, 1.0f };
+	float basin[4] = { -86.0f, 0.0f, LIT, 1.0f }, open[4] = { -SEAENC, SEAENC, LIT, 0.0f }; // a dry basin below sea level is no sea (review r2 NIT 3)
+	CHECK(SeaW(basin, 1.0f) == 0.0f);
+	CHECK(SeaKL(basin) == 0.0f);
+	CHECK(SeaW(open, 1.0f) == 1.0f);
+	CHECK(SeaKL(open) == 1.0f);
+	std::vector<float> low(size_t(64) * 64, -86.0f), F, G, lo, sea, lake;
+	Floor(low, 64, 195.3125, F, G, &lo);
+	Water(low, lo, 64, 195.3125, true, sea, lake);
+	CHECK(sea[size_t(32) * 64 + 32] == 0.0f);
+	CHECK(lake[size_t(32) * 64 + 32] > 0.9f); // a flat dry basin reads as a lake, as salt flats did before (design 13.3)
+	CHECK(std::fabs(LidDepth(P, flat) - 57.0f) < 0.5f);   // shallow on flat ground
+	CHECK(std::fabs(LidDepth(P, vale) - 340.0f) < 0.5f);  // the valley pool keeps its depth
+	CHECK(Density(P, flat, 1.0f, 30.0, 0.5f) > 0.007f);
+	CHECK(Density(P, flat, 1.0f, 120.0, 1.0f) < 1e-6f);   // a 300 m camera is far above it
 }

@@ -399,7 +399,9 @@ AddExhaust( th_main, 10, 2, tex );
 \end{lstlisting}
 
 \noindent
-The texture file must be stored in DDS format in Orbiter's default texture directory. Note that \textit{oapiRegisterExhaustTexture} can be safely called multiple times with the same texture.
+The texture file must be stored in DDS format in Orbiter's default texture directory. Note that \textit{oapiRegisterExhaustTexture} can be safely called multiple times with the same texture.\\
+\\
+With its VolPlumes effect on, the VulkanClient draws exhausts as volumetric plumes, whose size, colour and smoke come from the thruster and from an optional plume file of the vessel class; a custom exhaust texture is used for the plumes of the texture class only (section \ref{ssec:vk_plumes}).
 
 
 \subsection{Air-breathing engines}
@@ -527,9 +529,12 @@ SetReentryTexture( NULL );
 ...
 \end{lstlisting}
 
+\noindent
+With its VolPlumes effect on, the VulkanClient draws a volumetric plasma sheath around a vessel that has a re-entry particle stream while the energy flux of the oncoming air is high enough, and does not draw the re-entry flame while it does (section \ref{ssec:vk_plumes}).
+
 
 \subsection{Adding particle streams for exhaust and reentry effects}
-Orbiter supports particle streams for rendering contrails, exhaust gases, reentry plasma trails etc. Particle streams consist of a series of textured "billboard" objects which always face the camera. The streams can be customised with a set of parameters and allow the simulation of a variety of effects.\\
+Orbiter supports particle streams for rendering contrails, exhaust gases, reentry plasma trails etc. Particle streams consist of a series of textured "billboard" objects which always face the camera. The streams can be customised with a set of parameters and allow the simulation of a variety of effects. With its VolPlumes effect on, the VulkanClient draws diffuse streams with the default texture as lit volumetric smoke (section \ref{sssec:vk_puffs}).\\
 \\
 \textbf{The PARTICLESTREAMSPEC structure}\\
 \\

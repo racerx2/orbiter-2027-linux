@@ -21,13 +21,13 @@ namespace oapi { class D3D9Client; }
 
 // the receivers' CsmPrm (SceneShadow.glsl): row-major, scalar layout
 struct CsmGpu {
-	D3DXMATRIX mC[4];	// camera-relative world to atlas u, v and depth
-	D3DXVECTOR4 vC[4];	// texel m, depth range m, select radius m, band start m
-	D3DXVECTOR4 vO[4];	// world texel offset of the tile (xy), terrain receiver bias m (z)
+	D3DXMATRIX mC[CsmMath::NT];		// camera-relative world to atlas u, v and depth: the cascades, then the target tiles
+	D3DXVECTOR4 vC[CsmMath::NT];	// texel m, depth range m, select radius m, band start m; a target tile: texel, depth range, on, 0
+	D3DXVECTOR4 vO[CsmMath::NT];	// world texel offset of the tile (xy), terrain receiver bias m (z)
 	D3DXVECTOR4 vL;		// toward the sun, 2 tan of its angular radius
 	D3DXVECTOR4 vF;		// fade start, fade end, noise phase, on
 };
-static_assert(sizeof(CsmGpu) == 416, "CsmGpu must match CsmPrm in SceneShadow.glsl");
+static_assert(sizeof(CsmGpu) == 608, "CsmGpu must match CsmPrm in SceneShadow.glsl");
 
 class SceneShadows {
 public:
@@ -50,7 +50,7 @@ public:
 	int Cascade () const { return cur; }
 	LPD3DXMATRIX CasterVP () const { return const_cast<D3DXMATRIX *>(&mCaster); }
 	bool Cull (const D3DXVECTOR3 &c, float rad) const;	// a caster sphere (camera-relative) reaches this cascade's box and is not below half a texel
-	double TerrainCut () const { return cur >= 0 ? CsmMath::TerrainCut[cur] : 0.0; }
+	double TerrainCut () const { return cur >= 0 && cur < CsmMath::NC ? CsmMath::TerrainCut[cur] : 0.0; }
 	ShaderClass *TerrainShader () const { return pTerrain; }
 	ShaderClass *TreeShader () const { return pTrees; }
 	const D3DXVECTOR3 &ToSun () const { return toSun; }	// camera-relative world, the frozen light direction
@@ -68,6 +68,10 @@ private:
 	};
 	bool Gate (vPlanet *vp);
 	bool Frame (vPlanet *vp, bool force, int *draw, int &nd);
+	struct TgtSet;
+	void Target (const CsmMath::M3 &Rp, const CsmMath::V3 &cp, const VECTOR3 &P, const VECTOR3 &C);
+	void Seed (TgtSet &s, class vVessel *tv, double prevT, const CsmMath::M3 &Rp, const CsmMath::V3 &cp, const VECTOR3 &P, const VECTOR3 &C);
+	bool InTarget (const vObject *v) const;
 	void Draw (const int *draw, int ndraw);
 	void Fill ();
 	void Push ();
@@ -100,6 +104,17 @@ private:
 	double sinSun = 1.0;				// sun elevation at the camera's ground point
 	float tan2w = 0.0093f;
 	std::set<const vObject *> stencilOff;	// vessels this module took the stencil shadow from
+
+	// the target tiles: the camera's target vessel, then the nearest other one within C0's reach, each with those touching it, at their own texel (as the legacy focus map), left out of the cascades
+	static const int MaxTgt = 8;
+	struct TgtSet {
+		bool on = false;
+		int n = 0;
+		class vVessel *v[MaxTgt] = {};
+		CsmMath::Target f = {};
+		CsmMath::Xf xf = {};
+	};
+	TgtSet tg[CsmMath::NTgt];
 
 	// a few timing lines in the log after activation, nothing per frame
 	VkQueryPool qp = VK_NULL_HANDLE;

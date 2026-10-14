@@ -99,20 +99,48 @@ static void Fill (const Xf &x, const double sc[3], const double of[3], double ou
 	out[3][3] = 1.0;
 }
 
-void CasterMatrix (int i, const Xf &x, double out[4][4])
+int Col (int i) { return i < NC ? (i & 1) : 2; }
+int Row (int i) { return i < NC ? (i >> 1) : i - NC; }
+
+void CasterMatrix (int i, double r, double D, const Xf &x, double out[4][4])
 {
-	double r = Radius[i];
-	const double sc[3] = { 0.5 / r, 0.5 / r, 1.0 / Depth (i) };
-	const double of[3] = { double(i & 1) - 0.5, 0.5 - double(i >> 1), 0.0 };
+	const double kx = double(N) / AW, ky = double(N) / AH;
+	const double sc[3] = { kx / r, ky / r, 1.0 / D };
+	const double of[3] = { (2 * Col (i) + 1) * kx - 1.0, 1.0 - (2 * Row (i) + 1) * ky, 0.0 };
 	Fill (x, sc, of, out);
 }
 
-void ReceiverMatrix (int i, const Xf &x, double out[4][4])
+void ReceiverMatrix (int i, double r, double D, const Xf &x, double out[4][4])
 {
-	double r = Radius[i];
-	const double sc[3] = { 0.25 / r, -0.25 / r, 1.0 / Depth (i) };
-	const double of[3] = { 0.25 + 0.5 * double(i & 1), 0.25 + 0.5 * double(i >> 1), 0.0 };
+	const double kx = double(N) / AW, ky = double(N) / AH;
+	const double sc[3] = { 0.5 * kx / r, -0.5 * ky / r, 1.0 / D };
+	const double of[3] = { (Col (i) + 0.5) * kx, (Row (i) + 0.5) * ky, 0.0 };
 	Fill (x, sc, of, out);
+}
+
+void CasterMatrix (int i, const Xf &x, double out[4][4]) { CasterMatrix (i, Radius[i], Depth (i), x, out); }
+void ReceiverMatrix (int i, const Xf &x, double out[4][4]) { ReceiverMatrix (i, Radius[i], Depth (i), x, out); }
+
+bool FitTarget (const V3 *p, int n, double wMax, double prevT, Target &f)
+{
+	if (n <= 0) return false;
+	double x0 = p[0].x, x1 = x0, y0 = p[0].y, y1 = y0, z0 = p[0].z, z1 = z0;
+	for (int k = 1; k < n; k++) {
+		x0 = std::min (x0, p[k].x); x1 = std::max (x1, p[k].x);
+		y0 = std::min (y0, p[k].y); y1 = std::max (y1, p[k].y);
+		z0 = std::min (z0, p[k].z); z1 = std::max (z1, p[k].z);
+	}
+	double e = 0.5 * std::max (x1 - x0, y1 - y0);
+	double raw = std::max (std::max (e / (0.5 * N - TgtMargin), std::max (wMax, 0.0) / (2.0 * TgtKernel)), TgtMinT);
+	double t = std::exp2 (std::ceil (4.0 * std::log2 (raw) - 1e-9) / 4.0); // quarter-octave steps: a still vessel keeps its grid
+	if (prevT > t && prevT <= t * std::exp2 (0.25) * 1.0001 && raw > 0.97 * t) t = prevT; // one step finer only below 0.97 of it
+	if (t > Texel (0)) return false;
+	if (prevT <= 0.0 && t * std::exp2 (0.25) > Texel (0) && raw > 0.97 * t) return false; // back on at the coarsest step only below 0.97 of it
+	f.t = t;
+	f.r = 0.5 * N * t;
+	f.box = { std::round (0.5 * (x0 + x1) / t) * t, std::round (0.5 * (y0 + y1) / t) * t, z0 - 1.0 };
+	f.D = z1 - z0 + 4.0;
+	return true;
 }
 
 bool CullSphere (int i, const Xf &x, const V3 &c, double rho)
@@ -153,14 +181,14 @@ double FadeWeight (double d) { return 1.0 - Smoothstep (FadeStart, FadeEnd, d); 
 
 double Penumbra (double dz, double tan2w) { return std::max (dz, 0.0) * tan2w; }
 
-double FilterRadius (double w, double t) { return std::min (w / (2.0 * t), 4.0); }
+double FilterRadius (double w, double t) { return std::max (std::min (w / (2.0 * t), 4.0), 1.0); }
 
 double HandOver (double w, double t) { return Smoothstep (4.0, 8.0, w / (2.0 * t)); }
 
-// a cascade reached by a hand-over: at least half a texel, at most 4, on to the next one above 4 (SceneShadow.glsl CsmCascade)
+// a cascade reached by a hand-over: 1 to 4 texels, on to the next one above 4 (SceneShadow.glsl CsmCascade)
 static double ChainRadius (int i, double w)
 {
-	double t = Texel (i), r = t * std::max (FilterRadius (w, t), 0.5);
+	double t = Texel (i), r = t * FilterRadius (w, t);
 	if (i >= NC - 1) return r;
 	return r + (ChainRadius (i + 1, w) - r) * HandOver (w, t);
 }
@@ -193,13 +221,14 @@ double CapBias (double t, double cosT)
 	return 1.5 * t * std::max (std::min (std::sqrt (1.0 - c * c) / std::max (c, 0.02), 50.0) - PlaneSlope (0.2), 0.0);
 }
 
-void WorldTexel (int i, const Box &b, double &ox, double &oy)
+void WorldTexel (double t, const Box &b, double &ox, double &oy)
 {
-	double t = Texel (i);
 	long long kx = std::llround (b.mx / t) - N / 2, ky = std::llround (b.my / t) + N / 2;
-	ox = double(((kx % ATLAS) + ATLAS) % ATLAS);
-	oy = double(((ky % ATLAS) + ATLAS) % ATLAS);
+	ox = double(((kx % HashP) + HashP) % HashP);
+	oy = double(((ky % HashP) + HashP) % HashP);
 }
+
+void WorldTexel (int i, const Box &b, double &ox, double &oy) { WorldTexel (Texel (i), b, ox, oy); }
 
 void Disk (int n, double out[][2])
 {

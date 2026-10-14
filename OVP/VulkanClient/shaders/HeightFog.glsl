@@ -147,8 +147,13 @@ float Drift(vec3 p)	// value noise, 700 m cells on planet-local metres, periodic
 	return r;
 }
 
-float LidDepth(vec4 f) { return (vFog.z + vFog.w * min(f.y, 1200.0)) * sqrt(max(f.w, 0.0)); }
-float SeaW(vec4 f, float ef) { return (1.0 - smoothstep(0.5, 4.0, f.x)) * ef; }
+float LidDepth(vec4 f) { return (vFog.z * (0.3 + 0.7 * smoothstep(30.0, 300.0, f.y)) + vFog.w * min(f.y, 1200.0)) * sqrt(max(f.w, 0.0)); }	// shallow on flat ground
+const float SEAENC = 16.0;	// FogMath::SEAENC: the open-water weight rides in F
+float SeaCut(float s) { return 1.0 - smoothstep(1.25, 1.6, s); }	// a floor far below sea level is a dry basin
+float SeaW(vec4 f, float ef) { float s = -f.x / SEAENC; return smoothstep(0.15, 0.55, s) * SeaCut(s) * ef; }
+float SeaKL(vec4 f) { float s = -f.x / SEAENC; return smoothstep(0.25, 0.9, s) * SeaCut(s); }	// the sea bank's height: full over open water, low at the shore
+float SeaLidAt(float kl, float n) { return vFog2.w * kl * (1.0 + 0.3 * (2.0 * n - 1.0)); }
+float SeaSoft(float kl) { return 0.2 * vFog2.w * kl + 5.0; }
 float SInt(float u) { return u <= 0.0 ? 0.0 : (u >= 1.0 ? u - 0.5 : u * u * u - 0.5 * u * u * u * u); }
 
 float LidMean(float c, float w, float ha, float hb)	// mean of 1 - smoothstep(c - w, c + w, h), h linear from ha to hb
@@ -177,8 +182,8 @@ float DensitySeg(vec4 f, float ef, float ha, float hb, float n)
 	float rf = vFog.x * m * LidMean(L, Dl, ha, hb) * (0.6 + 0.8 * n) * ef;
 	float G = mix(vFog3.x, f.x + f.y, ef);
 	float rh = vFog.y * ExpMean(G, vFog2.y, ha, hb) * (1.0 - smoothstep(vFog2.x - 150.0, vFog2.x + 150.0, hm - G));
-	float Ls = vFog2.w * (1.0 + 0.3 * (2.0 * n - 1.0)), Dls = 0.2 * vFog2.w + 5.0;
-	float rs = vFog2.z * SeaW(f, ef) * LidMean(Ls, Dls, ha, hb) * (0.5 + n);
+	float sw = SeaW(f, ef), kl = SeaKL(f), Ls = SeaLidAt(kl, n), Dls = SeaSoft(kl);
+	float rs = vFog2.z * sw * LidMean(Ls, Dls, ha, hb) * (0.5 + n);
 	return rf + rh + rs;
 }
 
@@ -193,7 +198,7 @@ float Bound(vec4 f, float ef, float ha, float hb)	// the layout weight
 }
 
 float BoundLid(vec4 f) { return (f.w > 0.0 && vFog.x > 0.0) ? f.x + 1.55 * LidDepth(f) + 16.0 : -1e30; }
-float SeaLid(vec4 f, float ef) { return (vFog2.z > 0.0 && f.x < 4.0 && ef > 0.0) ? 1.5 * vFog2.w + 5.0 : -1e30; }
+float SeaLid(vec4 f, float ef) { return (vFog2.z > 0.0 && SeaW(f, ef) > 0.0) ? 1.5 * vFog2.w + 5.0 : -1e30; }
 
 float ExpBelow(float c, float k, float ha, float hb) { return k > 1e-9 ? ExpMean(-c, 1.0 / k, -ha, -hb) : 1.0; }	// mean of exp(-k max(c - h, 0)), h linear from ha to hb
 
@@ -202,8 +207,8 @@ vec3 StepLight(vec4 f, float ef, float n, float ha, float hb, vec3 pm, vec3 s, v
 {
 	float hm = 0.5 * (ha + hb), m = max(f.w, 0.0);
 	float D = LidDepth(f), L = f.x + D + 0.25 * D * (2.0 * n - 1.0), Dl = 0.15 * D + 8.0;
-	float Ls = vFog2.w * (1.0 + 0.3 * (2.0 * n - 1.0)), Dls = 0.2 * vFog2.w + 5.0;
-	float A = vFog.x * m * ef, B = vFog2.z * SeaW(f, ef), G = mix(vFog3.x, f.x + f.y, ef);
+	float sw = SeaW(f, ef), kl = SeaKL(f), Ls = SeaLidAt(kl, n), Dls = SeaSoft(kl);
+	float A = vFog.x * m * ef, B = vFog2.z * sw, G = mix(vFog3.x, f.x + f.y, ef);
 	float mus = dot(normalize(pm), s), im = 1.0 / max(mus, 0.08);
 	float hz = vFog.y * vFog2.y * exp(-max(hm - G, 0.0) / vFog2.y) * im;
 	float ms = 0.0, k = 1.0;

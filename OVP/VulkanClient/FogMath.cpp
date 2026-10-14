@@ -99,10 +99,32 @@ bool Map::Sample (const double p[3], float out[4], double *r) const
 
 // density --------------------------------------------------------------
 
-static inline float LidDepth (const Params &P, const float f[4])
+float LidDepth (const Params &P, const float f[4])
 {
-	return (P.D0 + P.kv * std::min(f[1], 1200.0f)) * std::sqrt(std::max(f[3], 0.0f));
+	float kf = 0.3f + 0.7f * Smoothf(30.0f, 300.0f, f[1]); // flat ground holds a shallow layer; the cold pool deepens with the valley
+	return (P.D0 * kf + P.kv * std::min(f[1], 1200.0f)) * std::sqrt(std::max(f[3], 0.0f));
 }
+
+static inline float SeaCut (float s) { return 1.0f - Smoothf(1.25f, 1.6f, s); } // a floor far below sea level is a dry basin, not the encoded sea (review r2 NIT 3)
+
+float SeaW (const float f[4], float ef)
+{
+	float s = -f[0] / SEAENC;
+	return Smoothf(0.15f, 0.55f, s) * SeaCut(s) * ef; // full over the water and at the shore, none a few km inland (nor over raised land)
+}
+
+float SeaKL (const float f[4])
+{
+	float s = -f[0] / SEAENC;
+	return Smoothf(0.25f, 0.9f, s) * SeaCut(s); // open water: the full bank; it slopes down to the shore and over sheltered water
+}
+
+static inline float SeaLidAt (const Params &P, float kl, float n) // the sea bank's top
+{
+	return P.Ds * kl * (1.0f + 0.3f * (2.0f * n - 1.0f));
+}
+
+static inline float SeaSoft (const Params &P, float kl) { return 0.2f * P.Ds * kl + 5.0f; }
 
 float Density (const Params &P, const float f[4], float ef, double h, float n)
 {
@@ -111,8 +133,8 @@ float Density (const Params &P, const float f[4], float ef, double h, float n)
 	float rf = P.sf * m * (1.0f - Smoothf(L - Dl, L + Dl, hf)) * (0.6f + 0.8f * n) * ef;
 	float G = P.Gmean + (f[0] + f[1] - P.Gmean) * ef, hg = hf - G;
 	float rh = P.sh * std::exp(-std::max(hg, 0.0f) / P.Hh) * (1.0f - Smoothf(P.Hinv - 150.0f, P.Hinv + 150.0f, hg));
-	float sea = (1.0f - Smoothf(0.5f, 4.0f, f[0])) * ef;
-	float Ls = P.Ds * (1.0f + 0.3f * (2.0f * n - 1.0f)), Dls = 0.2f * P.Ds + 5.0f;
+	float sea = SeaW(f, ef), kl = SeaKL(f);
+	float Ls = SeaLidAt(P, kl, n), Dls = SeaSoft(P, kl);
 	float rs = P.ss * sea * (1.0f - Smoothf(Ls - Dls, Ls + Dls, hf)) * (0.5f + n);
 	return rf + rh + rs;
 }
@@ -124,8 +146,8 @@ float DensitySeg (const Params &P, const float f[4], float ef, double ha, double
 	float rf = P.sf * m * float(LidMean(L, Dl, ha, hb)) * (0.6f + 0.8f * n) * ef;
 	float G = P.Gmean + (f[0] + f[1] - P.Gmean) * ef;
 	float rh = P.sh * float(ExpMean(G, P.Hh, ha, hb)) * (1.0f - Smoothf(P.Hinv - 150.0f, P.Hinv + 150.0f, hm - G));
-	float sea = (1.0f - Smoothf(0.5f, 4.0f, f[0])) * ef;
-	float Ls = P.Ds * (1.0f + 0.3f * (2.0f * n - 1.0f)), Dls = 0.2f * P.Ds + 5.0f;
+	float sea = SeaW(f, ef), kl = SeaKL(f);
+	float Ls = SeaLidAt(P, kl, n), Dls = SeaSoft(P, kl);
 	float rs = P.ss * sea * float(LidMean(Ls, Dls, ha, hb)) * (0.5f + n);
 	return rf + rh + rs;
 }
@@ -137,7 +159,7 @@ float Bound (const Params &P, const float f[4], float ef, double ha, double hb)
 	float rf = hm < f[0] + 1.55f * D + 16.0f ? P.sf * m * 1.4f * ef : 0.0f;
 	float G = P.Gmean + (f[0] + f[1] - P.Gmean) * ef;
 	float rh = hmin - G < P.Hinv + 150.0f ? P.sh * float(ExpMean(G, P.Hh, ha, hb)) : 0.0f;
-	float sea = (1.0f - Smoothf(0.5f, 4.0f, f[0])) * ef;
+	float sea = SeaW(f, ef);
 	float rs = hm < 1.5f * P.Ds + 5.0f ? P.ss * sea * 1.5f : 0.0f;
 	return rf + rh + rs;
 }
@@ -145,7 +167,7 @@ float Bound (const Params &P, const float f[4], float ef, double ha, double hb)
 float LidTop (const Params &P, const float f[4])
 {
 	float top = f[0] + 1.55f * LidDepth(P, f) + 16.0f;
-	if (f[0] < 4.0f) top = std::max(top, 1.5f * P.Ds + 5.0f);
+	if (SeaW(f, 1.0f) > 0.0f) top = std::max(top, 1.5f * P.Ds + 5.0f);
 	return top;
 }
 
@@ -224,7 +246,7 @@ float BoundLid (const Params &P, const float f[4])
 
 float SeaLid (const Params &P, const float f[4], float ef)
 {
-	return P.ss > 0.0f && f[0] < 4.0f && ef > 0.0f ? 1.5f * P.Ds + 5.0f : -1e30f;
+	return P.ss > 0.0f && SeaW(f, ef) > 0.0f ? 1.5f * P.Ds + 5.0f : -1e30f;
 }
 
 void MakeLayout (const Params &P, const FieldFn &field, const double o[3], const double d[3], double R, double t0, double t1, Layout &L)
@@ -410,6 +432,12 @@ double SeaDay (double lat, double lng, double mjd, double moist)
 	return Smooth(1.0 - p, 1.1 - p, DayNoise(lat, lng, mjd, 2u, 0.05, 2.0));
 }
 
+double Patch (double lat, double lng, double mjd, double R)
+{
+	double u = 0.65 * DayNoise(lat, lng, mjd, 4u, PATCH / R, 1.0) + 0.35 * DayNoise(lat, lng, mjd, 5u, PATCH / (2.3 * R), 1.0); // two octaves: no lattice look
+	return Smooth(0.28, 0.72, u); // fog patches and clear gaps a few km across, a new pattern each day
+}
+
 Params Frame (const FrameIn &in, SunTime *out)
 {
 	SunTime st = Sun(in.lat, in.lng, in.sun, in.sense);
@@ -542,7 +570,7 @@ void Water (const std::vector<float> &mean, const std::vector<float> &lo, int n,
 			size_t k = size_t(j) * n + i;
 			float h = mean[k];
 			if (h <= ND) continue;
-			if (h <= 0.5f) { sea[k] = 1.0f; continue; } // sea clamped at 0 (map-water 3)
+			if (h <= 0.5f && h >= -2.0f) { sea[k] = 1.0f; continue; } // sea clamped at 0 (map-water 3); dry land below sea level is no sea (review r2 NIT 3)
 			float mn = h, mx = h;
 			bool all = i >= 2 && j >= 2 && i < n - 2 && j < n - 2; // a whole 5 x 5 window
 			for (int b = j - 2; b <= j + 2 && all; b++)
@@ -674,9 +702,12 @@ void Bake (const BakeIn &in, Map &out)
 		}
 	out.cover = float(double(covered) / (double(n) * n));
 
-	std::vector<float> F, G, lo, sea, lake;
+	std::vector<float> F, G, lo, sea, lake, ws;
 	Floor(mean, n, step, F, G, &lo);
 	Water(mean, lo, n, step, in.wet, sea, lake);
+	std::vector<float> seaSrc(sea); // the sea fog's weight: the open water, reaching SEAR over the shore (uncovered texels skipped)
+	for (size_t k = 0; k < seaSrc.size(); k++) if (mean[k] <= ND) seaSrc[k] = Horizon::NODATA;
+	BoxFilter(seaSrc, n, std::max(1.0, SEAR / step), ws);
 	double wsum = 0.0, gsum = 0.0;
 	for (size_t k = 0; k < mean.size(); k++)
 		if (mean[k] > ND) { wsum += std::min(1.0f, sea[k] + lake[k]); gsum += G[k] > ND ? G[k] : mean[k]; }
@@ -733,15 +764,28 @@ void Bake (const BakeIn &in, Map &out)
 			double x = -in.half + (i + 0.5) * step, y = in.half - (j + 0.5) * step;
 			float Fk = F[k] > ND ? F[k] : mean[k], Gk = G[k] > ND ? G[k] : mean[k];
 			Fk = std::min(Fk, mean[k]);
-			o[0] = Fk;
-			o[1] = std::max(Gk - Fk, 0.0f);
+			float w = ws[k] > ND ? std::min(1.0f, std::max(0.0f, ws[k])) : 0.0f;
+			o[0] = Fk - SEAENC * w;
+			o[1] = std::max(Gk - Fk, 0.0f) + SEAENC * w;
 			if (dark) o[2] = DARK;
 			else o[2] = Hp[k] > -1e29f ? float(Hp[k] + R2(x, y)) : LIT;
 			double fa = (x / in.half * 0.5 + 0.5) * (nd - 1), fb = (0.5 - y / in.half * 0.5) * (nd - 1);
 			int a0 = std::min(nd - 2, std::max(0, int(fa))), b0 = std::min(nd - 2, std::max(0, int(fb)));
 			double wa = fa - a0, wb = fb - b0;
 			double md = (dn[b0][a0] * (1 - wa) + dn[b0][a0 + 1] * wa) * (1 - wb) + (dn[b0 + 1][a0] * (1 - wa) + dn[b0 + 1][a0 + 1] * wa) * wb;
-			o[3] = float(std::min(3.0, std::max(0.0, md * (1.0 + 1.5 * lake[k]) * (1.0 - sea[k]))));
+			double keep = std::max(double(lake[k]), Smooth(30.0, 300.0, std::max(Gk - Fk, 0.0f))); // valleys and lakes keep their fog; flat ground breaks into patches
+			double patch = 1.0;
+			if (keep < 1.0 && sea[k] < 1.0f && md > 0.0) { // the same function in both maps (review r2 SHOULD 2); the far map's texels average 2 x 2 points
+				int ns = step > 0.25 * PATCH ? 2 : 1;
+				double ps = 0.0, la, lo;
+				for (int b = 0; b < ns; b++)
+					for (int a = 0; a < ns; a++) {
+						out.f.FromMap(x + (ns > 1 ? (a - 0.5) * 0.5 * step : 0.0), y + (ns > 1 ? (b - 0.5) * 0.5 * step : 0.0), R, &la, &lo);
+						ps += Patch(la, lo, in.mjd, R);
+					}
+				patch = keep + (1.0 - keep) * ps / (ns * ns);
+			}
+			o[3] = float(std::min(3.0, std::max(0.0, md * (1.0 + 1.5 * lake[k]) * (1.0 - sea[k]) * patch)));
 			Fmin = std::min(Fmin, o[0]);
 			Gmax = std::max(Gmax, o[0] + o[1]);
 			Ltop = std::max(Ltop, LidTop(Pmax, o));

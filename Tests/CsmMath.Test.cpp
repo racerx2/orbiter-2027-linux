@@ -72,7 +72,7 @@ std::vector<Track> Follow (const World &W, int i, int frames, double dt, V3 (*cl
 		double u, vv;
 		UvFloat (i, x, v, u, vv);
 		double tt = Texel (i);
-		out.push_back ({ u * ATLAS + b.mx / tt, vv * ATLAS - b.my / tt, rb });
+		out.push_back ({ u * AW + b.mx / tt, vv * AH - b.my / tt, rb });
 	}
 	return out;
 }
@@ -86,7 +86,7 @@ V3 Still (double) { return Mul (Up (LAT, LNG), 6371e3 + 2.0); }
 
 TEST_CASE("CsmMath: version", "[csmmath]")
 {
-	CHECK(Version() == 2);
+	CHECK(Version() == 3);
 }
 
 TEST_CASE("CsmMath: light basis orthonormal, right-handed, z away from the sun", "[csmmath]")
@@ -206,8 +206,8 @@ TEST_CASE("CsmMath: a kept tile read 3 frames later gives the static point its o
 		double u0, v0, u3, v3;
 		UvFloat (i, Transform (B, R0, c0, b), Sub (Add (P0, MulM (R0, g)), C0), u0, v0);
 		UvFloat (i, Transform (B, R3, c3, b), Sub (Add (P3, MulM (R3, g)), C3), u3, v3);
-		CHECK(std::fabs (u3 - u0) * ATLAS < 1e-3);
-		CHECK(std::fabs (v3 - v0) * ATLAS < 1e-3);
+		CHECK(std::fabs (u3 - u0) * AW < 1e-3);
+		CHECK(std::fabs (v3 - v0) * AH < 1e-3);
 	}
 }
 
@@ -233,10 +233,80 @@ TEST_CASE("CsmMath: caster and receiver matrices agree and stay in their tile", 
 			CHECK(std::fabs ((c[0] + 1.0) * 0.5 - q[0]) < 1e-12); // viewport x
 			CHECK(std::fabs ((1.0 - c[1]) * 0.5 - q[1]) < 1e-12); // y down
 			CHECK(std::fabs (c[2] - q[2]) < 1e-12);
-			CHECK(q[0] >= 0.5 * (i & 1));
-			CHECK(q[0] <= 0.5 * (i & 1) + 0.5);
-			CHECK(q[1] >= 0.5 * (i >> 1));
-			CHECK(q[1] <= 0.5 * (i >> 1) + 0.5);
+			CHECK(q[0] >= double(Col (i) * N) / AW);
+			CHECK(q[0] <= double(Col (i) * N + N) / AW);
+			CHECK(q[1] >= double(Row (i) * N) / AH);
+			CHECK(q[1] <= double(Row (i) * N + N) / AH);
+			CHECK(q[2] > 0.0);
+			CHECK(q[2] < 1.0);
+		}
+	}
+}
+
+TEST_CASE("CsmMath: target tile round its casters, quarter-octave texels, off when no finer than C0", "[csmmath]")
+{
+	std::vector<V3> p; // a DG-sized box in planet-frame light space
+	for (int k = 0; k < 8; k++) p.push_back ({ 6.4e6 + ((k & 1) ? 9.0 : -9.0) + 0.37, -1.2e6 + ((k & 2) ? 8.5 : -8.5), 3.1e5 + ((k & 4) ? 4.0 : -2.0) });
+	Target f;
+	REQUIRE(FitTarget (p.data (), 8, 0.0, 0.0, f));
+	CHECK(std::fabs (std::log2 (f.t) * 4.0 - std::round (std::log2 (f.t) * 4.0)) < 1e-9);
+	CHECK(f.t < 0.25 * Texel (0)); // the contact shadow 4x finer than C0
+	CHECK(f.r == 0.5 * N * f.t);
+	CHECK(std::fabs (f.box.mx / f.t - std::round (f.box.mx / f.t)) < 1e-6);
+	CHECK(std::fabs (f.box.my / f.t - std::round (f.box.my / f.t)) < 1e-6);
+	for (const V3 &q : p) {
+		CHECK(std::fabs (q.x - f.box.mx) + (TgtMargin - 0.5) * f.t <= f.r);
+		CHECK(std::fabs (q.y - f.box.my) + (TgtMargin - 0.5) * f.t <= f.r);
+		CHECK((q.z - f.box.z0) / f.D > 0.0);
+		CHECK((q.z - f.box.z0) / f.D < 1.0);
+	}
+	Target g; // a wide penumbra sets the texel: at most 4 texels of PCF radius
+	REQUIRE(FitTarget (p.data (), 8, 0.3, 0.0, g));
+	CHECK(0.3 / (2.0 * g.t) <= TgtKernel + 1e-9);
+	CHECK(g.t < 0.3 / (2.0 * TgtKernel) * std::exp2 (0.25));
+	CHECK_FALSE(FitTarget (p.data (), 8, 2.0 * TgtKernel * Texel (0) * 1.1, 0.0, g)); // no finer than C0
+	std::vector<V3> big = p;
+	big[0].x -= 400.0;
+	CHECK_FALSE(FitTarget (big.data (), 8, 0.0, 0.0, g)); // a large cluster stays in the cascades
+	double T = std::exp2 (-4.5), Tc = std::exp2 (-4.25);
+	REQUIRE(FitTarget (p.data (), 8, 2.0 * TgtKernel * 0.99 * T, Tc, g));
+	CHECK(g.t == Tc); // just under a step: the coarser one kept
+	REQUIRE(FitTarget (p.data (), 8, 2.0 * TgtKernel * 0.96 * T, Tc, g));
+	CHECK(std::fabs (g.t - T) < 1e-12);
+	double Tm = std::exp2 (-3.75); // the coarsest step under C0's texel
+	CHECK(Tm <= Texel (0));
+	CHECK(Tm * std::exp2 (0.25) > Texel (0));
+	CHECK_FALSE(FitTarget (p.data (), 8, 2.0 * TgtKernel * 0.99 * Tm, 0.0, g)); // back on only below 0.97 of it
+	CHECK(FitTarget (p.data (), 8, 2.0 * TgtKernel * 0.99 * Tm, Tm, g));
+	CHECK(FitTarget (p.data (), 8, 2.0 * TgtKernel * 0.96 * Tm, 0.0, g));
+	bool alt = false; // their matrices land in slots (2, 0) and (2, 1)
+	M3 B = Basis (Unit (V3{ 0.3, 0.5, -0.8 }), alt), Rp = RotY (0.4);
+	V3 cp = { 1e6, 6e6, -2e5 };
+	Xf x0 = Transform (B, Rp, cp, Box{ 0.0, 0.0, 0.0 });
+	std::vector<V3> pl;
+	for (int k = 0; k < 8; k++) pl.push_back (Apply (x0, V3{ ((k & 1) ? 9.0 : -9.0) + 20.0, (k & 2) ? 3.0 : -1.0, ((k & 4) ? 8.0 : -8.0) - 5.0 }));
+	REQUIRE(FitTarget (pl.data (), 8, 0.05, 0.0, f));
+	Xf xt = Transform (B, Rp, cp, f.box);
+	CHECK(NT == FT + NTgt);
+	for (int ti = FT; ti < NT; ti++) {
+		CHECK(Col (ti) == 2);
+		CHECK(Row (ti) == ti - FT);
+		double Mc[4][4], Mr[4][4];
+		CasterMatrix (ti, f.r, f.D, xt, Mc);
+		ReceiverMatrix (ti, f.r, f.D, xt, Mr);
+		for (int k = 0; k < 8; k++) {
+			V3 v = { ((k & 1) ? 9.0 : -9.0) + 20.0, (k & 2) ? 3.0 : -1.0, ((k & 4) ? 8.0 : -8.0) - 5.0 };
+			double c[3], q[3];
+			for (int j = 0; j < 3; j++) {
+				c[j] = v.x * Mc[0][j] + v.y * Mc[1][j] + v.z * Mc[2][j] + Mc[3][j];
+				q[j] = v.x * Mr[0][j] + v.y * Mr[1][j] + v.z * Mr[2][j] + Mr[3][j];
+			}
+			CHECK(std::fabs ((c[0] + 1.0) * 0.5 - q[0]) < 1e-12);
+			CHECK(std::fabs ((1.0 - c[1]) * 0.5 - q[1]) < 1e-12);
+			CHECK(q[0] * AW >= 2.0 * N + TgtMargin - 0.5);
+			CHECK(q[0] * AW <= 3.0 * N - TgtMargin + 0.5);
+			CHECK(q[1] * AH >= Row (ti) * N + TgtMargin - 0.5);
+			CHECK(q[1] * AH <= Row (ti) * N + N - TgtMargin + 0.5);
 			CHECK(q[2] > 0.0);
 			CHECK(q[2] < 1.0);
 		}
@@ -380,8 +450,8 @@ TEST_CASE("CsmMath: stable noise index follows the ground, not the snap", "[csmm
 			double col = std::floor ((g.x - (b.mx - Radius[i])) / t);
 			if (col < 0 || col >= N) continue;
 			double row = std::floor ((b.my + Radius[i] - g.y) / t);
-			double wx = std::fmod (ox + col, double(ATLAS)), wy = std::fmod (oy - row + ATLAS, double(ATLAS));
-			double id = wx * ATLAS + wy;
+			double wx = std::fmod (ox + col, double(HashP)), wy = std::fmod (oy - row + HashP, double(HashP));
+			double id = wx * HashP + wy;
 			if (first < 0) first = id;
 			CHECK(id == first);
 		}
