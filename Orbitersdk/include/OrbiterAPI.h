@@ -6350,7 +6350,7 @@ OAPIFUNC int  oapiTileStreamElev (OBJHANDLE hBody);
 // finished tiles as (lvl, ilat, ilng) triples, keys holds 3*nmax; returns the count
 OAPIFUNC int  oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax);
 
-// not upstream: a locked vessel (e.g. destroyed in a collision) takes no player commands: keys, joystick, cockpit panel and VC switches, nav modes; its MFDs still work
+// not upstream: a locked vessel (e.g. destroyed in a collision) takes no player commands: keys, joystick, cockpit panel and VC switches (MFD buttons too), nav modes; its MFDs still work by the Shift keys; the lock is not saved with the scenario
 #define OAPI_VESSEL_CONTROL_LOCK 1 // not upstream: feature test for add-ons
 OAPIFUNC void oapiSetVesselControlLock (OBJHANDLE hVessel, bool lock);
 OAPIFUNC bool oapiGetVesselControlLock (OBJHANDLE hVessel);
