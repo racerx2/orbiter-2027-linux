@@ -117,6 +117,20 @@ public:
 		for (uint32_t i = 0; vtx && i < n; i++) std::memcpy (&m->grp[g].vtx[i], &vtx[i], sizeof (CollVtx));
 		return true;
 	}
+	bool addGroups = false;                                     // MeshAddGroup off: the template keeps its groups (the folded path)
+	int MeshAddGroup (CollH h, uint32_t from, const DentVtx *vtx, uint32_t nv, const uint16_t *idx, uint32_t ni) override
+	{
+		auto *m = (MeshT *)h;
+		if (!addGroups || from >= m->grp.size () || !nv || !ni) return -1;
+		calls.push_back ("MeshAddGroup");
+		CollGroupData d = m->grp[from];
+		d.vtx.resize (nv);
+		for (uint32_t i = 0; i < nv; i++) std::memcpy (&d.vtx[i], &vtx[i], sizeof (CollVtx));
+		d.idx.assign (idx, idx + ni);
+		d.usrflag &= ~2u;
+		m->grp.push_back (d);
+		return (int)m->grp.size () - 1;
+	}
 	void MeshFree (CollH h) override { ((MeshT *)h)->freed = true; calls.push_back ("MeshFree"); }
 	bool DebrisClassExists () override { return cfgDebris; }
 	std::map<const V *, DebrisCaps> caps; std::map<const V *, MeshT *> debrisMesh; std::vector<std::pair<uint32_t, bool>> flags; std::map<const V *, CollStateWrite> created;
@@ -374,6 +388,18 @@ TEST_CASE ("P7 debris: spawn in post, template flags, vertices, kick, cap, mesh 
 	CHECK (m->freed);
 	r.B ().End ();
 	for (auto &x : r.sdk.mesh) if (x.copy) CHECK (x.freed);
+}
+
+TEST_CASE ("P7b more debris in one pre-step than the cap: only the cap's worth spawn, none spawned to be deleted", "[dmg3P]")
+{
+	Rig r; r.cfg.debrisMax = 1;
+	for (int i = 0; i < 3; i++) { uint32_t c = r.Add ("C" + std::to_string (i)); r.B ().Hit (r.H (c, 1, 70, 0.9)); }
+	REQUIRE (r.B ().Pending () == 3);
+	r.B ().PreStep (0, 0.01); r.B ().Post (0, 0.01);
+	CHECK (r.sdk.Calls ("VesselCreate") == 1);
+	CHECK (r.B ().Debris ().size () == 1);
+	CHECK (r.sdk.Calls ("VesselDelete") == 0);
+	CHECK (r.sdk.Logged ("2 debris past CollisionDebrisMax (1) not spawned"));
 }
 
 TEST_CASE ("P8 missing CollDebris.cfg: hide only, one log line", "[dmg3P]")
@@ -798,6 +824,35 @@ TEST_CASE ("blast P1: a 70 m/s hit separates cells; SpawnCells makes one debris 
 			CHECK (o.debris[0].rec[i].p.bits == d.row.rec[i].p.bits); CHECK (o.debris[0].rec[i].p.R > 0);
 		}
 	}
+}
+
+TEST_CASE ("blast P1b: cell debris keep only the triangles of their cells, in groups of their own: no folded copy of the hull", "[dmg3P][blast]")
+{
+	std::vector<double> sz[2];
+	size_t tri[2] = { 0, 0 };
+	for (int pass = 0; pass < 2; pass++) {
+		BlastRig r; r.Ship ("A");
+		r.sdk.addGroups = pass == 1;
+		r.B ().Hit (r.K (70));
+		r.sdk.simt = 0.02;
+		r.B ().PreStep (0.02, 0.02); r.B ().Post (0.02, 0.02);
+		REQUIRE (!r.B ().Debris ().empty ());
+		const MeshT &tp = r.sdk.mesh.front ();
+		for (auto &d : r.B ().Debris ()) {
+			const BFake::V *dv = (const BFake::V *)d.h;
+			const MeshT *dm = r.sdk.debrisMesh[dv];
+			REQUIRE (dm);
+			sz[pass].push_back (r.sdk.caps[dv].size);
+			for (size_t g = 0; g < dm->grp.size (); g++) if (!(dm->grp[g].usrflag & 2)) tri[pass] += dm->grp[g].idx.size () / 3;
+			if (pass == 0) continue;
+			CHECK (dm->grp.size () > tp.grp.size ());
+			for (uint16_t g : d.row.pose[0].grp) CHECK ((dm->grp[g].usrflag & 2) != 0);
+		}
+	}
+	REQUIRE (sz[0].size () == sz[1].size ());
+	CHECK (tri[1] < tri[0]);
+	for (size_t i = 0; i < sz[0].size (); i++) CHECK (sz[1][i] <= sz[0][i] + 1e-9);
+	printf ("blast P1b: %zu debris, %zu triangles folded, %zu kept\n", sz[0].size (), tri[0], tri[1]);
 }
 
 TEST_CASE ("blast P2: a small hit breaks nothing; Blast runs only within 2 s of a hit", "[dmg3P][blast]")

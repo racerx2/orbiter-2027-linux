@@ -78,6 +78,9 @@ public:
 
 	void Set (const Mesh &mesh);
 
+	void DropGroups (DWORD usrflag);
+	// not upstream: removes every group with any of these user flags
+
 	void Setup ();
 	// call after all groups are assembled or whenever groups change,
 	// to set up group parameters

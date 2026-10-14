@@ -210,6 +210,8 @@ public: // dmg3 area P
 	bool  VesselDelete (CollH v) { cnt.n[CSK_STATE]++; LogCall (CSK_STATE, v); return DoVesselDelete (v); }
 	virtual CollH MeshLoad (const char *) { return nullptr; }  // oapiLoadMesh: private copy, NULL if missing
 	virtual bool  MeshEdit (CollH, uint32_t, uint32_t, const DentVtx *, uint32_t) { return false; } // template group: add UsrFlag (if nonzero), first n vertices (if vtx)
+	virtual int   MeshAddGroup (CollH, uint32_t, const DentVtx *, uint32_t, const uint16_t *, uint32_t) { return -1; } // template: a new group with group from's material, texture, z bias and flags (0x2 cleared); its index, -1 if none
+	virtual CollH MeshCompact (CollH m) { return m; }          // the mesh without its hidden (0x2) groups; the old one freed, or m as it is
 	virtual void  MeshFree (CollH) {}                          // oapiDeleteMesh
 	virtual bool  DebrisClassExists () { std::string t; return ReadText (Resolve ("Config/Vessels/CollDebris.cfg"), t); }
 	virtual uint32_t TouchdownCount (CollH) { return 0; }

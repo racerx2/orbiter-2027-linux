@@ -220,6 +220,7 @@ MESHHANDLE oapiLoadMesh (const char *) { WorldCall (); return nullptr; }
 void oapiDeleteMesh (MESHHANDLE) { WorldCall (); }
 bool oapiDeleteVessel (OBJHANDLE, OBJHANDLE) { WorldCall (); return false; }
 int oapiEditMeshGroup (MESHHANDLE, DWORD, GROUPEDITSPEC *) { WorldCall (); return -1; }
+DWORD oapiAddMeshGroup (MESHHANDLE, MESHGROUP *) { WorldCall (); return 0; } // not upstream: cell debris keep their triangles in groups of their own
 OBJHANDLE oapiCreateVesselEx (const char *, const char *, const void *) { WorldCall (); return nullptr; }
 SURFHANDLE oapiRegisterParticleTexture (char *) { WorldCall (); return nullptr; }
 double VESSEL::GetAltitude (AltitudeMode, int *) { WorldCall (); return 0; }

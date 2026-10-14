@@ -704,15 +704,38 @@ bool CollBreakA::BuildMesh (CollH mesh, const DentDebris &d, Geo &geo, uint32_t 
 	uint32_t ng = sdk.TplGroups (mesh);
 	if (ng != d.ngrp) return false;
 	for (uint32_t g = 0; g < ng; g++) if (!in.count ((uint16_t)g)) sdk.MeshEdit (mesh, g, 2, nullptr, 0);
+	const DentSites *ds = s.Sites (parent, d.slot);
+	std::vector<char> kc; // blast cell debris: its cells; triangles wholly outside them are dropped, not folded onto the cut (a small copy of the hull)
+	if (ds) for (auto &r : d.rec) if (r.p.mode == DENTM_VCUT && (r.p.bits & DENTC_KEEP) && r.p.P >= 0 && r.p.P < (double)ds->s.size ()) { kc.resize (ds->s.size (), 0); kc[(size_t)r.p.P] = 1; }
+	auto inside = [&] (const Vector &x) { size_t b = 0; double bd = 1e300; for (size_t c = 0; c < ds->s.size (); c++) { double q = (x - ds->s[c]).length2 (); if (q < bd) bd = q, b = c; } return kc[b] != 0; };
 	geo.clear ();
 	for (auto &ps : d.pose) for (uint16_t g : ps.grp) {
 		CollTplGroup t;
 		if (!sdk.TplGroup (mesh, g, t)) return false;
 		std::vector<DentVtx> rest (t.nvtx);
 		if (t.nvtx) std::memcpy (rest.data (), t.vtx, sizeof (DentVtx) * t.nvtx);
-		std::vector<DentVtx> v = PieceVertices (rest, g, ps, d.rec, s.Sites (parent, d.slot));
+		std::vector<uint16_t> idx (t.idx, t.idx + t.nidx);
+		std::vector<DentVtx> v = PieceVertices (rest, g, ps, d.rec, ds);
+		if (!kc.empty ()) {
+			std::vector<char> vin (rest.size ());
+			for (size_t i = 0; i < rest.size (); i++) vin[i] = inside (P (rest[i]));
+			std::vector<int> map (v.size (), -1);
+			std::vector<DentVtx> kv;
+			std::vector<uint16_t> ki;
+			for (size_t k = 0; k + 2 < idx.size (); k += 3) { // a triangle stays with a vertex or its centroid in the cells (MakeCellSpawn)
+				uint16_t a = idx[k], b = idx[k + 1], c = idx[k + 2];
+				if (a >= v.size () || b >= v.size () || c >= v.size ()) continue;
+				if (!vin[a] && !vin[b] && !vin[c] && !inside ((P (rest[a]) + P (rest[b]) + P (rest[c])) / 3.0)) continue;
+				for (uint16_t i : { a, b, c }) { if (map[i] < 0) { map[i] = (int)kv.size (); kv.push_back (v[i]); } ki.push_back ((uint16_t)map[i]); }
+			}
+			if (ki.size () < idx.size () && (ki.empty () || sdk.MeshAddGroup (mesh, g, kv.data (), (uint32_t)kv.size (), ki.data (), (uint32_t)ki.size ()) >= 0)) {
+				sdk.MeshEdit (mesh, g, 2, nullptr, 0); // the full group hidden, its kept triangles in a group of their own
+				if (!ki.empty ()) geo.emplace_back (std::move (kv), std::move (ki));
+				continue;
+			}
+		}
 		sdk.MeshEdit (mesh, g, 0, v.data (), (uint32_t)v.size ());
-		geo.emplace_back (std::move (v), std::vector<uint16_t> (t.idx, t.idx + t.nidx));
+		geo.emplace_back (std::move (v), std::move (idx));
 	}
 	return true;
 }
@@ -775,6 +798,7 @@ void CollBreakA::Spawn (CollSpawnA &sp, double simt, std::map<uint32_t, CollPare
 	if (!mesh) { Log ("Collision: debris mesh '%s' not loaded, no debris", sp.mesh.c_str ()); SyncRows (sp.parent); return; }
 	Geo geo;
 	if (!BuildMesh (mesh, sp.row, geo, sp.parent)) { sdk.MeshFree (mesh); Log ("Collision: debris mesh '%s' does not match its slot, no debris", sp.mesh.c_str ()); SyncRows (sp.parent); return; }
+	mesh = sdk.MeshCompact (mesh);
 	uint32_t fnv = 0;
 	CollSdk::DebrisCaps caps = Caps (geo, sp.mass, &fnv);
 	CollParentA &P = pc[sp.parent];
@@ -1157,6 +1181,7 @@ void CollBreakA::Rebuild (double simt)
 				sdk.VesselDelete (h);
 				continue;
 			}
+			mesh = sdk.MeshCompact (mesh);
 			std::vector<int> pk;
 			for (auto &ps : row.pose) for (uint16_t g : ps.grp) if (g < sl->pieceOf.size () && sl->pieceOf[g] >= 0 && std::find (pk.begin (), pk.end (), sl->pieceOf[g]) == pk.end ()) pk.push_back (sl->pieceOf[g]);
 			uint32_t fnv = 0;
@@ -1227,6 +1252,15 @@ void CollBreakA::PreStep (double simt, double simdt)
 	Boot (simt);
 	std::vector<CollSpawnA> sp;
 	sp.swap (spawn);
+	size_t cap = (size_t)std::max (0, cfg.debrisMax);
+	if (sp.size () > cap) { // past the cap the heaviest pieces fly; the rest are only hidden (spawned, the cap deleted them in the same post-step, a frame of work for nothing)
+		std::stable_sort (sp.begin (), sp.end (), [] (const CollSpawnA &a, const CollSpawnA &b) { return a.mass > b.mass; });
+		std::vector<uint32_t> par;
+		for (size_t i = cap; i < sp.size (); i++) par.push_back (sp[i].parent);
+		Log ("Collision: %zu debris past CollisionDebrisMax (%zu) not spawned", sp.size () - cap, cap);
+		sp.resize (cap);
+		for (uint32_t p : par) SyncRows (p);
+	}
 	played.clear ();
 	std::map<uint32_t, CollParentA> pc;
 	for (auto &x : sp) Spawn (x, simt, pc); // in the pre-step: the core places the new vessel and the parent's write where they were read

@@ -23,6 +23,10 @@ static_assert (sizeof (NTVERTEX) == 32, "NTVERTEX must keep the CollVtx layout")
 #if defined (OAPI_VESSEL_CONTROL_LOCK) && !defined (_WIN32)
 extern void oapiSetVesselControlLock (OBJHANDLE hVessel, bool lock) __attribute__ ((weak)); // not upstream: weak, so a host without it still loads the plugin
 #endif
+#if defined (OAPI_COPY_MESH) && !defined (_WIN32)
+extern MESHHANDLE oapiCopyMesh (MESHHANDLE hMesh, DWORD dropFlag) __attribute__ ((weak)); // not upstream: weak, a host without it loads every debris mesh from file
+#define COLL_COPY_MESH 1
+#endif
 
 namespace {
 inline Vector V (const VECTOR3 &v) { return Vector (v.x, v.y, v.z); }
@@ -331,13 +335,32 @@ protected:
 public: // dmg3 area P
 	void SetEmptyMass (CollH v, double m) override { if (m > 0) Ves (v)->SetEmptyMass (m); }
 	void SetPMI (CollH v, const Vector &p) override { if (p.x > 0 && p.y > 0 && p.z > 0) Ves (v)->SetPMI (O (p)); }
+	std::map<std::string, MESHHANDLE> meshMaster; // one file read per mesh a session; debris take copies (a breakup spawns dozens)
+	~CollSdkOrbiter () override { for (auto &kv : meshMaster) if (kv.second) oapiDeleteMesh (kv.second); }
 	CollH MeshLoad (const char *name) override
 	{
 		std::string n (name ? name : "");
 		if (n.empty ()) return nullptr;
-		MESHHANDLE m = oapiLoadMesh (n.data ());
-		if (m && !oapiMeshGroupCount (m)) { oapiDeleteMesh (m); m = nullptr; } // a missing file loads as an empty mesh
-		return (CollH)m;
+		auto load = [&] () { MESHHANDLE m = oapiLoadMesh (n.data ()); if (m && !oapiMeshGroupCount (m)) { oapiDeleteMesh (m); m = nullptr; } return m; }; // a missing file loads as an empty mesh
+#ifdef COLL_COPY_MESH
+		if (oapiCopyMesh) {
+			auto it = meshMaster.find (n);
+			if (it == meshMaster.end ()) it = meshMaster.emplace (n, load ()).first;
+			return it->second ? (CollH)oapiCopyMesh (it->second, 0) : nullptr;
+		}
+#endif
+		return (CollH)load ();
+	}
+	CollH MeshCompact (CollH mesh) override
+	{
+#ifdef COLL_COPY_MESH
+		if (mesh && oapiCopyMesh) { // the hidden groups left out: a debris piece uploads its own triangles only, not the whole hull
+			MESHHANDLE m = oapiCopyMesh ((MESHHANDLE)mesh, 2);
+			if (m && oapiMeshGroupCount (m)) { oapiDeleteMesh ((MESHHANDLE)mesh); return (CollH)m; }
+			if (m) oapiDeleteMesh (m);
+		}
+#endif
+		return mesh;
 	}
 	bool MeshEdit (CollH mesh, uint32_t g, uint32_t addFlag, const DentVtx *vtx, uint32_t n) override
 	{
@@ -346,6 +369,21 @@ public: // dmg3 area P
 		if (addFlag) ges.flags |= GRPEDIT_ADDUSERFLAG, ges.UsrFlag = addFlag;
 		if (vtx && n) ges.flags |= GRPEDIT_VTXCRD | GRPEDIT_VTXNML, ges.Vtx = (NTVERTEX *)vtx, ges.nVtx = n;
 		return oapiEditMeshGroup ((MESHHANDLE)mesh, g, &ges) == 0;
+	}
+	int MeshAddGroup (CollH mesh, uint32_t from, const DentVtx *vtx, uint32_t nv, const uint16_t *idx, uint32_t ni) override
+	{
+		if (!mesh || !vtx || !idx || !nv || !ni || nv > 65535) return -1;
+		MESHGROUPEX *src = from < oapiMeshGroupCount ((MESHHANDLE)mesh) ? oapiMeshGroupEx ((MESHHANDLE)mesh, from) : nullptr;
+		if (!src) return -1;
+		MESHGROUP g; memset (&g, 0, sizeof g);
+		g.Vtx = (NTVERTEX *)vtx; g.nVtx = nv; g.Idx = (WORD *)idx; g.nIdx = ni;
+		g.MtrlIdx = src->MtrlIdx; g.TexIdx = src->TexIdx; g.zBias = src->zBias;
+		DWORD flag = src->UsrFlag & ~2u; // read before the add reallocates the groups
+		DWORD k = oapiAddMeshGroup ((MESHHANDLE)mesh, &g); // deep copy (Mesh::AddGroup)
+		GROUPEDITSPEC ges; memset (&ges, 0, sizeof ges);
+		ges.flags = GRPEDIT_SETUSERFLAG; ges.UsrFlag = flag;
+		oapiEditMeshGroup ((MESHHANDLE)mesh, k, &ges);
+		return (int)k;
 	}
 	void MeshFree (CollH mesh) override { if (mesh) oapiDeleteMesh ((MESHHANDLE)mesh); }
 	bool DebrisClassExists () override

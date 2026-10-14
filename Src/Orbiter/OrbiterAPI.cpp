@@ -1402,6 +1402,16 @@ DLLEXPORT MESHHANDLE oapiLoadMesh (const char *fname)
 	return (MESHHANDLE)mesh;
 }
 
+DLLEXPORT MESHHANDLE oapiCopyMesh (MESHHANDLE hMesh, DWORD dropFlag) // not upstream
+{
+	if (!hMesh) return NULL;
+	Mesh *mesh = new Mesh (*(const Mesh*)hMesh); TRACENEW
+	if (dropFlag) mesh->DropGroups (dropFlag);
+	oapi::GraphicsClient *gc = g_pOrbiter->GetGraphicsClient ();
+	if (gc) for (DWORD i = 0; i < mesh->nTexture (); i++) if (mesh->GetTexture (i)) gc->clbkIncrSurfaceRef (mesh->GetTexture (i)); // each copy releases its own reference
+	return (MESHHANDLE)mesh;
+}
+
 DLLEXPORT const MESHHANDLE oapiLoadMeshGlobal (const char *fname)
 {
 	return (const MESHHANDLE)g_pOrbiter->LoadMeshGlobal (fname);

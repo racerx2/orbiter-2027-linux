@@ -4526,6 +4526,10 @@ OAPIFUNC VISHANDLE *oapiObjectVisualPtr (OBJHANDLE hObject);
 	*/
 OAPIFUNC MESHHANDLE oapiLoadMesh (const char *fname);
 
+// not upstream: a private copy of a loaded mesh without reading the file again (textures shared by reference), without the groups that have any of the dropFlag user flags; free it with oapiDeleteMesh
+#define OAPI_COPY_MESH 1 // not upstream: feature test for add-ons
+OAPIFUNC MESHHANDLE oapiCopyMesh (MESHHANDLE hMesh, DWORD dropFlag = 0);
+
 	/**
 	* \brief Retrieves a mesh handle from the global mesh manager. 
 	* \details When called for the first time for any given file name, the mesh is loaded from file 
