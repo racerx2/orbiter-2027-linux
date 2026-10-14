@@ -13,6 +13,7 @@
 #include "VkTexFile.h"
 #include "AABBUtil.h"
 #include "Log.h"
+#include "SceneShadows.h" // not upstream
 #include <algorithm>
 #include <cstdlib>
 #include <map>
@@ -47,7 +48,7 @@ static std::map<std::pair<std::string, bool>, std::weak_ptr<VkTex>> texCache;
 
 // values the PBR effect reads from the legacy effect, where the client already sets them
 static const char *SharedNames[] = { "kernel", "gLVP", "gVP", "gColor", "gAtmColor", "gRadius", "gSHD", "gCameraPos", "gNorth", "gEast",
-	"gSun", "gLights", "gLightsEnabled", "gShadowsEnabled", "gProxySize", "gInvProxySize", "gGlowConst" };
+	"gSun", "gLights", "gLightsEnabled", "gShadowsEnabled", "gProxySize", "gInvProxySize", "gGlowConst", "gExposure" };
 
 static const char *SlotSamplers[PBR_SLOT_COUNT] = { "BaseS", "MetalRoughS", "NormalS", "OcclusionS", "EmissiveS", "SpecularS", "SpecularColorS",
 	"TransmissionS", "ThicknessS", "ClearcoatS", "ClearcoatRoughS", "ClearcoatNormalS", "SheenColorS", "SheenRoughS", "AnisoS",
@@ -360,6 +361,21 @@ PbrVariant *PbrRender::Variant (unsigned f)
 		if (a && b) v.shared.push_back ({ a, b });
 		else LogErr ("PbrRender: shared value %s missing (%s)", n, a ? "PbrMesh.fx" : "D3D9Client.fx");
 	}
+	if (SceneShadows::Enabled ()) { // not upstream: the scene shadow block, as the legacy effect has it (design-scene-shadows)
+		VkFxHandle a = D3D9Effect::FX->GetParameterByName (0, "gCsm"), b = fx->GetParameterByName (0, "gCsm");
+		if (a && b) v.shared.push_back ({ a, b });
+	}
+	if (Config->SSR) for (const char *n : { "gSsr", "tSsrCol", "tSsrHiZ" }) { // not upstream: screen-space reflections, set per vessel and base on the legacy effect (design-ssr)
+		VkFxHandle a = D3D9Effect::FX->GetParameterByName (0, n), b = fx->GetParameterByName (0, n);
+		if (!a || !b) { LogErr ("PbrRender: shared value %s missing (%s)", n, a ? "PbrMesh.fx" : "D3D9Client.fx"); continue; }
+		if (((VkConstHandle)a)->sampler) v.sharedTex.push_back ({ a, b });
+		else v.shared.push_back ({ a, b });
+	}
+	if (Config->VolPlumes) { // not upstream: re-entry hull heating, set per vessel on the legacy effect (design-reentry-heat)
+		VkFxHandle a = D3D9Effect::FX->GetParameterByName (0, "gHeat"), b = fx->GetParameterByName (0, "gHeat");
+		if (a && b) v.shared.push_back ({ a, b });
+		else LogErr ("PbrRender: shared value gHeat missing (%s)", a ? "PbrMesh.fx" : "D3D9Client.fx");
+	}
 	if (!v.tech || !v.hMtrl || ((VkConstHandle)v.hMtrl)->size != sizeof(PbrMtrlGPU)) {
 		LogErr ("PbrRender: PbrMesh.fx does not match PbrMtrlGPU (%u bytes)", v.hMtrl ? ((VkConstHandle)v.hMtrl)->size : 0);
 		delete v.fx;
@@ -383,6 +399,7 @@ void PbrRender::BeginVariant (PbrVariant *v, VkTex *legacyEnv)
 	}
 	VkTex *irr = D3D9Effect::FX->GetTexture (D3D9Effect::eIrradMap);
 	fx->SetTexture (v->hShadowS, D3D9Effect::FX->GetTexture (D3D9Effect::eShadowMap));
+	if (SceneShadows *ss = SceneShadows::Get ()) if (ss->Ok ()) fx->SetTexture (fx->GetParameterByName (0, "CsmS"), ss->Atlas ()); // not upstream
 	fx->SetTexture (v->hIrradS, irr);
 
 	const PbrEnv *e = (curEnv && curEnv->ready) ? curEnv : NULL;
@@ -404,6 +421,7 @@ void PbrRender::BeginVariant (PbrVariant *v, VkTex *legacyEnv)
 	fx->SetTexture (v->hSceneS, sc ? sceneCopy : NULL);
 	fx->SetBool (v->hSceneCopy, sc);
 	fx->SetVector (v->hScreen, &scr);
+	for (auto &p : v->sharedTex) fx->SetTexture (p.second, D3D9Effect::FX->GetTexture (p.first)); // not upstream: screen-space reflections
 }
 
 // ===========================================================================================

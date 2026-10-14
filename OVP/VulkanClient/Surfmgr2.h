@@ -10,6 +10,9 @@
 #include "Tilemgr2_imp.hpp"
 #include "TileLabel.h"
 #include "D3D9Pad.h"
+#include "HorizonMap.h" // not upstream
+#include <atomic>
+#include <memory>
 
 /**
  * \brief Planetary surface rendering engine.
@@ -61,6 +64,22 @@ protected:
 
 	TileManager2<SurfTile> *smgr;	// surface tile manager interface
 	QuadTreeNode<SurfTile> *node;	// my node in the quad tree, if I'm part of a tree
+	bool streamWait;				// not upstream: asked the tile stream, shows an ancestor meanwhile
+	bool looseTex;					// not upstream: shows its loose Surf file, a rewrite by the stream replaces it
+	uint64_t texStamp;				// not upstream: that file's FileStamp when it was read, 0 unknown
+	double touchT;					// not upstream: last want sent from Render (sys time)
+	DWORD touchF;					// not upstream: the stream frame Render last walked it
+
+	std::atomic<bool> elevReady;	// not upstream: elev fully written (release at the end of LoadElevationData)
+	unsigned horGen;				// not upstream: matches a horizon job to this tile
+	std::shared_ptr<const Horizon::Map> hor; // not upstream: horizon map of this owner grid
+	VkTex *htex;					// not upstream: its texture
+	double horAsk;					// not upstream: sys time its job was made, < 0 none pending
+	double horCheck;				// not upstream: sys time missing grids were last checked
+	int horMissing;					// not upstream: neighbour grids missing at the job
+	bool horRedone;					// not upstream: made again once with them
+	SurfTile *ElevOwner ();			// not upstream: the ancestor whose elev holds my ggelev
+	void HorizonParams ();			// not upstream: shader values for the owner's map
 
 	void FixCorner (const SurfTile *nbr);
 	// Match corner elevation to neighbour
@@ -89,12 +108,15 @@ private:
 	D3DXVECTOR2 MicroRep[3];
 	DWORD MaxRep;
 	VkTex *ltex;	///< landmask/nightlight texture, if applicable
+	VkTex *ctex;	// not upstream: land class weights from the tile stream's Class layer, shared like ltex
 	INT16 *elev_file;			///< elevation data [m]
 	float *elev;				///< elevation data [m] (8x subsampled)
 	mutable float *ggelev;		///< pointer to my elevation data in the great-grandparent
 
 	TileLabel *label;			///< surface labels associated with this tile
 };
+
+template<> std::shared_ptr<const Horizon::Map> TileManager2<SurfTile>::HorizonAt (double lat, double lng, double bnd[4]); // not upstream
 
 #endif // !__SURFMGR2_H
 

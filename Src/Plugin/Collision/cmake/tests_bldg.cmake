@@ -1,0 +1,15 @@
+# not upstream: collision addon, unit tests of the streamed building colliders (design bldg-collision 7)
+foreach (t CollSourceA.Test CollBaseA.Test) # their units reach BldgGeom (CollBaseA's structure index)
+	if (TARGET ${t})
+		target_sources(${t} PRIVATE ${COLL_BLDG_OBJS})
+	endif ()
+endforeach ()
+if (TARGET CollSourceA.Test) # CollGeomSession owns the CollBldgA unit
+	target_sources(CollSourceA.Test PRIVATE $<TARGET_OBJECTS:Coll_CollBldgA>)
+endif ()
+if (COLL_HAVE_BLDGGEOM)
+	coll_unit_test(CollBldgA.Test 60 UNITS CollBldgA CollBaseA CollBaseObjA CollMeshFile CollShape CollAnim CollGeom CollSdk DentMath Vecmat)
+	target_sources(CollBldgA.Test PRIVATE ${COLL_BLDG_OBJS})
+	target_compile_definitions(CollBldgA.Test PRIVATE COLL_HAVE_BLDGGEOM=1)
+	target_include_directories(CollBldgA.Test PRIVATE ${COLL_BLDG_DIR}) # BldgGeom.h after the addon's folders
+endif ()

@@ -1204,7 +1204,7 @@ void D3D9Client::PushSketchpad(SURFHANDLE surf, D3D9Pad *pSkp) const
 
 void D3D9Client::PushRenderTarget(VkSurf *pColor, VkSurf *pDepthStencil, int code) const
 {
-	static const char *labels[] = { "NULL", "MAIN", "ENV", "CUSTOMCAM", "SHADOWMAP", "PICK", "SKETCHPAD", "OVERLAY" };
+	static const char *labels[] = { "NULL", "MAIN", "ENV", "CUSTOMCAM", "SHADOWMAP", "PICK", "SKETCHPAD", "OVERLAY", "NORMALDEPTH", "SCENEDEPTH", "SCENESHADOW", "FLOWMAP" }; // not upstream: the last four
 
 	RenderTgtData data;
 	data.pColor = pColor;
@@ -1238,7 +1238,7 @@ void D3D9Client::AlterRenderTarget(VkSurf *pColor, VkSurf *pDepthStencil)
 
 void D3D9Client::PopRenderTargets() const
 {
-	static const char *labels[] = { "NULL", "MAIN", "ENV", "CUSTOMCAM", "SHADOWMAP", "PICK", "SKETCHPAD", "OVERLAY" };
+	static const char *labels[] = { "NULL", "MAIN", "ENV", "CUSTOMCAM", "SHADOWMAP", "PICK", "SKETCHPAD", "OVERLAY", "NORMALDEPTH", "SCENEDEPTH", "SCENESHADOW", "FLOWMAP" }; // not upstream: the last four
 
 	assert(RenderStack.empty() == false);
 

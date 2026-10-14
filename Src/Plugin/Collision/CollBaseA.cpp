@@ -6,9 +6,29 @@
 #include <sstream>
 #include "CollBaseA.h"
 #include "DentMath.h"
+#if COLL_HAVE_BLDGGEOM
+#include "BldgGeom.h"
+#endif
 
 namespace {
 const int OBJTP_PLANET_ = 4; // OBJTP_PLANET (OrbiterAPI.h:1773)
+
+#if COLL_HAVE_BLDGGEOM
+void IndexGroups (BldgGeom::BaseIndex &bi, const std::vector<CollGroupData> &grp) // bldg: an object's triangles, base frame (y up)
+{
+	for (const CollGroupData &g : grp)
+		for (size_t k = 0; k + 2 < g.idx.size (); k += 3) {
+			double v[3][3];
+			bool ok = true;
+			for (int c = 0; c < 3 && ok; c++) {
+				uint16_t n = g.idx[k + c];
+				ok = n < g.vtx.size ();
+				if (ok) { v[c][0] = g.vtx[n].x; v[c][1] = g.vtx[n].y; v[c][2] = g.vtx[n].z; }
+			}
+			if (ok) bi.Add (v[0], v[1], v[2]);
+		}
+}
+#endif
 
 struct Cand { std::string file, ctx; CollBaseFile f; }; // ctx: CONTEXT value of the file's DIR line, "" without one
 
@@ -81,13 +101,16 @@ void ScanBases (CollSdk &sdk, const CollDirs &d, char *path, std::vector<Cand> &
 }
 } // namespace
 
-void CollBaseA::Build (CollSdk &sdk, const CollDirs &d, bool geometry)
+void CollBaseA::Build (CollSdk &sdk, const CollDirs &d, bool geometry, bool bldgIndex)
 {
 	rec.clear (); nObjects = nIncluded = 0;
 	bool ctxLogged = false;
+	uint32_t nIdx = 0; size_t nFaces = 0; // bldg: bases with a structure index, its faces
 	for (uint32_t pi = 0, np = sdk.GbodyCount (); pi < np; pi++) {
 		CollH hp = sdk.Gbody (pi);
 		if (sdk.ObjType (hp) != OBJTP_PLANET_ || !sdk.BaseCount (hp)) continue;
+		bool bldgOn = bldgIndex && geometry && sdk.BldgStream (hp); // bldg: only where the tile stream may serve buildings
+		(void)bldgOn; // without BldgGeom no index is built
 		std::string pname = sdk.Name (hp), ptext;
 		std::vector<Cand> cand;
 		if (!sdk.ReadText (sdk.Resolve (CollCfgPath (d, pname, ".cfg")), ptext)) {
@@ -156,9 +179,24 @@ void CollBaseA::Build (CollSdk &sdk, const CollDirs &d, bool geometry)
 			r->rposP = Vector (rr * clat * clng, rr * slat, rr * clat * slng);
 			r->rrotP = Matrix (clng*slat, clng*clat, -slng, -clat, slat, 0, slng*slat, slng*clat, clng);
 			uint32_t slotI = 0;
+#if COLL_HAVE_BLDGGEOM
+			std::shared_ptr<BldgGeom::BaseIndex> sidx = bldgOn ? std::make_shared<BldgGeom::BaseIndex> () : nullptr; // bldg: default mode, steep faces over 1.5 m
+#endif
 			for (auto &o : m->f.obj) {
 				nObjects++;
-				if (!CollBaseObjIncluded (o)) continue;
+				if (!CollBaseObjIncluded (o)) {
+#if COLL_HAVE_BLDGGEOM
+					if (sidx) { // bldg: the client keeps streamed buildings off every structure it draws, colliding or not
+						std::vector<std::string> warn;
+						CollBaseElev el;
+						el.lng = lng; el.lat = lat; el.elev = r->elev;
+						el.at = [&sdk, hp] (double l, double b) { return sdk.Elevation (hp, l, b); };
+						if (CollBaseObjGeometry (o, sdk, d, R, m->f.mapToSphere, warn, &el)) IndexGroups (*sidx, o.grp);
+						o.grp.clear ();
+					}
+#endif
+					continue;
+				}
 				nIncluded++;
 				CollBaseObjView v;
 				v.planet = pname; v.base = bname; v.type = o.type; v.planetIdx = (int)pi; v.baseIdx = (int)bi; v.obj = o.index;
@@ -171,6 +209,9 @@ void CollBaseA::Build (CollSdk &sdk, const CollDirs &d, bool geometry)
 					el.lng = lng; el.lat = lat; el.elev = r->elev;
 					el.at = [&sdk, hp] (double l, double b) { return sdk.Elevation (hp, l, b); };
 					if (CollBaseObjGeometry (o, sdk, d, R, m->f.mapToSphere, warn, &el)) {
+#if COLL_HAVE_BLDGGEOM
+						if (sidx) IndexGroups (*sidx, o.grp);
+#endif
 						if (!strcasecmp (o.type.c_str (), "MESH")) v.size = o.restBox;
 						r->shape.SetObject (slotI, o.index, o.grp.data (), o.grp.size (), v.mat, true);
 						r->shape.Follow (slotI, 1, 1);
@@ -183,12 +224,19 @@ void CollBaseA::Build (CollSdk &sdk, const CollDirs &d, bool geometry)
 				r->view.push_back (v);
 			}
 			if (geometry && slotI) r->shape.Finish (r->rposP, r->rrotP, R);
+#if COLL_HAVE_BLDGGEOM
+			if (sidx && !sidx->Empty ()) { r->bidx = sidx; nIdx++; nFaces += sidx->Count (); }
+#endif
 			rec.push_back (std::move (r));
 		}
 	}
 	char buf[160];
 	snprintf (buf, sizeof buf, "Collision bases: %zu bases, %u objects, %u included", rec.size (), nObjects, nIncluded);
 	sdk.Log (1, buf);
+	if (nIdx) {
+		snprintf (buf, sizeof buf, "Collision bases: %u bases keep streamed buildings off %zu structure faces", nIdx, nFaces);
+		sdk.Log (1, buf);
+	}
 }
 
 void CollBaseA::Poll (CollSdk &sdk, uint32_t frame)

@@ -43,6 +43,7 @@ struct CollCfgValues {
 	double blastESpec = 300;                // CollisionBlastESpec (blast) [J/kg]: impact damage at full strength
 	bool ground = true;                     // CollisionGround (ground): vessel colliders against the terrain make impact events
 	double groundMinSpeed = 5;              // CollisionGroundMinSpeed (ground) [m/s]: slowest approach to the terrain that makes one
+	bool streamBuildings = true;            // CollisionStreamBuildings (bldg): vessels hit the streamed 3D buildings
 };
 
 // every key in file order, with its field; Read, Keys and the template test walk this one list; CollisionCfgVersion is the build's (cmake/CollisionCfgOnce.cmake)
@@ -85,6 +86,7 @@ template <class V, class F> void CollCfgFields (V &v, F &&f)
 	f ("CollisionBlastESpec", v.blastESpec);
 	f ("CollisionGround", v.ground);
 	f ("CollisionGroundMinSpeed", v.groundMinSpeed);
+	f ("CollisionStreamBuildings", v.streamBuildings);
 }
 
 namespace CollCfg {

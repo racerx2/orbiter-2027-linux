@@ -367,6 +367,8 @@ TEST_CASE ("ground: the ground side of an event, and no building lookup for base
 	CHECK_FALSE (CollGroundSide (CollOwnerRef { 4, -1, -1, -1, -1 }));
 	CHECK_FALSE (CollGroundSide (CollOwnerRef { 0, 2, 0, 3, 0 }));
 	CHECK_FALSE (CollGroundSide (CollOwnerRef { 0, -1, -1, -1, -1 }));
+	CHECK_FALSE (CollGroundSide (CollOwnerRef { 0, 2, -2, 7, 0 }));      // bldg: a streamed building is no ground
+	CHECK_FALSE (CollGroundSide (CollOwnerRef { 0, 2, -2 - 0x7FFE, 0, 0 }));
 	Rig r;
 	CollFakeSdk::Body sun;
 	sun.name = "Sun"; sun.type = 3;
@@ -381,6 +383,7 @@ TEST_CASE ("ground: the ground side of an event, and no building lookup for base
 	CollDmgBaseObj o;
 	CHECK (host.BaseObject (0, 0, 5, o));
 	CHECK_FALSE (host.BaseObject (1, -1, -1, o));
+	CHECK_FALSE (host.BaseObject (1, -2, 7, o)); // bldg: no building record for a streamed building
 }
 
 TEST_CASE ("ground review 1: the lockout is per contact region; a frame with no candidate or a much faster approach re-arms", "[ground]")

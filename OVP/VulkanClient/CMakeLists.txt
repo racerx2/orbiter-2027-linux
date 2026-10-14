@@ -68,6 +68,33 @@ set(SourceFiles
 	TileMgr.cpp
 	Tilemgr2.cpp
 	VBase.cpp
+	BldgMgr.cpp # not upstream
+	BldgGeom.cpp # not upstream
+	GfxPool.cpp # not upstream: ground graphics
+	HorizonMap.cpp # not upstream
+	SceneFx.cpp # not upstream
+	SceneFxShadow.cpp # not upstream
+	PostTaa.cpp # not upstream
+	PostMath.cpp # not upstream
+	PostLook.cpp # not upstream
+	LookMath.cpp # not upstream
+	SceneShadows.cpp # not upstream
+	CsmMath.cpp # not upstream
+	SceneSsr.cpp # not upstream
+	SsrMath.cpp # not upstream
+	SceneFxGi.cpp # not upstream
+	SsgiMath.cpp # not upstream
+	SceneFxFog.cpp # not upstream
+	FogMath.cpp # not upstream
+	PostPlume.cpp # not upstream
+	PlumeMath.cpp # not upstream
+	HullHeat.cpp # not upstream
+	HeatMath.cpp # not upstream
+	AutoExpo.cpp # not upstream
+	VolCloudMap.cpp # not upstream
+	CloudAtlas.cpp # not upstream
+	TreeGeom.cpp # not upstream
+	TreeMgr.cpp # not upstream
 	VideoTab.cpp
 	VObject.cpp
 	VPlanet.cpp

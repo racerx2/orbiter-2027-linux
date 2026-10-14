@@ -4526,6 +4526,10 @@ OAPIFUNC VISHANDLE *oapiObjectVisualPtr (OBJHANDLE hObject);
 	*/
 OAPIFUNC MESHHANDLE oapiLoadMesh (const char *fname);
 
+// not upstream: a private copy of a loaded mesh without reading the file again (textures shared by reference), without the groups that have any of the dropFlag user flags; free it with oapiDeleteMesh
+#define OAPI_COPY_MESH 1 // not upstream: feature test for add-ons
+OAPIFUNC MESHHANDLE oapiCopyMesh (MESHHANDLE hMesh, DWORD dropFlag = 0);
+
 	/**
 	* \brief Retrieves a mesh handle from the global mesh manager. 
 	* \details When called for the first time for any given file name, the mesh is loaded from file 
@@ -4776,6 +4780,8 @@ OAPIFUNC void oapiReleaseTexture (SURFHANDLE hTex);
 	*  to retrieve a \c MESHGROUP pointer, and modify the TexIdx entry.
 	*/
 OAPIFUNC bool oapiSetTexture (MESHHANDLE hMesh, DWORD texidx, SURFHANDLE tex);
+// not upstream: adds tex to the mesh, which takes its own reference; returns the index for MESHGROUP::TexIdx, (DWORD)-1 if none
+OAPIFUNC DWORD oapiAddMeshTexture (MESHHANDLE hMesh, SURFHANDLE tex);
 OAPIFUNC bool oapiSetTexture (DEVMESHHANDLE hMesh, DWORD texidx, SURFHANDLE tex);
 
 	/**
@@ -6334,6 +6340,36 @@ OAPIFUNC void       oapiCloseFile (FILEHANDLE file, FileAccessMode mode);
 
 // not upstream: on-disk spelling of a '\'-separated, any-case path; an unmatched tail is kept so new files work too
 OAPIFUNC std::string oapiResolvePath (const char *path);
+
+// not upstream: the planet tile stream (TileStream.cpp) fills Textures/<body>/Surf and Mask while the sim runs
+OAPIFUNC bool oapiTileStreamEnabled (OBJHANDLE hBody);
+// lvl: file level; flags 1: the file failed to load, 2: loaded from the cache, 4: only its Elev; returns 1 file there, 0 wanted, -1 never
+OAPIFUNC int  oapiTileStreamWant (OBJHANDLE hBody, int lvl, int ilat, int ilng, int flags);
+// not upstream: the last level the stream makes Elev for (0: none); Elev archive tiles under its files are not read, nor Elev_mod over them
+OAPIFUNC int  oapiTileStreamElev (OBJHANDLE hBody);
+// finished tiles as (lvl, ilat, ilng) triples, keys holds 3*nmax; returns the count
+OAPIFUNC int  oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax);
+
+// not upstream: a locked vessel (e.g. destroyed in a collision) takes no player commands: keys, joystick, cockpit panel and VC switches (MFD buttons too), nav modes; its MFDs still work by the Shift keys; the lock is not saved with the scenario
+#define OAPI_VESSEL_CONTROL_LOCK 1 // not upstream: feature test for add-ons
+OAPIFUNC void oapiSetVesselControlLock (OBJHANDLE hVessel, bool lock);
+OAPIFUNC bool oapiGetVesselControlLock (OBJHANDLE hVessel);
+
+// not upstream: streamed 3D buildings, z14 Web Mercator tiles (x east from 180W, y south from the top)
+#define OAPI_TILESTREAM_BLDG 1 // not upstream: TSBLDG, TSBLDGMESH and the oapiTileStreamBldg* calls are there (feature test for add-ons)
+typedef struct { double lat, lng; float hmin, hmax; DWORD v0, nv, i0, ni; } TSBLDG; // anchor (rad), vertex and index ranges
+typedef struct {
+	int z, x, y;
+	DWORD nb, nv, ni;
+	const TSBLDG *b;
+	const float *vtx;  // per vertex x east, y up, z north (m from its building's anchor), nx, ny, nz
+	const DWORD *idx;  // triangles, clockwise from the front, relative to the building's v0
+} TSBLDGMESH;
+// returns 1 the tile file is there, 0 wanted, -1 never (no buildings for this body, or off)
+OAPIFUNC int  oapiTileStreamBldgWant (OBJHANDLE hBody, int x, int y);
+// the tile's buildings, NULL if not there; free with oapiTileStreamBldgFree
+OAPIFUNC TSBLDGMESH *oapiTileStreamBldgLoad (OBJHANDLE hBody, int x, int y);
+OAPIFUNC void oapiTileStreamBldgFree (TSBLDGMESH *mesh);
 
 	/**
 	* \brief Writes the current simulation state to a scenario file.

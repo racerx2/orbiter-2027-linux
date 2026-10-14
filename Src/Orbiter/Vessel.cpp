@@ -3655,6 +3655,7 @@ bool Vessel::SetNavMode (int mode, bool fromstream)
 {
 	if (bFRplayback && !fromstream) return false;
 	// ignore manual SetNavMode during playback
+	if (bCtrlLock && mode && !fromstream) return false; // not upstream: a locked vessel's nav modes stay off
 
 	DWORD bitflag = 1 << (mode-1);
 	int i;
@@ -3742,8 +3743,16 @@ double Vessel::GetSpec (VesselSpec which)
 }
 #endif
 
+void Vessel::SetCtrlLock (bool lock) // not upstream
+{
+	if (lock == bCtrlLock) return;
+	bCtrlLock = lock;
+	if (lock) for (int i = 0; i < 7; i++) if (navmode & (1 << i)) ClrNavMode (i+1); // the nav modes go with the controls
+}
+
 int Vessel::ConsumeDirectKey (char *buffer)
 {
+	if (bCtrlLock) return 0; // not upstream: the module sees no keys; the caller skips the controls
 	if (modIntf.v->Version() >= 1) {
 		return ((VESSEL2*)modIntf.v)->clbkConsumeDirectKey (buffer);
 	} else {
@@ -3755,13 +3764,13 @@ int Vessel::ConsumeBufferedKey (DWORD key, bool down, char *kstate)
 {
 	int res;
 	const Keymap &keymap = g_pOrbiter->keymap;
-
 	// first offer the key to the module
-	if (modIntf.v->Version() >= 1)
+	if (modIntf.v->Version() >= 1 && !bCtrlLock) // not upstream: a locked vessel's module sees no keys
 		if (res = ((VESSEL2*)modIntf.v)->clbkConsumeBufferedKey (key, down, kstate)) return res;
 	// If module processes the key, we skip default handler
 
 	if (!down) return 0; // at the moment, only process keydown events
+	if (!bCtrlLock) { // not upstream: nav modes, RCS and undocking go with the controls; the HUD keys below stay
 
 	// Navigation computer modes
 	if (keymap.IsLogicalKey (key, kstate, OAPI_LKEY_NMHoldAltitude)) TglNavMode (NAVMODE_HOLDALT);
@@ -3774,6 +3783,7 @@ int Vessel::ConsumeBufferedKey (DWORD key, bool down, char *kstate)
 	if (keymap.IsLogicalKey (key, kstate, OAPI_LKEY_RCSEnable))      SetAttMode (attmode >= 1 ? 0 : 1);
 	if (keymap.IsLogicalKey (key, kstate, OAPI_LKEY_RCSMode))        ToggleAttMode ();
 	if (keymap.IsLogicalKey (key, kstate, OAPI_LKEY_Undock))         UndockInteractive ();
+	}
 
 	// HUD control (internal view only)
 	if (g_camera->IsInternal()) {
@@ -3784,6 +3794,7 @@ int Vessel::ConsumeBufferedKey (DWORD key, bool down, char *kstate)
 		if (keymap.IsLogicalKey (key, kstate, OAPI_LKEY_HUDTarget))
 			if (g_pane->GetHUD() && g_pane->GetHUD()->Mode() == HUD_DOCKING)    ((HUD_Docking*)g_pane->GetHUD())->SelectReferenceOld();
 	}
+	if (bCtrlLock) return 0; // not upstream: no clearance request or control-surface toggle
 
 	if (KEYMOD_CONTROL (kstate)) {  // CTRL-Key combinations
 
@@ -5661,6 +5672,7 @@ bool Vessel::PanelRedrawEvent (int id, int event, SURFHANDLE surf, void *context
 
 bool Vessel::PanelMouseEvent (int id, int event, int mx, int my, void *context) const
 {
+	if (bCtrlLock) return false; // not upstream: the cockpit's switches are dead
 	if (modIntf.v && modIntf.v->Version() >= 2 && ((VESSEL3*)modIntf.v)->clbkPanelMouseEvent (id, event, mx, my, context))
 		return true;
 	else if (modIntf.v && modIntf.v->Version() >= 1)
@@ -5687,6 +5699,7 @@ bool Vessel::VCRedrawEvent (int id, int event, SURFHANDLE surf) const
 
 bool Vessel::VCMouseEvent (int id, int event, Vector &p) const
 {
+	if (bCtrlLock) return false; // not upstream: the cockpit's switches are dead
 	if (modIntf.v && modIntf.v->Version() >= 1) {
 		VECTOR3 v = _V(p.x,p.y,p.z);
 		return ((VESSEL2*)modIntf.v)->clbkVCMouseEvent (id, event, v);

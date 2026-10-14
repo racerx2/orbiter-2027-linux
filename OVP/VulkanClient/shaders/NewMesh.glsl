@@ -27,7 +27,17 @@ struct PSBools {
 
 // uniform extern struct X {...} x: the structs in blocks (vertex binding 0, pixel binding 1), set by name as the whole struct
 layout(binding = 0, row_major, scalar) uniform VSConstBlock { VSConst vs_const; };
+#if defined(_SSGI)
+struct PSGi {		// not upstream: SceneDepth_PS's albedo for SSGI (design-ssgi 4.1)
+	vec4 vMat;		// albedo factor (rgb), base texture bound (w)
+	vec4 vMtl;		// metal factor (x), metal map bound (y), map channel b (z, else g), decode the base texture sRGB to linear (w)
+	vec4 vCls;		// class (x: 2 bases and buildings, 3 vessels), family (y: 0 legacy, 1 metalness, 2 pbr, 3 base tile)
+};
+layout(binding = 1, row_major, scalar) uniform PSConstBlock { PSConst ps_const; PSBools ps_bools; PSGi ps_gi; };
+layout(binding = 5) uniform sampler2D tMR;	// metalness map
+#else
 layout(binding = 1, row_major, scalar) uniform PSConstBlock { PSConst ps_const; PSBools ps_bools; };
+#endif
 
 
 layout(binding = 4) uniform sampler2D tDiff;	// s0
@@ -222,4 +232,42 @@ vec4 NormalDepth_PS(NormalTexVS frg)
 layout(location = 0) in NormalTexVS frg;
 layout(location = 0) out vec4 oColor;
 void main() { oColor = NormalDepth_PS(frg); }
+#endif
+
+// not upstream: camera distance for the SceneDepth pass (SSAO, cloud march); textured groups alpha tested
+#ifdef PS_SceneDepth_PS
+layout(location = 0) in NormalTexVS frg;
+layout(location = 0) out vec4 oColor;
+#if defined(_SSGI)
+layout(location = 1) out vec4 oAlb;	// not upstream: SSGI albedo / 4, family
+layout(location = 2) out vec4 oNrm;	// not upstream: SSGI octahedral world normal, class
+vec2 OctEnc(vec3 n)
+{
+	n /= abs(n.x) + abs(n.y) + abs(n.z);
+	vec2 p = n.z >= 0.0 ? n.xy : (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+	return p * 0.5 + 0.5;
+}
+#endif
+void main()
+{
+#if defined(_SSGI)
+	vec4 t = texture(tDiff, frg.tex0.xy);
+	if (ps_bools.bOIT && t.a < ps_bools.fCutoff) discard;
+#else
+	if (ps_bools.bOIT && texture(tDiff, frg.tex0.xy).a < ps_bools.fCutoff) discard; // custom: 0.75 legacy, the material's for PBR
+#endif
+	oColor = vec4(length(frg.posW));
+#if defined(_SSGI)
+	vec3 c = clamp(t.rgb, 0.0, 1.0);
+	if (ps_gi.vMtl.w > 0.5) c = mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); // UNORM base colour to linear (PbrMesh's PBRM_BASEGAMMA)
+	vec3 rho = (ps_gi.vMat.w > 0.5 ? c : vec3(1.0)) * ps_gi.vMat.rgb;
+	float metal = ps_gi.vMtl.x;
+	if (ps_gi.vMtl.y > 0.5) { vec4 m = texture(tMR, frg.tex0.xy); metal *= ps_gi.vMtl.z > 0.5 ? m.b : m.g; }
+	rho *= 1.0 - clamp(metal, 0.0, 1.0);	// metals have no diffuse part
+	vec3 n = normalize(frg.nrmW);
+	if (dot(n, frg.posW) > 0.25 * length(frg.posW)) n = -n;	// inverted mesh normals; slight silhouette ones are bent in SSGI.glsl
+	oAlb = vec4(clamp(rho * 0.25, 0.0, 1.0), ps_gi.vCls.y / 3.0);
+	oNrm = vec4(OctEnc(n), 0.0, ps_gi.vCls.x / 3.0);
+#endif
+}
 #endif

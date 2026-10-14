@@ -1,0 +1,757 @@
+
+\documentclass[Orbiter Technical Reference.tex]{subfiles}
+\begin{document}
+
+\section{Rendering methods of the Vulkan client's effects}
+\textbf{Orbiter 2027, Linux edition}
+\begin{sloppypar}
+
+
+\subsection{Introduction}
+The Vulkan graphics client of the Linux edition (Modules/VulkanClient.so, sources in OVP/VulkanClient) adds a set of effects to the rendering it inherits from the D3D9 client: auto exposure, temporal anti-aliasing, sun shadows for the whole scene, screen-space reflections and global illumination, volumetric engine plumes, smoke and re-entry plasma, the glow of hulls heated by re-entry, height and valley fog, a night look for cities, and some earlier effects (lens flare, light shafts, water, ground shadows of the volume clouds, a seamless far cloud layer). This note describes their methods with the equations the client uses, for developers who want to understand or extend them.\\
+Each effect has its own key in Modules/VulkanClient/VulkanClient.cfg. With a key at 0, the effect's passes and targets are not created and its shader code is not compiled into any shader, so the image is the one without the effect.
+
+\begin{longtable}{ |p{0.5\textwidth}|p{0.26\textwidth}|p{0.12\textwidth}| }
+\hline\rule{0pt}{2ex}
+\textbf{Key} & \textbf{Default} & \textbf{Section}\\
+\hline\rule{0pt}{2ex}
+AutoExposure & 1 & \ref{sec:vk_expo}\\
+\hline\rule{0pt}{2ex}
+AutoExpMinEV, AutoExpMaxEV & $-1.5$ ($-4$..0), 2.5 (0..4) & \ref{sec:vk_expo}\\
+\hline\rule{0pt}{2ex}
+TAA & 1 & \ref{sec:vk_taa}\\
+\hline\rule{0pt}{2ex}
+SceneShadows & 1 & \ref{sec:vk_csm}\\
+\hline\rule{0pt}{2ex}
+SSR & 1 & \ref{sec:vk_ssr}\\
+\hline\rule{0pt}{2ex}
+SSGI, SSGIStrength & 1, 1.0 (0..2) & \ref{sec:vk_ssgi}\\
+\hline\rule{0pt}{2ex}
+VolPlumes & 1 & \ref{sec:vk_plume}, \ref{sec:vk_heat}\\
+\hline\rule{0pt}{2ex}
+HeightFog & 0 & \ref{sec:vk_fog}\\
+\hline\rule{0pt}{2ex}
+NightLook & 1 & \ref{sec:vk_night}\\
+\hline\rule{0pt}{2ex}
+LensFlare, LightShafts, HeatHaze, Sharpen, Vignette & 1 & \ref{sec:vk_early}\\
+\hline\rule{0pt}{2ex}
+WaterFx, VolCloudShadows, CloudAtlas & 1 & \ref{sec:vk_early}\\
+\hline\rule{0pt}{2ex}
+Filmic & 0 & \ref{sec:vk_conv}\\
+\hline
+\end{longtable}
+
+\noindent The maths that does not need the GPU is kept in small units without client types (CsmMath, SsrMath, SsgiMath, PlumeMath, FogMath, AutoExpo, PostMath, LookMath and CloudAtlas in OVP/VulkanClient); their unit tests (Tests/\textit{Unit}.Test.cpp) mirror the shaders step by step and are the best place to try a change to a formula.
+
+
+\subsection{Conventions}\label{sec:vk_conv}
+\paragraph{Coordinates.} Positions are camera-relative and in global axes unless stated otherwise; the large offsets of a planet or a vessel are taken out in double precision on the CPU before any matrix goes to the GPU. A pixel's view ray is
+
+\[ \hat{\vec{r}}(u,v) = \mathrm{unit}\left( \vec{X} (2u-1) \tan\alpha_x + \vec{Y} (1-2v) \tan\alpha_y + \vec{Z}' \right) \]
+
+\noindent
+with the camera axes $\vec{X}, \vec{Y}$, the half apertures $\alpha_x, \alpha_y$ and the forward axis $\vec{Z}' = \vec{Z} - \vec{X} k_x - \vec{Y} k_y$, into which the TAA jitter $k_x = P_{31}/P_{11}$, $k_y = P_{32}/P_{22}$ of the projection matrix $\mat{P}$ is folded (section \ref{sec:vk_taa}), so that the ray goes through the jittered pixel.
+
+\paragraph{Scene distance.} Most effects read the scene distance buffer $d(u,v)$ (SceneFx, R32F at full resolution): the distance from the camera along the pixel ray to the nearest opaque surface, 0 where nothing is drawn. It is drawn in its own pass every main frame in which any reader is on: the camera's proxy body with its terrain, bases, buildings and trees, and the vessels, with the near planes of the main pass and a far plane at 10$^{6}$\,m: the body with the planets' near plane, then, where the main pass clears the depth before the vessels, a depth clear and the vessels' near plane. The buffer thus holds what the image shows, and nothing that the main pass clipped. The point of a pixel is $\vec{p} = d\,\hat{\vec{r}}$.\\
+Half-resolution passes are brought back to full resolution with a depth-aware up-sample (joint bilateral upsampling \cite{kopf2007}): the four nearest half-resolution texels are weighted bilinearly and by a distance weight such as $W(d,d_i) = \exp(-|d-d_i|/(0.02d+1\,\mathrm{m}))$ (0.02 where only one of the two is empty).
+
+\paragraph{Notation.} $S(a,b,x)$ is the smooth step $t^{2}(3-2t)$ with $t = \mathrm{clamp}((x-a)/(b-a), 0, 1)$; it falls when $a > b$. $\xi(\vec{q})$ is the interleaved gradient noise of a pixel $\vec{q}$ \cite{jimenez2014},
+
+\[ \xi(\vec{q}) = \mathrm{fract}\left(52.9829189\,\mathrm{fract}(0.06711056\,q_x + 0.00583715\,q_y)\right) \]
+
+\noindent
+and moves with the frame by $\vec{q} \rightarrow \vec{q} + 5.588238\,k$ where a temporal filter averages it. Luminance is $Y = 0.2126R + 0.7152G + 0.0722B$. HG$(\cos\theta, g)$ is the Henyey-Greenstein phase function \cite{henyey1941}.
+
+\paragraph{Display curves.} Every legacy shader turns its lit colour into a display value with its own curve, after the exposure $e$ (section \ref{sec:vk_expo}) has been multiplied in. The effects that read the rendered image (reflections, global illumination, plumes) invert or apply these curves:
+
+\begin{longtable}{ |p{0.32\textwidth}|p{0.58\textwidth}| }
+\hline\rule{0pt}{2ex}
+\textbf{Drawn object} & \textbf{Display value} $y$ \textbf{of the exposed radiance} $x$\\
+\hline\rule{0pt}{2ex}
+Terrain, trees and sky with an atmosphere & $T_w(x) = 1 - e^{-x}$ (trees with their own exposure constant), or with \textit{Filmic} the fit of the ACES curve \cite{narkowicz2016} to $0.568x$: $\frac{t(2.51t+0.03)}{t(2.43t+0.59)+0.14}$, $t = 0.568x$\\
+\hline\rule{0pt}{2ex}
+Vessels (Metalness and glTF meshes) & $T_m(x) = x\,(1+x^{4})^{-1/4}$; the identity when the post-processing chain (LightBlur) tone-maps later\\
+\hline\rule{0pt}{2ex}
+Terrain without an atmosphere & $T_a(x) = \min(x,1)^{g}$, $g$ the planet's terrain gamma\\
+\hline\rule{0pt}{2ex}
+Legacy meshes, base tiles & the lit colour, clamped at 1\\
+\hline
+\end{longtable}
+
+\noindent
+Haze between the camera and a surface is the transmittance $\vec{A}$ and the in-scatter $\vec{I}$ of the atmosphere tables (Scatter.glsl). Meshes add it after their curve, $y = \vec{A}\,T(x) + \vec{I}$; the terrain inside it, $y = T_w(\mathrm{Expo}\,(\vec{A}x' + \vec{I}_{raw}))$, with $x'$ the radiance before the exposure and Expo the planet's exposure constant, its base value times $e$.
+
+
+\subsection{Frame order}\label{sec:vk_order}
+The effects run in the main scene pass in this order (Scene::RenderMainScene, SceneFx::AfterOpaque):
+
+\begin{enumerate}
+\item \textbf{Exposure.} The exposure $e$ of this frame is taken from the controller, which has just read back the measure of an earlier frame (section \ref{sec:vk_expo}). Custom cameras, environment maps and irradiance probes are drawn with $e = 1$.
+\item \textbf{Jitter.} TAA picks this frame's sub-pixel jitter and folds it into the projection (section \ref{sec:vk_taa}).
+\item \textbf{Shadow cascades.} The cascades that are due are drawn into the shadow atlas, and the receivers' parameters are set (section \ref{sec:vk_csm}).
+\item \textbf{Opaque scene.} Planets, bases and vessels are drawn. Their shaders apply the exposure, the shadow cascades, the reflections traced on last frame's capture (section \ref{sec:vk_ssr}), the night lights (section \ref{sec:vk_night}) and the glow of hot hulls (section \ref{sec:vk_heat}), whose wall temperatures are stepped in the vessels' updates before the frame.
+\item \textbf{Plume collection.} The plumes, smoke puffs and plasma of this frame are gathered on the CPU, and the particle streams they replace are claimed (section \ref{sec:vk_plume}).
+\item \textbf{After the opaque scene:} the scene distance pass, the TAA flag pass (the camera target vessel), SSAO, the ground shadows of the volume clouds, the global illumination (section \ref{sec:vk_ssgi}), then the height fog and the volume clouds in the order of section \ref{sec:vk_fog}.
+\item \textbf{TAA resolve} of the opaque scene.
+\item \textbf{Reflection capture:} the resolved image and its depth pyramid, traced by the next frame's surfaces.
+\item The shadow noise is fixed on the ground for what is drawn after the resolve; the jitter is switched off; in-scene labels are drawn.
+\item \textbf{Heat haze} behind the exhausts, then the \textbf{volumetric plumes}, puffs and plasma.
+\item Legacy exhausts (cross-faded with the volume plumes), beacons, the particle streams that were not claimed (as soft billboards, section \ref{sec:vk_plume}), and the transparent glTF groups.
+\item The cascades stop receiving; the virtual cockpit is drawn.
+\item \textbf{Exposure measure} of the finished 3D image (after LightBlur's tone curve when post-processing is on).
+\item \textbf{Final look:} light shafts, lens flare, sharpening and vignette, then the sun and light glares.
+\end{enumerate}
+
+\noindent
+The labels, the cockpit, the HUD and the 2D panels are never part of the TAA history, the reflections, the global illumination or the fog.
+
+
+\subsection{Auto exposure}\label{sec:vk_expo}
+\textit{AutoExposure}, \textit{AutoExpMinEV}, \textit{AutoExpMaxEV}; sources AutoExpo.h/.cpp, shaders/Exposure.glsl, SceneFx.cpp.
+
+\subsubsection{Measure}
+The finished image is halved three times with linear filtering to $W/8 \times H/8$, then reduced to 16 $\times$ 9 blocks and to one texel. Each pixel of luminance $L$ adds $w \log_{2} L$, $w$ and its saturation flag, with the centre-biased weight
+
+\[ w = \left\{ \begin{array}{ll} 0 & L < 0.002 \\ 1 - \frac{1}{2} S(0.3, 1, |\vec{c}|) & \mathrm{otherwise} \end{array} \right. \]
+
+\noindent
+where $\vec{c} \in [-1,1]^{2}$ is the pixel's position on the screen; black space thus does not count. A pixel is saturated when its largest channel is at least $\theta_{s} = 254/255$. The texel holds the weighted mean $\bar{\ell}$ of $\log_{2} L$, the weight sum as a fraction of the pixels, and the saturated fraction $s$. It is copied to the CPU with the frame's number and read when that frame's fence has passed, a few frames later; the controller compares it with the exposure $e_{u}$ that frame was drawn with.
+
+\subsubsection{Controller}
+The exposure is kept as $\mathrm{EV} = \log_{2} e$. With the band $[\ell_{lo}, \ell_{hi}] = [0.12, 0.55]$ of the measured display luminance, the target and its time constant are
+
+\[ (\mathrm{EV}_{t}, \tau) = \left\{ \begin{array}{lll}
+\mathrm{EV}_{u} + \min(0, \Delta_{hi}) - 2(s - 0.15), & 0.7\,\mathrm{s} & s > 0.15 \\
+\mathrm{EV}_{u} + \Delta_{lo}, & 2.0\,\mathrm{s} & \Delta_{lo} > 0 \\
+\mathrm{EV}_{u} + \Delta_{hi}, & 0.7\,\mathrm{s} & \Delta_{hi} < 0 \\
+\min(\max(0, \mathrm{EV}_{u} + \Delta_{lo}), \mathrm{EV}_{u} + \Delta_{hi}), & 4.0\,\mathrm{s} & \mathrm{otherwise}
+\end{array} \right. \]
+
+\noindent
+with $\Delta_{lo} = \log_{2}\ell_{lo} - \bar{\ell}$ and $\Delta_{hi} = \log_{2}\ell_{hi} - \bar{\ell}$: dark scenes brighten slowly, bright ones darken quickly, and inside the band the exposure drifts back toward 1 as far as the band allows. Saturation only ever lowers the exposure. The target is clamped to [\textit{AutoExpMinEV}, \textit{AutoExpMaxEV}] (default $-1.5$ and $+2.5$), with at most +1 when the camera is outside the atmosphere, and approached with the system time step $\Delta t$:
+
+\[ \mathrm{EV} \leftarrow \mathrm{EV} + (\mathrm{EV}_{t} - \mathrm{EV})\left(1 - e^{-\Delta t/\tau}\right) \]
+
+\noindent
+A measure whose weight sum is under 5\,\% holds the exposure; a change of focus or of the camera mode resets it to $e = 1$.\\
+The exposure multiplies each object's lit colour before its display curve: the meshes' shaders take it as a uniform, and for a planet with an atmosphere it is folded into the planet's exposure constant (terrain, sky, haze, clouds and trees), without an atmosphere into the terrain's brightness. Stars, the HUD, glares, beacons, legacy exhausts and particles and the 2D parts are not exposed.
+
+
+\subsubsection{Night brake}\label{sec:vk_nightexpo}
+A night city is a few bright lights on black ground: the day rules lift it until the lights burn out. With \textit{NightLook}, the rules change with the night weight of the camera,
+
+\[ n = S\left(\sin 3^{\circ}, \sin(-9^{\circ}), \sin(\epsilon + \delta)\right), \qquad \cos\delta = \frac{R}{R+h} \]
+
+\noindent
+where $\epsilon$ is the sun's elevation over the camera's horizontal, $\delta$ the dip of the horizon seen from the height $h$ over a body of radius $R$ ($n = 1$ when the sun is up and $\epsilon + \delta$ passes 90$^{\circ}$, so a camera high on the day side is never in the night). For $n > 0$:
+
+\begin{itemize}
+\item the band's low edge drops to $\ell_{lo}\,2^{-3n}$, so a dark scene is not lifted to the day's level;
+\item the upper clamp moves toward +1 EV: $\mathrm{EV}_{max} + (1 - \mathrm{EV}_{max})\,n$;
+\item every rise is braked by the near-saturated share $s$: $\mathrm{EV}_{t} \leftarrow \mathrm{EV}_{u} + (\mathrm{EV}_{t} - \mathrm{EV}_{u})(1 - n\,S(0.005, 0.03, s))$ when $\mathrm{EV}_{t} > \mathrm{EV}_{u}$;
+\item the saturation threshold falls to $\theta_{s} = 254/255 + (0.9 - 254/255)\,n$, and $s$ is counted on the full-resolution image: a first pass writes, for each 2 $\times$ 2 pixels, the share of pixels at or over $\theta_{s}$ into the alpha of the $W/2$ level, which the halvings average and the block pass sums. Single lit windows are thus counted before the box filters spread them.
+\end{itemize}
+
+\noindent
+In the cockpit the band and the clamp keep their day values; the brake stays, with a window three times wider (1.5 to 9\,\%), since the panel's own lamps and displays are near saturation already. With $n = 0$ the controller is the day controller, to the bit.
+
+
+\subsection{Temporal anti-aliasing}\label{sec:vk_taa}
+\textit{TAA}; sources PostTaa.h/.cpp, PostMath.h/.cpp, shaders/PostTaa.glsl \cite{karis2014taa, salvi2016}.
+
+\subsubsection{Jitter}
+Each frame $k$ moves the projection by a sub-pixel offset from the Halton sequences of bases 2 and 3 \cite{karis2014taa}, eight phases long:
+
+\[ (j_{x}, j_{y}) = \left(H_{2}(i) - \tfrac{1}{2},\, H_{3}(i) - \tfrac{1}{2}\right), \qquad i = (k \bmod 8) + 1 \]
+
+\[ P_{31} \leftarrow P_{31} + \frac{2j_{x}}{W}, \qquad P_{32} \leftarrow P_{32} - \frac{2j_{y}}{H} \]
+
+\noindent
+in pixels of the $W \times H$ view. Only the main pass is jittered, from the start of the frame to the resolve; the history is kept unjittered. A frame without jitter (and without history) follows a change of the camera's proxy body, the focus, the camera target or the cockpit mode, a frame in which the resolve did not run, the mesh debugger's camera and wireframe mode.
+
+\subsubsection{Reprojection}
+Each pixel's previous position is found from its point $\vec{p} = d\,\hat{\vec{r}}$ in the current frame. For a body with rotation $\mat{R}$ and position $\vec{o}$, a point fixed on it moves, between the previous camera position $\vec{c}'$ and the current $\vec{c}$, as
+
+\[ \vec{p}' = \mat{A}\vec{p} + \vec{b}, \qquad \mat{A} = \mat{R}'\mat{R}^{T}, \qquad \vec{b} = \mat{A}(\vec{c} - \vec{o}) + (\vec{o}' - \vec{c}') \]
+
+\noindent
+(primes for the previous frame); the matrix is built in double precision, where the heliocentric offsets of 10$^{11}$\,m cancel, and multiplied with the previous view and unjittered projection. Three such matrices are used: one rigid with the camera's proxy body (the ground and what stands on it), one rigid with the camera target vessel and what is docked or attached to it (its pixels are marked by the flag pass, which draws that stack again against the scene distance), and the camera's turn only, for directions at infinity. Pixels without a distance take the sphere of the cloud layer when the camera is under it (trying the sky's turn as well, and keeping the history closer to the current colour), or the planet; pixels of the volume clouds with an opacity over 0.3 take the clouds' own march distance. The point used is the one of the nearest distance in the 3 $\times$ 3 neighbourhood, so that edges move with the object in front.
+
+\subsubsection{Resolve}
+Colours are weighted by $c/(1+Y)$ before any filtering and converted back by $c/(1-Y)$, so that single bright pixels do not dominate \cite{karis2014taa}. In YCoCg, the 3 $\times$ 3 neighbourhood gives the mean $\mu$ and the deviation $\sigma$ \cite{salvi2016}, and the current colour is filtered at the unjittered pixel centre with a fit of the Blackman-Harris window, $w = \exp(-2.29\,|\vec{e}|^{2})$, $\vec{e}$ the tap's offset minus the jitter. The history is read with a Catmull-Rom spline \cite{catmull1974} written as five bilinear taps (the 4 $\times$ 4 kernel without its corners, renormalised), and clipped toward the centre of the box
+
+\[ [\min(\mu - 1.25\sigma, c_{0}),\; \max(\mu + 1.25\sigma, c_{0})] \]
+
+\noindent
+along the line to its centre; the box holds the pixel's own colour $c_{0}$, so a lone bright pixel keeps its history. The output is $\mathrm{mix}(h, c, \alpha)$ with
+
+\[ \alpha = 0.1 + 0.25\,S(1.5, 2.5, |\Delta\vec{x}|) \]
+
+\noindent
+for a motion of $|\Delta\vec{x}|$ pixels, and $\alpha = 1$ where the previous position is off the screen or the history is not finite. The output is written into the main target and kept as the next frame's history.
+
+
+
+\subsection{Sun shadows of the whole scene}\label{sec:vk_csm}
+\textit{SceneShadows}; sources SceneShadows.h/.cpp, CsmMath.h/.cpp, shaders/SceneShadow.glsl (receivers), shaders/CsmCast.glsl (terrain and tree casters). The method is that of cascaded shadow maps \cite{engel2006} centred on the camera, with texel-snapped boxes \cite{valient2008}, a normal offset \cite{holbert2011}, a receiver-plane depth bias \cite{isidoro2006} and a penumbra from a blocker search \cite{fernando2005}.
+
+\subsubsection{Cascades}
+Four square cascades $i$ = 0..3 of $N$ = 2048 texels share one 6144 $\times$ 4096 atlas of 32-bit depth (96 MB) with a fifth tile for the camera's target vessel (below): cascade $i$ in the tile at column $i \bmod 2$ and row $\lfloor i/2 \rfloor$, the target tile at column 2 and row 0. The device must support sampled 32-bit depth images of 6144 texels. Each covers a box of half-size $r_{i}$ around the camera, across the sun's direction, and reaches $Z_{ext}$ = 20\,km toward the sun for distant casters:
+
+\begin{longtable}{ |p{0.12\textwidth}|p{0.17\textwidth}|p{0.15\textwidth}|p{0.17\textwidth}|p{0.25\textwidth}| }
+\hline\rule{0pt}{2ex}
+\textbf{Cascade} & \textbf{Half-size} $r_{i}$ & \textbf{Texel} $t_{i}$ & \textbf{Depth range} $D_{i}$ & \textbf{Drawn}\\
+\hline\rule{0pt}{2ex}
+C0 & 80 m & 7.8 cm & 20.16 km & every frame\\
+\hline\rule{0pt}{2ex}
+C1 & 600 m & 58.6 cm & 21.2 km & every frame\\
+\hline\rule{0pt}{2ex}
+C2 & 4.5 km & 4.39 m & 29 km & even frames\\
+\hline\rule{0pt}{2ex}
+C3 & 45 km & 43.9 m & 110 km & frames with $k \bmod 4 = 1$\\
+\hline
+\end{longtable}
+
+\noindent
+with $t_{i} = 2r_{i}/N$ and $D_{i} = 2r_{i} + Z_{ext}$. A cascade that is not due keeps its map, and is drawn again earlier when the camera has moved more than $0.05\,r_{i}$ along any axis of its light space since it was drawn, or when the set of target vessels changed. The cascades are active while the camera's proxy body has a tile manager with elevated terrain, the camera is less than 42\,km above the ground, and the sun stands higher than $-3^{\circ}$ over the camera's horizontal.
+
+\subsubsection{Light frame and stabilisation}
+For the direction $\vec{L}$ toward the sun in the planet's frame, the light frame has the rows
+
+\[ \vec{X} = \mathrm{unit}(\vec{a} \times \vec{L}), \qquad \vec{Y} = \vec{X} \times \vec{L}, \qquad \vec{Z} = -\vec{L} \]
+
+\noindent
+with $\vec{a}$ the planet's axis, or its $x$ axis when $|\vec{a} \times \vec{L}| < 0.05$ (back above 0.1). This frame is frozen: it is defined in the planet's frame and only rebuilt when the sun has turned more than 1/2048\,rad in it, at a change of the proxy body and when the cascades become active; all cascades are drawn on such frames. Between them a shadow cast by a fixed object stays fixed on the ground, although the planet turns.\\
+With $\vec{q}$ the camera in light space ($\mat{B}$ the light frame, $\vec{c}_{p}$ the camera in the planet's frame, $\vec{q} = \mat{B}\vec{c}_{p}$), a cascade's box is snapped to whole texels,
+
+\[ m_{x} = t_{i}\,\mathrm{round}(q_{x}/t_{i}), \qquad m_{y} = t_{i}\,\mathrm{round}(q_{y}/t_{i}), \qquad z_{0} = q_{z} - r_{i} - Z_{ext} \]
+
+\noindent
+so that the camera's motion does not move the texel grid on the ground. Every frame, each cascade's own frame $\mat{B}$ and box are used again with this frame's planet rotation $\mat{R}_{p}$ and camera, to transform a camera-relative point $\vec{v}$ into box metres:
+
+\[ \vec{s} = \mat{B}\mat{R}_{p}^{T}\vec{v} + (\vec{q} - \vec{m}), \qquad \vec{m} = (m_{x}, m_{y}, z_{0}) \]
+
+\noindent
+With the tile's column $c$ and row $q$ and the tile's share of the atlas, $k_{x} = N/6144$ and $k_{y} = N/4096$, the caster matrix maps $\vec{s}$ to the clip coordinates $(k_{x}s_{x}/r_{i} + (2c + 1)k_{x} - 1,\; k_{y}s_{y}/r_{i} + 1 - (2q + 1)k_{y},\; s_{z}/D_{i})$, the tile folded into a viewport of the whole atlas, and the receiver matrix to the atlas coordinates
+
+\[ u = k_{x}\left(\frac{s_{x}}{2r_{i}} + c + \frac{1}{2}\right), \qquad v = k_{y}\left(-\frac{s_{y}}{2r_{i}} + q + \frac{1}{2}\right), \qquad z = \frac{s_{z}}{D_{i}} \]
+
+\subsubsection{Casters}
+A due cascade is cleared in its quadrant (scissored) and drawn depth only, without culling, with a slope-scaled depth bias of 1 and no constant bias. The casters are:
+
+\begin{itemize}
+\item \textbf{Terrain:} the loaded tiles of the proxy body, with this frame's tile matrices. The quadtree is walked down while all four children are loaded and their grid spacing is not finer than the cascade's cut (none in C0 and C1, 8.8\,m in C2, 88\,m in C3).
+\item \textbf{Base structures} drawn over the base tiles, visible or not, in the cascades their bounding spheres reach, except the buried ones (below) and when the base is in the dark.
+\item \textbf{Buildings and trees} in C0 to C2. Trees are drawn as their meshes (with the wind sway) up to 350 to 450\,m from the camera in C0 and 150 to 200\,m in C1, the threshold picked per tree so that the two kinds meet without a line, and beyond as cards facing the sun at the depth of the crown, cut to the crown's outline; C2 takes the cards only.
+\item \textbf{Vessels} (except the target vessels) whose bounding sphere reaches the box and is not smaller than half a texel, with every mesh group except those flagged as casting no shadow (0x1) or hidden (0x2). glTF groups with transmission are left out, and glTF groups with the alpha modes MASK and BLEND are alpha-tested (at the cutoff, or 0.5 for BLEND); legacy groups are alpha-tested against their texture (at 0.75) only with the flag 0x20, and all other legacy groups, transparent ones included, cast as opaque.
+\end{itemize}
+
+
+\subsubsection{Receivers: offset and bias}
+Every lit shader of the scene (terrain, base tiles, vessel and building meshes, trees) multiplies its sun light by the visibility $V(\vec{p}, \vec{n})$ of the cascades, or takes the smaller of $V$ and its legacy shadow. Let $\vec{n}$ be the geometric normal and $\cos\theta = \vec{n} \cdot \vec{L}$; surfaces with $\cos\theta < -0.05$ are dark already and return 1. The point is first moved along the normal by one texel times the sine of the light's angle \cite{holbert2011},
+
+\[ \vec{p}_{o} = \vec{p} + \vec{n}\,t_{i}\sin\theta \]
+
+\noindent
+and transformed to $(u, v, z)$. The receiver's plane is then followed across the filter instead of a constant slope bias \cite{isidoro2006}. With $k = 4096\,t_{i}$ the metres per atlas unit, the plane's depth gradient is
+
+\[ \vec{g} = \left( \frac{n_{x} k}{D_{i}\max(\cos\theta, 0.2)},\; -\frac{n_{y} k}{D_{i}\max(\cos\theta, 0.2)} \right) \]
+
+\noindent
+($n_{x}, n_{y}$ in the light frame), and each texel $\vec{c}_{j}$ of a gather is compared at its own centre,
+
+\[ z_{j} = z + \vec{g} \cdot (\vec{c}_{j} - (u, v)) - \varepsilon \]
+
+\noindent
+The gradient is computed from the normal, not from screen derivatives, since neighbouring pixels may use different cascades. Its slope is capped at $\cos\theta = 0.2$; the slope the cap leaves out goes into the constant bias
+
+\[ \varepsilon = \frac{1}{D_{i}} \left( 0.25\,t_{i}k_{b} + z_{b} + k_{t}b_{i} + 1.5\,t_{i} \max\left(\min\left(\tan\theta, 50\right) - \tan\theta_{c}, 0\right) \right), \qquad \tan\theta_{c} = \sqrt{24} \]
+
+\noindent
+with $\tan\theta = \sin\theta/\max(\cos\theta, 0.02)$; $k_{b} = 3$ on vessel meshes that also take the legacy vessel shadow map and 1 elsewhere; $z_{b}$ half the tree's height for trees (a crown does not shadow itself); and $k_{t} = 1$ for terrain, base tiles and legacy base meshes (0 for glTF meshes), with $b_{i}$ = 0.2, 0.5, 2 and 20\,m for the coarser terrain the cascades draw.
+
+\subsubsection{Blocker search and filtering}
+A texel rotation $\varphi = 2\pi\xi$ is taken per pixel. With TAA it moves with the frame, which the resolve averages; otherwise it is the noise of the texel's index on the ground, in world texels modulo 4096, so the pattern stays on the ground as the boxes snap. Glass, exhausts and other meshes drawn after the resolve use the ground pattern too.\\
+\textbf{Blockers.} Five 2 $\times$ 2 gathers, at the centre and at four points of a best-candidate disk \cite{mitchell1991} at a radius of 4 texels, compare 20 texels against the receiver's plane. Without a blocker the point is lit. Otherwise the mean blocker depth $\bar{z}_{b}$ gives the penumbra width in metres \cite{fernando2005}
+
+\[ w = \max(z - \bar{z}_{b}, 0)\, D_{i}\, 2\tan\omega_{\odot}, \qquad 2\tan\omega_{\odot} = \frac{2R_{\odot}}{\sqrt{d_{\odot}^{2} - R_{\odot}^{2}}} \]
+
+\noindent
+($R_{\odot}$ the sun's radius, $d_{\odot}$ its distance; about 0.0093 at the Earth), and the filter radius in texels $R = w/(2t_{i})$. When all 20 texels block and $R \le 4$, the point is in the umbra.\\
+\textbf{Filter.} The percentage-closer filter of radius $\min(R, 4)$ takes eight bilinear 2 $\times$ 2 compares on the rotated disk of radius $\max(R, 1)$ texels: a penumbra narrower than a texel still gets a smooth edge instead of the texel steps that a single bilinear compare leaves.\\
+\textbf{Hand-over.} A far caster's penumbra can be wider than four texels of the cascade. Then the filter goes on in the next, coarser cascade $j+1$ with the radius $\min(w/(2t_{j+1}), 4)$ (at least one texel, as above), and on again while that is over 4 (up to C3); each step $j$ is blended in by $h_{j} = S(4, 8, w/(2t_{j}))$, from the coarsest back to the finest:
+
+\[ V = \mathrm{mix}\left(V_{i},\, \mathrm{mix}(V_{i+1},\, \mathrm{mix}(V_{i+2}, \ldots, h_{i+2}),\, h_{i+1}),\, h_{i}\right) \]
+
+\noindent
+The kernel's width in metres is continuous in $w$ and never wider than four texels of C3.
+
+\subsubsection{Target tile}
+Near the camera a vessel's penumbra is a few centimetres wide, much less than a texel of C0. The camera's target vessel (or else the focus vessel) and up to seven vessels that touch it (bounding spheres overlapping, none larger than 80\,m) are therefore drawn every frame into their own tile, at their own texel, and left out of the cascades. The tile is fitted in the same frozen light frame to the corners of the vessels' boxes: with $e$ half the larger side of their extent across the light, $h_{max}$ the highest box corner over the ground and $\epsilon$ the sun's elevation,
+
+\[ t_{raw} = \max\left(\frac{e}{N/2 - 8},\; \frac{w_{max}}{8},\; 0.005\,\mathrm{m}\right), \qquad w_{max} = \frac{h_{max}}{\max(\sin\epsilon, 0.05)}\,2\tan\omega_{\odot} \]
+
+\noindent
+so that the vessels fit with a margin of 8 texels and their widest penumbra on the ground is at most four texels. The texel is rounded up to quarter octaves, $t = 2^{\lceil 4\log_{2}t_{raw}\rceil/4}$, and kept at the previous, finer step until $t_{raw}$ falls below 0.97 of it, so that a still vessel keeps its texel grid; the box centre is snapped to $t$, and the depth range runs from 1\,m before the nearest corner to 3\,m after the farthest. The tile is used while $t$ is finer than C0's texel and the vessel's shadow lands within the range of the projected shadows (below). A receiver inside the tile takes $V = \min(V_{cascades}, V_{tile})$, with the same filter and no terrain bias; the tile's cleared depth counts as no caster, since the ground lies beyond its depth range.
+
+\subsubsection{Cascade selection and fades}
+A point at the distance $d$ from the camera uses the first cascade with $d < 0.94\,r_{i}$, and blends into the next one by $b = S(0.80\,r_{i}, 0.94\,r_{i}, d)$; with TAA one cascade is taken per pixel, the next one where $b > \xi$, and the resolve does the blend. The cascades fade out into the terrain's horizon shadows,
+
+\[ V \leftarrow \mathrm{mix}\left(1, V, 1 - S(30\,\mathrm{km}, 42\,\mathrm{km}, d)\right) \]
+
+\noindent
+The cascades receive from the start of the main pass to the cockpit; custom cameras, environment maps and the cockpit interior do not receive.
+
+\subsubsection{Legacy ground shadows and buried structures}
+Vessels and base structures also have the legacy projected (stencil) shadows on a plane under them. A vessel's projected shadow is left out while the cascades or the target tile draw its shadow. A target vessel's shadow is in the tile while it is on; for the others, the shadow falls at $\vec{c} - \vec{L}\,h/\max(\sin\epsilon, 0.07)$ for a vessel at the height $h$ and the sun elevation $\epsilon$; that point must be within 30\,km (and $h/\max(\sin\epsilon,0.07) < 16$\,km), in the first cascade whose $0.94\,r_{i}$ holds it with the vessel's radius $\rho$, and $\rho$ must be at least half a texel of it.\\
+The core merges a base's generic objects into a few meshes, and the projected shadow of a large merged mesh lies on one plane at the height of the base's reference point. Where the streamed terrain is higher than that plane, objects can stand under the ground while their shadows are drawn over it. Two rules, which apply with the cascades on and off, prevent this:
+
+\begin{itemize}
+\item A separately meshed structure whose top lies under the loaded terrain at the four top corners and the centre of its box is buried: it casts neither a cascade shadow nor a projected one. The test runs once a second (real time).
+\item Each vertex of a projected shadow is moved toward the camera along its view ray by $\delta = \min(2\,\mathrm{m}/\max(\sin\beta, 0.01),\, d/2)$, $\beta$ the angle between the ray and the plane, which lifts it 2\,m over the plane without moving it on the screen, and the shadow is depth tested against the terrain (not written). Ground up to 2\,m over the plane still takes the shadow; terrain higher than that hides it.
+\end{itemize}
+
+
+
+\subsection{Screen-space reflections}\label{sec:vk_ssr}
+\textit{SSR}; sources SceneSsr.h/.cpp, SsrMath.h/.cpp, shaders/Ssr.glsl (the trace every host shares), shaders/HiZ.glsl (the capture). Surfaces trace their reflection ray over an image of the scene and its depth pyramid \cite{uludag2014}; a hit replaces the surface's sky or environment-map reflection. The tracing follows McGuire and Mara \cite{mcguire2014}; every surface traces its mirror ray, and rough surfaces read a blurred level of the captured image along a cone instead of sampling their lobe \cite{uludag2014}.
+
+\subsubsection{Capture}
+After the TAA resolve, the client copies the resolved (unjittered) image into a 16-bit float texture with a full mip chain, and builds a pyramid of the inverse view depth from the scene distance:
+
+\[ Z^{(0)}(\vec{x}) = \frac{1}{d\,(\hat{\vec{r}} \cdot \vec{Z})} \;(0 \mathrm{\ where\ nothing\ is\ drawn}), \qquad Z^{(k)}(\vec{x}) = \max_{2 \times 2} Z^{(k-1)} \]
+
+\noindent
+with $L = \min(9, \lfloor\log_{2}\max(W,H)\rfloor + 1)$ levels on a size padded to a multiple of $2^{L-1}$, so that each level is an exact half. The maximum of $1/z$ is the nearest surface in a cell. Since the capture comes after the opaque scene is finished, the surfaces drawn in the opaque pass trace the previous frame's capture: their ray is projected with the previous view and the drawn body's rigid motion of section \ref{sec:vk_taa}, so a reflection moves with the reflecting surface. Surfaces drawn after the capture in the same frame (the transparent glTF groups) trace the current one. The capture is dropped, and nothing is traced, after a change of proxy body, focus, target or camera mode, a frame without a capture, or a camera jump (more than 1\,km plus twice the previous frame's motion in the body's frame, or a turn of more than 45$^{\circ}$).
+
+\subsubsection{Fog removal}
+When the height fog (section \ref{sec:vk_fog}) was drawn into the captured image, its over-blend $c' = c(1 - a) + \vec{f}$ is undone with the fog composite's own depth-aware weights before the capture,
+
+\[ c = \frac{\max(c' - \vec{f}, 0)}{\max(1 - a, 0.05)} \]
+
+\noindent
+blended back toward $c'$ over $a$ = 0.75 to 0.95, so the fog is applied once, at the reflecting pixel.
+
+\subsubsection{Ray}
+On meshes and base tiles the geometric normal $\vec{n}_{g}$ is the normal of the drawn triangle, the plane the scene distance holds, taken from the screen derivatives of the camera-relative position, $\vec{n}_{g} = \pm\,\mathrm{unit}(\partial_{x}\vec{p} \times \partial_{y}\vec{p})$ turned toward the camera (the vertex normal where the cross product vanishes); a smooth vertex normal on a coarse mesh would put the start inside the drawn face at grazing views. On water it is the planet's surface normal. The start point is lifted off its surface by 1.5 pixel angles times its distance along $\vec{n}_{g}$, which clears the depth error of a pixel centre. The direction is the mirror ray $\vec{R} = \mathrm{reflect}(-\vec{V}, \vec{n})$ for every roughness: a single sample of the lobe per pixel, averaged only by TAA, would leave a visible checker of hits and misses on rough metal. Normal maps and waves can point the ray into the surface; it is bent to at least 0.01 above $\vec{n}_{g}$.\\
+The ray from $\vec{P}$ is projected to the screen as a segment from $\vec{X}_{0}$ to $\vec{X}_{1}$, its far end $10^{6}$\,m away, or on the near plane ($w$ = 0.1\,m) for a ray toward the camera; along the segment $s = 1/w$ varies linearly in the segment parameter $t$, which keeps the march perspective correct \cite{mcguire2014}. The segment is clipped to the screen.
+
+\subsubsection{Hierarchical march}
+The walk starts at level 1, one pixel along the segment, and makes at most 48 iterations. In the cell of size $2^{\ell}$ at the current $t$, with $Z_{c}$ the cell's value and $t_{x}$ the segment's exit from the cell:
+
+\begin{itemize}
+\item if the segment through the cell is in front of everything in it, $\min(s(t), s(t_{x})) > Z_{c}$, the walk moves to $t_{x}$ and one level up;
+\item otherwise, above level 0, it moves (for a ray going away from the camera) to the depth of the cell's nearest surface, $s(t) = Z_{c}$, and one level down;
+\item at level 0 it is a hit when the ray's far end in the cell is within the thickness of the surface,
+
+\[ \frac{1}{\max(s(t), s(t_{x}))} \le z_{s} + \tau_{0} + \tau_{r} z_{s}, \qquad z_{s} = \frac{1}{Z_{c}}, \quad \tau_{0} = 0.25\,\mathrm{m}, \quad \tau_{r} = 0.015 \]
+
+and otherwise the ray passes behind a thin object and goes on.
+\end{itemize}
+
+\noindent
+When the iterations run out before the end of the segment, mostly on a ray that grazes the surface it leaves (water seen from a few metres up, where every coarse cell holds a nearer row of water), 16 samples of level 0, at the centres of 16 equal parts of the rest of the segment, finish it with the same thickness test. Every segment thus ends in a hit or at its end, where the sky lookup below takes over.\\
+The pyramid holds one depth layer; back faces of an object are taken as hits. A hit's confidence is
+
+\[ \kappa = \left(1 - S(0.20, 0.36, \alpha)\right) S(0, 0.06, e_{u}\tfrac{W}{H})\, S(0, 0.06, e_{v}) \]
+
+\noindent
+with the distances $e_{u}, e_{v}$ of the hit to the nearest screen edges in $u$ and $v$: rough surfaces and screen edges fade out. The colour is read at the mip level $\log_{2}\max(1, t L \alpha)$ of the captured image, $L$ the segment's length in pixels: a cone along the ray, which stands in for the spread of a rough surface's lobe \cite{uludag2014}.\\
+When the walk reaches the end of an unclipped segment, the ray goes to the sky. If the screen point of its direction at infinity is on the screen and nothing is drawn there, that sky pixel is used with the sky weight (planet water: $1 - S(3\,\mathrm{km}, 12\,\mathrm{km}, h)$ at the camera height $h$; meshes: 1; 0 with the planetarium on).
+
+\subsubsection{Hosts}
+The captured values are display values. A planet's water inverts its own curve at the exposure the image was captured with ($y$ clamped at 0.985) and scales to this frame's exposure; meshes subtract the haze and invert their curve, $x = T^{-1}((y - \vec{I})/\vec{A})/e$. Finite hits lose the haze between the camera and the reflecting water, which the water's own haze adds again.
+
+\begin{itemize}
+\item \textbf{Water} (planet shader): the traced radiance $c_{h}$ replaces the sky reflection, $c_{rfl} \leftarrow \mathrm{mix}(c_{rfl},\, F c_{h},\, \kappa)$, with the water's Fresnel factor $F$ (the legacy water's term, or with \textit{WaterFx} Schlick's approximation \cite{schlick1994} with $F_{0}$ = 0.02 on $\vec{V}\cdot\vec{n}$) and a lobe $\alpha$ of 0.35 times the water's specular roughness; it is traced only where $0.75\,F\,(1 - S(0.20, 0.36, \alpha)) \ge 0.01$, and up to 30\,km of camera height.
+\item \textbf{Vessels} (legacy, Metalness and glTF meshes): the hit replaces the environment map's reflection with its own weight, $c_{env} \leftarrow \mathrm{mix}(c_{env}, c_{h}, \kappa)$; glTF materials trace the specular lobe, or the clear coat when that is the smoother lobe. A vessel traces only where its shader reads its environment map (environment maps on, a reflective material with a reflected share of at least 0.01); elsewhere nothing is traced.
+\item \textbf{Base surfaces} (tiles and the flat structures on them) have no reflection of their own. They are taken as dry ground ($\alpha$ = 0.30, $F_{0}$ = 0.04) and blended toward the hit by the split-sum directional albedo \cite{karis2014mobile} $F_{env}(F_{0}, \sqrt{\alpha}, \vec{n}\cdot\vec{V})$ times $\kappa$; where $F_{env}$ times the roughness fade is under 0.03, which for dry ground means all but grazing views, nothing is traced.
+\end{itemize}
+
+
+
+\subsection{Screen-space global illumination}\label{sec:vk_ssgi}
+\textit{SSGI}, \textit{SSGIStrength} (0 to 2, default 1); sources SceneFxGi.cpp, SsgiMath.h/.cpp, shaders/SSGI.glsl. One diffuse bounce of the lit opaque scene is gathered on the screen \cite{ritschel2009}: horizon slices through the view vector as in GTAO \cite{jimenez2016}, each with a bitmask of 32 occluded sectors \cite{therrien2023}. It runs while the camera is less than 20\,km above the ground or a vessel is within 2\,km.
+
+\subsubsection{Buffers}
+The scene distance pass writes two more targets while SSGI runs: the albedo $\rho/4$ (10 bits a channel) with the shader family of the surface (legacy, Metalness, glTF, base tile), and the normal in octahedral form \cite{cigolle2014} with the class of the surface (terrain, tree, base or building, vessel). The lit opaque scene is copied after the volume cloud shadows, before the fog and the clouds.
+
+\subsubsection{Senders}
+At half resolution, each texel converts the 2 $\times$ 2 full-resolution pixels within 2\,\% of its distance from display values back to exposed radiance, inverting the display curve of their class and family and taking off the haze (see the conventions above):
+
+\[ v = \left\{ \begin{array}{ll}
+\left(T_{w}^{-1}(y) - \mathrm{Expo}\,\vec{I}_{raw}\right)/(\vec{A}\,s_{T}) & \mathrm{terrain\ with\ an\ atmosphere}\\
+T_{w}^{-1}((y - \vec{I})/\vec{A})/s_{tree} & \mathrm{trees}\\
+T_{m}^{-1}((y - \vec{I})/\vec{A}) & \mathrm{Metalness\ and\ glTF\ meshes}\\
+(y - \vec{I})/\vec{A} & \mathrm{legacy\ meshes\ and\ base\ tiles}
+\end{array} \right. \]
+
+\noindent
+($s_{T}$ and $s_{tree}$ the planet's and the trees' exposure constants over $e$; airless terrain inverts $T_{a}$). To keep a single over-exposed pixel from lighting its neighbours, each sender is capped by what its albedo and its light allow, $v \le 1.5\,e\,\rho\,(2\vec{E}_{\odot} + \vec{E}_{amb} + 0.5\,\nu)$ with the sun and ambient light at the point and the weight $\nu$ of the night lights, and by 3. Two linear halvings give quarter and eighth resolution versions.
+
+\subsubsection{Slices and visibility bitmask}
+Each half-resolution receiver at $\vec{P}$ with the normal $\vec{N}$ and the view vector $\vec{V}$ takes two slices at the angles $\phi_{k} = (k + \xi)\pi/2$ on the screen, each with eight samples on both sides at the offsets $o_{j} = R_{px}\,t_{j}^{2} + 1$ (half-resolution pixels), $t_{j} = (j + \xi')/8$. The radius is
+
+\[ R = \max(25\,\mathrm{m}, 0.06\,d), \qquad R_{px} = \mathrm{clamp}\left(\frac{R\,H_{2}}{2d\tan\alpha_{y}}, 4, 0.35\,H_{2}\right) \]
+
+\noindent
+($H_{2}$ the half-resolution height). The clamp limits only how far the samples reach on the screen; the sender falloff below keeps the world radius $R$, so that sunlit ground a few metres from a close hull still counts. In a slice with the tangent $\vec{T}$ and the normal's projection $\vec{n}_{p}$ into the slice, at the angle $\gamma$ from $\vec{V}$, the cosine-weighted measure of an angle $\vartheta$ from $\vec{V}$ is $\mu(\vartheta) = \cos(\vartheta - \gamma)|\sin\vartheta|$ on $[\gamma - \pi/2, \gamma + \pi/2]$, with the total $M = \cos\gamma + \gamma\sin\gamma$. The 32 sectors are uniform in its integral $F(\vartheta)/M$, so each sector carries the same weight. A sample at $\vec{S}$ covers the sectors between its front $\vec{S} - \vec{P}$ and its back $\vec{S} + \tau\hat{\vec{r}}_{S} - \vec{P}$, with the thickness $\tau$ of the sender's class (terrain solid; trees 4\,m; bases and buildings $\max(1\,\mathrm{m}, 0.01d)$; vessels $\max(0.5\,\mathrm{m}, 0.005d)$):
+
+\[ i_{0,1} = \left\lfloor 32\,F(\vartheta_{front,back})/M + \eta \right\rfloor \]
+
+\noindent
+where $\eta$ is a dither of the sector edges per slice, which keeps thin rims from being lost by rounding. Only the sectors not yet occluded in the slice add light:
+
+\[ E = \frac{1}{2} \sum_{k=1}^{2} |\vec{n}_{p}|\,\frac{M_{k}}{32} \sum_{\mathrm{samples}} n_{new}\, f_{face}\, f_{fall} \max(v_{S} - v_{amb}, 0) \]
+
+\noindent
+with $n_{new}$ the number of newly covered sectors, $f_{face} = S(-0.05, 0.25, \vec{n}_{S}\cdot(\vec{P} - \vec{S})/|\vec{P} - \vec{S}|)$ the sender facing the receiver, $f_{fall} = 1 - S(0.6R, R, |\vec{S} - \vec{P}|)$ with the unclamped $R$, and the sender radiance $v_{S}$ read at the resolution that matches the sample spacing. $v_{amb}$ is the ambient light the receiver's shader gives already (the terrain's ambient term, or the sky ambient of meshes), times $e$, so that only the excess over it is added. $E$ is the bounce irradiance over $\pi$: a uniform radiance $v$ over the hemisphere gives $E = v$. Samples on the receiver's own plane ($|(\vec{S} - \vec{P})\cdot\vec{N}| < 0.003d + 0.02$\,m) are skipped.\\
+Vessels lit by irradiance probes (Metalness and glTF meshes) hold part of a sender already when their probe draws it: the terrain and the trees with environment maps on, the base structures with the \textit{Full Scene} reflection mode, never vessels. For them $v_{amb}$ in a sector is $\max(v_{amb}, k\,e\,y_{S})$, $y_{S}$ the sender's display value, with $k = 0.7\,g\,\bar{w} \approx 0.61\,g$ for the Metalness probe ($g$ the Planet glow setting, $\bar{w}$ the mean weight of the probe's integration kernel; $k = 0$ without irradiance maps) and $k = 1$ for the glTF image-based light, the cosine mean of the environment cube. The probe sees a sender at its display value, which the display curves compress, so a sunlit apron still lights a hull above it, and what the probe holds is not counted twice.
+
+\subsubsection{Filters}
+Two separable 9-tap blurs weight by $e^{-i^{2}/8}$, by the distance, $\exp(-|d_{i} - d|/(0.02d + 0.05\,\mathrm{m}))$, and by $(\vec{n}\cdot\vec{n}_{i})^{8}$. The temporal filter reprojects each point with the rigid motions of section \ref{sec:vk_taa} into the previous frame, accepts the history where its stored distance agrees within $0.03d + 0.2$\,m, rescales it by $e/e'$ for the exposure change, and blends
+
+\[ E \leftarrow \mathrm{mix}(E_{hist},\, E,\, \alpha), \qquad \alpha = 0.08 \;(0.25 \mathrm{\ for\ a\ motion\ over\ one\ half\mbox{-}resolution\ pixel}) \]
+
+\subsubsection{Composite}
+At full resolution, $E$ is up-sampled with bilinear, distance and normal weights, scaled by the strength and faded by $1 - S(15\,\mathrm{km}, 25\,\mathrm{km}, d)$, and added to the image through the receiver's own curve, so that the increment is what the shader would have shown with the extra light $\rho E$:
+
+\[ \Delta y = T\left(T^{-1}(y) + s\,\vec{A}\,\rho E\right) - T\left(T^{-1}(y)\right) \]
+
+\noindent
+for terrain ($s = s_{T}$) and trees, with the haze in or around the curve as each draws it. Metalness meshes add lights in quadrature and glTF meshes in linear light shown through sRGB; the client inverts those steps too. Legacy meshes and base tiles clamp their light at 1: $\Delta y = \vec{A}\min(\rho E, \max(e\rho - q, 0))$ with $q = (y - \vec{I})/\vec{A}$. The increment is never negative.
+
+
+
+\subsection{Volumetric plumes, smoke and re-entry plasma}\label{sec:vk_plume}
+\textit{VolPlumes}; sources PostPlume.h/.cpp, PlumeMath.h/.cpp, shaders/Plume.glsl, and Particle.cpp with shaders/SoftParticle.glsl for the soft billboards; per-class settings in Config/GC/Plume/\textit{class}.cfg. Engine exhausts become emitting and absorbing volumes, the diffuse particle streams (smoke, steam) and the ground clouds under a launch become lit puffs, and vessels in re-entry get a shock layer of glowing plasma. All three are drawn at half resolution after the TAA resolve and composited with the scene, the fog and the volume clouds. An exhaust smaller than 1 pixel stays the legacy flame; between 1 and 3 pixels of exit radius the two cross-fade, $w = S(1, 3, r_{px})$.
+
+\subsubsection{Nozzle}
+The thrust model of Orbiter, $F(p) = F_{0}(1 - \phi\,p/p_{SL})$ with $\phi = 1 - I_{sp}(p_{SL})/I_{sp,0}$, is read as the pressure term of a nozzle, $A_{e}p$, which gives the exit area and radius
+
+\[ A_{e} = \frac{F_{0}\phi}{p_{SL}}, \qquad r_{e} = \mathrm{clamp}\left(\sqrt{A_{e}/\pi},\, 0.3\,w_{s},\, 1.5\,w_{s}\right) \]
+
+\noindent
+($w_{s}$ the exhaust's width in its specification); without a pressure loss ($\phi \le 0.02$) $r_{e} = 0.6\,w_{s}$, and in the texture class (below) $r_{e} = 0.8\,w_{s}$, the legacy flame's half-width. The exit pressure is estimated from the share of the pressure term in an ideal nozzle, $p_{e} = \mathrm{clamp}(0.05\,p_{SL}/\phi,\, 3\,\mathrm{kPa},\, 120\,\mathrm{kPa})$; without a pressure loss it is 40\,kPa for $F_{0} > 300$\,kN and 8\,kPa below. The propellant class follows from $I_{sp,0}$ (m/s): over 4000 hydrolox, over 3450 methalox, over 2900 kerolox, below that solid; under 50\,kN and below 3500 hypergolic; outside 2300 to 5000, or without a thruster, the exhaust's own texture is kept ("texture" class). A class file may set the class and $p_{e}$ per exhaust, thruster group or index range. Each class has a palette: the core and shock colours (blackbodies of 2100\,K for kerolox soot and 2600\,K for alumina \cite{wyman2013}), soot, scattering and albedo, and a smoke tail.
+
+\subsubsection{Jet state}
+With $\gamma = 1.2$ and a chamber pressure $p_{c}$ = 7\,MPa, the isentropic relations \cite{anderson2003} give the exit Mach number $M_{e}$ from $p_{c}/p_{e}$ and the fully expanded Mach number $M_{j}$ from $p_{c}/\max(p_{a}, 0.01p_{e})$ at the ambient pressure $p_{a}$. Then
+
+\[ w_{atm} = S\left(0.03, 0.3, \frac{p_{a}}{p_{e}}\right), \qquad r_{j} = \sqrt{\frac{A(M_{j})}{A(M_{e})}} \]
+
+\[ L_{s} = 1.306\sqrt{M_{j}^{2} - 1}\cdot 2r_{j}, \qquad \theta_{\infty} = \nu_{max} - \nu(M_{e}) \]
+
+\noindent
+in exit radii: $w_{atm}$ blends the jet in air ($w_{atm} = 1$) into the vacuum plume, $r_{j}$ is the fully expanded jet radius from the area ratio $A/A^{*}$, $L_{s}$ the shock cell length of Pack \cite{pack1950}, and $\theta_{\infty}$ the limiting turning angle of the Prandtl-Meyer expansion (at least 0.05\,rad). A Mach disk stands at $0.55\,L_{s}$ when the jet is strongly over- or under-expanded ($p_{e}/p_{a} < 0.4$ or $> 4$). The visible length is $L = l_{s}(0.4 + 0.6\lambda)(1 + 1.5(1 - w_{atm}))$ for the exhaust length $l_{s}$ and the thrust level $\lambda$.
+
+\subsubsection{Plume field}
+At a point with the axial distance $x$ and the radial distance $r$ from the nozzle exit, the jet's radius is
+
+\begin{align*}
+R(x) = r_{e}\Big[ & r_{j} + (1 - r_{j})e^{-\hat{x}/(0.5L_{s})} + 0.06\,r_{j}\sin\frac{2\pi\hat{x}}{L_{s}}\,e^{-\hat{x}/(4L_{s})} \\
+& + 0.094\max(0, \hat{x} - 4L_{s}) \Big], \qquad \hat{x} = x/r_{e}
+\end{align*}
+
+\noindent
+the expansion to $r_{j}$, the breathing of the shock cells, and beyond four cells the spreading of a turbulent jet \cite{pope2000}. The densities of the jet and of the vacuum plume (Simons \cite{simons1972}, $\cos^{2/(\gamma-1)} = \cos^{10}$) are
+
+\[ \rho_{J} = a(x)\,e^{-(r/R)^{4}}, \qquad \rho_{V} = \cos^{10}\left(\min\left(\frac{\pi\theta}{2\theta_{\infty}}, \frac{\pi}{2}\right)\right) \frac{1}{(1 + d/r_{e})^{2}} \left(1 - S(0.6L, L, d)\right) \]
+
+\noindent
+with $a(x) = 1 - S(0.85L, 1.15L, x)$, $d$ the distance from the exit and $\theta$ the angle off the axis; $\rho = \mathrm{mix}(\rho_{V}, \rho_{J}, w_{atm})$, eroded by a scrolling 3D noise toward the edge and downstream. The emission, extinction and lit source are
+
+\[ \vec{E} = \vec{c}_{core} I \rho\, e^{-x/(k_{L}L)}\, N + \vec{E}_{diamonds} + \vec{E}_{disk} + \vec{E}_{glow} \]
+
+\[ \sigma = \frac{(k_{soot}(0.3 + 0.7S(0.5, 1, r/R)) + k_{s})\rho}{1.8R}\min(4I, 1) \]
+
+\[ \vec{Q} = \left(\tfrac{1}{2}\vec{C}_{\odot}\,4\pi\,\mathrm{HG}(\hat{\vec{r}}\cdot\vec{L}, 0.5) + \vec{C}_{amb}\right) a_{s}\frac{k_{s}\rho}{1.8R}\min(4I, 1) \]
+
+\noindent
+with the normalisation $N = \mathrm{mix}(1/(2r_{e}), 1/(1.8R), S(0.3, 0.7, w_{atm}))$, the intensity $I = \lambda(1 - m\,n(t))\,w$ ($m$ the exhaust's flicker modulation, $n$ a smooth value noise in time), and the light $\vec{C}_{\odot}$, $\vec{C}_{amb}$ at the vessel times $e$. The shock diamonds are bright where $|2\,\mathrm{fract}(\hat{x}/L_{s}) - 1| + r/R$ is small, fading over four cells; the Mach disk is a thin Gaussian disk at its distance; the nozzle glows when seen from behind. The texture class takes its colour from the exhaust's own texture, with the legacy mapping. In air, a smoke tail continues beyond $0.7L$ to $4L$, self-shadowed along the chord toward the sun, and where the plume hits the ground (within $2.5L$ of the nozzle along the axis, the axis pointing more than 11.5$^{\circ}$ below the horizontal) a wall jet spreads along the plane. Low over the ground in air, the impact also emits ground-cloud puffs at a rate of $6\sqrt{F_{0}\lambda n_{e}/1\,\mathrm{MN}}$ per second for $n_{e}$ engines, which move with the wind, rise at 3\,m/s, grow by 3\,m/s and live 30\,s.\\
+Parallel nozzles of one vessel and class that touch, or that are below 3 pixels and within three radii, are merged into one plume with an envelope; while more than 32 remain, the nearest pairs are merged. The 32 largest plumes on the screen are kept; the rest are drawn as legacy flames.
+
+\subsubsection{Re-entry plasma}
+A vessel in an atmosphere, with or without a re-entry particle stream, glows with the intensity
+
+\[ I = S(6, 7, \log_{10}(qV))\; S(3000\,\mathrm{m/s}, 6000\,\mathrm{m/s}, V) \]
+
+\noindent
+of the free-stream energy flux $qV$ (dynamic pressure times airspeed, in W/m$^{2}$), and a colour from a table of airspeed, from orange at 5\,km/s to violet at 12\,km/s; in atmospheres other than air (gas constant more than 15\,\% from 287\,J/(kg\,K)) a fixed violet. While the plasma runs, the legacy re-entry billboard is not drawn for any vessel: below the plasma's onset (under about 3\,km/s) only the hull glow shows (section \ref{sec:vk_heat}). For the two largest vessels on the screen (a radius of at least 48 pixels) the hull is drawn twice into flow maps of 128 $\times$ 128, orthographic along the airflow from the front and from behind. From them, each texel holds the windward and the leeward surface distances $z_{s}, z_{b}$ and the Newtonian windward weight $w = (\vec{n}\cdot\vec{f})^{2} = 1/(1 + |\nabla z_{s}|^{2})$ \cite{lees1955}; a reduction gives the stagnation point and the frontal area, and a blur the halo's shape. Other vessels use their hull box as an ellipsoid. Where the view ray crosses the windward surface, the shock layer adds
+
+\[ \vec{L}_{band} = 3\,\vec{c}\,I f \sqrt{w}\,\left(\frac{\max(l, l_{f})}{l_{f}}\right)^{-1/2} b(l)\, \min\left(\frac{1}{|\hat{\vec{r}}\cdot\vec{n}|}, 8\right) \]
+
+\noindent
+for the windward face's normal $\vec{n}$ (from the flow map's depth gradient, one-sided at the outline): a thin layer along the face, brighter toward the limb. A ray that ends on the hull gets the layer only where the face it hits, with the normal from the scene distance, looks into the oncoming air, $c_{n} = -\vec{n}\cdot\vec{f} \ge 0.1$, and the flow map sees it as the windward surface within $(1 + 1.5\tan\theta_{n})$ times a map texel plus a pixel ($\theta_{n}$ the face's angle to the flow, $\tan\theta_{n} \le 10$); then $w = c_{n}^{2}$. Lee and side faces stay dark. Here $l$ is the running length from the stagnation point, $l_{f} = 0.1R_{n}$ for a nose radius estimated from the frontal area $A_{f}$, $R_{n} = \mathrm{clamp}(0.25\sqrt{A_{f}/\pi}, 0.3\,\mathrm{m}, 3\,\mathrm{m})$, the laminar fall-off $l^{-1/2}$, a smooth front edge $b(l)$, and a flicker $f$ of $\pm$20\,\% at 3 to 6\,Hz. The march adds a halo in front of the windward surface, $\exp(-(z_{s} - z)/\lambda_{h})/(1.25\lambda_{h})$ upstream of it and four times shallower behind it, so that it does not soak through thin wings to the lee side ($\lambda_{h} = 0.08R_{b}$ for the hull's bounding radius $R_{b}$, at least 1.5 half-resolution pixels, the intensity lowered as it is widened), and a base wake behind the leeward side that widens with the Mach angle $\tan\mu = \tan\arcsin(1/M)$ and decays over the base diameter.
+
+
+\subsubsection{March}
+Each plume and plasma vessel is bounded by a capsule. A half-resolution pixel's ray keeps the eight nearest capsules it enters, clipped to [0.05\,m, scene distance] (the nearest of the four full-resolution distances under the pixel), and cuts the ray at all their entries and exits. Each interval gets $\mathrm{clamp}(\Delta/\Delta_{s}, 1, 24)$ steps for the finest step $\Delta_{s}$ of the primitives in it (for a plume $\max(0.6r_{e}, L/40)$ in air, $\max(0.1\,\mathrm{m}, L/10)$ in vacuum), scaled down when the ray would take more than 48. The step offset is $\xi$ of the pixel, without a frame term, so the plumes do not crawl. Each step of length $\Delta t$ integrates the emission and the lit source over the step \cite{hillaire2015}:
+
+\[ \vec{L} \leftarrow \vec{L} + T\,\frac{(\vec{E} + \vec{Q})\,\vec{T}_{h}(1 - e^{-\sigma\Delta t})}{\sigma} + T\,(1 - e^{-\sigma\Delta t})\,\vec{I}_{h}, \qquad T \leftarrow T e^{-\sigma\Delta t} \]
+
+\noindent
+($\vec{E}\,\Delta t$ when $\sigma\Delta t$ is tiny), the sum over the primitives at the point. $\vec{T}_{h}$ and $\vec{I}_{h}$ are the haze's transmittance and in-scatter at the vessel, combined with the fog: with the fog's transmittance $T_{f}$ from the camera to the plume's middle (section \ref{sec:vk_fog}) and the colour $\vec{f}$ of the fog layer at the pixel, $\vec{T}_{h} \leftarrow \vec{T}_{h}T_{f}$ and $\vec{I}_{h} \leftarrow \vec{I}_{h}T_{f} + \vec{f}(1 - T_{f})$: the plume's light is dimmed by the fog in front of it, and its opacity hides the fog behind it. A volume cloud nearer than the plume's mean distance covers it by the cloud's opacity. Without post-processing the result goes through the vessels' curve $T_{m}$. A second target keeps the plume's transmittance-weighted mean distance for a 3 $\times$ 3 blur weighted by $\exp(-|a - b|/(0.03\min(a,b) + 0.5\,\mathrm{m}))$ on both distances.
+
+\subsubsection{Smoke and steam puffs}
+The particles of the diffuse streams that use the default texture (or all of them with the class file's PUFFS 1) and the ground clouds are drawn instead as spherical billboards \cite{umenhoffer2006}: a quad covering the sphere's outline, whose pixel shader integrates the density $\sigma(1 - r^{2}/R^{2})$ of the sphere exactly along the ray, between its entry and the scene distance:
+
+\[ \tau = \sigma\left[ (u_{1} - u_{0})\left(1 - \frac{b^{2}}{R^{2}}\right) - \frac{u_{1}^{3} - u_{0}^{3}}{3R^{2}} \right](0.6 + 0.8n) \]
+
+\noindent
+($b$ the ray's distance from the centre, $u_{0}, u_{1}$ the chord's ends from its middle, $n$ a 3D noise turning with the puff), so puffs fade softly into the ground and the vessels. The coefficient is $\sigma = 1.05\,a/R$ from a particle's legacy alpha $a$, and $\sigma = 2.25\,a/R$ with $a = 0.6(1 - t/t_{life})S(0, 1.5\,\mathrm{s}, t)$ for a ground cloud of age $t$. The puff is lit by the sun through its own half chord toward the sun and by the column of the puffs before it toward the sun, from a deep opacity map \cite{kim2001} on a 48 $\times$ 48 grid across the sun's direction, built on the CPU; with the phase $4\pi\,\mathrm{HG}(\cos\theta, 0.35)$, an ambient term brighter on the top, and the light of the four brightest plumes, $\sum 2k/(|\vec{d}|^{2} + 0.25L^{2})$ for a plume of strength $k = IL r_{e}$ at the distance $\vec{d}$. Puffs nearer than the biggest plume's middle (without a plume, the largest plasma sheath) go into a front layer, the others into a back layer; at most 8192 puffs and 16 around the camera are drawn, and a hashed subset with a denser $\sigma$ when they would cover more than 32 half-resolution screens.
+
+\subsubsection{Soft billboards}
+The particle streams that are not drawn as puffs (emissive streams, re-entry streams, and the diffuse streams that the PUFFS rule above leaves out) keep their legacy billboards, texture, tint and batch opacities. In the main pass, when the scene distance $d_{s}$ was drawn this frame, each billboard's opacity is multiplied by a soft-particle fade \cite{lorach2007}. The billboard of a particle of radius $R$ is taken as the outline of its sphere \cite{umenhoffer2006}: at the billboard coordinates $(x, y) \in [-1, 1]^{2}$ the sphere's half chord is $h = R\sqrt{\max(1 - x^{2} - y^{2}, 0)}$, and with $d$ the distance of the billboard's point at the pixel,
+
+\[ f = \mathrm{clamp}\left(\frac{d_{s} - d - o\,h}{\max(h,\, 0.25R)},\, 0,\, 1\right) \qquad (f = 1 \mathrm{\ where\ } d_{s} = 0) \]
+
+\noindent
+With $o = 0$, for all streams but the re-entry streams, the fade runs from the billboard's plane, where the depth test would cut, to the back of the sphere. A re-entry stream is born at its vessel's centre, so the newest particles' spheres hold the hull; with $o = 1$ their fade starts at the back of the sphere, and a surface inside it is not veiled. The factor is taken as a tent over the pixel and its four neighbours, $\frac{1}{2}f_{0} + \frac{1}{8}\sum_{j=1}^{4} f_{j}$: the scene distance is drawn jittered and the billboards after the jitter is off, up to half a pixel apart, and the tent blends depth edges as the anti-aliased colour is blended. Other passes and the particles' ground shadows keep the legacy billboards.
+
+\subsubsection{Composite}
+The puffs' two layers and the march are up-sampled jointly with the scene distance \cite{kopf2007} and composited over the scene as premultiplied colours, front puffs over the plumes over the back puffs:
+
+\[ \vec{c} = \vec{F} + (1 - \alpha_{F})\left(\vec{V} + (1 - \alpha_{V})\vec{B}\right), \qquad \alpha = 1 - (1 - \alpha_{F})(1 - \alpha_{V})(1 - \alpha_{B}) \]
+
+\noindent
+The legacy flames of the exhausts that became volumes are drawn with the weight $1 - w$, and the heat haze takes the plume's radii and length.
+
+
+
+\subsection{Re-entry hull heating}\label{sec:vk_heat}
+\textit{VolPlumes}; sources HullHeat.h/.cpp, HeatMath.h/.cpp, shaders/HullHeat.glsl and shaders/HeatPrm.glsl; per-class settings in the HEAT line of Config/GC/Plume/\textit{class}.cfg. The skin of a vessel flying fast through an atmosphere is heated by the oncoming air and glows with its own temperature. The heating and the wall temperatures are computed per vessel on the CPU, in simulation time; their distribution over the hull is evaluated per pixel in the vessel's mesh shaders, without a pass or a target of its own.
+
+\subsubsection{Stagnation heating}
+From the density $\rho$, the airspeed $V$ and the temperature $T_{\infty}$ at the vessel, and the gas constant $R$ and the ratio of specific heats $\gamma$ of the atmosphere (287\,J/(kg\,K) and 1.4 when the body gives none), the cold-wall convective heat flux at the stagnation point of a nose of radius $R_{n}$ is that of Sutton and Graves \cite{sutton1971}, capped by the free-molecular limit:
+
+\[ q_{cw} = \min\left(k\sqrt{\rho/R_{n}}\;V^{3},\; \tfrac{1}{2}\rho V^{3}\right) \]
+
+\noindent
+in SI units, with $k = 1.7415\cdot10^{-4}$ for $230 \le R \le 1000$\,J/(kg\,K) (air), $1.9027\cdot10^{-4}$ below (carbon dioxide) and $0.6556\cdot10^{-4}$ above (hydrogen and helium). The flux into a wall at the temperature $T$ is $q_{cw}(1 - c_{p}T/h_{0})$, with $c_{p} = \gamma R/(\gamma - 1)$ and the total enthalpy $h_{0} = c_{p}T_{\infty} + V^{2}/2$ \cite{anderson2006}; the factor turns negative above the recovery temperature, where the air cools the wall. The nose radius is $R_{n} = \mathrm{clamp}(0.03\,L, 0.25\,\mathrm{m}, 3\,\mathrm{m})$ for the largest extent $L$ of the hull's box, unless the class file gives it. Atlantis ($R_{n}$ = 1.1\,m) at 75\,km and 7.5\,km/s ($\rho = 4\cdot10^{-5}$\,kg/m$^{3}$) gets $q_{cw} \approx$ 440\,kW/m$^{2}$.
+
+\subsubsection{Wall temperature}
+The wall is a single layer in radiative equilibrium with a heat capacity $C$ per area. It is kept for eight heating levels $G_{j} = 2 \cdot 0.4^{j}$, $j$ = 0..7, from twice the stagnation flux down to 0.0033 of it:
+
+\[ C\,\frac{dT_{j}}{dt} = G_{j}\,q_{cw}\left(1 - \frac{c_{p}T_{j}}{h_{0}}\right) - \varepsilon\sigma\left(T_{j}^{4} - T_{s}^{4}\right) \]
+
+\noindent
+with the emissivity $\varepsilon$ (0.85), the Stefan-Boltzmann constant $\sigma$, the sink temperature $T_{s} = \mathrm{clamp}(T_{\infty}, 150\,\mathrm{K}, 400\,\mathrm{K})$ (250\,K without air), and $C = 4\varepsilon\sigma T_{ref}^{3}\,\tau_{lag}$ for $T_{ref}$ = 1500\,K, so that the lag $\tau_{lag}$ (25\,s) is the e-folding time of a small disturbance at 1500\,K; a hotter wall follows faster, as $T^{-3}$. Each frame takes an implicit Euler step over the simulation time step $\Delta t$,
+
+\[ \frac{C}{\Delta t}\left(T'_{j} - T_{j}\right) = G_{j}\,q_{cw}\left(1 - \frac{c_{p}T'_{j}}{h_{0}}\right) - \varepsilon\sigma\left(T'^{4}_{j} - T_{s}^{4}\right) \]
+
+\noindent
+whose residual increases with $T'_{j}$; it is solved by Newton's method inside a bracket, and is stable for any step and any time acceleration. A pause keeps the temperatures. A new vessel, a step back in time or a step of more than 600\,s starts at the equilibrium ($\Delta t \rightarrow \infty$), so a scenario that starts in the middle of an entry starts hot. Without heating, a wall at $\tau_{lag}$ = 25\,s cools from 1500 to 1000\,K in about 80\,s: the afterglow after peak heating. A vessel glows while its hottest level $T_{0}$ is at least 650\,K.
+
+\subsubsection{Flow and stagnation point}
+The downstream direction $\vec{f}$ is $-\mathrm{unit}(\vec{v})$ of the airspeed vector $\vec{v}$ in vessel axes, taken while $|\vec{v}| \ge 1$\,m/s (otherwise the last one is kept). The stagnation point $\vec{p}_{s}$ is the hull vertex furthest upstream, the maximum of $\vec{p}\cdot(-\vec{f})$ over the vertices of the exterior meshes. Each mesh keeps the extreme vertices along 128 directions of a Fibonacci sphere, in its own coordinates with its group transforms, built over several frames at most 20000 vertices at a time; its mesh offset in the vessel is applied each frame. Until the sets are complete, the support point of an ellipsoid with 0.55 times the hull box's extent as half-axes stands in. Both $\vec{f}$ and $\vec{p}_{s}$ are low-passed in simulation time with the weight $1 - e^{-\Delta t/\tau_{f}}$, $\tau_{f} = \mathrm{clamp}(\tau_{lag}(T_{ref}/T_{0})^{3}/3,\, 0.2\,\mathrm{s},\, \tau_{lag})$, so that the pattern drifts with the wall's time scale when the attitude changes. Each pass gets them in its own camera-relative frame.
+
+\subsubsection{Local heating}
+At a hull pixel with the geometric normal $\vec{N}$ (the interpolated vertex normal; normal maps are not used) and the position $\vec{P}$, $c = \mathrm{clamp}(-\vec{N}\cdot\vec{f}, -1, 1)$ is the sine of the surface's inclination to the flow and $x = |\vec{P} - \vec{p}_{s}|$ the running length from the stagnation point. With the angle factor, a fit of Lees' laminar distribution over a hemisphere \cite{lees1956} continued to 0 on the lee side,
+
+\[ F(c) = \left\{ \begin{array}{ll} 0.1 + 0.9\,c^{2} & c \ge 0 \\ 0.1\max(0, 1 + 4c)^{2} & c < 0 \end{array} \right. \]
+
+\noindent
+the local heating ratio $G = q/q_{cw}$ is the largest of three terms, plus a lee floor of 0.005, clamped to [0, 2]:
+
+\begin{align*}
+G_{s} &= F(c)\,e^{-(x/1.5R_{n})^{2}} && \mathrm{stagnation\ region}\\
+G_{f} &= k_{fp}\,(1 - c^{2})^{1/4}\,c\,\sqrt{R_{n}/\max(x, R_{n})} && \mathrm{laminar\ flat\ plate},\ c > 0\\
+G_{c} &= \max_{k}\,G_{e,k}\,F\left(\cos\min(d_{k}/w_{k}, 3)\right)S(-0.5, 0, \vec{N}\cdot\vec{n}_{k}) && \mathrm{attachment\ lines}\\
+k_{fp} &= \frac{2.53\cdot10^{-5}}{1.7415\cdot10^{-4}}\,V^{0.2}
+\end{align*}
+
+\noindent
+$G_{f}$ is the flat-plate heating of Tauber, Menees and Adelman \cite{tauber1987} over the stagnation value. The attachment lines come from the meshes, not from the screen. Once per mesh, spread over frames (2500 exposure rays per vessel and 10000 in all per frame), the client welds the vertices at 1\,mm, takes the convex manifold edges that turn the normal by 2$^{\circ}$ or more, keeps those whose two faces see open sky for at least a quarter of 12 hemisphere rays against a voxel copy of the hull, and marks an edge real where the face normals within $\rho$ = 1.5\,\% of the mesh size beside it turn through 80$^{\circ}$ or more: both Newtonian sonic points, about 40$^{\circ}$ from the attachment line, then lie on the feature, so a leading edge, a nose or a wing tip qualifies and a ridge between panels does not. When the flow has turned by 0.2$^{\circ}$, or after 2\,s, each real edge is evaluated for $\vec{f}$; with $\vec{u}$ the upstream direction across the edge and $\Lambda$ its sweep, the edge holds the attachment line where $\vec{u}$ lies between its two faces' normals, at the level
+
+\[ G_{e} = \min\left(1.2, \sqrt{R_{n}/2r}\right)\cos\Lambda\,F(\cos\beta)\left(1 - S(0, 15^{\circ}, \beta_{f})\right)S(20^{\circ}, 40^{\circ}, m)\left(1 - s/3\right) \]
+
+\noindent
+(swept cylinder: Fay and Riddell's $\sqrt{R_{n}/2r}$ of the sphere's flux, Tauber's $\cos\Lambda$), with $r \ge 0.05R_{n}$ the edge radius (the spacing of its parallel neighbours over its own turn), $\beta$ the angle of $\vec{u}$ beyond the edge's own faces (Lees around the feature), $\beta_{f}$ the least such angle over its neighbours (off when the line has left the feature), $m$ the angle of $\vec{u}$ from the nearer end of the feature's turn, and $s$ the number of three points along the edge with body upstream of it in its cross-section (between 0.5 and 10\,\% of the mesh size: the feature sits in that body's shock and boundary layers). The cap 1.2 is reached by an edge of radius $R_{n}/3$ or less: leading edges run as hot as the nose. The sonic factor switches the edge off where the flow meets the face beyond one end of the feature nearly head-on: the sonic line then lies on that face, the subsonic region spans it, and the face, not the edge, sets the velocity gradient at the line, so a leading edge or a ridge on a face turned 70$^{\circ}$ or more into the flow keeps the flat-plate value. Segments along a line with levels within 30\,\% are merged; the 16 strongest by level times length go to the shader with their ends, the attachment normal $\vec{n}$ and the band half-width $w = \mathrm{clamp}(r, 0.2R_{n}, R_{n})$, and $d_{k}$ is the pixel's distance from segment $k$. Atlantis' belly at 40$^{\circ}$ angle of attack ($c$ = 0.64, $x$ = 10\,m) gets $G_{f} \approx 0.16$, about 1100\,K at 75\,km against about 1700\,K at the nose.
+
+\subsubsection{Colour}
+The glow is the radiance of a blackbody at the wall temperature: Planck's law integrated from 360 to 830\,nm in steps of 1\,nm against the CIE 1931 colour-matching functions in the fit of Wyman, Sloan and Shirley \cite{wyman2013}, times 683\,lm/W, converted to linear sRGB with the negative components clipped, and divided by the luminance that the scene shows as 1, a white diffuse surface in full sunlight, $L_{ref} = 1.27\cdot10^{5}\,\mathrm{lx}/\pi \approx 4.04\cdot10^{4}$\,cd/m$^{2}$. A table of 64 entries, uniform in $1/T$ from 500 to 4000\,K, holds its logarithm, floored at $-60$; below 500\,K the radiance is 0. For example, 1000\,K gives 2.7\,cd/m$^{2}$ ($6.7\cdot10^{-5}$ of $L_{ref}$), 1500\,K $7.8\cdot10^{3}$ (0.19) and 1700\,K $5.3\cdot10^{4}$ (1.3). Each frame, a glowing vessel passes $\ell_{j} = \ln(g_{h}B(T_{j})/L_{ref})$ for its eight levels, with the gain $g_{h}$ = 2 times the class file's glow factor. A pixel interpolates between the levels in $\ln G$,
+
+\[ t = \mathrm{clamp}\left(\frac{\ln(G/2)}{\ln 0.4}, 0, 9\right), \quad j = \min(\lfloor t \rfloor, 6), \quad \vec{E} = \varepsilon_{v}\exp\left(\ell_{j} + (t - j)(\ell_{j+1} - \ell_{j})\right) \]
+
+\noindent
+(beyond the last level it extrapolates and darkens), with the visible emissivity from Kirchhoff's law, $\varepsilon_{v} = \mathrm{clamp}(1 - Y(\vec{a}), 0.2, 1)$ for the linear albedo $\vec{a}$: the texture times the diffuse colour, or the base colour of a PBR material.
+
+\subsubsection{Composite}
+$\vec{E}$ is linear scene radiance and is added before the exposure. The legacy and Metalness shaders light in display values, which are taken as sRGB: $c' = \mathrm{sRGB}(\mathrm{sRGB}^{-1}(c) + \vec{E})$ with the exact transfer of IEC 61966-2-1, which holds above 1 for the floating-point target; the glTF shader adds $\vec{E}(1 - t_{r})$ in linear light to the emission of its lit branch, $t_{r}$ the transmission, so that a clear coat covers it as it covers the emission. Values above 1 bloom in the post-processing. The vessel's exterior draws in the main pass, custom cameras and environment maps take it; the virtual cockpit pass does not. As part of the mesh colour it is accumulated by TAA, held by the reflection capture (water and glossy hulls reflect it), covered by the haze and the fog, and not darkened by shadows. The global illumination takes it as part of the image, but caps each sender by its albedo and the sun, ambient and night light that falls on it (section \ref{sec:vk_ssgi}): at night the cap passes little of the glow on to other surfaces, on a sunlit hull a part of it. It is independent of the plasma (section \ref{sec:vk_plume}), which follows the energy flux at once, while the hull follows the lagged wall temperature: when the vessel climbs or slows down, the plasma fades first and the hull keeps glowing.
+
+
+
+\subsection{Height and valley fog}\label{sec:vk_fog}
+\textit{HeightFog} (default 0); sources SceneFxFog.cpp, FogMath.h/.cpp, shaders/HeightFog.glsl. Three kinds of fog are modelled on planets with an atmosphere and elevation data, with the camera under 45\,km: radiation fog that fills the valleys to a flat top, a haze layer over the ground, and sea fog. Their density follows the terrain through maps baked from the elevation grids, and changes with the time of day, the season and the day.
+
+\subsubsection{Fog maps}
+Two maps of 256 $\times$ 256 texels on a gnomonic tangent plane cover 50\,km (near) and 300\,km (far) around the camera. They are baked on a worker thread from the loaded elevation grids (the finest grid that covers a point wins) whenever the camera has moved 3\,km (near) or 20\,km (far) from the centre, the sun has turned 0.5$^{\circ}$ or 1$^{\circ}$ (less near sunrise and sunset), after 120\,s, or when finer grids have arrived; a new map cross-fades in over 1\,s. A grid is refused unless at least three of five inner points agree with the core's surface elevation (within 50\,m or 10\,\% of the grid's range), so that placeholder heights of tiles not yet loaded do not enter a map. Each texel holds four fields:
+
+\begin{itemize}
+\item the floor $F$: the minimum of the mean heights within 2\,km, box-averaged over 1.5\,km, never above the ground itself: the level a valley fills from;
+\item the valley depth $V = G - F$, with $G$ the mean height box-averaged over 3\,km;
+\item the sun-shadow height $H_{s}$: the height under which the sun is hidden by the terrain, swept along the sun's direction over the map \cite{timonen2010}, on the tangent plane with the curvature taken out ($h - (x^{2} + y^{2})/2R$); each step of $\Delta$ toward the sun keeps $\max(h, h_{up} - \Delta\tan\epsilon_{\odot})$, the near map starting from the far map's heights upstream;
+\item the strength $m$ (0 to 3): the fog day of the place (below) times $(1 + 1.5\,l)$, with the lake share $l$ (flat local minima of the elevation, box-averaged over 1\,km), and 0 on the sea. On flat ground the fog breaks into patches: $m$ is multiplied by $k + (1 - k)P$ with $k = \max(l, S(30\,\mathrm{m}, 300\,\mathrm{m}, V))$, so valleys and lakes keep their fog, and $P = S(0.28, 0.72, 0.65N_{1} + 0.35N_{2})$ from two value noises of cells of 3\,km and 1.3\,km on the sphere and one day (the far map, with 1.2\,km texels, takes $N_{2} = 0.5$).
+\end{itemize}
+
+\noindent
+The sea fog needs to know how open the water is around a point. The sea's share of the texels, box-averaged over 4\,km, gives the open-water weight $w$, which is carried in the first two fields, $F' = F - 16w$ and $V' = V + 16w$: the ground $G = F' + V'$ is unchanged, and the encoding is linear, so the maps' bilinear filtering and their blending stay consistent. Below, $F$ and $V$ are the stored fields $F'$ and $V'$.
+
+\noindent
+Texels without elevation data have no fog of their own; in the near map they give way to the far map's fields.
+
+\subsubsection{Density}
+At the altitude $h$ with the fields $(F, V, H_{s}, m)$, the drift noise $n \in [0, 1]$ (value noise in 700\,m cells moving with a slow wind \cite{teschner2003}) and the far map's edge weight $e_{f}$:
+
+\begin{align*}
+\sigma = \; & \sigma_{f} m\left[1 - S(L - D_{l}, L + D_{l}, h)\right](0.6 + 0.8n)\,e_{f} \\
+& + \sigma_{h} e^{-\max(h - G, 0)/H_{h}}\left[1 - S(H_{inv} \mp 150\,\mathrm{m}, h - G)\right] \\
+& + \sigma_{s} w_{sea}\left[1 - S(L_{s} - D_{ls}, L_{s} + D_{ls}, h)\right](0.5 + n)
+\end{align*}
+
+\noindent
+with the radiation fog's depth and lid
+
+\[ D = (k_{f}D_{0} + k_{v}\min(V, 1200\,\mathrm{m}))\sqrt{m}, \qquad k_{f} = 0.3 + 0.7\,S(30\,\mathrm{m}, 300\,\mathrm{m}, V) \]
+
+\[ L = F + D + 0.25D(2n - 1), \qquad D_{l} = 0.15D + 8\,\mathrm{m} \]
+
+\noindent
+so that a deep valley fills higher than a shallow one and flat ground holds only a shallow layer; the haze of scale height $H_{h}$ = 350\,m up to its inversion $H_{inv}$ over the ground (the step $S(H_{inv} \mp 150\,\mathrm{m}, x)$ runs from $H_{inv} - 150$ to $H_{inv} + 150$\,m); and the sea fog over open water and its shores, $w_{sea} = S(0.15, 0.55, -F/16)\,e_{f}$ (none over raised land), with a bank whose height falls toward the shore and over sheltered water, $k_{l} = S(0.25, 0.9, -F/16)$, $L_{s} = D_{s}k_{l}(1 + 0.3(2n - 1))$ and $D_{ls} = 0.2D_{s}k_{l} + 5$\,m. Beyond the far map $G$ goes to the mean ground of the map.
+
+\subsubsection{Time of day, season and fog days}
+The parameters are set each frame from the local solar time and the day length at the camera, the planet's wetness (the water fraction $a_{w}$ of the far map, $\mathrm{moist} = S(0, 0.15, a_{w})$, 0 on a planet without water) and the mean cloud cover $\bar{c}$ within 50\,km:
+
+\begin{longtable}{ |p{0.2\textwidth}|p{0.7\textwidth}| }
+\hline\rule{0pt}{2ex}
+$\sigma_{f}$ & $0.008\,f_{tod}f_{season}f_{clear}\,\mathrm{hum}\,b$ per m\\
+\hline\rule{0pt}{2ex}
+$D_{0}$, $k_{v}$ & $20 + 160\,f_{tod}f_{season}\,\mathrm{hum}$ m; $0.25(0.4 + 0.6f_{tod})$\\
+\hline\rule{0pt}{2ex}
+$\sigma_{h}$ & $2.5\cdot10^{-5}\,\mathrm{hum}\,b\,(0.4 + 0.6\max(f_{tod}, f_{eve}))$ per m\\
+\hline\rule{0pt}{2ex}
+$\sigma_{s}$, $D_{s}$ & $0.006\,s_{day}\,\mathrm{hum}(0.55 + 0.45f_{tod})$ per m; $60 + 200\,s_{day}$ m\\
+\hline\rule{0pt}{2ex}
+& $\mathrm{hum} = 0.3 + 0.7\,\mathrm{moist}$, $b$ = 1 (0.25 on a dry planet), $f_{season} = 0.55 + 0.6\,S(9, 15, t_{night})$, $f_{clear} = 1 - 0.6\,S(0.5, 0.9, \bar{c})$, $f_{eve} = 1 - S(0, 3, t_{set})$ after sunset\\
+\hline
+\end{longtable}
+
+\noindent
+($t_{night}$ the night's length and $t_{set}$ the hours since sunset). The diurnal factor $f_{tod}$ rises through the night toward its peak $p = 0.1 + 0.9\,S(0, 6, t_{night})$ as $x^{2}$ of the night's progress $x$, and after sunrise falls to the trough $q = 0.1 + 0.9(1 - S(0, 8, t_{day}))$ over $\min(3.5, t_{day}/2)$ hours: short nights cool little, short days do not burn the fog off; polar days and nights hold constants. The inversion rises from 400\,m to 1500\,m over the day. Whether a place has fog on a given day is a fog-day value
+
+\[ m_{day} = 1.35\,S(1 - p_{d}, 1.15 - p_{d}, N(\vec{x}, t)) \]
+
+\[ p_{d} = \min\left(0.5,\, (0.12 + 0.28\,\mathrm{moist})(0.75 + 0.4\,S(9, 15, t_{night}))\right) \]
+
+\noindent
+from a value noise $N$ in 4D (cells of 0.05\,rad on the sphere and of one day), mapped through the normal distribution to be uniform at every point, so that the share of fog days is $p_{d}$ everywhere. Sea fog days are drawn from the same noise with their own seed and cells of two days, $s_{day} = S(1 - p_{s}, 1.1 - p_{s}, N)$ with $p_{s} = 0.12\,\mathrm{moist}$.
+
+
+\subsubsection{Integration}
+The fog lies in a shell from $R + F_{min} - 20$\,m to $R + h_{top} + 200$\,m, $h_{top}$ the highest lid or haze top of the maps. At half resolution, each pixel takes the first stretch $[t_{0}, t_{1}]$ of its ray inside the shell, ended by the scene distance, the planet and 200\,km. A ray without a scene distance that meets the shell's inner sphere ahead within 100\,km must have crossed ground, since the terrain is drawn into the scene distance out to 150\,km and the far map covers at least 130\,km; that ground was clipped by the main pass's near plane, and the ray ends at that plane, so the fog does not fill the hidden terrain. Sixteen steps are placed where the fog is:
+
+\begin{enumerate}
+\item 16 scan intervals are spaced evenly in $\mathrm{asinh}(t/s_{A})$, $s_{A} = \mathrm{clamp}(0.1(t_{1} - t_{0}), 30\,\mathrm{m}, 2000\,\mathrm{m})$, dense near the camera; intervals are split at the ray's lowest point and where the ray crosses a lid, so that the altitude is monotonic in each.
+\item Each interval gets the weight $(1 - e^{-\tau_{b}})e^{-\tau_{before}/2} + 0.02\,\Delta/(t_{1} - t_{0})$ from an upper bound $\tau_{b}$ of its optical depth and the bound $\tau_{before}$ in front of it.
+\item The 16 steps are put at equal shares of the cumulative weight.
+\end{enumerate}
+
+\noindent
+Along a step the altitude runs from $h_{a}$ to $h_{b}$ (computed as $h(t) = h_{c} + (2tR_{c}\mu + t^{2})/(\sqrt{R_{c}^{2} + 2tR_{c}\mu + t^{2}} + R_{c})$, which keeps its precision in single floats). The density is the closed-form mean over that altitude range: the mean of a smooth step uses its integral $\int_{0}^{u} S = u^{3} - u^{4}/2$, the mean of the exponential haze its integral. A step of a few kilometres through a thin lid is thus neither missed nor aliased, and only the fields and the noise are read at the jittered point (the step offset is $\xi$ of the pixel, under TAA $\mathrm{fract}(\xi + 0.618034\,(k \bmod 64))$ for the frame $k$). The steps accumulate
+
+\[ \vec{L} \leftarrow \vec{L} + T\,a\,\vec{S}, \qquad T \leftarrow T(1 - a), \qquad a = 1 - e^{-\bar{\sigma}\Delta t} \]
+
+\noindent
+and the transmittance-weighted mean distance $\bar{t}$ of the fog.
+
+\subsubsection{Lighting}
+The light $\vec{S}$ of a step is a mean over its altitude range as well:
+
+\[ \vec{S} = \vec{C}_{\odot}V_{t}\,C_{cl} \sum_{i=0}^{2} 2^{-i} p_{i}\, e^{-2^{-i}\tau_{h}}\, \bar{T}_{f}(2^{-i}) + 2\,\vec{C}_{sky}\left(0.35 + 0.65\,\bar{T}_{occ}\right) \]
+
+\noindent
+Multiple scattering is approximated by three octaves of halved extinction and halved contribution \cite{wrenninge2013}, each with its own phase, $p_{i} = 4\pi\left(0.75\,\mathrm{HG}(\cos\theta, g_{i}) + 0.25\,\mathrm{HG}(\cos\theta, -g'_{i})\right)$, $g_{i}$ = 0.7, 0.35, 0.175 and $g'_{i}$ = 0.2, 0.1, 0.05. The sun's path is taken through flat layers: through the haze, $\tau_{h} = \sigma_{h}H_{h}e^{-\max(h - G, 0)/H_{h}}/\max(\mu_{\odot}, 0.08)$, and through the fog above the point up to its lid, $\bar{T}_{f}(k)$ the mean over the step of $\exp(-0.8k\sigma_{f}m(L + D_{l} - h)^{+}/\max(\mu_{\odot}, 0.08))$ (likewise for the sea fog). The terrain's shadow is $V_{t} = 1 - \overline{S}(H_{s} \mp 30\,\mathrm{m}, h)$, the mean step around the shadow height (weakened at high time acceleration, when the maps lag); the 2D cloud deck's shadow is $C_{cl} = \exp(-2.5c)$ with the cover $c$ where the sun ray leaves the deck. The sky light $\vec{C}_{sky}$ (the atmosphere's ambient at the ray's middle) is occluded inside the layer by $\bar{T}_{occ}$, the mean of $\exp(-0.5\sigma_{f}m(L - h)^{+})$. $\vec{C}_{\odot}$ is the sun's colour at the point from the atmosphere tables.
+
+\subsubsection{Composite}
+The fog colour $\vec{c} = \vec{L}/(1 - T)$ is hazed at the mean fog distance as the terrain is, $\vec{c}\,\vec{A} + \vec{I}$, put through the planet's curve, and written premultiplied with the opacity
+
+\[ \alpha = (1 - T)\,w_{F}\,k_{deck}, \qquad w_{F} = \left(1 - S(12\,\mathrm{km}, 30\,\mathrm{km}, h_{c} - \bar{G})\right) w_{ramp} \]
+
+\noindent
+($w_{ramp}$ rising over 2\,s after the maps are first ready, and without a cloud cover map times $1 - S(h_{cl}, h_{cl} + 500\,\mathrm{m}, h_{c})$ for the cloud layer's altitude $h_{cl}$; $k_{deck}$ the 2D cloud deck's cover, $1 - 0.8c$, for fog seen from above it beyond the volume clouds' range). A depth-aware 3 $\times$ 3 blur and the 2 $\times$ 2 up-sample bring it over the scene with alpha blending. With the camera lower than 500\,m above the cloud layer's altitude (the middle of the volume clouds' slab) the fog is drawn after the volume clouds, over them; higher up it is drawn before them, under the clouds.\\
+The other effects use the fog through two results: the fog image itself (the reflection capture removes it, the plumes and puffs take its colour), and a transmittance $T(\vec{c}, \hat{\vec{d}}, l)$ along any ray, integrated on the CPU with the same layout and density (8 steps for the plumes and puffs). Toward the sun, over 30\,km with 16 steps,
+
+\[ T_{\odot} = 1 - w_{F}(1 - T) \]
+
+\noindent
+scales the sun's glare, so that a sun hidden in thick fog makes none.
+
+
+
+\subsection{Night look}\label{sec:vk_night}
+\textit{NightLook}; sources shaders/NewPlanet.glsl (ground lights), shaders/PBR.fx and BldgMgr.cpp (windows), AutoExpo.cpp (the tested copies of the shader maths, and the exposure rules of section \ref{sec:vk_nightexpo}), Utils/bldgtex (the window map). The planet's night light map gives where and how bright a city is; the night look turns it into lamps that light the ground, and lights the windows of the streamed buildings one by one at dusk.
+
+\subsubsection{Ground lights}
+The legacy night term weights the light map by $f_{n} = \beta\,\mathrm{clamp}(-4\,\vec{n}\cdot\vec{L} + 0.05, 0, 1)$, $\beta$ the planet's night light factor. From the map's colour $\vec{m}$, the city level $I = \max(m_{r}, m_{g}, m_{b})$ is given contrast, $C = I^{2.2}$, so that suburbs are darker than the cores; the share of lit street segments is $p = 0.45 + 0.5C$ and the hue $\vec{h} = \mathrm{mix}(1, \vec{m}/I, 0.5)$. Trees, grass and fields of the land-class map dim the light by a factor $U$ down to 0.25. The ground is lit with
+
+\[ \vec{c}_{ngt} = \vec{h}\,f_{n}(1 - k_{space})\,C\,U\left(0.06\,\bar{\vec{c}} + 2\,\vec{E}_{pool} + 0.24\,\vec{E}_{spill}\right) \]
+
+\noindent
+on its albedo, and the lamps' own glare $4\,\vec{E}_{head}$ is added through the haze's transmittance after it; $k_{space}$ is the planet shader's factor of the camera in space, $\bar{\vec{c}}$ the mean lamp colour. From high up the legacy orbital term $4\,\vec{m}\,k_{space}f_{n}$ shows the map as it is, weighted by $S(0.35, 0.8, k_{space})$ (from about 11\,km).\\
+The lamps stand along two families of streets on a grid of 128\,m blocks, bent by a value noise by up to about 30\,m over a kilometre. For each family, a hash \cite{hoskins} of the line and the block decides whether a segment is lit ($< p$) and its lamps' colour: sodium (2000\,K, half), and LEDs of 3000\,K and 4000\,K. A lit segment has four lamps a block, each present with the probability 0.85, alternately on either side of the street. A lamp has a light pool and a head with the profile $e^{-r^{2}/s^{2}}$ ($s$ = 0.07 and 0.012 blocks, about 9 and 1.5\,m; integral $\pi s^{2}$), and a lit street a spill of half-width 0.04 blocks along it. The pixel's footprint decides how they are drawn, keeping the energy and never drawing a feature thinner than a pixel:
+
+\begin{itemize}
+\item points: the nearest lamp and its nearer neighbour, each profile widened to the footprint;
+\item a band across the line, of the same energy per unit length, once the lamps along it are less than about two pixels apart ($S(1/16, 1/8, f_{along})$ of a block);
+\item the area mean once the lines are about three pixels apart ($S(0.2, 0.35, f_{across})$).
+\end{itemize}
+
+\noindent
+By day ($f_{n} = 0$) none of this is evaluated.
+
+\subsubsection{Windows}
+The facade map of the streamed buildings gets a night map: per window a colour (blackbody white points from 2700 to 5000\,K, and a few television blues) and an on-time $a \in [0.05, 0.85]$ in the alpha channel, 0 for a window that is never lit; 12\,\% of the windows are lit at full night on industrial facades and 40 to 45\,\% elsewhere. Its first three mip levels are box filters whose on-time is weighted by the windows' light; from level 4 each texel is one of its four children, picked by a hash, so a far lit window stays a point instead of a grey wall. Each building cell has a dusk progress, from the sun's elevation $\epsilon$ at the cell and the cell's hash $\eta$,
+
+\[ D = \mathrm{clamp}\left(1.2\,\mathrm{clamp}\left(\frac{2^{\circ} - \epsilon}{10^{\circ}}, 0, 1\right) - 0.2\,\eta,\; 0, 1\right) \]
+
+\noindent
+and a window of on-time $a$ shines with
+
+\[ \vec{c}_{win}\,S(a - w_{\ell}, a + w_{\ell}, D)\,S(0, 0.05, D), \qquad w_{\ell} = \mathrm{clamp}(0.03 + 0.03\max(\ell, 0), 0.03, 0.15) \]
+
+\noindent
+for the map's level of detail $\ell$: the windows of a city come on one by one between sunset and full night, and in a soft step where the mips average many of them.
+
+
+
+\subsection{Earlier effects}\label{sec:vk_early}
+\subsubsection{Lens flare, light shafts and the final look}
+\textit{LensFlare}, \textit{LightShafts}, \textit{HeatHaze}, \textit{Sharpen}, \textit{Vignette}; sources PostLook.h/.cpp, LookMath.h/.cpp, shaders/PostLook.glsl.\\
+\textbf{Light shafts} are a radial blur toward the sun \cite{mitchell2007}. At half resolution, a mask takes the bright sky near the sun, $S(0.6, 0.95, Y)\,(1 - S(0, 0.3, r_{\odot}))^{2}$ for pixels without a distance ($r_{\odot}$ the distance to the sun point in screen heights). It is blurred with 48 taps toward the sun over 90\,\% of the way (at most one screen height), with the weights $0.965^{k}$ normalised by their sum and taps off the screen counting as 0, and added as a screen, $c \leftarrow c + k\,s\,\vec{C}_{\odot}(1 - c)$, so a bright sky does not clip. The strength is $k = 0.35(1 - k_{space})$, faded when the sun point is more than 1 to 1.5 screen widths from the centre and when the sun is below the camera's horizon ($-0.6^{\circ}$ to $1.7^{\circ}$ with the dip).\\
+\textbf{Lens flare.} Six ghosts lie on the line through the sun and the screen centre, at $\vec{g}_{k} = -t_{k}\vec{s}$ in screen-height units about the centre ($t$ = $-0.6$, $-0.3$, 0.2, 0.45, 0.8, 1.1; $t = 1$ is the sun's mirror point), as tinted discs of 0.02 to 0.09 screen heights with colour fringes ($\pm$1.5\,\% in radius per channel); a halo ring of radius 0.42 is drawn when the sun is between 0.1 and 0.9 from the centre, brighter on the sun's side. The strength is $0.25\,f_{edge}\,V_{\odot}\,(1 - \alpha_{cloud})\max(\vec{C}_{\odot})\,\mathrm{clamp}(e, 0.25, 2)$, with the edge fade $1 - S(0.85, 1.05, \max(|x_{ndc}|, |y_{ndc}|))$, the terrain's and the 2D clouds' cover of the sun from the CPU, and on the GPU the vessels' and cockpit's sun visibility, five scene distance taps around the sun point and the volume clouds' opacity there.\\
+\textbf{Heat haze.} Behind each exhaust, projected as a screen segment with its half-widths, the scene is displaced by $0.006\,s(\vec{n} - \frac{1}{2})$ screen heights, $\vec{n}$ a value noise scrolled along the plume and $s = \lambda(1 - \delta/w)^{2}\sqrt{1 - t}$ for the distance $\delta$ from the segment of half-width $w$ at the position $t$ along it; pixels and offsets nearer than the nozzle are not moved, so nothing in front is pulled into the plume.\\
+\textbf{Sharpening and vignette.} A contrast-adaptive cross filter, $c' = (c + w\sum_{4} c_{j})/(1 + 4w)$ with $w = -a\sqrt{\mathrm{clamp}(\min(c_{min}, 1 - c_{max})/c_{max}, 0, 1)}$, $a$ = 0.18 after TAA and 0.12 without; the vignette $c \leftarrow c(1 - 0.18\,S(0.45, 1.05, r))$ for the distance $r$ from the centre over the half diagonal.
+
+\subsubsection{Water}
+\textit{WaterFx}; source shaders/NewPlanet.glsl. A second wave layer on the lattice $(2u + v, 2v - u)$ (turned by 26.6$^{\circ}$, $\sqrt{5}$ finer) is combined with the first by a whiteout blend of the unit normals; the waves flatten to 15\,\% of their slope from 2 to 30\,km, where the roughness takes over. The reflection uses Schlick's Fresnel term with $F_{0}$ = 0.02 \cite{schlick1994}, the glint the GGX distribution \cite{walter2007} with the roughness $\alpha = \min(\mathrm{mix}(0.08, 0.35, S(1\,\mathrm{km}, 80\,\mathrm{km}, d)), 0.2)$, widened for specular anti-aliasing by the normal's spread over the pixel \cite{kaplanyan2016}, $\alpha^{2} \leftarrow \alpha^{2} + \min(\frac{1}{2}(|\partial_{x}\vec{n}|^{2} + |\partial_{y}\vec{n}|^{2}), 0.18)$, and a gain of $2\pi$ that matches the ground's lighting convention. The water colour moves toward a deep blue with a subsurface green on the sun-facing side, minus the reflected share. Surf foam appears within 8\,km where a ring of eight taps of the water mask, 40\,m out at a level of about 20\,m texels, finds a little land, $0.7\,S(0.02, 0.12, f_{land})(1 - S(0.25, 0.5, f_{land}))$, broken by two octaves of noise that tile with the ocean texture and its time wrap and go to their mean before they alias; it is lit as white ground.
+
+\subsubsection{Ground shadows of the volume clouds}
+\textit{VolCloudShadows}; sources SceneFxShadow.cpp, shaders/VolShadow.glsl. At half resolution, the sun ray from each ground point (from the scene distance) through the volume clouds' slab is marched in 12 steps over at most 6\,km with the clouds' own density (without the detail noise, so it does not flicker); the shadow $(1 - e^{-0.6\,\tau})(1 - S(35\,\mathrm{km}, 60\,\mathrm{km}, d))\,w_{V}$ is blurred, up-sampled, and drawn as black with the opacity $0.75\,\mathrm{shadow}\,Y(\vec{A})\,\mathrm{clamp}(\vec{n}\cdot\vec{L}, 0, 1)$, the normal from the scene distance and $\vec{A}$ the haze transmittance, so the haze in front is not darkened. The volume clouds then draw over their own shadows. Near the camera the 2D cloud layer's shadows fade out by the same weight.
+
+\subsubsection{Cloud atlas}
+\textit{CloudAtlas}; sources CloudAtlas.h/.cpp, Cloudmgr2.cpp, shaders/NewPlanet.glsl. Each cloud tile has its own mip chain and is sampled with clamping, so seen from far away the minified tiles show seams at their edges. On a worker thread, the client assembles the cloud tiles' opacity of one file level into a single global texture in the cloud frame (row 0 north, column 0 at $-180^{\circ}$), which repeats in longitude: the finest level from 7 down to 5 that fits the device's largest texture and has at least half of its tiles, the missing ones filled from their nearest loaded ancestor. The tiles' own mismatch is removed at each joint by linear ramps over 8 pixels on either side toward the joint's mean (the step smoothed over $\pm$4 pixels along it). A pixel uses the atlas where the tile would be minified, with the weight $S(-1, -0.25, \ell_{A})$ of the atlas' anisotropic level of detail $\ell_{A}$, and wherever the tile is no finer than the atlas; the ground's cloud shadows read it the same way.
+
+
+
+\subsection{Limits}
+\begin{enumerate}
+\item The screen-space effects see only what is on the screen and one depth layer: reflections of objects off the screen or behind others fall back to the sky or environment map, and the global illumination has no senders there. Surfaces drawn in the opaque pass reflect the previous frame.
+\item Plumes, exhausts, particles, beacons and glass are not reflected and take no global illumination. Plumes, exhausts and particles cast no cascade shadows, nor do glTF groups with transmission; transparent legacy groups cast as opaque unless flagged 0x1. The fog does not cover the legacy exhausts, particles, beacons and glass, and city lights do not glow in the fog.
+\item The shadow cascades end at 42\,km from the camera and need elevated terrain and a device that samples a 6144 $\times$ 4096 depth atlas; beyond them the terrain's horizon shadows and the legacy projected shadows remain. Only the target vessel and those touching it get the fine target tile.
+\item The fog's maps follow the loaded elevation grids; they lag behind the terrain at high time acceleration, and fog is only drawn below 45\,km.
+\item Re-entry flow maps are drawn for the two largest vessels; others use an ellipsoid of their hull box.
+\item The hull heating is laminar and engineering-level: no transition to turbulence (late in an entry a real belly runs hotter), no shock interactions, no catalysis or ablation. The thermal lag belongs to the heating levels, not to each surface: a surface that turns out of the flow cools with the level it lands in. Real edges are found from the mesh geometry alone: a feature modelled with less than 80$^{\circ}$ of turn within 1.5\,\% of the mesh size (a very blunt leading edge on a large mesh) holds no attachment line, and at most 16 segments per vessel are drawn. Shielding by docked vessels, mesh animations after the stagnation point was found and normal maps are not taken into account.
+\end{enumerate}
+
+\end{sloppypar}
+\end{document}

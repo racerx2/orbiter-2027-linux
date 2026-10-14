@@ -11,6 +11,7 @@
 #include <QTimer>
 #include <QUrl>
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -167,6 +168,39 @@ uint64_t TexPackSpare (const TexPack &p)
 std::string TexPackWorkDir (const std::string &texdir)
 {
 	return Resolve (Join (texdir, ".texinstall"));
+}
+
+static std::string Lower (std::string s)
+{
+	for (char &c : s) c = (char)std::tolower ((unsigned char)c);
+	return s;
+}
+
+std::vector<std::string> TexPackClean (const TexPackList &list, const std::string &texdir)
+{
+	std::vector<std::string> gone;
+	std::error_code ec;
+	for (fs::directory_iterator b (Resolve (texdir), ec), end; !ec && b != end; b.increment (ec)) {
+		std::error_code e;
+		if (!b->is_directory (e)) continue;
+		std::string body = Lower (b->path().filename().string());
+		std::string arch = Resolve (Join (Join (texdir, b->path().filename().string()), "Archive"));
+		for (fs::directory_iterator f (arch, e), fend; !e && f != fend; f.increment (e)) {
+			std::string n = f->path().filename().string(); // .<Layer>.tree.<md5>.partial
+			size_t t = n.find (".tree.");
+			if (n.size() < 9 || n[0] != '.' || n.compare (n.size() - 8, 8, ".partial") || t == std::string::npos || t < 2) continue;
+			std::string layer = Lower (n.substr (1, t - 1));
+			bool listed = false;
+			for (const TexPack &p : list.pack)
+				if (!p.parts.empty() && Lower (p.body) == body && Lower (p.layer) == layer) listed = true;
+			std::error_code r;
+			if (!listed && fs::remove (f->path(), r)) gone.push_back (f->path().string());
+		}
+	}
+	std::string work = TexPackWorkDir (texdir);
+	std::error_code r;
+	if (fs::exists (work, r) && fs::remove_all (work, r) != (std::uintmax_t)-1 && !r) gone.push_back (work);
+	return gone;
 }
 
 bool TexPackMd5 (const std::string &file, std::string &md5)

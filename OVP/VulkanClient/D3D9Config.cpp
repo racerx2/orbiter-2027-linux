@@ -98,6 +98,35 @@ void D3D9Config::Reset ()
 	bIrradiance			= 1;
 	bAtmoQuality		= 1;
 	NoPlanetAA			= 0;
+	HorizonShadows		= 1; // not upstream: ground graphics
+	SSAO				= 1;
+	SSAOStrength		= 0.8f;
+	SSAORadius			= 1.5f;
+	VolClouds			= 1;
+	VolCloudQuality		= 1;
+	Trees				= 1;
+	TreeRange			= 2500.0f;
+	TreeDensity			= 1.0f;
+	AutoExposure		= 1;
+	AutoExpMinEV		= -1.5f;
+	AutoExpMaxEV		= 2.5f;
+	CloudAtlas			= 1;
+	LensFlare			= 1;
+	LightShafts			= 1;
+	TAA					= 1;
+	WaterFx				= 1;
+	VolCloudShadows		= 1;
+	Filmic				= 0;
+	Vignette			= 1;
+	Sharpen				= 1;
+	HeatHaze			= 1;
+	SceneShadows		= 1;
+	SSR		= 1;
+	VolPlumes		= 1;
+	SSGI		= 1;
+	HeightFog		= 0;
+	NightLook		= 1;
+	SSGIStrength	= 1.0f;
 	
 	GFXIntensity = 0.5;
 	GFXDistance = 0.8;
@@ -200,6 +229,35 @@ bool D3D9Config::ReadParams ()
 	if (oapiReadItem_int   (hFile, (char*)"ShaderCacheUse", i))				ShaderCacheUse = max(0, min(1, i));
 	if (oapiReadItem_int   (hFile, (char*)"NoPlanetAA", i))					NoPlanetAA = max(0, min(1, i));
 	if (oapiReadItem_float (hFile, (char*)"OrbitalShadowMult", d))			    OrbitalShadowMult = max(0.5, min(10.0, d));
+	if (oapiReadItem_int   (hFile, (char*)"HorizonShadows", i))				HorizonShadows = max(0, min(1, i)); // not upstream: ground graphics
+	if (oapiReadItem_int   (hFile, (char*)"SSAO", i))							SSAO = max(0, min(1, i));
+	if (oapiReadItem_float (hFile, (char*)"SSAOStrength", d))					SSAOStrength = float(max(0.0, min(1.0, d)));
+	if (oapiReadItem_float (hFile, (char*)"SSAORadius", d))					SSAORadius = float(max(0.25, min(8.0, d)));
+	if (oapiReadItem_int   (hFile, (char*)"VolClouds", i))					VolClouds = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"VolCloudQuality", i))				VolCloudQuality = max(0, min(2, i));
+	if (oapiReadItem_int   (hFile, (char*)"Trees", i))						Trees = max(0, min(1, i));
+	if (oapiReadItem_float (hFile, (char*)"TreeRange", d))					TreeRange = float(max(500.0, min(4000.0, d)));
+	if (oapiReadItem_float (hFile, (char*)"TreeDensity", d))					TreeDensity = float(max(0.1, min(2.0, d)));
+	if (oapiReadItem_int   (hFile, (char*)"AutoExposure", i))					AutoExposure = max(0, min(1, i));
+	if (oapiReadItem_float (hFile, (char*)"AutoExpMinEV", d))					AutoExpMinEV = float(max(-4.0, min(0.0, d)));
+	if (oapiReadItem_float (hFile, (char*)"AutoExpMaxEV", d))					AutoExpMaxEV = float(max(0.0, min(4.0, d)));
+	if (oapiReadItem_int   (hFile, (char*)"CloudAtlas", i))					CloudAtlas = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"LensFlare", i))					LensFlare = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"LightShafts", i))					LightShafts = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"TAA", i))					TAA = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"WaterFx", i))					WaterFx = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"VolCloudShadows", i))					VolCloudShadows = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"Filmic", i))					Filmic = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"Vignette", i))					Vignette = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"Sharpen", i))					Sharpen = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"HeatHaze", i))					HeatHaze = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"SceneShadows", i))					SceneShadows = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"SSR", i))					SSR = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"VolPlumes", i))					VolPlumes = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"SSGI", i))					SSGI = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"HeightFog", i))					HeightFog = max(0, min(1, i));
+	if (oapiReadItem_int   (hFile, (char*)"NightLook", i))					NightLook = max(0, min(1, i));
+	if (oapiReadItem_float (hFile, (char*)"SSGIStrength", d))				SSGIStrength = float(max(0.0, min(2.0, d)));
 
 	if (oapiReadItem_float (hFile, (char*)"GFXIntensity", d))					GFXIntensity = max(0.0, min(1.0, d));
 	if (oapiReadItem_float (hFile, (char*)"GFXDistance", d))					GFXDistance = max(0.0, min(1.0, d));
@@ -299,6 +357,36 @@ void D3D9Config::WriteParams ()
 	oapiWriteItem_float (hFile, (char*)"GFXSunIntensity", GFXSunIntensity);
 	oapiWriteItem_float (hFile, (char*)"GFXLocalMax", GFXLocalMax);
 	oapiWriteItem_float (hFile, (char*)"GFXGlare", GFXGlare);
+
+	oapiWriteItem_int   (hFile, (char*)"HorizonShadows", HorizonShadows); // not upstream: ground graphics
+	oapiWriteItem_int   (hFile, (char*)"SSAO", SSAO);
+	oapiWriteItem_float (hFile, (char*)"SSAOStrength", SSAOStrength);
+	oapiWriteItem_float (hFile, (char*)"SSAORadius", SSAORadius);
+	oapiWriteItem_int   (hFile, (char*)"VolClouds", VolClouds);
+	oapiWriteItem_int   (hFile, (char*)"VolCloudQuality", VolCloudQuality);
+	oapiWriteItem_int   (hFile, (char*)"Trees", Trees);
+	oapiWriteItem_float (hFile, (char*)"TreeRange", TreeRange);
+	oapiWriteItem_float (hFile, (char*)"TreeDensity", TreeDensity);
+	oapiWriteItem_int   (hFile, (char*)"AutoExposure", AutoExposure);
+	oapiWriteItem_float (hFile, (char*)"AutoExpMinEV", AutoExpMinEV);
+	oapiWriteItem_float (hFile, (char*)"AutoExpMaxEV", AutoExpMaxEV);
+	oapiWriteItem_int   (hFile, (char*)"CloudAtlas", CloudAtlas);
+	oapiWriteItem_int   (hFile, (char*)"LensFlare", LensFlare);
+	oapiWriteItem_int   (hFile, (char*)"LightShafts", LightShafts);
+	oapiWriteItem_int   (hFile, (char*)"TAA", TAA);
+	oapiWriteItem_int   (hFile, (char*)"WaterFx", WaterFx);
+	oapiWriteItem_int   (hFile, (char*)"VolCloudShadows", VolCloudShadows);
+	oapiWriteItem_int   (hFile, (char*)"Filmic", Filmic);
+	oapiWriteItem_int   (hFile, (char*)"Vignette", Vignette);
+	oapiWriteItem_int   (hFile, (char*)"Sharpen", Sharpen);
+	oapiWriteItem_int   (hFile, (char*)"HeatHaze", HeatHaze);
+	oapiWriteItem_int   (hFile, (char*)"SceneShadows", SceneShadows);
+	oapiWriteItem_int   (hFile, (char*)"SSR", SSR);
+	oapiWriteItem_int   (hFile, (char*)"VolPlumes", VolPlumes);
+	oapiWriteItem_int   (hFile, (char*)"SSGI", SSGI);
+	oapiWriteItem_int   (hFile, (char*)"HeightFog", HeightFog);
+	oapiWriteItem_int   (hFile, (char*)"NightLook", NightLook);
+	oapiWriteItem_float (hFile, (char*)"SSGIStrength", double(SSGIStrength));
 
 	oapiWriteItem_string (hFile,(char*) "SolCfg", SolCfg);
 	oapiWriteItem_string (hFile,(char*) "DebugLineFont", DebugFont);

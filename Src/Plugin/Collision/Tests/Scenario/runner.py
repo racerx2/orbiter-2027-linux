@@ -30,6 +30,8 @@ XDISPLAY = ':58'
 XSOCK, XLOCK = '/tmp/.X11-unix/X58', '/tmp/.X58-lock'
 LOCK_WAIT = 60  # s; ScenarioTests.cmake adds 90 s to each test's TIMEOUT for it
 TEXBODIES = ('Earth', 'Moon', 'Mars')  # bodies whose textures upstream ships separately
+STREAMOWN = ('Bldg', 'TileStream', 'Elev_mod', 'Cloud')  # bldg: real sandbox folders in Textures/Earth: the tests' building tiles, the stream's indexes, Elev_mod and clouds (no write reaches the root's)
+STREAMNOT = ('Elev', 'Surf', 'Mask', 'Class')  # bldg: the root's streamed terrain never reaches a test; a headless run finds no Elev folder, as before the stream
 
 
 class TestError(Exception):  # exit 1: the test could not run as specified, or a guard refused
@@ -208,6 +210,19 @@ def link_entries(src, dst, skip=()):
             ensure_link(os.path.join(dst, e), os.path.join(src, e))
 
 
+def drop_root_link(p, root):  # bldg: a link an older runner made into the root is removed, never followed; a real folder stays
+    if os.path.islink(p):
+        t = os.path.realpath(p)
+        if not (t == root or t.startswith(root + os.sep)):
+            raise TestError('sandbox layout changed: %s links outside the root (move the run folder away by hand)' % p)
+        os.unlink(p)
+
+
+def ensure_own_dir(p, root):  # bldg: a folder an older runner linked into the root becomes a real one
+    drop_root_link(p, root)
+    ensure_dir(p)
+
+
 class Sandbox:
     def __init__(self, a, test, run):
         self.a = a
@@ -299,13 +314,20 @@ class Sandbox:
             d = os.path.join(dst, e)
             if e in TEXBODIES and os.path.isdir(d) and not os.path.islink(d) and not os.listdir(d):
                 os.rmdir(d)  # our empty stand-in (below) from before the body's textures were installed
-            if os.path.isdir(s) and os.path.isdir(os.path.join(s, 'Archive')):
+            if e == 'Earth' and os.path.isdir(s):  # bldg: a real folder, the stream's folders the sandbox's own or absent, the rest linked
+                ensure_own_dir(d, self.root)
+                for x in STREAMNOT:
+                    drop_root_link(os.path.join(d, x), self.root)
+                link_entries(s, d, skip=('Archive',) + STREAMOWN + STREAMNOT)
+            elif os.path.isdir(s) and os.path.isdir(os.path.join(s, 'Archive')):
                 link_entries(s, os.path.join(dst, e), skip=('Archive',))  # planet archives never reach a test (T 2.3)
             else:
                 ensure_link(os.path.join(dst, e), s)
         for b in TEXBODIES:  # without a texture folder or .tex the client waits in a modal box for the focus planet (VPlanet.cpp:541-548)
             if not os.path.lexists(os.path.join(src, b)) and not os.path.exists(os.path.join(src, b + '.tex')):
                 ensure_dir(os.path.join(dst, b))
+        for e in STREAMOWN:  # bldg: no building tile, stream index, Elev_mod or cloud of the root reaches a test
+            ensure_own_dir(os.path.join(dst, 'Earth', e), self.root)
 
     def mirror_meshes(self):  # addon .col files and test-only meshes of <data>/meshes over the root's Meshes (design-pbr-nested-glass 7)
         src, dst = os.path.join(self.root, 'Meshes'), self.path('Meshes')
@@ -737,7 +759,8 @@ def merge_cfg(text, items):
     return '\n'.join(out) + '\n'
 
 
-PINS = (('CollisionModel', '1'), ('CollisionResponse', 'TRUE'), ('CollisionCheck', 'TRUE'), ('CollisionLog', '2'))
+PINS = (('CollisionModel', '1'), ('CollisionResponse', 'TRUE'), ('CollisionCheck', 'TRUE'), ('CollisionLog', '2'),
+        ('CollisionStreamBuildings', 'FALSE'))  # bldg: streamed buildings off unless a test opts in (ACFG)
 
 
 def addon_cfg(a, acfg):
@@ -817,11 +840,16 @@ def write_scenario(a, spec, sbx, stem, runid):  # step 6: the run's scenario is 
     src = (spec.scn or a.scn).replace('{stem}', stem)
     if src.startswith('gen:'):
         text = gen_scn.generate(src[4:], a)
-        if isinstance(text, tuple):  # synthetic flight records, written after the clear (E4 7.5 step 6), only into Flights/
+        if isinstance(text, tuple):  # synthetic flight records, written after the clear (E4 7.5 step 6), only into Flights/; bldg: building tiles only into the sandbox's own Textures/Earth/Bldg
             text, files = text
             for rel, data in sorted(files.items()):
-                if rel.split('/')[0] != 'Flights' or '..' in rel.split('/'):
-                    raise TestError('generated file outside Flights/: %s' % rel)
+                w = rel.split('/')
+                if '..' in w or not (w[0] == 'Flights' or (w[:3] == ['Textures', 'Earth', 'Bldg'] and len(w) > 3)):
+                    raise TestError('generated file outside Flights/ and Textures/Earth/Bldg/: %s' % rel)
+                if w[0] == 'Textures':  # the resolved folder is the one under the resolved sandbox: no link on the way
+                    own = os.path.realpath(sbx.path('Textures', 'Earth', 'Bldg'))
+                    if own != os.path.join(os.path.realpath(sbx.dir), 'Textures', 'Earth', 'Bldg'):
+                        raise TestError('runner: %s is not the sandbox\'s own folder' % own)
                 ensure_dir(os.path.dirname(sbx.path(rel)))
                 write_if_changed(sbx.path(rel), data)
     elif src.endswith('.scn'):  # a scenario file of this folder (or an absolute path)
@@ -872,7 +900,9 @@ def leak_snapshot(root, addon_so):
 
     for n in ('Orbiter.cfg', 'Orbiter.log', 'keymap.cfg', 'Sketchpad.log', os.path.join('Config', 'Collision.cfg')):  # not Collision.so: a rebuild replaces it
         add(os.path.join(root, n))
-    for d, pat in (('Scenarios', None), ('Config', None), ('Flights', None), ('Images', None), ('Modules', r'\.(cfg|log|html)$'), ('Meshes', r'\.col$')):
+    for d, pat in (('Scenarios', None), ('Config', None), ('Flights', None), ('Images', None), ('Modules', r'\.(cfg|log|html)$'), ('Meshes', r'\.col$'),
+                   (os.path.join('Textures', 'Earth', 'Bldg'), None), (os.path.join('Textures', 'Earth', 'Elev_mod'), None),
+                   (os.path.join('Textures', 'Earth', 'Cloud'), None)):  # bldg: a test's building tile, Elev_mod or cloud never reaches the root's
         for base, _, files in os.walk(os.path.join(root, d)):
             for f in files:
                 if pat is None or re.search(pat, f):

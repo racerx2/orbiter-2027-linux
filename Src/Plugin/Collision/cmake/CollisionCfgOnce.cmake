@@ -59,6 +59,17 @@ if (have LESS 2)
 	endif ()
 endif ()
 
+# v2 -> v3: the streamed buildings switch (bldg) appended with its comment when no key line has it
+if (have LESS 3)
+	string(TOUPPER "${text}" utext)
+	if (NOT utext MATCHES "(^|\n)[ \t]*COLLISIONSTREAMBUILDINGS[ \t]*=")
+		if (NOT text STREQUAL "" AND NOT text MATCHES "\n$")
+			string(APPEND text "\n")
+		endif ()
+		string(APPEND text "; Streamed 3D buildings are solid: vessels crash into them and rest on their roofs\nCollisionStreamBuildings = TRUE\n")
+	endif ()
+endif ()
+
 # the version line: replaced in place if present, else inserted after the first line when that is a comment, else at the top
 string(TOUPPER "${text}" utext)
 string(REGEX MATCH "(^|\n)([ \t]*COLLISIONCFGVERSION[ \t]*=)[^\r\n]*" m "${utext}")

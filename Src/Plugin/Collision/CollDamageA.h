@@ -37,6 +37,8 @@ struct VesselDamageA {
 	uint32_t alias = ~0u;                                     // recorder side-file alias
 	uint32_t nslot = 0;                                       // slot count at the last rematch
 	bool loggedCap = false;
+	bool locked = false;                                      // not upstream: destroyed, the player's controls taken (Lock)
+	int adPrev = -1;                                          // not upstream: the control-surface mode before the lock, -1 none
 };
 struct BuildingDamageA { CollDmgBaseObj obj; double eabs = 0; uint32_t flags = 0; };
 struct NoticeA {                                              // one notice of this pre-step
@@ -134,6 +136,7 @@ private:
 	void DoRepair (VesselDamageA &v, bool playback);
 	double Threshold (uint32_t id) const;
 	void Cut (CollH h, VesselDamageA &v, bool want);
+	void Lock (CollH h, VesselDamageA &v, bool want);           // not upstream: a destroyed craft takes no player commands and its control surfaces are off
 	void KeepLast (CollH h, ThrustCutA &c);
 	bool IsDummy (CollH h, CollH tk);
 	bool HasTank (CollH h, CollH tk);

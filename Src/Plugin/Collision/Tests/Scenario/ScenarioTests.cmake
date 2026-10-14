@@ -196,4 +196,7 @@ coll_scenario_test(Coll.Base.Crash70 SCN gen:crash:kind=base,u=70 FRAMES 150 TIM
 coll_scenario_test(Coll.Ground.Crash70 SCN gen:crash:kind=ground,u=70 FRAMES 150 TIMEOUT 300 CHECK groundcrash LABELS slow RUNS "main|headless|on||||") # blast: a DG into open ground breaks and throws debris
 coll_scenario_test(Coll.Atlantis.ETSep SCN etsep.scn STEP 0.05 FRAMES 1400 EVERY 10 TIMEOUT 600 CHECK etsep CFG "ElevationMode = 0" LABELS slow RUNS "main|headless|on||||") # etsep: the ascent AP separates the ET (state at MET 476 s); the tank leaves
 coll_scenario_test(Coll.Dmg3.Crash70.Client VISUAL SCN ${dg70} FRAMES 300 TIMEOUT 900 CHECK dmg3crash RUNS "main|client|on||||") # the same crash in VulkanClient
+# bldg: streamed buildings are solid (design bldg-collision 7); a synthetic one-building tile in the sandbox's own Textures/Earth/Bldg, client runs (a headless session has no tile stream)
+coll_scenario_test(Coll.Bldg.Crash70 VISUAL SCN gen:bldg:kind=crash,u=70 FRAMES 150 TIMEOUT 900 CHECK bldgcrash ACFG "CollisionStreamBuildings = TRUE" RUNS "main|client|on||||") # the impact names the building, the DG dents
+coll_scenario_test(Coll.Bldg.Roof VISUAL SCN gen:bldg:kind=roof FRAMES 1400 EVERY 10 TIMEOUT 900 CHECK bldgroof ACFG "CollisionStreamBuildings = TRUE" RUNS "main|client|on||||") # a DG rests on a flat roof
 coll_scenario_test(Coll.Dmg3.Tear.Client VISUAL SCN "${dg70},cam=side" FRAMES 300 TIMEOUT 900 CHECK dmg3crash RUNS "main|client|on||||") # dmg3 tear: side view of the torn section; dmg3crash's branch comes from the scenario's speed

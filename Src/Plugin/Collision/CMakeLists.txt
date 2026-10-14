@@ -83,12 +83,14 @@ foreach (part G F D I) # per-phase unit lists, each appends to COLL_UNITS
 	include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/units_${part}.cmake OPTIONAL)
 endforeach ()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/blast.cmake) # CollBlastLib, and the CollBlastA unit once its source exists
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/bldg.cmake) # Coll_BldgGeom when the client's BldgGeom.cpp is there, and the CollBldgA unit
 foreach (u ${COLL_UNITS})
 	add_library(Coll_${u} OBJECT ${u}.cpp)
 	target_include_directories(Coll_${u} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${COLL_SDK_INCLUDE})
 	target_link_libraries(Coll_${u} PRIVATE CollBlastLib) # the Blast include dirs
 	set_target_properties(Coll_${u} PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON FOLDER Modules/Collision)
 endforeach ()
+coll_bldg_units () # COLL_HAVE_BLDGGEOM and BldgGeom.h for CollBaseA and CollBldgA
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 	target_compile_options(Coll_DentMath PRIVATE -ffp-contract=off) # dent geometry must not depend on FMA contraction
 endif ()
@@ -97,6 +99,7 @@ add_library(Collision SHARED CollPlugin.cpp CollSession.cpp)
 foreach (u ${COLL_UNITS})
 	target_sources(Collision PRIVATE $<TARGET_OBJECTS:Coll_${u}>)
 endforeach ()
+target_sources(Collision PRIVATE ${COLL_BLDG_OBJS}) # bldg: BldgGeom, hidden like the units
 target_include_directories(Collision PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${COLL_SDK_INCLUDE})
 target_compile_definitions(Collision PRIVATE COLL_ADDON_VERSION="${COLL_VERSION}") # no feature macro here: COLL_HAVE_IMGUI comes from CollPlatform.h
 target_link_libraries(Collision ${COLL_ORBITER_LIB} ${COLL_SDK_LIB} CollBlastLib)
@@ -238,6 +241,7 @@ if (COLL_MAKE_TESTS)
 		include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests_${part}.cmake OPTIONAL)
 	endforeach ()
 	include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests_blast.cmake)
+	include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/tests_bldg.cmake) # bldg: CollBldgA.Test, and BldgGeom for the tests that link CollBaseA
 	target_sources(CollisionAPI.Test PRIVATE Tests/CollisionAPI.Check.cpp) # the public header alone in a TU
 	target_link_libraries(CollisionAPI.Test ${CMAKE_DL_LIBS})
 	if (NOT WIN32)
@@ -269,8 +273,12 @@ if (COLL_MAKE_TESTS)
 			else ()
 				set(imgui $<TARGET_PROPERTY:imgui,INTERFACE_INCLUDE_DIRECTORIES>)
 			endif ()
+			set(bldg "")
+			if (COLL_HAVE_BLDGGEOM)
+				set(bldg --bldggeom ${COLL_BLDG_DIR}) # bldg: BldgGeom.h for CollBaseA and CollBldgA, BldgGeom.cpp compiled too
+			endif ()
 			coll_add_test(Collision.Win2024.Compile TIMEOUT 600 SKIP 77 LABELS collision windows COMMAND ${Python3_EXECUTABLE} ${tdir}/Collision.Win2024.Compile.py
-				--headers ${COLL_W2024_INCLUDE} --src ${CMAKE_CURRENT_SOURCE_DIR} --imgui ${imgui} --blast ${COLL_BLAST_DIR})
+				--headers ${COLL_W2024_INCLUDE} --src ${CMAKE_CURRENT_SOURCE_DIR} --imgui ${imgui} --blast ${COLL_BLAST_DIR} ${bldg})
 		endif ()
 		include(Tests/Scenario/ScenarioTests.cmake) # scenario tests: the runner, the test modules, the catalog of E4 7.9
 	endif ()

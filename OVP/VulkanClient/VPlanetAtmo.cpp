@@ -18,6 +18,7 @@
 #include "AtmoControls.h"
 #include "VectorHelpers.h"
 #include "IProcess.h"
+#include "SceneShadows.h" // not upstream
 
 using namespace oapi;
 
@@ -123,8 +124,10 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	string blend = "";
 	string flags = "";
 	if (!Config->bAtmoQuality) flags += "_PERFORMANCE ";
+	if (Config->Filmic) flags += "_FILMIC "; // not upstream
 
 	pRender[PLT_GIANT] = new PlanetShader(pDev, "Modules/VulkanClient/NewPlanet.glsl", "GiantVS", "GiantPS", "Giant", flags.c_str());
+	if (Config->CloudAtlas) flags += "_CLOUDATLAS "; // not upstream: seamless cloud alpha
 	pRender[PLT_G_CLOUDS] = new PlanetShader(pDev, "Modules/VulkanClient/NewPlanet.glsl", "CloudVS", "GiantCloudPS", "GiantCloud", flags.c_str());
 
 	if (Config->CloudMicro) flags += "_CLOUDMICRO ";
@@ -144,6 +147,8 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	if (Config->ShadowMapMode) flags += "_SHDMAP ";
 	if (Config->EnableMeshDbg) flags += "_DEVTOOLS ";
 	if (!Config->bAtmoQuality) flags += "_PERFORMANCE ";
+	if (Config->Filmic) flags += "_FILMIC "; // not upstream
+	if (SceneShadows::Enabled()) flags += "_CSM "; // not upstream: scene shadow receivers (design-scene-shadows)
 
 	pRender[PLT_MARS] = new PlanetShader(pDev, "Modules/VulkanClient/NewPlanet.glsl", "TerrainVS", "TerrainPS", "Mars", (flags + blend).c_str());
 
@@ -158,12 +163,19 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	if (bWater) flags += "_WATER ";
 	if (bWater && bRiples) flags += "_RIPPLES ";
 	if (bShadows) flags += "_CLOUDSHD ";
+	if (bShadows && Config->CloudAtlas) flags += "_CLOUDATLAS "; // not upstream: seamless cloud shadows
+	if (bWater && Config->WaterFx) flags += "_WATERFX "; // not upstream: waves, glitter, sky, foam
+	if (bWater && bRiples && Config->SSR) flags += "_SSR "; // not upstream: screen-space reflections on the water, on the micro texture samplers 21/22 that the Earth flags never use (r3-ssr2)
+	if (bShadows && Config->VolClouds && Config->VolCloudShadows) flags += "_VOLSHD "; // not upstream: the 2D cloud shadow fades under the volume
 	if (bNightLights) flags += "_NIGHTLIGHTS ";
+	if (bNightLights && Config->NightLook) flags += "_NIGHTLOOK "; // not upstream: night city look (design-night-look 5)
 	if (bLocals) flags += "_LOCALLIGHTS ";
 
 	if (Config->ShadowMapMode) flags += "_SHDMAP ";
 	if (Config->EnableMeshDbg) flags += "_DEVTOOLS ";
 	if (!Config->bAtmoQuality) flags += "_PERFORMANCE ";
+	if (Config->Filmic) flags += "_FILMIC "; // not upstream
+	if (SceneShadows::Enabled()) flags += "_CSM "; // not upstream: scene shadow receivers (design-scene-shadows)
 
 	pRender[PLT_EARTH] = new PlanetShader(pDev, "Modules/VulkanClient/NewPlanet.glsl", "TerrainVS", "TerrainPS", "Earth", (flags + blend).c_str());
 }
@@ -566,6 +578,16 @@ bool vPlanet::SphericalShadow()
 
 
 // ===========================================================================================
+// not upstream: auto-exposure e in the main pass, 1 in the others
+void vPlanet::ApplyExposure()
+{
+	if (mesh) return;
+	float e = (scn->GetRenderPass() == RENDERPASS_MAINSCENE) ? scn->GetExposure() : 1.0f;
+	if (HasAtmosphere() && surfmgr2) { if (expoBase > 0.0f) cp.Expo = expoBase * e; } // 0: UpdateScatter not run yet
+	else if (trBase > 0.0f) cp.TrExpo = trBase * e;
+}
+
+// ===========================================================================================
 //
 void vPlanet::UpdateScatter()
 {
@@ -653,6 +675,8 @@ void vPlanet::UpdateScatter()
 	cp.Time = fmod(oapiGetSimTime(), 3600.0f);
 	cp.TrGamma = 1.0f / float(atmo->tgamma);
 	cp.TrExpo = float(atmo->trb);
+	trBase = cp.TrExpo; // not upstream: auto-exposure
+	ApplyExposure();
 	cp.Ambient = fAmbient;
 	cp.CosAlpha = min(1.0f, cp.PlanetRad / cp.CamRad);
 	cp.SinAlpha = sqrt(1.0f - cp.CosAlpha * cp.CosAlpha);
@@ -691,6 +715,8 @@ void vPlanet::UpdateScatter()
 	cp.iH.x = 1.0f / float(atmo->rheight * 1000.0);
 	cp.iH.y = 1.0f / float(atmo->mheight * 1000.0);
 	cp.Expo = atmo->aux3;
+	expoBase = cp.Expo; // not upstream: auto-exposure
+	ApplyExposure();
 	//cp.HG = FVECTOR4(1.5f * (1.0f - g * g) / (2.0f + g * g), 1.0f + g * g, 2.0f * g, float(atmo->mphaseb));
 	cp.HG = FVECTOR4(pow(1.0f - g * g, 0.75f), g, 0.0f, float(atmo->mphaseb));
 

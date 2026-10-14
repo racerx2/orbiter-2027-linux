@@ -1025,6 +1025,7 @@ Notes:
 \begin{itemize}
 \item If the mesh only uses a single texture it is more efficient to specify it via the TEX entry instead of defining it in the mesh and using the OWNMATERIAL flag, because Orbiter can merge objects with the same TEX entries for improved performance.
 \item If OWNSHADOW is used, any mesh groups which have bit 0 set in their FLAG entry do not cast shadows, otherwise they do cast shadows (see section \ref{sec:mesh_file}).
+\item FILE can also name a glTF mesh (.glb or .gltf, used with OWNMATERIAL). With the VulkanClient, a structure buried under the terrain casts no shadow (see section \ref{ssec:vk_bases}).
 \end{itemize}
 
 

@@ -22,6 +22,22 @@ Windows is [orbitersim/orbiter](https://github.com/orbitersim/orbiter).
 
 ## What's new since the Windows version
 
+### Streamed Earth and 3D cities
+
+![New York, Paris, Chicago and London](./.github/readme/earth-cities.jpg)
+
+*New York, Paris, Chicago and London, streamed in while flying.*
+
+Earth streams in as you fly, from free servers with no account or key:
+
+- **Imagery and terrain** for the whole planet: Sentinel-2 imagery, elevation, water and coastlines.
+- **3D cities**: buildings from OpenStreetMap wherever it has them, set on the terrain with textured walls and
+  roofs and windows lit at night. With the Collision module on they are solid: ships crash into them and can land on their roofs.
+- **Ground detail**: 3D trees from land cover, terrain shadows, volumetric clouds without tile seams.
+- **Offline**: download a region ahead of time under Options > Earth streaming.
+
+Sources, settings and credits: [Earth imagery](#earth-imagery).
+
 ### Planets and moons
 
 ![Pluto and Charon](./.github/readme/planets.jpg)
@@ -65,8 +81,11 @@ An add-on that makes ships collide with each other, with base buildings and with
 - Structures break apart live in the simulation with NVIDIA Blast, on the CPU (no special graphics card needed).
   Pieces that come off fly away as debris.
 - Crashes into buildings and into the ground do the same damage.
+- The streamed 3D buildings are solid too, with the shape they are drawn with: ships crash into them and can land on their roofs.
 - Damage and debris are saved with the scenario and play back in flight recordings.
-- A ship that absorbs more than 1 kJ per kg is destroyed (it loses thrust when the Damage model option is on).
+- A ship that absorbs more than 1 kJ per kg is destroyed: it loses thrust, and the player loses its controls
+  (keys, joystick, cockpit switches); its MFDs can still be switched with the Shift keys.
+- High-speed crashes don't freeze the game, even when a breakup makes dozens of pieces.
 
 Turn it on in the Launchpad's **Modules** tab (Collision). Settings are in `Config/Collision.cfg`.
 
@@ -101,6 +120,27 @@ KTX2 compression.
 
 Try it with the **Delta-glider > DG and DG-S and DGTest** scenario, and **Graphics > PBR material bench**,
 which shows every material on its own sphere.
+
+### Graphics effects
+
+![Re-entry plasma and hull heating, valley fog in the Alps, a ship's shadow and sea reflections, Atlantis' plume at launch](./.github/readme/effects.jpg)
+
+*Re-entry plasma and hull heating; valley fog in the Alps; shadows and sea reflections; Atlantis' plume.*
+
+New in the Vulkan client, each a switch in `Modules/VulkanClient/VulkanClient.cfg` (on by default, fog off):
+
+- **Shadows** (`SceneShadows`): sun shadows of ships, buildings and terrain out to about 40 km from the camera.
+- **Reflections** (`SSR`): water and glossy hulls reflect the scene around them.
+- **Bounce light** (`SSGI`): sunlit ground and hulls light up what is next to them.
+- **Plumes and smoke** (`VolPlumes`): lit volumetric exhaust with shock diamonds, ground clouds and smoke.
+- **Re-entry** (`VolPlumes`): a plasma sheath shaped by the hull, and a hull that heats up and glows from the
+  nose and leading edges, then cools slowly. Works for any ship, no add-on changes needed.
+- **Fog** (`HeightFog`): fog that fills valleys and lies over the sea, by time of day and season.
+- **Night look** (`NightLook`): cities lit by street lamps that light the ground, building windows that come on
+  at dusk, and nights that stay dark.
+
+How they work: the Technical Reference (*Vulkan effects*). For add-on makers: the Developer Manual
+(*Graphics content*).
 
 ### Multiplayer
 
@@ -166,6 +206,122 @@ This path can also be set using ORBITER_PLANET_TEXTURE_INSTALL_DIR environment v
 Alternatively, you can configure the texture directory after building Orbiter
 by setting the `PlanetTexDir` entry in `Orbiter.cfg`.
 
+## Earth imagery
+
+Earth is not part of the texture download. While Orbiter runs, the tiles it
+draws stream in from free servers that need no account or key, and are kept
+in `Textures/Earth` like installed tiles. The sources are listed in
+`Config/TileStream.cfg`; with the shipped file the requests go to:
+
+- `tiles.maps.eox.at`: surface imagery, EOX Sentinel-2 cloudless 2016, levels 1 to 16
+- `gibs.earthdata.nasa.gov`: night lights (NASA Black Marble 2016), the
+  OpenStreetMap water mask, and NASA Blue Marble standing in at levels 10 and
+  below while EOX does not answer
+- `esa-worldcover.s3.eu-central-1.amazonaws.com`: ESA WorldCover 2021, the
+  10 m water mask and the land classes for the ground detail, from level 12
+- `s3.amazonaws.com` (`elevation-tiles-prod`): elevation, Terrain Tiles on AWS
+- `eoimages.gsfc.nasa.gov`: clouds, the NASA Visible Earth cloud map (levels 1 to 7)
+- `tiles.openfreemap.org`: 3D buildings within 3 to 6 km of the camera below
+  15 km altitude, set on the terrain with textured walls, roofs and lit windows
+  at night; the textures are drawn by the build itself (`Utils/bldgtex`, into
+  `Textures/Bldg`), and a building inside a base's own buildings is left out
+
+The runways and pads of the Earth surface bases are laid flat at the base's
+height. Elevation below sea level is raised to 0 m except in the `FLOOR` boxes
+of `Config/TileStream.cfg` (the Dead Sea, the Caspian Sea, Death Valley, the
+Qattara Depression and other large depressions); the Netherlands polders stay
+at 0 m.
+
+An Orbiter 2016 Earth pack installed in `Textures/Earth/Archive` is still used
+for its imagery, masks and clouds. Its elevation, which includes trees and
+buildings, is replaced with streaming on: a tile takes the streamed heights
+once the stream has the elevation of its parent tile, and shows them the next
+time it is loaded. Nothing has to be deleted for this.
+
+`Orbiter.cfg` keys:
+
+- `TileStream` (default `TRUE`): stream Earth tiles
+- `TileStreamOffline` (default `FALSE`): no requests, only tiles on disk
+- `TileStreamCacheMB` (default `2048`, `0` no limit): at the start of a session
+  and every five minutes the tiles used longest ago go first; levels 8 and
+  below are always kept
+- `TileStreamBuildings` (default `TRUE`): stream 3D buildings
+
+The Launchpad page Options > Earth streaming sets the first three, shows the
+cache size, clears the streamed tiles (only files the stream wrote, listed in
+`Textures/Earth/TileStream`) and downloads a region ahead of time around a base
+or a position, for flying offline. A region download is refused while Offline
+is ticked or while the tiles are being cleared.
+
+The VulkanClient draws 3D trees from the streamed land cover where it shows
+forest or shrub, below 3 km above the ground. With the terrain horizon
+shadows, ambient occlusion, volumetric clouds and auto exposure they are the
+Ground graphics group of the VulkanClient Advanced Setup dialog;
+`VulkanClient.cfg` keys (defaults): `HorizonShadows` (1), `SSAO` (1),
+`SSAOStrength` (0.8), `SSAORadius` (1.5 m), `VolClouds` (1),
+`VolCloudQuality` (1, 0 low to 2 high), `Trees` (1), `TreeRange` (2500 m),
+`TreeDensity` (1), `AutoExposure` (1), `AutoExpMinEV` (-1.5), `AutoExpMaxEV`
+(2.5), `CloudAtlas` (1, cloud layer without tile seams).
+
+The Effects group of the same dialog switches the look passes, each on its
+own; `VulkanClient.cfg` keys (defaults): `LensFlare` (1), `LightShafts` (1),
+`TAA` (1, temporal anti-aliasing), `WaterFx` (1, waves, glitter, sky
+reflection, foam), `VolCloudShadows` (1, shadows of the volumetric clouds),
+`Filmic` (0, filmic tone curve), `Vignette` (1), `Sharpen` (1), `HeatHaze`
+(1, shimmer behind engines), and in its third row `SceneShadows` (1, sun
+shadows of terrain, buildings, trees and vessels), `SSR` (1, reflections of
+the scene in water, runways and glossy hulls), `VolPlumes` (1, volumetric
+engine plumes, lit smoke, soft particle trails, re-entry plasma and hulls
+glowing from re-entry heating), `SSGI` (1, one bounce of light
+from nearby surfaces), `SSGIStrength` (1.0, 0 to 2), `HeightFog` (0, valley
+fog and haze layers), `NightLook` (1, street lamps, lit windows and a darker
+night exposure).
+
+Privacy: each tile request tells the server which part of Earth is shown. Its
+only headers are `Host`, `User-Agent: OrbiterLinux/<version>`,
+`Accept-Language: en`, `Accept-Encoding` and `Connection`, and `Range` for a
+WorldCover read; no cookies are kept or sent. Offline mode makes no requests.
+
+### Earth credits
+
+The same credits are on the Launchpad page Options > Earth streaming, from
+`Config/TileStream.cfg`, and in the user manual's Credits section.
+
+- Imagery: EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH
+  (Contains modified Copernicus Sentinel data 2016 & 2017), CC BY 4.0
+- Imagery where EOX does not answer: NASA Blue Marble: Next Generation (NASA
+  Earth Observatory, Reto Stöckli), via NASA GIBS
+- Night lights: NASA Black Marble 2016 (VIIRS), via NASA GIBS
+  https://www.earthdata.nasa.gov/gibs, part of NASA's Earth Science Data and
+  Information System (ESDIS)
+- Water mask: © OpenStreetMap contributors, available under the Open Database
+  License https://www.openstreetmap.org/copyright, via NASA GIBS
+- Water and land cover: © ESA WorldCover project 2021 / Contains modified
+  Copernicus Sentinel data (2021) processed by ESA WorldCover consortium,
+  CC BY 4.0 https://esa-worldcover.org
+- Clouds: NASA Visible Earth, Blue Marble clouds (NASA Goddard Space Flight
+  Center, Reto Stöckli) https://visibleearth.nasa.gov
+- Elevation: Terrain Tiles on AWS https://registry.opendata.aws/terrain-tiles: Mapzen
+  - ArcticDEM terrain data DEM(s) were created from DigitalGlobe, Inc., imagery
+    and funded under National Science Foundation awards 1043681, 1559691, and 1542736
+  - Australia terrain data © Commonwealth of Australia (Geoscience Australia) 2017
+  - Austria terrain data © offene Daten Österreichs – Digitales Geländemodell (DGM) Österreich
+  - Canada terrain data contains information licensed under the Open Government Licence – Canada
+  - Europe terrain data produced using Copernicus data and information funded by
+    the European Union - EU-DEM layers
+  - Global ETOPO1 terrain data U.S. National Oceanic and Atmospheric Administration
+  - Mexico terrain data source: INEGI, Continental relief, 2016
+  - New Zealand terrain data Copyright 2011 Crown copyright (c) Land Information
+    New Zealand and the New Zealand Government (All rights reserved)
+  - Norway terrain data © Kartverket
+  - United Kingdom terrain data © Environment Agency copyright and/or database
+    right 2015. All rights reserved
+  - United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data
+    courtesy of the U.S. Geological Survey.
+- Buildings: © OpenMapTiles https://openmaptiles.org © OpenStreetMap
+  contributors, available under the Open Database License
+  https://www.openstreetmap.org/copyright, served by OpenFreeMap https://openfreemap.org
+
 ## Help
 
 Help files are located in the Doc subfolder (if you built them with `-DORBITER_MAKE_DOC=ON`).
@@ -176,4 +332,3 @@ the Orbiter Launchpad dialog, or with Alt-F1 while running
 Orbiter.
 
 Remaining questions can be posted on my [Discord](https://discord.gg/fnxQYTKPFK).
-

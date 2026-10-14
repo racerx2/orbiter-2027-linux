@@ -267,8 +267,9 @@ void HazeManager2::GlobalInit(D3D9Client *gclient)
 	CreateSkydomeBuffers(4);
 	CreateSkydomeBuffers(5);
 
-	pDome = new ShaderClass(pDev, "Modules/VulkanClient/NewPlanet.glsl", "HorizonVS", "HorizonPS", "Dome", NULL);
-	pRing = new ShaderClass(pDev, "Modules/VulkanClient/NewPlanet.glsl", "HorizonVS", "HorizonRingPS", "Ring", NULL);
+	const char *hf = Config->Filmic ? "_FILMIC " : NULL; // not upstream
+	pDome = new ShaderClass(pDev, "Modules/VulkanClient/NewPlanet.glsl", "HorizonVS", "HorizonPS", "Dome", hf);
+	pRing = new ShaderClass(pDev, "Modules/VulkanClient/NewPlanet.glsl", "HorizonVS", "HorizonRingPS", "Ring", hf);
 }
 
 // -----------------------------------------------------------------------

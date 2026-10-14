@@ -164,6 +164,8 @@ VESSEL *oapiGetVesselInterface (OBJHANDLE h)
 }
 
 int VESSEL::GetDamageModel () const { WorldCall (); return ((const FakeVessel *)(const void *)this)->damage; } // ASan: a destroyed vessel is poisoned
+DWORD VESSEL::GetADCtrlMode () const { WorldCall (); return 7; } // not upstream: the destroyed-craft lock reads and sets the control surfaces
+void VESSEL::SetADCtrlMode (DWORD) const { WorldCall (); }
 
 // the rest of the SDK the module imports (CollSdkOrbiter.cpp): world reads see an empty, mesh-less world; every one is a world call
 namespace {
@@ -201,6 +203,12 @@ VISHANDLE *oapiObjectVisualPtr (OBJHANDLE) { WorldCall (); return nullptr; }
 void oapiAnnotationSetPos (NOTEHANDLE, double, double, double, double) {}
 NOTEHANDLE oapiCreateAnnotation (bool, double, const VECTOR3 &) { return nullptr; }
 double oapiSurfaceElevation (OBJHANDLE, double, double) { WorldCall (); return 0; }
+#ifdef OAPI_TILESTREAM_BLDG
+bool oapiTileStreamEnabled (OBJHANDLE) { WorldCall (); return false; } // bldg: streamed buildings, none here
+int oapiTileStreamBldgWant (OBJHANDLE, int, int) { WorldCall (); return -1; }
+TSBLDGMESH *oapiTileStreamBldgLoad (OBJHANDLE, int, int) { WorldCall (); return nullptr; }
+void oapiTileStreamBldgFree (TSBLDGMESH *) { Bug ("oapiTileStreamBldgFree of a mesh never loaded"); }
+#endif
 void oapiAnnotationSetText (NOTEHANDLE, char *) {}
 void oapiGetRotationMatrix (OBJHANDLE, MATRIX3 *m) { WorldCall (); *m = _M (1, 0, 0, 0, 1, 0, 0, 0, 1); }
 double oapiGetTimeAcceleration () { WorldCall (); return 1; }
@@ -212,6 +220,7 @@ MESHHANDLE oapiLoadMesh (const char *) { WorldCall (); return nullptr; }
 void oapiDeleteMesh (MESHHANDLE) { WorldCall (); }
 bool oapiDeleteVessel (OBJHANDLE, OBJHANDLE) { WorldCall (); return false; }
 int oapiEditMeshGroup (MESHHANDLE, DWORD, GROUPEDITSPEC *) { WorldCall (); return -1; }
+DWORD oapiAddMeshGroup (MESHHANDLE, MESHGROUP *) { WorldCall (); return 0; } // not upstream: cell debris keep their triangles in groups of their own
 OBJHANDLE oapiCreateVesselEx (const char *, const char *, const void *) { WorldCall (); return nullptr; }
 SURFHANDLE oapiRegisterParticleTexture (char *) { WorldCall (); return nullptr; }
 double VESSEL::GetAltitude (AltitudeMode, int *) { WorldCall (); return 0; }
