@@ -22,6 +22,22 @@ Windows is [orbitersim/orbiter](https://github.com/orbitersim/orbiter).
 
 ## What's new since the Windows version
 
+### Streamed Earth and 3D cities
+
+![New York, Paris, Chicago and London](./.github/readme/earth-cities.jpg)
+
+*New York, Paris, Chicago and London, streamed in while flying.*
+
+Earth streams in as you fly, from free servers with no account or key:
+
+- **Imagery and terrain** for the whole planet: Sentinel-2 imagery, elevation, water and coastlines.
+- **3D cities**: buildings from OpenStreetMap wherever it has them, set on the terrain with textured walls and
+  roofs and windows lit at night. They are solid: ships crash into them and can land on their roofs.
+- **Ground detail**: 3D trees from land cover, terrain shadows, volumetric clouds without tile seams.
+- **Offline**: download a region ahead of time under Options > Earth streaming.
+
+Sources, settings and credits: [Earth imagery](#earth-imagery).
+
 ### Planets and moons
 
 ![Pluto and Charon](./.github/readme/planets.jpg)
