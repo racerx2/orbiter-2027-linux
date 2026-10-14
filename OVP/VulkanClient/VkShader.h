@@ -14,6 +14,9 @@
 #include <vector>
 #include <deque>
 #include <map>
+#include <atomic>
+#include <mutex>
+#include <thread>
 
 // shader constant or sampler (D3DXCONSTANT_DESC counterpart)
 struct VkConstEntry {
@@ -113,13 +116,16 @@ public:
 	int GetValue (VkFxHandle h, void *data, UINT bytes);   // custom: PBR effects copy the legacy effect's shared values
 	VkTex *GetTexture (VkFxHandle h);                       // custom: the texture bound to a sampler or texture parameter
 	bool CompileCheck ();                                   // custom: every pass to SPIR-V, no shader objects; false if one fails
+	void WarmAsync ();                                      // custom: every pass compiled on a worker thread, so none compiles mid-flight on first use
 
+	struct Ready { std::atomic<bool> v { false }; Ready () = default; Ready (const Ready &o) : v (o.v.load ()) {} Ready &operator= (const Ready &o) { v = o.v.load (); return *this; } };
 	struct Pass {
 		std::string vs, ps, vsArgs, psArgs;  // entry functions and their uniform arguments
 		std::vector<std::pair<std::string, std::string>> states;
 		VkShaderEXT vsObj, psObj;
 		bool failed;
 		std::vector<VkSamplerSlot> samplers; // sampler bindings the pass reads
+		Ready ready;                         // custom: compiled (or failed), by the worker or the first BeginPass
 	};
 	struct Technique {
 		std::string name;
@@ -152,6 +158,9 @@ private:
 	int curPass;
 	bool saved;
 	VkDev::State savedState;
+	std::mutex warmMx;                   // custom: one pass compiles at a time, the worker's or BeginPass's
+	std::thread warm;
+	std::atomic<bool> warmStop { false };
 };
 
 #endif // !__VKSHADER_H

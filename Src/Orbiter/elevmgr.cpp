@@ -409,6 +409,43 @@ bool ElevationManager::LoadElevationTile_mod (int lvl, int ilat, int ilng, doubl
 // lat(PI) = North pole, lat(-PI) = South Pole
 // lng(-PI) = 180deg West, lng(PI) = 180deg East
 
+INT16 *ElevationManager::SharedTile (int lvl, int ilat, int ilng) const // not upstream
+{
+	const size_t ndat = (size_t)elev_stride * elev_stride;
+	const uint64_t key = ElevKey (lvl, ilat, ilng);
+	const unsigned gen = TsWriteGen ();
+	{
+		std::lock_guard<std::mutex> lk (sharedMx);
+		auto miss = sharedMiss.find (key); // a level with no tile: the search below it goes on at once
+		if (miss != sharedMiss.end () && miss->second == gen) return nullptr;
+		auto it = shared.find (key);
+		if (it != shared.end () && it->second.gen == gen && it->second.data.size () == ndat) {
+			it->second.used = ++sharedUse;
+			INT16 *d = new INT16[ndat];
+			memcpy (d, it->second.data.data (), ndat * sizeof (INT16));
+			return d;
+		}
+	}
+	INT16 *d = LoadElevationTile (lvl, ilat, ilng, elev_res);
+	if (d) LoadElevationTile_mod (lvl, ilat, ilng, elev_res, d);
+	std::lock_guard<std::mutex> lk (sharedMx);
+	if (!d) {
+		if (sharedMiss.size () >= 4096) sharedMiss.clear ();
+		sharedMiss[key] = gen;
+		return nullptr;
+	}
+	if (shared.size () >= 48) { // the least recently used goes
+		auto old = shared.begin ();
+		for (auto it = shared.begin (); it != shared.end (); ++it) if (it->second.used < old->second.used) old = it;
+		shared.erase (old);
+	}
+	Shared &s = shared[key];
+	s.data.assign (d, d + ndat);
+	s.gen = gen;
+	s.used = ++sharedUse;
+	return d;
+}
+
 double ElevationManager::Elevation (double lat, double lng, int reqlvl, std::vector<ElevationTile> *tilecache, Vector *normal, int *reslvl) const
 {
 	double e = 0.0;
@@ -460,9 +497,8 @@ double ElevationManager::Elevation (double lat, double lng, int reqlvl, std::vec
 
 			for (lvl = reqlvl; lvl >= 0; lvl--) {
 				TileIdx (lat, lng, lvl, &ilat, &ilng);
-				t->data = LoadElevationTile (lvl+4, ilat, ilng, elev_res);
+				t->data = SharedTile (lvl+4, ilat, ilng); // not upstream: with its modifications, from the shared tiles
 				if (t->data) {
-					LoadElevationTile_mod (lvl+4, ilat, ilng, elev_res, t->data); // load modifications
 					int nlat = 1 << lvl;
 					int nlng = 2 << lvl;
 					t->mgr = this;
@@ -485,6 +521,8 @@ double ElevationManager::Elevation (double lat, double lng, int reqlvl, std::vec
 						t->quadrants |= DWORD(HasElevationTile(qlvl + 4, qlat + 0, qlng + 1)) << 1;	// NE
 						t->quadrants |= DWORD(HasElevationTile(qlvl + 4, qlat + 1, qlng + 0)) << 2; // SW
 						t->quadrants |= DWORD(HasElevationTile(qlvl + 4, qlat + 1, qlng + 1)) << 3;	// SE
+						int q = (lng > (t->lngmin + t->lngmax) * 0.5 ? 1 : 0) + (lat < (t->latmin + t->latmax) * 0.5 ? 2 : 0);
+						t->quadrants &= ~(DWORD(1) << q); // not upstream: this point's lvl+1 tile was just tried and would not load (stream-covered or bad): its quadrant is this tile's, or every query there reloads
 					}
 
 					//int q = Quadrant(lat, lng, lvl);

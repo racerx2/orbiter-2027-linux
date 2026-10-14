@@ -34,6 +34,11 @@ namespace {
 const int DIRS = 128;						// support directions (design 2.5)
 const DWORD BUILD_STEP = 20000;				// vertices per Step while a support set builds (review N11)
 const size_t EDGE_RAYS = 2500;				// exposure rays per Step while a mesh's real edges build (Rev 3)
+const DWORD FRAME_BUILD = 4 * BUILD_STEP;	// and per frame over all vessels (a breakup adds dozens of new meshes at once)
+const size_t FRAME_RAYS = 4 * EDGE_RAYS;
+DWORD frameBuild = 0;
+size_t frameRays = 0;
+DWORD budgetFrame = ~0u;
 
 struct MeshSup {							// one mesh's extreme vertices along DIRS directions, mesh coordinates
 	DWORD nv = 0, ng = 0;
@@ -210,8 +215,13 @@ void EdgeStep (const char *name, D3D9Mesh *m, MeshSup &ms, size_t &rays)
 // the upstream-most hull vertex along up (vessel axes): exterior meshes' support sets, each moved by its mesh offset this frame (review S1)
 bool HullHeat::Upstream (vVessel *vv, const double up[3], double out[3])
 {
-	DWORD budget = BUILD_STEP;
-	size_t done = 0, rays = EDGE_RAYS;
+	DWORD fid = vv->GetScene() ? vv->GetScene()->GetFrameId() : 0;
+	if (fid != budgetFrame) { budgetFrame = fid; frameBuild = FRAME_BUILD; frameRays = FRAME_RAYS; }
+	DWORD budget = std::min(BUILD_STEP, frameBuild);
+	size_t done = 0, rays = std::min(EDGE_RAYS, frameRays);
+	const DWORD budget0 = budget;
+	const size_t rays0 = rays;
+	struct Spend { DWORD &b; size_t &r; const DWORD b0; const size_t r0; ~Spend() { frameBuild -= std::min(frameBuild, b0 - b); frameRays -= std::min(frameRays, r0 - r); } } spend { budget, rays, budget0, rays0 };
 	bool all = true, any = false;
 	double bv = -1e300;
 	auto t0 = std::chrono::steady_clock::now();

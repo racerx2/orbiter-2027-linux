@@ -101,6 +101,12 @@ private:
 	mutable std::unordered_map<uint64_t, Loose> loose;        // not upstream: by lvl, ilat, ilng
 	mutable std::unordered_map<uint64_t, bool> badNode;       // not upstream: archive nodes that would not load
 	mutable unsigned looseGen = 0;                            // not upstream: TsWriteGen when the missing files were last checked
+	struct Shared { std::vector<INT16> data; unsigned gen; uint64_t used; }; // not upstream: a decoded tile with its Elev_mod, TsWriteGen when read, last use
+	mutable std::unordered_map<uint64_t, Shared> shared;      // not upstream: by lvl, ilat, ilng; every vessel's tile cache copies from it (a breakup adds dozens of vessels on the same tile)
+	mutable uint64_t sharedUse = 0;
+	mutable std::unordered_map<uint64_t, unsigned> sharedMiss; // not upstream: levels with no tile, by TsWriteGen when looked for
+	mutable std::mutex sharedMx;
+	INT16 *SharedTile (int lvl, int ilat, int ilng) const;    // not upstream: LoadElevationTile and LoadElevationTile_mod, read once and copied
 };
 
 #endif // !__ELEVMGR_H
