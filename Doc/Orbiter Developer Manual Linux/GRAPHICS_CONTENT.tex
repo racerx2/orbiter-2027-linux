@@ -70,7 +70,7 @@ Some effects also depend on older settings of the client and the Launchpad:
 \begin{itemize}
 \item Reflections on vessels, from the environment map and from the screen, need a \textit{Reflection Mode} other than \textit{Disable} (EnvMapMode, default 1).
 \item Reflections on water need the Launchpad's \textit{Specular water reflections} and \textit{Specular ripples} options and SpecularRipple = TRUE in the planet's configuration file. They work with \textit{Enable Development Tools} (EnableMeshDbg) ticked or not.
-\item Lit smoke and the re-entry plasma come from particle streams, which need the Launchpad's \textit{Particle streams} option.
+\item Lit smoke comes from particle streams, which need the Launchpad's \textit{Particle streams} option. The re-entry plasma does not need them.
 \item Ground shadows of vessels and base structures need a \textit{Terrain mapping} other than \textit{None} (TerrainShadowing, default 2) and a planet with a ShadowDepth below 0.98.
 \end{itemize}
 
@@ -588,7 +588,7 @@ A vessel glows in a plasma sheath when it flies fast through an atmosphere; it n
 \begin{itemize}
 \item In an atmosphere with a gas constant within 15\,\% of air's, its colour follows the airspeed: orange up to about 9 km/s, pink at 10 km/s and violet above, at the speeds of a return from the Moon. In other atmospheres it is pink-violet.
 \item Its shape follows the vessel's meshes seen along the airflow (the groups that cast shadows), for the two largest plasma vessels on screen when their radius on screen is at least 48 pixels; the others get an ellipsoid around their mesh bounds. Docked and attached vessels glow as one body. At most four vessels glow at a time.
-\item With VolPlumes on, Orbiter's re-entry flame (the texture of SetReentryTexture) is not drawn for any vessel; every vessel fast enough in an atmosphere gets the plasma, re-entry particle stream or not. Below the plasma's onset (under about 3 km/s) only the hull glow shows. The re-entry particle streams stay billboards, soft against the hull (section \ref{sssec:vk_puffs}).
+\item With VolPlumes on, Orbiter's re-entry flame (the texture of SetReentryTexture) is replaced by the plasma: up to four vessels fast enough in an atmosphere get it at a time, re-entry particle stream or not, and any further ones keep the old flame. Below the plasma's onset (under about 3 km/s) only the hull glow shows. The re-entry particle streams stay billboards, soft against the hull (section \ref{sssec:vk_puffs}).
 \end{itemize}
 
 

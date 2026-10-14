@@ -83,6 +83,7 @@ public:
 	void Torn (uint32_t id, const DentTorn &t) override;
 	void Repair (uint32_t id) override;
 	void DropVessel (uint32_t id, CollH h) override;
+	void TimeJump () override { for (auto &d : live) d.vSeen = false; } // a jump moves every vessel: no runaway test across it
 	void PreStep (double simt, double simdt) override;                  // spawns queued by the last post-step: debris vessels and the parents' kicks
 	void Boot (double simt);                              // first pass after load: rebuild debris, adopt rows, queue the load mass cut
 	void End () override;

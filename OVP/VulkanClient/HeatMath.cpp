@@ -114,10 +114,10 @@ void EdgeSet::Begin (const std::vector<float> &xyz, const std::vector<uint32_t> 
 
 bool EdgeSet::Step (size_t &rays)
 {
-	if (phase == 1) { Prepare(); phase = 2; return false; }
+	if (phase == 1) { Prepare(); phase = 2; rays = 0; return false; } // the weld and the edge list: a whole budget's work
 	if (phase == 2) { Voxelize(rays); if (next >= T.size() / 3) { next = 0; phase = 3; } return false; }
 	if (phase == 3) { Expose(rays); if (next >= faces.size()) phase = 4; return false; }
-	if (phase == 4) { Features(); phase = 5; }
+	if (phase == 4) { Features(); phase = 5; rays = 0; }
 	return phase == 5;
 }
 

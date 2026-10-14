@@ -380,6 +380,9 @@ public: // dmg3 area P
 		g.MtrlIdx = src->MtrlIdx; g.TexIdx = src->TexIdx; g.zBias = src->zBias;
 		DWORD flag = src->UsrFlag & ~2u; // read before the add reallocates the groups
 		DWORD k = oapiAddMeshGroup ((MESHHANDLE)mesh, &g); // deep copy (Mesh::AddGroup)
+		MESHGROUPEX *dst = oapiMeshGroupEx ((MESHHANDLE)mesh, k);
+		src = oapiMeshGroupEx ((MESHHANDLE)mesh, from); // again: the add moved the groups
+		if (dst && src) { memcpy (dst->TexIdxEx, src->TexIdxEx, sizeof dst->TexIdxEx); memcpy (dst->TexMixEx, src->TexMixEx, sizeof dst->TexMixEx); } // the extra textures (night lights) as the source group
 		GROUPEDITSPEC ges; memset (&ges, 0, sizeof ges);
 		ges.flags = GRPEDIT_SETUSERFLAG; ges.UsrFlag = flag;
 		oapiEditMeshGroup ((MESHHANDLE)mesh, k, &ges);

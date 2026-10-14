@@ -716,7 +716,9 @@ bool CollBreakA::BuildMesh (CollH mesh, const DentDebris &d, Geo &geo, uint32_t 
 		if (t.nvtx) std::memcpy (rest.data (), t.vtx, sizeof (DentVtx) * t.nvtx);
 		std::vector<uint16_t> idx (t.idx, t.idx + t.nidx);
 		std::vector<DentVtx> v = PieceVertices (rest, g, ps, d.rec, ds);
-		if (!kc.empty ()) {
+		bool cut = false; // only the groups a KEEP cut names: the animated pieces of a mixed blast stay whole
+		for (auto &r : d.rec) if (r.p.mode == DENTM_VCUT && (r.p.bits & DENTC_KEEP) && std::find (r.grp.begin (), r.grp.end (), g) != r.grp.end ()) cut = true;
+		if (!kc.empty () && cut) {
 			std::vector<char> vin (rest.size ());
 			for (size_t i = 0; i < rest.size (); i++) vin[i] = inside (P (rest[i]));
 			std::vector<int> map (v.size (), -1);
@@ -1254,11 +1256,16 @@ void CollBreakA::PreStep (double simt, double simdt)
 	sp.swap (spawn);
 	size_t cap = (size_t)std::max (0, cfg.debrisMax);
 	if (sp.size () > cap) { // past the cap the heaviest pieces fly; the rest are only hidden (spawned, the cap deleted them in the same post-step, a frame of work for nothing)
-		std::stable_sort (sp.begin (), sp.end (), [] (const CollSpawnA &a, const CollSpawnA &b) { return a.mass > b.mass; });
+		std::vector<size_t> ord (sp.size ());
+		for (size_t i = 0; i < ord.size (); i++) ord[i] = i;
+		std::stable_sort (ord.begin (), ord.end (), [&] (size_t a, size_t b) { return sp[a].mass > sp[b].mass; });
+		std::vector<char> keep (sp.size (), 0);
+		for (size_t i = 0; i < cap; i++) keep[ord[i]] = 1;
+		std::vector<CollSpawnA> kept; // the kept ones in their queue order
 		std::vector<uint32_t> par;
-		for (size_t i = cap; i < sp.size (); i++) par.push_back (sp[i].parent);
+		for (size_t i = 0; i < sp.size (); i++) if (keep[i]) kept.push_back (std::move (sp[i])); else par.push_back (sp[i].parent);
 		Log ("Collision: %zu debris past CollisionDebrisMax (%zu) not spawned", sp.size () - cap, cap);
-		sp.resize (cap);
+		sp.swap (kept);
 		for (uint32_t p : par) SyncRows (p);
 	}
 	played.clear ();

@@ -98,8 +98,7 @@ private:
 	std::vector<D3D9ParticleStream *> claimed;
 	std::unordered_map<const vVessel *, std::vector<float>> legacy;
 	std::unordered_map<const vVessel *, std::vector<int>> plumeOf;
-	std::unordered_map<const vVessel *, float> reentryW;
-	bool reentryOff = false;	// the plasma runs: no legacy re-entry billboard at all
+	std::unordered_map<const vVessel *, float> reentryW;	// legacy re-entry billboard weight: 0 for plasma vessels and those below its onset
 	std::map<std::pair<OBJHANDLE, DWORD>, Nozzle> *nozzles = nullptr;
 	std::map<std::string, ClassCfg> *classes = nullptr;
 	std::map<OBJHANDLE, std::vector<GroundPuff>> *ground = nullptr;
