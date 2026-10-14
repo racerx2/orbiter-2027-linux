@@ -13,3 +13,17 @@ With Docker:
         /src/packaging/linux/build.sh /src /out <version>
 
 `test.sh` checks a package in other distributions' containers (packaging/linux/test.sh).
+
+## Release candidates (`rc.sh`, no Docker)
+
+`rc.sh` builds in an AlmaLinux 9 folder with the Dockerfile's packages (`ORBITER_RELEASE_ROOT`), entered with bwrap, so no Docker and no root are needed. It makes one package, which runs on every distribution listed above.
+
+    packaging/linux/rc.sh build              # compiles as the release does (incremental): run it with every build
+    packaging/linux/rc.sh package [rcN]      # manuals, package, checks on this PC (launcher, headless flight, Vulkan client)
+    packaging/linux/rc.sh release [rcN]      # package if needed, bring Custom of both GitHub repos to this commit, publish
+
+- `rcN` defaults to the next number after the highest `2027-rcN` release.
+- The notes come from `notes.md`. The changes go in `out/portable/changes-rcN.md`; without that file, the notes list the commit subjects since the previous tag.
+- `release` pushes only a fast-forward. On a fork whose Custom holds our commits under other hashes, it pushes a merge with this commit's files.
+- It stops if a Custom branch has changes that are not here.
+- A second run re-uploads the files of an existing release.
