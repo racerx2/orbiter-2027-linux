@@ -7,7 +7,7 @@ add_executable(bldgtex
 )
 target_include_directories(bldgtex PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 target_link_libraries(bldgtex Qt6::Gui stb_dxt)
-set_target_properties(bldgtex PROPERTIES FOLDER Tools)
+set_target_properties(bldgtex PROPERTIES FOLDER Tools BUILD_WITH_INSTALL_RPATH OFF) # runs at build time: finds the Qt it linked, also outside the system folders (the release build)
 
 set(BLDGTEX_DIR ${ORBITER_BINARY_TEXTURES_DIR}/Bldg)
 set(BLDGTEX_FILES ${BLDGTEX_DIR}/facade.dds ${BLDGTEX_DIR}/facade_emis.dds ${BLDGTEX_DIR}/facade_norm.dds ${BLDGTEX_DIR}/facade_nite.dds ${BLDGTEX_DIR}/roof.dds ${BLDGTEX_DIR}/roof_norm.dds)
