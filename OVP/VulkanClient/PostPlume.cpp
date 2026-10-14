@@ -731,7 +731,7 @@ static vPlanet *PlanetOf (Scene *scn, OBJHANDLE hP)
 // diffuse particle streams and the ground clouds as lit spherical puffs (design 6)
 void PostPlume::GatherPuffs ()
 {
-	struct PT { D3DXVECTOR3 c, sun, amb, ep, Tr, In; float r, sg, dist, Tf, seed, spin, slot; D3DXVECTOR3 alb; };
+	struct PT { D3DXVECTOR3 c, sun, amb, ep, Tr, In; float r, sg, dist, Tf, seed, spin, slot, tau; D3DXVECTOR3 alb; }; // tau: the column's optical depth toward the sun
 	std::vector<PT> pt;
 	double simt = oapiGetSimTime();
 	VECTOR3 cam = scn->Camera.pos;
@@ -755,7 +755,7 @@ void PostPlume::GatherPuffs ()
 		for (size_t k = 0; k < n; k++) { const PT &p = pt[i0 + k]; pm[k] = { { p.c.x, p.c.y, p.c.z }, p.r, p.sg }; }
 		double s[3] = { toSun.x, toSun.y, toSun.z };
 		DeepOpacity(pm, s, 48, tau);
-		for (size_t k = 0; k < n; k++) pt[i0 + k].sun *= float(std::exp(-tau[k]));
+		for (size_t k = 0; k < n; k++) pt[i0 + k].tau = float(tau[k]); // the shader lights it (SmokeSun)
 	};
 
 	for (DWORD n = 0; n < scn->nstream; n++) {
@@ -782,8 +782,9 @@ void PostPlume::GatherPuffs ()
 			double a = s->Alpha(p, simt) * 0.35; // the legacy alpha times a density scale [V]
 			q.sg = float(4.0 * a / (4.0 / 3.0 * q.r));
 			q.dist = float(Len(q.c));
-			q.alb = D3DXVECTOR3(0.85f, 0.85f, 0.85f);
+			q.alb = D3DXVECTOR3(0.9f, 0.9f, 0.9f);
 			q.sun = V3(L.Color) * e;
+			q.tau = 0.0f;
 			q.amb = V3(L.Ambient) * e;
 			q.Tr = V3(L.Transmission);
 			q.In = V3(L.Incatter);
@@ -821,6 +822,7 @@ void PostPlume::GatherPuffs ()
 			q.dist = float(Len(q.c));
 			q.alb = D3DXVECTOR3(g.col[0], g.col[1], g.col[2]);
 			q.sun = V3(L.Color) * e;
+			q.tau = 0.0f;
 			q.amb = V3(L.Ambient) * e;
 			q.Tr = V3(L.Transmission);
 			q.In = V3(L.Incatter);
@@ -894,10 +896,10 @@ void PostPlume::GatherPuffs ()
 		D3DXVECTOR4 *d = &puffData[size_t(j) * 6];
 		d[0] = V4(q.c, q.r);
 		d[1] = V4(D3DXVECTOR3(q.sun.x * al.x, q.sun.y * al.y, q.sun.z * al.z), q.sg);
-		d[2] = V4(D3DXVECTOR3(q.amb.x * al.x, q.amb.y * al.y, q.amb.z * al.z), q.seed);
+		d[2] = V4(D3DXVECTOR3(q.amb.x * al.x, q.amb.y * al.y, q.amb.z * al.z), q.seed + 16.0f * (q.slot + 1.0f)); // the seed is below 13
 		d[3] = V4(D3DXVECTOR3(q.ep.x * al.x, q.ep.y * al.y, q.ep.z * al.z), q.spin);
 		d[4] = V4(q.Tr, q.Tf);
-		d[5] = V4(q.In, q.slot);
+		d[5] = V4(q.In, q.tau);
 		puffLayer[j] = q.dist < dMid ? 1 : 0;
 	}
 }
