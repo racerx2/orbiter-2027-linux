@@ -338,6 +338,7 @@ void PostPlume::Collect ()
 	plumeOf.clear();
 	reentryW.clear();
 	reentryFrame = frame;
+	reentryOff = false;
 	nPuff = 0;
 	nLit = 0;
 	for (int i : bakeQueue) atlasSlot[i].h = nullptr; // queued but never baked (no Render): the handle may be gone
@@ -348,6 +349,7 @@ void PostPlume::Collect ()
 	}
 	if (!ok || !scn->pFx || !scn->pFx->DepthOK()) return; // SceneFx draws tDepth every main frame for us
 	if (!NoiseReady()) return;
+	reentryOff = true; // the plasma replaces the legacy billboard for every vessel, also below its own onset
 	time = float(std::fmod(oapiGetSysTime(), 3600.0)); // the wall clock, as the haze
 	double vp[16];
 	const float *m = (const float *)&scn->Camera.mProjView;
@@ -610,15 +612,11 @@ void PostPlume::UpdateGround ()
 	}
 }
 
-// vessels with a re-entry stream and a high energy flux (design 7.1); the 2 largest on screen get flow maps
+// vessels with a high energy flux (design 7.1; any vessel, as the legacy billboard it replaces, re-entry stream or not); the 2 largest on screen get flow maps
 void PostPlume::GatherPlasma ()
 {
 	std::vector<OBJHANDLE> owners, taken;
-	for (DWORD n = 0; n < scn->nstream; n++) {
-		D3D9ParticleStream *s = scn->pstream[n];
-		if (!s || !s->IsReentry() || !s->Owner()) continue;
-		if (std::find(owners.begin(), owners.end(), s->Owner()) == owners.end()) owners.push_back(s->Owner());
-	}
+	for (DWORD n = 0; n < oapiGetVesselCount(); n++) if (OBJHANDLE h = oapiGetVesselByIndex(n)) owners.push_back(h);
 	std::vector<Plasma> cand;
 	for (OBJHANDLE h : owners) {
 		if (std::find(taken.begin(), taken.end(), h) != taken.end() || !oapiIsVessel(h)) continue;
@@ -977,6 +975,7 @@ void PostPlume::Revoke ()
 	for (D3D9ParticleStream *s : claimed) s->Unclaim();
 	claimed.clear();
 	reentryW.clear(); // the legacy re-entry billboards back
+	reentryOff = false;
 }
 
 double PostPlume::LegacyWeight (const vVessel *vv, DWORD idx)
@@ -992,6 +991,7 @@ float PostPlume::LegacyReentry (const vVessel *vv)
 {
 	PostPlume *p = inst;
 	if (!p || p->scn->GetRenderPass() != RENDERPASS_MAINSCENE || p->scn->GetFrameId() - p->reentryFrame > 2) return 1.0f; // the opaque pass runs before Collect: last frame's plasma
+	if (p->reentryOff) return 0.0f;
 	auto it = p->reentryW.find(vv);
 	return it == p->reentryW.end() ? 1.0f : it->second;
 }

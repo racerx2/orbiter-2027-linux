@@ -583,12 +583,12 @@ With VolPlumes on, every DIFFUSE particle stream (smoke, vapour and contrails) t
 
 
 \subsubsection{Re-entry plasma}
-A vessel that owns a re-entry particle stream glows in a plasma sheath when it flies fast through an atmosphere. Orbiter gives every vessel a default re-entry stream while the Launchpad's \textit{Particle streams} option is on, and a module can add its own with AddReentryStream. The plasma starts when the energy flux of the oncoming air (dynamic pressure times airspeed) passes about 10$^6$ W/m$^2$ at more than 3 km/s, near 85 km for a vessel at orbital speed, and is at full strength at 10$^7$ W/m$^2$ and 6 km/s.
+A vessel glows in a plasma sheath when it flies fast through an atmosphere; it needs no re-entry particle stream for it. The plasma starts when the energy flux of the oncoming air (dynamic pressure times airspeed) passes about 10$^6$ W/m$^2$ at more than 3 km/s, near 85 km for a vessel at orbital speed, and is at full strength at 10$^7$ W/m$^2$ and 6 km/s.
 
 \begin{itemize}
 \item In an atmosphere with a gas constant within 15\,\% of air's, its colour follows the airspeed: orange up to about 9 km/s, pink at 10 km/s and violet above, at the speeds of a return from the Moon. In other atmospheres it is pink-violet.
 \item Its shape follows the vessel's meshes seen along the airflow (the groups that cast shadows), for the two largest plasma vessels on screen when their radius on screen is at least 48 pixels; the others get an ellipsoid around their mesh bounds. Docked and attached vessels glow as one body. At most four vessels glow at a time.
-\item While the plasma draws a vessel, Orbiter's re-entry flame (the texture of SetReentryTexture) is not drawn for it. The re-entry particle streams stay billboards, soft against the hull (section \ref{sssec:vk_puffs}).
+\item With VolPlumes on, Orbiter's re-entry flame (the texture of SetReentryTexture) is not drawn for any vessel; every vessel fast enough in an atmosphere gets the plasma, re-entry particle stream or not. Below the plasma's onset (under about 3 km/s) only the hull glow shows. The re-entry particle streams stay billboards, soft against the hull (section \ref{sssec:vk_puffs}).
 \end{itemize}
 
 

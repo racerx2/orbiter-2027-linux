@@ -471,12 +471,12 @@ with the normalisation $N = \mathrm{mix}(1/(2r_{e}), 1/(1.8R), S(0.3, 0.7, w_{at
 Parallel nozzles of one vessel and class that touch, or that are below 3 pixels and within three radii, are merged into one plume with an envelope; while more than 32 remain, the nearest pairs are merged. The 32 largest plumes on the screen are kept; the rest are drawn as legacy flames.
 
 \subsubsection{Re-entry plasma}
-A vessel with a re-entry particle stream glows with the intensity
+A vessel in an atmosphere, with or without a re-entry particle stream, glows with the intensity
 
 \[ I = S(6, 7, \log_{10}(qV))\; S(3000\,\mathrm{m/s}, 6000\,\mathrm{m/s}, V) \]
 
 \noindent
-of the free-stream energy flux $qV$ (dynamic pressure times airspeed, in W/m$^{2}$), and a colour from a table of airspeed, from orange at 5\,km/s to violet at 12\,km/s; in atmospheres other than air (gas constant more than 15\,\% from 287\,J/(kg\,K)) a fixed violet. The legacy re-entry billboard is then not drawn. For the two largest vessels on the screen (a radius of at least 48 pixels) the hull is drawn twice into flow maps of 128 $\times$ 128, orthographic along the airflow from the front and from behind. From them, each texel holds the windward and the leeward surface distances $z_{s}, z_{b}$ and the Newtonian windward weight $w = (\vec{n}\cdot\vec{f})^{2} = 1/(1 + |\nabla z_{s}|^{2})$ \cite{lees1955}; a reduction gives the stagnation point and the frontal area, and a blur the halo's shape. Other vessels use their hull box as an ellipsoid. Where the view ray crosses the windward surface, the shock layer adds
+of the free-stream energy flux $qV$ (dynamic pressure times airspeed, in W/m$^{2}$), and a colour from a table of airspeed, from orange at 5\,km/s to violet at 12\,km/s; in atmospheres other than air (gas constant more than 15\,\% from 287\,J/(kg\,K)) a fixed violet. While the plasma runs, the legacy re-entry billboard is not drawn for any vessel: below the plasma's onset (under about 3\,km/s) only the hull glow shows (section \ref{sec:vk_heat}). For the two largest vessels on the screen (a radius of at least 48 pixels) the hull is drawn twice into flow maps of 128 $\times$ 128, orthographic along the airflow from the front and from behind. From them, each texel holds the windward and the leeward surface distances $z_{s}, z_{b}$ and the Newtonian windward weight $w = (\vec{n}\cdot\vec{f})^{2} = 1/(1 + |\nabla z_{s}|^{2})$ \cite{lees1955}; a reduction gives the stagnation point and the frontal area, and a blur the halo's shape. Other vessels use their hull box as an ellipsoid. Where the view ray crosses the windward surface, the shock layer adds
 
 \[ \vec{L}_{band} = 3\,\vec{c}\,I f \sqrt{w}\,\left(\frac{\max(l, l_{f})}{l_{f}}\right)^{-1/2} b(l)\, \min\left(\frac{1}{|\hat{\vec{r}}\cdot\vec{n}|}, 8\right) \]
 
