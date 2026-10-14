@@ -120,7 +120,7 @@ bool      gSceneCopy;      // the opaque scene copy is bound
 CsmPrm    gCsm;            // not upstream: scene shadow cascades, shared from D3D9Client.fx (design-scene-shadows Rev 2)
 #endif
 #if defined(_SSR)
-SsrPrm    gSsr;            // not upstream: screen-space reflections of this draw, shared from D3D9Client.fx (design-ssr), after the shadows' gCsm (ue5-integration INT-2)
+SsrPrm    gSsr;            // not upstream: screen-space reflections of this draw, shared from D3D9Client.fx (design-ssr), after the shadows' gCsm
 #endif
 #if defined(_HEAT)
 HeatPrm   gHeat;           // not upstream: re-entry hull heating, shared from D3D9Client.fx (design-reentry-heat), after gSsr (INT-2)
@@ -158,7 +158,7 @@ sampler2D AnisoS = sampler_state { MinFilter = ANISOTROPIC; MagFilter = LINEAR; 
 sampler2D IridescenceS = sampler_state { MinFilter = ANISOTROPIC; MagFilter = LINEAR; MipFilter = LINEAR; MaxAnisotropy = ANISOTROPY_MACRO; AddressU = WRAP; AddressV = WRAP; };
 sampler2D IridThickS = sampler_state { MinFilter = ANISOTROPIC; MagFilter = LINEAR; MipFilter = LINEAR; MaxAnisotropy = ANISOTROPY_MACRO; AddressU = WRAP; AddressV = WRAP; };
 
-#if defined(_CSM) // not upstream: the scene shadow atlas, binding 29, before SSR's (ue5-integration INT-3)
+#if defined(_CSM) // not upstream: the scene shadow atlas, binding 29, before SSR's
 sampler2D CsmS = sampler_state { MinFilter = POINT; MagFilter = POINT; MipFilter = NONE; AddressU = CLAMP; AddressV = CLAMP; };
 #endif
 
@@ -166,7 +166,7 @@ sampler2D CsmS = sampler_state { MinFilter = POINT; MagFilter = POINT; MipFilter
 #include "Common.glsl"
 #include "SceneShadow.glsl" // not upstream: CsmVis (_CSM, pixel stage)
 
-#if defined(_SSR) // not upstream: screen-space reflections (design-ssr); after the shadows' CsmS in the text, so 30 and 31 (ue5-integration INT-3)
+#if defined(_SSR) // not upstream: screen-space reflections (design-ssr); after the shadows' CsmS in the text, so 30 and 31
 sampler2D tSsrCol = sampler_state { MinFilter = LINEAR; MagFilter = LINEAR; MipFilter = LINEAR; AddressU = CLAMP; AddressV = CLAMP; };
 sampler2D tSsrHiZ = sampler_state { MinFilter = POINT; MagFilter = POINT; MipFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };
 #include "Ssr.glsl"
@@ -451,9 +451,6 @@ vec4 PbrMeshPS (PbrVS f)
 	T = normalize(T);
 	B = cross(T, Ng) * (f.tanW.w < 0.0 ? -1.0 : 1.0);
 	if (Flag(PBRM_DOUBLESIDED) && !gl_FrontFacing) { Ng = -Ng; T = -T; B = -B; }
-#if defined(_HEAT)
-	HeatGeo hHg = HeatGeom(Ng, f.camW); // not upstream: hull heating curvature, before the discard (design-reentry-heat)
-#endif
 
 	vec3 N = Ng;
 	if (HasMap(T_NORMAL)) {
@@ -607,7 +604,7 @@ vec4 PbrMeshPS (PbrVS f)
 		}
 #endif
 #if defined(_HEAT)
-		if (gHeat.vFlow.w > 0.5) emis += HeatGlow(Ng, f.camW, hHg, s.base) * (1.0 - s.trans); // not upstream: the hull's own glow, linear, under the coat as the emission; not on fully lit groups (design-reentry-heat)
+		if (gHeat.vFlow.w > 0.5) emis += HeatGlow(Ng, f.camW, s.base) * (1.0 - s.trans); // not upstream: the hull's own glow, linear, under the coat as the emission; not on fully lit groups (design-reentry-heat)
 #endif
 #ifdef PBR_CLEARCOAT
 		emis *= 1.0 - s.cc * FSchlick1(0.04, 1.0, s.NcV); // emission is under the coat

@@ -8,6 +8,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -26,11 +27,18 @@ struct Tune {
 	static constexpr double G0 = 2.0;			// [D] hottest bin
 	static constexpr double Gr = 0.4;			// [D] ratio between bins
 	static constexpr double glowOn = 650.0;		// [V] K: hottest bin from which the glow is drawn
-	static constexpr double edge = 1.2;			// [V] leading-edge level over stagnation (an edge of R <= R_n/3: sqrt(R_n/2R) >= 1.2)
-	static constexpr double gate0 = 2.0;		// [V] R_n k1 where an edge starts to count
-	static constexpr double gate1 = 4.0;		// [V] R_n k1 where it fully counts
-	static constexpr double attach0 = 0.85;		// [V] c_perp from which an edge holds an attachment line (windward creases do not); HullHeat.glsl HeatRatio has the same four gate numbers
-	static constexpr double attach1 = 0.97;		// [V] c_perp where it fully does
+	static constexpr double edge = 1.2;			// [V] cap of the edge level over stagnation (an edge of R <= R_n/3: sqrt(R_n/2R) >= 1.2)
+	static constexpr double edgeTurn = 80.0;	// [D] deg of turning within edgeRho that make a real edge: both Newtonian sonic points (about 40 deg) on the feature
+	static constexpr double edgeDelta = 2.0;	// [V] deg, the smallest turn of a candidate edge
+	static constexpr double edgeExpose = 0.25;	// [V] share of hemisphere rays that escape: an exposed face
+	static constexpr double edgeRho = 0.015;	// [V] neighbourhood radius per metre of mesh size (finds edges up to about 1.5 % of it in radius)
+	static constexpr double edgeBeta = 15.0;	// [V] deg: an attachment line off the feature switches its edge heating off over this angle
+	static constexpr double edgeBand = 0.2;		// [V] floor of the band half-width over R_n
+	static constexpr double edgeRmin = 0.05;	// [V] floor of the edge radius over R_n
+	static constexpr double shieldH = 0.005;	// [D] protrusion per metre of mesh size below which a feature sits in the shock and boundary layers of the body upstream
+	static constexpr double shieldL = 0.1;		// [V] reach of the shielding test per metre of mesh size
+	static constexpr int edgeRays = 12;			// [V] hemisphere rays per face
+	static constexpr int edgeSegs = 16;			// [V] attachment segments per vessel in the shader block
 	static constexpr double nose = 0.03;		// [V] default nose radius per metre of hull size
 	static constexpr double emis = 0.85;		// [P] HRSI/RCC class total emissivity
 	static constexpr double lag = 25.0;			// [V] s
@@ -41,9 +49,44 @@ double SuttonGraves (double rho, double Rn, double V, double k);	// W/m2 cold wa
 double HotWallFactor (double T, double cp, double h0);	// 1 - cp T / h0, at most 1; negative above the recovery temperature (convective cooling)
 double KFlatPlate (double V);					// Tauber's laminar flat plate over Sutton-Graves (air)
 double AngleFactor (double c);					// Lees hemisphere fit, c = sine of the inclination
-double LocalRatio (double c, double x, double k1, double k2, double fd2, double Rn, double kfp);	// q_local / q_cw, the shader's HeatRatio (fd2 = |f . d2|)
-bool Weingarten (const double N[3], const double dNx[3], const double dNy[3], const double dPx[3], const double dPy[3],
-	double &k1, double &k2, double d2[3]);		// the shader's HeatGeom: principal curvatures (>= 0) and the low-curvature direction
+double LocalRatio (double c, double x, double Rn, double kfp, double Ge);	// q_local / q_cw, the shader's HeatRatio: stagnation, flat plate, the edge bands' Ge, lee floor
+double EdgeBand (double d, double w, double level, double nDotAtt);	// the shader's band of one attachment segment at distance d
+double EdgeLevel (double rl, double Rn, double cL, double beta, double betaFeat);	// G_e on an attachment line: swept cylinder of radius rl, Lees around the feature, off when the line is off the feature
+
+struct EdgeSeg { double a[3], b[3], n[3]; double w, level; };	// an attachment segment: ends, attachment normal, band half-width [m], level G_e
+
+class EdgeSet {									// a mesh's real edges (design-reentry-heat Rev 3), built once in parts
+public:
+	void Begin (const std::vector<float> &xyz, const std::vector<uint32_t> &tri);	// mesh coordinates, 3 floats per vertex, 3 indices per triangle
+	bool Step (size_t &rays);					// one part of the build; rays is the budget; true when built
+	bool Done () const { return phase == 5; }
+	void Attach (const double f[3], double Rn, std::vector<EdgeSeg> &out) const;	// f the downstream direction (mesh axes, unit)
+	bool Shielded (const double p[3], const double u[3], const double t[3]) const;	// body upstream of p in its cross-section, past the protrusion floor
+	size_t tris = 0, convex = 0, exposed = 0, real = 0;
+	double size = 0.0, vox = 0.0;
+private:
+	int phase = 0;
+	std::vector<float> inXyz;
+	std::vector<uint32_t> inTri;
+	std::vector<double> P, N;
+	std::vector<uint32_t> T;
+	struct Cand { uint32_t a, b, f1, f2; double d; };
+	std::vector<Cand> cand;
+	std::vector<uint32_t> faces, adj0, adj;
+	std::vector<float> expo;
+	size_t next = 0;
+	double lo[3] = { 0.0, 0.0, 0.0 };
+	int dim[3] = { 0, 0, 0 };
+	std::vector<uint64_t> occ;
+	struct Edge { double a[3], b[3], t[3], p1[3], q[3]; double arc, rl; uint32_t va, vb, nb0, nb1; bool face1, face2; };	// faceN: a plain face on that side (no parallel neighbour within rho)
+	std::vector<Edge> edges;
+	std::vector<uint32_t> nbr;
+	bool Occ (const double p[3]) const;
+	void Prepare ();
+	void Voxelize (size_t &rays);
+	void Expose (size_t &rays);
+	void Features ();
+};
 
 struct Wall { double eps, C, Tsink; };
 double HeatCapacity (double lag, double eps);	// J/m2/K from the e-folding time at Tref

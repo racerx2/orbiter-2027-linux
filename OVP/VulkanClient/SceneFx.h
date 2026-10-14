@@ -38,7 +38,7 @@ public:
 	VkTex *Flag () const;                       // TAA: 1 on the camera target vessel, when written this frame, else NULL
 	VkTex *VolumeDist () const;                 // TAA: the volume clouds' mean distance, half res, when written this frame, else NULL
 	void CameraRays (D3DXVECTOR4 &camX, D3DXVECTOR4 &camY, D3DXVECTOR4 &camZ) const; // VolCloud.glsl PixelRay's vCamX/Y/Z; the TAA jitter folded into camZ
-	static bool DepthWanted ();                 // a feature reads tDepth: the depth targets exist and the terrain records for it (ue5-integration INT-4)
+	static bool DepthWanted ();                 // a feature reads tDepth: the depth targets exist and the terrain records for it
 	bool DepthRanThisFrame () const { return depthFrame != 0 && DepthValid(); }
 	float FogAlongRay (const VECTOR3 &from, const VECTOR3 &dir, double dist) const; // SceneFxFog.cpp: fog transmittance along a ray (global frame), 1 without fog
 	float FogTowardSun () const;                // SceneFxFog.cpp: fog transmittance from the camera toward the sun, 1 without fog

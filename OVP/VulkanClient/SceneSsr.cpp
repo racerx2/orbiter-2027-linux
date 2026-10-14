@@ -198,7 +198,7 @@ void SceneSsr::Capture (VkSurf *target)
 	VkTex *fog = fx->FogTex();
 	VkDev::State st = dev->GetState();
 	bool done = true;
-	if (fog) { // no double fog: the reflecting pixel gets its own (ue5-integration INT-5)
+	if (fog) { // no double fog: the reflecting pixel gets its own
 		if (!tFogTmp) {
 			tFogTmp = new VkTex(dev, W, H, 1, VK_FORMAT_R16G16B16A16_SFLOAT, RTUsage);
 			sFogTmp = new VkSurf(tFogTmp, 0);

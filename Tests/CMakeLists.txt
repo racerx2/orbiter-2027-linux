@@ -224,7 +224,7 @@ target_include_directories(PostMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanC
 add_unit_test(LookMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/LookMath.cpp)
 target_include_directories(LookMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 
-# not upstream: UE5 batch maths (ue5-integration)
+# not upstream: maths units of the new effects
 add_unit_test(CsmMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/CsmMath.cpp)
 target_include_directories(CsmMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 add_unit_test(SsrMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/SsrMath.cpp ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/PostMath.cpp)

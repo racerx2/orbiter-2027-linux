@@ -3,7 +3,7 @@
 // Dual licensed under GPL v3 and LGPL v3
 // Copyright (C) 2026 racerx2
 // ==============================================================
-// not upstream: re-entry hull heating maths (design-reentry-heat 2, 3)
+// not upstream: re-entry hull heating maths (design-reentry-heat 2, 3, Rev 3 real edges)
 
 #include "HeatMath.h"
 #include <algorithm>
@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <sstream>
+#include <unordered_map>
 
 namespace HeatMath {
 
@@ -55,60 +56,463 @@ static double Smooth (double e0, double e1, double x)
 	return u * u * (3.0 - 2.0 * u);
 }
 
-// stagnation region, swept attachment lines (Tauber, Menees and Adelman 1987: sqrt(q_cyl^2 cos^2 L + q_fp^2 sin^2 L)), laminar flat plate, lee floor
-double LocalRatio (double c, double x, double k1, double k2, double fd2, double Rn, double kfp)
+static double Dot (const double a[3], const double b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+static double Len (const double a[3]) { return std::sqrt(Dot(a, a)); }
+static void Cross (const double a[3], const double b[3], double o[3])
+{
+	double r[3] = { a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
+	o[0] = r[0]; o[1] = r[1]; o[2] = r[2];
+}
+static bool Unit (double a[3])
+{
+	double l = Len(a);
+	if (!(l > 1e-12)) return false;
+	for (int i = 0; i < 3; i++) a[i] /= l;
+	return true;
+}
+
+// stagnation region, laminar flat plate (Tauber, Menees and Adelman 1987), the edge bands, lee floor
+double LocalRatio (double c, double x, double Rn, double kfp, double Ge)
 {
 	c = std::clamp(c, -1.0, 1.0);
 	double r = x / (1.5 * Rn);
 	double Gs = AngleFactor(c) * std::exp(-r * r);
 	double Gf = 0.0;
 	if (c > 0.0) Gf = kfp * std::sqrt(std::sqrt(std::max(0.0, 1.0 - c * c))) * c * std::sqrt(Rn / std::max(x, Rn));
-	double an = (k1 + k2) > 0.0 ? (k1 - k2) / (k1 + k2) : 0.0;
-	double sL = std::clamp(an * fd2, 0.0, 1.0), cL = std::sqrt(1.0 - sL * sL);
-	double cn = std::clamp(c / std::max(cL, 1e-3), -1.0, 1.0);
-	double Ge = Tune::edge * AngleFactor(cn) * cL;
-	double Gc = Smooth(Tune::gate0, Tune::gate1, Rn * k1) * Smooth(Tune::attach0, Tune::attach1, cn) * std::sqrt(Ge * Ge + Gf * Gf * sL * sL);
-	return std::clamp(std::max(Gs, std::max(Gf, Gc)) + Tune::lee, 0.0, 2.0);
+	return std::clamp(std::max(Gs, std::max(Gf, Ge)) + Tune::lee, 0.0, 2.0);
 }
 
-static double Dot (const double a[3], const double b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
-static double Len (const double a[3]) { return std::sqrt(Dot(a, a)); }
-
-// shape operator in an orthonormal tangent basis from the screen derivatives: W = J_N J_P^-1, symmetrised
-bool Weingarten (const double N[3], const double dNx[3], const double dNy[3], const double dPx[3], const double dPy[3],
-	double &k1, double &k2, double d2[3])
+// Lees around a cylinder of the band's half-width; the far side of a thin edge is cut by the normal
+double EdgeBand (double d, double w, double level, double nDotAtt)
 {
-	k1 = k2 = 0.0;
-	d2[0] = d2[1] = d2[2] = 0.0;
-	double lx = Len(dPx), ly = Len(dPy);
-	if (!(lx > 0.0) || !(ly > 0.0)) return false;
-	double e1[3], np = Dot(N, dPx);
-	for (int i = 0; i < 3; i++) e1[i] = dPx[i] - N[i] * np;
-	if (Len(e1) < 0.1 * lx) { np = Dot(N, dPy); for (int i = 0; i < 3; i++) e1[i] = dPy[i] - N[i] * np; } // dP/dx along the normal: edge-on
-	double l1 = Len(e1);
-	if (!(l1 > 0.0)) return false;
-	for (double &v : e1) v /= l1;
-	double e2[3] = { N[1] * e1[2] - N[2] * e1[1], N[2] * e1[0] - N[0] * e1[2], N[0] * e1[1] - N[1] * e1[0] };
-	double p11 = Dot(e1, dPx), p21 = Dot(e2, dPx), p12 = Dot(e1, dPy), p22 = Dot(e2, dPy);
-	double n11 = Dot(e1, dNx), n21 = Dot(e2, dNx), n12 = Dot(e1, dNy), n22 = Dot(e2, dNy);
-	double det = p11 * p22 - p12 * p21;
-	if (!(std::fabs(det) > 1e-4 * lx * ly)) return false;
-	double i11 = p22 / det, i12 = -p12 / det, i21 = -p21 / det, i22 = p11 / det;
-	double w11 = n11 * i11 + n12 * i21, w12 = n11 * i12 + n12 * i22, w21 = n21 * i11 + n22 * i21, w22 = n21 * i12 + n22 * i22;
-	double a = w11, d = w22, b = 0.5 * (w12 + w21);
-	double m = 0.5 * (a + d), rr = std::sqrt(0.25 * (a - d) * (a - d) + b * b);
-	k1 = std::max(0.0, m + rr);
-	k2 = std::max(0.0, m - rr);
-	double v0, v1, lam = m - rr;
-	if (std::fabs(b) > 1e-12 * (std::fabs(a) + std::fabs(d) + 1e-30)) {
-		double ax = lam - d, ay = lam - a;
-		if (std::fabs(ax) > std::fabs(ay)) { v0 = ax; v1 = b; } else { v0 = b; v1 = ay; }
+	if (!(w > 0.0) || !(level > 0.0)) return 0.0;
+	return level * AngleFactor(std::cos(std::min(d / w, 3.0))) * Smooth(-0.5, 0.0, nDotAtt);
+}
+
+// swept cylinder (Fay and Riddell 1958: sqrt(R_n/2R) of the sphere's flux, Tauber's cos L), Lees by beta, off over edgeBeta when the attachment line is off the feature
+double EdgeLevel (double rl, double Rn, double cL, double beta, double betaFeat)
+{
+	double r = std::max(rl, Tune::edgeRmin * Rn);
+	double lev = std::min(Tune::edge, std::sqrt(Rn / (2.0 * r))) * std::clamp(cL, 0.0, 1.0) * AngleFactor(std::cos(beta));
+	return lev * (1.0 - Smooth(0.0, Tune::edgeBeta * HPI / 180.0, betaFeat));
+}
+
+namespace {
+struct VKey { int64_t x, y, z; bool operator== (const VKey &o) const { return x == o.x && y == o.y && z == o.z; } };
+struct VHash { size_t operator() (const VKey &k) const { return size_t(k.x * 73856093LL ^ k.y * 19349663LL ^ k.z * 83492791LL); } };
+struct EdgeRec { uint32_t f1 = 0, f2 = 0, o1 = 0, o2 = 0; int n = 0; };
+const double QW = 1e-3;		// weld grid, m
+}
+
+void EdgeSet::Begin (const std::vector<float> &xyz, const std::vector<uint32_t> &tri)
+{
+	*this = EdgeSet();
+	inXyz = xyz;
+	inTri = tri;
+	phase = 1;
+}
+
+bool EdgeSet::Step (size_t &rays)
+{
+	if (phase == 1) { Prepare(); phase = 2; return false; }
+	if (phase == 2) { Voxelize(rays); if (next >= T.size() / 3) { next = 0; phase = 3; } return false; }
+	if (phase == 3) { Expose(rays); if (next >= faces.size()) phase = 4; return false; }
+	if (phase == 4) { Features(); phase = 5; }
+	return phase == 5;
+}
+
+bool EdgeSet::Occ (const double p[3]) const
+{
+	int i[3];
+	for (int k = 0; k < 3; k++) {
+		double s = std::floor((p[k] - lo[k]) / vox);
+		if (!(s >= 0.0) || s >= dim[k]) return false;
+		i[k] = int(s);
 	}
-	else if (a <= d) { v0 = 1.0; v1 = 0.0; }
-	else { v0 = 0.0; v1 = 1.0; }
-	double lv = std::sqrt(v0 * v0 + v1 * v1);
-	if (lv > 0.0) for (int i = 0; i < 3; i++) d2[i] = (v0 * e1[i] + v1 * e2[i]) / lv;
-	return true;
+	size_t b = (size_t(i[2]) * dim[1] + i[1]) * dim[0] + i[0];
+	return (occ[b >> 6] >> (b & 63)) & 1;
+}
+
+// weld, face normals, manifold edges, convex candidates, face adjacency, surface voxels
+void EdgeSet::Prepare ()
+{
+	std::unordered_map<VKey, uint32_t, VHash> wm;
+	std::vector<uint32_t> remap(inXyz.size() / 3);
+	for (size_t i = 0; i < remap.size(); i++) {
+		VKey k = { std::llround(inXyz[3 * i] / QW), std::llround(inXyz[3 * i + 1] / QW), std::llround(inXyz[3 * i + 2] / QW) };
+		auto it = wm.find(k);
+		if (it == wm.end()) {
+			it = wm.emplace(k, uint32_t(P.size() / 3)).first;
+			for (int j = 0; j < 3; j++) P.push_back(inXyz[3 * i + j]);
+		}
+		remap[i] = it->second;
+	}
+	double mn[3] = { 1e300, 1e300, 1e300 }, mx[3] = { -1e300, -1e300, -1e300 };
+	for (size_t i = 0; i < P.size(); i += 3) for (int j = 0; j < 3; j++) { mn[j] = std::min(mn[j], P[i + j]); mx[j] = std::max(mx[j], P[i + j]); }
+	size = P.empty() ? 0.0 : std::max(mx[0] - mn[0], std::max(mx[1] - mn[1], mx[2] - mn[2]));
+	for (size_t t = 0; t + 2 < inTri.size(); t += 3) {
+		if (inTri[t] >= remap.size() || inTri[t + 1] >= remap.size() || inTri[t + 2] >= remap.size()) continue;
+		uint32_t a = remap[inTri[t]], b = remap[inTri[t + 1]], c = remap[inTri[t + 2]];
+		if (a == b || b == c || a == c) continue;
+		double e1[3], e2[3], n[3];
+		for (int j = 0; j < 3; j++) { e1[j] = P[3 * b + j] - P[3 * a + j]; e2[j] = P[3 * c + j] - P[3 * a + j]; }
+		Cross(e1, e2, n);
+		if (!(Len(n) > 1e-12 * size * size) || !Unit(n)) continue;
+		T.push_back(a); T.push_back(b); T.push_back(c);
+		for (int j = 0; j < 3; j++) N.push_back(n[j]);
+	}
+	inXyz.clear(); inXyz.shrink_to_fit();
+	inTri.clear(); inTri.shrink_to_fit();
+	size_t nf = T.size() / 3;
+	tris = nf;
+	std::unordered_map<uint64_t, EdgeRec> em;
+	em.reserve(nf * 2);
+	for (size_t f = 0; f < nf; f++) for (int e = 0; e < 3; e++) {
+		uint32_t a = T[3 * f + e], b = T[3 * f + (e + 1) % 3], o = T[3 * f + (e + 2) % 3];
+		uint64_t k = (uint64_t(std::min(a, b)) << 32) | std::max(a, b);
+		EdgeRec &r = em[k];
+		if (r.n == 0) { r.f1 = uint32_t(f); r.o1 = o; }
+		else if (r.n == 1) { r.f2 = uint32_t(f); r.o2 = o; }
+		r.n++;
+	}
+	std::vector<uint32_t> deg(nf + 1, 0);
+	for (auto &kv : em) if (kv.second.n == 2) { deg[kv.second.f1]++; deg[kv.second.f2]++; }
+	adj0.assign(nf + 1, 0);
+	for (size_t f = 0; f < nf; f++) adj0[f + 1] = adj0[f] + deg[f];
+	adj.assign(adj0[nf], 0);
+	std::vector<uint32_t> fill(adj0.begin(), adj0.end() - 1);
+	const double dmin = Tune::edgeDelta * HPI / 180.0;
+	std::vector<char> isFace(nf, 0);
+	for (auto &kv : em) {
+		const EdgeRec &r = kv.second;
+		if (r.n != 2) continue;
+		adj[fill[r.f1]++] = r.f2;
+		adj[fill[r.f2]++] = r.f1;
+		const double *n1 = &N[3 * r.f1], *n2 = &N[3 * r.f2];
+		double d = std::acos(std::clamp(Dot(n1, n2), -1.0, 1.0));
+		uint32_t a = uint32_t(kv.first >> 32), b = uint32_t(kv.first & 0xffffffffu);
+		double w[3];
+		for (int j = 0; j < 3; j++) w[j] = P[3 * r.o2 + j] - P[3 * a + j];
+		if (d < dmin || !(Dot(n1, w) < -1e-9 * size)) continue;
+		cand.push_back({ a, b, r.f1, r.f2, d });
+		isFace[r.f1] = isFace[r.f2] = 1;
+	}
+	convex = cand.size();
+	for (size_t f = 0; f < nf; f++) if (isFace[f]) faces.push_back(uint32_t(f));
+	expo.assign(nf, -1.0f);
+	vox = std::clamp(size / 250.0, 0.02, 0.15);
+	for (int j = 0; j < 3; j++) {
+		lo[j] = (P.empty() ? 0.0 : mn[j]) - 2.0 * vox;
+		dim[j] = P.empty() ? 1 : int(std::ceil((mx[j] - mn[j]) / vox)) + 5;
+	}
+	occ.assign((size_t(dim[0]) * dim[1] * dim[2] + 63) / 64, 0);
+	next = 0;
+}
+
+// the surface voxels, sampled at half a voxel along both triangle edges; 64 samples cost one ray of the budget
+void EdgeSet::Voxelize (size_t &rays)
+{
+	size_t nf = T.size() / 3;
+	for (; next < nf && rays > 0; next++) {
+		size_t f = next;
+		const double *a = &P[3 * T[3 * f]], *b = &P[3 * T[3 * f + 1]], *c = &P[3 * T[3 * f + 2]];
+		double lm = 0.0;
+		for (int j = 0; j < 3; j++) lm += std::max((b[j] - a[j]) * (b[j] - a[j]), (c[j] - a[j]) * (c[j] - a[j]));
+		int k = std::max(2, int(std::ceil(std::sqrt(lm) / (0.5 * vox))) + 1);
+		rays -= std::min(rays, size_t(k) * size_t(k + 1) / 128 + 1);
+		for (int i = 0; i <= k; i++) for (int j = 0; i + j <= k; j++) {
+			double p[3], ui = double(i) / k, uj = double(j) / k;
+			int ix[3];
+			bool in = true;
+			for (int m = 0; m < 3; m++) {
+				p[m] = a[m] + (b[m] - a[m]) * ui + (c[m] - a[m]) * uj;
+				double s = std::floor((p[m] - lo[m]) / vox);
+				if (!(s >= 0.0) || s >= dim[m]) { in = false; break; }
+				ix[m] = int(s);
+			}
+			if (!in) continue;
+			size_t bi = (size_t(ix[2]) * dim[1] + ix[1]) * dim[0] + ix[0];
+			occ[bi >> 6] |= uint64_t(1) << (bi & 63);
+		}
+	}
+}
+
+// share of hemisphere rays from a face that leave the voxel box without a hit
+void EdgeSet::Expose (size_t &rays)
+{
+	static double H[Tune::edgeRays][3];
+	static bool hOk = false;
+	if (!hOk) {
+		const double ga = HPI * (3.0 - std::sqrt(5.0));
+		for (int i = 0; i < Tune::edgeRays; i++) {
+			double z = std::sqrt(1.0 - (i + 0.5) / Tune::edgeRays), r = std::sqrt(std::max(0.0, 1.0 - z * z)), p = ga * i;
+			H[i][0] = r * std::cos(p); H[i][1] = r * std::sin(p); H[i][2] = z;
+		}
+		hOk = true;
+	}
+	int maxSteps = 2 * std::max(dim[0], std::max(dim[1], dim[2]));
+	while (next < faces.size() && rays >= size_t(Tune::edgeRays)) {
+		uint32_t f = faces[next++];
+		const double *n = &N[3 * f];
+		double c[3], t1[3], t2[3], ref[3] = { 1.0, 0.0, 0.0 };
+		for (int j = 0; j < 3; j++) c[j] = (P[3 * T[3 * f] + j] + P[3 * T[3 * f + 1] + j] + P[3 * T[3 * f + 2] + j]) / 3.0;
+		if (std::fabs(n[0]) > 0.9) { ref[0] = 0.0; ref[1] = 1.0; }
+		Cross(n, ref, t1); Unit(t1); Cross(n, t1, t2);
+		int esc = 0;
+		for (int i = 0; i < Tune::edgeRays; i++) {
+			double d[3], p[3];
+			for (int j = 0; j < 3; j++) { d[j] = H[i][0] * t1[j] + H[i][1] * t2[j] + H[i][2] * n[j]; p[j] = c[j] + n[j] * 1.5 * vox + d[j] * 0.5 * vox; }
+			bool out = false;
+			for (int s = 0; s < maxSteps; s++) {
+				bool inside = true;
+				for (int j = 0; j < 3; j++) { double u = (p[j] - lo[j]) / vox; if (!(u >= 0.0) || u >= dim[j]) inside = false; }
+				if (!inside) { out = true; break; }
+				if (Occ(p)) break;
+				for (int j = 0; j < 3; j++) p[j] += d[j] * 0.5 * vox;
+			}
+			esc += out ? 1 : 0;
+		}
+		expo[f] = float(esc) / Tune::edgeRays;
+		rays -= Tune::edgeRays;
+	}
+}
+
+// real edges: exposed convex edges whose surface-connected parallel neighbours within rho turn the normal by edgeTurn or more
+void EdgeSet::Features ()
+{
+	const double rho = Tune::edgeRho * size, c30 = std::cos(30.0 * HPI / 180.0), turn = Tune::edgeTurn * HPI / 180.0;
+	size_t nf = T.size() / 3;
+	std::vector<uint32_t> ok;
+	for (uint32_t i = 0; i < cand.size(); i++) if (expo[cand[i].f1] >= Tune::edgeExpose && expo[cand[i].f2] >= Tune::edgeExpose) ok.push_back(i);
+	exposed = ok.size();
+	std::vector<uint32_t> fc0(nf + 1, 0), fc;
+	for (uint32_t k : ok) { fc0[cand[k].f1 + 1]++; fc0[cand[k].f2 + 1]++; }
+	for (size_t f = 0; f < nf; f++) fc0[f + 1] += fc0[f];
+	fc.assign(fc0[nf], 0);
+	std::vector<uint32_t> fill(fc0.begin(), fc0.end() - 1);
+	for (uint32_t m = 0; m < ok.size(); m++) { fc[fill[cand[ok[m]].f1]++] = m; fc[fill[cand[ok[m]].f2]++] = m; }
+	std::vector<uint32_t> fStamp(nf, 0), eStamp(ok.size(), 0), realOf(ok.size(), UINT32_MAX);
+	std::vector<std::vector<uint32_t>> nbOk(ok.size());
+	std::vector<char> isReal(ok.size(), 0);
+	std::vector<double> rls(ok.size(), 0.0);
+	std::vector<char> plain1(ok.size(), 0), plain2(ok.size(), 0);
+	uint32_t stamp = 0;
+	std::vector<uint32_t> seen, front, nfront;
+	std::vector<double> ang;
+	for (uint32_t m = 0; m < ok.size(); m++) {
+		const Cand &e = cand[ok[m]];
+		const double *a = &P[3 * e.a], *b = &P[3 * e.b];
+		double t[3], mid[3];
+		for (int j = 0; j < 3; j++) { t[j] = b[j] - a[j]; mid[j] = 0.5 * (a[j] + b[j]); }
+		if (!Unit(t)) continue;
+		double sm = Dot(mid, t);
+		++stamp;
+		seen.assign({ e.f1, e.f2 });
+		front = seen;
+		fStamp[e.f1] = fStamp[e.f2] = stamp;
+		for (int dep = 0; dep < 4; dep++) {
+			nfront.clear();
+			for (uint32_t f : front) for (uint32_t k = adj0[f]; k < adj0[f + 1]; k++) {
+				uint32_t g = adj[k];
+				if (fStamp[g] == stamp) continue;
+				fStamp[g] = stamp;
+				nfront.push_back(g); seen.push_back(g);
+			}
+			front.swap(nfront);
+		}
+		uint32_t o1 = T[3 * e.f1] != e.a && T[3 * e.f1] != e.b ? T[3 * e.f1] : (T[3 * e.f1 + 1] != e.a && T[3 * e.f1 + 1] != e.b ? T[3 * e.f1 + 1] : T[3 * e.f1 + 2]);
+		double s1[3];
+		for (int j = 0; j < 3; j++) s1[j] = P[3 * o1 + j] - mid[j];
+		double ps = Dot(s1, t);
+		for (int j = 0; j < 3; j++) s1[j] -= ps * t[j];
+		Unit(s1);
+		double w1 = 4.0 * rho, w2 = 4.0 * rho;
+		const double *n1 = &N[3 * e.f1];
+		double bu[3], bw[3];
+		double pn = Dot(n1, t);
+		for (int j = 0; j < 3; j++) bu[j] = n1[j] - pn * t[j];
+		Unit(bu);
+		Cross(t, bu, bw);
+		ang.clear();
+		auto addN = [&](uint32_t f) { const double *n = &N[3 * f]; ang.push_back(std::atan2(Dot(n, bw), Dot(n, bu))); };
+		addN(e.f1); addN(e.f2);
+		eStamp[m] = stamp;
+		for (uint32_t f : seen) for (uint32_t k = fc0[f]; k < fc0[f + 1]; k++) {
+			uint32_t j = fc[k];
+			if (eStamp[j] == stamp) continue;
+			eStamp[j] = stamp;
+			const Cand &g = cand[ok[j]];
+			const double *pa = &P[3 * g.a], *pb = &P[3 * g.b];
+			double tj[3];
+			for (int q = 0; q < 3; q++) tj[q] = pb[q] - pa[q];
+			if (!Unit(tj) || std::fabs(Dot(tj, t)) < c30) continue;
+			double sa = Dot(pa, t), sb = Dot(pb, t);
+			if (!(std::fabs(sb - sa) > 1e-9)) continue;
+			double u = (sm - sa) / (sb - sa);
+			if (u < -0.05 || u > 1.05) continue;
+			u = std::clamp(u, 0.0, 1.0);
+			double dv[3];
+			for (int q = 0; q < 3; q++) dv[q] = pa[q] + u * (pb[q] - pa[q]) - mid[q];
+			double pd = Dot(dv, t);
+			for (int q = 0; q < 3; q++) dv[q] -= pd * t[q];
+			double dl = Len(dv);
+			if (dl > rho) continue;
+			nbOk[m].push_back(j);
+			addN(g.f1); addN(g.f2);
+			if (dl > 1e-3) { if (Dot(dv, s1) > 0.0) w1 = std::min(w1, dl); else w2 = std::min(w2, dl); }
+		}
+		std::sort(ang.begin(), ang.end());
+		double gap = ang.front() + 2.0 * HPI - ang.back();
+		for (size_t k = 1; k < ang.size(); k++) gap = std::max(gap, ang[k] - ang[k - 1]);
+		double th = 2.0 * HPI - gap;
+		rls[m] = 0.5 * (w1 + w2) / std::max(e.d, 1e-3);
+		plain1[m] = w1 >= 4.0 * rho;
+		plain2[m] = w2 >= 4.0 * rho;
+		isReal[m] = th >= turn;
+	}
+	for (uint32_t m = 0; m < ok.size(); m++) {
+		if (!isReal[m]) continue;
+		const Cand &e = cand[ok[m]];
+		Edge E;
+		for (int j = 0; j < 3; j++) { E.a[j] = P[3 * e.a + j]; E.b[j] = P[3 * e.b + j]; E.t[j] = E.b[j] - E.a[j]; }
+		if (!Unit(E.t)) continue;
+		const double *n1 = &N[3 * e.f1], *n2 = &N[3 * e.f2];
+		double p2[3], d1 = Dot(n1, E.t), d2 = Dot(n2, E.t);
+		for (int j = 0; j < 3; j++) { E.p1[j] = n1[j] - d1 * E.t[j]; p2[j] = n2[j] - d2 * E.t[j]; }
+		if (!Unit(E.p1) || !Unit(p2)) continue;
+		Cross(E.t, E.p1, E.q);
+		E.arc = std::atan2(Dot(p2, E.q), Dot(p2, E.p1));
+		if (E.arc < 0.0) { E.arc = -E.arc; for (double &v : E.q) v = -v; }
+		E.rl = rls[m];
+		E.va = e.a; E.vb = e.b;
+		E.nb0 = E.nb1 = 0;
+		E.face1 = plain1[m] != 0;
+		E.face2 = plain2[m] != 0;
+		realOf[m] = uint32_t(edges.size());
+		edges.push_back(E);
+	}
+	for (uint32_t m = 0; m < ok.size(); m++) {
+		if (realOf[m] == UINT32_MAX) continue;
+		Edge &E = edges[realOf[m]];
+		E.nb0 = uint32_t(nbr.size());
+		for (uint32_t j : nbOk[m]) if (realOf[j] != UINT32_MAX) nbr.push_back(realOf[j]);
+		E.nb1 = uint32_t(nbr.size());
+	}
+	real = edges.size();
+	P.clear(); P.shrink_to_fit(); N.clear(); N.shrink_to_fit(); T.clear(); T.shrink_to_fit();
+	cand.clear(); cand.shrink_to_fit(); faces.clear(); faces.shrink_to_fit();
+	adj0.clear(); adj0.shrink_to_fit(); adj.clear(); adj.shrink_to_fit(); expo.clear(); expo.shrink_to_fit();
+}
+
+// body more than shieldH upstream of p within edgeRho beside it, in the cross-section (Newtonian shadow with the shock and boundary layers' thickness)
+bool EdgeSet::Shielded (const double p[3], const double u[3], const double t[3]) const
+{
+	if (occ.empty() || !(vox > 0.0)) return false;
+	double l[3];
+	Cross(t, u, l);
+	if (!Unit(l)) l[0] = l[1] = l[2] = 0.0;
+	double W = Tune::edgeRho * size, h0 = std::max(Tune::shieldH * size, 2.0 * vox), h1 = Tune::shieldL * size;
+	for (double s : { -1.0, -0.5, 0.0, 0.5, 1.0 }) for (double h = h0; h <= h1; h += 0.5 * vox) {
+		double q[3];
+		for (int j = 0; j < 3; j++) q[j] = p[j] + u[j] * h + l[j] * s * W;
+		if (Occ(q)) return true;
+	}
+	return false;
+}
+
+// the attachment lines on the real edges for the downstream direction f, merged along shared ends
+void EdgeSet::Attach (const double f[3], double Rn, std::vector<EdgeSeg> &out) const
+{
+	if (!Done() || edges.empty()) return;
+	struct B { double beta, cL, plain; double u[3], n[3]; bool ok; };
+	std::vector<B> bb(edges.size());
+	for (size_t i = 0; i < edges.size(); i++) {
+		const Edge &E = edges[i];
+		B &b = bb[i];
+		double fa = Dot(f, E.t), fp[3];
+		for (int j = 0; j < 3; j++) fp[j] = f[j] - fa * E.t[j];
+		b.ok = Unit(fp);
+		if (!b.ok) continue;
+		for (int j = 0; j < 3; j++) b.u[j] = -fp[j];
+		b.cL = std::sqrt(std::max(0.0, 1.0 - fa * fa));
+		double au = std::atan2(Dot(b.u, E.q), Dot(b.u, E.p1)), bR = Tune::edgeBeta * HPI / 180.0;
+		if (au >= 0.0 && au <= E.arc) { // on the edge; near the end of a plain face the attachment line moves onto that face
+			b.beta = 0.0;
+			b.plain = (E.face1 ? Smooth(0.0, bR, au) : 1.0) * (E.face2 ? Smooth(0.0, bR, E.arc - au) : 1.0);
+			for (int j = 0; j < 3; j++) b.n[j] = b.u[j];
+			continue;
+		}
+		double e0 = au < 0.0 ? -au : 2.0 * HPI - au, e1 = au < 0.0 ? au + 2.0 * HPI - E.arc : au - E.arc;
+		b.beta = std::min(e0, e1);
+		b.plain = (e0 <= e1 ? E.face1 : E.face2) ? 0.0 : 1.0; // past a plain face: that face's corner, not an edge
+		double ae = e0 <= e1 ? 0.0 : E.arc;
+		for (int j = 0; j < 3; j++) b.n[j] = std::cos(ae) * E.p1[j] + std::sin(ae) * E.q[j];
+	}
+	struct S { uint32_t e; double level, w; double n[3]; };
+	std::vector<S> sel;
+	for (size_t i = 0; i < edges.size(); i++) {
+		const Edge &E = edges[i];
+		const B &b = bb[i];
+		if (!b.ok) continue;
+		double bf = b.beta;
+		for (uint32_t k = E.nb0; k < E.nb1; k++) if (bb[nbr[k]].ok) bf = std::min(bf, bb[nbr[k]].beta);
+		double lev = EdgeLevel(E.rl, Rn, b.cL, b.beta, bf) * b.plain;
+		if (lev < 0.02) continue;
+		int sh = 0;
+		for (double k : { 0.2, 0.5, 0.8 }) {
+			double p[3];
+			for (int j = 0; j < 3; j++) p[j] = E.a[j] + (E.b[j] - E.a[j]) * k;
+			sh += Shielded(p, b.u, E.t) ? 1 : 0;
+		}
+		lev *= 1.0 - sh / 3.0;
+		if (lev < 0.02) continue;
+		S s = { uint32_t(i), lev, std::clamp(E.rl, Tune::edgeBand * Rn, Rn), { b.n[0], b.n[1], b.n[2] } };
+		sel.push_back(s);
+	}
+	std::vector<uint32_t> par(sel.size());
+	for (uint32_t i = 0; i < par.size(); i++) par[i] = i;
+	auto find = [&](uint32_t i) { while (par[i] != i) { par[i] = par[par[i]]; i = par[i]; } return i; };
+	std::unordered_map<uint32_t, std::vector<uint32_t>> vm;
+	for (uint32_t k = 0; k < sel.size(); k++) { vm[edges[sel[k].e].va].push_back(k); vm[edges[sel[k].e].vb].push_back(k); }
+	const double c15 = std::cos(15.0 * HPI / 180.0);
+	for (auto &kv : vm) for (size_t x = 0; x < kv.second.size(); x++) for (size_t y = x + 1; y < kv.second.size(); y++) {
+		const S &s1 = sel[kv.second[x]], &s2 = sel[kv.second[y]];
+		if (std::fabs(Dot(edges[s1.e].t, edges[s2.e].t)) < c15) continue;
+		if (std::fabs(s1.level - s2.level) > 0.3 * std::max(s1.level, s2.level)) continue;
+		par[find(kv.second[x])] = find(kv.second[y]);
+	}
+	std::unordered_map<uint32_t, std::vector<uint32_t>> grp;
+	for (uint32_t k = 0; k < sel.size(); k++) grp[find(k)].push_back(k);
+	for (auto &kv : grp) {
+		const std::vector<uint32_t> &g = kv.second;
+		const double *t0 = edges[sel[g[0]].e].t;
+		double ax[3] = { 0.0, 0.0, 0.0 }, c[3] = { 0.0, 0.0, 0.0 }, n[3] = { 0.0, 0.0, 0.0 }, lw = 0.0, ls = 0.0, ws = 0.0;
+		for (uint32_t k : g) {
+			const Edge &E = edges[sel[k].e];
+			double len = 0.0;
+			for (int j = 0; j < 3; j++) len += (E.b[j] - E.a[j]) * (E.b[j] - E.a[j]);
+			len = std::sqrt(len);
+			double sg = Dot(E.t, t0) < 0.0 ? -1.0 : 1.0;
+			for (int j = 0; j < 3; j++) { ax[j] += sg * E.t[j] * len; c[j] += 0.5 * (E.a[j] + E.b[j]); n[j] += sel[k].n[j] * len; }
+			lw += len; ls += sel[k].level * len; ws += sel[k].w * len;
+		}
+		if (!(lw > 0.0) || !Unit(ax)) continue;
+		Unit(n);
+		for (int j = 0; j < 3; j++) c[j] /= double(g.size());
+		double s0 = 1e300, s1 = -1e300;
+		for (uint32_t k : g) {
+			const Edge &E = edges[sel[k].e];
+			double da[3], db[3];
+			for (int j = 0; j < 3; j++) { da[j] = E.a[j] - c[j]; db[j] = E.b[j] - c[j]; }
+			s0 = std::min(s0, std::min(Dot(da, ax), Dot(db, ax)));
+			s1 = std::max(s1, std::max(Dot(da, ax), Dot(db, ax)));
+		}
+		EdgeSeg o;
+		for (int j = 0; j < 3; j++) { o.a[j] = c[j] + ax[j] * s0; o.b[j] = c[j] + ax[j] * s1; o.n[j] = n[j]; }
+		o.level = ls / lw;
+		o.w = ws / lw;
+		out.push_back(o);
+	}
 }
 
 double HeatCapacity (double lag, double eps)

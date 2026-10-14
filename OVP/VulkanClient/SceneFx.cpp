@@ -34,7 +34,7 @@ struct SceneFx::CloudBox {
 SceneFx::SceneFx (oapi::D3D9Client *_gc, Scene *_scn, DWORD w, DWORD h)
 	: gc(_gc), scn(_scn), dev(_gc->GetDevice()), W(w), H(h)
 {
-	if (DepthWanted()) InitDepth(); // every reader of tDepth (ue5-integration INT-4)
+	if (DepthWanted()) InitDepth(); // every reader of tDepth
 	if (Config->SSAO) InitSSAO();
 	if (Config->VolClouds) InitClouds();
 	if (Config->VolClouds && Config->VolCloudShadows && pVol) InitVolShadow(); // not upstream: compiled at start, not mid-flight
@@ -278,7 +278,7 @@ void SceneFx::AfterOpaque (const std::list<vVessel*> &vessels, VkSurf *target)
 	cloudFade = clouds ? wV : 0.0f; // the 2D layer near the camera fades from the next frame on
 	bool ssao = WantSSAO(vessels);
 	bool taa = depthOK && scn->TaaActive(); // not upstream: TAA reprojects from tDepth every main frame it runs
-	bool more = depthOK && (gi || fog || Config->SSR || Config->VolPlumes); // the batch's other readers of tDepth (ue5-integration INT-4)
+	bool more = depthOK && (gi || fog || Config->SSR || Config->VolPlumes); // the other readers of tDepth
 	if (!ssao && !clouds && !taa && !more) { volShdFade = 0.0f; return; }
 	VkDev::State st = dev->GetState();
 	DepthPass(vessels);
@@ -299,7 +299,7 @@ void SceneFx::DepthPass (const std::list<vVessel*> &vessels)
 	scn->PushCameraFrustumLimits(scn->GetPlanetNearPlane(), 1e6f); // not upstream: the main pass's near planes, so what it clipped is not in tDepth either (r3 fog2)
 	scn->BeginPass(RENDERPASS_SCENE_DEPTH);
 	gc->PushRenderTarget(sDepth, sDepthDS, RENDERPASS_SCENE_DEPTH);
-	if (gi) GiBind(0, vessels); // not upstream: SSGI albedo and normal MRT, cleared with tDepth (ue5-integration INT-4)
+	if (gi) GiBind(0, vessels); // not upstream: SSGI albedo and normal MRT, cleared with tDepth
 	dev->Clear(true, true, true, 0, 1.0f, 0);
 	dev->SetCullMode(VK_CULL_MODE_BACK_BIT);
 	D3DXMATRIX mVP = *scn->GetProjectionViewMatrix();

@@ -136,7 +136,7 @@ layout(binding = 2, row_major, scalar) uniform PlanetPSBlock {
 	CsmPrm gCsm;			// not upstream: scene shadow cascades (design-scene-shadows Rev 2)
 #endif
 #if defined(_SSR)
-	SsrPrm gSsr;			// not upstream: screen-space reflections of the water (design-ssr), after the shadows' gCsm (ue5-integration INT-2)
+	SsrPrm gSsr;			// not upstream: screen-space reflections of the water (design-ssr), after the shadows' gCsm
 #endif
 };
 

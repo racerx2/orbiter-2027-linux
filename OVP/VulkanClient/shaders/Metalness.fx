@@ -151,9 +151,6 @@ vec4 MetalnessPS(vec4 sc, PBRData frg)	// sc : VPOS
 #if defined(_SSR) && defined(_ENVMAP)
 	vec3 nSsrF = SsrFaceN(-frg.camW, normalize(frg.nrmW)); // not upstream: the face the depth holds, before any discard (r3-ssr2)
 #endif
-#if defined(_HEAT)
-	HeatGeo hHg = HeatGeom(frg.nrmW, frg.camW); // not upstream: hull heating curvature, before any discard (design-reentry-heat)
-#endif
 
 	// ======================================================================
 	// Start fetching texture data
@@ -405,7 +402,7 @@ vec4 MetalnessPS(vec4 sc, PBRData frg)	// sc : VPOS
 	vec3 cHeat = pow(vec3(abs(fHeat)), vec3(0.5f, 1.5f, 8.0f));
 	cDiff.rgb = cDiff.rgb + cHeat;
 #if defined(_HEAT)
-	if (gHeat.vFlow.w > 0.5) cDiff.rgb = HeatAddDisplay(cDiff.rgb, HeatGlow(frg.nrmW, frg.camW, hHg, HeatToLinear(hAlb))); // not upstream: the hull's own glow (design-reentry-heat)
+	if (gHeat.vFlow.w > 0.5) cDiff.rgb = HeatAddDisplay(cDiff.rgb, HeatGlow(frg.nrmW, frg.camW, HeatToLinear(hAlb))); // not upstream: the hull's own glow (design-reentry-heat)
 #endif
 
 #if defined(_DEBUG)

@@ -50,7 +50,7 @@ float UnfogW(float a, float b)
 	return exp(-abs(a - b) / (0.02 * a + 1.0));
 }
 
-// the fog's over-blend undone, c' = c (1 - a) + f, with the composite's own depth-aware 2x2 weights; vSrc.zw = 1/size of the fog (ue5-integration INT-5)
+// the fog's over-blend undone, c' = c (1 - a) + f, with the composite's own depth-aware 2x2 weights; vSrc.zw = 1/size of the fog
 vec4 PSUnfog(float x, float y)
 {
 	vec2 uv = vec2(x, y), tq = vSrc.zw, td = 1.0 / vec2(textureSize(tDepth, 0));

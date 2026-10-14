@@ -346,7 +346,7 @@ void PostPlume::Collect ()
 		for (auto it = nozzles->begin(); it != nozzles->end();) it = oapiIsVessel(it->first.first) ? std::next(it) : nozzles->erase(it);
 		for (auto it = groundAcc.begin(); it != groundAcc.end();) it = oapiIsVessel(it->first) ? std::next(it) : groundAcc.erase(it);
 	}
-	if (!ok || !scn->pFx || !scn->pFx->DepthOK()) return; // SceneFx draws tDepth every main frame for us (ue5-integration INT-4)
+	if (!ok || !scn->pFx || !scn->pFx->DepthOK()) return; // SceneFx draws tDepth every main frame for us
 	if (!NoiseReady()) return;
 	time = float(std::fmod(oapiGetSysTime(), 3600.0)); // the wall clock, as the haze
 	double vp[16];

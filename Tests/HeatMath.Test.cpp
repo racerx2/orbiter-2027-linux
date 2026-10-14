@@ -1,8 +1,9 @@
-// not upstream: re-entry hull heating maths (OVP/VulkanClient/HeatMath.cpp, design-reentry-heat 15)
+// not upstream: re-entry hull heating maths (OVP/VulkanClient/HeatMath.cpp, design-reentry-heat 15, Rev 3 real edges)
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "HeatMath.h"
+#include <array>
 #include <cmath>
 #include <random>
 
@@ -97,99 +98,200 @@ TEST_CASE("HeatMath: afterglow after peak heating", "[heatmath]")
 TEST_CASE("HeatMath: local heating ratio", "[heatmath]")
 {
 	double Rn = 1.0, kfp = KFlatPlate(7500.0);
-	CHECK_THAT(LocalRatio(1.0, 0.0, 1.0, 1.0, 0.3, Rn, kfp), WithinAbs(1.0 + Tune::lee, 1e-9)); // stagnation point, nose radius R_n
-	CHECK_THAT(LocalRatio(1.0 + 1e-7, 0.0, 1.0, 1.0, 0.0, Rn, kfp), WithinAbs(1.0 + Tune::lee, 1e-6)); // c over 1 by rounding (review M3c)
-	CHECK(std::isfinite(LocalRatio(1.0 + 1e-7, 0.0, 1.0, 1.0, 0.0, Rn, kfp)));
-	double edge = LocalRatio(1.0, 50.0, 10.0, 0.0, 0.0, Rn, kfp); // unswept edge, R = R_n/10, far from the nose
-	CHECK_THAT(edge, WithinAbs(Tune::edge + Tune::lee, 1e-9));
-	double s45 = std::sqrt(0.5), c45 = s45; // 45 deg swept edge: on its attachment line c = cos L, f . d2 = sin L
-	double fp = kfp * std::sqrt(std::sqrt(1.0 - c45 * c45)) * c45 * std::sqrt(Rn / 50.0);
-	CHECK_THAT(LocalRatio(c45, 50.0, 10.0, 0.0, s45, Rn, kfp), WithinAbs(std::sqrt(std::pow(Tune::edge * c45, 2.0) + fp * fp * 0.5) + Tune::lee, 1e-9));
-	CHECK(LocalRatio(c45, 50.0, 10.0, 0.0, s45, Rn, kfp) > 0.7 * (edge - Tune::lee)); // review M1: 0.71 of the unswept edge, not 0
-	CHECK_THAT(LocalRatio(c45, 50.0, 10.0, 10.0, s45, Rn, kfp), WithinAbs(LocalRatio(c45, 50.0, 10.0, 10.0, 0.0, Rn, kfp), 1e-12)); // a sphere has no sweep
+	CHECK_THAT(LocalRatio(1.0, 0.0, Rn, kfp, 0.0), WithinAbs(1.0 + Tune::lee, 1e-9)); // stagnation point, nose radius R_n
+	CHECK_THAT(LocalRatio(1.0 + 1e-7, 0.0, Rn, kfp, 0.0), WithinAbs(1.0 + Tune::lee, 1e-6)); // c over 1 by rounding (review M3c)
+	CHECK(std::isfinite(LocalRatio(1.0 + 1e-7, 0.0, Rn, kfp, 0.0)));
 	double c = 0.64, x = 10.0;
 	double fb = kfp * std::sqrt(std::sqrt(1.0 - c * c)) * c * std::sqrt(Rn / x);
-	CHECK_THAT(LocalRatio(c, x, 0.3, 0.0, 0.0, Rn, kfp), WithinAbs(fb + Tune::lee, 1e-9)); // belly: a fuselage curvature is no edge (review M2)
-	CHECK_THAT(LocalRatio(c, x, 1.9, 0.0, 0.0, Rn, kfp), WithinAbs(fb + Tune::lee, 1e-9)); // below the gate
-	double cc = 0.55, fc = kfp * std::sqrt(std::sqrt(1.0 - cc * cc)) * cc * std::sqrt(Rn / 20.0);
-	CHECK_THAT(LocalRatio(cc, 20.0, 10.0, 0.0, 0.0, Rn, kfp), WithinAbs(fc + Tune::lee, 1e-9)); // a sharp crease on a windward panel holds no attachment line
-	CHECK(LocalRatio(0.97, 20.0, 10.0, 0.0, 0.0, Rn, kfp) > 1.1); // a leading edge facing the flow does
-	double fs = kfp * std::sqrt(std::sqrt(1.0 - cc * cc)) * cc * std::sqrt(Rn / 20.0);
-	CHECK_THAT(LocalRatio(cc, 20.0, 10.0, 0.0, 0.7, Rn, kfp), WithinAbs(fs + Tune::lee, 1e-9)); // the same crease swept so that |f.d2| = 0.7: c_perp 0.77, still none (code review MUST 1)
-	CHECK_THAT(LocalRatio(-0.5, 5.0, 10.0, 10.0, 0.0, Rn, kfp), WithinAbs(Tune::lee, 1e-12)); // lee
-	CHECK_THAT(LocalRatio(1e-9, 0.5, 1.0, 1.0, 0.0, Rn, kfp), WithinAbs(LocalRatio(-1e-9, 0.5, 1.0, 1.0, 0.0, Rn, kfp), 1e-6)); // continuous at the shoulder
-	double prev = LocalRatio(0.99, 20.0, 0.0, 0.0, 0.0, Rn, kfp); // continuous in the curvature gate band
-	for (double k = 1.5; k < 4.5; k += 0.01) {
-		double g = LocalRatio(0.99, 20.0, k, 0.0, 0.0, Rn, kfp);
-		CHECK(std::fabs(g - prev) < 0.015);
-		prev = g;
-	}
-	prev = LocalRatio(0.80, 20.0, 10.0, 0.0, 0.0, Rn, kfp); // and in the attachment gate band
-	for (double c2 = 0.80; c2 < 1.0; c2 += 0.001) {
-		double g = LocalRatio(c2, 20.0, 10.0, 0.0, 0.0, Rn, kfp);
-		CHECK(std::fabs(g - prev) < 0.02);
-		prev = g;
-	}
-	CHECK(LocalRatio(1.0, 0.0, 1e6, 1e6, 0.0, Rn, kfp) <= 2.0);
+	CHECK_THAT(LocalRatio(c, x, Rn, kfp, 0.0), WithinAbs(fb + Tune::lee, 1e-9)); // belly, Tauber's flat plate
+	CHECK_THAT(LocalRatio(c, x, Rn, kfp, 0.9), WithinAbs(0.9 + Tune::lee, 1e-9)); // an edge band above it
+	CHECK_THAT(LocalRatio(-0.5, 5.0, Rn, kfp, 0.0), WithinAbs(Tune::lee, 1e-12)); // lee
+	CHECK_THAT(LocalRatio(1e-9, 0.5, Rn, kfp, 0.0), WithinAbs(LocalRatio(-1e-9, 0.5, Rn, kfp, 0.0), 1e-6)); // continuous at the shoulder
+	CHECK(LocalRatio(1.0, 0.0, Rn, kfp, 5.0) <= 2.0);
 	CHECK_THAT(AngleFactor(1.0), WithinAbs(1.0, 1e-12));
 	CHECK_THAT(AngleFactor(0.0), WithinAbs(0.1, 1e-12));
 	CHECK(AngleFactor(-0.25) == 0.0);
 }
 
-static void Cross (const double a[3], const double b[3], double o[3]) { o[0] = a[1] * b[2] - a[2] * b[1]; o[1] = a[2] * b[0] - a[0] * b[2]; o[2] = a[0] * b[1] - a[1] * b[0]; }
-static double Dot3 (const double a[3], const double b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
-
-TEST_CASE("HeatMath: Weingarten map from screen derivatives", "[heatmath]")
+TEST_CASE("HeatMath: edge level and band", "[heatmath]")
 {
-	std::mt19937 rng(7);
-	std::uniform_real_distribution<double> U(-1.0, 1.0);
-	int n = 0;
-	for (int it = 0; it < 400 && n < 200; it++) {
-		double N[3] = { U(rng), U(rng), U(rng) }, l = std::sqrt(Dot3(N, N));
-		if (l < 0.2) continue;
-		for (double &v : N) v /= l;
-		double a[3] = { U(rng), U(rng), U(rng) }, t1[3], t2[3];
-		Cross(N, a, t1);
-		double lt = std::sqrt(Dot3(t1, t1));
-		if (lt < 0.2) continue;
-		for (double &v : t1) v /= lt;
-		Cross(N, t1, t2);
-		n++;
-		double s1 = 0.01 + 0.05 * std::fabs(U(rng)), s2 = 0.01 + 0.05 * std::fabs(U(rng)), sh = 0.5 * U(rng);
-		double dPx[3], dPy[3], dNx[3], dNy[3], k1, k2, d2[3];
-		for (int i = 0; i < 3; i++) { dPx[i] = s1 * t1[i] + 0.3 * s1 * N[i]; dPy[i] = s2 * (t2[i] + sh * t1[i]); } // rotated, sheared, not in the tangent plane
-		double R = 0.2 + 3.0 * std::fabs(U(rng));
-		auto tang = [&](const double d[3], double o[3]) { double q = Dot3(N, d); for (int i = 0; i < 3; i++) o[i] = d[i] - q * N[i]; };
-		double tx[3], ty[3];
-		tang(dPx, tx); tang(dPy, ty);
-		for (int i = 0; i < 3; i++) { dNx[i] = tx[i] / R; dNy[i] = ty[i] / R; } // sphere
-		REQUIRE(Weingarten(N, dNx, dNy, dPx, dPy, k1, k2, d2));
-		CHECK_THAT(k1, WithinRel(1.0 / R, 1e-6));
-		CHECK_THAT(k2, WithinRel(1.0 / R, 1e-6));
-		double ax[3] = { t1[0] * 0.6 + t2[0] * 0.8, t1[1] * 0.6 + t2[1] * 0.8, t1[2] * 0.6 + t2[2] * 0.8 }; // cylinder axis in the tangent plane
-		for (int i = 0; i < 3; i++) { dNx[i] = (tx[i] - Dot3(tx, ax) * ax[i]) / R; dNy[i] = (ty[i] - Dot3(ty, ax) * ax[i]) / R; }
-		REQUIRE(Weingarten(N, dNx, dNy, dPx, dPy, k1, k2, d2));
-		CHECK_THAT(k1, WithinRel(1.0 / R, 1e-6));
-		CHECK_THAT(k2, WithinAbs(0.0, 1e-6 / R));
-		CHECK_THAT(std::fabs(Dot3(d2, ax)), WithinAbs(1.0, 1e-6)); // the low-curvature direction is the axis
-		double rk1 = k1, rk2 = k2;
-		double rx[3], ry[3], mx[3], my[3]; // the screen rolled 90 deg: same curvatures (review M1)
-		for (int i = 0; i < 3; i++) { rx[i] = dPy[i]; ry[i] = -dPx[i]; mx[i] = dNy[i]; my[i] = -dNx[i]; }
-		REQUIRE(Weingarten(N, mx, my, rx, ry, k1, k2, d2));
-		CHECK_THAT(k1, WithinRel(rk1, 1e-9));
-		CHECK_THAT(k2, WithinAbs(rk2, 1e-9));
-		for (int i = 0; i < 3; i++) { dNx[i] = -tx[i] / R; dNy[i] = -ty[i] / R; } // concave: no edge
-		REQUIRE(Weingarten(N, dNx, dNy, dPx, dPy, k1, k2, d2));
-		CHECK(k1 == 0.0);
+	double Rn = 1.0, d2r = HPI / 180.0;
+	CHECK_THAT(EdgeLevel(0.01, Rn, 1.0, 0.0, 0.0), WithinAbs(Tune::edge, 1e-12)); // a sharp edge is capped
+	CHECK_THAT(EdgeLevel(2.0, Rn, 1.0, 0.0, 0.0), WithinAbs(0.5, 1e-12)); // Fay-Riddell cylinder: sqrt(R_n/2R)
+	CHECK_THAT(EdgeLevel(2.0, Rn, 0.5, 0.0, 0.0), WithinAbs(0.25, 1e-12)); // swept: cos L
+	CHECK_THAT(EdgeLevel(2.0, Rn, 1.0, 60.0 * d2r, 0.0), WithinAbs(0.5 * AngleFactor(0.5), 1e-12)); // Lees around the feature
+	CHECK(EdgeLevel(0.01, Rn, 1.0, 20.0 * d2r, Tune::edgeBeta * d2r) == 0.0); // the attachment line off the feature
+	double prev = EdgeLevel(0.3, Rn, 1.0, 0.0, 0.0);
+	for (double b = 0.0; b < 20.0; b += 0.05) { // continuous as the line leaves the feature
+		double g = EdgeLevel(0.3, Rn, 1.0, b * d2r, b * d2r);
+		CHECK(std::fabs(g - prev) < 0.02);
+		CHECK(g <= prev + 1e-12);
+		prev = g;
 	}
-	CHECK(n >= 100);
-	double N[3] = { 0, 0, 1 }, d[3] = { 0.01, 0, 0 }, k1 = 1, k2 = 1, d2[3];
-	CHECK(!Weingarten(N, d, d, d, d, k1, k2, d2)); // singular quad
-	CHECK(k1 == 0.0);
-	CHECK(k2 == 0.0);
-	double far[3] = { 1e3, 0, 0 }, far2[3] = { 0, 1e3, 0 }, fn[3] = { 1e3 / 4.0, 0, 0 }, fn2[3] = { 0, 1e3 / 4.0, 0 };
-	REQUIRE(Weingarten(N, fn, fn2, far, far2, k1, k2, d2)); // scale-free threshold (review M3d)
-	CHECK_THAT(k1, WithinRel(0.25, 1e-9));
+	CHECK_THAT(EdgeBand(0.0, 0.2, 1.1, 1.0), WithinAbs(1.1, 1e-12));
+	CHECK_THAT(EdgeBand(0.2 * HPI / 3.0, 0.2, 1.0, 1.0), WithinAbs(AngleFactor(0.5), 1e-9)); // 60 deg around a cylinder of the band's radius
+	CHECK(EdgeBand(1.0, 0.2, 1.0, 1.0) == 0.0);
+	CHECK(EdgeBand(0.0, 0.2, 1.0, -0.6) == 0.0); // the far side of a thin edge
+	CHECK(EdgeBand(0.0, 0.0, 1.0, 1.0) == 0.0);
+}
+
+// a closed prism: the polygon (z, y) counter-clockwise, extruded along x in n slices, with end caps (outward normals)
+static void Prism (const std::vector<std::array<double, 2>> &poly, double x0, double x1, int n, std::vector<float> &xyz, std::vector<uint32_t> &tri)
+{
+	size_t m = poly.size();
+	uint32_t base = uint32_t(xyz.size() / 3);
+	for (int s = 0; s <= n; s++) {
+		double x = x0 + (x1 - x0) * s / n;
+		for (auto &p : poly) { xyz.push_back(float(x)); xyz.push_back(float(p[1])); xyz.push_back(float(p[0])); }
+	}
+	auto V = [&](int s, size_t i) { return base + uint32_t(s * m + i % m); };
+	for (int s = 0; s < n; s++) for (size_t i = 0; i < m; i++) {
+		uint32_t A = V(s, i), B = V(s, i + 1), C = V(s + 1, i + 1), D = V(s + 1, i);
+		tri.insert(tri.end(), { A, C, B, A, D, C });
+	}
+	for (size_t i = 1; i + 1 < m; i++) {
+		tri.insert(tri.end(), { V(0, 0), V(0, i), V(0, i + 1) });
+		tri.insert(tri.end(), { V(n, 0), V(n, i + 1), V(n, i) });
+	}
+}
+
+static void Build (EdgeSet &es, const std::vector<float> &xyz, const std::vector<uint32_t> &tri)
+{
+	es.Begin(xyz, tri);
+	for (int i = 0; i < 100000; i++) { size_t r = 3000; if (es.Step(r)) break; }
+	REQUIRE(es.Done());
+}
+
+static void Flow (double alpha, double slip, double f[3]) // downstream direction for an angle of attack and sideslip, vessel axes (x right, y up, z forward)
+{
+	double a = alpha * HPI / 180.0, b = slip * HPI / 180.0;
+	f[0] = -std::sin(b); f[1] = std::sin(a) * std::cos(b); f[2] = -std::cos(a) * std::cos(b);
+}
+
+static const EdgeSeg *Best (const std::vector<EdgeSeg> &s)
+{
+	const EdgeSeg *b = nullptr;
+	for (auto &e : s) if (!b || e.level > b->level) b = &e;
+	return b;
+}
+
+// a wing slice: sharp wedge leading edge at z = 0.5, flat upper and lower faces 0.08 m apart with a 15 deg ridge on top, a square trailing edge at z = -3
+static std::vector<std::array<double, 2>> Wing (bool ridge)
+{
+	std::vector<std::array<double, 2>> p = { { 0.5, 0.0 }, { 0.0, 0.04 } };
+	if (ridge) { p.push_back({ -1.4, 0.04 }); p.push_back({ -1.5, 0.04 + 0.1 * std::tan(15.0 * HPI / 180.0) }); p.push_back({ -1.6, 0.04 }); }
+	p.push_back({ -3.0, 0.04 }); p.push_back({ -3.0, -0.04 }); p.push_back({ 0.0, -0.04 });
+	return p; // (z, y), counter-clockwise seen with z right and y up
+}
+
+TEST_CASE("HeatMath: real edges of a wing", "[heatmath]")
+{
+	std::vector<float> xyz;
+	std::vector<uint32_t> tri;
+	Prism(Wing(true), -2.0, 2.0, 4, xyz, tri);
+	EdgeSet es;
+	Build(es, xyz, tri);
+	CHECK(es.tris == tri.size() / 3);
+	CHECK(es.real > 0);
+	std::vector<EdgeSeg> s;
+	double f[3], Rn = 0.5;
+	Flow(0.0, 0.0, f); // head on: the leading edge holds the attachment line over the whole span, merged into one segment
+	es.Attach(f, Rn, s);
+	const EdgeSeg *b = Best(s);
+	REQUIRE(b);
+	CHECK_THAT(b->level, WithinAbs(Tune::edge, 1e-9));
+	CHECK_THAT(b->a[2], WithinAbs(0.5, 1e-6));
+	CHECK_THAT(b->b[2], WithinAbs(0.5, 1e-6));
+	CHECK_THAT(std::fabs(b->b[0] - b->a[0]), WithinAbs(4.0, 1e-6));
+	CHECK_THAT(b->n[2], WithinAbs(1.0, 1e-9));
+	s.clear(); // swept 40 deg: cos L
+	Flow(0.0, 40.0, f);
+	es.Attach(f, Rn, s);
+	b = Best(s);
+	REQUIRE(b);
+	CHECK_THAT(b->level, WithinAbs(Tune::edge * std::cos(40.0 * HPI / 180.0), 1e-6));
+	s.clear(); // from behind: nothing on the leading edge
+	f[0] = 0.0; f[1] = 0.0; f[2] = 1.0;
+	es.Attach(f, Rn, s);
+	for (auto &e : s) CHECK(!(e.a[2] > 0.4 && e.b[2] > 0.4));
+	for (double al : { -60.0, -65.0, -70.0, 60.0, 65.0 }) { // the ridge faces the flow but is no edge (code review MUST 1), at any attitude
+		s.clear();
+		Flow(al, 0.0, f);
+		es.Attach(f, Rn, s);
+		for (auto &e : s) CHECK(!(e.a[2] > -1.8 && e.a[2] < -1.2 && e.b[2] > -1.8 && e.b[2] < -1.2));
+		for (auto &e : s) CHECK(std::isfinite(e.level));
+	}
+	double prev = -1.0; // continuous in the attitude
+	for (double al = -30.0; al <= 30.0; al += 0.5) {
+		s.clear();
+		Flow(al, 0.0, f);
+		es.Attach(f, Rn, s);
+		double best = 0.0;
+		for (auto &e : s) if (e.a[2] > 0.4 && e.b[2] > 0.4) best = std::max(best, e.level);
+		if (prev >= 0.0) CHECK(std::fabs(best - prev) < 0.05);
+		prev = best;
+	}
+}
+
+TEST_CASE("HeatMath: rounded leading edge", "[heatmath]")
+{
+	std::vector<std::array<double, 2>> p; // a 4 cm radius nose in 10 facets from the lower to the upper face
+	for (int i = 0; i <= 10; i++) { double a = -0.5 * HPI + HPI * i / 10.0; p.push_back({ 0.04 * std::cos(a), 0.04 * std::sin(a) }); }
+	p.push_back({ -3.0, 0.04 }); p.push_back({ -3.0, -0.04 }); // counter-clockwise
+	std::vector<float> xyz;
+	std::vector<uint32_t> tri;
+	Prism(p, -2.0, 2.0, 2, xyz, tri);
+	EdgeSet es;
+	Build(es, xyz, tri);
+	std::vector<EdgeSeg> s;
+	double f[3], Rn = 0.5;
+	for (double al : { 0.0, 30.0, -30.0 }) { // the band sits on the nose facet facing the flow
+		s.clear();
+		Flow(al, 0.0, f);
+		es.Attach(f, Rn, s);
+		const EdgeSeg *b = Best(s);
+		REQUIRE(b);
+		double ang = std::atan2(b->a[1], b->a[2]) * 180.0 / HPI;
+		CHECK(std::fabs(ang + al) < 12.0);
+		CHECK(b->level > 0.5);
+		CHECK(b->w >= Tune::edgeBand * Rn - 1e-12);
+	}
+}
+
+TEST_CASE("HeatMath: exposure and shielding", "[heatmath]")
+{
+	std::vector<float> xyz;
+	std::vector<uint32_t> tri;
+	std::vector<std::array<double, 2>> boxc = { { 5.0, -1.0 }, { 5.0, 1.0 }, { -5.0, 1.0 }, { -5.0, -1.0 } }; // (z, y) counter-clockwise
+	std::vector<std::array<double, 2>> innerc = { { 0.5, -0.3 }, { 0.5, 0.3 }, { -0.5, 0.3 }, { -0.5, -0.3 } };
+	Prism(boxc, -5.0, 5.0, 1, xyz, tri);
+	size_t nOuter = tri.size();
+	Prism(innerc, -0.5, 0.5, 1, xyz, tri); // closed inside the big box: never exposed
+	EdgeSet es;
+	Build(es, xyz, tri);
+	CHECK(es.real > 0);
+	std::vector<EdgeSeg> s;
+	double f[3] = { 0.0, -std::sqrt(0.5), -std::sqrt(0.5) };
+	es.Attach(f, 0.5, s);
+	for (auto &e : s) CHECK((std::fabs(e.a[1]) > 0.9 || std::fabs(e.a[2]) > 4.0)); // only the big box's edges
+	(void)nOuter;
+	for (double h : { 0.02, 0.3 }) { // a step on the top face: a small one sits in the body's layers, a tall one stands out
+		std::vector<float> x2;
+		std::vector<uint32_t> t2;
+		std::vector<std::array<double, 2>> topc = { { -1.0, 1.0 }, { -1.0, 1.0 + h }, { -2.0, 1.0 + h }, { -2.0, 1.0 } };
+		Prism(boxc, -5.0, 5.0, 1, x2, t2);
+		Prism(topc, -1.0, 1.0, 1, x2, t2);
+		EdgeSet e2;
+		Build(e2, x2, t2);
+		double g[3] = { 0.0, -std::sin(40.0 * HPI / 180.0), -std::cos(40.0 * HPI / 180.0) }; // from ahead and above
+		double p[3] = { 0.0, 1.0 + h, -1.0 }, u[3] = { 0.0, std::sin(40.0 * HPI / 180.0), std::cos(40.0 * HPI / 180.0) }, t[3] = { 1.0, 0.0, 0.0 };
+		CHECK(e2.Shielded(p, u, t) == (h < 0.1));
+		std::vector<EdgeSeg> s2;
+		e2.Attach(g, 0.5, s2);
+		bool front = false;
+		for (auto &e : s2) if (std::fabs(e.a[2] + 1.0) < 1e-3 && std::fabs(e.a[1] - (1.0 + h)) < 1e-3 && std::fabs(e.b[2] + 1.0) < 1e-3) front = true;
+		CHECK(front == (h > 0.1));
+	}
 }
 
 TEST_CASE("HeatMath: blackbody colour and luminance", "[heatmath]")

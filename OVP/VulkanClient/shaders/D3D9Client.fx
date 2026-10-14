@@ -165,7 +165,7 @@ float	  gExposure;		// not upstream: auto-exposure, 1 off the main pass
 CsmPrm    gCsm;				// not upstream: scene shadow cascades, off outside the main pass (design-scene-shadows Rev 2)
 #endif
 #if defined(_SSR)
-SsrPrm    gSsr;				// not upstream: screen-space reflections of this draw (design-ssr), after the shadows' gCsm (ue5-integration INT-2)
+SsrPrm    gSsr;				// not upstream: screen-space reflections of this draw (design-ssr), after the shadows' gCsm
 #endif
 #if defined(_HEAT)
 HeatPrm   gHeat;			// not upstream: re-entry hull heating of the vessel drawn, zero otherwise (design-reentry-heat), after gSsr (INT-2)
@@ -553,7 +553,7 @@ sampler2D Planet3S = sampler_state    // Planet/Cloud micro texture sampler
 	AddressV = WRAP;
 };
 
-#if defined(_CSM) // not upstream: the scene shadow atlas (design-scene-shadows); the 25th sampler, binding 28, before SSR's (ue5-integration INT-3)
+#if defined(_CSM) // not upstream: the scene shadow atlas (design-scene-shadows); the 25th sampler, binding 28, before SSR's
 uniform extern texture   gCsmMap;
 sampler2D CsmS = sampler_state { Texture = <gCsmMap>; MinFilter = POINT; MagFilter = POINT; MipFilter = NONE; AddressU = CLAMP; AddressV = CLAMP; };
 #endif
@@ -698,7 +698,7 @@ void main() { oColor = SpotTechPS(frg PS_ARGS); }
 
 #include "SceneShadow.glsl" // not upstream: CsmVis (_CSM, pixel stage) for Mesh.fx, Vessel.fx, PBR.fx and Metalness.fx
 
-#if defined(_SSR) // not upstream: screen-space reflections (design-ssr); after the shadows' CsmS in the text, so 29 and 30 (ue5-integration INT-3)
+#if defined(_SSR) // not upstream: screen-space reflections (design-ssr); after the shadows' CsmS in the text, so 29 and 30
 sampler2D tSsrCol = sampler_state { MinFilter = LINEAR; MagFilter = LINEAR; MipFilter = LINEAR; AddressU = CLAMP; AddressV = CLAMP; };
 sampler2D tSsrHiZ = sampler_state { MinFilter = POINT; MagFilter = POINT; MipFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };
 #include "Ssr.glsl"

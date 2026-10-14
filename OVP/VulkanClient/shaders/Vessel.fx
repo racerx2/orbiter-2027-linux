@@ -73,9 +73,6 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 #if defined(_SSR) && defined(_ENVMAP)
 	vec3 nSsrF = SsrFaceN(-frg.camW, normalize(frg.nrmW)); // not upstream: the face the depth holds, before any discard (r3-ssr2)
 #endif
-#if defined(_HEAT)
-	HeatGeo hHg = HeatGeom(frg.nrmW, frg.camW); // not upstream: hull heating curvature, before any discard (design-reentry-heat)
-#endif
 
 	if (gTextured) cTex = texture(WrapS, frg.tex0.xy);
 	else		   cTex = vec4(1);
@@ -281,7 +278,7 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 	// Add emissive textures to output
 	cTex.rgb += cEmis;
 #if defined(_HEAT)
-	if (gHeat.vFlow.w > 0.5) cTex.rgb = HeatAddDisplay(cTex.rgb, HeatGlow(frg.nrmW, frg.camW, hHg, HeatToLinear(hAlb))); // not upstream: the hull's own glow (design-reentry-heat)
+	if (gHeat.vFlow.w > 0.5) cTex.rgb = HeatAddDisplay(cTex.rgb, HeatGlow(frg.nrmW, frg.camW, HeatToLinear(hAlb))); // not upstream: the hull's own glow (design-reentry-heat)
 #endif
 
 #if defined(_DEBUG)

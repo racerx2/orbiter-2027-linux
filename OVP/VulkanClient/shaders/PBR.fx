@@ -83,9 +83,6 @@ vec4 PBR_PS(vec4 sc, PBRData frg)	// sc : VPOS
 #if defined(_SSR)
 	vec3 nSsrF = SsrFaceN(-frg.camW, normalize(frg.nrmW)); // not upstream: the face the depth holds, before any discard (r3-ssr2)
 #endif
-#if defined(_HEAT)
-	HeatGeo hHg = HeatGeom(frg.nrmW, frg.camW); // not upstream: hull heating curvature, before any discard (design-reentry-heat)
-#endif
 
 	// ----------------------------------------------------------------------
 	// Start fetching texture data
@@ -425,7 +422,7 @@ vec4 PBR_PS(vec4 sc, PBRData frg)	// sc : VPOS
 #endif
 
 #if defined(_HEAT)
-	if (gHeat.vFlow.w > 0.5) cDiff.rgb = HeatAddDisplay(cDiff.rgb, HeatGlow(frg.nrmW, frg.camW, hHg, HeatToLinear(hAlb))); // not upstream: the hull's own glow (design-reentry-heat)
+	if (gHeat.vFlow.w > 0.5) cDiff.rgb = HeatAddDisplay(cDiff.rgb, HeatGlow(frg.nrmW, frg.camW, HeatToLinear(hAlb))); // not upstream: the hull's own glow (design-reentry-heat)
 #endif
 
 #if defined(_DEBUG)
@@ -514,9 +511,6 @@ vec4 FAST_PS(vec4 sc, FASTData frg)	// sc : VPOS
 
 #if defined(_SSR)
 	vec3 nSsrF = SsrFaceN(-frg.camW, normalize(frg.nrmW)); // not upstream: the face the depth holds, before any discard (r3-ssr2)
-#endif
-#if defined(_HEAT)
-	HeatGeo hHg = HeatGeom(frg.nrmW, frg.camW); // not upstream: hull heating curvature, before any discard (design-reentry-heat)
 #endif
 
 	// Start fetching texture data -------------------------------------------
@@ -607,7 +601,7 @@ vec4 FAST_PS(vec4 sc, FASTData frg)	// sc : VPOS
 		if (wB > 0.0) cDiff.rgb = mix(cDiff.rgb, SsrMeshDecode(SsrFetch(hB), false), wB);
 #endif
 #if defined(_HEAT)
-		if (gHeat.vFlow.w > 0.5) cDiff.rgb = HeatAddDisplay(cDiff.rgb, HeatGlow(frg.nrmW, frg.camW, hHg, HeatToLinear(hAlb))); // not upstream: the hull's own glow, lit groups only (design-reentry-heat)
+		if (gHeat.vFlow.w > 0.5) cDiff.rgb = HeatAddDisplay(cDiff.rgb, HeatGlow(frg.nrmW, frg.camW, HeatToLinear(hAlb))); // not upstream: the hull's own glow, lit groups only (design-reentry-heat)
 #endif
 	}
 

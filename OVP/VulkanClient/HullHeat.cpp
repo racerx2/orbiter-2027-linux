@@ -3,7 +3,7 @@
 // Dual licensed under GPL v3 and LGPL v3
 // Copyright (C) 2026 racerx2
 // ==============================================================
-// not upstream: re-entry hull heating (design-reentry-heat 2, 4, 7, Rev 2): per-vessel wall temperatures in sim time, the shader block of its exterior draws
+// not upstream: re-entry hull heating (design-reentry-heat 2, 4, 7, Rev 2, Rev 3): per-vessel wall temperatures in sim time, the real edges' attachment lines, the shader block of its exterior draws
 
 #include "HullHeat.h"
 #include "HeatMath.h"
@@ -33,6 +33,7 @@ namespace {
 
 const int DIRS = 128;						// support directions (design 2.5)
 const DWORD BUILD_STEP = 20000;				// vertices per Step while a support set builds (review N11)
+const size_t EDGE_RAYS = 2500;				// exposure rays per Step while a mesh's real edges build (Rev 3)
 
 struct MeshSup {							// one mesh's extreme vertices along DIRS directions, mesh coordinates
 	DWORD nv = 0, ng = 0;
@@ -43,6 +44,10 @@ struct MeshSup {							// one mesh's extreme vertices along DIRS directions, mes
 	P3 pt[DIRS];
 	std::vector<P3> pts;					// the unique points, once done
 	double used = 0.0;						// system time of the last query (purge, review NIT 5)
+	HeatMath::EdgeSet es;					// the real edges (Rev 3), after the support set
+	bool esBegun = false;
+	double esMs = 0.0;
+	int esSteps = 0;
 	MeshSup () { for (double &b : best) b = -1e300; }
 };
 
@@ -75,6 +80,10 @@ struct HullHeat::State {
 	double fl[3] = { 0.0, 0.0, -1.0 };		// downstream, vessel axes, low-passed (review S3)
 	double ps[3] = { 0.0, 0.0, 0.0 };		// stagnation point, vessel axes, low-passed
 	float lnB[NBIN][3] = {};
+	std::vector<EdgeSeg> segs;				// attachment segments, vessel axes (Rev 3)
+	double segFl[3] = { 0.0, 0.0, 0.0 };	// the flow they were found for
+	double segT = -1e30;
+	bool segAll = false;					// every mesh's edges were built
 };
 
 namespace {
@@ -155,13 +164,54 @@ bool BuildSome (D3D9Mesh *m, MeshSup &ms, DWORD &budget, size_t &done)
 	return true;
 }
 
+// part of one mesh's real edges (Rev 3): the triangles in mesh coordinates as the support set reads them, then the build in parts
+void EdgeStep (const char *name, D3D9Mesh *m, MeshSup &ms, size_t &rays)
+{
+	if (rays < size_t(Tune::edgeRays)) return;
+	auto t0 = std::chrono::steady_clock::now();
+	if (!ms.esBegun) {
+		ms.esBegun = true;
+		std::vector<float> xyz;
+		std::vector<uint32_t> tri;
+		const NMVERTEX *vb = m->pBuf ? m->pBuf->pVBSys : nullptr;
+		const WORD *ib = m->pBuf ? m->pBuf->pIBSys : nullptr;
+		DWORD ng = m->GetGroupCount();
+		for (DWORD g = 0; vb && ib && g < ng; g++) {
+			const D3D9Mesh::GROUPREC *gr = m->GetGroup(g);
+			if (!gr || gr->bDeleted) continue;
+			D3DXMATRIX M;
+			if (gr->bTransform) M = m->GetTransform(int(g), true);
+			else if (m->GetTransform()) M = *m->GetTransform();
+			else D3DXMatrixIdentity(&M);
+			uint32_t base = uint32_t(xyz.size() / 3);
+			for (DWORD k = 0; k < gr->nVert; k++) {
+				const NMVERTEX &v = vb[gr->VertOff + k];
+				P3 p;
+				Mul({ v.x, v.y, v.z }, M, p);
+				for (int j = 0; j < 3; j++) xyz.push_back(float(p[j]));
+			}
+			for (DWORD f = 0; f < gr->nFace; f++) {
+				const WORD *t = ib + gr->IdexOff + 3 * f;
+				if (t[0] >= gr->nVert || t[1] >= gr->nVert || t[2] >= gr->nVert) continue;
+				for (int j = 0; j < 3; j++) tri.push_back(base + t[j]);
+			}
+		}
+		ms.es.Begin(xyz, tri);
+	}
+	bool fin = ms.es.Step(rays);
+	ms.esMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+	ms.esSteps++;
+	if (fin) LogAlw("HullHeat: %s: hull edges, %d triangles, %d convex, %d exposed, %d real (voxel %.3f m, %.1f ms over %d steps)", name,
+		int(ms.es.tris), int(ms.es.convex), int(ms.es.exposed), int(ms.es.real), ms.es.vox, ms.esMs, ms.esSteps);
+}
+
 }
 
 // the upstream-most hull vertex along up (vessel axes): exterior meshes' support sets, each moved by its mesh offset this frame (review S1)
 bool HullHeat::Upstream (vVessel *vv, const double up[3], double out[3])
 {
 	DWORD budget = BUILD_STEP;
-	size_t done = 0;
+	size_t done = 0, rays = EDGE_RAYS;
 	bool all = true, any = false;
 	double bv = -1e300;
 	auto t0 = std::chrono::steady_clock::now();
@@ -174,6 +224,7 @@ bool HullHeat::Upstream (vVessel *vv, const double up[3], double out[3])
 		D3DXMATRIX T;
 		if (vv->meshlist[i].trans) T = *vv->meshlist[i].trans;
 		else D3DXMatrixIdentity(&T);
+		if (!ms.es.Done()) EdgeStep(vv->GetInterface()->GetName(), m, ms, rays);
 		for (const P3 &p : ms.pts) {
 			P3 q;
 			Mul(p, T, q);
@@ -309,6 +360,7 @@ void HullHeat::Step (vVessel *vv)
 	}
 	s.glow = s.flowOk && s.T[0] >= Tune::glowOn;
 	if (!s.glow) return;
+	Edges(vv, s);
 
 	double gain = Tune::camera * s.cfg.glow / LREF;
 	for (int k = 0; k < NBIN; k++) {
@@ -324,11 +376,55 @@ void HullHeat::Step (vVessel *vv)
 		s.nextLog = simt + 2.0;
 		logLines++;
 		double Teq = EquilibriumWall(qcw, BinRatio(0), cp, h0, w);
-		LogAlw("HullHeat: %s t %.1f alt %.1f km V %.2f km/s AOA %.1f slip %.1f q %.0f kW/m2 Teq %.0f T %.0f/%.0f/%.0f/%.0f K (G 2/0.32/0.05/0.008)", v->GetName(), simt,
-			v->GetAltitude() * 1e-3, V * 1e-3, v->GetAOA() * DEG, v->GetSlipAngle() * DEG, qcw * 1e-3, Teq, s.T[0], s.T[2], s.T[4], s.T[6]);
+		double eb = 0.0;
+		for (const EdgeSeg &e : s.segs) eb = std::max(eb, e.level);
+		LogAlw("HullHeat: %s t %.1f alt %.1f km V %.2f km/s AOA %.1f slip %.1f q %.0f kW/m2 Teq %.0f T %.0f/%.0f/%.0f/%.0f K (G 2/0.32/0.05/0.008) edges %d (G_e %.2f)", v->GetName(), simt,
+			v->GetAltitude() * 1e-3, V * 1e-3, v->GetAOA() * DEG, v->GetSlipAngle() * DEG, qcw * 1e-3, Teq, s.T[0], s.T[2], s.T[4], s.T[6], int(s.segs.size()), eb);
 	}
 	stepMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 	if (++stepN == 600) LogAlw("HullHeat: Step %.4f ms mean over 600 glowing steps", stepMs / 600.0);
+}
+
+// the attachment segments of the exterior meshes for the low-passed flow, again when it turned by 0.2 deg, after 2 s, or while edges build (Rev 3)
+void HullHeat::Edges (vVessel *vv, State &s)
+{
+	double c = s.fl[0] * s.segFl[0] + s.fl[1] * s.segFl[1] + s.fl[2] * s.segFl[2];
+	if (s.segAll && c > std::cos(0.2 * RAD) && s.t - s.segT < 2.0 && s.t >= s.segT) return;
+	s.segs.clear();
+	bool all = true;
+	for (UINT i = 0; i < vv->nmesh; i++) {
+		D3D9Mesh *m = vv->meshlist[i].mesh;
+		if (!m || !m->IsOK() || !(vv->meshlist[i].vismode & MESHVIS_EXTERNAL)) continue;
+		auto it = meshSup->find(m);
+		if (it == meshSup->end() || !it->second.es.Done()) { all = false; continue; }
+		D3DXMATRIX T;
+		if (vv->meshlist[i].trans) T = *vv->meshlist[i].trans;
+		else D3DXMatrixIdentity(&T);
+		const float *R = &T._11;
+		double f[3], l = 0.0;
+		for (int j = 0; j < 3; j++) { f[j] = s.fl[0] * R[4 * j] + s.fl[1] * R[4 * j + 1] + s.fl[2] * R[4 * j + 2]; l += f[j] * f[j]; }
+		l = std::sqrt(l);
+		if (!(l > 0.0)) continue;
+		for (double &x : f) x /= l;
+		std::vector<EdgeSeg> o;
+		it->second.es.Attach(f, s.Rn, o);
+		for (EdgeSeg &e : o) {
+			P3 a, b;
+			Mul({ e.a[0], e.a[1], e.a[2] }, T, a);
+			Mul({ e.b[0], e.b[1], e.b[2] }, T, b);
+			double n[3], ln = 0.0;
+			for (int j = 0; j < 3; j++) { n[j] = e.n[0] * R[j] + e.n[1] * R[4 + j] + e.n[2] * R[8 + j]; ln += n[j] * n[j]; }
+			ln = std::sqrt(ln);
+			for (int j = 0; j < 3; j++) { e.a[j] = a[j]; e.b[j] = b[j]; e.n[j] = ln > 0.0 ? n[j] / ln : 0.0; }
+			s.segs.push_back(e);
+		}
+	}
+	auto len = [](const EdgeSeg &e) { double d = 0.0; for (int j = 0; j < 3; j++) d += (e.b[j] - e.a[j]) * (e.b[j] - e.a[j]); return std::sqrt(d); };
+	std::sort(s.segs.begin(), s.segs.end(), [&](const EdgeSeg &x, const EdgeSeg &y) { return x.level * len(x) > y.level * len(y); });
+	if (s.segs.size() > size_t(HEAT_NSEG)) s.segs.resize(HEAT_NSEG);
+	s.segAll = all;
+	for (int j = 0; j < 3; j++) s.segFl[j] = s.fl[j];
+	s.segT = s.t;
 }
 
 HullHeat::Scope::Scope (vVessel *vv, bool internal)
@@ -355,11 +451,31 @@ HullHeat::Scope::Scope (vVessel *vv, bool internal)
 	p.vCoef[0] = float(s.kfp);
 	p.vCoef[1] = float(Tune::lee);
 	p.vCoef[2] = float(Tune::epsVisMin);
-	p.vCoef[3] = float(Tune::edge);
+	p.vCoef[3] = 0.0f;
 	for (int k = 0; k < NBIN; k++) {
 		for (int j = 0; j < 3; j++) p.vBin[k][j] = s.lnB[k][j];
 		p.vBin[k][3] = float(s.T[k]);
 	}
+	int ne = 0;
+	for (const EdgeSeg &e : s.segs) { // to the camera-relative render frame (Rev 3)
+		if (ne >= HEAT_NSEG) break;
+		P3 a, b;
+		Mul({ e.a[0], e.a[1], e.a[2] }, M, a);
+		Mul({ e.b[0], e.b[1], e.b[2] }, M, b);
+		double n[3], ln = 0.0;
+		for (int j = 0; j < 3; j++) { n[j] = e.n[0] * (&M._11)[j] + e.n[1] * (&M._21)[j] + e.n[2] * (&M._31)[j]; ln += n[j] * n[j]; }
+		ln = std::sqrt(ln);
+		if (!(ln > 0.0) || !std::isfinite(ln)) continue;
+		for (int j = 0; j < 3; j++) {
+			p.vEdge[3 * ne][j] = float(a[j]);
+			p.vEdge[3 * ne + 1][j] = float(b[j]);
+			p.vEdge[3 * ne + 2][j] = float(n[j] / ln);
+		}
+		p.vEdge[3 * ne][3] = float(e.w);
+		p.vEdge[3 * ne + 1][3] = float(e.level);
+		ne++;
+	}
+	p.vEdgeN[0] = float(ne);
 	D3D9Effect::FX->SetValue(hHeat, &p, sizeof(p));
 	set = true;
 }

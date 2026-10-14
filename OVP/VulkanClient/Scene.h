@@ -78,7 +78,7 @@ class Scene {
 	friend class D3D9CelestialSphere;
 	friend class PostTaa;  // not upstream: TAA reads the camera (design-visual-batch 3)
 	friend class PostLook; // not upstream: haze, shafts, flare, sharpen, vignette (design-visual-batch 4-7)
-	friend class SceneShadows; // not upstream: the UE5 batch (ue5-integration)
+	friend class SceneShadows; // not upstream: scene shadows
 	friend class SceneSsr;
 	friend class PostPlume;
 
