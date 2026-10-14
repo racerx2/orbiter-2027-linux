@@ -30,6 +30,8 @@ class MemStat;
 class ScriptInterface; // g++: a friend declaration doesn't introduce the name
 class DDEServer;
 class ImageIO;
+class TileStream; // not upstream
+struct StreamTrack; // not upstream
 namespace orbiter {
 	class ConsoleNG;
 	class LaunchpadDialog;
@@ -185,6 +187,7 @@ public:
 
 	// Onscreen annotation
 	inline oapi::ScreenAnnotation *SNotePB() const { return snote_playback; }
+	inline TileStream *Stream() const { return m_pTileStream; } // not upstream: planet tile stream (TileStream.cpp)
 	oapi::ScreenAnnotation *CreateAnnotation (bool exclusive, double size, COLORREF col);
 	bool DeleteAnnotation (oapi::ScreenAnnotation *sn);
 
@@ -380,6 +383,12 @@ private:
 	oapi::ScreenAnnotation **snote;// onscreen annotations
 	DWORD           nsnote;        // number of annotations
 	oapi::ScreenAnnotation *snote_playback;// onscreen annotation during playback
+	TileStream *m_pTileStream;             // not upstream: planet tile stream
+	void StartTileStream ();               // not upstream
+	void StopTileStream ();                // not upstream
+	void StreamPrefetch ();                // not upstream: ground-track tiles at high time acceleration
+	void StreamTrackStep ();               // not upstream
+	StreamTrack *m_pStreamTrack;           // not upstream: StreamPrefetch's state, one per session
 	ScriptInterface *script;
 	INTERPRETERHANDLE hScnInterp;
 

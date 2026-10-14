@@ -1174,16 +1174,35 @@ void CollDmgSession::Cut (CollH h, VesselDamageA &v, bool want)
 
 void CollDmgSession::EndFrame ()
 {
-	int dm = -2;
 	for (auto &kv : vessel) {
 		VesselDamageA &v = kv.second;
-		if (!(v.d.flags & XDMG_DESTROYED) && !v.cut.dummy) continue;
+		if (!(v.d.flags & XDMG_DESTROYED) && !v.cut.dummy && !v.locked) continue;
 		CollH h = host.Vessel (kv.first);
 		if (!h) continue;
-		if (dm == -2) dm = sdk.VesselCount () ? sdk.DamageModel (sdk.Vessel (0)) : 0;
-		bool want = (v.d.flags & XDMG_DESTROYED) && !(v.d.flags & XDMG_MODULEFX) && dm != 0 && !sdk.Playback (h) && cfg.thrustCut;
+		bool want = (v.d.flags & XDMG_DESTROYED) && !(v.d.flags & XDMG_MODULEFX) && !sdk.Playback (h) && cfg.thrustCut; // not upstream: also with Orbiter's own damage setting off; destroyed is this addon's verdict
 		Cut (h, v, want);
+		Lock (h, v, want);
 	}
+}
+
+void CollDmgSession::Lock (CollH h, VesselDamageA &v, bool want) // not upstream
+{
+	if (want == v.locked) {
+		if (want && sdk.ADCtrlMode (h) != 0) sdk.SetADCtrlMode (h, 0); // a module switched them back on
+		return;
+	}
+	if (want) {
+		v.adPrev = sdk.ADCtrlMode (h);
+		sdk.SetADCtrlMode (h, 0);
+		bool core = sdk.ControlLock (h, true);
+		Log ("Collision controls lost: '%s'%s", v.name.c_str (), core ? "" : " (this core has no input lock: thrust and control surfaces only)");
+	} else {
+		sdk.ControlLock (h, false);
+		if (v.adPrev >= 0) sdk.SetADCtrlMode (h, v.adPrev);
+		v.adPrev = -1;
+		Log ("Collision controls back: '%s'", v.name.c_str ());
+	}
+	v.locked = want;
 }
 
 void CollDmgSession::PostStep ()

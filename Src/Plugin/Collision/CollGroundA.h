@@ -25,7 +25,7 @@ constexpr uint32_t COLL_GROUND_VTX    = 4096;  // collider vertices tested per v
 
 struct CollGroundVessel { uint32_t id; CollH h; const CollShape *shape; }; // one live vessel with its collider
 
-inline bool CollGroundSide (const CollOwnerRef &o) { return !o.vesselId && o.planet >= 0 && o.base < 0; } // the ground side of an impact event
+inline bool CollGroundSide (const CollOwnerRef &o) { return !o.vesselId && o.planet >= 0 && o.base == -1; } // the ground side of an impact event; base <= -2 is a streamed building (bldg)
 double CollGroundMeff (double m, const Vector &pmi, const Vector &r, const Vector &n); // 1 / (1/m + (r x n) . I^-1 (r x n)), I = m pmi, vessel frame; pmi axes <= 0 locked
 
 class CollGroundA {

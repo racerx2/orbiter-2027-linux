@@ -26,15 +26,16 @@ typedef struct {
 } COLLA_HDR;
 
 #define COLLA_CON_VESSEL   0x01   // the other body is a vessel
-#define COLLA_CON_BUILDING 0x02   // the other body is a base object
+#define COLLA_CON_BUILDING 0x02   // the other body is a base object, or a streamed building (STREAMED)
 #define COLLA_CON_FIRST    0x04   // newly touching feature; only such contacts carry damage energy
 #define COLLA_CON_SLOW     0x08   // every approach below 0.1 m/s
 #define COLLA_CON_WOKE     0x10   // this vessel was woken from LANDED
+#define COLLA_CON_STREAMED 0x20   // with BUILDING: a streamed 3D building, no base (hOther NULL, otherObj -1)
 typedef struct {
 	COLLA_HDR hdr;                // kind COLLA_KIND_CONTACT
 	uint32_t flags;               // COLLA_CON_*
-	OBJHANDLE hOther;             // other vessel, or the base of a building
-	int32_t otherObj;             // building object index in its base, else -1
+	OBJHANDLE hOther;             // other vessel, or the base of a building; NULL for a streamed building
+	int32_t otherObj;             // building object index in its base, else -1 (a vessel or a streamed building)
 	int32_t mesh, group;          // hit mesh and group of this vessel, -1 if unknown
 	int32_t reserved;             // 0
 	double simt;                  // impact time [s]

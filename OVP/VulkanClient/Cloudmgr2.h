@@ -8,6 +8,9 @@
 #define __CLOUDMGR2_H
 
 #include "Tilemgr2_imp.hpp"
+#include <atomic>
+#include <memory>
+#include <vector>
 
 /**
  * \brief Visual representation of planetary cloud tile.
@@ -31,6 +34,9 @@ public:
 	double GetMaxElev() const { return cloudalt; }		// virtual from Tile::
 	double GetMeanElev() const { return cloudalt; }		// virtual from Tile::
 
+	// not upstream: the alpha as 256x256 bytes for the volume clouds and the lens flare, NULL until loaded or with both off
+	std::shared_ptr<const std::vector<uint8_t>> Density() const { return densReady.load(std::memory_order_acquire) ? dens : nullptr; }
+
 protected:
 	virtual Tile *getParent() const { return node && node->Parent() ? node->Parent()->Entry() : NULL; }
 	// Return pointer to parent tile, if exists
@@ -40,9 +46,16 @@ protected:
 	virtual void Render ();
 
 	double cloudalt;
+	std::shared_ptr<const std::vector<uint8_t>> dens; // not upstream: set by PreLoad before densReady
+	std::atomic<bool> densReady{false};
 	TileManager2<CloudTile> *cmgr;	// cloud tile manager interface
 	QuadTreeNode<CloudTile> *node;	// my node in the quad tree, if I'm part of a tree
 };
+
+template<> int TileManager2<CloudTile>::VolTiles (double lat, double lng, double half, std::vector<VolCloud::Src> &out); // not upstream
+
+float CloudAlphaToward (TileManager2<CloudTile> *m, const VECTOR3 &cameraPos, const VECTOR3 &sunDir); // not upstream: the layer's alpha on the ray to the sun (global frame); loader mutex held
+float CloudSunAlpha (const TileManager2<CloudTile> *m, DWORD frame); // not upstream: that alpha from the main camera, as Render looked it up in frame with LensFlare on; 0 otherwise
 
 #endif // !__CLOUDMGR2_H
 

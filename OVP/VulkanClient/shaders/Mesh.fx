@@ -120,6 +120,8 @@ vec4 RingTechPS(MeshVS frg)
 
 	if (da<0) sh = 1.0f;
 
+	sh *= gExposure; // not upstream: auto-exposure
+
 	if ((dot(frg.nrmW, frg.CamW)*dot(frg.nrmW, gSun.Dir))>0) return vec4(color.rgb*0.35f*sh, color.a);
 	return vec4(color.rgb*sh, color.a);
 }
@@ -142,7 +144,7 @@ vec4 RingTech2PS(MeshVS frg)
 
 	if (da<0) sh = 1.0f;
 
-	color.rgb *= sh;
+	color.rgb *= sh * gExposure; // not upstream: auto-exposure
 
 	if ((dot(frg.nrmW, frg.CamW)*dot(frg.nrmW, gSun.Dir))>0) return vec4(color.rgb*0.35f, color.a);
 	return vec4(color.rgb, color.a);
@@ -215,12 +217,24 @@ vec4 BaseTilePS(TileMeshVS frg)
 	float  d = clamp(dot(-gSun.Dir, nrmW), 0.0, 1.0);
 
 	if (d<=0) s = 0;
+#if defined(_CSM) && defined(STAGE_PS)
+	{ float fC = CsmVis(CsmS, -frg.CamW, nrmW, 1.0, 0.0, 1.0); d *= fC; s *= fC; } // not upstream: scene shadows on the base tiles, biased as ground (design-scene-shadows 7.2)
+#endif
 
 	vec3 clr = cTex.rgb * clamp(d * gSun.Color + s * gSun.Color + gSun.Ambient, 0.0, 1.0);
+#if defined(_SSR) && defined(STAGE_PS)
+	SsrHit hS; // not upstream: base surfaces reflect by the rough split-sum weight, nothing where the ray misses (design-ssr Rev 2 M4)
+	float aS;
+	float wS = SsrBase(nrmW, SsrFaceN(-frg.CamW, nrmW), CamW, -frg.CamW, gl_FragCoord.xy, hS, aS); // the face from derivatives here, in uniform control flow (r3-ssr2)
+	clr *= aS;
+#endif
 
 	if (gNight) clr += texture(Tex1S, frg.tex0).rgb;
+#if defined(_SSR) && defined(STAGE_PS)
+	if (wS > 0.0) clr = mix(clr, max((SsrFetch(hS) * gSsr.vDecode.y - frg.insca.rgb) / max(frg.atten.rgb, vec3(1e-3)), vec3(0.0)), wS); // not upstream
+#endif
 
-	return vec4(clr.rgb*frg.atten.rgb+frg.insca.rgb, cTex.a);
+	return vec4((clr.rgb*frg.atten.rgb+frg.insca.rgb)*gExposure, cTex.a); // not upstream: auto-exposure
 	//return float4(clr.rgb*frg.atten.rgb+frg.insca.rgb, cTex.a*(1-frg.insca.a));	// Make basetiles transparent during night
 }
 
@@ -313,6 +327,9 @@ ShadowTexVS ShadowMeshTechExVS(POSTEX vrt)
 	float alpha = dot(vrt.posL.xyz, gColor.xyz) + gColor.w;
 	vec3 posX = (vec4(vrt.posL.xyz, 1.0f) * gGrpT).xyz;
 	vec3 posW = (vec4(posX, 1.0f) * gW).xyz;
+	vec3 nW = normalize((vec4(gColor.xyz, 0.0f) * gW).xyz); // not upstream: the shadow plane's normal
+	float dW = max(length(posW), 1e-3); // not upstream
+	posW *= 1.0f - min(2.0f / max(abs(dot(posW, nW)) / dW, 0.01f), 0.5f * dW) / dW; // not upstream: pulled along the view ray, ground up to 2 m over the plane takes the shadow, higher ground (a structure under the terrain) hides it in the depth test
 	outVS.posH  = vec4(posW, 1.0f) * gVP;
 	outVS.tex0  = vec3(vrt.tex0.xy, alpha);
 	outVS.dstW  = outVS.posH.zw;
@@ -471,7 +488,8 @@ technique ShadowTech
 		BlendOp = Add;
 		SrcBlend = SrcAlpha;
 		DestBlend = InvSrcAlpha;
-		ZEnable = false;
+		ZEnable = true; // not upstream: the terrain hides the shadow of a structure under it
+		ZFunc = LessEqual;
 		ZWriteEnable = false;
 
 		StencilEnable = true;

@@ -11,6 +11,7 @@
 #include "Scene.h"
 #include "D3D9Surface.h"
 #include "D3D9Config.h"
+#include "SceneFx.h" // not upstream: tDepth for the soft billboards (r3 trail)
 #include <stdio.h>
 
 static bool needsetup = true;
@@ -46,6 +47,7 @@ static PARTICLESTREAMSPEC DefaultParticleStreamSpec = {
 SURFHANDLE D3D9ParticleStream::deftex = 0;
 SURFHANDLE D3D9ParticleStream::deftexems = 0;
 bool D3D9ParticleStream::bShadows = false;
+ShaderClass *D3D9ParticleStream::pSoft = NULL; // not upstream (r3 trail)
 
 D3D9ParticleStream::D3D9ParticleStream(GraphicsClient *_gc, PARTICLESTREAMSPEC *pss) : ParticleStream (_gc, pss), D3D9Effect()
 {
@@ -98,12 +100,18 @@ void D3D9ParticleStream::GlobalInit (oapi::D3D9Client *gclient)
 	deftex = SURFACE(gclient->clbkLoadTexture("Contrail1.dds", 0));
 	deftexems = SURFACE(gclient->clbkLoadTexture("Contrail1.dds", 0));
 	bShadows = *(bool*)gclient->GetConfigParam (CFGPRM_VESSELSHADOWS);
+	if (Config->VolPlumes) { // not upstream: soft billboards in the main pass, nothing is compiled without the switch (r3 trail)
+		pSoft = new ShaderClass(gclient->GetDevice(), "Modules/VulkanClient/SoftParticle.glsl", "SoftPtclVS", "SoftPtclPS", "SoftParticle", "");
+		if (!pSoft->GetVSHandle("mVP") || !pSoft->GetPSHandle("pColor") || !pSoft->GetPSHandle("pFade")) { LogErr("D3D9ParticleStream: SoftParticle.glsl constants missing, legacy billboards"); SAFE_DELETE(pSoft); }
+		else LogAlw("D3D9ParticleStream: soft billboards on");
+	}
 }
 
 void D3D9ParticleStream::GlobalExit ()
 {
 	DELETE_SURFACE(deftex);
 	DELETE_SURFACE(deftexems);
+	SAFE_DELETE(pSoft); // not upstream (r3 trail)
 }
 
 void D3D9ParticleStream::SetSpecs(PARTICLESTREAMSPEC *pss)
@@ -411,6 +419,16 @@ void D3D9ParticleStream::CalcNormals(const VECTOR3 &ppos, NTVERTEX *vtx)
 void D3D9ParticleStream::Render(VkDev *dev)
 {
 	if (!pfirst) return;
+	if (plumeFrame) { // not upstream: PostPlume drew this stream as lit puffs in this main pass
+		Scene *scn = pGC->GetScene();
+		if (plumeFrame == scn->GetFrameId() + 1 && scn->GetRenderPass() == RENDERPASS_MAINSCENE) return;
+	}
+	if (pSoft) { // not upstream: the main pass fades the billboards by tDepth; other passes and frames without it stay legacy (r3 trail)
+		Scene *scn = pGC->GetScene();
+		SceneFx *fx = scn->GetSceneFx();
+		VkTex *dep = (fx && scn->GetRenderPass() == RENDERPASS_MAINSCENE) ? fx->Depth() : NULL;
+		if (dep) { RenderSoft(dev, dep); return; }
+	}
 	if (diffuse) RenderDiffuse(dev);
 	else         RenderEmissive(dev);
 }
@@ -528,6 +546,59 @@ void D3D9ParticleStream::RenderEmissive(VkDev *dev)
 
 	HR(FX->EndPass());
 	HR(FX->End());
+}
+
+// not upstream: RenderDiffuse's or RenderEmissive's billboards, batches, texture, tint and opacity, faded by tDepth in SoftParticle.glsl (r3 trail)
+void D3D9ParticleStream::RenderSoft(VkDev *dev, VkTex *depth)
+{
+	VECTOR3 camera_gpos = pGC->GetScene()->GetCameraGPos();
+	D3DXMATRIX mVP;
+	FX->GetMatrix(eVP, &mVP); // the effect's view projection, as the legacy techniques read it
+	D3DXVECTOR4 col(1, 1, 1, 1);
+	if (!diffuse) { D3DCOLORVALUE c; SetMaterial(c); col = D3DXVECTOR4(c.r, c.g, c.b, 1); } // diffuse is unlit white (Particle.fx light = 1)
+	D3DXVECTOR4 fade(IsReentry() ? 1.0f : 0.0f, 0.25f, 0, 0); // a re-entry stream is born inside its hull: its sphere never veils a surface inside it
+	int bstride = diffuse ? np/16+1 : stride; // the legacy batch sizes
+
+	VkDev::State s0 = dev->GetState();
+	VkViewport vp = dev->GetViewport();
+	pSoft->Setup(pNTVertexDecl, true, 1);
+	dev->SetViewport(vp.x, vp.y, vp.width, vp.height, vp.minDepth, vp.maxDepth); // Setup takes the whole target
+	VkDev::State s = dev->GetState(); // the legacy pass states over the current ones: Z test, no Z write, SrcAlpha over InvSrcAlpha
+	s.depthWrite = false;
+	s.stencil = s0.stencil;
+	s.writeMask = s0.writeMask;
+	dev->SetState(s);
+	pSoft->ClearTextures();
+	pSoft->SetVSConstants("mVP", &mVP, sizeof(mVP));
+	pSoft->SetPSConstants("pFade", &fade, sizeof(fade));
+	pSoft->SetTexture("tPtcl", tex ? SURFACE(tex)->GetTexture() : NULL, IPF_WRAP | IPF_ANISOTROPIC, max(2, Config->Anisotrophy));
+	pSoft->SetTexture("tDepthS", depth, IPF_POINT | IPF_CLAMP, 0);
+	pSoft->UpdateTextures();
+
+	static const float lx[4] = { -1, -1, 1, 1 }, ly[4] = { -1, 1, 1, -1 }; // SetDParticleCoords' corners in radii
+	ParticleSpec *p;
+	NTVERTEX *vtx;
+	int i0, j, n;
+	float *u, *v;
+	for (p = pfirst, vtx = dvtx, n = i0 = 0; p; p = p->next) {
+		SetDParticleCoords(p->pos - camera_gpos, p->size, vtx);
+		u = tu + p->texidx;
+		v = tv + p->texidx;
+		for (j = 0; j < 4; j++, vtx++) {
+			vtx->nx = lx[j];
+			vtx->ny = ly[j];
+			vtx->nz = (float)p->size;
+			vtx->tu = u[j];
+			vtx->tv = v[j];
+		}
+		if (++n == bstride || n+i0 == np) {
+			col.w = (float)max (0.1, p->alpha0*(1.0-(oapiGetSimTime()-p->t0)*ipht2));
+			pSoft->SetPSConstants("pColor", &col, sizeof(col));
+			dev->DrawIndexedPrimitiveUP(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, n*4, VkPrimVerts(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, n*2), idx, VK_INDEX_TYPE_UINT16, dvtx+i0*4, sizeof(NTVERTEX));
+			i0 += n;
+			n = 0;
+		}
+	}
 }
 
 

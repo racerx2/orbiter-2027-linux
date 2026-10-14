@@ -4,6 +4,7 @@
 #include <cstring>
 #include "CollSourceA.h"
 #include "CollBaseA.h"
+#include "CollBldgA.h"
 #include "DentMath.h"
 #include "OrbiterAPI.h"
 
@@ -43,7 +44,7 @@ bool ExcludesAll (const CollSidecar *sc)
 }
 } // namespace
 
-CollGeomSession::CollGeomSession (CollSdk &s, const CollCfgValues &c): sdk (s), cfg (c), bases (new CollBaseA) {}
+CollGeomSession::CollGeomSession (CollSdk &s, const CollCfgValues &c): sdk (s), cfg (c), bases (new CollBaseA), bldg (new CollBldgA (s, cfg)) {}
 CollGeomSession::~CollGeomSession () = default;
 
 void CollGeomSession::ReadOrbiterCfg ()
@@ -160,7 +161,9 @@ void CollGeomSession::SimulationStart (int mode, bool renderWindow)
 		if (!renderWindow) Rec (id)->vis = VIS_HEADLESS;
 	}
 	Merge ();
-	if (cfg.model != 0 || true) bases->Build (sdk, dirs, cfg.model != 0);
+	bool bldgOn = cfg.model != 0 && cfg.streamBuildings && CollBldgA::Built (); // bldg: the base structure index only when streamed buildings are solid
+	if (cfg.model != 0 || true) bases->Build (sdk, dirs, cfg.model != 0, bldgOn);
+	bldg->Start (bases.get ());
 }
 
 void CollGeomSession::PollSlots (CollVesselSrc &r)
@@ -465,6 +468,16 @@ void CollGeomSession::BeginFrame (double simt, double simdt)
 	}
 	if (cfg.model != 0) PollAssemblies ();
 	if (cfg.model != 0) bases->Poll (sdk, frame);
+	if (cfg.model != 0 && bldg->On ()) { // bldg: tiles and buildings near the vessels that have a collider
+		std::vector<CollBldgA::Live> lv;
+		for (auto &p : vessel) {
+			if (!p || !p->collider || !p->geom.shape) continue;
+			Vector c; double r = 0;
+			p->shape->Bound (1, c, r);
+			lv.push_back (CollBldgA::Live { p->h, std::max (r, p->geom.nextR) });
+		}
+		bldg->Frame (simt, lv);
+	}
 	inPreStep = false;
 }
 
@@ -489,12 +502,14 @@ void CollGeomSession::TimeJump ()
 		if (p->shape) p->shape->MarkJump ();
 		p->histValid = false; p->lastNext.clear ();
 	}
+	bldg->TimeJump ();                      // bldg: idle and ground timers run on sim time
 }
 
 void CollGeomSession::EndSession ()
 {
 	vessel.clear (); pending.clear (); byHandle.clear ();
 	asm_.clear (); port.clear (); att.clear ();
+	bldg->Clear ();                         // bldg: the core's tile meshes freed (memory only) before the bases they point at
 	bases.reset (new CollBaseA);
 }
 

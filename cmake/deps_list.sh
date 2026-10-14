@@ -30,7 +30,7 @@ owner() {
 # loaded at run time by Qt, so no NEEDED names them
 QT=$(dirname "$(path_of libQt6Core.so.6)")/qt6/plugins
 RUNTIME=$(ls "$QT"/platforms/libqxcb.so "$QT"/platforms/libqwayland*.so "$QT"/wayland-shell-integration/libxdg-shell.so \
-	"$QT"/imageformats/libqjpeg.so "$QT"/imageformats/libqico.so 2>/dev/null)
+	"$QT"/imageformats/libqjpeg.so "$QT"/imageformats/libqico.so "$QT"/tls/libqopensslbackend.so 2>/dev/null) # TLS: texture downloads, Earth tile stream
 # custom: launcher skins; the QML modules QML skins import, found through their qmldir files at run time
 QMLDIR=$(dirname "$(path_of libQt6Core.so.6)")/qt6/qml
 QMLRT=$(ls "$QMLDIR"/QtQuick/qmldir "$QMLDIR"/QtQml/qmldir "$QMLDIR"/QML/qmldir "$QMLDIR"/QtQml/Models/qmldir \

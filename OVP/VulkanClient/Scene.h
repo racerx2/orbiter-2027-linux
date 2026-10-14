@@ -54,6 +54,9 @@ class D3D9Pad;
 #define RENDERPASS_SKETCHPAD	0x0006
 #define RENDERPASS_MAINOVERLAY	0x0007
 #define RENDERPASS_NORMAL_DEPTH	0x0008
+#define RENDERPASS_SCENE_DEPTH	0x0009 // not upstream: camera distance for SSAO and the cloud march (SceneFx)
+#define RENDERPASS_SCENESHADOW	0x000A // not upstream: the sun shadow cascades (SceneShadows)
+#define RENDERPASS_FLOWMAP		0x000B // not upstream: a vessel seen along its airflow (PostPlume)
 
 #define RESTORE ((VkSurf*)(-1))
 #define CURRENT ((VkSurf*)(-2))
@@ -73,6 +76,11 @@ class D3D9Pad;
 class Scene {
 
 	friend class D3D9CelestialSphere;
+	friend class PostTaa;  // not upstream: TAA reads the camera (design-visual-batch 3)
+	friend class PostLook; // not upstream: haze, shafts, flare, sharpen, vignette (design-visual-batch 4-7)
+	friend class SceneShadows; // not upstream: scene shadows
+	friend class SceneSsr;
+	friend class PostPlume;
 
 	// Visual record ===================================================================
 	//
@@ -363,6 +371,8 @@ public:
 	float			GetCameraAspect() const { return (float)Camera.aspect; }
 	float			GetCameraFarPlane() const { return Camera.farplane; }
 	float			GetCameraNearPlane() const { return Camera.nearplane; }
+	float			GetPlanetNearPlane() const { return zNearPlanet; }  // not upstream: the main pass's near plane for the planets this frame (SceneFx::DepthPass, r3 fog2)
+	bool			VesselsZCleared() const { return bZClearVessels; } // not upstream: the main pass cleared z before the vessels this frame
 	float			GetCameraAperture() const { return (float)Camera.aperture; }
 	VECTOR3			GetCameraGPos() const { return Camera.pos; }
 	VECTOR3			GetCameraGDir() const { return Camera.dir; }
@@ -378,6 +388,12 @@ public:
 	bool			WorldToScreenSpace2(const VECTOR3& rdir, oapi::FVECTOR2* pt, D3DXMATRIX* pVP = NULL, float clip = 1.0f);
 
 	DWORD			GetFrameId() const { return dwFrameId; }
+	float			GetExposure() const { return fExposure; } // not upstream: auto-exposure e of the main pass
+	float			GetVolCloudFade() const;	// not upstream: weight of the volume clouds drawn last frame, fades the proxy's 2D layer near the camera
+	float			GetVolShadowFade() const;	// not upstream: weight of the volume cloud shadow drawn last frame, fades the proxy's 2D cloud shadow near the camera
+	bool			IsJittered() const { return bJitter; } // not upstream: the main pass projection carries the TAA jitter
+	bool			TaaActive() const;	// not upstream: TAA runs this main frame (after its BeginFrame)
+	class SceneFx *	GetSceneFx() const { return pFx; } // not upstream: the legacy particle streams read its tDepth (r3 trail)
 
 	const D3DXVECTOR3 *GetCameraX() const { return &Camera.x; }
 	const D3DXVECTOR3 *GetCameraY() const { return &Camera.y; }
@@ -516,6 +532,21 @@ private:
 
 	class ImageProcessing *pLightBlur, *pBlur, *pGDIOverlay, *pIrradiance, *pVisDepth, *pCreateGlare;
 	class ShaderClass *pLocalCompute, *pRenderGlares;
+	class SceneFx *pFx; // not upstream: SceneDepth, SSAO, volumetric clouds, exposure measure
+	class PostTaa *pTaa = nullptr;   // not upstream: temporal anti-aliasing
+	class PostLook *pLook = nullptr; // not upstream: heat haze and the final look pass
+	class SceneShadows *pShadows = nullptr; // not upstream: whole-scene sun shadows
+	class SceneSsr *pSsr = nullptr;         // not upstream: screen-space reflection capture
+	class PostPlume *pPlume = nullptr;      // not upstream: volumetric plumes, smoke, plasma
+	bool bJitter = false;            // not upstream: SetCameraAperture adds the TAA jitter
+	float jitX = 0.0f, jitY = 0.0f;  // not upstream: jitter in pixels
+	bool bLabelsLate = false;        // not upstream: with TAA the in-scene labels are drawn after the resolve, unjittered
+	float zNearPlanet = 0.5f;        // not upstream: the near plane the planets drew with in the main pass
+	bool bZClearVessels = false;     // not upstream: the main pass cleared z and took the vessels' near plane before them
+	void RenderPlanetLabels (DWORD i, DWORD mkrmode); // not upstream: from the planets loop
+	void RenderSceneArt (DWORD plnmode);              // not upstream: planetarium and exterior art
+	void RenderSurfaceLabels (DWORD mkrmode);         // not upstream: new-style surface labels
+	float fExposure = 1.0f; // not upstream: auto-exposure e of the main pass
 
 	class vVessel *vFocus;
 	VOBJREC *vobjEnv, *vobjIrd;

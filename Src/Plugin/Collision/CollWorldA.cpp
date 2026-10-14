@@ -377,6 +377,7 @@ void CollPhysSession::PS5Notices ()
 				for (const CollABody &B : body)
 					if (B.woke && std::find (B.member.begin (), B.member.end (), s.owner.vesselId) != B.member.end ()) c.flags |= COLLA_CON_WOKE;
 			if (o.owner.vesselId) { const Snap *x = SnapOf (o.owner.vesselId); c.hOther = x ? (OBJHANDLE)x->h : nullptr; c.otherObj = -1; }
+			else if (o.owner.base <= -2) { c.hOther = nullptr; c.otherObj = -1; c.flags |= COLLA_CON_STREAMED; } // bldg: a streamed building has no base
 			else { c.hOther = (OBJHANDLE)geom.BaseHandle (o.owner.planet, o.owner.base); c.otherObj = o.owner.obj; }
 			c.mesh = s.mesh; c.group = s.grp; c.reserved = 0;
 			c.simt = e.t;

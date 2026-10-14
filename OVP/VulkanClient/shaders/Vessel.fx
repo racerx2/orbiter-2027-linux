@@ -70,6 +70,9 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 
 	vec3 cDiffLocal;
 	vec3 cSpecLocal;
+#if defined(_SSR) && defined(_ENVMAP)
+	vec3 nSsrF = SsrFaceN(-frg.camW, normalize(frg.nrmW)); // not upstream: the face the depth holds, before any discard (r3-ssr2)
+#endif
 
 	if (gTextured) cTex = texture(WrapS, frg.tex0.xy);
 	else		   cTex = vec4(1);
@@ -122,13 +125,24 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 
 	// Special alpha only texture in use
 	if (gNoColor) cTex.rgb = vec3(1);
+#if defined(_HEAT)
+	vec3 hAlb = cTex.rgb * gMtrl.diffuse.rgb; // not upstream: the albedo, for the hull glow's emissivity (design-reentry-heat)
+#endif
 
 
 	// ----------------------------------------------------------------------
 	// Add vessel self-shadows
 	// ----------------------------------------------------------------------
 
+#if defined(_CSM)
+	{ // not upstream: the legacy map and the scene cascades, the darker of the two (design-scene-shadows 7.2)
+		float fS = 1.0;
 #if SHDMAP > 0
+		fS = ComputeShadow(frg.shdH, dLN, sc);
+#endif
+		cSun.rgb *= min(fS, CsmVis(CsmS, -frg.camW, normalize(frg.nrmW), gShadowsEnabled ? 3.0 : 1.0, 0.0, gBaseBuilding ? 1.0 : 0.0));
+	}
+#elif SHDMAP > 0
 	cSun.rgb *= ComputeShadow(frg.shdH, dLN, sc);
 #endif
 
@@ -197,6 +211,14 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 	// Compute environment map/fresnel effects --------------------------------
 	//
 	if (gEnvMapEnable) {
+#if defined(_SSR)
+		SsrHit hE = SsrNone(); // not upstream: what the reflection ray finds on screen replaces the cube's, vessels only (design-ssr 6)
+		if (gSsr.vSurf.x < 0.5 && fRefl + (gFresnel ? gMtrl.fresnel.y : 0.0) >= 0.01) {
+			vec3 nG = nSsrF; // the drawn face: a smooth vertex normal can start the ray inside a coarse mesh (r3-ssr2)
+			float aE = (1.0 - clamp(fRghn, 0.0, 1.0)) * (1.0 - clamp(fRghn, 0.0, 1.0)); // fRghn is the smoothness here
+			hE = SsrTrace(-frg.camW, nG, SsrKeepAbove(SsrDir(nrmW, CamD, aE, gl_FragCoord.xy), nG, 0.01), aE);
+		}
+#endif
 
 		// Do we need fresnel code for this render pass ?
 
@@ -206,6 +228,9 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 
 			// Get mirror reflection for fresnel
 			vec3 cEnvFres = textureLod(EnvMapAS, RflW, 0).rgb;
+#if defined(_SSR)
+			if (hE.conf > 0.0) cEnvFres = mix(cEnvFres, SsrMeshDecode(textureLod(tSsrCol, hE.uv, 0.0).rgb, false), hE.conf); // not upstream
+#endif
 
 			float  dCN = clamp(dot(CamD, nrmW), 0.0, 1.0);
 
@@ -230,6 +255,9 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 		float fLOD = (1.0f - fRghn) * 10.0f;
 
 		vec3 cEnv = textureLod(EnvMapAS, RflW, fLOD).rgb;
+#if defined(_SSR)
+		if (hE.conf > 0.0) cEnv = mix(cEnv, SsrMeshDecode(SsrFetch(hE), false), hE.conf); // not upstream
+#endif
 
 		// Compute total reflected light, accummulate in cSpec
 		cSpec.rgb += cRefl.rgb * cEnv;
@@ -249,12 +277,16 @@ vec4 AdvancedPS(vec4 sc, PBRData frg)	// sc : VPOS
 
 	// Add emissive textures to output
 	cTex.rgb += cEmis;
+#if defined(_HEAT)
+	if (gHeat.vFlow.w > 0.5) cTex.rgb = HeatAddDisplay(cTex.rgb, HeatGlow(frg.nrmW, frg.camW, HeatToLinear(hAlb))); // not upstream: the hull's own glow (design-reentry-heat)
+#endif
 
 #if defined(_DEBUG)
 	//if (gDebugHL) cTex = cTex*0.5f + gColor;
 	cTex = cTex * (1 - gColor*0.5f) + gColor;
 #endif
 
+	cTex.rgb *= gExposure; // not upstream: auto-exposure
 	cTex.rgb *= gSun.Transmission;
 	cTex.rgb += gSun.Inscatter;
 

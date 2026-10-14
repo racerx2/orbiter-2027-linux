@@ -95,7 +95,7 @@ UINT VkVertexDecl::Location (VkDeclUsage usage, BYTE index)
 	return 0;
 }
 
-VkVertexDecl::VkVertexDecl (const VkDeclElement *elem, int n, UINT stride0, UINT stride1)
+VkVertexDecl::VkVertexDecl (const VkDeclElement *elem, int n, UINT stride0, UINT stride1, bool inst1)
 {
 	UINT stride[2] = { stride0, stride1 };
 	UINT end[2] = { 0, 0 };
@@ -114,7 +114,7 @@ VkVertexDecl::VkVertexDecl (const VkDeclElement *elem, int n, UINT stride0, UINT
 		VkVertexInputBindingDescription2EXT b = { VK_STRUCTURE_TYPE_VERTEX_INPUT_BINDING_DESCRIPTION_2_EXT };
 		b.binding = s;
 		b.stride = stride[s] ? stride[s] : end[s]; // D3D9 takes the stride from SetStreamSource; declarations here carry it
-		b.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+		b.inputRate = (s == 1 && inst1) ? VK_VERTEX_INPUT_RATE_INSTANCE : VK_VERTEX_INPUT_RATE_VERTEX; // not upstream: instance data in stream 1
 		b.divisor = 1;
 		bind.push_back (b);
 	}
@@ -802,6 +802,8 @@ VkDev::~VkDev ()
 	for (int i = 0; i < NFRAMES; i++) {
 		delete frame[i].transient;
 		frame[i].transient = NULL;
+		delete frame[i].rb; // not upstream
+		frame[i].rb = NULL;
 	}
 	for (;;) { // the device is idle: every deferred release runs, also those a release defers
 		std::deque<std::pair<uint64_t, std::function<void()>>> rel;
@@ -873,6 +875,8 @@ VkCommandBuffer VkDev::BeginFrame ()
 	}
 	bool failed = !ok; // read once: a loader thread can fail the device in between
 	if (failed) WaitIdle (); // a failed device (here or on a loader thread): nothing is left in flight when ReleaseDone frees everything
+	f.rbReady = failed ? 0 : f.rbStamp; // not upstream: this slot's copy is done
+	f.rbStamp = 0;
 	ReleaseDone (failed);
 	f.transientUsed = 0;
 	VKCHECK(vkResetCommandPool (dev, f.pool, 0));
@@ -1525,6 +1529,15 @@ void VkDev::DrawIndexedPrimitive (VkPrimitiveTopology t, int baseVertex, UINT st
 	vkCmdDrawIndexed (Cmd(), indexCount, 1, startIndex, baseVertex, 0);
 }
 
+void VkDev::DrawIndexedPrimitiveInstanced (VkPrimitiveTopology t, int baseVertex, UINT startIndex, UINT indexCount, UINT instances, UINT firstInstance)
+{
+	PreDraw (true);
+	BeginRendering ();
+	if (!rendering || !indexCount || !instances) return;
+	SetTopology (t);
+	vkCmdDrawIndexed (Cmd(), indexCount, instances, startIndex, baseVertex, firstInstance);
+}
+
 void VkDev::DrawPrimitiveUP (VkPrimitiveTopology t, UINT vertexCount, const void *vtx, UINT stride)
 {
 	void *p;
@@ -1790,4 +1803,41 @@ void VkDev::ColorFill (VkSurf *s, const RECT *r, DWORD argb)
 	vkCmdClearColorImage (cmd, s->tex->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &c, 1, &rr); // whole level: images without attachment use can't clear a rectangle
 	TransferDone (cmd);
 	s->tex->Written (s->level);
+}
+
+// not upstream: readbacks with no wait; the slot is read once BeginFrame has waited for its frame
+void VkDev::ReadbackCopy (VkTex *t, uint32_t stamp)
+{
+	if (!recording || !t || !t->img || t->samples != VK_SAMPLE_COUNT_1_BIT || VkFormatBlockSize (t->fmt) > 16) return;
+	Frame &f = frame[iFrame];
+	if (!f.rb) f.rb = new VkBuf (this, 16, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, true);
+	if (!f.rb->Map ()) return;
+	EndRendering ();
+	VkCommandBuffer cmd = Cmd ();
+	t->Transition (cmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+	VkBufferImageCopy r = {};
+	r.imageSubresource = { t->Aspect (), 0, 0, 1 };
+	r.imageExtent = { 1, 1, 1 };
+	vkCmdCopyImageToBuffer (cmd, t->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, f.rb->buf, 1, &r);
+	VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+	mb.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+	mb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+	mb.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+	mb.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+	VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+	di.memoryBarrierCount = 1;
+	di.pMemoryBarriers = &mb;
+	vkCmdPipelineBarrier2 (cmd, &di);
+	f.rbStamp = stamp;
+}
+
+bool VkDev::ReadbackGet (void *out, UINT n, uint32_t *stamp)
+{
+	Frame &f = frame[iFrame];
+	if (!f.rbReady || !f.rb || !f.rb->Map () || n > 16) return false;
+	f.rb->Invalidate ();
+	memcpy (out, f.rb->Map (), n);
+	*stamp = f.rbReady;
+	f.rbReady = 0;
+	return true;
 }

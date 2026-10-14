@@ -17,6 +17,7 @@
 #include "resource.h"
 #include "ResDialog.h"
 #include "Util.h"
+#include "TabStream.h" // not upstream
 #include <QAbstractButton>
 #include <QComboBox>
 #include <QListWidget>
@@ -119,6 +120,7 @@ void OptionsPageContainer::CreatePages()
 	AddPage(new OptionsPage_Labels(this), parent);
 	AddPage(new OptionsPage_Forces(this), parent);
 	AddPage(new OptionsPage_Axes(this), parent);
+	if (m_orig == LAUNCHPAD) AddPage(new OptionsPage_Stream(this)); // not upstream: Earth streaming (TabStream.cpp)
 	QTreeWidget *hTree = qobject_cast<QTreeWidget*>(m_hPageList);
 	hTree->setCurrentItem(hTree->topLevelItem(0));
 }
@@ -329,7 +331,8 @@ QWidget *OptionsPage::HParent() const
 QTreeWidgetItem *OptionsPage::CreatePage(QWidget *hDlg, QTreeWidgetItem *parent)
 {
 	int winId = ResourceId();
-	m_hPage = oapiCreateResDialog(g_pOrbiter->GetInstance(), winId, HParent());
+	m_hPage = winId < 0 ? new QWidget(HParent()) // not upstream: a page that makes its own controls
+		: oapiCreateResDialog(g_pOrbiter->GetInstance(), winId, HParent());
 	if (m_hPage) {
 		m_hPage->setProperty("OptionsPage", QVariant::fromValue((void*)this)); // DWLP_USER
 		DlgProc(m_hPage);

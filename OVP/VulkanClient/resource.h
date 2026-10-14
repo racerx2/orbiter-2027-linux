@@ -177,6 +177,29 @@
 #define IDC_ESCACHE                             3034
 #define IDC_EAQUALITY                           3035
 #define IDC_TILECOUNT                           3036
+#define IDC_GG_HORIZON                          3037 // not upstream: ground graphics
+#define IDC_GG_SSAO                             3038 // not upstream
+#define IDC_GG_VOLCLOUDS                        3039 // not upstream
+#define IDC_GG_TREES                            3040 // not upstream
+#define IDC_GG_AUTOEXP                          3041 // not upstream
+#define IDC_GG_CLOUDQ                           3042 // not upstream
+#define IDC_GG_TREERANGE                        3043 // not upstream
+#define IDC_GG_CLOUDATLAS                       3044 // not upstream
+#define IDC_FX_FLARE                    3045 // not upstream
+#define IDC_FX_SHAFTS                   3046 // not upstream
+#define IDC_FX_TAA                      3047 // not upstream
+#define IDC_FX_WATER                    3048 // not upstream
+#define IDC_FX_VOLSHD                   3049 // not upstream
+#define IDC_FX_FILMIC                   3050 // not upstream
+#define IDC_FX_VIGNETTE                 3051 // not upstream
+#define IDC_FX_SHARPEN                  3052 // not upstream
+#define IDC_FX_HAZE                     3053 // not upstream
+#define IDC_FX_SCENESHD                 3054 // not upstream
+#define IDC_FX_SSR                      3055 // not upstream
+#define IDC_FX_PLUMES                   3056 // not upstream
+#define IDC_FX_SSGI                     3057 // not upstream
+#define IDC_FX_FOG                      3058 // not upstream
+#define IDC_FX_NIGHT                    3059 // not upstream
 #define IDC_ATM_S1                              4000
 #define IDC_ATM_S2                              4001
 #define IDC_ATM_S3                              4002

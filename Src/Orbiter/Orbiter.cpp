@@ -59,7 +59,10 @@
 #include "WlPointer.h"
 #include "WlShortcuts.h"
 #include "SleepWatch.h"
+#include "TileStream.h" // not upstream
 #include <filesystem>
+
+static std::function<std::string (const std::string &)> StreamBodyDir (class Config *cfg); // not upstream: TileStream.cpp tile folders
 
 #include "Tracy.hpp"
 
@@ -317,6 +320,8 @@ Orbiter::Orbiter ()
 	hBk             = NULL;
 	hScnInterp      = NULL;
 	snote_playback  = NULL;
+	m_pTileStream   = NULL; // not upstream
+	m_pStreamTrack  = NULL; // not upstream
 	nsnote          = 0;
 	bVisible        = false;
 	bAllowInput     = false;
@@ -784,12 +789,15 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 	else if (Cfg()->CfgDebugPrm.FixedStep > 0.0)
 		td.SetFixedStep(Cfg()->CfgDebugPrm.FixedStep);
 
+	if (gclient && pConfig->bTileStream) // not upstream: the planets look for their tile folders when they are made
+		TileStream::PrepareDirs (oapiResolvePath (ConfigPath ("TileStream")), StreamBodyDir (pConfig));
 	if (!InitializeWorld (pState->Solsys())) {
 		LOGOUT_ERR_FILENOTFOUND_MSG(g_pOrbiter->ConfigPath (pState->Solsys()), "while initialising solar system %s", pState->Solsys());
 		TerminateOnError();
 		return 0;
 	}
 	LOGOUT("Finished initialising world");
+	StartTileStream (); // not upstream: before the planet visuals check their tile folders
 	time_prev = std::chrono::steady_clock::now() - std::chrono::milliseconds(1); // make sure SimDT > 0 for first frame
 
 	g_psys->InitState (ScnPath (scenario));
@@ -930,6 +938,7 @@ void Orbiter::CloseSession ()
 		m_pLaunchpad->ShowWaitPage (true, simheapsize);
 		if (gclient) {
 			gclient->clbkCloseSession (false);
+			StopTileStream (); // not upstream: the client's tile loader has stopped
 			Base::DestroyStaticDeviceObjects ();
 		}
 		if (snote_playback) delete snote_playback;
@@ -963,6 +972,7 @@ void Orbiter::CloseSession ()
 		if (pDlgMgr)  { delete pDlgMgr; pDlgMgr = 0; }
 		if (gclient) {
 			gclient->clbkCloseSession (true);
+			StopTileStream (); // not upstream
 			gclient->clbkDestroyRenderWindow (true);
 		}
 
@@ -1073,6 +1083,7 @@ INT Orbiter::Run ()
 		if (bAllowInput) bActive = true, bAllowInput = false;
 		if (BeginTimeStep (bRunning)) {
 			UpdateWorld();
+			StreamPrefetch (); // not upstream
 			EndTimeStep (bRunning);
 			if (bVisible) {
 				if (bActive) UserInput ();
@@ -1114,6 +1125,7 @@ void Orbiter::SingleFrame ()
 		if (bAllowInput) bActive = true, bAllowInput = false;
 		if (BeginTimeStep (bRunning)) {
 			UpdateWorld();
+			StreamPrefetch (); // not upstream
 			EndTimeStep (bRunning);
 			if (bVisible) {
 				if (bActive) UserInput ();
@@ -1778,6 +1790,123 @@ VOID Orbiter::Output2DData ()
 }
 
 //-----------------------------------------------------------------------------
+// not upstream: the planet tile stream fills Textures/<Body>/Surf, Mask and Elev while the sim runs (TileStream.cpp)
+//-----------------------------------------------------------------------------
+static std::function<std::string (const std::string &)> StreamBodyDir (Config *cfg)
+{
+	return [cfg] (const std::string &name) {
+		char p[512];
+		return cfg->PTexPath (p, sizeof p, name.c_str()) ? oapiResolvePath (p) : std::string();
+	};
+}
+
+// not upstream (earth-sky): StreamPrefetch's state for one session
+struct StreamTrack {
+	std::chrono::steady_clock::time_point next;
+	std::vector<TsTrack::Pt> prev;
+	double prevT = 0.0;
+	int calls = 0;
+	bool failed = false; // an exception: no prefetch for the rest of the session
+};
+
+void Orbiter::StartTileStream ()
+{
+	if (!gclient || !pConfig->bTileStream || m_pTileStream) return;
+	TileStream::Options o;
+	o.cfgfile = oapiResolvePath (ConfigPath ("TileStream"));
+	for (size_t i = 0; i < g_psys->nPlanet(); i++) o.bodies.push_back (g_psys->GetPlanet ((int)i)->Name());
+	o.bodyDir = StreamBodyDir (pConfig);
+	o.capMB = (uint64_t)std::max (0, pConfig->TileStreamCacheMB);
+	o.offline = pConfig->bTileStreamOffline;
+	o.buildings = pConfig->bTileStreamBuildings;
+	o.userAgent = "OrbiterLinux/" + std::to_string (oapiGetOrbiterVersion()) + " (+https://github.com/racerx2/orbiter-2027-linux)";
+	o.log = [] (const std::string &s) { LOGOUT ("%s", s.c_str()); };
+	o.baseDir = [this] (const std::string &name) { return oapiResolvePath ((std::string (pConfig->CfgDirPrm.ConfigDir) + name + "/Base").c_str()); }; // not upstream (earth-sky)
+	o.radius = [] (const std::string &name) {
+		for (size_t i = 0; i < g_psys->nPlanet(); i++)
+			if (name == g_psys->GetPlanet ((int)i)->Name()) return g_psys->GetPlanet ((int)i)->Size();
+		return 6.37101e6;
+	};
+	try {
+		m_pTileStream = new TileStream (o);
+	} catch (const std::exception &e) {
+		LOGOUT ("TileStream: not started: %s", e.what());
+		m_pTileStream = NULL;
+	}
+	if (m_pTileStream && !m_pStreamTrack) m_pStreamTrack = new StreamTrack;
+}
+
+void Orbiter::StopTileStream ()
+{
+	if (m_pTileStream) { delete m_pTileStream; m_pTileStream = NULL; }
+	delete m_pStreamTrack;
+	m_pStreamTrack = NULL;
+}
+
+// not upstream (earth-sky): at 10x or more, prefetch tiles under the next 45 real seconds of ground track
+void Orbiter::StreamPrefetch ()
+{
+	if (!m_pStreamTrack || m_pStreamTrack->failed) return;
+	try {
+		StreamTrackStep ();
+	} catch (const std::exception &e) {
+		LOGOUT ("TileStream: ground-track prefetch stopped: %s", e.what());
+		m_pStreamTrack->failed = true;
+	} catch (...) {
+		LOGOUT ("TileStream: ground-track prefetch stopped");
+		m_pStreamTrack->failed = true;
+	}
+}
+
+void Orbiter::StreamTrackStep ()
+{
+	StreamTrack &s = *m_pStreamTrack;
+	std::chrono::steady_clock::time_point &next = s.next;
+	std::vector<TsTrack::Pt> &prev = s.prev;
+	double &prevT = s.prevT;
+	int &calls = s.calls;
+	if (!m_pTileStream || !g_focusobj || td.Warp() < 10.0) { prev.clear(); return; }
+	auto now = std::chrono::steady_clock::now();
+	if (now < next) return;
+	next = now + std::chrono::seconds (1);
+	const CelestialBody *cb = g_focusobj->ElRef();
+	if (!cb || cb->Type() != OBJTP_PLANET || !m_pTileStream->Enabled (cb->Name())) return;
+	Vector p = tmul (cb->GRot(), g_focusobj->GPos() - cb->GPos()), v = tmul (cb->GRot(), g_focusobj->GVel() - cb->GVel());
+	double r0[3] = {p.x, p.y, p.z}, v0[3] = {v.x, v.y, v.z};
+	double mu = 6.67259e-11 * cb->Mass(), r = p.length(), a = 1.0 / (2.0 / r - v.length2() / mu);
+	double horizon = 45.0 * td.Warp();
+	if (a > 0) horizon = std::min (horizon, 2.0 * PI * sqrt (a * a * a / mu));
+	int L = TsTrack::Level (r - cb->Size(), 6, 14);
+	double span = PI / (1 << (L - 4)), rate = std::max (v.length() / r, 1e-6);
+	int n = std::clamp ((int)(horizon * rate / (0.25 * span)), 8, 2000);
+	std::vector<TsTrack::Pt> pts = TsTrack::Propagate (r0, v0, mu, 2.0 * PI / cb->RotT(), horizon, n);
+	if (pts.empty()) return;
+	std::string body = cb->Name();
+	int queued = 0;
+	for (int lv : {L - 2, L}) {
+		for (const auto &k : TsTrack::Keys (pts, lv, 1)) {
+			int q = m_pTileStream->Prefetch (body, k[0], k[1], k[2]);
+			if (!q) break;
+			queued += q > 0;
+		}
+	}
+	if (!prev.empty() && ++calls % 10 == 1) { // the last track against where the vessel is now
+		double dt = td.SimT0 - prevT, err = -1.0;
+		for (size_t i = 1; i < prev.size(); i++)
+			if (prev[i].t >= dt) {
+				double f = (dt - prev[i - 1].t) / std::max (1e-9, prev[i].t - prev[i - 1].t);
+				double lng = prev[i - 1].lng + f * remainder (prev[i].lng - prev[i - 1].lng, 2.0 * PI), lat = prev[i - 1].lat + f * (prev[i].lat - prev[i - 1].lat);
+				err = cb->Size() * 1e-3 * std::hypot (remainder (lng - pts[0].lng, 2.0 * PI) * cos (lat), lat - pts[0].lat);
+				break;
+			}
+		LOGOUT ("TileStream: prefetch %s L%d/L%d over %.0f s, %d tiles queued or there, %d waiting, track error %.1f km after %.0f s",
+			body.c_str(), L - 2, L, horizon, queued, (int)m_pTileStream->Prefetching(), err, dt);
+	}
+	prev = pts;
+	prevT = td.SimT0;
+}
+
+//-----------------------------------------------------------------------------
 // Name: BeginTimeStep()
 // Desc: Update timings for the current frame step
 //-----------------------------------------------------------------------------
@@ -2250,6 +2379,7 @@ void Orbiter::KbdInputImmediate_OnRunning (char *kstate)
 {
 	if (g_focusobj->ConsumeDirectKey (kstate)) return;  // key is consumed by focus vessel
 
+	if (!g_focusobj->CtrlLock()) { // not upstream: a locked (destroyed) vessel takes no control keys; its MFDs still work
 	// main/retro/hover thruster settings
 	if (keymap.IsLogicalKey (kstate, OAPI_LKEY_IncMainThrust))   g_focusobj->IncMainRetroLevel ( 0.2*td.SimDT);
 	if (keymap.IsLogicalKey (kstate, OAPI_LKEY_DecMainThrust))   g_focusobj->IncMainRetroLevel (-0.2*td.SimDT);
@@ -2297,6 +2427,7 @@ void Orbiter::KbdInputImmediate_OnRunning (char *kstate)
 	// Wheel brake control
 	if (keymap.IsLogicalKey (kstate, OAPI_LKEY_WheelbrakeLeft))  g_focusobj->SetWBrakeLevel (1.0, 1, false);
 	if (keymap.IsLogicalKey (kstate, OAPI_LKEY_WheelbrakeRight)) g_focusobj->SetWBrakeLevel (1.0, 2, false);
+	} // not upstream: CtrlLock
 
 	// left/right MFD control
 	if (KEYMOD_SHIFT (kstate)) {
@@ -2457,6 +2588,7 @@ void Orbiter::UserJoyInput_System (JoyState *js)
 //-----------------------------------------------------------------------------
 void Orbiter::UserJoyInput_OnRunning (JoyState *js)
 {
+	if (g_focusobj->CtrlLock()) return; // not upstream: a locked (destroyed) vessel takes no joystick input
 	if (bEnableAtt) {
 		if (js->lX) {
 			if (js->rgbButtons[2]) { // emulate rudder control

@@ -6,6 +6,7 @@
 #include "Planet.h"
 #include "Orbiter.h"
 #include "Log.h" // not upstream: LOGOUT_WARN for names that don't fit
+#include "TileStream.h" // not upstream: TsSessionElev
 #include <filesystem>
 
 using std::min;
@@ -55,6 +56,7 @@ ElevationManager::ElevationManager (const CelestialBody *_cbody)
 		// -7: -4 for level offset of quadtree root, -3 for great-grandfather elevation access mode
 		elev_res = ((Planet*)cbody)->ElevationResolution();
 	}
+	streamMax = (tilesource & 0x0001) ? TsSessionElev (cbody->Name()) : 0; // not upstream: as the client's streamElevMax, before Base::Setup reads heights
 	if (tilesource & 0x0002) {
 		char cbuf[256];
 		if (g_pOrbiter->Cfg()->PTexPath (cbuf, sizeof cbuf, cbody->Name())) { // not upstream: sized; a path that doesn't fit gives no archive
@@ -72,7 +74,8 @@ ElevationManager::ElevationManager (const CelestialBody *_cbody)
 	int len = snprintf(fname, sizeof fname, "%s\\Elev", cbody->Name()); // not upstream: bounded
 	if ((size_t)len >= sizeof fname) LOGOUT_WARN("Path too long: %s", cbody->Name()); // not upstream: no Elev dir
 	else if (g_pOrbiter->Cfg()->PTexPath(path, sizeof path, fname)) { // not upstream: sized; a path that doesn't fit: no Elev dir
-		auto x = std::filesystem::status(oapiResolvePath(path));
+		elevDir = oapiResolvePath(path); // not upstream: resolved once; the numbered folders and files below it have no case to fold
+		auto x = std::filesystem::status(elevDir);
 		bDirExists = std::filesystem::is_directory(x);
 	}
 
@@ -90,6 +93,69 @@ ElevationManager::~ElevationManager ()
 	for (int i = 0; i < 2; i++)
 		if (treeMgr[i])
 			delete treeMgr[i];
+}
+
+bool ElevationManager::LooseElev (int lvl, int ilat, int ilng) const // not upstream
+{
+	return LooseFile (lvl, ilat, ilng);
+}
+
+static uint64_t ElevKey (int lvl, int ilat, int ilng) // not upstream: 25 bits each for ilat and ilng
+{
+	return (uint64_t(uint32_t(lvl)) << 50) | (uint64_t(uint32_t(ilat) & 0x1FFFFFF) << 25) | uint64_t(uint32_t(ilng) & 0x1FFFFFF);
+}
+
+bool ElevationManager::LooseFile (int lvl, int ilat, int ilng, std::string *path) const // not upstream
+{
+	if (!(tilesource & 0x0001) || !bDirExists || lvl < 0 || ilat < 0 || ilng < 0) return false;
+	uint64_t key = ElevKey (lvl, ilat, ilng);
+	unsigned gen = TsWriteGen ();
+	std::lock_guard<std::mutex> lk (looseMx);
+	auto it = loose.find (key);
+	if (it != loose.end() && (it->second.there || it->second.gen == gen)) { // found once, or missing since the stream's last write
+		if (path) *path = it->second.path;
+		return it->second.there;
+	}
+	char rel[64];
+	snprintf (rel, sizeof rel, "/%02d/%06d/%06d.elv", lvl, ilat, ilng);
+	Loose L { false, it != loose.end() && it->second.walked, gen, elevDir + rel };
+	std::error_code ec;
+	L.there = std::filesystem::exists (L.path, ec);
+	if (!L.there && !L.walked) { // once per file: the case-insensitive lookup, for packs whose names differ in case
+		L.walked = true;
+		char fname[256], p[256];
+		int len = snprintf (fname, sizeof fname, "%s\\Elev\\%02d\\%06d\\%06d.elv", cbody->Name(), lvl, ilat, ilng);
+		if ((size_t)len < sizeof fname && g_pOrbiter->Cfg()->PTexPath (p, sizeof p, fname)) {
+			std::string r = oapiResolvePath (p);
+			if (std::filesystem::exists (r, ec)) { L.there = true; L.path = r; }
+		}
+	}
+	if (path) *path = L.path;
+	loose[key] = std::move (L);
+	return loose[key].there;
+}
+
+void ElevationManager::TileBad (int lvl, int ilat, int ilng, bool isLoose) const // not upstream
+{
+	uint64_t key = ElevKey (lvl, ilat, ilng);
+	unsigned gen = TsWriteGen ();
+	std::lock_guard<std::mutex> lk (looseMx);
+	if (!isLoose) { badNode[key] = true; return; }
+	auto it = loose.find (key);
+	if (it != loose.end()) { it->second.there = false; it->second.walked = true; it->second.gen = gen; } // looked for again after the stream's next write
+}
+
+bool ElevationManager::NodeBad (int lvl, int ilat, int ilng) const // not upstream
+{
+	std::lock_guard<std::mutex> lk (looseMx);
+	return badNode.count (ElevKey (lvl, ilat, ilng)) > 0;
+}
+
+bool ElevationManager::StreamCovers (int lvl, int ilat, int ilng) const // not upstream: the stream's Elev of the parent (past its last level, of the ancestor there) hides the archive's surface model tile
+{
+	if (!streamMax || lvl <= 4) return false;
+	int d = lvl > streamMax ? lvl - streamMax : 1;
+	return LooseElev (lvl - d, ilat >> d, ilng >> d);
 }
 
 
@@ -119,13 +185,8 @@ bool ElevationManager::TileIdx (double lat, double lng, int lvl, int *ilat, int 
 bool ElevationManager::HasElevationTile(int lvl, int ilat, int ilng) const
 {
 	if (mode) {
-		if (tilesource & 0x0001 && bDirExists) {
-			char fname[256], path[256];
-			int len = snprintf(fname, sizeof fname, "%s\\Elev\\%02d\\%06d\\%06d.elv", cbody->Name(), lvl, ilat, ilng); // not upstream: bounded
-			if ((size_t)len >= sizeof fname) LOGOUT_WARN("Path too long: %s", cbody->Name()); // not upstream: the file source is skipped, the tree is tried
-			else if (g_pOrbiter->Cfg()->PTexPath(path, sizeof path, fname) && std::filesystem::exists(oapiResolvePath(path))) return true; // not upstream: sized; a path that doesn't fit skips the file source
-		}
-		if (treeMgr[0]) {
+		if (LooseFile (lvl, ilat, ilng)) return true; // not upstream: from the file cache, no path walk per call
+		if (treeMgr[0] && !StreamCovers (lvl, ilat, ilng) && !NodeBad (lvl, ilat, ilng)) { // not upstream: StreamCovers, NodeBad
 			if (treeMgr[0]->Idx(lvl, ilat, ilng) != DWORD(-1)) return true;
 		}
 	}
@@ -141,12 +202,11 @@ INT16 *ElevationManager::LoadElevationTile (int lvl, int ilat, int ilng, double 
 		int i;
 		const int ndat = elev_stride*elev_stride;
 		double scale, offset;
-		if (tilesource & 0x0001 && bDirExists) {
-			FILE *f;
-			char fname[256], path[256];
-			int len = snprintf (fname, sizeof fname, "%s\\Elev\\%02d\\%06d\\%06d.elv", cbody->Name(), lvl, ilat, ilng); // not upstream: bounded
-			if ((size_t)len >= sizeof fname) LOGOUT_WARN ("Path too long: %s", cbody->Name()); // not upstream: the file source is skipped
-			else if (g_pOrbiter->Cfg()->PTexPath(path, sizeof path, fname) && (f = fopen(oapiResolvePath(path).c_str(), "rb"))) { // not upstream: sized; a path that doesn't fit skips the file source
+		std::string lpath; // not upstream: the Elev file from the cache, no path walk per call
+		if (LooseFile (lvl, ilat, ilng, &lpath)) {
+			FILE *f = fopen (lpath.c_str(), "rb");
+			if (!f) TileBad (lvl, ilat, ilng, true); // not upstream: gone since it was found
+			else {
 				elev = new INT16[ndat];
 				ELEVFILEHEADER hdr = {}; // not upstream: zeroed, so a short read leaves no stale fields
 				bool ok = fread (&hdr, sizeof(ELEVFILEHEADER), 1, f) == 1; // not upstream: a short file is dropped like a missing one
@@ -176,10 +236,10 @@ INT16 *ElevationManager::LoadElevationTile (int lvl, int ilat, int ilng, double 
 					break;
 				}
 				fclose(f);
-				if (!ok) { delete []elev; elev = 0; } // not upstream: then the tree archive is tried, as for a missing file
+				if (!ok) { delete []elev; elev = 0; TileBad (lvl, ilat, ilng, true); } // not upstream: then the tree archive is tried, as for a missing file, and the file counts as missing
 			}
 		}
-		if (!elev && treeMgr[0]) {
+		if (!elev && treeMgr[0] && !StreamCovers (lvl, ilat, ilng) && !NodeBad (lvl, ilat, ilng)) { // not upstream: StreamCovers, NodeBad
 			BYTE *buf;
 			DWORD ndata = treeMgr[0]->ReadData(lvl, ilat, ilng, &buf);
 			if (ndata) {
@@ -189,6 +249,7 @@ INT16 *ElevationManager::LoadElevationTile (int lvl, int ilat, int ilng, double 
 				if (!ElevNodeOk (phdr, ndata, ndat)) { // not upstream: a short or corrupt node counts as no tile
 					delete []elev;
 					treeMgr[0]->ReleaseData(buf);
+					TileBad (lvl, ilat, ilng, false); // not upstream: and HasElevationTile says so too, so no quadrant waits for it
 					return 0;
 				}
 				p += phdr->hdrsize;
@@ -287,7 +348,7 @@ bool ElevationManager::LoadElevationTile_mod (int lvl, int ilat, int ilng, doubl
 				if (ok) return true; // not upstream: else try the tree archive, as for a missing file
 			}
 		}
-		if (treeMgr[1]) {
+		if (treeMgr[1] && !(streamMax && LooseElev (lvl, ilat, ilng))) { // not upstream: the archive's Elev_mod only over the archive's Elev
 			BYTE *buf;
 			DWORD ndata = treeMgr[1]->ReadData(lvl, ilat, ilng, &buf);
 			if (ndata) {
@@ -348,6 +409,43 @@ bool ElevationManager::LoadElevationTile_mod (int lvl, int ilat, int ilng, doubl
 // lat(PI) = North pole, lat(-PI) = South Pole
 // lng(-PI) = 180deg West, lng(PI) = 180deg East
 
+INT16 *ElevationManager::SharedTile (int lvl, int ilat, int ilng) const // not upstream
+{
+	const size_t ndat = (size_t)elev_stride * elev_stride;
+	const uint64_t key = ElevKey (lvl, ilat, ilng);
+	const unsigned gen = TsWriteGen ();
+	{
+		std::lock_guard<std::mutex> lk (sharedMx);
+		auto miss = sharedMiss.find (key); // a level with no tile: the search below it goes on at once
+		if (miss != sharedMiss.end () && miss->second == gen) return nullptr;
+		auto it = shared.find (key);
+		if (it != shared.end () && it->second.gen == gen && it->second.data.size () == ndat) {
+			it->second.used = ++sharedUse;
+			INT16 *d = new INT16[ndat];
+			memcpy (d, it->second.data.data (), ndat * sizeof (INT16));
+			return d;
+		}
+	}
+	INT16 *d = LoadElevationTile (lvl, ilat, ilng, elev_res);
+	if (d) LoadElevationTile_mod (lvl, ilat, ilng, elev_res, d);
+	std::lock_guard<std::mutex> lk (sharedMx);
+	if (!d) {
+		if (sharedMiss.size () >= 4096) sharedMiss.clear ();
+		sharedMiss[key] = gen;
+		return nullptr;
+	}
+	if (shared.size () >= 48) { // the least recently used goes
+		auto old = shared.begin ();
+		for (auto it = shared.begin (); it != shared.end (); ++it) if (it->second.used < old->second.used) old = it;
+		shared.erase (old);
+	}
+	Shared &s = shared[key];
+	s.data.assign (d, d + ndat);
+	s.gen = gen;
+	s.used = ++sharedUse;
+	return d;
+}
+
 double ElevationManager::Elevation (double lat, double lng, int reqlvl, std::vector<ElevationTile> *tilecache, Vector *normal, int *reslvl) const
 {
 	double e = 0.0;
@@ -399,9 +497,8 @@ double ElevationManager::Elevation (double lat, double lng, int reqlvl, std::vec
 
 			for (lvl = reqlvl; lvl >= 0; lvl--) {
 				TileIdx (lat, lng, lvl, &ilat, &ilng);
-				t->data = LoadElevationTile (lvl+4, ilat, ilng, elev_res);
+				t->data = SharedTile (lvl+4, ilat, ilng); // not upstream: with its modifications, from the shared tiles
 				if (t->data) {
-					LoadElevationTile_mod (lvl+4, ilat, ilng, elev_res, t->data); // load modifications
 					int nlat = 1 << lvl;
 					int nlng = 2 << lvl;
 					t->mgr = this;
@@ -424,6 +521,8 @@ double ElevationManager::Elevation (double lat, double lng, int reqlvl, std::vec
 						t->quadrants |= DWORD(HasElevationTile(qlvl + 4, qlat + 0, qlng + 1)) << 1;	// NE
 						t->quadrants |= DWORD(HasElevationTile(qlvl + 4, qlat + 1, qlng + 0)) << 2; // SW
 						t->quadrants |= DWORD(HasElevationTile(qlvl + 4, qlat + 1, qlng + 1)) << 3;	// SE
+						int q = (lng > (t->lngmin + t->lngmax) * 0.5 ? 1 : 0) + (lat < (t->latmin + t->latmax) * 0.5 ? 2 : 0);
+						t->quadrants &= ~(DWORD(1) << q); // not upstream: this point's lvl+1 tile was just tried and would not load (stream-covered or bad): its quadrant is this tile's, or every query there reloads
 					}
 
 					//int q = Quadrant(lat, lng, lvl);

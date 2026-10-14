@@ -29,7 +29,7 @@ void main() { oVS = HazeTechVS(HZVERTEX(iPosL, iColor, iTex0) VS_ARGS); gl_Posit
 //
 vec4 HazeTechPS(HazeVS frg)
 {
-	return frg.color * texture(ClampS, frg.tex0);
+	return frg.color * texture(ClampS, frg.tex0) * vec4(vec3(gExposure), 1.0); // not upstream: auto-exposure
 
 	//return float4(frg.color.rgb, frg.color.a*frg.tex0.y*frg.tex0.y);
 	//return float4(frg.color.rgb*(frg.tex0.y+0.30), frg.color.a*frg.tex0.y*frg.tex0.y);

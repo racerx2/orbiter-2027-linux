@@ -815,6 +815,15 @@ void VideoTab::InitSetupDialog(QWidget *hWnd)
 	oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_TILECOUNT), "1200");
 	oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_TILECOUNT), "2400");
 
+	DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ)->clear(); // not upstream: ground graphics
+	oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ), "Low");
+	oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ), "Medium");
+	oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ), "High");
+	DlgItem<QComboBox>(hWnd, IDC_GG_TREERANGE)->clear();
+	oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_GG_TREERANGE), "1 km");
+	oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_GG_TREERANGE), "2.5 km");
+	oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_GG_TREERANGE), "4 km");
+
 	// gcGUI -----------------------------------------
 	if (Config->gcGUIMode == 1) Config->gcGUIMode = 0;
 	DlgItem<QComboBox>(hWnd, IDC_GUIMODE)->clear();
@@ -910,6 +919,29 @@ void VideoTab::InitSetupDialog(QWidget *hWnd)
 	DlgItem<QAbstractButton>(hWnd, IDC_EIRRAD)->setChecked(Config->bIrradiance == 1);
 	DlgItem<QAbstractButton>(hWnd, IDC_ESCACHE)->setChecked(Config->ShaderCacheUse == 1);
 	DlgItem<QAbstractButton>(hWnd, IDC_EAQUALITY)->setChecked(Config->bAtmoQuality == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_GG_HORIZON)->setChecked(Config->HorizonShadows == 1); // not upstream: ground graphics
+	DlgItem<QAbstractButton>(hWnd, IDC_GG_SSAO)->setChecked(Config->SSAO == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_GG_VOLCLOUDS)->setChecked(Config->VolClouds == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_GG_TREES)->setChecked(Config->Trees == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_GG_AUTOEXP)->setChecked(Config->AutoExposure == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_GG_CLOUDATLAS)->setChecked(Config->CloudAtlas == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_FLARE)->setChecked(Config->LensFlare == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_SHAFTS)->setChecked(Config->LightShafts == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_TAA)->setChecked(Config->TAA == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_WATER)->setChecked(Config->WaterFx == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_VOLSHD)->setChecked(Config->VolCloudShadows == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_FILMIC)->setChecked(Config->Filmic == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_VIGNETTE)->setChecked(Config->Vignette == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_SHARPEN)->setChecked(Config->Sharpen == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_HAZE)->setChecked(Config->HeatHaze == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_SCENESHD)->setChecked(Config->SceneShadows == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_SSR)->setChecked(Config->SSR == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_PLUMES)->setChecked(Config->VolPlumes == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_SSGI)->setChecked(Config->SSGI == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_FOG)->setChecked(Config->HeightFog == 1);
+	DlgItem<QAbstractButton>(hWnd, IDC_FX_NIGHT)->setChecked(Config->NightLook == 1);
+	DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ)->setCurrentIndex(Config->VolCloudQuality);
+	DlgItem<QComboBox>(hWnd, IDC_GG_TREERANGE)->setCurrentIndex(Config->TreeRange < 1750.0f ? 0 : Config->TreeRange < 3250.0f ? 1 : 2);
 
 
 	DlgItem<QAbstractButton>(hWnd, IDC_NORMALMAPS)->setChecked(Config->UseNormalMap==1);
@@ -990,6 +1022,33 @@ void VideoTab::SaveSetupState(QWidget *hWnd)
 	Config->bIrradiance   = (int)DlgItem<QAbstractButton>(hWnd, IDC_EIRRAD)->isChecked();
 	Config->ShaderCacheUse= (int)DlgItem<QAbstractButton>(hWnd, IDC_ESCACHE)->isChecked();
 	Config->bAtmoQuality  = (int)DlgItem<QAbstractButton>(hWnd, IDC_EAQUALITY)->isChecked();
+	Config->HorizonShadows = (int)DlgItem<QAbstractButton>(hWnd, IDC_GG_HORIZON)->isChecked(); // not upstream: ground graphics
+	Config->SSAO          = (int)DlgItem<QAbstractButton>(hWnd, IDC_GG_SSAO)->isChecked();
+	Config->VolClouds     = (int)DlgItem<QAbstractButton>(hWnd, IDC_GG_VOLCLOUDS)->isChecked();
+	Config->Trees         = (int)DlgItem<QAbstractButton>(hWnd, IDC_GG_TREES)->isChecked();
+	Config->AutoExposure  = (int)DlgItem<QAbstractButton>(hWnd, IDC_GG_AUTOEXP)->isChecked();
+	Config->CloudAtlas    = (int)DlgItem<QAbstractButton>(hWnd, IDC_GG_CLOUDATLAS)->isChecked();
+	Config->LensFlare = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_FLARE)->isChecked();
+	Config->LightShafts = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_SHAFTS)->isChecked();
+	Config->TAA = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_TAA)->isChecked();
+	Config->WaterFx = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_WATER)->isChecked();
+	Config->VolCloudShadows = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_VOLSHD)->isChecked();
+	Config->Filmic = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_FILMIC)->isChecked();
+	Config->Vignette = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_VIGNETTE)->isChecked();
+	Config->Sharpen = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_SHARPEN)->isChecked();
+	Config->HeatHaze = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_HAZE)->isChecked();
+	Config->SceneShadows = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_SCENESHD)->isChecked();
+	Config->SSR = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_SSR)->isChecked();
+	Config->VolPlumes = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_PLUMES)->isChecked();
+	Config->SSGI = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_SSGI)->isChecked();
+	Config->HeightFog = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_FOG)->isChecked();
+	Config->NightLook = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_NIGHT)->isChecked();
+	Config->VolCloudQuality = std::max(0, (int)DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ)->currentIndex());
+	{
+		static const float range[3] = { 1000.0f, 2500.0f, 4000.0f };
+		int r = (int)DlgItem<QComboBox>(hWnd, IDC_GG_TREERANGE)->currentIndex();
+		if (r >= 0 && r < 3) Config->TreeRange = range[r];
+	}
 
 	// Sliders
 	Config->Convergence   = double(DlgItem<QSlider>(hWnd, IDC_CONVERGENCE)->value()) * 0.01;

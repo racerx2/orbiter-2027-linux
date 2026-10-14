@@ -196,9 +196,20 @@ vec2 DirToUV(vec3 uDir)
 }
 
 
+// not upstream: ACES fit (Narkowicz 2015) with the input scaled so that mid tones match 1 - exp(-x)
+vec3 Filmic(vec3 x)
+{
+	x *= 0.568;
+	return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+
 vec3 HDR(vec3 x)
 {
+#if defined(_FILMIC)
+	return Filmic(Const.Expo * x); // not upstream
+#else
 	return 1.0f - exp(-Const.Expo * x);
+#endif
 }
 
 

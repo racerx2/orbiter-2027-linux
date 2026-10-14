@@ -148,6 +148,9 @@ vec4 MetalnessPS(vec4 sc, PBRData frg)	// sc : VPOS
 	float  fSmth, fMetal;
 	vec3 cDiffLocal;
 	vec3 cSpecLocal;
+#if defined(_SSR) && defined(_ENVMAP)
+	vec3 nSsrF = SsrFaceN(-frg.camW, normalize(frg.nrmW)); // not upstream: the face the depth holds, before any discard (r3-ssr2)
+#endif
 
 	// ======================================================================
 	// Start fetching texture data
@@ -217,6 +220,9 @@ vec4 MetalnessPS(vec4 sc, PBRData frg)	// sc : VPOS
 
 	if (gNoColor) cDiff.rgb = vec3(1);
 	cDiff = clamp(cDiff * vec4(gMtrl.diffuse.rgb, gMtrlAlpha), 0.0, 1.0);
+#if defined(_HEAT)
+	vec3 hAlb = cDiff.rgb; // not upstream: the albedo (material diffuse included), for the hull glow's emissivity (design-reentry-heat)
+#endif
 	
 
 	// ======================================================================
@@ -289,7 +295,15 @@ vec4 MetalnessPS(vec4 sc, PBRData frg)	// sc : VPOS
 	// ======================================================================
 	// Add vessel self-shadows
 	// ======================================================================
+#if defined(_CSM)
+	{ // not upstream: the legacy map and the scene cascades, the darker of the two (design-scene-shadows 7.2)
+		float fS = 1.0;
 #if SHDMAP > 0
+		fS = smoothstep(0, 0.72, ComputeShadow(frg.shdH, dLN, sc));
+#endif
+		cSun *= min(fS, CsmVis(CsmS, -frg.camW, normalize(frg.nrmW), gShadowsEnabled ? 3.0 : 1.0, 0.0, gBaseBuilding ? 1.0 : 0.0));
+	}
+#elif SHDMAP > 0
 	cSun *= smoothstep(0, 0.72, ComputeShadow(frg.shdH, dLN, sc));
 #endif
 	
@@ -343,6 +357,15 @@ vec4 MetalnessPS(vec4 sc, PBRData frg)	// sc : VPOS
 	float  R = 0.1f * fSmth;
 	float  frP = R + (1.0f - R) * fFrs;
 
+#if defined(_SSR) && defined(_ENVMAP)
+	vec3 cEw = cF * mix(frP, 1.0f, fMetal); // not upstream: what the reflection ray finds on screen replaces the cube's, vessels only, where it shows (design-ssr 6)
+	if (gEnvMapEnable && gSsr.vSurf.x < 0.5 && max(max(cEw.r, cEw.g), cEw.b) >= 0.01) {
+		vec3 nG = nSsrF; // the drawn face: a smooth vertex normal can start the ray inside a coarse mesh (r3-ssr2)
+		float aE = mix(0.01, 1.0, fRgh3); // this shader's own GGX lobe
+		SsrHit hE = SsrTrace(-frg.camW, nG, SsrKeepAbove(SsrDir(nrmW, camW, aE, gl_FragCoord.xy), nG, 0.01), aE);
+		if (hE.conf > 0.0) cEnv = mix(cEnv, SsrMeshDecode(SsrFetch(hE), SSR_CURVE), hE.conf);
+	}
+#endif
 	vec3 cE = (cEnv * cF * mix(frP, 1.0f, fMetal));
 
 	// Attennuate diffuse color for Metals & Fresnel
@@ -378,10 +401,15 @@ vec4 MetalnessPS(vec4 sc, PBRData frg)	// sc : VPOS
 	//float3 cHeat = float3(pow(abs(fHeat), 0.5f), pow(abs(fHeat), 1.5f), pow(abs(fHeat), 8.0f));
 	vec3 cHeat = pow(vec3(abs(fHeat)), vec3(0.5f, 1.5f, 8.0f));
 	cDiff.rgb = cDiff.rgb + cHeat;
+#if defined(_HEAT)
+	if (gHeat.vFlow.w > 0.5) cDiff.rgb = HeatAddDisplay(cDiff.rgb, HeatGlow(frg.nrmW, frg.camW, HeatToLinear(hAlb))); // not upstream: the hull's own glow (design-reentry-heat)
+#endif
 
 #if defined(_DEBUG)
 	cDiff = cDiff * (1.0f - gColor*0.5f) + gColor;
 #endif
+
+	cDiff.rgb *= gExposure; // not upstream: auto-exposure, before either curve
 
 #if defined(_LIGHTGLOW)
 	cDiff.rgb *= gSun.Transmission;

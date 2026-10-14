@@ -96,6 +96,16 @@ struct Tune
 #define SH_SIZE		0
 #define SH_INVSIZE	1
 
+#include "SceneShadow.glsl" // not upstream: CsmPrm (_CSM, design-scene-shadows)
+
+#if defined(_SSR)
+#include "SsrPrm.glsl" // not upstream: screen-space reflections (design-ssr)
+#endif
+
+#if defined(_HEAT)
+#include "HeatPrm.glsl" // not upstream: re-entry hull heating (design-reentry-heat)
+#endif
+
 layout(binding = 0, row_major, scalar) uniform FxParams	// the uniform extern parameters, packed as the client's structs
 {
 vec3      kernel[KERNEL_SIZE];
@@ -150,6 +160,16 @@ float 	  gMtrlAlpha;
 float	  gGlowConst;
 float	  gNightTime;		// 1 for nighttime, 0 for daytime
 Flow	  gCfg;
+float	  gExposure;		// not upstream: auto-exposure, 1 off the main pass
+#if defined(_CSM)
+CsmPrm    gCsm;				// not upstream: scene shadow cascades, off outside the main pass (design-scene-shadows Rev 2)
+#endif
+#if defined(_SSR)
+SsrPrm    gSsr;				// not upstream: screen-space reflections of this draw (design-ssr), after the shadows' gCsm
+#endif
+#if defined(_HEAT)
+HeatPrm   gHeat;			// not upstream: re-entry hull heating of the vessel drawn, zero otherwise (design-reentry-heat), after gSsr (INT-2)
+#endif
 };
 
 // Textures -----------------------------------------------------------------
@@ -533,6 +553,11 @@ sampler2D Planet3S = sampler_state    // Planet/Cloud micro texture sampler
 	AddressV = WRAP;
 };
 
+#if defined(_CSM) // not upstream: the scene shadow atlas (design-scene-shadows); the 25th sampler, binding 28, before SSR's
+uniform extern texture   gCsmMap;
+sampler2D CsmS = sampler_state { Texture = <gCsmMap>; MinFilter = POINT; MagFilter = POINT; MipFilter = NONE; AddressU = CLAMP; AddressV = CLAMP; };
+#endif
+
 
 
 // ----------------------------------------------------------------------------
@@ -669,6 +694,18 @@ void main() { oColor = ExhaustTechPS(frg PS_ARGS); }
 #endif
 #ifdef PS_SpotTechPS
 void main() { oColor = SpotTechPS(frg PS_ARGS); }
+#endif
+
+#include "SceneShadow.glsl" // not upstream: CsmVis (_CSM, pixel stage) for Mesh.fx, Vessel.fx, PBR.fx and Metalness.fx
+
+#if defined(_SSR) // not upstream: screen-space reflections (design-ssr); after the shadows' CsmS in the text, so 29 and 30
+sampler2D tSsrCol = sampler_state { MinFilter = LINEAR; MagFilter = LINEAR; MipFilter = LINEAR; AddressU = CLAMP; AddressV = CLAMP; };
+sampler2D tSsrHiZ = sampler_state { MinFilter = POINT; MagFilter = POINT; MipFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };
+#include "Ssr.glsl"
+#endif
+
+#if defined(_HEAT)
+#include "HullHeat.glsl" // not upstream: re-entry hull heating, pixel stage (design-reentry-heat)
 #endif
 
 #include "Particle.fx"

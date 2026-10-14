@@ -36,6 +36,9 @@ constexpr double BRK_TEAR_KICK    = 0.1;    // section kick = this * vn along +-
 constexpr double BRK_KICK         = 0.15;   // debris speed = this * vn
 constexpr double BRK_SEP          = 0.05;   // pair counted apart at this bound gap [m]
 constexpr double BRK_STUCK        = 10.0;   // debris still overlapping after this is deleted [s]
+constexpr double BRK_TD_K         = 50.0;   // debris touchdown stiffness per point per kg: 8 points give omega 20/s, omega dt = 1 at 20 fps [N/m/kg]
+constexpr double BRK_TD_D         = 2.5;    // debris touchdown damping per point per kg: 8 points give c dt / m = 1 at 20 fps [N s/m/kg]
+constexpr double BRK_RUNAWAY      = 1e4;    // debris whose velocity jumps more than this + 100 m/s2 x step in one step is deleted (contact blow-up at a long frame) [m/s]
 constexpr double BRK_FUNC_DIST    = 0.15;   // a touchdown, thruster or dock point this near a vertex holds the piece [m]
 constexpr int    BRK_PER_EVENT    = 4;      // debris per event
 constexpr const char *BRK_CLASS   = "CollDebris";
@@ -49,7 +52,7 @@ struct CollSlotA {                                        // rest geometry of on
 	std::vector<int> tier; std::vector<uint32_t> cls;     // dmg3 tear: per group tier and pose class
 	uint32_t staticCls = 0;                               // dmg3 tear: pose class of the hull (largest piece)
 };
-struct CollDebrisA { uint32_t id = ~0u, parent = 0, other = 0, event = 0; CollH h = nullptr, mesh = nullptr; double birth = 0; DentDebris row; uint32_t fnv = 0; bool restored = false; }; // restored: rebuilt on load, its pairs count as apart (no stuck delete)
+struct CollDebrisA { uint32_t id = ~0u, parent = 0, other = 0, event = 0; CollH h = nullptr, mesh = nullptr; double birth = 0; DentDebris row; uint32_t fnv = 0; bool restored = false; Vector vLast; bool vSeen = false; }; // restored: rebuilt on load, its pairs count as apart (no stuck delete)
 struct CollSpawnA { uint32_t parent = 0, other = 0, event = 0; std::string mesh; DentDebris row; Vector cv, dv, dw; double mass = 0; CollSdk::DebrisCaps caps; bool blast = false; }; // blast: the parent takes the opposite impulse
 struct CollCutPlan { bool ok = false; DentRecord rec; std::vector<uint16_t> front, straddle; double d = 0, f = 0, area = 0; const char *why = ""; }; // dmg3 tear: planned cut
 struct CollFreeA { CollH mesh = nullptr, h = nullptr; bool dropped = false; };
@@ -80,6 +83,7 @@ public:
 	void Torn (uint32_t id, const DentTorn &t) override;
 	void Repair (uint32_t id) override;
 	void DropVessel (uint32_t id, CollH h) override;
+	void TimeJump () override { for (auto &d : live) d.vSeen = false; } // a jump moves every vessel: no runaway test across it
 	void PreStep (double simt, double simdt) override;                  // spawns queued by the last post-step: debris vessels and the parents' kicks
 	void Boot (double simt);                              // first pass after load: rebuild debris, adopt rows, queue the load mass cut
 	void End () override;

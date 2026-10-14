@@ -2,6 +2,7 @@
 import math
 import os
 import re
+import struct
 
 GGRAV = 6.67259e-11  # OrbiterAPI.h
 PLANETS = {'Earth': (5.973698968e+24, 6.37101e6), 'Moon': (7.347673176382784e+22, 1.738e6)}  # Config Mass, Size
@@ -178,8 +179,69 @@ def crash(p):  # blast ground/base crash: a DeltaGlider placed in frame 1 by TD;
     return s + 'END_SHIPS\n'
 
 
+def bld_tile(x, y, buildings):  # bldg: a z14 .bld file as TsBldg::Build and Encode write it (TileStreamMvt.cpp): wall quads of the ring, then the roof
+    recs, vtx, idx = [], [], []
+    for lat, lng, ring, hmin, hmax in buildings:  # ring: (east, north) m from the anchor, clockwise seen from above, convex
+        bot = hmin if hmin > 0 else -4.0
+        v0, i0, nv = len(vtx) // 6, len(idx), 0
+        for k in range(len(ring)):
+            (e0, n0), (e1, n1) = ring[k], ring[(k + 1) % len(ring)]
+            l = math.hypot(e1 - e0, n1 - n0)
+            nx, nz = -(n1 - n0) / l, (e1 - e0) / l
+            for e, h, n in ((e0, bot, n0), (e1, bot, n1), (e1, hmax, n1), (e0, hmax, n0)):
+                vtx += [e, h, n, nx, 0.0, nz]
+            idx += [nv, nv + 1, nv + 2, nv, nv + 2, nv + 3]
+            nv += 4
+        r0 = nv
+        for e, n in ring:
+            vtx += [e, hmax, n, 0.0, 1.0, 0.0]
+            nv += 1
+        for k in range(1, len(ring) - 1):
+            idx += [r0, r0 + k, r0 + k + 1]
+        recs.append((lat, lng, max(0.0, hmin), hmax, v0, nv, i0, len(idx) - i0))
+    out = struct.pack('<4sIiiiIII', b'OBLD', 1, 14, x, y, len(recs), len(vtx) // 6, len(idx))
+    for r in recs:
+        out += struct.pack('<ddffIIII', *r)
+    return out + struct.pack('<%df' % len(vtx), *vtx) + struct.pack('<%dI' % len(idx), *idx)
+
+
+def bld_tile_of(lat, lng):  # z14 tile of a point (BldgMgr TileOf)
+    n = 1 << 14
+    return int(math.floor((lng / (2 * math.pi) + 0.5) * n)), int(math.floor((1.0 - math.asinh(math.tan(lat)) / math.pi) * 0.5 * n))
+
+
+def base_loc(args, cfg):  # a base's Location from the root's cfg, radians
+    t = open(os.path.join(args.root, 'Config', 'Earth', 'Base', cfg), encoding='latin-1').read()
+    m = re.search(r'(?im)^\s*Location\s*=\s*(\S+)\s+(\S+)', t)
+    if not m:
+        raise ValueError('%s has no Location line' % cfg)
+    return math.radians(float(m.group(1))), math.radians(float(m.group(2)))
+
+
+def bldg(p, args):  # bldg: one synthetic streamed building on open ground near KSC; kind=crash: a DG at u m/s west into its east wall; kind=roof: a DG set down on its flat roof
+    kind, u = p.get('kind', 'crash'), float(p.get('u', 70))
+    blng, blat = base_loc(args, 'Canaveral.cfg')
+    _, rad = PLANETS['Earth']
+    if kind == 'roof':
+        x, z, w, d, top = 7180.0, -1600.0, 40.0, 30.0, 10.0  # base-local centre (south, east) [m]; 40 m east-west, 30 m north-south, 10 m high: a flat roof
+        act = 'TESTPLACEBASE 1 DG Cape_Canaveral %s %s %s 0 0 0 270' % (g(x), g(top + 3.0), g(z))  # gear 2.6 m below the CG: a 0.4 m drop
+        gear = '  GEAR 1 1.0000\n'
+    else:
+        x, z, w, d, top = 7180.0, -1800.0, 30.0, 20.0, 15.0  # its east wall 85 m west of the DG
+        act = 'TESTPLACEBASE 1 DG Cape_Canaveral %s 4 %s 0 2 %s 270' % (g(x), g(z + 100.0), g(-u))
+        gear = ''
+    lat, lng = blat - x / rad, blng + z / (rad * math.cos(blat))  # as TESTPLACEBASE
+    tx, ty = bld_tile_of(lat, lng)
+    ring = [(-w / 2, -d / 2), (-w / 2, d / 2), (w / 2, d / 2), (w / 2, -d / 2)]
+    s = head('DG', 'DG and a streamed building, %s' % kind)
+    r = 2 * rad
+    s += 'TD:CollTestDirector\n  STATUS Orbiting Earth\n  RPOS %s 0 0\n  RVEL 0 0 %s\n  AROT 0 0 0\n  %s\nEND\n' % (g(r), g(v_circ('Earth', r)), act)
+    s += 'DG:DeltaGlider\n  STATUS Landed Earth\n  BASE Cape Canaveral:3\n  HEADING 270.00\n%s  PRPLEVEL 0:0.6\nEND\n' % gear
+    return s + 'END_SHIPS\n', {'Textures/Earth/Bldg/14/%d/%d.bld' % (tx, ty): bld_tile(tx, ty, [(lat, lng, ring, 0.0, top)])}
+
+
 GENERATORS = {'pair': pair, 'surface': surface, 'ascent': ascent, 'synthplay': synthplay, 'hvc': hvc, 'ksc': ksc, 'hangar': hangar, 'crash': crash, 'stack': stack, 'attached': attached,
-              'wake': wake}
+              'wake': wake, 'bldg': bldg}
 
 
 def params(text):

@@ -29,6 +29,7 @@ public:
 		std::string name, cls; double size = 10, mass = 1000, empty = 500; bool playback = false, recording = false, alive = true;
 		std::deque<Th> th; std::vector<Th *> thList; std::deque<Tk> tk; std::vector<Tk *> tkList;
 		int visual = 0; std::map<uint32_t, std::vector<std::vector<DentVtx>>> dev;
+		bool lock = false; int ad = 7; // not upstream: control lock and control-surface mode
 	};
 	DFake (bool imgui = false) : CollSdk (imgui) {}
 	std::deque<V> ves; std::vector<V *> list;
@@ -64,6 +65,9 @@ public:
 	bool Recording (CollH h) override { calls++; return X (h)->recording; }
 	bool Playback (CollH h) override { calls++; return X (h)->playback; }
 	int DamageModel (CollH) override { calls++; return damageModel; }
+	bool ControlLock (CollH h, bool l) override { X (h)->lock = l; return true; }
+	int ADCtrlMode (CollH h) override { return X (h)->ad; }
+	void SetADCtrlMode (CollH h, int m) override { X (h)->ad = m; }
 	uint32_t MeshCount (CollH) override { return 0; }
 	CollH MeshTemplate (CollH, uint32_t) override { return nullptr; }
 	const char *MeshName (CollH, uint32_t) override { return ""; }
@@ -416,6 +420,11 @@ TEST_CASE ("E3-U9 thrust cut through the dummy tank")
 	CHECK (dummy ()->max == COLL_DUMMY_MAXMASS);
 	CHECK (dummy ()->mass == 0);
 	for (DFake::Th *t : { t0, t1, retro, t3 }) CHECK (t->tank == dummy ());
+	CHECK (v->lock); // not upstream: destroyed, the player's controls are taken
+	CHECK (v->ad == 0);
+	v->ad = 7; // a module switches the surfaces back on: off again next frame
+	r.Frame ();
+	CHECK (v->ad == 0);
 	// status round trip: level finite
 	CHECK (std::isfinite (dummy ()->mass / dummy ()->max));
 	// DG doors close during the cut: unlink seen
@@ -437,15 +446,14 @@ TEST_CASE ("E3-U9 thrust cut through the dummy tank")
 	t1->tank = rcs;
 	r.Frame ();
 	CHECK (t1->tank == v->tkList.back ());
-	// Damage model off: restored to the module's latest wish, dummy gone
+	// not upstream: Orbiter's own damage setting off: the craft stays cut and locked, destroyed is this addon's verdict
 	r.sdk.damageModel = 0;
 	r.Frame ();
-	CHECK (v->tkList.size () == 3);
-	CHECK (t0->tank == main);
-	CHECK (t1->tank == rcs);
-	CHECK (retro->tank == nullptr);
-	CHECK (t3->tank == rcs);
-	// on again, then repair
+	CHECK (v->tkList.size () == 4);
+	CHECK (t0->tank == v->tkList.back ());
+	CHECK (t3->tank == v->tkList.back ());
+	CHECK (v->lock);
+	// then repair
 	r.sdk.damageModel = 1;
 	r.Frame ();
 	CHECK (v->tkList.size () == 4);
@@ -453,6 +461,8 @@ TEST_CASE ("E3-U9 thrust cut through the dummy tank")
 	r.Frame ();
 	CHECK (v->tkList.size () == 3);
 	CHECK (t0->tank == main);
+	CHECK (!v->lock); // not upstream: repaired, the controls are back with the surfaces' mode from before
+	CHECK (v->ad == 7);
 	CHECK (r.s.Damage (a)->d.flags == 0);
 	// no destroyed vessel: zero writes
 	uint64_t w = r.sdk.Count ().Writes ();

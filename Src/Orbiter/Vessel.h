@@ -1122,6 +1122,9 @@ public:
 	int ConsumeBufferedKey (DWORD key, bool down, char *kstate);
 	// Keyboard handler for buffered keys
 
+	void SetCtrlLock (bool lock);                  // not upstream: a locked vessel takes no player commands (keys, joystick, cockpit, nav modes)
+	inline bool CtrlLock () const { return bCtrlLock; } // not upstream
+
 	void Update (bool force = false);
 	void UpdatePassive ();
 	void UpdateAttachments();
@@ -1676,6 +1679,7 @@ private:
 	double Lift, Drag, SideForce;         // current lift and drag magnitudes
 
 	DWORD navmode;             // bitflags for currently active navmodes
+	bool bCtrlLock = false;    // not upstream: SetCtrlLock
 	struct HoverHoldAlt {      // Hover hold altitude data
 		double alt;            //   hover hold target altitude
 		double palt;           //   hover hold previous altitude

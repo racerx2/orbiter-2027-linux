@@ -139,20 +139,16 @@ TEST_CASE ("The shipped package list names every layer once, in our release", "[
 	std::string err;
 	REQUIRE (TexPackRead ("Config/TexturePacks.cfg", list, err));
 	CHECK (list.url.find ("https://github.com/racerx2/Orbiter-linux-orbital-bodies-textures/releases/download/") == 0);
-	CHECK (list.pack.size() == 47);
-	std::set<std::string> seen, earth;
+	CHECK (list.pack.size() == 42);
+	std::set<std::string> seen;
 	for (const TexPack &p : list.pack) {
 		CHECK (p.zip == p.body + "_" + p.layer + (p.parts.empty() ? ".zip" : ".tree"));
 		CHECK (seen.insert (p.body + "/" + p.layer).second);
 		CHECK (p.zipsize > 0);
 		CHECK (p.rawsize > 0);
 		for (const TexPart &t : p.parts) CHECK (t.size <= 1073741824); // GitHub takes release files under 2 GiB
-		if (p.body == "Earth") {
-			CHECK_FALSE (p.parts.empty()); // the 2016 high-res archives
-			earth.insert (p.layer);
-		}
+		CHECK (p.body != "Earth"); // Earth streams in (TileStream.cpp)
 	}
-	CHECK (earth == std::set<std::string> {"Surf", "Mask", "Elev", "Elev_mod", "Cloud"});
 }
 
 TEST_CASE ("A layer is present when its folder has files or its archive tree exists", "[TexPack]")
@@ -428,4 +424,23 @@ TEST_CASE ("A part cut off midway is dropped from the partial archive", "[TexPac
 	CHECK (TexPackResume (t.texdir, p) == 200000);
 	REQUIRE (TexPackInstall (list, p, t.texdir, nullptr, nullptr, err));
 	CHECK (Read (t.tex / "Moon" / "Archive" / "Elev.tree") == data);
+}
+
+TEST_CASE ("Partial archives of packs no longer listed and the work folder are removed", "[TexPack]")
+{
+	Tmp t;
+	TexPackList list;
+	TexPack moon = Pack ("Moon", "Elev");
+	moon.parts.push_back ({"Moon_Elev.tree.01", "0123456789abcdef0123456789abcdef", 1});
+	list.pack.push_back (moon);
+	Write (t.tex / "Earth" / "Archive" / ".Surf.tree.a8890486.partial", "x");
+	Write (t.tex / "Earth" / "Archive" / "Surf.tree", "x");
+	Write (t.tex / "Moon" / "Archive" / ".Elev.tree.01234567.partial", "x");
+	Write (t.tex / ".texinstall" / "Earth_Surf.tree.01.part", "x");
+	std::vector<std::string> gone = TexPackClean (list, t.texdir);
+	CHECK (gone.size() == 2);
+	CHECK_FALSE (fs::exists (t.tex / "Earth" / "Archive" / ".Surf.tree.a8890486.partial"));
+	CHECK (fs::exists (t.tex / "Earth" / "Archive" / "Surf.tree")); // a whole archive is the user's
+	CHECK (fs::exists (t.tex / "Moon" / "Archive" / ".Elev.tree.01234567.partial")); // still listed: it resumes
+	CHECK_FALSE (fs::exists (t.tex / ".texinstall"));
 }

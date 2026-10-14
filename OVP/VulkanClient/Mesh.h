@@ -49,6 +49,7 @@ const DWORD SPEC_INHERIT = (DWORD)(-2); // "inherit" material/texture flag
 #define SHADER_SHADOWMAP		10
 #define SHADER_SHADOWMAP_OIT	11
 #define SHADER_NORMAL_DEPTH		12
+#define SHADER_SCENE_DEPTH		13 // not upstream: SceneFx distance pass
 
 #define VCLASS_AMSO			1
 #define VCLASS_XR2			2
@@ -92,6 +93,12 @@ public:
 		BOOL bClip;		// custom: drop shadow map pixels below the cutoff (PBR groups)
 	} ps_bools;
 
+	static struct PSGi {	// not upstream: SceneDepth_PS's SSGI albedo under _SSGI (NewMesh.glsl PSGi)
+		float4 vMat;		// albedo factor (rgb), base texture bound (w)
+		float4 vMtl;		// metal factor, metal map bound, map channel b (else g), decode the base texture to linear
+		float4 vCls;		// class, family
+	} ps_gi;
+
 
 	MeshShader(VkDev *pDev, const char *file, const char *vs, const char *ps, const char *opt = NULL) :
 		ShaderClass(pDev, "Modules/VulkanClient/NewMesh.glsl", vs, ps, "MeshShader", opt)
@@ -101,6 +108,8 @@ public:
 		hPSC  = GetPSHandle("ps_const");
 		hPSB  = GetPSHandle("ps_bools");
 		hPST[0] = GetPSHandle("tDiff");
+		hPSG  = GetPSHandle("ps_gi");	// not upstream: NULL without _SSGI
+		hPST[1] = hPSG ? GetPSHandle("tMR") : NULL; // not upstream
 	}
 
 	~MeshShader()
@@ -109,6 +118,7 @@ public:
 	}
 
 	VkConstHandle hPSB, hVSC, hPSC, hPST[16];
+	VkConstHandle hPSG;	// not upstream: ps_gi
 };
 
 
@@ -342,8 +352,11 @@ public:
 
 	static void		GlobalInit(VkDev *pDev);
 	static void		GlobalExit();
+	static void		SetGiClass(int cls) { giCls = cls; } // not upstream: SSGI class of the next SceneDepth draws (2 bases and buildings, 3 vessels), -1 outside SceneFx::DepthPass
 
 private:
+	static int giCls;			// not upstream: SetGiClass
+	bool bGiTile = false;		// not upstream: a base's tile mesh (SSGI family 3)
 
 
 	void			UpdateTangentSpace(NMVERTEX *pVrt, WORD *pIdx, DWORD nVtx, DWORD nFace, bool bTextured);

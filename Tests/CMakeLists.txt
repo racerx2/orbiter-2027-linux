@@ -168,6 +168,75 @@ target_compile_definitions(GltfLoader.Test PRIVATE GLTF_TEST_ROOT="${ORBITER_SOU
 add_unit_test(PbrMaterial.Test ${ORBITER_SOURCE_ROOT_DIR}/OVP/VulkanClient/PbrMaterial.cpp)
 target_include_directories(PbrMaterial.Test PRIVATE ${ORBITER_SOURCE_ROOT_DIR}/OVP/VulkanClient)
 target_link_libraries(PbrMaterial.Test Qt6::Core) # VkGltfImage.h
+# not upstream: the planet tile stream: grids, pixels, DDS, config, size cap, and the service on file:// sources
+add_unit_test(TileStream.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp)
+target_link_libraries(TileStream.Test Qt6::Network Qt6::Gui stb_dxt zlib)
+target_compile_options(TileStream.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(TileStream.Test PRIVATE -fsanitize=address)
+set_tests_properties(TileStream.Test PROPERTIES TIMEOUT 120) # room for a slow machine: the binary runs in seconds
+add_unit_test(TileStreamDecode.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream: the tile stream's decoders on hostile input, ASan
+target_link_libraries(TileStreamDecode.Test Qt6::Network Qt6::Gui stb_dxt zlib)
+target_compile_options(TileStreamDecode.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(TileStreamDecode.Test PRIVATE -fsanitize=address)
+add_unit_test(TileStreamCore.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream: the core's lock, holds, ownership, indexes, archives, disks and caps
+target_link_libraries(TileStreamCore.Test Qt6::Network Qt6::Gui stb_dxt zlib)
+target_compile_options(TileStreamCore.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(TileStreamCore.Test PRIVATE -fsanitize=address)
+# not upstream: the Launchpad Earth streaming page: base list, when Clear and Download are refused, how they end
+add_unit_test(TileStreamLaunchpad.Test ${ORBITER_SOURCE_DIR}/StreamBases.cpp)
+# not upstream: streamed buildings' walls, roofs, atlas UVs and base structures, on .bld meshes the core makes
+add_unit_test(BldgGeom.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/BldgGeom.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp)
+target_include_directories(BldgGeom.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+target_link_libraries(BldgGeom.Test Qt6::Gui zlib)
+target_compile_definitions(BldgGeom.Test PRIVATE BLDGTEX_DIR="${ORBITER_BINARY_TEXTURES_DIR}/Bldg")
+add_dependencies(BldgGeom.Test BldgTextures)
+target_compile_options(BldgGeom.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(BldgGeom.Test PRIVATE -fsanitize=address)
+# not upstream: terrain horizon maps (design-ground-graphics 2)
+add_unit_test(HorizonMap.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/HorizonMap.cpp)
+target_include_directories(HorizonMap.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+target_compile_options(HorizonMap.Test PRIVATE -O2 -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(HorizonMap.Test PRIVATE -fsanitize=address)
+# not upstream: auto-exposure controller (design-ground-graphics 6)
+add_unit_test(AutoExpo.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/AutoExpo.cpp)
+target_include_directories(AutoExpo.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+target_compile_options(AutoExpo.Test PRIVATE -O2 -fsanitize=address -fno-omit-frame-pointer) # -O2: the night look's Monte Carlo cases
+target_link_options(AutoExpo.Test PRIVATE -fsanitize=address)
+# not upstream: volumetric cloud coverage map and noise (design-ground-graphics 4)
+add_unit_test(VolCloudMap.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/VolCloudMap.cpp)
+target_include_directories(VolCloudMap.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+target_compile_options(VolCloudMap.Test PRIVATE -O2 -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(VolCloudMap.Test PRIVATE -fsanitize=address)
+# not upstream: tree placement and meshes (design-ground-graphics 5)
+add_unit_test(TreeGeom.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/TreeGeom.cpp)
+target_include_directories(TreeGeom.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+target_compile_options(TreeGeom.Test PRIVATE -O2 -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(TreeGeom.Test PRIVATE -fsanitize=address)
+# not upstream: seamless far cloud layer (design-cloud-seams)
+add_unit_test(CloudAtlas.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/CloudAtlas.cpp)
+target_include_directories(CloudAtlas.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+target_compile_options(CloudAtlas.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(CloudAtlas.Test PRIVATE -fsanitize=address)
+
+# not upstream: visual batch maths (design-visual-batch 13)
+add_unit_test(PostMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/PostMath.cpp)
+target_include_directories(PostMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+add_unit_test(LookMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/LookMath.cpp)
+target_include_directories(LookMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+
+# not upstream: maths units of the new effects
+add_unit_test(CsmMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/CsmMath.cpp)
+target_include_directories(CsmMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+add_unit_test(SsrMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/SsrMath.cpp ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/PostMath.cpp)
+target_include_directories(SsrMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+add_unit_test(SsgiMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/SsgiMath.cpp)
+target_include_directories(SsgiMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+add_unit_test(FogMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/FogMath.cpp)
+target_include_directories(FogMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+add_unit_test(PlumeMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/PlumeMath.cpp)
+target_include_directories(PlumeMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+add_unit_test(HeatMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/HeatMath.cpp) # not upstream: re-entry hull heating maths
+target_include_directories(HeatMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 
 if (BUILD_ORBITER_SERVER)
 

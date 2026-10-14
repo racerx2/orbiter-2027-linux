@@ -44,6 +44,16 @@ set(common_src
 	TabVideo.cpp
 	TexInstall.cpp # not upstream: missing planet texture download
 	TexPack.cpp # not upstream
+	TileStream.cpp # not upstream: planet tile stream
+	TileStreamApi.cpp # not upstream
+	TileStreamCfg.cpp # not upstream
+	TileStreamImg.cpp # not upstream
+	TileStreamCog.cpp # not upstream
+	TileStreamMvt.cpp # not upstream
+	TileStreamNet.cpp # not upstream
+	TileStreamSky.cpp # not upstream: clouds, base flattening, ground track
+	TabStream.cpp # not upstream: Launchpad Earth streaming page
+	StreamBases.cpp # not upstream: its base list and refusal rules
 # Dialogs
 	CustomControls.cpp
 	DialogWin.cpp
@@ -143,6 +153,7 @@ set(Orbiter_common_libs
 	Qt6::Widgets
 	Qt6::DBus
 	Qt6::Network # not upstream: TexPack.cpp downloads
+	stb_dxt # not upstream: TileStreamImg.cpp
 	${CMAKE_DL_LIBS}
 )
 set(Orbiter_libs

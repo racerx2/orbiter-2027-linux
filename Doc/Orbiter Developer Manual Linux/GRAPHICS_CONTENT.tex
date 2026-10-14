@@ -1,0 +1,759 @@
+\documentclass[Orbiter Developer Manual.tex]{subfiles}
+\begin{document}
+
+\section{Add-on content and the VulkanClient graphics}
+\label{sec:vk_content}
+\begin{sloppypar}
+The VulkanClient, the graphics client of the Linux edition, adds a set of effects to Orbiter's rendering: sun shadows cast by the whole scene, reflections and indirect light taken from the image on screen, volumetric engine plumes with lit smoke, re-entry plasma and hulls glowing from re-entry heating, volumetric clouds, water effects, height fog and a night look for cities. The VulkanClient manual (Doc/VulkanClient/VulkanClient.html, sections \textit{Ground graphics} and \textit{Effects}) describes them for users, and \textit{Rendering methods of the Vulkan client's effects} in the Orbiter Technical Reference describes how they work.\\
+The effects take what they need from the files and calls that add-ons already use: meshes with their materials and textures, the exhaust definitions and particle streams of vessels, the object lists of surface bases and the tiles of planets. Add-ons therefore work with them without changes. This section is for the makers of vessels, meshes, bases, planets and plugins. It describes what each effect reads from an add-on, the optional files and keys that tune it, the glTF meshes and PBR materials the client draws, the API functions of the Linux edition that concern graphics, and how to check content with each effect switched on and off.
+
+
+\subsection{Effect switches}
+\label{ssec:vk_switches}
+Each effect has its own key in Modules/VulkanClient/VulkanClient.cfg, 1 for on and 0 for off. The same switches are in the \textit{Ground graphics} and \textit{Effects} groups of the VulkanClient Advanced Setup dialog (the \textit{Advanced} button on the Video tab of the Launchpad). With a key at 0 the effect is not created at all, and the picture is the one without it. None of the effects changes the 2D panel, the HUD or the MFDs. The effects that work on the finished image are drawn in the main view only, and custom camera views and environment maps show the scene without them; the water effects, horizon shadows, seamless clouds, night look, re-entry hull heating and Filmic are part of the planet and mesh shaders and show there as well.\\
+The client reads VulkanClient.cfg when Orbiter starts and writes it back when Orbiter closes, so edit the file only while Orbiter is not running. Changes made in the dialog apply from the next simulation session.
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.2\textwidth}|p{0.09\textwidth}|p{0.63\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Key} & \textbf{Default} & \textbf{Effect, and what it uses from add-ons}\\
+	\hline\rule{0pt}{2ex}
+	HorizonShadows & 1 & Terrain horizon shadows from the elevation tiles. Vessels, base structures and streamed buildings in the shadow of a ridge lose their direct sunlight and cast no shadow.\\
+	\hline\rule{0pt}{2ex}
+	SSAO & 1 & Ambient occlusion from the screen depth, below 20 km above the ground or with a vessel within 2 km of the camera. SSAOStrength: 0 to 1, default 0.8. SSAORadius: 0.25 to 8 m, default 1.5.\\
+	\hline\rule{0pt}{2ex}
+	VolClouds & 1 & Volumetric clouds within about 60 km of the camera, shaped from the planet's cloud tiles (section \ref{ssec:vk_planets}). VolCloudQuality: 0 low, 1 medium (default), 2 high.\\
+	\hline\rule{0pt}{2ex}
+	VolCloudShadows & 1 & Shadows of the volumetric clouds on the ground, buildings, trees and vessels. Needs VolClouds.\\
+	\hline\rule{0pt}{2ex}
+	CloudAtlas & 1 & One seamless texture for the cloud layer and its shadows, made from the cloud tiles of levels 5 to 7 (section \ref{ssec:vk_planets}).\\
+	\hline\rule{0pt}{2ex}
+	Trees & 1 & 3D trees where the land cover tiles of the Earth stream show forest or shrub, never within 6 m of a base's surfaces and structures. TreeRange: 500 to 4000 m, default 2500. TreeDensity: 0.1 to 2, default 1.\\
+	\hline\rule{0pt}{2ex}
+	AutoExposure & 1 & The exposure of the 3D scene follows dark and bright views. AutoExpMinEV: $-$4 to 0, default $-$1.5. AutoExpMaxEV: 0 to 4, default 2.5.\\
+	\hline\rule{0pt}{2ex}
+	LensFlare & 1 & Ghosts and a halo from the sun, hidden by terrain, clouds and anything in the screen depth, vessels included.\\
+	\hline\rule{0pt}{2ex}
+	LightShafts & 1 & Rays from the sun around the objects in front of it, while the camera is in an atmosphere and the sun is above the horizon, on or near the screen.\\
+	\hline\rule{0pt}{2ex}
+	TAA & 1 & Temporal anti-aliasing of the 3D scene. Exhaust flames, beacons, particle streams, PBR glass and what plugins draw after the scene are drawn after it.\\
+	\hline\rule{0pt}{2ex}
+	WaterFx & 1 & Waves, glitter, a sky reflection and foam on the water of the planet's water mask.\\
+	\hline\rule{0pt}{2ex}
+	Filmic & 0 & A film-like tone curve for the planet, sky, clouds, trees and plumes; meshes keep theirs.\\
+	\hline\rule{0pt}{2ex}
+	Vignette & 1 & Slightly darker corners.\\
+	\hline\rule{0pt}{2ex}
+	Sharpen & 1 & Sharpening of the finished 3D image.\\
+	\hline\rule{0pt}{2ex}
+	HeatHaze & 1 & Shimmering air behind every exhaust above 2\,\% level while the camera is in an atmosphere.\\
+	\hline\rule{0pt}{2ex}
+	SceneShadows & 1 & Sun shadows that terrain, base structures, streamed buildings, trees and vessels cast on each other (section \ref{ssec:vk_shadows}).\\
+	\hline\rule{0pt}{2ex}
+	SSR & 1 & Screen-space reflections on reflective materials, water and base surfaces (section \ref{sssec:vk_mtrl_fx}).\\
+	\hline\rule{0pt}{2ex}
+	VolPlumes & 1 & Volumetric exhausts, lit smoke and steam, ground clouds, soft particle billboards, re-entry plasma and the glow of hulls heated by re-entry (section \ref{ssec:vk_plumes}).\\
+	\hline\rule{0pt}{2ex}
+	SSGI & 1 & One bounce of indirect light between the surfaces on screen, below about 20 km above the ground or with a vessel within 2 km. SSGIStrength: 0 to 2, default 1.\\
+	\hline\rule{0pt}{2ex}
+	HeightFog & 0 & Ground fog and haze in valleys and over water, below 45 km (section \ref{ssec:vk_planets}).\\
+	\hline\rule{0pt}{2ex}
+	NightLook & 1 & City lights drawn as lamps along streets, streamed buildings' windows lit one by one at dusk, and an exposure that keeps night scenes dark. Daytime is unchanged.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+Some effects also depend on older settings of the client and the Launchpad:
+
+\begin{itemize}
+\item Reflections on vessels, from the environment map and from the screen, need a \textit{Reflection Mode} other than \textit{Disable} (EnvMapMode, default 1).
+\item Reflections on water need the Launchpad's \textit{Specular water reflections} and \textit{Specular ripples} options and SpecularRipple = TRUE in the planet's configuration file. They work with \textit{Enable Development Tools} (EnableMeshDbg) ticked or not.
+\item Lit smoke comes from particle streams, which need the Launchpad's \textit{Particle streams} option. The re-entry plasma does not need them.
+\item Ground shadows of vessels and base structures need a \textit{Terrain mapping} other than \textit{None} (TerrainShadowing, default 2) and a planet with a ShadowDepth below 0.98.
+\end{itemize}
+
+
+\subsection{Meshes and materials}
+\label{ssec:vk_mesh}
+The VulkanClient draws Orbiter's .msh meshes (section \ref{sec:mesh_file}) and, in the Linux edition, meshes in the glTF 2.0 format. Each mesh group is drawn by one of three shaders:
+
+\begin{itemize}
+\item the default shader (\textit{PBR (Old)} in the Vulkan Debug Controls), for the materials of .msh meshes;
+\item the \textit{Metalness PBR} shader, which a material file selects per mesh (SHADER Metalness, see below);
+\item the glTF PBR shader, for every material that has a PBR record: the materials of glTF meshes, and materials of .msh meshes that a material file gives PBR lines.
+\end{itemize}
+
+
+\subsubsection{Texture maps}
+\label{sssec:vk_texmaps}
+For each texture of a .msh mesh the client looks for further maps with the same name and an id at its end, for example dgmk4\_1\_norm.dds next to dgmk4\_1.dds (section \textit{Advanced texturing} in the mesh chapter). The maps must have the same file extension as the base texture (DDS, PNG, JPG, BMP or TGA); names are matched without regard to case. These are all the maps the client reads:
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.12\textwidth}|p{0.14\textwidth}|p{0.66\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Id} & \textbf{Channels} & \textbf{Use}\\
+	\hline\rule{0pt}{2ex}
+	\_norm & RGB & Tangent-space normal map.\\
+	\hline\rule{0pt}{2ex}
+	\_spec & RGBA & Specular colour; alpha times 1024 is the specular power (255 gives 1024, 0 turns the highlight off).\\
+	\hline\rule{0pt}{2ex}
+	\_emis & RGB & Emission, added day and night and scaled by the material's Emission property (EMISSION2 in a material file, default 1). Alpha is ignored.\\
+	\hline\rule{0pt}{2ex}
+	\_rghn & G & Smoothness (1 smooth, 0 rough).\\
+	\hline\rule{0pt}{2ex}
+	\_metal & G & Metalness (1 metal). Metalness shader only.\\
+	\hline\rule{0pt}{2ex}
+	\_refl & RGB & Reflectivity and its colour; black also masks the Fresnel reflection. Default shader only.\\
+	\hline\rule{0pt}{2ex}
+	\_transl & RGB & Translucence: the surface lit from behind.\\
+	\hline\rule{0pt}{2ex}
+	\_transm & RGBA & Transmittance: the bright spot of the sun seen through the surface; alpha its size.\\
+	\hline\rule{0pt}{2ex}
+	\_heat & G & Shape of the heat glow that the material's SpecialFX property (part temperature) makes. Metalness shader only.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+\_bump maps are not read. A glTF mesh brings its own maps (section \ref{sssec:vk_pbr}); the maps above are not looked for next to its images.
+
+
+\subsubsection{Material files}
+\label{sssec:vk_gcmtrl}
+A material file changes the materials of a vessel class's meshes without editing the meshes: Config/GC/<class>.cfg, where <class> is the vessel class name with each / or $\backslash$ replaced by \_ (Config/GC/DeltaGlider.cfg for the Delta-glider). The \textit{Save materials} button of the Vulkan Debug Controls writes these files, and they can be edited with any text editor. Material files apply to vessel meshes only.
+
+\begin{lstlisting}[language=OSFS]
+CONFIG_VERSION 3
+; =============================================
+MESH DG\deltaglider_ns
+SHADER Metalness
+; ---------------------------------------------
+MATERIAL 10
+SPECULAR 2.03 1.98 1.85 25
+SMOOTHNESS 0.745 1
+METALNESS 1
+; ---------------------------------------------
+MATERIAL 24
+REFLECT 0.118 0.118 0.118
+FRESNEL 2.24 1024 1
+\end{lstlisting}
+
+\noindent
+MESH starts the entries of one mesh: the mesh's name as the vessel loads it (as Save materials writes it, with $\backslash$ between folders; a glTF mesh's name keeps its extension), or MeshIdx-<n> for mesh number n of the vessel when the mesh has no file name. MATERIAL <n> starts the entries of material n of that mesh, counted from 0. Each key starts its line; lines the client does not know are skipped. The legacy keys are those of the D3D9 client on Windows:
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |>{\raggedright\arraybackslash}p{0.36\textwidth}|p{0.56\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Line} & \textbf{Meaning}\\
+	\hline\rule{0pt}{2ex}
+	SHADER <name> & The mesh's shader: PBR-Old (default) or Metalness.\\
+	\hline\rule{0pt}{2ex}
+	DIFFUSE <r> <g> <b> <a> & Diffuse colour and opacity.\\
+	\hline\rule{0pt}{2ex}
+	AMBIENT <r> <g> <b> & Ambient colour.\\
+	\hline\rule{0pt}{2ex}
+	SPECULAR <r> <g> <b> <power> & Specular colour and power.\\
+	\hline\rule{0pt}{2ex}
+	EMISSIVE <r> <g> <b> & Emissive colour.\\
+	\hline\rule{0pt}{2ex}
+	EMISSION2 <r> <g> <b> & Scale of the \_emis map (the Emission property). Default 1 1 1.\\
+	\hline\rule{0pt}{2ex}
+	REFLECT <r> <g> <b> & Mirror reflection colour, independent of the view angle.\\
+	\hline\rule{0pt}{2ex}
+	FRESNEL <angle> <lobe> <max> & Fresnel reflection: angle dependency (0.5 to 2), the reflection's sharpness (a value below 10 counts as 1024) and its maximum intensity. With the Metalness shader the last value is the attenuation (1 none, 0 strongest).\\
+	\hline\rule{0pt}{2ex}
+	SMOOTHNESS <s> [<e>] & Smoothness 0 to 1. The Metalness shader raises the \_rghn map to the power e (default 1) and multiplies it by s. ROUGHNESS is read the same way.\\
+	\hline\rule{0pt}{2ex}
+	METALNESS <m> & Metalness, Metalness shader.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+A MATERIAL block can also hold the PBR lines of section \ref{sssec:vk_pbr}. They make the material a PBR material drawn by the glTF PBR shader, and replace a glTF mesh's own material of that number as a whole. The legacy keys of the same material still set its legacy material, which is used when PBR materials are off (see section \ref{ssec:vk_testing}).
+
+
+\subsubsection{glTF meshes}
+\label{sssec:vk_gltf}
+The Linux edition reads meshes in the glTF 2.0 format, binary (.glb) or text (.gltf with its .bin and image files). A mesh name that ends in .glb or .gltf (in any case) is read as glTF wherever Orbiter loads a mesh by name: the MeshName entry of a vessel class file, VESSEL::AddMesh and oapiLoadMeshGlobal with a file name, and the FILE entry of a base MESH object. The name includes the extension and is relative to the Meshes folder:
+
+\begin{lstlisting}[language=OSFS]
+MeshName = MyShip\myship.glb
+\end{lstlisting}
+
+\noindent
+How the file becomes an Orbiter mesh:
+
+\begin{itemize}
+\item The default scene is read, or every root node if the file has no scene, with the node transforms applied. The whole model becomes one mesh.
+\item Each primitive (triangles, triangle strips or fans) becomes a mesh group, in the order in which the nodes and their primitives are listed, children after their parent. A primitive with more than 65535 vertices is split into several groups. The groups have no labels; Orbiter's mesh animations address them by index as usual.
+\item POSITION, NORMAL and TEXCOORD\_0 are read. A primitive without normals gets the flat normal of each triangle. The tangents for normal maps are computed from the texture coordinates.
+\item Units are metres. The axes are glTF's with the z axis mirrored: the vessel's nose points along glTF $-$Z, its right side along +X and its top along +Y. In Blender, model the nose along +Y, the top along +Z and the right side along +X, and export with the \textit{+Y Up} option.
+\item glTF material n becomes mesh material n and gets the PBR record of section \ref{sssec:vk_pbr}, so a material file addresses it as MATERIAL n. A primitive without a material gets the glTF default material, added after the file's own materials.
+\item Images in PNG or JPEG format are read from inside the .glb, from data URIs, or from files given relative to the .gltf file. Each group's base colour image is also its mesh texture.
+\item {\raggedright These material extensions are read: KHR\_materials\_emissive\_strength, KHR\_materials\_ior, KHR\_materials\_specular, KHR\_materials\_transmission, KHR\_materials\_volume, KHR\_materials\_clearcoat, KHR\_materials\_sheen, KHR\_materials\_anisotropy and KHR\_materials\_iridescence.\par}
+\end{itemize}
+
+\noindent
+Not supported: animations, skins (the model is drawn in its rest pose), morph targets (the base shape is drawn), points and lines, KHR\_texture\_transform, texture coordinate sets other than the first, and KTX2 or WebP images. A file whose extensionsRequired list holds an extension other than those above, for example a compressed geometry format, is not loaded. Extensions that are only used are ignored with a warning. Orbiter.log lists each glTF mesh with its numbers of groups, materials and textures, every warning, and the reason when a file cannot be read.\\
+\\
+A glTF base object needs the OWNMATERIAL flag to keep its materials; without it, Orbiter merges its geometry into the base's shared meshes with the TEX texture, like any MESH object. The Collision module (section \ref{sec:collision_dev}) builds no collision geometry for glTF base objects.\\
+Each glTF material also has a legacy approximation, which graphics clients without PBR materials draw: the base colour as diffuse and ambient colour, the emissive colour (at most 1) and no specular reflection. oapiMeshMaterialPbr returns the PBR record to clients that want it (section \ref{ssec:vk_api}).
+
+
+\subsubsection{PBR material records}
+\label{sssec:vk_pbr}
+A PBR record describes a metal-rough material as glTF defines it. A glTF mesh has one for each of its materials. A material file can give a PBR record to any material of a vessel's meshes, .msh or glTF, in its MATERIAL block (section \ref{sssec:vk_gcmtrl}); for a glTF material it replaces the file's record as a whole. A record starts from the defaults below. The line PBR switches it on; a record without it is ignored. Key names are not case sensitive, and a line with an error is reported in the client's log and skipped.
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |>{\raggedright\arraybackslash}p{0.34\textwidth}|>{\raggedright\arraybackslash}p{0.13\textwidth}|>{\raggedright\arraybackslash}p{0.45\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Line} & \textbf{Default} & \textbf{Meaning}\\
+	\hline\rule{0pt}{2ex}
+	PBR & & The material is a PBR material.\\
+	\hline\rule{0pt}{2ex}
+	PBR\_BASECOLOR <r> <g> <b> <a> & 1 1 1 1 & Base colour factor (linear) and opacity.\\
+	\hline\rule{0pt}{2ex}
+	PBR\_METALLIC <m> & 1 & Metalness factor.\\
+	\hline\rule{0pt}{2ex}
+	PBR\_ROUGHNESS <r> & 1 & Roughness factor, 0 mirror-smooth to 1 rough.\\
+	\hline\rule{0pt}{2ex}
+	PBR\_NORMALSCALE <s> & 1 & Strength of the normal map.\\
+	\hline\rule{0pt}{2ex}
+	PBR\_NORMAL\_GREENUP <0|1> & 0 & 1: the normal map's green channel points up, as glTF defines it. glTF meshes set 1.\\
+	\hline\rule{0pt}{2ex}
+	PBR\_OCCLUSION <s> & 1 & Strength of the occlusion map.\\
+	\hline\rule{0pt}{2ex}
+	PBR\_EMISSIVE <r> <g> <b> [<k>] & 0 0 0 1 & Emissive colour and its strength k.\\
+	\hline\rule{0pt}{2ex}
+	PBR\_ALPHA <mode> [<c>] & OPAQUE & OPAQUE, MASK (texels with opacity below the cutoff c are not drawn; default 0.5) or BLEND (see-through).\\
+	\hline\rule{0pt}{2ex}
+	PBR\_DOUBLESIDED <0|1> & 0 & 1: both sides of each triangle are drawn.\\
+	\hline\rule{0pt}{2ex}
+	PBR\_IOR <n> & 1.5 & Index of refraction, at least 1.\\
+	\hline\rule{0pt}{2ex}
+	PBR\_SPECULAR <f> & 1 & Strength of the specular reflection.\\
+	\hline\rule{0pt}{2ex}
+	PBR\_SPECULARCOLOR <r> <g> <b> & 1 1 1 & Colour of the specular reflection.\\
+	\hline\rule{0pt}{2ex}
+	PBR\_TRANSMISSION <f> & 0 & Share of the light that passes through the surface (glass).\\
+	\hline\rule{0pt}{2ex}
+	PBR\_VOLUME <t> <d> <r> <g> <b> & 0 0 1 1 1 & Thickness [m], attenuation distance [m] (0: no attenuation) and attenuation colour of a transmitting material.\\
+	\hline\rule{0pt}{2ex}
+	PBR\_CLEARCOAT <f> <r> [<s>] & 0 0 1 & Clear coat strength, roughness and normal map scale.\\
+	\hline\rule{0pt}{2ex}
+	PBR\_SHEEN <r> <g> <b> <rough> & 0 0 0 0 & Sheen colour and roughness (cloth).\\
+	\hline\rule{0pt}{2ex}
+	PBR\_ANISOTROPY <s> <rot> & 0 0 & Anisotropy strength and rotation [rad] (brushed metal).\\
+	\hline\rule{0pt}{2ex}
+	PBR\_IRIDESCENCE <f> <n> <tmin> <tmax> & 0 1.3 100 400 & Thin-film iridescence: strength, film index of refraction (at least 1) and thickness range [nm].\\
+	\hline\rule{0pt}{2ex}
+	PBR\_TEX <slot> <file> & & A texture for one slot (table below). The file name is the rest of the line, relative to the Textures folder.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+Texture slots, with the channels the client reads; the factors of the table above multiply them, as in glTF. The slots marked sRGB hold colours in sRGB encoding, the others linear values. Any image format the client reads can be used, and mipmaps are made when the file has none.
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |>{\raggedright\arraybackslash}p{0.28\textwidth}|p{0.64\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Slot} & \textbf{Channels}\\
+	\hline\rule{0pt}{2ex}
+	BASECOLOR & RGB colour (sRGB), A opacity\\
+	\hline\rule{0pt}{2ex}
+	METALROUGH & G roughness, B metalness\\
+	\hline\rule{0pt}{2ex}
+	NORMAL, CLEARCOATNORMAL & RGB tangent-space normal\\
+	\hline\rule{0pt}{2ex}
+	OCCLUSION & R\\
+	\hline\rule{0pt}{2ex}
+	EMISSIVE & RGB (sRGB)\\
+	\hline\rule{0pt}{2ex}
+	SPECULAR & A\\
+	\hline\rule{0pt}{2ex}
+	SPECULARCOLOR, SHEENCOLOR & RGB (sRGB)\\
+	\hline\rule{0pt}{2ex}
+	TRANSMISSION, CLEARCOAT, IRIDESCENCE & R\\
+	\hline\rule{0pt}{2ex}
+	THICKNESS, CLEARCOATROUGH, IRIDESCENCETHICK & G\\
+	\hline\rule{0pt}{2ex}
+	SHEENROUGH & A\\
+	\hline\rule{0pt}{2ex}
+	ANISOTROPY & RG direction, B strength\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+Example: a .msh hull material turned into polished metal with its own maps.
+
+\begin{lstlisting}[language=OSFS]
+CONFIG_VERSION 3
+MESH MyShip\hull
+MATERIAL 3
+PBR
+PBR_BASECOLOR 0.8 0.8 0.82 1
+PBR_METALLIC 1
+PBR_ROUGHNESS 0.35
+PBR_TEX METALROUGH MyShip\hull_mr.png
+PBR_TEX NORMAL MyShip\hull_n.png
+PBR_NORMAL_GREENUP 1
+\end{lstlisting}
+
+\noindent
+PBR materials are lit by the sun, the local lights and the vessel's environment map, which is filtered for their roughness. BLEND and transmitting materials are drawn after the rest of the scene, over a copy of it that transmitting materials refract. In the virtual cockpit, PBR materials have no environment reflections, like the legacy materials there.
+
+
+\subsubsection{How materials take part in the effects}
+\label{sssec:vk_mtrl_fx}
+\textbf{Reflections.} A vessel surface reflects what is on screen where it reflects the environment map: materials with a REFLECT colour, a FRESNEL reflection or a \_refl map, Metalness materials and PBR materials. Where the ray finds nothing on screen, the environment map is used as before. The screen reflection fades out as the surface gets rougher, between a PBR roughness of about 0.45 and 0.6 (with the default shader, a smoothness of about 0.55 to 0.4). Base tiles and the base objects under shadows (runways, landing pads, roads) reflect the scene at grazing angles as a dry surface; water is described in section \ref{ssec:vk_planets}. Exhaust flames, plumes and particle streams are not reflected.\\
+\\
+\textbf{Indirect light.} The global illumination takes the light of sunlit and sky-lit surfaces on screen and passes one bounce of it to the surfaces near them, tinted by their albedo: the texture times the material's diffuse colour for legacy materials, the base colour times (1 $-$ metalness) for PBR and Metalness materials, the material's diffuse colour alone for groups with flag 0x10. Fully lit groups (flag 0x04) receive none. The light a surface passes on is limited by its albedo and the light that falls on it, so emission maps and emissive colours do not light their surroundings; use local lights (AddPointLight, AddSpotLight) for lamps and floodlights.\\
+\\
+\textbf{Emission and night.} Emission maps and emissive colours glow in the same way by day and by night; the night look of the client changes city lights and streamed buildings only, not vessels or base meshes. The automatic exposure scales the 3D scene, emission included, so check emissive content with AutoExposure on and off. The client uses the value 0.75 in the fourth component of a material's SpecialFX property to mark streamed buildings; vessel modules should not set it.\\
+\\
+\textbf{See-through groups.} Ambient occlusion, reflections, indirect light, height fog, volumetric clouds and plumes work from a depth image of the scene drawn before them. Some groups are not in it, and these effects look through them:
+
+\begin{itemize}
+\item groups with flag 0x01 or 0x02;
+\item legacy groups drawn with a material opacity below 0.5 (untextured groups, or every group of a mesh whose material opacity modulates its textures), and in textured groups the texels whose opacity is below 0.75;
+\item PBR groups in BLEND mode or with transmission, and in MASK mode the texels below the cutoff.
+\end{itemize}
+
+\noindent
+Mesh group flags (section \ref{sec:mesh_file}) as the client's effects read them:
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.11\textwidth}|p{0.81\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Flag} & \textbf{Effect on the VulkanClient's rendering}\\
+	\hline\rule{0pt}{2ex}
+	0x01 & No ground shadow, and also no scene shadow, no part in the screen depth and none in the re-entry plasma's hull.\\
+	\hline\rule{0pt}{2ex}
+	0x02 & Not drawn, and in none of the effects.\\
+	\hline\rule{0pt}{2ex}
+	0x04 & Not lit: receives no shadows and no indirect light.\\
+	\hline\rule{0pt}{2ex}
+	0x10 & The texture's colour is left out; indirect light uses the material's diffuse colour.\\
+	\hline\rule{0pt}{2ex}
+	0x20 & Texels with an opacity below 0.75 cast no scene shadow (trees, fences). Without this flag a textured legacy group casts a solid shadow.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+Legacy glass casts a shadow like any other group. Give window and canopy groups flag 0x01 when they should not cast one; PBR materials with transmission cast none by themselves.
+
+
+\subsection{Shadows}
+\label{ssec:vk_shadows}
+
+\subsubsection{Scene shadows}
+With SceneShadows on, the client draws the sun's shadows of the scene near the camera from four shadow maps centred on the camera, 160 m, 1.2 km, 9 km and 90 km across. The nearest map resolves about 8 cm. While the vessel the camera looks at (or the focus vessel) casts its shadow within 30 km of the camera, it and the vessels touching it (up to 80 m in radius, at most eight) get a fifth map of their own, fitted around them with texels down to 5 mm; it is used only while its texels are finer than those of the nearest of the four. Shadows are sharp at the contact point and soften with the distance from their caster. They fade out between 30 and 42 km from the camera, where the terrain's horizon shadows take over. Scene shadows are drawn while
+
+\begin{itemize}
+\item the camera's nearest body is drawn with surface elevation (tiles in the 2016 format, section \ref{ssec:planetery_tex}, and the Launchpad's \textit{Surface elevation} option),
+\item the camera is less than 42 km above the ground,
+\item and the sun is higher than 3$^{\circ}$ below the horizon at the point under the camera.
+\end{itemize}
+
+\noindent
+Casters, also outside the view:
+
+\begin{itemize}
+\item the terrain relief;
+\item the meshes a vessel shows in the external view (MESHVIS\_\allowbreak EXTERNAL), also while the camera is in its cockpit. Groups with flag 0x01 or 0x02 and PBR materials with transmission cast none; groups with flag 0x20 and PBR materials in MASK or BLEND mode cast through their texture's opacity (section \ref{sssec:vk_mtrl_fx});
+\item the structures of surface bases that stand on the ground, with the same group shadow settings as their ground shadows (section \ref{ssec:vk_bases});
+\item streamed buildings and trees, within the three nearer maps.
+\end{itemize}
+
+\noindent
+A vessel or base structure in the shadow of a ridge has no direct sunlight and casts no shadow. Receivers are the terrain, base tiles, trees, streamed buildings and every lit group of vessel and base meshes, in all three shaders; fully lit groups (flag 0x04) are not shadowed. The virtual cockpit interior receives no scene shadows; the vessel's own self-shadow map (Self Shadows in the Advanced Setup dialog) still works there and on the exterior, where the darker of the two shadows counts.
+
+
+\subsubsection{Ground shadows}
+Where the scene shadows draw a vessel's or a base structure's shadow (within 30 km of the camera), the client draws no ground shadow for it. Elsewhere, and with SceneShadows off, the ground shadows are drawn as before: each vessel's meshes are projected onto the ground plane under it, without the groups with flag 0x01 or 0x02 and without PBR materials with transmission, while the vessel is less than 100 times its size above the ground and the sun is more than about 4$^{\circ}$ above the horizon; the planet's ShadowDepth sets their darkness. A ground shadow fades out as the sun goes behind a ridge.
+
+
+\subsection{Surface bases}
+\label{ssec:vk_bases}
+Orbiter puts a base's generic objects (BLOCK, HANGAR, TANK and the other generated objects, and MESH objects without OWNMATERIAL) into a few meshes shared by the whole base, one per texture: one set for the objects under the ground shadows (UNDERSHADOWS, such as pads, runways and roads) and one for the structures over them. A MESH object with OWNMATERIAL stays a mesh of its own. For the VulkanClient this means:
+
+\begin{itemize}
+\item \textbf{Shadows.} The structures over the ground shadows cast scene shadows and ground shadows; the objects under the shadows cast none and receive them. A structure casts its scene shadow with its ground shadow settings: a MESH object needs SHADOW or OWNSHADOW, and with OWNSHADOW the groups with bit 0 of their FLAG set cast none (section \ref{ssec:surface_bases}).
+\item \textbf{Structures under the terrain cast no shadow.} A structure whose top lies under the loaded terrain at the four corners and the centre of its bounding box's top casts neither a scene shadow nor a ground shadow. The client tests this once a second as the terrain loads, and its log (Modules/VulkanClient/D3D9ClientLog.html) reports how many of a base's structures are buried. The shared meshes span the whole base and are seldom wholly buried; their ground shadows are hidden where the terrain lies more than 2 m above the base's ground plane. A building that stands partly below the terrain thus loses its ground shadow there: flatten the ground under the base (\textit{Terrain Flattening} in the VulkanClient manual) or set its objects on the terrain.
+\item \textbf{Sunlight.} A structure in the shadow of a ridge loses its direct sunlight, and its shadows fade with it.
+\item \textbf{Reflections.} Base tiles and the objects under the shadows reflect the scene at grazing angles, as a dry surface. Base meshes have no environment map of their own.
+\item \textbf{Streamed buildings and trees.} On Earth, a streamed building is left out when a structure of a base (a steep part of its meshes more than 1.5 m tall) lies inside its outline or within 6 m of its outline or centre, so that the base's own models show alone. No tree grows within 6 m of any part of a base, pads, runways and roads included.
+\item \textbf{glTF objects.} A MESH object can be a glTF file (section \ref{sssec:vk_gltf}); give it OWNMATERIAL to keep its materials. Material files (section \ref{sssec:vk_gcmtrl}) do not apply to base meshes.
+\end{itemize}
+
+
+\subsubsection{Streamed buildings}
+Below 15 km the Earth stream sets the buildings of OpenStreetMap within a few kilometres of the camera on the terrain (see \textit{Earth streaming} in the Orbiter User Manual). The client draws them with the textures in Textures/Bldg, which Orbiter's build draws with its own tool (Utils/bldgtex); nothing is downloaded for them. A texture pack can replace these files; it must keep their sizes, their layout and the 8-pixel gutters around each area, and give each file a full mipmap chain.
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.2\textwidth}|p{0.17\textwidth}|p{0.55\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{File} & \textbf{Format} & \textbf{Content}\\
+	\hline\rule{0pt}{2ex}
+	facade.dds & 4096$\times$4096 DXT1 & Wall atlas of 4 $\times$ 4 regions of 1024 pixels, region r at x = 1024 (r mod 4), y = 1024 (r div 4). Regions 0 to 13 hold the 14 facade styles, regions 14 and 15 the pitched roof tiles.\\
+	\hline\rule{0pt}{2ex}
+	facade\_emis.dds & 2048$\times$2048 DXT1 & The light of the windows at night (RGB).\\
+	\hline\rule{0pt}{2ex}
+	facade\_norm.dds & 2048$\times$2048 DXT1 & Normal map of the atlas.\\
+	\hline\rule{0pt}{2ex}
+	facade\_nite.dds & 2048$\times$2048 DXT5 & Used instead of facade\_emis.dds with NightLook: RGB the colour of each window's light, alpha the dusk progress at which that window comes on (0.05 to 0.85; 0 for wall and windows that stay dark).\\
+	\hline\rule{0pt}{2ex}
+	roof.dds & 1024$\times$1024 DXT1 & Flat roofs, repeating every 16 m.\\
+	\hline\rule{0pt}{2ex}
+	roof\_norm.dds & 1024$\times$1024 DXT1 & Normal map of the flat roofs.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+A facade region holds, from its top: an 8-pixel gutter, six upper floors of 122 pixels (y = 8 to 740), a plain band of 96 pixels (y = 748 to 844) and the ground floor of 164 pixels (y = 852 to 1016). Across, it holds eight bays of 126 pixels from x = 8. Walls repeat the upper floors in blocks of up to six and the bays in blocks of up to eight; the gables of pitched roofs use the plain band. A roof region holds two variants of 1008 $\times$ 496 pixels, at y = 8 and y = 520, each covering 12 m along the ridge and 6 m down the slope. The style of a building is picked from its height h and footprint area A: houses (h $\leq$ 9 m, A $\leq$ 400 m$^2$) use styles 12, 3, 4 and 0; low industrial buildings (h $\leq$ 14 m, A $\geq$ 2000 m$^2$) 13 and 6; towers (h > 45 m) 8, 9, 10, 11 and 7; all others 0 to 7, 10 and 11.
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.08\textwidth}|p{0.3\textwidth}|p{0.15\textwidth}|p{0.15\textwidth}|p{0.16\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Style} & \textbf{Look} & \textbf{Floor [m]} & \textbf{Bay [m]} & \textbf{Ground floor [m]}\\
+	\hline\rule{0pt}{2ex}
+	0 & red brick, shops & 3.2 & 3.4 & 4.0\\
+	\hline\rule{0pt}{2ex}
+	1 & brown brick & 3.1 & 3.2 & 3.6\\
+	\hline\rule{0pt}{2ex}
+	2 & yellow brick, shops & 3.2 & 3.4 & 4.0\\
+	\hline\rule{0pt}{2ex}
+	3 & white render & 3.0 & 3.2 & 3.0\\
+	\hline\rule{0pt}{2ex}
+	4 & ochre render & 3.0 & 3.2 & 3.0\\
+	\hline\rule{0pt}{2ex}
+	5 & grey concrete panels & 2.8 & 3.0 & 2.8\\
+	\hline\rule{0pt}{2ex}
+	6 & beige concrete & 2.9 & 3.3 & 3.2\\
+	\hline\rule{0pt}{2ex}
+	7 & prewar stone & 3.4 & 3.0 & 4.5\\
+	\hline\rule{0pt}{2ex}
+	8 & blue-green glass & 3.8 & 3.0 & 5.0\\
+	\hline\rule{0pt}{2ex}
+	9 & dark glass & 3.8 & 3.0 & 5.0\\
+	\hline\rule{0pt}{2ex}
+	10 & ribbon windows & 3.7 & 3.6 & 4.2\\
+	\hline\rule{0pt}{2ex}
+	11 & dark metal & 3.6 & 3.4 & 4.5\\
+	\hline\rule{0pt}{2ex}
+	12 & house siding & 2.8 & 3.4 & 2.8\\
+	\hline\rule{0pt}{2ex}
+	13 & industrial & 5.0 & 6.0 & 5.0\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+By day the windows give no light. Without NightLook, the buildings' windows come on in groups as the sun at their place goes from 2$^{\circ}$ above to 6$^{\circ}$ below the horizon, each group at its own time. With NightLook each window comes on by itself, when the dusk progress of its group passes the window's value in the alpha channel of facade\_nite.dds. The smaller mipmaps of that map should keep single windows rather than average them, or distant windows turn into an even glow.
+
+
+\subsection{Exhausts, particle streams and re-entry}
+\label{ssec:vk_plumes}
+With VolPlumes on, the client draws engine exhausts, smoke and the plasma of re-entry as lit volumes, and hulls heated by re-entry glow. It builds them from what vessels already define: the exhausts of AddExhaust (section \textit{Defining exhaust flames} of the spacecraft chapter), the particle streams of AddExhaustStream, AddParticleStream and AddReentryStream, and the vessel's meshes. A vessel needs no change for them; the optional file of section \ref{sssec:vk_plumecfg} tunes them per vessel class.
+
+
+\subsubsection{Volumetric exhaust plumes}
+Every exhaust with a level above 0 becomes a volume, from the exhaust's position, direction, length (lscale), width (wscale), level and modulation (the flicker of EXHAUSTSPEC::modulate), and from its thruster:
+
+\begin{itemize}
+\item The nozzle's exit radius comes from the thruster's maximum vacuum thrust and the pressure dependency of its specific impulse (the isp\_ref and p\_ref of CreateThruster), which together give the exit area in Orbiter's thrust model. It is kept between 0.3 and 1.5 times the exhaust's width. A thruster whose specific impulse does not depend on pressure gets 0.6 times the width; the texture class (below) 0.8 times the width.
+\item The plume reaches about the exhaust's length at full level, and up to 2.5 times that in vacuum. The ambient pressure shapes it: a narrow jet with shock diamonds near sea level, a wide faint cone in vacuum.
+\item The colour and smoke come from a propellant class.
+\end{itemize}
+
+\noindent
+The class is taken from the vessel's plume file when it names one, otherwise from the first of these rules that matches (specific impulse Isp in vacuum, in m/s; thrust F in vacuum):
+
+\begin{enumerate}
+\item an exhaust without a thruster, or Isp below 2300 or above 5000: texture;
+\item F below 50 kN and Isp below 3500: hypergolic;
+\item Isp of 4000 or more: hydrolox;
+\item Isp from 3450 to 4000: methalox;
+\item Isp from 2900 to 3450: kerolox;
+\item Isp from 2300 to 2900: solid.
+\end{enumerate}
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.14\textwidth}|p{0.42\textwidth}|p{0.17\textwidth}|p{0.15\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Class} & \textbf{Look} & \textbf{Smoke tail in air} & \textbf{Ground cloud}\\
+	\hline\rule{0pt}{2ex}
+	hydrolox & Pale blue, nearly transparent flame with bright shock diamonds & none & steam\\
+	\hline\rule{0pt}{2ex}
+	methalox & Blue flame with pinkish shock diamonds & none & steam\\
+	\hline\rule{0pt}{2ex}
+	kerolox & Bright orange, sooty flame & dark grey & steam\\
+	\hline\rule{0pt}{2ex}
+	hypergolic & Orange-brown, translucent flame & thin, brownish & steam\\
+	\hline\rule{0pt}{2ex}
+	solid & Glowing white-orange flame & dense, white & steam\\
+	\hline\rule{0pt}{2ex}
+	texture & The exhaust's own texture (the tex of AddExhaust, or Orbiter's Exhaust.dds): its flame strip and its glow, from the same parts of the texture as the legacy flame, laid onto the volume & none & dust\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+Only the texture class uses an add-on's exhaust texture. An engine with a custom flame texture and a specific impulse in the ranges above is drawn with the colours of its propellant class, unless its plume file sets it to texture.\\
+\\
+Exhausts smaller than one pixel on screen (by their exit radius) stay legacy flames; between one and three pixels the two are blended. Neighbouring exhausts of one vessel with the same class and direction merge into one plume, and the 32 largest plumes on screen are drawn as volumes, the others as legacy flames. The legacy flame of an exhaust drawn as a volume is not drawn. Plumes light the smoke around them, but not meshes or the ground: engine light on the vessel and the pad still comes from the vessel's local lights (AddPointLight, AddSpotLight), as before. Height fog and the volumetric clouds cover plumes behind them.\\
+\\
+\textbf{Ground clouds.} When a plume reaches the ground in air, a cloud of steam or dust rises where it hits: while the vessel is less than 300 m above the ground, the ambient pressure is above 10 kPa, the plume points within about 78$^{\circ}$ of straight down and the ground lies within 2.5 plume lengths of the nozzle. More thrust gives more cloud, up to 384 puffs per vessel; each lasts about 30 s, rises and drifts with the wind. Steam is white, dust tan.\\
+\\
+\textbf{Heat haze.} With HeatHaze on, the air behind the 32 nearest exhausts above 2\,\% level shimmers while the camera is in an atmosphere. The shimmer follows the plume's shape, or the exhaust's length and width when there is no plume.
+
+
+\subsubsection{Plume files}
+\label{sssec:vk_plumecfg}
+A vessel class can give its exhausts their classes, and tune its smoke, its ground cloud and the heating of its hull, in Config/GC/Plume/<class>.cfg, where <class> is the class name with each / or $\backslash$ replaced by \_. The file name must match the class name exactly, including upper and lower case. Orbiter comes with plume files for Atlantis, its boosters (Atlantis\_SRB) and the Delta-glider.
+
+\begin{lstlisting}[language=OSFS]
+; Config/GC/Plume/MyRocket.cfg
+EXHAUST main kerolox          ; first stage engines
+EXHAUST 4-7 hypergolic pe=20  ; four vernier engines, 20 kPa exit pressure
+EXHAUST att hypergolic        ; attitude thrusters
+EXHAUST 8 solid               ; escape tower motor
+SMOKE 1.5
+GROUND steam
+PUFFS 1
+HEAT nose=1.5 lag=40          ; blunt nose, thick heat shield
+\end{lstlisting}
+
+\noindent
+Each line holds a keyword and its values; a semicolon starts a comment. Keywords may be written in any case; class names and the values of GROUND are lower case. Unknown keywords are ignored; an EXHAUST line with an unknown class is reported in the client's log and skipped. When several EXHAUST lines select an exhaust, the last one counts.
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |>{\raggedright\arraybackslash}p{0.32\textwidth}|p{0.6\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Line} & \textbf{Meaning}\\
+	\hline\rule{0pt}{2ex}
+	EXHAUST <sel> <class>\newline [pe=<p>] & Sets the class of the selected exhausts: hydrolox, methalox, kerolox, hypergolic, solid or texture. pe sets the nozzle exit pressure in kPa, which shapes the plume against the ambient pressure. Default: the class from the rules above, and an exit pressure estimated from the specific impulse's pressure dependency (between 3 and 120 kPa; 40 kPa for thrusters above 300 kN and 8 kPa for others when the specific impulse does not depend on pressure).\\
+	\hline\rule{0pt}{2ex}
+	SMOKE <f> & Scale of the smoke tail of the kerolox, hypergolic and solid classes, 0 to 2. Default 1. A vessel that has its own diffuse particle stream gets 0.3 times this tail, since its stream adds the smoke.\\
+	\hline\rule{0pt}{2ex}
+	GROUND <type> & The ground cloud: steam, dust or none; other values count as steam. Default: dust for the texture class, steam for the others.\\
+	\hline\rule{0pt}{2ex}
+	PUFFS <0|1> & Which of the vessel's diffuse particle streams become lit puffs (section \ref{sssec:vk_puffs}): 1 all of them, 0 none. Default: those with Orbiter's default particle texture.\\
+	\hline\rule{0pt}{2ex}
+	HEAT [off|on] [nose=<m>]\newline [emis=<e>] [lag=<s>]\newline [glow=<g>] & The re-entry hull heating of the class (section \ref{sssec:vk_heat}). Default: on, with the defaults given there.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+Selectors of EXHAUST:
+
+\begin{itemize}
+\item \textbf{<i>}, \textbf{<i>-<j>}: exhaust index i, or i to j, counted from 0 in the order of the vessel's exhausts (the index of GetExhaustSpec).
+\item \textbf{*}: all exhausts.
+\item \textbf{main}, \textbf{retro}, \textbf{hover}: the exhausts whose thruster belongs to the vessel's main, retro or hover thruster group (THGROUP\_MAIN, THGROUP\_RETRO, THGROUP\_HOVER).
+\item \textbf{att}: the exhausts whose thruster belongs to one of the attitude thruster groups (THGROUP\_\allowbreak ATT\_\allowbreak PITCHUP to THGROUP\_\allowbreak ATT\_\allowbreak BACK).
+\end{itemize}
+
+\noindent
+A vessel class without a plume file gets the classes of the rules above, smoke scale 1, the default ground cloud, puffs from its default-texture streams and hull heating with the defaults. The client's log (Modules/VulkanClient/D3D9ClientLog.html) has a line for each plume file it reads, with its number of EXHAUST rules, and for the first frames with lit engines a line per exhaust with its level, class, exit radius, size on screen and distance, to check what an engine gets.
+
+
+\subsubsection{Particle streams}
+\label{sssec:vk_puffs}
+With VolPlumes on, every DIFFUSE particle stream (smoke, vapour and contrails) that uses Orbiter's default particle texture (tex = NULL in PARTICLESTREAMSPEC) is drawn as lit, round puffs: lit by the sun and the sky, shadowed by the column of puffs toward the sun, lit by nearby plumes and covered by fog. Each particle keeps its size, growth, lifetime and opacity from the stream's specification; only the drawing changes. A stream with its own texture is drawn as before, unless the vessel's plume file says PUFFS 1; then it too becomes puffs, tinted with the mean colour of its texture. PUFFS 0 keeps all of the vessel's streams as billboards. EMISSIVE streams and re-entry streams never become puffs.\\
+\\
+\textbf{Soft billboards.} The streams that stay billboards keep their texture, colour, size and opacity, but in the main view they no longer cut a hull, a pad or the ground along a hard line. Each billboard is taken as a sphere of the particle's size: its opacity at a pixel is 0 where the surface behind it lies in the billboard's plane and rises to full where that surface lies beyond the far side of the sphere. A re-entry stream starts at its vessel's centre, inside the hull, so its particles are faded only from the far side of their sphere on: they cover what lies beyond the sphere and do not veil the part of the hull inside it. Custom cameras, environment maps and the particles' ground shadows show the billboards as before, and with VolPlumes off all streams are drawn as before.
+
+
+\subsubsection{Re-entry plasma}
+A vessel glows in a plasma sheath when it flies fast through an atmosphere; it needs no re-entry particle stream for it. The plasma starts when the energy flux of the oncoming air (dynamic pressure times airspeed) passes about 10$^6$ W/m$^2$ at more than 3 km/s, near 85 km for a vessel at orbital speed, and is at full strength at 10$^7$ W/m$^2$ and 6 km/s.
+
+\begin{itemize}
+\item In an atmosphere with a gas constant within 15\,\% of air's, its colour follows the airspeed: orange up to about 9 km/s, pink at 10 km/s and violet above, at the speeds of a return from the Moon. In other atmospheres it is pink-violet.
+\item Its shape follows the vessel's meshes seen along the airflow (the groups that cast shadows), for the two largest plasma vessels on screen when their radius on screen is at least 48 pixels; the others get an ellipsoid around their mesh bounds. Docked and attached vessels glow as one body. At most four vessels glow at a time.
+\item With VolPlumes on, Orbiter's re-entry flame (the texture of SetReentryTexture) is replaced by the plasma: up to four vessels fast enough in an atmosphere get it at a time, re-entry particle stream or not, and any further ones keep the old flame. Below the plasma's onset (under about 3 km/s) only the hull glow shows. The re-entry particle streams stay billboards, soft against the hull (section \ref{sssec:vk_puffs}).
+\end{itemize}
+
+
+\subsubsection{Re-entry hull heating}
+\label{sssec:vk_heat}
+With VolPlumes on, the hull of every vessel that flies fast through an atmosphere also glows from its own temperature, as a hot heat shield does. The client computes the heating of the vessel's skin from its flight state and its meshes; a vessel needs no change for it, and an optional HEAT line in its plume file tunes it.
+
+\begin{itemize}
+\item \textbf{Where it glows.} The nose and the leading edges of wings and fins that face the oncoming air are hottest and glow yellow-white; the windward belly glows dull red to orange, fading toward the sides; the lee side stays dark. The pattern follows the mesh: the point of the hull furthest upstream is the stagnation point, and the smoothed vertex normals give the angle of each surface to the flow. Normal maps are not used for it. The leading edges are found once per mesh from its geometry: an outside edge (both faces open to the sky) where the surface turns through 80$^{\circ}$ or more within 1.5\,\% of the mesh size, such as a wing's or fin's leading edge, a nose or a tip; a ridge between two panels is not one. Vertices closer than 1\,mm count as one, so a hull split into groups still shows its edges where the groups meet. An edge glows as a line only while the oncoming air divides on it: when the vessel turns a face nearly head-on into the flow, the line moves onto that face and the edge falls to the face's heating.
+\item \textbf{When.} The heating follows the density and the airspeed (Sutton-Graves stagnation heating, for air, carbon dioxide or hydrogen-helium atmospheres by the gas constant), and the skin temperature follows the heating with a lag: it builds up over tens of seconds and falls slowly after the hottest part of the entry, so the hull keeps glowing after the plasma has faded. At 7.5 km/s and 75 km, Atlantis' nose reaches about 1700 K. Nothing is drawn while even the hottest parts of a hull are below 650 K.
+\item \textbf{Brightness.} The glow is the light of a body at that temperature, scaled to the scene, so it shows mostly at night and on the nose and edges by day, and it is subject to the exposure like the rest of the scene. Dark surfaces glow more than light ones (the visible emissivity is taken as one minus the albedo, at least 0.2), so markings stay visible.
+\item \textbf{Which groups.} The lit groups of the meshes a vessel shows in the external view, in all three shaders, in the main view, custom cameras and environment maps. The virtual cockpit interior does not glow. The legacy heat glow of Metalness materials (the SpecialFX property and the \_heat map) is kept, and the hull glow adds to it.
+\end{itemize}
+
+\noindent
+The HEAT line of the plume file (section \ref{sssec:vk_plumecfg}) tunes the heating of a vessel class:
+
+\begin{lstlisting}[language=OSFS]
+HEAT nose=0.4 emis=0.8 lag=30 glow=1.5
+\end{lstlisting}
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.2\textwidth}|>{\raggedright\arraybackslash}p{0.3\textwidth}|>{\raggedright\arraybackslash}p{0.42\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Value} & \textbf{Default (range)} & \textbf{Meaning}\\
+	\hline\rule{0pt}{2ex}
+	off, on & on & The word off turns the hull heating off for this class, for add-ons that draw their own glow; on turns it on again after an earlier off.\\
+	\hline\rule{0pt}{2ex}
+	nose=<m> & 0.03 times the largest extent of the hull, at least 0.25 and at most 3 m (0.05 to 20 m) & Nose radius. A larger radius widens the hot region around the stagnation point and lowers its temperature, as the inverse eighth root of the radius; the heating of the belly does not depend on it.\\
+	\hline\rule{0pt}{2ex}
+	emis=<e> & 0.85 (0.05 to 1) & Emissivity of the heat shield: how well it radiates its heat away. A lower value runs hotter.\\
+	\hline\rule{0pt}{2ex}
+	lag=<s> & 25 s (1 to 600 s) & Time constant of the skin temperature at 1500 K: the heat capacity of the shield. Hotter skin follows faster, cooler skin slower; with 25 s the skin cools from 1500 to 1000 K in about 80 s.\\
+	\hline\rule{0pt}{2ex}
+	glow=<g> & 1 (0 to 10) & Brightness factor of the glow; 0 draws none. The temperatures are not changed.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+Values are written as name=value without spaces; names may be written in any case. Values out of range are clamped, and values the client does not understand are reported in its log and skipped. Several HEAT lines apply one after the other. The log has a line for each plume file with a HEAT line, with the values it uses, a line when a vessel first glows (its nose radius, emissivity, lag and glow), and while it glows a line every 2 s of simulation time, up to 60 in all, with its altitude, airspeed, angle of attack and sideslip, stagnation heating, equilibrium temperature and the temperatures of its heating levels.
+
+
+\subsection{Planets and moons}
+\label{ssec:vk_planets}
+\textbf{Atmosphere configuration.} The client keeps its atmosphere settings of a body in Config/GC/<name>.atm.cfg (for Earth, the file chosen as \textit{Earth visual config} in the Advanced Setup dialog); the Vulkan Atmospheric Controls dialog writes them. The Shader line of this file selects the body's surface shader, and with it the effects the body can have:
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.12\textwidth}|p{0.8\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Shader} & \textbf{Use}\\
+	\hline\rule{0pt}{2ex}
+	Earth & Bodies with an atmosphere and water or clouds. The only shader with water reflections, the water effects, night lights and cloud shadows.\\
+	\hline\rule{0pt}{2ex}
+	Mars & Bodies with an atmosphere, without water or night lights (Mars, Venus, Titan).\\
+	\hline\rule{0pt}{2ex}
+	Moon & Bodies without an atmosphere.\\
+	\hline\rule{0pt}{2ex}
+	Giant & Gas giants. No volumetric clouds and no height fog.\\
+	\hline\rule{0pt}{2ex}
+	Auto & The default when the line is missing: Earth for a body with an atmosphere and specular ripples or a cloud layer, Giant for other atmosphere bodies more than 6000 km in radius, Mars for the remaining ones with an atmosphere, Moon for the rest.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+When the file is missing, the client uses Config/GC/Mercury.atm.cfg, whose shader is Moon. A planet add-on with an atmosphere therefore needs a file of its own: copy the file of a similar body to the planet's name, check its Shader line, and tune it with the Atmospheric Controls dialog.\\
+\\
+\textbf{Surface tiles.} The new ground effects need the tile format of Orbiter 2016 (section \ref{ssec:planetery_tex}): the horizon shadows, the scene shadows and the height fog work from its elevation tiles, and the volumetric clouds and the height fog use the atmospheric scattering that the client computes only for bodies drawn from such tiles.\\
+\\
+\textbf{Clouds.} The cloud tiles (Cloud layer, CloudFormat = 2) hold the cloud cover in their alpha channel; their colour is white. The client uses them in three ways:
+
+\begin{itemize}
+\item \textbf{Seamless layer} (CloudAtlas). The client joins the tiles of one file level into a single texture for the far cloud layer and its shadows. It takes the finest of levels 7, 6 and 5 that has at least half of its tiles and fits the graphics card's largest texture: level 7 has 8 rows of 16 tiles and makes 8192 $\times$ 4096 pixels. Missing tiles are filled from the nearest coarser level that has them. The tiles must be 512 $\times$ 512 pixels. Tiles finer than the atlas level, near the camera, are drawn as before. A layer with the same alpha everywhere gets no atlas. Loose tile files are looked for again every 30 seconds, so tiles added during the session (as the Earth stream adds them) are taken in. For a planet add-on, provide levels 5 to 7 complete.
+\item \textbf{Volumetric clouds} (VolClouds). On a body with an atmosphere, a cloud layer whose CloudAlt is below 20 km and a shader other than Giant, the layer near the camera becomes a volume from 1 km below CloudAlt to 2 km above it. Its cover comes from the finest loaded cloud tiles, its detail from noise. It is drawn within about 60 km of the camera, fading from 35 km, while the camera is no more than 10 to 15 km above CloudAlt.
+\item \textbf{Cloud shadows.} The 2D cloud shadows (CloudShadowDepth, the Launchpad's \textit{Cloud shadows}) are drawn as before. With VolCloudShadows, the volumetric clouds cast their own shadows in the direction of the sun, and the 2D shadow fades out under them within 35 to 60 km of the camera.
+\end{itemize}
+
+\noindent
+\textbf{Water.} The water effects use the water mask of the Mask layer, on bodies with the Earth shader and with the Launchpad's \textit{Specular water reflections}. WaterFx adds two layers of waves, glitter that widens with the distance, a sky reflection that depends on the view angle (also seen from orbit), a deeper water colour and a line of foam along coasts within 8 km of the camera. The foam appears where the mask has land within about 40 m of the water, read from the mask at about 20 m resolution, so it follows the mask's coastline. Screen-space reflections on water also need specular ripples (see section \ref{ssec:vk_switches}) and a camera below 30 km.\\
+\\
+\textbf{Night lights.} The night lights are the colour channels of the Mask layer, drawn on bodies with the Earth shader and the Launchpad's \textit{Planet night lights}. With NightLook, the client draws them near the ground as lamps along a street pattern, with dark blocks between them, whose number follows the brightness of the map; seen from higher up, the map's own glow takes over. On Earth, the land cover tiles of the stream also dim the lamps outside built-up areas.\\
+\\
+\textbf{Height fog.} With HeightFog on, fog and haze form on every body with an atmosphere and elevation tiles, except with the Giant shader, while the camera is below 45 km; they fade out between 12 and 30 km above the mean ground. The client makes fog maps from the elevation tiles around the camera. The fog pools deep in valleys; on flat ground it forms a shallow layer that breaks into patches a few kilometres across, in a new pattern each day. A fog bank can lie over open water, thinning toward the shore and over sheltered water such as lagoons; the client finds water as ground at sea level (within 0.5 m) and as flat lakes. The fog is thickest around dawn and on long nights, changes from day to day, and is shadowed by ridges and clouds. Its humidity follows the planet's SpecularRipple flag together with the Launchpad's \textit{Specular ripples} option: without them the body counts as dry, with a quarter of the valley fog and haze and no fog over sea or lakes; with them, the more water the area around the camera holds, the denser and more frequent the fog.\\
+\\
+\textbf{Trees.} The 3D trees grow only where the land cover tiles of the Earth stream show forest or shrub; other bodies have none.
+
+
+\subsection{API additions}
+\label{ssec:vk_api}
+The Linux edition adds these functions to OrbiterAPI.h (Orbitersdk/include). They do not exist in the Windows version, so a module that is built for both should keep their use to its Linux build (OAPI\_TILESTREAM\_BLDG is defined where the streamed building functions exist).
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |>{\raggedright\arraybackslash}p{0.42\textwidth}|p{0.5\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Function} & \textbf{Description}\\
+	\hline\rule{0pt}{2ex}
+	DWORD oapiAddMeshTexture (MESHHANDLE hMesh, SURFHANDLE tex) & Adds tex to the texture list of a mesh and returns its index for MESHGROUP::TexIdx, or the index it already has there; (DWORD)$-$1 if hMesh or tex is NULL. The mesh holds its own reference to the texture and releases it with the mesh.\\
+	\hline\rule{0pt}{2ex}
+	const char *oapiMeshMaterialPbr (MESHHANDLE hMesh, DWORD idx) & The PBR record of material idx of a glTF mesh, as the lines of section \ref{sssec:vk_pbr} separated by line feeds; NULL if the material has none. For graphics clients and tools that draw PBR materials.\\
+	\hline\rule{0pt}{2ex}
+	std::string oapiResolvePath (const char *path) & The spelling on disk of a path written as in Orbiter's files ($\backslash$ between folders, any case). A part that matches no file is kept as given, so that new files can be written. Linux file names are case sensitive while Orbiter's names are not: use it before opening an add-on's files with fopen or std::ifstream.\\
+	\hline\rule{0pt}{2ex}
+	bool oapiTileStreamEnabled (OBJHANDLE hBody) & TRUE if the planet tile stream serves the body (Earth, while streaming is on).\\
+	\hline\rule{0pt}{2ex}
+	int oapiTileStreamWant (OBJHANDLE hBody, int lvl, int ilat, int ilng, int flags) & Asks the stream for the files of a tile (lvl: file level). flags: 1 the file failed to load, 2 it was loaded from the cache, 4 only its elevation file is wanted. Returns 1 when the file is there, 0 when it has been requested, $-$1 when it never will be.\\
+	\hline\rule{0pt}{2ex}
+	int oapiTileStreamElev (OBJHANDLE hBody) & The last file level for which the stream makes elevation files; 0 when it makes none for the body or the session does not stream (streaming off, or no graphics client). While it is above 0, the client and the core, each when its tile load flags include loose files, do not read a tile above level 4 of the elevation archive (Elev.tree) whose parent tile (past that level, whose ancestor at that level) has a loose elevation file, and they apply the Elev\_mod archive only over the archive's own elevation.\\
+	\hline\rule{0pt}{2ex}
+	int oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax) & Writes up to nmax finished tiles as (lvl, ilat, ilng) triples into keys (3 nmax ints) and returns their number. Each tile is reported once, to the first caller; the graphics client uses it to load new tiles.\\
+	\hline\rule{0pt}{2ex}
+	int oapiTileStreamBldgWant (OBJHANDLE hBody, int x, int y) & Asks for the streamed buildings of a zoom-14 Web Mercator tile: x counts east from 180$^{\circ}$ W, y south from the top. Returns 1 when the tile's file is there, 0 when it has been requested, $-$1 when it never will be (no buildings for this body, or buildings off).\\
+	\hline\rule{0pt}{2ex}
+	TSBLDGMESH *oapiTileStreamBldgLoad (OBJHANDLE hBody, int x, int y) & Reads the tile's buildings; NULL when the file is not there. The result belongs to the caller.\\
+	\hline\rule{0pt}{2ex}
+	void oapiTileStreamBldgFree (TSBLDGMESH *mesh) & Frees the result of oapiTileStreamBldgLoad.\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+\noindent
+A TSBLDGMESH holds the tile (z, x, y), the numbers of buildings, vertices and indices (nb, nv, ni) and three arrays. b has a TSBLDG for each building: its anchor (lat, lng, in radians), its base and top height above the ground (hmin, hmax, in metres, from OpenStreetMap), and the ranges of its vertices (v0, nv) and indices (i0, ni). vtx has six floats per vertex: the position in metres from the building's anchor (x east, y up, z north) and the normal. idx holds triangles, clockwise seen from the front, with indices relative to the building's v0.\\
+\\
+The client's own interface for plugins, gcCoreAPI.h (custom cameras, render surfaces, Sketchpad extensions, custom windows), is described in the VulkanClient manual. What a plugin draws through its exterior render callback (GENERICPROC\_RENDER\_EXTERIOR) is drawn after the screen-space effects: it is not anti-aliased by TAA, not fogged and not seen in reflections.
+
+
+\subsection{Existing add-ons}
+\label{ssec:vk_existing}
+An add-on made for the D3D9 client or for earlier versions of the VulkanClient works without changes and gets these effects:
+
+\begin{itemize}
+\item Its meshes, textures, maps and material files are drawn as before. They cast and receive scene shadows and take part in ambient occlusion, reflections and indirect light.
+\item Its exhausts become volumetric plumes, classed by their specific impulse. Engines with a specific impulse above 5000 or below 2300 m/s, and exhausts without a thruster, keep their own flame texture (texture class); an engine whose specific impulse falls in a propellant range is drawn in that propellant's colours, even if it has its own texture. Add a plume file (section \ref{sssec:vk_plumecfg}) with EXHAUST * texture to keep the add-on's look.
+\item Its diffuse particle streams with Orbiter's default texture become lit smoke; streams with their own texture keep their look, with soft edges where they meet surfaces.
+\item It glows in a plasma sheath during re-entry, and its re-entry flame texture is not drawn meanwhile. Its hull glows from the heating, nose and leading edges first, and keeps glowing for a while after the plasma has faded.
+\item Near the ground, its engines raise steam or dust.
+\item Base structures buried under the terrain lose the stray ground shadows they had; streamed buildings and trees keep clear of base structures.
+\end{itemize}
+
+\noindent
+Points to check in older content:
+
+\begin{itemize}
+\item Window and canopy groups made as legacy glass cast shadows like solid parts; give them flag 0x01.
+\item Groups with flag 0x01 are not in the screen depth: clouds, fog and plumes behind them can show through them (section \ref{sssec:vk_mtrl_fx}).
+\item Emissive textures and materials look brighter or darker with the automatic exposure.
+\item A vessel that draws its own re-entry glow on its hull, for example with emissive textures switched by its module, gets the client's hull heating on top of it; HEAT off in its plume file (section \ref{sssec:vk_heat}) keeps only its own.
+\item A planet without its own Config/GC/<name>.atm.cfg is drawn with the Moon shader.
+\end{itemize}
+
+
+\subsection{Testing content}
+\label{ssec:vk_testing}
+\begin{itemize}
+\item \textbf{Each effect on and off.} Set one key of section \ref{ssec:vk_switches} to 0 in VulkanClient.cfg (with Orbiter closed) or untick it in the Advanced Setup dialog, and compare the same scenario with it on and off. With a key at 0 the picture is the one without the effect; whatever changes only with the key on is the effect's work. The effects that the defaults leave off (Filmic, HeightFog) should be tried as well.
+\item \textbf{PBR materials off.} Start Orbiter with the environment variable ORBITER\_PBR\_DISABLE=1: the client ignores all PBR records and draws glTF meshes with their legacy approximation, as other graphics clients do. ORBITER\_PBR\_PRECOMPILE=1 compiles every variant of the PBR shader at start and writes a summary to Orbiter.log.
+\item \textbf{Hull heating off.} ORBITER\_HULLHEAT\_DISABLE=1 leaves the re-entry hull heating off while the plumes and the plasma stay on, to compare a hull with and without its glow; HEAT off in the plume file does the same for one class.
+\item \textbf{Logs.} Orbiter.log reports each glTF mesh with its warnings. The client's log (Modules/VulkanClient/D3D9ClientLog.html) reports the material files it reads, the PBR textures it loads and any material line it cannot read, the plume files and the class and exit radius of each lit exhaust in the first frames, the hull heating values of each glowing vessel and its wall temperatures, the cloud atlas level of each body, and the number of buried structures of each base. A higher \textit{Debug level} in the Advanced Setup dialog adds more lines, for example each material record applied to a mesh.
+\item \textbf{Vulkan Debug Controls.} With \textit{Enable Development Tools} ticked, the dialog shows and edits the materials of the selected mesh group, and \textit{Save materials} writes the material file.
+\item \textbf{Cases worth flying.} Engines at full and low thrust at sea level, at altitude and in vacuum, close up and from a distance; a vertical landing or a launch for the ground cloud; a re-entry at orbital speed between 85 and 50 km, by day and at night, and the climb or slow-down after it for the hull's afterglow; the vessel and the base at a low sun for shadows; night with and without NightLook; a custom camera or an environment map view, which shows the scene without the image effects.
+\end{itemize}
+
+\end{sloppypar}
+
+\end{document}

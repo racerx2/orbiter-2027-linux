@@ -704,15 +704,40 @@ bool CollBreakA::BuildMesh (CollH mesh, const DentDebris &d, Geo &geo, uint32_t 
 	uint32_t ng = sdk.TplGroups (mesh);
 	if (ng != d.ngrp) return false;
 	for (uint32_t g = 0; g < ng; g++) if (!in.count ((uint16_t)g)) sdk.MeshEdit (mesh, g, 2, nullptr, 0);
+	const DentSites *ds = s.Sites (parent, d.slot);
+	std::vector<char> kc; // blast cell debris: its cells; triangles wholly outside them are dropped, not folded onto the cut (a small copy of the hull)
+	if (ds) for (auto &r : d.rec) if (r.p.mode == DENTM_VCUT && (r.p.bits & DENTC_KEEP) && r.p.P >= 0 && r.p.P < (double)ds->s.size ()) { kc.resize (ds->s.size (), 0); kc[(size_t)r.p.P] = 1; }
+	auto inside = [&] (const Vector &x) { size_t b = 0; double bd = 1e300; for (size_t c = 0; c < ds->s.size (); c++) { double q = (x - ds->s[c]).length2 (); if (q < bd) bd = q, b = c; } return kc[b] != 0; };
 	geo.clear ();
 	for (auto &ps : d.pose) for (uint16_t g : ps.grp) {
 		CollTplGroup t;
 		if (!sdk.TplGroup (mesh, g, t)) return false;
 		std::vector<DentVtx> rest (t.nvtx);
 		if (t.nvtx) std::memcpy (rest.data (), t.vtx, sizeof (DentVtx) * t.nvtx);
-		std::vector<DentVtx> v = PieceVertices (rest, g, ps, d.rec, s.Sites (parent, d.slot));
+		std::vector<uint16_t> idx (t.idx, t.idx + t.nidx);
+		std::vector<DentVtx> v = PieceVertices (rest, g, ps, d.rec, ds);
+		bool cut = false; // only the groups a KEEP cut names: the animated pieces of a mixed blast stay whole
+		for (auto &r : d.rec) if (r.p.mode == DENTM_VCUT && (r.p.bits & DENTC_KEEP) && std::find (r.grp.begin (), r.grp.end (), g) != r.grp.end ()) cut = true;
+		if (!kc.empty () && cut) {
+			std::vector<char> vin (rest.size ());
+			for (size_t i = 0; i < rest.size (); i++) vin[i] = inside (P (rest[i]));
+			std::vector<int> map (v.size (), -1);
+			std::vector<DentVtx> kv;
+			std::vector<uint16_t> ki;
+			for (size_t k = 0; k + 2 < idx.size (); k += 3) { // a triangle stays with a vertex or its centroid in the cells (MakeCellSpawn)
+				uint16_t a = idx[k], b = idx[k + 1], c = idx[k + 2];
+				if (a >= v.size () || b >= v.size () || c >= v.size ()) continue;
+				if (!vin[a] && !vin[b] && !vin[c] && !inside ((P (rest[a]) + P (rest[b]) + P (rest[c])) / 3.0)) continue;
+				for (uint16_t i : { a, b, c }) { if (map[i] < 0) { map[i] = (int)kv.size (); kv.push_back (v[i]); } ki.push_back ((uint16_t)map[i]); }
+			}
+			if (ki.size () < idx.size () && (ki.empty () || sdk.MeshAddGroup (mesh, g, kv.data (), (uint32_t)kv.size (), ki.data (), (uint32_t)ki.size ()) >= 0)) {
+				sdk.MeshEdit (mesh, g, 2, nullptr, 0); // the full group hidden, its kept triangles in a group of their own
+				if (!ki.empty ()) geo.emplace_back (std::move (kv), std::move (ki));
+				continue;
+			}
+		}
 		sdk.MeshEdit (mesh, g, 0, v.data (), (uint32_t)v.size ());
-		geo.emplace_back (std::move (v), std::vector<uint16_t> (t.idx, t.idx + t.nidx));
+		geo.emplace_back (std::move (v), std::move (idx));
 	}
 	return true;
 }
@@ -754,8 +779,8 @@ CollSdk::DebrisCaps CollBreakA::Caps (const Geo &geo, double mass, uint32_t *fnv
 	double xm = 0.5 * (lo.x + hi.x);
 	c.td = { Vector (xm, lo.y, hi.z), Vector (lo.x, lo.y, lo.z), Vector (hi.x, lo.y, lo.z),
 		Vector (lo.x, hi.y, lo.z), Vector (hi.x, hi.y, lo.z), Vector (lo.x, hi.y, hi.z), Vector (hi.x, hi.y, hi.z), Vector (xm, hi.y, hi.z) };
-	c.tdK = 4 * mass * 9.81 / 0.02;
-	c.tdD = 2 * 0.7 * std::sqrt (c.tdK * mass);
+	c.tdK = mass * BRK_TD_K; // per point; the core integrates contact forces explicitly (Vessel.cpp), so all 8 points on the ground stay stable at 20 fps
+	c.tdD = mass * BRK_TD_D;
 	c.mu = 0.5;
 	return c;
 }
@@ -775,6 +800,7 @@ void CollBreakA::Spawn (CollSpawnA &sp, double simt, std::map<uint32_t, CollPare
 	if (!mesh) { Log ("Collision: debris mesh '%s' not loaded, no debris", sp.mesh.c_str ()); SyncRows (sp.parent); return; }
 	Geo geo;
 	if (!BuildMesh (mesh, sp.row, geo, sp.parent)) { sdk.MeshFree (mesh); Log ("Collision: debris mesh '%s' does not match its slot, no debris", sp.mesh.c_str ()); SyncRows (sp.parent); return; }
+	mesh = sdk.MeshCompact (mesh);
 	uint32_t fnv = 0;
 	CollSdk::DebrisCaps caps = Caps (geo, sp.mass, &fnv);
 	CollParentA &P = pc[sp.parent];
@@ -1157,6 +1183,7 @@ void CollBreakA::Rebuild (double simt)
 				sdk.VesselDelete (h);
 				continue;
 			}
+			mesh = sdk.MeshCompact (mesh);
 			std::vector<int> pk;
 			for (auto &ps : row.pose) for (uint16_t g : ps.grp) if (g < sl->pieceOf.size () && sl->pieceOf[g] >= 0 && std::find (pk.begin (), pk.end (), sl->pieceOf[g]) == pk.end ()) pk.push_back (sl->pieceOf[g]);
 			uint32_t fnv = 0;
@@ -1198,6 +1225,15 @@ void CollBreakA::Post (double simt, double simdt)
 	for (size_t i = freeMesh.size (); i-- > 0;) if (freeMesh[i].dropped) { if (freeMesh[i].mesh) sdk.MeshFree (freeMesh[i].mesh); freeMesh.erase (freeMesh.begin () + (long)i); }
 	for (auto &kv : ves) Assert (kv.first, kv.second);
 	PairCheck (simt);
+	for (size_t i = live.size (); i-- > 0;) { // a contact blow-up (non-finite or a velocity jump no impact gives) would drag every query along: deleted
+		CollDebrisA &d = live[i];
+		if (!d.h || !sdk.IsVessel (d.h) || sdk.Playback (d.h)) { d.vSeen = false; continue; }
+		Vector x, v; Matrix R;
+		sdk.GlobalState (d.h, x, v, R);
+		bool bad = !std::isfinite (x.x + x.y + x.z + v.x + v.y + v.z) || (d.vSeen && (v - d.vLast).length () > BRK_RUNAWAY + 100.0 * std::max (simdt, 0.0));
+		if (bad) { Kill (i, "runaway state"); continue; }
+		d.vLast = v; d.vSeen = true;
+	}
 	for (size_t i = live.size (); i-- > 0;) if (simt - live[i].birth > cfg.debrisLife) Kill (i, "life");
 	while (live.size () > (size_t)std::max (0, cfg.debrisMax)) Kill (0, "cap");
 }
@@ -1218,6 +1254,20 @@ void CollBreakA::PreStep (double simt, double simdt)
 	Boot (simt);
 	std::vector<CollSpawnA> sp;
 	sp.swap (spawn);
+	size_t cap = (size_t)std::max (0, cfg.debrisMax);
+	if (sp.size () > cap) { // past the cap the heaviest pieces fly; the rest are only hidden (spawned, the cap deleted them in the same post-step, a frame of work for nothing)
+		std::vector<size_t> ord (sp.size ());
+		for (size_t i = 0; i < ord.size (); i++) ord[i] = i;
+		std::stable_sort (ord.begin (), ord.end (), [&] (size_t a, size_t b) { return sp[a].mass > sp[b].mass; });
+		std::vector<char> keep (sp.size (), 0);
+		for (size_t i = 0; i < cap; i++) keep[ord[i]] = 1;
+		std::vector<CollSpawnA> kept; // the kept ones in their queue order
+		std::vector<uint32_t> par;
+		for (size_t i = 0; i < sp.size (); i++) if (keep[i]) kept.push_back (std::move (sp[i])); else par.push_back (sp[i].parent);
+		Log ("Collision: %zu debris past CollisionDebrisMax (%zu) not spawned", sp.size () - cap, cap);
+		sp.swap (kept);
+		for (uint32_t p : par) SyncRows (p);
+	}
 	played.clear ();
 	std::map<uint32_t, CollParentA> pc;
 	for (auto &x : sp) Spawn (x, simt, pc); // in the pre-step: the core places the new vessel and the parent's write where they were read

@@ -458,6 +458,8 @@ VkEffect::VkEffect (VkDev *_dev) : dev(_dev), cb(_dev)
 
 VkEffect::~VkEffect ()
 {
+	warmStop = true; // custom: the worker ends after its current pass
+	if (warm.joinable ()) warm.join ();
 	if (dev->GetConstantSource () == &cb) dev->SetConstantSource (NULL, NULL); // custom: the device must not push a deleted buffer (PBR variants go with the scene)
 	VkDevice d = dev->dev;
 	for (auto &t : tech) for (auto &p : t.pass) {
@@ -478,7 +480,22 @@ VkEffect *VkEffect::Create (VkDev *dev, const char *file, const VkMacros &macros
 		delete fx;
 		return NULL;
 	}
+	fx->WarmAsync ();
 	return fx;
+}
+
+void VkEffect::WarmAsync ()
+{
+	if (warm.joinable ()) return;
+	warm = std::thread ([this] () {
+		for (auto &t : tech) for (auto &p : t.pass) {
+			if (warmStop.load ()) return;
+			if (p.ready.v.load (std::memory_order_acquire)) continue;
+			std::lock_guard<std::mutex> lk (warmMx);
+			if (!p.vsObj && !p.failed) p.failed = !CompilePass (p);
+			p.ready.v.store (true, std::memory_order_release);
+		}
+	});
 }
 
 void VkEffect::ParseTechnique (const std::string &code, size_t &i)
@@ -783,7 +800,11 @@ int VkEffect::BeginPass (UINT i)
 {
 	if (!cur || i >= cur->pass.size()) return -1;
 	Pass &p = cur->pass[i];
-	if (!p.vsObj && !p.failed) p.failed = !CompilePass (p);
+	if (!p.ready.v.load (std::memory_order_acquire)) { // custom: not warmed yet: compile now, or wait for the worker's pass
+		std::lock_guard<std::mutex> lk (warmMx);
+		if (!p.vsObj && !p.failed) p.failed = !CompilePass (p);
+		p.ready.v.store (true, std::memory_order_release);
+	}
 	if (p.failed) return -1;
 	ApplyStates (p);
 	dev->BindShaders (p.vsObj, p.psObj);

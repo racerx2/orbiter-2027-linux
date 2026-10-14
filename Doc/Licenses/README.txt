@@ -14,6 +14,7 @@ wayland-protocols.txt                pointer-constraints, relative-pointer, keyb
 libxmp.txt                           libxmp-lite 4.6.3 (Claudio Matsuoka, Hipolito Carraro Jr), MIT, in Modules/Plugin/XRSound.so
 stb_vorbis.txt                       stb_vorbis 1.22 (Sean Barrett), MIT or public domain, in XRSound.so
 dr_libs.txt                          dr_mp3 and dr_flac (David Reid), public domain or MIT-0, in XRSound.so
+stb_dxt.txt                          stb_dxt 1.12 (Sean Barrett, Fabian Giesen), MIT or public domain, in Orbiter (Earth tile stream)
 Roboto.txt                           font Roboto-Medium.ttf, Apache-2.0
 Cousine.txt                          font Cousine-Regular.ttf, SIL Open Font License 1.1
 Lekton - SIL License.txt             font Lekton-Bold.ttf, SIL Open Font License 1.1

@@ -10,6 +10,8 @@
 #include "CollSdk.h"
 #include "CollShape.h"
 
+namespace BldgGeom { class BaseIndex; }      // bldg: the client's base structure index (OVP/VulkanClient/BldgGeom.h)
+
 struct CollBaseObjView {
 	std::string planet, base, type;
 	int32_t planetIdx, baseIdx; uint32_t obj;
@@ -58,6 +60,7 @@ struct CollBaseRec {
 	std::vector<CollBaseObjView> view; // included objects
 	std::vector<uint32_t> objOf;       // shape slot -> core object index
 	bool checkedOk = true; uint32_t nextCheck = 0;
+	std::shared_ptr<const BldgGeom::BaseIndex> bidx; // bldg: every object's steep faces, base frame; keeps streamed buildings out; null without
 };
 
 // MIT base-object code (CollBaseObjA.cpp): parse the object list, build the geometry in the base frame
@@ -68,7 +71,7 @@ int  CollBaseObjClass (const std::string &type);   // DENTB_*, -1 for non-collid
 
 class CollBaseA {
 public:
-	void Build (CollSdk &sdk, const CollDirs &d, bool geometry); // clbkSimulationStart (10.3)
+	void Build (CollSdk &sdk, const CollDirs &d, bool geometry, bool bldgIndex = false); // clbkSimulationStart (10.3); bldgIndex: the base structure index on planets with a tile stream (bldg)
 	void Poll (CollSdk &sdk, uint32_t frame);                    // pose check once per base per 100 frames (10.4)
 	const CollBaseRec *Rec (int planet, int base) const;
 	const CollBaseObjView *Object (int planet, int base, int obj) const;

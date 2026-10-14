@@ -26,6 +26,8 @@
 #include "DebugControls.h"
 #include "D3D9Config.h"
 #include "VPlanet.h"
+#include "SceneShadows.h" // not upstream
+#include "SceneSsr.h" // not upstream
 
 // xnamath.h left out (Windows only): its vector operations below are written out on D3DXVECTOR3
 
@@ -352,8 +354,12 @@ bool vBase::Update (bool bMainScene)
 	if (fabs(simt-Tlghtchk)>0.1 || oapiGetPause()) {
 		VECTOR3 rpos = gpos - vP->GlobalPos();
 		sunLight = vP->GetObjectAtmoParams(rpos);
+		terrainSun = vP->TerrainSunVisibility(gpos, tsCache); // not upstream: structures above shadows only, the ground meshes match the terrain
 		Tlghtchk = simt;
 	}
+
+	const double syst = oapiGetSysTime(); // not upstream: the buried check once a real second, also under time warp
+	if (fabs(syst - Tburied) > 1.0 || buried.size() != nstructure_as) { UpdateBuried(); Tburied = syst; }
 
 	if (fabs(simt-Tchk)>1.0) {
 		VECTOR3 pos, sdir;
@@ -376,6 +382,37 @@ bool vBase::Update (bool bMainScene)
 
 
 // ===========================================================================================
+// not upstream: a structure whose top lies under the loaded terrain at its four top corners and its centre is buried and casts no shadow
+void vBase::UpdateBuried()
+{
+	buried.assign(nstructure_as, 0);
+	if (!vP) return;
+	OBJHANDLE hPlanet = oapiGetBasePlanet(hObj);
+	const double prad = oapiGetSize(hPlanet);
+	int nb = 0;
+	for (DWORD i = 0; i < nstructure_as; i++) {
+		const D9BBox &b = structure_as[i]->BBox;
+		const double x[5] = { b.min.x, b.max.x, b.min.x, b.max.x, b.bs.x };
+		const double z[5] = { b.min.z, b.min.z, b.max.z, b.max.z, b.bs.z };
+		bool under = true;
+		for (int k = 0; k < 5 && under; k++) {
+			double lng, lat, el;
+			VECTOR3 v = ToLocal(_V(x[k], b.max.y, z[k]), &lng, &lat);
+			if (vP->GetElevation(lng, lat, &el) <= 0) el = oapiSurfaceElevation(hPlanet, lng, lat);
+			under = length(v) - prad < el;
+		}
+		buried[i] = under ? 1 : 0;
+		nb += under ? 1 : 0;
+	}
+	if (nb != nBuried) {
+		char name[64]; oapiGetObjectName(hObj, name, 64);
+		if (nb > 0 || nBuried > 0) LogAlw("vBase %s: %d of %u structures under the terrain cast no shadow", name, nb, nstructure_as);
+		nBuried = nb;
+	}
+}
+
+
+// ===========================================================================================
 //
 bool vBase::RenderSurface(VkDev *dev)
 {
@@ -384,6 +421,7 @@ bool vBase::RenderSurface(VkDev *dev)
 	if (!IsVisible()) return false;
 
 	pCurrentVisual = this;
+	SceneSsr::Scope ssrScope(scn, vP ? vP->Object() : NULL, SceneSsr::BASE_SURFACE, false); // not upstream: tiles and the structures under shadows reflect (design-ssr)
 
 	// render tiles
 	if (tilemesh) {
@@ -418,17 +456,45 @@ bool vBase::RenderStructures(VkDev *dev)
 
 	if (tilemesh) uCurrentMesh++;
 	uCurrentMesh += nstructure_bs;
+	SceneSsr::Scope ssrScope(scn, vP ? vP->Object() : NULL, SceneSsr::BASE_BUILDING, false); // not upstream: glTF buildings reflect through their IBL (design-ssr)
 
 	// render generic objects above shadows
 	for (DWORD i=0; i<nstructure_as; i++) {
 		FVECTOR3 bs = structure_as[i]->GetBoundingSpherePos();
 		FVECTOR3 qw = TransformCoord(bs, mWorld);
 		D3D9Sun sp = vP->GetObjectAtmoParams(qw._V() + vP->CameraPos());
+		sp.Color *= terrainSun; // not upstream
 		structure_as[i]->SetSunLight(&sp);
 		structure_as[i]->Render(&mWorld, RENDER_BASE);
 		++uCurrentMesh;
 	}
 	return true;
+}
+
+
+// ===========================================================================================
+// not upstream: the SceneFx distance pass, the meshes the main pass drew
+void vBase::RenderDepth(VkDev *dev, const D3DXMATRIX &mVP)
+{
+	if (!active || !IsVisible()) return;
+	D3DXMATRIX VP = mVP;
+	if (tilemesh) tilemesh->RenderShadowMap(&mWorld, &VP, 2);
+	for (DWORD i = 0; i < nstructure_bs; i++) structure_bs[i]->RenderShadowMap(&mWorld, &VP, 2);
+	for (DWORD i = 0; i < nstructure_as; i++) structure_as[i]->RenderShadowMap(&mWorld, &VP, 2);
+}
+
+
+// ===========================================================================================
+// not upstream: the structures above the base tiles as scene shadow casters, visible or not; the tiles and the flat structures would shadow the ground they lie on (design-scene-shadows 5)
+void vBase::RenderCasters(VkDev *dev, const SceneShadows &s)
+{
+	if (!active || terrainSun <= 0.0f) return;
+	for (DWORD i = 0; i < nstructure_as; i++) {
+		if (i < buried.size() && buried[i]) continue;
+		D3DXVECTOR3 c;
+		D3DXVec3TransformCoord(&c, (const D3DXVECTOR3 *)&structure_as[i]->BBox.bs, &mWorld);
+		if (s.Cull(c, structure_as[i]->BBox.bs.w)) structure_as[i]->RenderShadowMap(&mWorld, s.CasterVP(), 1);
+	}
 }
 
 
@@ -471,6 +537,8 @@ void vBase::RenderGroundShadow(VkDev *dev, float alpha)
 	if (!active) return;
 	if (!IsVisible()) return;
 	if (Config->TerrainShadowing == 0) return;
+	if (terrainSun <= 0.0f) return; // not upstream: no sun on it, no shadow from it
+	alpha *= terrainSun;            // not upstream
 
 	pCurrentVisual = this;
 
@@ -494,7 +562,19 @@ void vBase::RenderGroundShadow(VkDev *dev, float alpha)
 	double prad = oapiGetSize(hPlanet);
 	D3DXVECTOR4 param = D9OffsetRange(prad, 30e3);
 
+	SceneShadows *csm = SceneShadows::Get(); // not upstream: structures whose shadow the cascades draw get no stencil shadow
+	if (csm && !csm->ReceiversOn(vP)) csm = NULL;
+	const VkDev::State st0 = dev->GetState(); // not upstream: ShadowTech pass 1 now depth tests
+	bool drew = false; // not upstream
+
 	for (DWORD i=0; i<nstructure_as; i++) {
+
+		if (i < buried.size() && buried[i]) continue; // not upstream: a structure wholly under the terrain casts no shadow
+		if (csm) { // not upstream
+			D3DXVECTOR3 c;
+			D3DXVec3TransformCoord(&c, (const D3DXVECTOR3 *)&structure_as[i]->BBox.bs, &mWorld);
+			if (csm->Covers(c, structure_as[i]->BBox.bs.w, 0.0)) continue;
+		}
 		
 		if (structure_as[i]->HasShadow()) {
 
@@ -548,7 +628,14 @@ void vBase::RenderGroundShadow(VkDev *dev, float alpha)
 			D3DXVECTOR4 nrml = D3DXVECTOR4(float(n.x), float(n.y), float(n.z), zo);
 
 			structure_as[i]->RenderShadowsEx(scale, &mProj, &mWorld, &nrml, &param);
+			drew |= structure_as[i]->IsOK(); // not upstream
 		}
+	}
+	if (drew) { // not upstream: the draws after it inherit pass 1's old depth state (test off, function unchanged)
+		VkDev::State st = dev->GetState();
+		st.depthTest = false;
+		st.depthFunc = st0.depthFunc;
+		dev->SetState(st);
 	}
 }
 
