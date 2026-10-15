@@ -57,6 +57,9 @@ namespace TsSky {
 	void TerrTile (double lng, double lat, int z, int &row, int &col);
 	bool Hits (const TsBase &b, double R, int L, int ilat, int ilng, double blend);
 	std::string ElevMod (int L, int ilat, int ilng, const std::vector<std::pair<const TsBase *, double>> &bases, double R, double scale, const std::string &elev, double blend);
+	// elev-consistency: tile (L, ilat, ilng)'s Elev_mod from an add-on's Elev_mod of its ancestor (aL, ailat, ailng); "" if it modifies nothing there
+	std::string InheritMod (int L, int ilat, int ilng, int aL, int ailat, int ailng, const std::string &amod, const std::string &elev, double scale);
+	bool ModOk (const std::string &m); // elev-consistency: an Elev_mod file the core applies (grid, dtype, sizes)
 }
 
 namespace TsTrack {
@@ -92,7 +95,7 @@ namespace TsBldg {
 bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::string &err);
 int TsCfgElev (const std::string &file, const std::string &body); // the last level of the body's ELEV source, 0 for none
 int TsSessionElev (const std::string &body); // TileStreamApi.cpp: TsCfgElev when this session streams; Elev archive tiles under the stream's files are not read
-unsigned TsWriteGen (); // not upstream: files the streams of this process put in place so far; a new value: a missing file may be there now
+unsigned TsElevGen (); // not upstream (elev-consistency): Elev and Elev_mod files the streams of this process wrote or removed so far; a new value: heights may have changed, a missing Elev may be there now
 
 namespace TsImg {
 	struct Grid { int z, row0, col0, nrow, ncol; };
