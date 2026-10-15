@@ -40,7 +40,7 @@ SceneFx::SceneFx (oapi::D3D9Client *_gc, Scene *_scn, DWORD w, DWORD h)
 	if (Config->VolClouds && Config->VolCloudShadows && pVol) InitVolShadow(); // not upstream: compiled at start, not mid-flight
 	if (Config->SSGI && depthOK) InitGi();
 	if (Config->HeightFog && depthOK) InitFog();
-	if (Config->AutoExposure) InitExposure();
+	InitExposure(); // not upstream: always, auto exposure can be switched on in the sim (design-exposure-override)
 }
 
 void SceneFx::InitDepth ()
@@ -121,9 +121,10 @@ void SceneFx::InitExposure ()
 	p.minEV = Config->AutoExpMinEV;
 	p.maxEV = Config->AutoExpMaxEV;
 	p.night = Config->NightLook != 0; // the night rules (design-night-look 4)
+	expoPrm = p;
 	expo.SetParams(p);
 	if (!ok || !tBlocks->img || !tTotal->img || !pExpo->IsOK()) {
-		LogErr("SceneFx: exposure targets or shaders failed, auto-exposure off");
+		LogErr("SceneFx: exposure targets or shaders failed, no auto exposure");
 		SAFE_DELETE(pExpo);
 	}
 }
@@ -497,14 +498,29 @@ void SceneFx::Clouds (VkSurf *target, vPlanet *vp, float wV)
 
 float SceneFx::BeginFrame ()
 {
-	if (!pExpo) return 1.0f;
+	float bias = std::min(std::max(Config->ExposureEV, -3.0f), 3.0f); // the Graphics Controls: compensation with auto, the exposure without (design-exposure-override)
+	if (!Config->AutoExposure || !pExpo) {
+		expoAuto = false;
+		return std::exp2(bias);
+	}
 	OBJHANDLE f = oapiGetFocusObject();
 	bool in = oapiCameraInternal();
-	if (f != expoFocus || in != expoInternal) {
+	OBJHANDLE t = oapiCameraTarget();
+	int mode = oapiCameraMode();
+	if (!expoAuto || f != expoFocus || in != expoInternal || t != expoTarget || mode != expoMode) {
 		expo.Reset();
 		expoFocus = f;
 		expoInternal = in;
+		expoTarget = t;
+		expoMode = mode;
+		expoAuto = true;
 	}
+	AutoExpo::Params p = expoPrm;
+	p.minEV = std::min(std::max(Config->AutoExpMinEV, -4.0f), 0.0f);
+	p.maxEV = std::min(std::max(Config->AutoExpMaxEV, 0.0f), 4.0f);
+	p.speed = std::min(std::max(Config->AutoExpSpeed, 0.25f), 4.0f);
+	expo.SetParams(p);
+	expo.SetBias(bias);
 	if (Config->NightLook) { // the sun over the camera's own horizon (design-night-look 4)
 		vPlanet *pn = scn->GetCameraProxyVisual();
 		VECTOR3 cn = pn ? pn->CameraPos() : _V(0, 0, 0), sn = pn ? pn->SunDirection() : _V(0, 0, 0);
@@ -514,7 +530,7 @@ float SceneFx::BeginFrame ()
 	uint32_t stamp = 0;
 	if (dev->ReadbackGet(m, sizeof(m), &stamp)) {
 		vPlanet *vp = scn->GetCameraProxyVisual();
-		float top = (vp && vp->CameraInAtmosphere()) ? Config->AutoExpMaxEV : 1.0f; // +1 EV at most out of the atmosphere
+		float top = (vp && vp->CameraInAtmosphere()) ? p.maxEV : 1.0f; // +1 EV at most out of the atmosphere
 		expo.Update(AutoExpo::Sample{ m[0], m[1], m[2] }, stamp, float(oapiGetSysStep()), top);
 	}
 	expo.Used(scn->GetFrameId());
@@ -524,7 +540,7 @@ float SceneFx::BeginFrame ()
 // halving blits of the finished scene, 16x9 log luminance blocks, one texel, copied for the CPU
 void SceneFx::Measure (VkSurf *target)
 {
-	if (!pExpo || !target) return;
+	if (!pExpo || !target || !Config->AutoExposure) return;
 	VkDev::State st = dev->GetState();
 	bool sat = false;
 	if (Config->NightLook && expo.Night() > 0.0f) { // not upstream: night look, W/2 with the share of near-saturated full-res pixels in alpha (design-night-look Rev 2 M2)
@@ -550,7 +566,7 @@ void SceneFx::Measure (VkSurf *target)
 	if (!sat) dev->StretchRect(target, NULL, sHalf[0], NULL, VK_FILTER_LINEAR);
 	dev->StretchRect(sHalf[0], NULL, sHalf[1], NULL, VK_FILTER_LINEAR);
 	dev->StretchRect(sHalf[1], NULL, sHalf[2], NULL, VK_FILTER_LINEAR);
-	D3DXVECTOR4 prm(16.0f, 9.0f, 0.002f, expo.SatThreshold());
+	D3DXVECTOR4 prm(16.0f, 9.0f, 0.002f * std::exp2(expo.Bias()), expo.SatThreshold()); // dark limit follows the bias
 	pExpo->Activate(sat ? "PSBlocksSat" : "PSBlocks");
 	pExpo->SetFloat("vPrm", &prm, sizeof(prm));
 	pExpo->SetTextureNative("tSrc", tHalf[2], IPF_POINT | IPF_CLAMP);
