@@ -61,6 +61,7 @@ private:
 	QDoubleSpinBox *m_lat = nullptr, *m_lng = nullptr, *m_radius = nullptr;
 	QProgressBar *m_bar = nullptr;
 	QPointer<QTimer> m_timer;
+	QObject m_life; // the controls' connections end with the page, not with its window
 	std::thread m_sizeThread, m_fetchThread;
 	std::shared_ptr<Size> m_sz;
 	std::shared_ptr<Fetch> m_fetch;

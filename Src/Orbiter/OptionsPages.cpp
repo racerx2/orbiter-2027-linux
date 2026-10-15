@@ -72,6 +72,7 @@ OptionsPageContainer::OptionsPageContainer(Originator orig, Config* cfg)
 
 OptionsPageContainer::~OptionsPageContainer()
 {
+	for (QMetaObject::Connection &c : m_conn) QObject::disconnect(c);
 	Clear();
 }
 
@@ -95,10 +96,10 @@ void OptionsPageContainer::SetWindowHandles(QWidget *hDlg, QWidget *hSplitter, Q
 
 	// WM_NOTIFY of the page list
 	if (QTreeWidget *hTree = qobject_cast<QTreeWidget*>(m_hPageList))
-		QObject::connect(hTree, &QTreeWidget::currentItemChanged, hDlg, [this](QTreeWidgetItem *itemNew) { OnNotifyPagelist(itemNew); });
+		m_conn[0] = QObject::connect(hTree, &QTreeWidget::currentItemChanged, hDlg, [this](QTreeWidgetItem *itemNew) { OnNotifyPagelist(itemNew); });
 	// WM_VSCROLL of the page scroll bar, if the dialog has one
 	if (QScrollBar *sb = DlgItem<QScrollBar>(hDlg, IDC_SCROLLBAR1))
-		QObject::connect(sb, &QScrollBar::valueChanged, hDlg, [this, hDlg, sb](int pos) { VScroll(hDlg, pos, sb); });
+		m_conn[1] = QObject::connect(sb, &QScrollBar::valueChanged, hDlg, [this, hDlg, sb](int pos) { VScroll(hDlg, pos, sb); });
 }
 
 // ----------------------------------------------------------------------
@@ -296,7 +297,7 @@ void OptionsPageContainer::UpdateConfig()
 
 OptionsPage::OptionsPage(OptionsPageContainer* container)
 	: m_container(container)
-	, m_hPage(0)
+	, m_hPage(nullptr)
 	, m_hItem(0)
 {
 }
@@ -358,21 +359,28 @@ BOOL OptionsPage::OnInitDialog(QWidget *hWnd)
 
 // ----------------------------------------------------------------------
 
+// GetWindowLongPtr (DWLP_USER): the page of a window, none once ~OptionsPage has run
+static OptionsPage *PageOf(QWidget *hWnd)
+{
+	return (OptionsPage*)hWnd->property("OptionsPage").value<void*>();
+}
+
 void OptionsPage::DlgProc(QWidget *hWnd)
 {
+	// s_DlgProc: every handler finds the page through the window, as the original does through DWLP_USER
 	// WM_COMMAND
-	oapiConnectDlgCommands(hWnd, [this, hWnd](int id, int code, QWidget *hCtrl) { OnCommand(hWnd, id, code, hCtrl); });
+	oapiConnectDlgCommands(hWnd, [hWnd](int id, int code, QWidget *hCtrl) { if (OptionsPage *p = PageOf(hWnd)) p->OnCommand(hWnd, id, code, hCtrl); });
 	for (QObject *o : hWnd->children()) {
 		int id = oapiResId(qobject_cast<QWidget*>(o));
 		// WM_HSCROLL of gauge controls
 		if (GaugeCtrl *g = qobject_cast<GaugeCtrl*>(o))
-			QObject::connect(g, &GaugeCtrl::scrolled, hWnd, [this, hWnd, id](int request, int pos) { OnHScroll(hWnd, id, request, pos); });
+			QObject::connect(g, &GaugeCtrl::scrolled, hWnd, [hWnd, id](int request, int pos) { if (OptionsPage *p = PageOf(hWnd)) p->OnHScroll(hWnd, id, request, pos); });
 		// WM_NOTIFY UDN_DELTAPOS of up-down controls
 		else if (ResUpDown *ud = qobject_cast<ResUpDown*>(o))
-			QObject::connect(ud, &ResUpDown::deltaPos, hWnd, [this, hWnd, id](int iDelta) { OnDeltaPos(hWnd, id, iDelta); });
+			QObject::connect(ud, &ResUpDown::deltaPos, hWnd, [hWnd, id](int iDelta) { if (OptionsPage *p = PageOf(hWnd)) p->OnDeltaPos(hWnd, id, iDelta); });
 	}
-	// other window events
-	new EventHook(hWnd, [this, hWnd](QObject *obj, QEvent *event) { return obj == hWnd && OnMessage(hWnd, event); });
+	// other window events, also those of its destruction (a layout's ChildRemoved)
+	new EventHook(hWnd, [hWnd](QObject *obj, QEvent *event) { OptionsPage *p = obj == hWnd ? PageOf(hWnd) : nullptr; return p && p->OnMessage(hWnd, event); });
 }
 
 // ======================================================================
