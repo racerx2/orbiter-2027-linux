@@ -343,6 +343,47 @@ void TsBldg::LatLng (int z, double x, double y, double &lat, double &lng)
 	lat = std::atan (std::sinh (M_PI * (1.0 - 2.0 * y / n)));
 }
 
+namespace {
+// one building's walls and flat roof from its rings (outer first) appended to m; false, m as it was, past a client group's 65535 vertices
+bool Extrude (const std::vector<std::vector<TsBldg::Pt>> &rings, double bot, double top, TsBldg::Mesh &m, TsBldg::Building &b)
+{
+	using TsBldg::Pt;
+	size_t at = m.vtx.size(), ix = m.idx.size();
+	uint32_t nv = 0;
+	auto vtx = [&] (double e, double h, double n, double nx, double ny, double nz) {
+		m.vtx.insert (m.vtx.end(), {(float)e, (float)h, (float)n, (float)nx, (float)ny, (float)nz});
+		return nv++;
+	};
+	// walls: outer ring clockwise and holes anticlockwise seen from above, faces to the left of travel
+	for (size_t r = 0; r < rings.size(); r++) {
+		std::vector<Pt> q = rings[r];
+		if ((Area (q) < 0) != (r == 0)) std::reverse (q.begin(), q.end());
+		for (size_t k = 0; k < q.size(); k++) {
+			const Pt &p0 = q[k], &p1 = q[(k + 1) % q.size()];
+			double de = p1.x - p0.x, dn = p1.y - p0.y, l = std::hypot (de, dn);
+			if (l <= 0) continue;
+			double nx = -dn / l, nz = de / l;
+			uint32_t i0 = vtx (p0.x, bot, p0.y, nx, 0, nz);
+			vtx (p1.x, bot, p1.y, nx, 0, nz);
+			vtx (p1.x, top, p1.y, nx, 0, nz);
+			vtx (p0.x, top, p0.y, nx, 0, nz);
+			m.idx.insert (m.idx.end(), {i0, i0 + 1, i0 + 2, i0, i0 + 2, i0 + 3});
+		}
+	}
+	std::vector<uint32_t> tri;
+	TsBldg::Triangulate (rings, tri);
+	uint32_t r0 = nv;
+	for (const auto &r : rings)
+		for (const Pt &p : r) vtx (p.x, top, p.y, 0, 1, 0);
+	for (uint32_t t : tri) m.idx.push_back (r0 + t);
+	if (nv > 65535) { m.vtx.resize (at); m.idx.resize (ix); return false; }
+	b.v0 = (uint32_t)(at / 6); b.nv = nv; b.i0 = (uint32_t)ix; b.ni = (uint32_t)(m.idx.size() - ix);
+	return true;
+}
+
+double Bot (float hmin) { return hmin > 0.0f ? (double)hmin : -4.0; } // Build's wall bottom from the stored hmin
+}
+
 TsBldg::Mesh TsBldg::Build (int z, int x, int y, const std::vector<Feature> &feats, uint32_t extent)
 {
 	Mesh m;
@@ -393,37 +434,15 @@ TsBldg::Mesh TsBldg::Build (int z, int x, int y, const std::vector<Feature> &fea
 			rings.resize (keep);
 			if (total > budget) continue; // the tile's vertex budget is spent
 			budget -= total;
-			Building b {alat, alng, (float)std::max (0.0, bot), (float)top, (uint32_t)(m.vtx.size() / 6), 0, (uint32_t)m.idx.size(), 0};
-			uint32_t nv = 0;
-			auto vtx = [&] (double e, double h, double n, double nx, double ny, double nz) {
-				m.vtx.insert (m.vtx.end(), {(float)e, (float)h, (float)n, (float)nx, (float)ny, (float)nz});
-				return nv++;
-			};
-			// walls: outer ring clockwise and holes anticlockwise seen from above, faces to the left of travel
-			for (size_t r = 0; r < rings.size(); r++) {
-				std::vector<Pt> q = rings[r];
-				if ((Area (q) < 0) != (r == 0)) std::reverse (q.begin(), q.end());
-				for (size_t k = 0; k < q.size(); k++) {
-					const Pt &p0 = q[k], &p1 = q[(k + 1) % q.size()];
-					double de = p1.x - p0.x, dn = p1.y - p0.y, l = std::hypot (de, dn);
-					if (l <= 0) continue;
-					double nx = -dn / l, nz = de / l;
-					uint32_t i0 = vtx (p0.x, bot, p0.y, nx, 0, nz);
-					vtx (p1.x, bot, p1.y, nx, 0, nz);
-					vtx (p1.x, top, p1.y, nx, 0, nz);
-					vtx (p0.x, top, p0.y, nx, 0, nz);
-					m.idx.insert (m.idx.end(), {i0, i0 + 1, i0 + 2, i0, i0 + 2, i0 + 3});
-				}
+			for (auto &r : rings) for (Pt &p : r) p = {(double)(float)p.x, (double)(float)p.y}; // as a version 2 file keeps them
+			Building b {alat, alng, (float)std::max (0.0, bot), (float)top, 0, 0, 0, 0};
+			if (!Extrude (rings, bot, top, m, b)) continue; // a client group's limit
+			b.r0 = (uint32_t)m.rsz.size();
+			b.nr = (uint32_t)rings.size();
+			for (const auto &r : rings) {
+				m.rsz.push_back ((uint32_t)r.size());
+				for (const Pt &p : r) m.pts.insert (m.pts.end(), {(float)p.x, (float)p.y});
 			}
-			std::vector<uint32_t> tri;
-			Triangulate (rings, tri);
-			uint32_t r0 = nv;
-			for (const auto &r : rings)
-				for (const Pt &p : r) vtx (p.x, top, p.y, 0, 1, 0);
-			for (uint32_t t : tri) m.idx.push_back (r0 + t);
-			b.nv = nv;
-			b.ni = (uint32_t)m.idx.size() - b.i0;
-			if (nv > 65535) { m.vtx.resize ((size_t)b.v0 * 6); m.idx.resize (b.i0); continue; } // a client group's limit
 			m.b.push_back (b);
 		}
 	}
@@ -441,9 +460,76 @@ template<class T> bool Get (const std::string &s, size_t &at, T &v)
 }
 }
 
+namespace {
+// version 2: per building lat, lng, hmin, hmax and its ring count, then the ring sizes, then the points; walls and roofs made again
+bool ReadV2 (const std::string &s, size_t at, uint32_t nb, uint32_t nr, uint32_t np, TsBldg::Mesh &m)
+{
+	if ((uint64_t)nb * 26 + (uint64_t)nr * 2 + (uint64_t)np * 8 != s.size() - at || np > MaxTile) return false;
+	std::vector<uint16_t> cnt (nb);
+	m.b.resize (nb);
+	uint64_t rings = 0, pts = 0;
+	for (uint32_t i = 0; i < nb; i++) {
+		TsBldg::Building &b = m.b[i];
+		Get (s, at, b.lat); Get (s, at, b.lng); Get (s, at, b.hmin); Get (s, at, b.hmax); Get (s, at, cnt[i]);
+		if (!(std::fabs (b.lat) <= M_PI) || !(std::fabs (b.lng) <= 2.0 * M_PI) || !(b.hmin >= 0.0f) || !(b.hmax >= b.hmin) || !(b.hmax <= MaxHeight)) return false;
+		if (cnt[i] < 1 || cnt[i] > MaxHoles + 1) return false;
+		rings += cnt[i];
+	}
+	if (rings != nr) return false;
+	m.rsz.resize (nr);
+	for (uint32_t &r : m.rsz) {
+		uint16_t n = 0;
+		Get (s, at, n);
+		if (n < 3 || n > MaxPoly) return false;
+		r = n;
+		pts += n;
+	}
+	if (pts != np) return false;
+	m.pts.resize ((size_t)np * 2);
+	if (np) memcpy (m.pts.data(), s.data() + at, m.pts.size() * sizeof (float));
+	for (float v : m.pts) if (!(std::fabs (v) < 1e5f)) return false; // NaN too
+	std::vector<std::vector<TsBldg::Pt>> rr;
+	size_t r = 0, p = 0;
+	for (uint32_t i = 0; i < nb; i++) {
+		TsBldg::Building &b = m.b[i];
+		rr.assign (cnt[i], {});
+		size_t total = 0;
+		for (size_t k = 0; k < cnt[i]; k++) {
+			size_t n = m.rsz[r + k];
+			total += n + (k ? 2 : 0); // Build's cap: holes count their bridge
+			for (size_t j = 0; j < n; j++, p++) rr[k].push_back ({(double)m.pts[2 * p], (double)m.pts[2 * p + 1]});
+		}
+		if (total > MaxPoly) return false;
+		b.r0 = (uint32_t)r;
+		b.nr = cnt[i];
+		r += cnt[i];
+		if (!Extrude (rr, Bot (b.hmin), (double)b.hmax, m, b)) return false; // Build never writes one past the limit
+	}
+	return true;
+}
+}
+
 std::string TsBldg::Encode (const Mesh &m)
 {
 	std::string s ("OBLD");
+	size_t nr = 0, np = 0;
+	bool v2 = true;
+	for (const Building &b : m.b) {
+		if (b.nr < 1 || b.r0 != nr || (size_t)b.r0 + b.nr > m.rsz.size()) { v2 = false; break; }
+		for (uint32_t r = b.r0; r < b.r0 + b.nr; r++) np += m.rsz[r];
+		nr += b.nr;
+	}
+	if (v2 && nr == m.rsz.size() && np * 2 == m.pts.size()) {
+		Put (s, (uint32_t)2);
+		Put (s, (int32_t)m.z); Put (s, (int32_t)m.x); Put (s, (int32_t)m.y);
+		Put (s, (uint32_t)m.b.size()); Put (s, (uint32_t)nr); Put (s, (uint32_t)np);
+		for (const Building &b : m.b) {
+			Put (s, b.lat); Put (s, b.lng); Put (s, b.hmin); Put (s, b.hmax); Put (s, (uint16_t)b.nr);
+		}
+		for (uint32_t n : m.rsz) Put (s, (uint16_t)n);
+		if (!m.pts.empty()) s.append ((const char*)m.pts.data(), m.pts.size() * sizeof (float));
+		return s;
+	}
 	Put (s, (uint32_t)1);
 	Put (s, (int32_t)m.z); Put (s, (int32_t)m.x); Put (s, (int32_t)m.y);
 	Put (s, (uint32_t)m.b.size()); Put (s, (uint32_t)(m.vtx.size() / 6)); Put (s, (uint32_t)m.idx.size());
@@ -462,8 +548,12 @@ bool TsBldg::Read (const std::string &s, Mesh &m)
 	size_t at = 4;
 	uint32_t ver, nb, nv, ni;
 	int32_t z, x, y;
-	if (s.size() < 4 || s.compare (0, 4, "OBLD") || !Get (s, at, ver) || ver != 1) return false;
+	if (s.size() < 4 || s.compare (0, 4, "OBLD") || !Get (s, at, ver) || (ver != 1 && ver != 2)) return false;
 	if (!Get (s, at, z) || !Get (s, at, x) || !Get (s, at, y) || !Get (s, at, nb) || !Get (s, at, nv) || !Get (s, at, ni)) return false;
+	if (ver == 2) { // nv, ni: rings and points
+		m.z = z; m.x = x; m.y = y;
+		return ReadV2 (s, at, nb, nv, ni, m);
+	}
 	if ((uint64_t)nb * 40 + (uint64_t)nv * 24 + (uint64_t)ni * 4 != s.size() - at) return false;
 	m.z = z; m.x = x; m.y = y;
 	m.b.resize (nb);

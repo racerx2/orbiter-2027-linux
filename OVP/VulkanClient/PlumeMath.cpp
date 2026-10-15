@@ -8,6 +8,7 @@
 #include "PlumeMath.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <numeric>
 
@@ -19,6 +20,11 @@ double Smoothstep (double e0, double e1, double x)
 {
 	double t = std::clamp((x - e0) / (e1 - e0), 0.0, 1.0);
 	return t * t * (3.0 - 2.0 * t);
+}
+
+double Condensate (double pa, double pe)
+{
+	return Smoothstep(-4.0, -5.0, std::log10(std::max(pa / std::max(pe, 1.0), 1e-12))); // [V] T falls as (pa/pe)^((g-1)/g): ~1100 K to ~200 K at 1e-4 (g 1.2)
 }
 
 double PressureRatio (double M, double g)
@@ -361,6 +367,77 @@ bool CapsuleVisible (const double pl[6][4], const double a[3], const double b[3]
 		if (da < -r && db < -r) return false;
 	}
 	return true;
+}
+
+// ---- base surfaces under a plume (design-pad-plume)
+
+static const double CellM = 16.0;
+static long long CellKey (double x, double z) { return (long long)(((unsigned long long)(long long)std::floor(x / CellM) << 32) ^ (unsigned long long)(uint32_t)(int32_t)std::floor(z / CellM)); }
+
+void SurfaceGrid::Add (const double a[3], const double b[3], const double c[3], const double nrm[3])
+{
+	double e1[3] = { b[0] - a[0], b[1] - a[1], b[2] - a[2] }, e2[3] = { c[0] - a[0], c[1] - a[1], c[2] - a[2] };
+	double n[3] = { e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0] };
+	double l = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]), ln = std::sqrt(nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]);
+	if (!(l > 1e-9) || std::fabs(n[1]) < 0.7071 * l) return; // steep or degenerate
+	if (ln > 0.1 && nrm[1] < 0.7071 * ln) return; // faces down by its normals: an underside
+	double x0 = std::min({ a[0], b[0], c[0] }), x1 = std::max({ a[0], b[0], c[0] }), z0 = std::min({ a[2], b[2], c[2] }), z1 = std::max({ a[2], b[2], c[2] });
+	if (x1 - x0 > 1024.0 || z1 - z0 > 1024.0) return; // ground sheets and runways: the terrain stands for them
+	unsigned k = unsigned(tris.size());
+	tris.push_back({ { a[0], b[0], c[0] }, { a[1], b[1], c[1] }, { a[2], b[2], c[2] } });
+	ymax = std::max({ ymax, a[1], b[1], c[1] });
+	for (double x = std::floor(x0 / CellM) * CellM; x <= x1; x += CellM)
+		for (double z = std::floor(z0 / CellM) * CellM; z <= z1; z += CellM)
+			cells[CellKey(x + 0.5 * CellM, z + 0.5 * CellM)].push_back(k);
+}
+
+double SurfaceGrid::Top (double x, double z, double ceil) const
+{
+	auto it = cells.find(CellKey(x, z));
+	if (it == cells.end()) return NONE;
+	double best = NONE;
+	for (unsigned i : it->second) {
+		const T &t = tris[i];
+		double d = (t.z[1] - t.z[2]) * (t.x[0] - t.x[2]) + (t.x[2] - t.x[1]) * (t.z[0] - t.z[2]);
+		if (std::fabs(d) < 1e-12) continue;
+		double l1 = ((t.z[1] - t.z[2]) * (x - t.x[2]) + (t.x[2] - t.x[1]) * (z - t.z[2])) / d;
+		double l2 = ((t.z[2] - t.z[0]) * (x - t.x[2]) + (t.x[0] - t.x[2]) * (z - t.z[2])) / d;
+		double l3 = 1.0 - l1 - l2;
+		if (l1 < -1e-9 || l2 < -1e-9 || l3 < -1e-9) continue;
+		double h = l1 * t.y[0] + l2 * t.y[1] + l3 * t.y[2];
+		if (h <= ceil && h > best) best = h;
+	}
+	return best;
+}
+
+double SurfaceGrid::Hit (const double o[3], const double d[3], double tmax) const
+{
+	if (!(tmax > 0.0) || cells.empty()) return NONE;
+	double t0 = o[1] > ymax && d[1] < 0.0 ? (o[1] - ymax) / -d[1] : 0.0; // above every surface until the ray comes down to the top
+	if (t0 >= tmax) return NONE;
+	int n = std::clamp(int(std::ceil((tmax - t0) / 2.0)), 1, 64);
+	double dt = (tmax - t0) / n, y0 = o[1] + d[1] * t0;
+	for (int k = 1; k <= n; k++) {
+		double t = t0 + k * dt, x = o[0] + d[0] * t, y = o[1] + d[1] * t, z = o[2] + d[2] * t;
+		double h = Top(x, z, std::max(y0, y)); // a surface the step from y0 to y can reach
+		if (h > NONE && h >= y) return y0 > y ? t - dt + dt * std::clamp((y0 - h) / (y0 - y), 0.0, 1.0) : t - dt;
+		y0 = y;
+	}
+	return NONE;
+}
+
+double SurfaceGrid::Deck (double x, double z, double r, double ceil, int &ring) const
+{
+	double best = Top(x, z, ceil), outer[8];
+	for (int k = 0; k < 8; k++) {
+		double c = std::cos(k * PI / 4.0), s = std::sin(k * PI / 4.0);
+		best = std::max(best, Top(x + 0.5 * r * c, z + 0.5 * r * s, ceil));
+		outer[k] = Top(x + r * c, z + r * s, ceil);
+		best = std::max(best, outer[k]);
+	}
+	ring = 0;
+	if (best > NONE) for (double h : outer) if (h > NONE && h >= best - 3.0) ring++;
+	return best;
 }
 
 }

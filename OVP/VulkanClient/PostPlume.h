@@ -41,6 +41,7 @@ private:
 	struct Plume;
 	struct Plasma;
 	struct GroundPuff;
+	struct BaseSurf;
 	struct Slot { SURFHANDLE h = nullptr; VkTex *tex = nullptr; VkImage img = VK_NULL_HANDLE; DWORD used = 0; bool baked = false; };
 
 	bool NoiseReady ();
@@ -49,6 +50,8 @@ private:
 	int SlotOf (SURFHANDLE h); // atlas slot when baked, else -1 (the bake is queued)
 	void GatherPlumes ();
 	void UpdateGround ();
+	void Pads (Plume &P, VESSEL *v, OBJHANDLE hP, const VECTOR3 &cam); // base structures under the plume (design-pad-plume)
+	const BaseSurf &SurfOf (OBJHANDLE hP, OBJHANDLE hBase);
 	void GatherPlasma ();
 	void GatherPuffs ();
 	void FillPlume (int i, const Plume &p);
@@ -85,6 +88,7 @@ private:
 	bool noiseAsked = false;
 	SURFHANDLE hExhaustTex = nullptr;
 	D3DXVECTOR4 pal[24];
+	D3DXVECTOR4 cond[6]; // per class: condensate albedo, optical depth scale in vacuum (design-vacuum-plume)
 
 	DWORD frame = 0, claimFrame = 0, reentryFrame = 0;
 	double pxs = 1.0;                         // full-res pixels per metre at 1 m
@@ -103,6 +107,7 @@ private:
 	std::map<std::string, ClassCfg> *classes = nullptr;
 	std::map<OBJHANDLE, std::vector<GroundPuff>> *ground = nullptr;
 	std::map<OBJHANDLE, double> groundAcc;
+	std::map<OBJHANDLE, BaseSurf> *pads = nullptr; // per base, made on first use
 	double lastSimt = -1e30;
 	OBJHANDLE lastFocus = NULL;
 	Slot atlasSlot[16];
@@ -113,6 +118,7 @@ private:
 	double collectMs = 0.0;
 	int collectN = 0;
 	int nLit = 0, diagN = 0, drawN = 0; // lit exhausts this frame; the first frames with any, and the first draws, are logged
+	int padN = 0;                       // the first ground hits are logged with their structures
 };
 
 #endif // !__POSTPLUME_H

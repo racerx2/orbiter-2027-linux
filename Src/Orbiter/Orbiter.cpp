@@ -161,6 +161,8 @@ static void BkMsgProc (QWidget *hDlg);
 
 VOID    DestroyWorld ();
 void    SetEnvironmentVars ();
+void    FontResourceInit (); // not upstream: FontResource.cpp
+void    FontResourceExit (); // not upstream: as above
 // hMutex, hConsoleMutex left out: unused handles
 
 // =======================================================================
@@ -184,6 +186,7 @@ extern "C" __attribute__((visibility("default"))) double acos (double x) noexcep
 
 int main (int argc, char *argv[])
 {
+	FontResourceInit (); // not upstream: its atexit handler, registered before Qt's
 	QApplication app (argc, argv); // the Launchpad and the dialogs are Qt widgets
 	UseVisibleIndicators (); // not upstream: the bundled Qt draws with Fusion
 	app.setQuitOnLastWindowClosed (false); // WM_QUIT comes only from the Launchpad (PostQuitMessage)
@@ -595,7 +598,7 @@ void *Orbiter::LoadModule (const char *path, const char *name)
 	char cbuf[PATH_MAX+512]; // not upstream: 256; holds the working directory and the module path
 	if (FindStandaloneDll(path, name, cbuf, sizeof cbuf)) // not upstream: sized; try to find standalone plugin file
 	{
-		hDLL = dlopen (cbuf, RTLD_NOW); // LoadLibrary
+		hDLL = ModuleLoad (cbuf); // LoadLibrary; not upstream: counted, ModuleFree detaches on the last free
 	}
 	else // try to find plugin in a plugin folder
 	{
@@ -604,7 +607,7 @@ void *Orbiter::LoadModule (const char *path, const char *name)
 		{
 			// absolute path; the module finds the libraries in its folder through its RUNPATH ($ORIGIN), as LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR did
 			sprintf(cbuf, "%s/%s", cwd, cbuf2);
-			hDLL = dlopen (cbuf, RTLD_NOW); // LoadLibraryEx
+			hDLL = ModuleLoad (cbuf); // LoadLibraryEx; not upstream: counted, ModuleFree detaches on the last free
 		}
 		else
 		{
@@ -984,6 +987,7 @@ void Orbiter::CloseSession ()
 		CloseApp (true);
 		if (pConfig->CfgDebugPrm.ShutdownMode == 2 || bFastExit) {
 			LOGOUT("**** Fast process shutdown\r\n");
+			FontResourceExit (); // not upstream: module statics and Qt's are destroyed in exit
 			exit (0); // just kill the process
 		} else {
 			LOGOUT("**** Respawning Orbiter process\r\n");

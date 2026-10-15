@@ -1972,6 +1972,12 @@ double DentMath::BuildingMass (int cls, const Vector &size)
 	return rho * std::fabs (size.x) * std::fabs (size.y) * std::fabs (size.z) * f;
 }
 
+double DentMath::StructureMass (double m, const Vector &box)
+{
+	double b = BuildingMass (DENTB_MESH, box);
+	return std::isfinite (b) ? std::max (m, b) : m;
+}
+
 const DentMaterial *DentMath::FindMaterial (const char *id)
 {
 	if (!id) return nullptr;

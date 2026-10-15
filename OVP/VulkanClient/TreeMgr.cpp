@@ -203,6 +203,9 @@ bool TreeMgr::Ask (long long key)
 		const std::shared_ptr<const Base> &b = BaseOf (hb);
 		if (!b->idx.Empty()) j.bases.push_back (b);
 	}
+	fixed.Near (u, R, 25e3, j.fixed);
+	if (!zonesRead) { zones = ClearZones::Read (hObj, false); zonesRead = true; } // bases never change in a session; BldgMgr logs them
+	ClearZones::Near (zones, u, R, 25e3, j.zones);
 	if (Config->HorizonShadows && vp->SurfMgr2()) j.hor = vp->SurfMgr2()->HorizonAt (latc, lngc, j.hb);
 	if (!worker.joinable()) worker = std::thread (&TreeMgr::Work, this); // first job: bodies never low enough get no thread
 	{
@@ -211,6 +214,7 @@ bool TreeMgr::Ask (long long key)
 	}
 	cv.notify_one();
 	cells[key].pending = true;
+	cells[key].stale = false; // this job has the fixed structures as they are now
 	return true;
 }
 
@@ -269,6 +273,17 @@ void TreeMgr::Update ()
 
 	if (t >= tWant) {
 		tWant = t + 0.5;
+		std::vector<VECTOR3> mv;
+		if (fixed.Update (hObj, mv)) // fixed structures made, moved or gone: the cells within 25 km are made again (design fixed-structures)
+			for (auto &kv : cells) {
+				double la0, la1, lo0, lo1;
+				Bounds (kv.first, la0, la1, lo0, lo1);
+				VECTOR3 uc = Up (0.5 * (la0 + la1), 0.5 * (lo0 + lo1));
+				for (const VECTOR3 &m : mv) {
+					double l = length (m);
+					if (l > 0 && R * acos (std::min (1.0, dotp (m / l, uc))) <= 25e3) { kv.second.stale = true; kv.second.tCheck = 0.0; break; }
+				}
+			}
 		std::vector<long long> want;
 		Cells (camLat, camLng, range + 300.0, want);
 		VECTOR3 uc = Up (camLat, camLng);
@@ -304,7 +319,7 @@ void TreeMgr::Update ()
 		double g[5];
 		int rc[5];
 		vp->SurfMgr2()->GetLoadedElevations (5, lng, lat, g, rc);
-		bool redo = !c.complete;
+		bool redo = !c.complete || c.stale;
 		for (int i = 0; i < 5 && !redo; i++) if (rc[i] == 1 && std::fabs (g[i] - c.gc[i]) > 0.3) redo = true;
 		if (!redo && !c.hasHor && Config->HorizonShadows) {
 			double hb[4];
@@ -437,8 +452,14 @@ void TreeMgr::Work ()
 				if (std::fabs (dx) > f->rad + 2.0 || std::fabs (dz) > f->rad + 2.0) continue;
 				if (TreeGeom::InRing (f->ring, dx, dz, 2.0)) return true;
 			}
+			for (const auto &z : j.zones) if (ClearZones::Covers (z, Up (lat, lng), R)) return true; // a base file's clear zone (design base-clear)
 			for (const auto &b : j.bases) {
 				VECTOR3 p = Up (lat, lng) * R - b->p, l = tmul (b->rb, mul (b->rp, p));
+				if (b->idx.Covers (l.x, l.z, 6.0)) return true;
+			}
+			for (const auto &b : j.fixed) {
+				VECTOR3 p = Up (lat, lng) * R - b->p, l = tmul (b->rb, mul (b->rp, p));
+				if (b->clear > 0.0 && l.x * l.x + l.z * l.z <= b->clear * b->clear) return true; // its clear zone (design fixed-clear)
 				if (b->idx.Covers (l.x, l.z, 6.0)) return true;
 			}
 			return false;

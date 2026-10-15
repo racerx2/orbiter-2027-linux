@@ -1707,6 +1707,11 @@ int D3D9Client::clbkGetMeshGroup (DEVMESHHANDLE hMesh, DWORD grpidx, GROUPREQUES
 	return ((D3D9Mesh*)hMesh)->GetGroup (grpidx, grs);
 }
 
+int D3D9Client::clbkGetMeshGroupFlags (DEVMESHHANDLE hMesh, DWORD grpidx, DWORD *usrFlag) // not upstream: oapiGetMeshGroupFlags
+{
+	return ((D3D9Mesh*)hMesh)->GetGroupFlags (grpidx, usrFlag);
+}
+
 #pragma endregion
 
 // ==============================================================
@@ -3323,7 +3328,7 @@ Font *D3D9Client::clbkCreateFont(int height, bool prop, const char *face, FontSt
 	return *g_fonts.insert(new D3D9PadFont(height, prop, face, style, orientation)).first;
 }
 
-Font* D3D9Client::clbkCreateFontEx(int height, char* face, int width, int weight, FontStyle style, float spacing) const
+Font* D3D9Client::clbkCreateFontEx(int height, const char* face, int width, int weight, FontStyle style, float spacing) const // not upstream: const face
 {
 	_TRACE;
 	if (ChkDev(__FUNCTION__)) return NULL;

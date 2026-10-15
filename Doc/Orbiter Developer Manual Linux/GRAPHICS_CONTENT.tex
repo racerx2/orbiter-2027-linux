@@ -31,6 +31,8 @@ The client reads VulkanClient.cfg when Orbiter starts and writes it back when Or
 	\hline\rule{0pt}{2ex}
 	Trees & 1 & 3D trees where the land cover tiles of the Earth stream show forest or shrub, never within 6 m of a base's surfaces and structures. TreeRange: 500 to 4000 m, default 2500. TreeDensity: 0.1 to 2, default 1.\\
 	\hline\rule{0pt}{2ex}
+	BldgRange & 20 & km, 5 to 40: streamed buildings out to this distance, nearest first. Past about 4 km a tile keeps only the buildings at least 1.5 pixels tall there, with one wall piece a face; far tiles together stay within 0.4 million vertices a km of range (8 million at 20 km), thinned further where they would not.\\
+	\hline\rule{0pt}{2ex}
 	AutoExposure & 1 & The exposure of the 3D scene follows dark and bright views. AutoExpMinEV: $-$4 to 0, default $-$1.5. AutoExpMaxEV: 0 to 4, default 2.5.\\
 	\hline\rule{0pt}{2ex}
 	LensFlare & 1 & Ghosts and a halo from the sun, hidden by terrain, clouds and anything in the screen depth, vessels included.\\

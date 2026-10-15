@@ -1935,7 +1935,7 @@ D3D9PadFont::D3D9PadFont(int height, bool prop, const char *face, FontStyle styl
 
 
 
-D3D9PadFont::D3D9PadFont(int height, char *face, int width, int weight, FontStyle style, float spacing)
+D3D9PadFont::D3D9PadFont(int height, const char *face, int width, int weight, FontStyle style, float spacing) // not upstream: const face
 : Font(height, false, face, style, 0)
 {
 

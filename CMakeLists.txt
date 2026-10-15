@@ -1,7 +1,7 @@
 # Copyright (c) Martin Schweiger
 # Licensed under the MIT License
 
-cmake_minimum_required(VERSION 3.28) # not upstream: copy_directory_if_different (3.26), FetchContent EXCLUDE_FROM_ALL in tracy.cmake (3.28)
+cmake_minimum_required(VERSION 3.28) # not upstream: file(COPY_FILE) in copynewer.cmake (3.21), FetchContent EXCLUDE_FROM_ALL in tracy.cmake (3.28)
 
 # Set the project name
 project (Orbiter VERSION 21.7.24)
@@ -107,16 +107,16 @@ set(CMAKE_SHARED_LIBRARY_PREFIX "")
 set(CMAKE_SHARED_MODULE_PREFIX "")
 
 # Copy data and binary assets from source to binary tree to provide a working Orbiter environment
-# copy_directory_if_different: skips re-copying 228 MB of textures on every build
+set(ORBITER_COPY_NEWER ${CMAKE_COMMAND} -DSTATE=${CMAKE_BINARY_DIR}/CMakeFiles/copynewer -P ${CMAKE_SOURCE_DIR}/cmake/copynewer.cmake) # not upstream: copy_directory that keeps files changed in the build tree (Orbiter runs from it)
 # BinAssets copy left out: msvcr71/msvcp71.dll are the Windows runtime for old add-ons
 add_custom_target(CopyData ALL
-	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_SOURCE_DIR}/Scenarios/ ${CMAKE_BINARY_DIR}/Scenarios
-	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_SOURCE_DIR}/Textures/ ${ORBITER_BINARY_TEXTURES_DIR}
-	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_SOURCE_DIR}/Meshes/ ${CMAKE_BINARY_DIR}/Meshes
-	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_SOURCE_DIR}/Script/ ${CMAKE_BINARY_DIR}/Script
-	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_SOURCE_DIR}/Config/ ${CMAKE_BINARY_DIR}/Config
-	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_SOURCE_DIR}/GravityModels/ ${CMAKE_BINARY_DIR}/GravityModels
-	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_SOURCE_DIR}/Flights/ ${CMAKE_BINARY_DIR}/Flights
+	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_SOURCE_DIR}/Scenarios/ ${CMAKE_BINARY_DIR}/Scenarios # not upstream: copynewer.cmake keeps files changed in the build tree
+	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_SOURCE_DIR}/Textures/ ${ORBITER_BINARY_TEXTURES_DIR} # not upstream: copynewer.cmake keeps files changed in the build tree
+	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_SOURCE_DIR}/Meshes/ ${CMAKE_BINARY_DIR}/Meshes # not upstream: copynewer.cmake keeps files changed in the build tree
+	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_SOURCE_DIR}/Script/ ${CMAKE_BINARY_DIR}/Script # not upstream: copynewer.cmake keeps files changed in the build tree
+	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_SOURCE_DIR}/Config/ ${CMAKE_BINARY_DIR}/Config # not upstream: copynewer.cmake keeps files changed in the build tree
+	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_SOURCE_DIR}/GravityModels/ ${CMAKE_BINARY_DIR}/GravityModels # not upstream: copynewer.cmake keeps files changed in the build tree
+	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_SOURCE_DIR}/Flights/ ${CMAKE_BINARY_DIR}/Flights # not upstream: copynewer.cmake keeps files changed in the build tree
 	COMMAND ${CMAKE_COMMAND} -E make_directory ${ORBITER_BINARY_SDK_DIR}/lib/Lua
 )
 set_target_properties(CopyData

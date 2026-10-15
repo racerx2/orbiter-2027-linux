@@ -9,6 +9,8 @@
 
 #include "Body.h"
 #include "Nav.h"
+#include "BaseClear.h" // not upstream
+#include <vector> // not upstream
 
 class Planet;
 class PlanetarySystem;
@@ -157,6 +159,8 @@ public:
 	inline bool MapObjectsToSphere() const { return bObjmapsphere; }
 	// map base objects onto spherical planet surface?
 
+	inline const std::vector<BaseClearZone> &ClearZones () const { return clear; } // not upstream: BEGIN_CLEARZONES (design base-clear)
+
 	void DestroySurfaceTiles ();
 	// Destroy the meshes and textures of the high-res surface tiles
 
@@ -203,6 +207,8 @@ private:
 	SurftileSpec *tile;            // list of surface tiles
 	DWORD ntilebuf;                // list length
 	DWORD ntile;                   // number of surface tiles
+
+	std::vector<BaseClearZone> clear; // not upstream: no streamed building or tree in these
 
 	Vector sundir;                 // sun direction in base coordinates
 	double sundir_updt;            // time of next buffered sun direction update

@@ -886,6 +886,13 @@ NTVERTEX Convert(NMVERTEX &v)
 }
 
 
+int D3D9Mesh::GetGroupFlags (DWORD grp, DWORD *usrFlag) const
+{
+	if (!Grp || grp >= nGrp || Grp[grp].bDeleted) return 1;
+	*usrFlag = Grp[grp].UsrFlag;
+	return 0;
+}
+
 int D3D9Mesh::GetGroup (DWORD grp, GROUPREQUESTSPEC *grs)
 {
 	if (!pBuf) return 1;

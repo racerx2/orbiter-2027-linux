@@ -176,6 +176,25 @@ bool Hits (const TsBase &b, double R, int L, int ilat, int ilng, double blend)
 	return la + r >= n - dh && la - r <= n && std::fabs (std::remainder (ln - (w + dw / 2), 360.0)) <= dw / 2 + rl; // across the date line too
 }
 
+// elev-consistency: an Elev_mod file of tile (L, ilat, ilng): the header, then the 259x259 nodes
+static std::string ModFile (int L, int ilat, int ilng, const std::vector<int16_t> &z, double scale, double emin, double emax, double emean)
+{
+	const int N = 259;
+	double w, n, dw, dh;
+	Bounds (L, ilat, ilng, w, n, dw, dh);
+	std::string out (100, '\0');
+	auto i32 = [&out] (size_t at, int32_t v) { memcpy (&out[at], &v, 4); };
+	auto f64 = [&out] (size_t at, double v) { memcpy (&out[at], &v, 8); };
+	out[0] = 'E'; out[1] = 'L'; out[2] = 'E'; out[3] = 1;
+	i32 (4, 100); i32 (8, -16); i32 (12, N); i32 (16, N); i32 (20, 1); i32 (24, 1);
+	f64 (28, scale); f64 (36, 0.0);
+	f64 (44, (n - dh) * M_PI / 180.0); f64 (52, n * M_PI / 180.0);
+	f64 (60, w * M_PI / 180.0); f64 (68, (w + dw) * M_PI / 180.0);
+	f64 (76, emin); f64 (84, emax); f64 (92, emean);
+	out.append ((const char *)z.data(), z.size() * sizeof (int16_t));
+	return out;
+}
+
 // Elev_mod of a tile: bases flat at their height, cosine blend ring, SHRT_MAX elsewhere; "" if untouched
 std::string ElevMod (int L, int ilat, int ilng, const std::vector<std::pair<const TsBase *, double>> &bases, double R, double scale, const std::string &elev, double blend)
 {
@@ -214,17 +233,97 @@ std::string ElevMod (int L, int ilat, int ilng, const std::vector<std::pair<cons
 		}
 	}
 	if (!any) return std::string();
-	std::string out (100, '\0');
-	auto i32 = [&out] (size_t at, int32_t v) { memcpy (&out[at], &v, 4); };
-	auto f64 = [&out] (size_t at, double v) { memcpy (&out[at], &v, 8); };
-	out[0] = 'E'; out[1] = 'L'; out[2] = 'E'; out[3] = 1;
-	i32 (4, 100); i32 (8, -16); i32 (12, N); i32 (16, N); i32 (20, 1); i32 (24, 1);
-	f64 (28, scale); f64 (36, 0.0);
-	f64 (44, (n - dh) * M_PI / 180.0); f64 (52, n * M_PI / 180.0);
-	f64 (60, w * M_PI / 180.0); f64 (68, (w + dw) * M_PI / 180.0);
-	f64 (76, emin); f64 (84, emax); f64 (92, sum / cnt);
-	out.append ((const char *)z.data(), z.size() * sizeof (int16_t));
-	return out;
+	return ModFile (L, ilat, ilng, z, scale, emin, emax, sum / cnt);
+}
+
+// elev-consistency: an Elev_mod header the core reads (elevmgr.cpp), and its node as metres, NaN where it leaves the Elev alone
+static bool ModHead (const std::string &m, int32_t &hs, int32_t &dt, double &sc, double &of)
+{
+	if (m.size() < 100 || m.compare (0, 3, "ELE")) return false;
+	int32_t nx, ny;
+	memcpy (&hs, &m[4], 4); memcpy (&dt, &m[8], 4); memcpy (&nx, &m[12], 4); memcpy (&ny, &m[16], 4);
+	memcpy (&sc, &m[28], 8); memcpy (&of, &m[36], 8);
+	if (nx != 259 || ny != 259 || hs < 100 || !std::isfinite (sc) || !std::isfinite (of)) return false;
+	if (dt == 0) return true;
+	if (dt == 8) return m.size() >= (size_t)hs + 259 * 259;
+	if (dt == -16) return m.size() >= (size_t)hs + 259 * 259 * 2;
+	return false;
+}
+
+bool ModOk (const std::string &m)
+{
+	int32_t hs, dt;
+	double sc, of;
+	return ModHead (m, hs, dt, sc, of);
+}
+
+static double ModNode (const std::string &m, int32_t hs, int32_t dt, double sc, double of, int i, int j)
+{
+	size_t at = (size_t)i * 259 + j;
+	if (dt == 0) return of;
+	if (dt == 8) {
+		uint8_t q = (uint8_t)m[(size_t)hs + at];
+		return q == UCHAR_MAX ? NAN : q * sc + of;
+	}
+	int16_t q;
+	memcpy (&q, &m[(size_t)hs + at * 2], 2);
+	return q == SHRT_MAX ? NAN : q * sc + of;
+}
+
+static bool ElvReadable (const std::string &e)
+{
+	if (e.size() < 100 || e.compare (0, 3, "ELE")) return false;
+	int32_t hs, dt;
+	memcpy (&hs, &e[4], 4); memcpy (&dt, &e[8], 4);
+	return dt == 0 || (dt == -16 && hs >= 100 && e.size() >= (size_t)hs + 259 * 259 * 2);
+}
+
+// elev-consistency: the Elev_mod of a tile from an add-on's Elev_mod of its ancestor, bilinear over the ancestor's nodes;
+// a node partly under modified ones blends to the tile's own Elev; "" if no node is modified
+std::string InheritMod (int L, int ilat, int ilng, int aL, int ailat, int ailng, const std::string &amod, const std::string &elev, double scale)
+{
+	const int N = 259;
+	int32_t hs, dt;
+	double sc, of;
+	if (aL >= L || aL < 4 || L - aL > 20 || (ilat >> (L - aL)) != ailat || (ilng >> (L - aL)) != ailng) return std::string();
+	if (!ModHead (amod, hs, dt, sc, of) || !(scale > 0.0)) return std::string();
+	bool own = ElvReadable (elev);
+	double w, n, dw, dh, aw, an, adw, adh;
+	Bounds (L, ilat, ilng, w, n, dw, dh);
+	Bounds (aL, ailat, ailng, aw, an, adw, adh);
+	std::vector<int16_t> z ((size_t)N * N, SHRT_MAX);
+	bool any = false;
+	double emin = 1e9, emax = -1e9, sum = 0.0, cnt = 0.0;
+	for (int i = 0; i < N; i++) {
+		double fi = (n - dh + (i - 1) * dh / 256.0 - (an - adh)) / adh * 256.0 + 1.0; // the ancestor's row, from the south
+		int i0 = std::clamp ((int)std::floor (fi), 0, N - 2);
+		double u = std::clamp (fi - i0, 0.0, 1.0);
+		for (int j = 0; j < N; j++) {
+			double fj = (w + (j - 1) * dw / 256.0 - aw) / adw * 256.0 + 1.0; // its column, from the west
+			int j0 = std::clamp ((int)std::floor (fj), 0, N - 2);
+			double v = std::clamp (fj - j0, 0.0, 1.0);
+			const double wt[4] = {(1 - u) * (1 - v), (1 - u) * v, u * (1 - v), u * v};
+			const double h[4] = {ModNode (amod, hs, dt, sc, of, i0, j0), ModNode (amod, hs, dt, sc, of, i0, j0 + 1),
+			                     ModNode (amod, hs, dt, sc, of, i0 + 1, j0), ModNode (amod, hs, dt, sc, of, i0 + 1, j0 + 1)};
+			double W = 0.0, S = 0.0;
+			for (int q = 0; q < 4; q++)
+				if (!std::isnan (h[q])) { W += wt[q]; S += wt[q] * h[q]; }
+			if (W <= 1e-9) continue;
+			double m;
+			if (W >= 1.0 - 1e-9) m = S / W;
+			else if (own) m = S + (1.0 - W) * ElvNode (elev, i, j);
+			else continue; // the Elev unreadable: no blend toward 0 m
+			int16_t q = (int16_t)std::clamp (std::lround (m / scale), -32767L, 32766L);
+			z[(size_t)i * N + j] = q;
+			any = true;
+			cnt++;
+			emin = std::min (emin, q * scale);
+			emax = std::max (emax, q * scale);
+			sum += q * scale;
+		}
+	}
+	if (!any) return std::string();
+	return ModFile (L, ilat, ilng, z, scale, emin, emax, sum / cnt);
 }
 
 } // namespace TsSky

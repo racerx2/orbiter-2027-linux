@@ -127,6 +127,12 @@ void Vessel::FRecorder_Activate (bool active, const char *fname, bool append)
 		if (FRfname) delete []FRfname;
 		FRfname = new char[strlen(cbuf)+1]; TRACENEW
 		strcpy (FRfname, cbuf);
+		if (!append) { // not upstream: a new recording removes old .pos/.att/.atc once; FRecorder_Save appends, so first-frame events stay
+			for (const char *ext : {"pos", "att", "atc"}) { // not upstream: as above
+				strcpy (cbuf+strlen(cbuf)-3, ext);
+				std::remove (cbuf);
+			}
+		} // not upstream: as above
 		//frec_last.frm = 1;  // for now, record in equatorial frame by default
 		frec_last.crd = 1;  // for now, record in polar coordinates by default
 	} else {
@@ -202,7 +208,7 @@ void Vessel::FRecorder_Save (bool force)
 			}
 		}
 		if (cbody != ref) {
-			ofstream ofs(FRfname, isfirst ? ios::trunc : ios::app);
+			ofstream ofs(FRfname, ios::app); // not upstream: appends, FRecorder_Activate emptied the file
 			ofs << "STARTMJD " << setprecision(12) << MJDofs << endl;
 			ofs << "REF " << cbody->Name() << endl;
 			ofs << "FRM " << (frec_last.frm == 0 ? "ECLIPTIC" : "EQUATORIAL") << endl;
@@ -276,7 +282,7 @@ void Vessel::FRecorder_Save (bool force)
 		if (ref != sp.ref) {
 			char cbuf[256];
 			strcpy (cbuf, FRfname); strcpy (cbuf+strlen(cbuf)-3, "att");
-			ofstream ofs (cbuf, isfirst ? ios::trunc : ios::app);
+			ofstream ofs (cbuf, ios::app); // not upstream: appends, FRecorder_Activate emptied the file
 			if (isfirst)
 				ofs << "STARTMJD " << setprecision(12) << MJDofs << endl;
 			switch (frec_att_last.frm) {
@@ -315,7 +321,7 @@ void Vessel::FRecorder_Save (bool force)
 				frec_eng_simt = td.SimT1;
 				char cbuf[256];
 				strcpy (cbuf, FRfname); strcpy (cbuf+strlen(cbuf)-3, "atc");
-				ofs.open (cbuf, isfirst ? ios::trunc : ios::app);
+				ofs.open (cbuf, ios::app); // not upstream: appends, FRecorder_Activate emptied the file
 				ofs << setprecision(10) << (frec_eng_simt-Tofs) << " ENG";
 				bfopen = true;
 			}

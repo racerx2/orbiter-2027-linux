@@ -343,3 +343,92 @@ TEST_CASE ("The build drew every texture: DXT1 with the full mip chain at its si
 	}
 }
 #endif
+
+TEST_CASE ("Far buildings: one wall piece a face with the floors the height holds, the same footprint, pitched roofs kept", "[BldgGeom]")
+{
+	auto far = [] (const std::vector<std::vector<TsBldg::Pt>> &rings, double h) {
+		TsBldg::Feature f;
+		f.rings = rings;
+		f.height = h;
+		TsBldg::Mesh m = TsBldg::Build (TZ, TX, TY, {f}, 4096);
+		REQUIRE (m.b.size() == 1);
+		const TsBldg::Building &b = m.b[0];
+		Out o;
+		Build (m.vtx.data() + (size_t)b.v0 * 6, b.nv, m.idx.data() + b.i0, b.ni, b.hmin, b.hmax, 12345, o, true);
+		return o;
+	};
+	Out n = Make ({Ring (Box (20, 10))}, 15), o = far ({Ring (Box (20, 10))}, 15);
+	CHECK (o.fv.size() == 4 * 4); // four faces, one quad each
+	CHECK (o.style == n.style);
+	CHECK (o.ring == n.ring);
+	CHECK (o.rv.size() == n.rv.size());
+	CHECK (std::fabs (WallArea (o) - WallArea (n)) < 0.01 * WallArea (n));
+	FrontFacing (o.fv, o.fi);
+	InRegion (o.fv, o.style);
+	const Style &st = Styles[o.style];
+	int F = std::clamp ((int)std::lround (15.0 / st.floorH), 1, UpperFloors);
+	double ry = (o.style / 4) * Region, top = 1e9, bot = 0;
+	for (const V &v : o.fv) { top = std::min (top, (double)v.v * Atlas - ry); bot = std::max (bot, (double)v.v * Atlas - ry); }
+	CHECK (std::fabs (top - (UpperY + (UpperFloors - F) * FloorPx)) < 1e-2);
+	CHECK (std::fabs (bot - (UpperY + UpperFloors * FloorPx)) < 1e-2);
+	Out t = far ({Ring (Box (30, 30))}, 120.0);
+	double tt = 1e9;
+	for (const V &v : t.fv) tt = std::min (tt, (double)v.v * Atlas - (t.style / 4) * Region);
+	CHECK (std::fabs (tt - UpperY) < 1e-2); // six floors at most, stretched
+	Out h = far ({Ring (Box (10, 8))}, 0.0);
+	REQUIRE (h.pitched);
+	Out hn = Make ({Ring (Box (10, 8))}, 0.0);
+	size_t slopes = 0, nslopes = 0;
+	for (const V &v : h.fv) slopes += v.ny > 0.3f;
+	for (const V &v : hn.fv) nslopes += v.ny > 0.3f;
+	CHECK (slopes == nslopes);
+	CHECK (h.fv.size() < hn.fv.size());
+}
+
+TEST_CASE ("Distance classes: by on-screen height, the class-0 edge fixed, a 15 % band, the budget scale", "[BldgGeom]")
+{
+	using namespace BldgGeom::Lod;
+	CHECK (Class (3.9, 1.0, -1) == 0);
+	CHECK (Class (4.0, 1.0, -1) == 1);
+	CHECK (Class (7.9, 1.0, -1) == 1);
+	CHECK (Class (8.0, 1.0, -1) == 2);
+	CHECK (Class (20.0, 1.0, -1) == 3);
+	CHECK (Class (40.0, 1.0, -1) == 4);
+	CHECK (Class (1000.0, 1.0, -1) == 5);
+	CHECK (Class (3.9, 8.0, -1) == 0); // the scale never moves the class-0 edge
+	CHECK (Class (4.0, 2.0, -1) == 2); // past it the scale thins
+	CHECK (Class (4.4, 1.0, 0) == 0);  // held a little past the edge
+	CHECK (Class (4.7, 1.0, 0) == 1);
+	CHECK (Class (3.6, 1.0, 1) == 1);  // and a little before it
+	CHECK (Class (3.4, 1.0, 1) == 0);
+	CHECK (Class (9.0, 1.0, 1) == 1);
+	CHECK (Class (9.3, 1.0, 1) == 2);
+	CHECK (Class (7.1, 1.0, 2) == 2);
+	CHECK (Class (6.9, 1.0, 2) == 1);
+	CHECK (Class (5000.0, 1.0, 5) == 5);
+	CHECK (std::fabs (Scale (0) - 1.0) < 1e-12);
+	CHECK (std::fabs (Scale (2) - 2.0) < 1e-12);
+	CHECK (std::fabs (Scale (NScale - 1) - 8.0) < 1e-12);
+	CHECK (Step (0, 3.1e6, -1.0, 3e6) == 1);
+	CHECK (Step (1, 2.9e6, 3.5e6, 3e6) == 1); // stays: one step down would be over
+	CHECK (Step (1, 1.0e6, 2.8e6, 3e6) == 1); // stays: one step down not under 90 %
+	CHECK (Step (1, 1.0e6, 2.6e6, 3e6) == 0);
+	CHECK (Step (NScale - 1, 9e9, 9e9, 3e6) == NScale - 1);
+	CHECK (Step (0, 1.0, -1.0, 3e6) == 0);
+}
+
+TEST_CASE ("Reaches (design fixed-clear): a footprint round the origin, an edge within r, a degenerate ring", "[BldgGeom]")
+{
+	std::vector<std::array<double, 2>> around = {{-5, -5}, {5, -5}, {5, 5}, {-5, 5}};
+	CHECK (Reaches (around, 1.0));                   // the origin inside, every edge 5 m away
+	std::vector<std::array<double, 2>> edge = {{-20, 10}, {20, 10}, {20, 30}, {-20, 30}}; // its near edge 10 m away, the corners 22 m
+	CHECK (Reaches (edge, 12.0));
+	CHECK (Reaches (edge, 10.0));
+	CHECK_FALSE (Reaches (edge, 8.0));
+	std::vector<std::array<double, 2>> far = {{30, 30}, {40, 30}, {40, 40}, {30, 40}};
+	CHECK_FALSE (Reaches (far, 42.0));               // its nearest corner 42.4 m away
+	CHECK (Reaches (far, 42.5));
+	CHECK_FALSE (Reaches ({{-1, 0}, {1, 0}}, 100.0)); // not a polygon
+	CHECK_FALSE (Reaches (around, 0.0));
+	CHECK_FALSE (Reaches (around, -3.0));
+}

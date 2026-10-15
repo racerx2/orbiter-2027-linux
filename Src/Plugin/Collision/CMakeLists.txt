@@ -142,7 +142,7 @@ else ()
 	set(COLL_DATA_CMDS COMMAND ${COLL_CFG_ONCE})
 	list(APPEND COLL_DATA_CMDS COMMAND ${CMAKE_COMMAND} -E make_directory ${ORBITER_BINARY_CONFIG_DIR}/Vessels COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/Config/Vessels/CollDebris.cfg ${ORBITER_BINARY_CONFIG_DIR}/Vessels/CollDebris.cfg) # dmg3 P debris class
 	if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/Meshes)
-		list(APPEND COLL_DATA_CMDS COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_CURRENT_SOURCE_DIR}/Meshes/ ${ORBITER_BINARY_MESH_DIR})
+		list(APPEND COLL_DATA_CMDS COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_CURRENT_SOURCE_DIR}/Meshes/ ${ORBITER_BINARY_MESH_DIR}) # not upstream: copynewer.cmake keeps files changed in the build tree
 	endif ()
 	add_custom_target(CollisionData ALL ${COLL_DATA_CMDS} DEPENDS ${COLL_SDK_HEADER})
 	set_target_properties(CollisionData PROPERTIES FOLDER Data)

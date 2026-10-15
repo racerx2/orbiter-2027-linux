@@ -238,6 +238,7 @@ namespace DentMath {
 		double E[2], double eabs[2]);                             // 2.1 steps 2-7; false: an event without FIRST carries energy (Damage asserts in debug)
 	bool   Destroyed (double eabs, double mEmpty, double mTotal, double epsD); // eabs / m >= epsD; m = mEmpty, or mTotal if 0
 	double BuildingMass (int cls, const Vector &size);            // rho_env * V_env; size = SCALE (primitives) or the rest box in object axes (MESH)
+	double StructureMass (double m, const Vector &box);           // a fixed structure's damage mass: its own, at least a MESH building of its collider box
 	const DentMaterial *FindMaterial (const char *id);            // table 3.1, ASCII case-insensitive; null if unknown
 	const DentMaterial &DefaultMaterial (int cls);                // al_structure for vessels (cls < 0), else by DENTB_* class (3.2)
 	// keys and text (7.3, 9, 10)

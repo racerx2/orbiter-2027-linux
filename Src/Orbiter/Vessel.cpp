@@ -3421,7 +3421,7 @@ const MESHHANDLE Vessel::GetMeshTemplate (UINT idx) const
 
 const char *Vessel::GetMeshName (UINT idx) const
 {
-	if (idx < nmesh && meshlist[idx]->meshname[0]) return meshlist[idx]->meshname;
+	if (idx < nmesh && meshlist[idx] && meshlist[idx]->meshname[0]) return meshlist[idx]->meshname; // not upstream: a deleted slot is NULL
 	else return NULL;
 }
 
@@ -4760,6 +4760,7 @@ void Vessel::Update (bool force)
 	} else if (fstatus == FLIGHTSTATUS_LANDED) {
 
 		// simplified state update for idle vessels
+		sp.Reseat (); // not upstream (elev-consistency): on the ground the stream wrote since
 		proxyplanet->LocalToGlobal_t1 (sp.ploc, s1->pos);
 		double vground = Pi2 * proxyplanet->Size() * sp.clat / proxyplanet->RotT();
 		s1->vel.Set (-vground*sp.slng, 0.0, vground*sp.clng);
@@ -5999,7 +6000,7 @@ bool Vessel::RegisterModule (const char *dllname)
 		dlerror (); // not upstream: clears a stale error, so LoadModule logs none
 		return false;
 	}
-	hMod = dlopen (oapiResolvePath (cbuf).c_str(), RTLD_NOW);
+	hMod = ModuleLoad (oapiResolvePath (cbuf).c_str()); // not upstream: counted, ModuleFree detaches on the last free
 	if (!hMod)
 		return false;
 
@@ -7706,7 +7707,7 @@ void VESSEL::ShiftMeshes (const VECTOR3 &ofs) const
 
 bool VESSEL::GetMeshOffset (UINT idx, VECTOR3 &ofs) const
 {
-	if (idx >= vessel->nmesh) return false;
+	if (idx >= vessel->nmesh || !vessel->meshlist[idx]) return false; // not upstream: a deleted slot is NULL
 	memcpy (&ofs, &vessel->meshlist[idx]->meshofs, sizeof(VECTOR3));
 	return true;
 }
@@ -7744,7 +7745,7 @@ MESHHANDLE VESSEL::CopyMeshFromTemplate (UINT idx) const
 
 WORD VESSEL::GetMeshVisibilityMode (UINT idx) const
 {
-	return (idx < vessel->nmesh ? vessel->meshlist[idx]->vismode : 0);
+	return (idx < vessel->nmesh && vessel->meshlist[idx] ? vessel->meshlist[idx]->vismode : 0); // not upstream: a deleted slot is NULL
 }
 
 void VESSEL::SetMeshVisibilityMode (UINT idx, WORD mode) const

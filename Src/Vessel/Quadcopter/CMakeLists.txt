@@ -36,12 +36,12 @@ add_dependencies(Quadcopter
 
 add_custom_command(
 	TARGET Quadcopter PRE_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CONFIG_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Config/Vessels
+	COMMAND ${ORBITER_COPY_NEWER} ${CONFIG_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Config/Vessels # not upstream: copynewer.cmake keeps files changed in the build tree
 )
 
 add_custom_command(
 	TARGET Quadcopter PRE_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${MESH_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Meshes/Quadcopter
+	COMMAND ${ORBITER_COPY_NEWER} ${MESH_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Meshes/Quadcopter # not upstream: copynewer.cmake keeps files changed in the build tree
 )
 
 #add_custom_command(

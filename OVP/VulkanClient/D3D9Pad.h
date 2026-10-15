@@ -766,7 +766,7 @@ public:
 	 *   selected for \e prop==true, and 'fixed' is selected for \e prop==false.
 	 */
 	D3D9PadFont (int height, bool prop, const char *face, FontStyle style = FontStyle::FONT_NORMAL, int orientation=0, DWORD flags=0);
-	D3D9PadFont (int height, char *face, int width = 0, int weight = 400, FontStyle style = FontStyle::FONT_NORMAL, float spacing = 0.0f);
+	D3D9PadFont (int height, const char *face, int width = 0, int weight = 400, FontStyle style = FontStyle::FONT_NORMAL, float spacing = 0.0f); // not upstream: const face
 	/**
 	 * \brief Font destructor.
 	 */

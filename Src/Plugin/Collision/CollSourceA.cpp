@@ -109,11 +109,15 @@ void CollGeomSession::ReadKeys (CollVesselSrc &r)
 					if (CollItemBool (bt, "EnableCollider", b)) k.enableCollider = b;
 					if (CollItemReal (bt, "DockZoneRadius", d)) k.dockZoneRadius = d;
 					if (CollItemReal (bt, "DestroyEnergy", d)) k.destroyEnergy = d;
+					if (CollItemBool (bt, "FixedStructure", b)) k.fixed = b ? 1 : 0;
+					if (CollItemReal (bt, "FixedStructureClear", d)) k.fixedClear = d;
 				}
 			}
 			if (CollItemBool (text, "EnableCollider", b)) k.enableCollider = b;
 			if (CollItemReal (text, "DockZoneRadius", d)) k.dockZoneRadius = d;
 			if (CollItemReal (text, "DestroyEnergy", d)) k.destroyEnergy = d;
+			if (CollItemBool (text, "FixedStructure", b)) k.fixed = b ? 1 : 0;
+			if (CollItemReal (text, "FixedStructureClear", d)) k.fixedClear = d;
 			return true;
 		};
 		if (!readFile (CollCfgPath (dirs, "Vessels\\" + cls, ".cfg"))) readFile (CollCfgPath (dirs, cls, ".cfg"));
@@ -130,7 +134,7 @@ void CollGeomSession::FirstSight (CollVesselSrc &r)
 	r.cls = sdk.ClassName (r.h);
 	ReadKeys (r);
 	r.collider = Active (r);
-	if (!r.collider && !r.wantSlots) return;
+	if (!r.collider && !r.wantSlots && r.keys.fixed != 1) return; // a fixed structure's slots keep streamed buildings out, collider or not
 	PollSlots (r);
 	if (!r.collider) return;
 	PollAnims (r, true);
@@ -407,6 +411,37 @@ void CollGeomSession::ClientCheck (CollVesselSrc &r)
 	}
 }
 
+void CollGeomSession::PollHidden (CollVesselSrc &r)
+{
+	if (noGroupFlags || !r.shape) return;
+	CollH vis = sdk.Visual (r.h);
+	if (!vis) return; // no visual: the flags last read stay
+	std::vector<uint8_t> hid;
+	size_t n = 0;
+	for (uint32_t m = 0; m < r.slot.size (); m++) {
+		const CollSlotRec &s = r.slot[m];
+		if (!s.present || !s.info.collide || !s.info.rest || r.shape->CollMesh (m)) continue; // a sidecar MESH's groups are not the client's
+		CollH dm = sdk.DevMesh (r.h, vis, m);
+		if (!dm) continue;
+		hid.assign (s.info.rest->grp.size (), 0);
+		for (uint32_t g = 0; g < hid.size (); g++) {
+			uint32_t f = 0;
+			int rc = sdk.DevGroupFlags (dm, g, f);
+			if (rc == -2) {
+				noGroupFlags = true;
+				sdk.Log (1, "Collision: the core or graphics client gives no mesh group flags: groups an add-on hides stay solid");
+				return;
+			}
+			if (rc == 0 && (f & 2)) { hid[g] = 1; n++; }
+		}
+		r.shape->SetMeshHidden (m, hid);
+	}
+	if (n && !r.hiddenLogged) {
+		r.hiddenLogged = true;
+		sdk.Log (1, ("Collision: '" + r.name + "': " + std::to_string (n) + " groups its add-on hides are not solid").c_str ());
+	}
+}
+
 void CollGeomSession::BeginFrame (double simt, double simdt)
 {
 	(void)simt;
@@ -430,7 +465,7 @@ void CollGeomSession::BeginFrame (double simt, double simdt)
 		if (!r) continue;
 		r->geom.id = r->id; r->geom.h = r->h;
 		if (!r->collider) {
-			if (r->wantSlots) PollSlots (*r);
+			if (r->wantSlots || r->keys.fixed == 1) PollSlots (*r);
 			r->geom.shape = nullptr;
 			continue;
 		}
@@ -463,6 +498,7 @@ void CollGeomSession::BeginFrame (double simt, double simdt)
 		if (!r->shape) r->shape = std::make_unique<CollShape> ();
 		r->geom.flags = r->shape->Update (info.data (), (uint32_t)info.size (), *src, a, na, tpl);
 		r->geom.shape = (r->geom.flags & COLLSH_NONE) ? nullptr : r->shape.get ();
+		if (r->geom.shape && (firstVis || (r->geom.flags & (COLLSH_BUILT | COLLSH_REBUILT)) || (frame + r->id) % 30 == 0)) PollHidden (*r);
 		Predict (*r, *src);
 		r->histValid = r->dtCur > 0;
 	}
@@ -476,6 +512,27 @@ void CollGeomSession::BeginFrame (double simt, double simdt)
 			p->shape->Bound (1, c, r);
 			lv.push_back (CollBldgA::Live { p->h, std::max (r, p->geom.nextR) });
 		}
+		std::vector<CollBldgA::FixedIn> fx; // bldg: landed fixed structures, their external meshes at rest (design fixed-structures)
+		for (auto &p : vessel) {
+			if (!p || p->keys.fixed != 1) continue;
+			CollVesselRead rd {};
+			sdk.ReadVessel (p->h, rd, CVR_NOWEIGHT);
+			if (!(rd.status & 1)) continue;
+			CollBldgA::FixedIn f { p->h, p->name, rd.x, rd.R, 1469598103934665603ull, {}, CollFixedClear (p->keys.fixedClear) };
+			uint64_t cb;
+			memcpy (&cb, &f.clear, sizeof cb);
+			f.sig = (f.sig ^ cb) * 1099511628211ull;
+			for (uint32_t k = 0; k < p->slot.size (); k++) {
+				const CollSlotRec &s = p->slot[k];
+				if (!s.present || !(s.mode & MESHVIS_EXTERNAL) || !s.info.rest) continue;
+				f.mesh.push_back ({ s.info.rest, s.ofs });
+				uint64_t o[3];
+				memcpy (o, s.ofs.data, sizeof o);
+				for (uint64_t w : { (uint64_t)k, (uint64_t)s.serial, o[0], o[1], o[2] }) f.sig = (f.sig ^ w) * 1099511628211ull;
+			}
+			fx.push_back (std::move (f));
+		}
+		bldg->Fixed (std::move (fx));
 		bldg->Frame (simt, lv);
 	}
 	inPreStep = false;
@@ -680,6 +737,33 @@ const CollClassKeys &CollGeomSession::Keys (uint32_t id) const
 {
 	CollVesselSrc *r = Rec (id);
 	return r ? r->keys : noKeys;
+}
+
+double CollFixedClear (double key)
+{
+	return std::isfinite (key) && key > 0.0 ? std::min (key, COLL_FIXED_CLEAR_MAX) : 0.0;
+}
+
+bool CollFixed (int key, bool landed, double m, double size)
+{
+	if (!landed || key == 0) return false;
+	if (key == 1) return true;
+	double v = 4.0 / 3.0 * 3.14159265358979323846 * size * size * size;
+	return m >= 0.0 && v > 0.0 && m < COLL_FIXED_RHO * v;
+}
+
+bool CollGeomSession::Fixed (uint32_t id) const
+{
+	CollVesselSrc *r = Rec (id);
+	if (!r || !r->h) return false;
+	CollVesselRead rd {};
+	sdk.ReadVessel (r->h, rd, CVR_NOWEIGHT);
+	double m = sdk.EmptyMass (r->h), size = sdk.Size (r->h);
+	bool f = CollFixed (r->keys.fixed, (rd.status & 1) != 0, m, size);
+	if (f != (r->fixedLogged == 1) && (f || r->fixedLogged >= 0))
+		sdk.Log (1, ("Collision: '" + r->name + "' " + (f ? (r->keys.fixed == 1 ? "is a fixed structure (FixedStructure)" : "is a fixed structure (placeholder mass " + std::to_string (m) + " kg, size " + std::to_string (size) + " m)") : "is no longer a fixed structure")).c_str ());
+	r->fixedLogged = f ? 1 : 0;
+	return f;
 }
 
 const CollBaseRec *CollGeomSession::BaseRec (int planet, int base) const { return bases->Rec (planet, base); }

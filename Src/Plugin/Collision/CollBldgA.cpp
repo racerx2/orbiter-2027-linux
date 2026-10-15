@@ -74,6 +74,22 @@ struct CollBldgA::Tile {
 	std::unordered_map<int64_t, std::vector<uint32_t>> grid; // anchors by COLL_BLDG_CELL cell
 	std::vector<uint32_t> active;              // built buildings
 	std::vector<const CollBaseRec *> near;     // bases with a structure index within COLL_BLDG_BASES
+	std::vector<std::shared_ptr<const FixedRec>> nearF; // fixed structures within COLL_BLDG_BASES (design fixed-structures)
+	std::vector<const ZoneRec *> nearZ;        // base files' clear zones within COLL_BLDG_BASES + their radius (design base-clear)
+};
+
+struct CollBldgA::FixedRec {                   // a fixed structure's steep faces in the horizon frame at its origin, as a base record
+	CollH h = nullptr;
+	const Planet *p = nullptr;
+	std::string name;
+	Vector loc;                                // origin, planet frame
+	Matrix Rp;                                 // its rotation in the planet frame when made
+	Vector rposP; Matrix rrotP;                // record frame: x south, y up, z east (CollBaseA.cpp)
+	uint64_t sig = 0;
+	double clear = 0;                          // FixedStructureClear [m] (design fixed-clear)
+#if COLL_HAVE_BLDGGEOM
+	std::shared_ptr<const BldgGeom::BaseIndex> bidx;
+#endif
 };
 
 CollBldgA::CollBldgA (CollSdk &s, const CollCfgValues &c) : sdk (s), cfg (c) {}
@@ -113,12 +129,24 @@ void CollBldgA::Start (const CollBaseA *b)
 	}
 	on = !planets.empty ();
 	if (on) Log ("Collision bldg: streamed buildings are solid on %zu planets", planets.size ());
+	for (const Planet &p : planets) // the base files' clear zones, from the core whatever cfg file matched (design base-clear)
+		for (uint32_t k = 0, nb = sdk.BaseCount (p.h); k < nb; k++) {
+			std::vector<CollClearZone> z;
+			sdk.BaseClearZones (sdk.Base (p.h, k), z);
+			for (const CollClearZone &c : z) {
+				double slng = sin (c.lng), clng = cos (c.lng), slat = sin (c.lat), clat = cos (c.lat);
+				ZoneRec r { &p, Up (c.lat, c.lng), Up (c.lat, c.lng) * p.R, Matrix (clng*slat, clng*clat, -slng, -clat, slat, 0, slng*slat, slng*clat, clng), c.rad }; // CollBaseA's base frame: x south, y up, z east
+				zones.push_back (r);
+			}
+		}
+	if (!zones.empty ()) Log ("Collision bldg: %zu clear zones from base files keep streamed buildings out", zones.size ());
 }
 
 void CollBldgA::Release ()
 {
 	for (auto &kv : tiles) Drop (*kv.second);
 	tiles.clear (); slotOf.clear (); bad.clear (); pending.clear (); bodies.clear (); ves.clear (); vground.clear ();
+	fixedIn.clear (); fixedRec.clear (); zones.clear (); // they point at the planets Start makes again
 }
 
 void CollBldgA::Clear () { Release (); on = false; bases = nullptr; }
@@ -338,23 +366,40 @@ void CollBldgA::Setup (Tile &t)
 	if (bases) // bases near the tile whose structures keep its buildings out (BldgMgr::Make)
 		for (const auto &r : bases->rec)
 			if (r->bidx && r->hPlanet == P.h && P.R * std::acos (std::min (1.0, dotp (Up (r->lat, r->lng), Up (lat0, lng0)))) <= COLL_BLDG_BASES) t.near.push_back (r.get ());
+	for (const ZoneRec &z : zones) // the base files' clear zones near the tile, along the ground (BldgMgr, ClearZones::Near)
+		if (z.p == t.p && 2.0 * P.R * std::asin (std::min (1.0, 0.5 * (Up (lat0, lng0) - z.u).length ())) <= COLL_BLDG_BASES + z.r) t.nearZ.push_back (&z);
+	NearFixed (t);
+}
+
+void CollBldgA::NearFixed (Tile &t) const
+{
+	t.nearF.clear ();
+	double lat0, lng0;
+	Merc (t.x + 0.5, t.y + 0.5, lat0, lng0);
+	for (const auto &r : fixedRec) {
+		double rl = r->loc.length ();
+		if (r->p != t.p || !(rl > 0)) continue;
+		if (t.p->R * std::acos (std::min (1.0, dotp (r->loc / rl, Up (lat0, lng0)))) <= COLL_BLDG_BASES) t.nearF.push_back (r);
+	}
 }
 
 // the client's rule (BldgMgr::Make): footprint corners, edge midpoints or centroid within COLL_BLDG_MARGIN of a base structure, or a structure inside the footprint
 bool CollBldgA::Excluded (const Tile &t, uint32_t i, double g, const std::vector<std::array<double, 2>> &ring) const
 {
 #if COLL_HAVE_BLDGGEOM
-	if (t.near.empty () || ring.size () < 3) return false;
+	if ((t.near.empty () && t.nearF.empty () && t.nearZ.empty ()) || ring.size () < 3) return false;
 	const CollBldgRec &R = t.tile.b[i];
 	Vector ub = Up (R.lat, R.lng), eb = East (R.lng), nb = North (R.lat, R.lng), base = ub * (t.p->R + g);
 	std::vector<std::array<double, 2>> foot;
-	for (const CollBaseRec *r : t.near) {
+	auto place = [&] (const Vector &rposP, const Matrix &rrotP) {
 		foot.clear ();
 		for (const auto &q : ring) {
-			Vector l = tmul (r->rrotP, base + eb * q[0] + nb * q[1] - r->rposP); // the base frame: x south, z east
+			Vector l = tmul (rrotP, base + eb * q[0] + nb * q[1] - rposP); // the base frame: x south, z east
 			foot.push_back ({ l.x, l.z });
 		}
-		const BldgGeom::BaseIndex &bi = *r->bidx;
+	};
+	auto hits = [&] (const Vector &rposP, const Matrix &rrotP, const BldgGeom::BaseIndex &bi) {
+		place (rposP, rrotP);
 		bool hit = false;
 		double cx = 0, cz = 0;
 		for (size_t k = 0; k < foot.size () && !hit; k++) {
@@ -362,12 +407,131 @@ bool CollBldgA::Excluded (const Tile &t, uint32_t i, double g, const std::vector
 			hit = bi.Near (a[0], a[1], COLL_BLDG_MARGIN) || bi.Near (0.5 * (a[0] + c[0]), 0.5 * (a[1] + c[1]), COLL_BLDG_MARGIN);
 			cx += a[0]; cz += a[1];
 		}
-		if (hit || bi.Near (cx / foot.size (), cz / foot.size (), COLL_BLDG_MARGIN) || bi.Inside (foot)) return true;
+		return hit || bi.Near (cx / foot.size (), cz / foot.size (), COLL_BLDG_MARGIN) || bi.Inside (foot);
+	};
+	for (const ZoneRec *z : t.nearZ) { // the client's base file clear zone test (design base-clear)
+		place (z->rposP, z->rrotP);
+		if (BldgGeom::Reaches (foot, z->r)) return true;
+	}
+	for (const CollBaseRec *r : t.near) if (hits (r->rposP, r->rrotP, *r->bidx)) return true;
+	for (const auto &r : t.nearF) {
+		if (r->clear > 0) { // the client's clear zone test (design fixed-clear), faces or not
+			place (r->rposP, r->rrotP);
+			if (BldgGeom::Reaches (foot, r->clear)) return true;
+		}
+		if (r->bidx && hits (r->rposP, r->rrotP, *r->bidx)) return true;
 	}
 	return false;
 #else
 	(void)t; (void)i; (void)g; (void)ring;
 	return false;
+#endif
+}
+
+void CollBldgA::Shape (const Tile &t, uint32_t i, BldgGeom::Out &o) const
+{
+#if COLL_HAVE_BLDGGEOM
+	const CollBldgRec &R = t.tile.b[i];
+	uint64_t la, ln;
+	memcpy (&la, &R.lat, 8);
+	memcpy (&ln, &R.lng, 8);
+	BldgGeom::Build (t.tile.vtx + (size_t)R.v0 * 6, R.nv, t.tile.idx + R.i0, R.ni, R.hmin, R.hmax, (uint32_t)Mix (la ^ (ln * 0x9E3779B97F4A7C15ull)), o); // the client's hash: its gable roofs and skips
+#else
+	(void)t; (void)i; (void)o;
+#endif
+}
+
+// fixed structures (design fixed-structures): a record per landed FixedStructure vessel, made again when it moved, turned or its meshes changed
+void CollBldgA::FixedPass ()
+{
+#if COLL_HAVE_BLDGGEOM
+	std::vector<std::shared_ptr<const FixedRec>> now;
+	std::vector<std::pair<const Planet *, Vector>> changed; // planet frame places whose tiles check their buildings again
+	for (const FixedIn &f : fixedIn) {
+		const Planet *P = nullptr;
+		Vector loc;
+		for (const Planet &p : planets) {
+			Vector l = tmul (p.pR, f.x - p.pp);
+			if (l.length () > 0 && l.length () - p.R < COLL_BLDG_ALT + 12e3) { P = &p; loc = l; break; }
+		}
+		if (!P) continue;
+		Matrix Rp = transp (P->pR) * f.R;
+		std::shared_ptr<const FixedRec> old;
+		for (const auto &r : fixedRec) if (r->h == f.h) old = r;
+		if (old && old->p == P && old->sig == f.sig && (old->loc - loc).length () <= COLL_FIXED_MOVE) {
+			double turn = 0;
+			for (int c = 0; c < 3; c++) turn = std::max (turn, (Vector (Rp.data[c], Rp.data[3 + c], Rp.data[6 + c]) - Vector (old->Rp.data[c], old->Rp.data[3 + c], old->Rp.data[6 + c])).length ());
+			if (turn <= COLL_FIXED_TURN) { now.push_back (old); continue; }
+		}
+		auto r = std::make_shared<FixedRec> ();
+		r->h = f.h; r->p = P; r->name = f.name; r->loc = loc; r->Rp = Rp; r->sig = f.sig; r->clear = f.clear;
+		double rl = loc.length (), lat = std::asin (std::max (-1.0, std::min (1.0, loc.y / rl))), lng = std::atan2 (loc.z, loc.x);
+		double slat = sin (lat), clat = cos (lat), slng = sin (lng), clng = cos (lng);
+		r->rposP = loc;
+		r->rrotP = Matrix (clng*slat, clng*clat, -slng, -clat, slat, 0, slng*slat, slng*clat, clng); // CollBaseA's base frame at the vessel
+		auto bi = std::make_shared<BldgGeom::BaseIndex> ();
+		for (const auto &m : f.mesh)
+			for (const CollGroupData &g : m.first->grp)
+				for (size_t k = 0; k + 2 < g.idx.size (); k += 3) {
+					double v[3][3];
+					bool ok = true;
+					for (int c = 0; c < 3 && ok; c++) {
+						uint16_t n = g.idx[k + c];
+						ok = n < g.vtx.size ();
+						if (!ok) break;
+						Vector q = tmul (r->rrotP, mul (Rp, Vector (g.vtx[n].x, g.vtx[n].y, g.vtx[n].z) + m.second));
+						v[c][0] = q.x; v[c][1] = q.y; v[c][2] = q.z;
+					}
+					if (ok) bi->Add (v[0], v[1], v[2]);
+				}
+		r->bidx = bi;
+		Log ("Collision bldg: fixed structure '%s' keeps streamed buildings off %zu structure faces, clear within %.0f m", f.name.c_str (), bi->Count (), r->clear);
+		if (old) changed.push_back ({ old->p, old->loc });
+		changed.push_back ({ P, loc });
+		now.push_back (r);
+	}
+	for (const auto &r : fixedRec)
+		if (std::find (now.begin (), now.end (), r) == now.end () && std::none_of (now.begin (), now.end (), [&] (const std::shared_ptr<const FixedRec> &x) { return x->h == r->h; })) {
+			Log ("Collision bldg: fixed structure '%s' no longer keeps streamed buildings out", r->name.c_str ());
+			changed.push_back ({ r->p, r->loc });
+		}
+	fixedRec.swap (now);
+	if (changed.empty ()) return;
+	size_t n = 0;
+	for (auto &kv : tiles) {
+		Tile &t = *kv.second;
+		double lat0, lng0;
+		Merc (t.x + 0.5, t.y + 0.5, lat0, lng0);
+		bool near = false;
+		for (const auto &c : changed) {
+			double cl = c.second.length ();
+			near = near || (c.first == t.p && cl > 0 && t.p->R * std::acos (std::min (1.0, dotp (c.second / cl, Up (lat0, lng0)))) <= COLL_BLDG_BASES);
+		}
+		if (near) { Recheck (t); n++; }
+	}
+	if (n) Log ("Collision bldg: %zu tiles checked their buildings again for fixed structures", n);
+#endif
+}
+
+void CollBldgA::Recheck (Tile &t)
+{
+#if COLL_HAVE_BLDGGEOM
+	NearFixed (t);
+	BldgGeom::Out o;
+	for (uint32_t i = 0; i < t.b.size (); i++) {
+		Bldg &b = t.b[i];
+		if (b.state == Bldg::EXCLUDED) { b.state = Bldg::IDLE; b.checked = false; continue; }
+		if (b.state == Bldg::IDLE) { b.checked = false; continue; }
+		if (b.state != Bldg::BUILT) continue;
+		Shape (t, i, o);
+		b.checked = true;
+		if (!Excluded (t, i, b.g, o.ring)) continue;
+		Free (t, i); // leaves the active list in this frame's parts pass
+		b.state = Bldg::EXCLUDED;
+		st.excluded++;
+	}
+#else
+	(void)t;
 #endif
 }
 
@@ -379,11 +543,8 @@ uint32_t CollBldgA::Activate (Tile &t, uint32_t i, double simt, double g)
 	const CollBldgRec &R = t.tile.b[i];
 	const float *vtx = t.tile.vtx + (size_t)R.v0 * 6;
 	const uint32_t *idx = t.tile.idx + R.i0;
-	uint64_t la, ln;
-	memcpy (&la, &R.lat, 8);
-	memcpy (&ln, &R.lng, 8);
 	BldgGeom::Out o;
-	BldgGeom::Build (vtx, R.nv, idx, R.ni, R.hmin, R.hmax, (uint32_t)Mix (la ^ (ln * 0x9E3779B97F4A7C15ull)), o); // the client's hash: its gable roofs and skips
+	Shape (t, i, o);
 	if (!b.checked) {
 		b.checked = true;
 		if (Excluded (t, i, g, o.ring)) {
@@ -493,6 +654,7 @@ void CollBldgA::Frame (double simt, const std::vector<Live> &v)
 	double sys = sdk.SysTime ();
 	if (sys >= tWant) { // every tile near a low vessel, every half second
 		tWant = sys + COLL_BLDG_WANT;
+		FixedPass (); // before Load: a new tile's Setup sees the records
 		for (const Ves &x : ves) if (x.alt < COLL_BLDG_ALT) Want (x);
 	}
 	Load ();

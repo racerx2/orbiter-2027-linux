@@ -125,6 +125,21 @@ public:
 		if(ImGui::Button("Recrete Sun/Glares")) {
 			g_client->GetScene()->CreateSunGlare();
 		}
+
+		ImGui::SeparatorText("Exposure"); // not upstream: the exposure override (design-exposure-override)
+		bool autoExp = Config->AutoExposure != 0;
+		if (ImGui::Checkbox("Auto exposure", &autoExp)) Config->AutoExposure = autoExp ? 1 : 0;
+		ImGui::SliderFloatReset(autoExp ? "Compensation (EV)###expoEV" : "Exposure (EV)###expoEV", &Config->ExposureEV, -3.0f, 3.0f, 0.0f, "%+1.1f");
+		if (ImGui::IsItemHovered()) ImGui::SetTooltip(autoExp ? "Added to the auto exposure; on a bright view saturation caps a positive value. Switch auto off to fix the exposure." : "The fixed exposure");
+		Config->ExposureEV = std::min(std::max(Config->ExposureEV, -3.0f), 3.0f);
+		if (autoExp) {
+			ImGui::SliderFloatReset("Brighten limit (EV)", &Config->AutoExpMaxEV, 0.0f, 4.0f, 1.0f, "%+1.1f");
+			ImGui::SliderFloatReset("Darken limit (EV)", &Config->AutoExpMinEV, -4.0f, 0.0f, -1.5f, "%+1.1f");
+			ImGui::SliderFloatReset("Adaptation speed", &Config->AutoExpSpeed, 0.25f, 4.0f, 1.0f, "%1.2fx");
+			Config->AutoExpMaxEV = std::min(std::max(Config->AutoExpMaxEV, 0.0f), 4.0f);
+			Config->AutoExpMinEV = std::min(std::max(Config->AutoExpMinEV, -4.0f), 0.0f);
+			Config->AutoExpSpeed = std::min(std::max(Config->AutoExpSpeed, 0.25f), 4.0f);
+		}
 		ImGui::PopItemWidth();
 	}
 };

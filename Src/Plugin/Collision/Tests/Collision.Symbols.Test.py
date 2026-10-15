@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import sys
 
-ENTRY = {'InitModule', 'ExitModule', 'ModuleDate', 'ModuleDetach', 'oapiModuleResources', 'opcLoadState', 'opcSaveState'}
+ENTRY = {'InitModule', 'ExitModule', 'ModuleDate', 'ModuleDetach', 'ModuleAttach', 'oapiModuleResources', 'opcLoadState', 'opcSaveState'}  # ModuleAttach/ModuleDetach: Orbitersdk.cpp
 WEAK = {'GetModuleVersion'}
 FORBIDDEN = {'rand', 'srand', 'setlocale', 'fesetenv', 'fesetround', 'feholdexcept', 'feupdateenv', 'fesetexceptflag', 'feenableexcept', 'uselocale',
              '_ZNSt6locale6globalERKS_'}  # the last: std::locale::global

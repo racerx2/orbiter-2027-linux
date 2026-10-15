@@ -1361,7 +1361,7 @@ public:
 	 * \sa clbkReleaseFont, oapi::Font
 	 */
 	virtual Font *clbkCreateFont (int height, bool prop, const char *face, FontStyle style = FontStyle::FONT_NORMAL, int orientation = 0) const { return NULL; }
-	virtual Font* clbkCreateFontEx (int height, char* face, int width = 0, int weight = 400, FontStyle style = FontStyle::FONT_NORMAL, float spacing = 0.0f) const { return NULL; }
+	virtual Font* clbkCreateFontEx (int height, const char* face, int width = 0, int weight = 400, FontStyle style = FontStyle::FONT_NORMAL, float spacing = 0.0f) const { return NULL; } // not upstream: const face
 		
 	/**
 	 * \brief De-allocate a font resource.
@@ -1678,6 +1678,11 @@ protected:
 	 *   directory.
 	 */
 	virtual void clbkStoreMeshPersistent (MESHHANDLE hMesh, const char *fname) {}
+
+public: // not upstream
+	// not upstream: a device mesh group's user flags now (oapiGetMeshGroupFlags); 0 ok, -2 not supported. Last virtual: the vtable's earlier slots stay
+	virtual int clbkGetMeshGroupFlags (DEVMESHHANDLE hMesh, DWORD grpidx, DWORD *usrFlag) { return -2; }
+protected: // not upstream: as before
 
 	/**
 	 * \brief Displays the default Orbiter splash screen on top of

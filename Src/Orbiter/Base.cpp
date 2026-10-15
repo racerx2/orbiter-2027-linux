@@ -171,6 +171,13 @@ Base::Base (char *fname, Planet *_planet, double _lng, double _lat)
 			ntile++;
 		}
 	}
+
+	ifs.clear (); // not upstream: FindLine's rewind needs a stream without failbit (design base-clear)
+	if (FindLine (ifs, "BEGIN_CLEARZONES")) { // not upstream: no streamed buildings or trees in these (design base-clear)
+		std::vector<std::string> warn;
+		ReadClearZones (ifs, clear, warn);
+		for (const std::string &w : warn) LOGOUT_WARN ("Base %s: BEGIN_CLEARZONES: %s", Name(), w.c_str());
+	}
 }
 
 Base::~Base ()
