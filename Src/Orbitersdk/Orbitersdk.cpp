@@ -18,6 +18,7 @@ OAPIFUNC void InitLib (void *hModule);
 typedef void (*DLLEXIT)(void*);
 static DLLEXIT DLLExit;
 static void *hThisModule;
+static bool bDetached; // not upstream: ModuleDetach ran, ModuleAttach attaches again
 
 // GetProcAddress counterpart: dlsym also searches the module's dependencies, so keep only the module's own symbol
 static void *OwnProc (void *hModule, const char *name, const void *base)
@@ -46,7 +47,16 @@ DLLCLBK void ModuleDetach ()
 {
 	DLLEXIT f = DLLExit;
 	DLLExit = 0;
+	bDetached = true; // not upstream: see ModuleAttach
 	if (f) (*f)(hThisModule);
+}
+
+// not upstream: DLL_PROCESS_ATTACH again, as after the last FreeLibrary; the core calls it when it reopens a module dlclose kept
+DLLCLBK void ModuleAttach ()
+{
+	if (!bDetached) return;
+	bDetached = false;
+	DllMain_ProcessAttach ();
 }
 
 __attribute__((destructor)) static void DllMain_ProcessDetach ()

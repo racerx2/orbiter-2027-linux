@@ -133,6 +133,86 @@ TEST_CASE ("E2-U11 class keys of vessels without a class name", "[CollSourceA]")
 	REQUIRE (g.Keys (2).dockZoneRadius == 1.5);
 }
 
+TEST_CASE ("fixed structures: the FixedStructure key, the placeholder-mass rule, landed only (design fixed-structures)", "[CollSourceA]")
+{
+	CHECK (CollFixed (-1, true, 2.000001, 392.5));  // SSV LC-39A
+	CHECK (!CollFixed (-1, true, 2000001, 300));    // SSV SLC-6: needs the key
+	CHECK (!CollFixed (-1, true, 2300, 36));        // a solar aircraft, 36 m half span
+	CHECK (!CollFixed (-1, true, 400, 15));         // a glider
+	CHECK (!CollFixed (-1, false, 2, 392.5));       // in flight
+	CHECK (CollFixed (1, true, 1.65e7, 50));        // SSV VAB with the key
+	CHECK (!CollFixed (1, false, 1.65e7, 50));
+	CHECK (!CollFixed (0, true, 2, 392.5));         // FALSE turns the rule off
+	CollFakeSdk s;
+	s.File (".\\Config\\Vessels\\Pad.cfg", "FixedStructure = TRUE\nFixedStructureClear = 400\n");
+	s.File (".\\Config\\Vessels\\Light.cfg", "FixedStructure = FALSE\n");
+	auto *a = s.AddVessel ("A", "Pad"), *b = s.AddVessel ("B", "Light"), *c = s.AddVessel ("C"), *d = s.AddVessel ("D");
+	for (auto *v : { a, b, c, d }) { v->rd.status = 1; v->rd.m = 0.01; }
+	a->rd.m = 1e6;
+	d->rd.status = 0;
+	CollGeomSession g (s, Cfg ());
+	g.SimulationStart (0, false);
+	g.BeginFrame (0, 0.1);
+	CHECK (g.Keys (0).fixed == 1);
+	CHECK (g.Keys (1).fixed == 0);
+	CHECK (g.Keys (2).fixed == -1);
+	CHECK (g.Keys (0).fixedClear == 400.0);         // FixedStructureClear (design fixed-clear)
+	CHECK (g.Keys (1).fixedClear == 0.0);
+	CHECK (CollFixedClear (400.0) == 400.0);
+	CHECK (CollFixedClear (9e9) == COLL_FIXED_CLEAR_MAX);
+	CHECK (CollFixedClear (-1.0) == 0.0);
+	CHECK (CollFixedClear (std::nan ("")) == 0.0);
+	CHECK (g.Fixed (0));
+	CHECK (!g.Fixed (1));
+	CHECK (g.Fixed (2));                            // 0.01 kg, size 10 m
+	CHECK (!g.Fixed (3));
+	CHECK (s.LogCount ("'A' is a fixed structure (FixedStructure)") == 1);
+	CHECK (s.LogCount ("'C' is a fixed structure (placeholder mass") == 1);
+	g.Fixed (0);
+	CHECK (s.LogCount ("'A' is a fixed structure") == 1); // once per change
+	a->rd.status = 0;
+	CHECK (!g.Fixed (0));
+	CHECK (s.LogCount ("'A' is no longer a fixed structure") == 1);
+	CHECK (s.misuse == 0);
+}
+
+TEST_CASE ("fixed structures rev 2: a group the add-on hides on its device mesh leaves the collider, shown again it returns; no flags from the host leaves the shape alone", "[CollSourceA]")
+{
+	for (bool flags : { true, false }) {
+		CollFakeSdk s;
+		s.groupFlags = flags;
+		auto *v = s.AddVessel ("Pad");
+		const auto *T = s.AddTpl ("pad", { Box (2), Box (0.5f) });
+		v->slot.resize (1); v->slot[0].kind = CollFakeSdk::TPL; v->slot[0].tpl = T;
+		v->visual = &s;
+		s.devFlags[{ (const void *)v, 0 }] = { 0, 3 }; // group 1 hidden and its shadow off, as LC39's HideRBUS
+		CollGeomSession g (s, Cfg ());
+		g.SimulationStart (0, false);
+		auto hiddenGrp = [&] (uint32_t grp) {
+			const CollShape *sh = g.Geom (0)->shape;
+			int p = sh ? sh->PartOf (0, grp) : -1;
+			if (p < 0) return false;
+			const uint8_t *mk = sh->GroupMask ((uint32_t)p);
+			const CollGeom &G = sh->Part ((uint32_t)p).Geom ();
+			bool any = false;
+			for (size_t k = 0; k < G.srcTab.size (); k++) if (G.srcTab[k].grp == grp) any = any || (mk && mk[k]);
+			return any;
+		};
+		g.BeginFrame (0, 0.1);
+		REQUIRE (g.Geom (0)->shape);
+		CAPTURE (flags);
+		CHECK (hiddenGrp (1) == flags);
+		CHECK (!hiddenGrp (0));
+		CHECK (s.LogCount ("'Pad': 1 groups its add-on hides are not solid") == (flags ? 1 : 0));
+		CHECK (s.LogCount ("gives no mesh group flags") == (flags ? 0 : 1));
+		s.devFlags[{ (const void *)v, 0 }] = { 0, 0 };
+		for (int k = 0; k < 31; k++) g.BeginFrame (0, 0.1);
+		CHECK (!hiddenGrp (1));
+		CHECK (s.LogCount ("gives no mesh group flags") == (flags ? 0 : 1)); // once a session
+		CHECK (s.misuse == 0);
+	}
+}
+
 TEST_CASE ("E2-U4 animation diff and E2-U6 prediction", "[CollSourceA]")
 {
 	CollFakeSdk s;

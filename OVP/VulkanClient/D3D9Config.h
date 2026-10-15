@@ -107,9 +107,12 @@ public:
 	int Trees;						// not upstream: 3D trees from the land class tiles (0,1)
 	float TreeRange;				// not upstream: m, 500...4000
 	float TreeDensity;				// not upstream: 0.1...2
+	float BldgRange;				// not upstream: km, 5...40, streamed buildings out to this distance
 	int AutoExposure;				// not upstream: eye adaptation (0,1)
 	float AutoExpMinEV;				// not upstream: -4...0
 	float AutoExpMaxEV;				// not upstream: 0...4
+	float ExposureEV;				// not upstream: -3...3, with auto exposure the compensation, without it the exposure
+	float AutoExpSpeed;				// not upstream: 0.25...4, adaptation speed
 	int CloudAtlas;					// not upstream: seamless cloud layer and shadows (0,1)
 	int LensFlare;			// not upstream: ghosts and halo along the sun line (0,1)
 	int LightShafts;		// not upstream: screen-space sun shafts in air (0,1)

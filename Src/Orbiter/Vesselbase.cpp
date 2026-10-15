@@ -4,6 +4,7 @@
 #include "Orbiter.h"
 #include "Vesselbase.h"
 #include "Psys.h"
+#include "TileStream.h" // not upstream: TsElevGen
 
 using std::max;
 
@@ -135,6 +136,7 @@ void SurfParam::SetLanded (double _lng, double _lat, double _alt, double _dir, c
 	lng = _lng;
 	lat = _lat;
 	alt = _alt;
+	elevGen = TsElevGen (); // not upstream (elev-consistency): before the height is read
 	rad = ref->Size() + alt + (planet ? planet->Elevation (lng, lat) : 0.0);
 	slng = sin(lng), clng = cos(lng), slat = sin(lat), clat = cos(lat);
 	ref->EquatorialToLocal (slng, clng, slat, clat, rad, ploc);
@@ -166,6 +168,18 @@ void SurfParam::SetLanded (double _lng, double _lat, double _alt, double _dir, c
 		atmT = atmp = atmrho = atmM = 0.0;
 	}
 	dynp = 0.0;
+}
+
+
+// -----------------------------------------------------------------------
+
+void SurfParam::Reseat () // not upstream (elev-consistency)
+{
+	unsigned g = TsElevGen ();
+	if (g == elevGen || !ref || ref->Type() != OBJTP_PLANET) return;
+	elevGen = g;
+	rad = ref->Size() + alt + ((Planet*)ref)->Elevation (lng, lat);
+	ref->EquatorialToLocal (slng, clng, slat, clat, rad, ploc);
 }
 
 

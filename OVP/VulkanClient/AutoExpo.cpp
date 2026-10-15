@@ -14,19 +14,27 @@ namespace AutoExpo {
 void Controller::Reset ()
 {
 	ev = 0.0f;
-	for (int i = 0; i < NHIST; i++) { histStamp[i] = 0; histEV[i] = 0.0f; }
+	fresh = true;
+	for (int i = 0; i < NHIST; i++) { histStamp[i] = 0; histEV[i] = 0.0f; histBias[i] = 0.0f; }
 	histNext = 0;
+}
+
+void Controller::SetParams (const Params &p)
+{
+	prm = p;
+	ev = std::min(std::max(ev, prm.minEV), prm.maxEV);
 }
 
 float Controller::Exposure () const
 {
-	return std::exp2(ev);
+	return std::exp2(ev + bias);
 }
 
 void Controller::Used (uint32_t stamp)
 {
 	histStamp[histNext] = stamp;
 	histEV[histNext] = ev;
+	histBias[histNext] = bias;
 	histNext = (histNext + 1) % NHIST;
 }
 
@@ -79,14 +87,19 @@ bool Controller::Update (const Sample &s, uint32_t stamp, float dt, float topEV)
 	for (int i = 0; i < NHIST; i++) if (histStamp[i] == stamp) k = i;
 	if (k < 0) return false;
 	histStamp[k] = 0; // each measure counts once
+	Sample u = s;
+	u.meanLog2 -= histBias[k]; // the frame as rendered without the bias
 	float tau;
-	float t = Target(s, histEV[k], &tau);
+	float t = Target(u, histEV[k], &tau);
 	float n = Night();
 	float top = std::min(prm.maxEV, topEV);
 	if (n > 0.0f) top = std::min(top, prm.maxEV + (prm.nightMaxEV - prm.maxEV) * n * band);
 	t = std::min(std::max(t, prm.minEV), top);
 	if (s.sat > prm.satLimit) t = std::min(t, ev);
-	float a = dt > 0.0f ? 1.0f - std::exp(-dt / tau) : 0.0f;
+	bool snap = fresh && s.weight >= prm.snapWeight && t < ev; // first measure after Reset: darken at once
+	fresh = false;
+	float speed = std::isfinite(prm.speed) ? std::min(std::max(prm.speed, 0.25f), 4.0f) : 1.0f;
+	float a = snap ? 1.0f : (dt > 0.0f ? 1.0f - std::exp(-dt * speed / tau) : 0.0f);
 	ev += (t - ev) * a;
 	ev = std::min(std::max(ev, prm.minEV), prm.maxEV);
 	return true;

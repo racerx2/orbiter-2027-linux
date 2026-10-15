@@ -105,6 +105,10 @@ add_test(NAME RcCond.Test COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_D
 # not upstream: folder listings in NTFS order, MakePath under a long working directory
 add_unit_test(Util.Test ${ORBITER_SOURCE_DIR}/Util.cpp ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
 target_link_libraries(Util.Test Qt6::Widgets)
+add_library(Util.Module MODULE Util.Module.cpp) # not upstream: ModuleLoad/ModuleFree counts on a module
+set_target_properties(Util.Module PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${ORBITER_BINARY_ROOT_DIR}/Tests") # not upstream: as above
+target_compile_definitions(Util.Test PRIVATE UTIL_MODULE="$<TARGET_FILE:Util.Module>") # not upstream: as above
+add_dependencies(Util.Test Util.Module) # not upstream: as above
 # not upstream: the .msh reader on malformed files, built with ASan
 add_unit_test(Mesh.Test ${ORBITER_SOURCE_DIR}/Mesh.cpp ${ORBITER_SOURCE_DIR}/PathResolve.cpp ${ORBITER_SOURCE_DIR}/GltfLoader.cpp)
 target_link_libraries(Mesh.Test Qt6::Core)
@@ -184,6 +188,8 @@ target_compile_options(TileStreamCore.Test PRIVATE -fsanitize=address -fno-omit-
 target_link_options(TileStreamCore.Test PRIVATE -fsanitize=address)
 # not upstream: the Launchpad Earth streaming page: base list, when Clear and Download are refused, how they end
 add_unit_test(TileStreamLaunchpad.Test ${ORBITER_SOURCE_DIR}/StreamBases.cpp)
+# not upstream: a base file's clear zones (BEGIN_CLEARZONES)
+add_unit_test(BaseClear.Test ${ORBITER_SOURCE_DIR}/BaseClear.cpp)
 # not upstream: streamed buildings' walls, roofs, atlas UVs and base structures, on .bld meshes the core makes
 add_unit_test(BldgGeom.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/BldgGeom.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp)
 target_include_directories(BldgGeom.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)

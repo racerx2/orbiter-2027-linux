@@ -52,14 +52,19 @@ void Tri (std::vector<uint32_t> &ix, const std::vector<V> &vs, uint32_t a, uint3
 
 struct Wall { P p0, p1; double bot, top, nx, nz; };
 
+enum Mode { Full, Simple, Far }; // Simple: one band a face; Far: one band a face, its floors as the height holds
+
 // one wall face from u0 to u1 bays: a plinth below ground, the ground floor, chunks of up to 6 floors; cut at every 8 bays
-void Face (const Style &st, int reg, const Wall &w, double u0, double u1, bool simple, Out &o)
+void Face (const Style &st, int reg, const Wall &w, double u0, double u1, Mode mode, Out &o)
 {
 	double top = w.top;
 	struct B { double y0, y1, v0, v1; }; // heights and their pixel rows in the region
 	std::vector<B> bands;
-	if (simple) bands.push_back ({w.bot, top, UpperY + UpperFloors * FloorPx, (double)UpperY});
-	else {
+	if (mode == Simple) bands.push_back ({w.bot, top, UpperY + UpperFloors * FloorPx, (double)UpperY});
+	else if (mode == Far) {
+		int F = std::clamp ((int)std::lround ((top - std::max (w.bot, 0.0)) / st.floorH), 1, UpperFloors);
+		bands.push_back ({w.bot, top, UpperY + UpperFloors * FloorPx, (double)UpperY + (UpperFloors - F) * FloorPx});
+	} else {
 		if (w.bot < -0.01) bands.push_back ({w.bot, std::min (0.0, top), (double)PlainY + PlainPx, (double)PlainY});
 		double y0 = std::max (w.bot, 0.0), ys = y0;
 		if (top - y0 > 0.05 && y0 < 0.5) {
@@ -99,7 +104,7 @@ void Face (const Style &st, int reg, const Wall &w, double u0, double u1, bool s
 }
 
 // the walls of each ring, u carried round corners that barely turn and across short faces, else whole bays a face
-void Walls (const Style &st, int reg, const std::vector<std::vector<Wall>> &rings, uint32_t hash, bool simple, Out &o)
+void Walls (const Style &st, int reg, const std::vector<std::vector<Wall>> &rings, uint32_t hash, Mode mode, Out &o)
 {
 	for (size_t r = 0; r < rings.size(); r++) {
 		double u = (double)(((hash >> 8) + r * 3) % Bays);
@@ -114,8 +119,8 @@ void Walls (const Style &st, int reg, const std::vector<std::vector<Wall>> &ring
 				cont = c > std::cos (25.0 * M_PI / 180.0) || W < 0.6 * bw;
 			}
 			double u0 = cont ? u : std::ceil (u - 1e-6), u1 = cont ? u + W / bw : u0 + std::max (1.0, std::round (W / bw));
-			if (simple) { u0 = 0; u1 = std::min ((double)Bays, std::max (1.0, std::round (W / bw))); } // one piece a face
-			Face (st, reg, w, u0, u1, simple, o);
+			if (mode != Full) { u0 = 0; u1 = std::min ((double)Bays, std::max (1.0, std::round (W / bw))); } // one piece a face
+			Face (st, reg, w, u0, u1, mode, o);
 			u = u1;
 		}
 	}
@@ -216,8 +221,9 @@ void Rings (const float *vtx, uint32_t nv, std::vector<std::vector<std::array<do
 	}
 }
 
-void Build (const float *vtx, uint32_t nv, const uint32_t *idx, uint32_t ni, float hmin, float hmax, uint32_t hash, Out &o)
+void Build (const float *vtx, uint32_t nv, const uint32_t *idx, uint32_t ni, float hmin, float hmax, uint32_t hash, Out &o, bool far)
 {
+	Mode mode = far ? Far : Full;
 	o = Out();
 	uint32_t nw = 0;
 	std::vector<std::vector<Wall>> rings = WallRings (vtx, nv, nw);
@@ -266,7 +272,7 @@ void Build (const float *vtx, uint32_t nv, const uint32_t *idx, uint32_t ni, flo
 			if (eave < 2.4) eave = 2.4;
 			ridge = eave + rise;
 			for (Wall &w : W) w.top = eave;
-			Walls (st, reg, {W}, hash, false, o);
+			Walls (st, reg, {W}, hash, mode, o);
 			Gable (st, reg, k1, k2, nx[1], nz[1], eave, ridge, o);
 			Gable (st, reg, k3, k0, nx[3], nz[3], eave, ridge, o);
 			P m1 = Lerp (k1, k2, 0.5), m2 = Lerp (k3, k0, 0.5);
@@ -279,10 +285,10 @@ void Build (const float *vtx, uint32_t nv, const uint32_t *idx, uint32_t ni, flo
 		}
 	}
 
-	Walls (st, reg, rings, hash, false, o);
+	Walls (st, reg, rings, hash, mode, o);
 	if (o.fv.size() > 60000) { // a vast or curved tower: one band a face
 		o.fv.clear(); o.fi.clear();
-		Walls (st, reg, rings, hash, true, o);
+		Walls (st, reg, rings, hash, Simple, o);
 	}
 	double ox = (double)((hash >> 12) % 101) / 101.0 * FlatRoofM, oz = (double)((hash >> 4) % 103) / 103.0 * FlatRoofM;
 	uint32_t r0 = nw * 4;
@@ -293,6 +299,28 @@ void Build (const float *vtx, uint32_t nv, const uint32_t *idx, uint32_t ni, flo
 	for (uint32_t k = 0; k + 2 < ni; k += 3)
 		if (idx[k] >= r0 && idx[k + 1] >= r0 && idx[k + 2] >= r0 && idx[k] < nv && idx[k + 1] < nv && idx[k + 2] < nv)
 			o.ri.insert (o.ri.end(), {idx[k] - r0, idx[k + 1] - r0, idx[k + 2] - r0});
+}
+
+// ---- far buildings: distance classes
+
+double Lod::Scale (int s) { return std::pow (2.0, 0.5 * std::clamp (s, 0, NScale - 1)); }
+
+int Lod::Class (double h, double s, int cur)
+{
+	const double k = 1.15; // the hysteresis band
+	if (h < (cur == 0 ? H[1] * k : cur > 0 ? H[1] / k : H[1])) return 0; // the class-0 edge does not move with s
+	double hs = h * s;
+	if (cur > 0 && hs >= H[cur] / k && (cur + 1 == NClass || hs < H[cur + 1] * k)) return cur;
+	int c = 1;
+	while (c + 1 < NClass && H[c + 1] <= hs) c++;
+	return c;
+}
+
+int Lod::Step (int s, double est, double down, double budget)
+{
+	if (est > budget && s + 1 < NScale) return s + 1;
+	if (s > 0 && down >= 0.0 && down < 0.9 * budget) return s - 1;
+	return s;
 }
 
 // ---- base structures
@@ -378,6 +406,21 @@ bool BaseIndex::Inside (const std::vector<std::array<double, 2>> &poly) const
 			}
 		}
 	return false;
+}
+
+bool Reaches (const std::vector<std::array<double, 2>> &poly, double r)
+{
+	if (poly.size() < 3 || !(r > 0.0)) return false;
+	bool in = false;
+	for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++) {
+		const auto &a = poly[j], &b = poly[i];
+		if ((b[1] > 0.0) != (a[1] > 0.0) && 0.0 < (a[0] - b[0]) * (0.0 - b[1]) / (a[1] - b[1]) + b[0]) in = !in;
+		double dx = b[0] - a[0], dz = b[1] - a[1], l2 = dx * dx + dz * dz;
+		double s = l2 > 0.0 ? std::clamp (-(a[0] * dx + a[1] * dz) / l2, 0.0, 1.0) : 0.0;
+		double px = a[0] + s * dx, pz = a[1] + s * dz;
+		if (px * px + pz * pz <= r * r) return true;
+	}
+	return in;
 }
 
 } // namespace BldgGeom

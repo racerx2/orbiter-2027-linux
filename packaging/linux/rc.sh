@@ -62,7 +62,7 @@ check() { # $1 package name: unpacked with a temp HOME, so nothing lands in the 
 		printf 'StartPaused = FALSE\nFullscreen = FALSE\nWindowWidth = 1280\nWindowHeight = 720\nDeviceIndex = 0\nACTIVE_MODULES\nVulkanClient\nEND_MODULES\n' > Orbiter.cfg
 		export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0} DISPLAY=${DISPLAY:-:0}
 		timeout 120 ./Orbiter "--scenariox=Delta-glider/Smack!" --fixedstep=0.02 --maxframes=150 > "$T/client.out" 2>&1 || die "Vulkan client failed: $T/client.out, $T/$1/Orbiter.log"
-		say "client check: rc 0, $(grep -c 'ERROR' Orbiter.log || true) ERROR lines in its log"
+		say "client check: rc 0, $(grep 'ERROR' Orbiter.log | grep -cv 'D3D9ERROR: \(Surface \|UnDeleted Surface\)' || true) ERROR lines in its log besides the surfaces freed at exit"
 	fi
 	export HOME=$H0; unset XDG_DATA_HOME XDG_CONFIG_HOME XDG_CACHE_HOME
 	cd "$SRC"

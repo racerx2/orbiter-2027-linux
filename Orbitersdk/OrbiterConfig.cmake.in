@@ -1,0 +1,38 @@
+# not upstream: CMake package for add-ons, find_package(Orbiter CONFIG); <root>/Orbitersdk/lib/cmake/Orbiter in the build tree and in an installed Orbiter
+
+get_filename_component(Orbiter_ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../.." ABSOLUTE)
+set(ORBITER_ROOT ${Orbiter_ROOT_DIR})
+set(_orbiter_sdk ${Orbiter_ROOT_DIR}/Orbitersdk)
+
+if(NOT TARGET Orbiter::Orbitersdk)
+	add_library(Orbiter::Orbitersdk STATIC IMPORTED)
+	set_target_properties(Orbiter::Orbitersdk PROPERTIES
+		IMPORTED_LOCATION ${_orbiter_sdk}/lib/libOrbitersdk.a
+		INTERFACE_INCLUDE_DIRECTORIES ${_orbiter_sdk}/include
+	)
+	add_library(Orbiter::DlgCtrl STATIC IMPORTED)
+	set_target_properties(Orbiter::DlgCtrl PROPERTIES
+		IMPORTED_LOCATION ${_orbiter_sdk}/lib/libDlgCtrl.a
+		INTERFACE_INCLUDE_DIRECTORIES ${_orbiter_sdk}/include
+	)
+	add_library(Orbiter::XRSound STATIC IMPORTED)
+	set_target_properties(Orbiter::XRSound PROPERTIES
+		IMPORTED_LOCATION ${_orbiter_sdk}/XRSound/libXRSound.a
+		INTERFACE_INCLUDE_DIRECTORIES ${_orbiter_sdk}/XRSound
+	)
+	# lua.so is in the Orbiter folder, SONAME lua.so
+	add_library(Orbiter::lua SHARED IMPORTED)
+	set_target_properties(Orbiter::lua PROPERTIES
+		IMPORTED_LOCATION ${Orbiter_ROOT_DIR}/lua.so
+		IMPORTED_SONAME lua.so
+		INTERFACE_INCLUDE_DIRECTORIES ${_orbiter_sdk}/include/Lua
+	)
+endif()
+
+# orbiter_rc_resources(<target> <file.rc> ...): .rc scripts as C++ resource tables
+set(ORBITER_SOURCE_SDK_INCLUDE_DIR ${_orbiter_sdk}/include)
+include(CMakeFindDependencyMacro)
+find_dependency(Python3 COMPONENTS Interpreter)
+set(ORBITER_RC_CMAKE ${Orbiter_ROOT_DIR}/cmake/rcresources.cmake)
+include(${ORBITER_RC_CMAKE})
+unset(_orbiter_sdk)

@@ -4530,6 +4530,10 @@ OAPIFUNC MESHHANDLE oapiLoadMesh (const char *fname);
 #define OAPI_COPY_MESH 1 // not upstream: feature test for add-ons
 OAPIFUNC MESHHANDLE oapiCopyMesh (MESHHANDLE hMesh, DWORD dropFlag = 0);
 
+// not upstream: the user flags a device mesh group has now (0x2 hidden, as oapiEditMeshGroup sets them); 0 ok, -1 no graphics client, -2 the client cannot tell, else the client's error
+#define OAPI_MESHGROUP_FLAGS 1 // not upstream: feature test for add-ons
+OAPIFUNC int oapiGetMeshGroupFlags (DEVMESHHANDLE hMesh, DWORD grpidx, DWORD *usrFlag);
+
 	/**
 	* \brief Retrieves a mesh handle from the global mesh manager. 
 	* \details When called for the first time for any given file name, the mesh is loaded from file 
@@ -5472,7 +5476,7 @@ OAPIFUNC oapi::Font *oapiCreateFont (int height, bool prop, const char *face, Fo
 * \param spacing Spacing between charters in a string (0.0f for default)
 * \return A pointer to a created or pre-existing font or NULL in a case of an error.
 */
-OAPIFUNC oapi::Font* oapiCreateFontEx(int height, char* face, int width = 0, int weight = 400, FontStyle style = FontStyle::FONT_NORMAL, float spacing = 0.0f);
+OAPIFUNC oapi::Font* oapiCreateFontEx(int height, const char* face, int width = 0, int weight = 400, FontStyle style = FontStyle::FONT_NORMAL, float spacing = 0.0f); // not upstream: const, face is only read
 
 /**
  * \brief Release a font resource.
@@ -5480,6 +5484,10 @@ OAPIFUNC oapi::Font* oapiCreateFontEx(int height, char* face, int width = 0, int
  * \sa oapiCreateFont
  */
 OAPIFUNC void oapiReleaseFont (oapi::Font *font);
+
+// not upstream: private font files, the Linux counterpart of AddFontResourceEx/RemoveFontResourceEx (FR_PRIVATE); Orbiter-relative path, reference counted
+OAPIFUNC bool oapiAddFontResource (const char *path);
+OAPIFUNC bool oapiRemoveFontResource (const char *path);
 
 /**
  * \brief Creates a pen resource for drawing lines and shape outlines.
@@ -6371,6 +6379,12 @@ OAPIFUNC int  oapiTileStreamBldgWant (OBJHANDLE hBody, int x, int y);
 OAPIFUNC TSBLDGMESH *oapiTileStreamBldgLoad (OBJHANDLE hBody, int x, int y);
 OAPIFUNC void oapiTileStreamBldgFree (TSBLDGMESH *mesh);
 
+// not upstream: a base file's clear zones (BEGIN_CLEARZONES): no streamed building or tree within rad of the centre
+#define OAPI_BASE_CLEARZONES 1 // not upstream: feature test for add-ons
+typedef struct { double lng, lat, rad; } BASECLEARZONE; // centre [rad], radius [m]
+// returns how many zones the base has; fills zone[0..] with up to nmax of them
+OAPIFUNC DWORD oapiGetBaseClearZones (OBJHANDLE hBase, BASECLEARZONE *zone, DWORD nmax);
+
 	/**
 	* \brief Writes the current simulation state to a scenario file.
 	* \param fname scenario file name
@@ -6430,7 +6444,7 @@ OAPIFUNC void __writeLogError(const char *func, const char *file, int line, cons
 	* \param item item id
 	* \param string string to be written (zero-terminated)
 	*/
-OAPIFUNC void oapiWriteScenario_string (FILEHANDLE scn, const char *item, char *string); // not upstream: const, item is only read
+OAPIFUNC void oapiWriteScenario_string (FILEHANDLE scn, const char *item, const char *string); // not upstream: const, item and string are only read
 
 	/**
 	* \brief Writes an integer-valued item to a scenario file.
@@ -6446,7 +6460,7 @@ OAPIFUNC void oapiWriteScenario_int (FILEHANDLE scn, const char *item, int i); /
 	* \param item item id
 	* \param d floating point value to be written
 	*/
-OAPIFUNC void oapiWriteScenario_float (FILEHANDLE scn, char *item, double d);
+OAPIFUNC void oapiWriteScenario_float (FILEHANDLE scn, const char *item, double d); // not upstream: const, item is only read
 
 	/**
 	* \brief Writes a vector-valued item to a scenario file.

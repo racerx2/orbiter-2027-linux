@@ -53,7 +53,12 @@ struct CollVesselGeom {
 struct CollAssembly { std::vector<uint32_t> member; uint32_t root; CollH sv; uint64_t memberHash; uint8_t flags; };
 struct CollPortRec { uint32_t vessel, port; Vector pos, dir, rot; CollH mate; int32_t matePort; };
 struct CollAttRec  { uint32_t vessel, index; bool toparent; Vector pos, dir, rot; char id[9]; CollH mate; int32_t mateIndex; };
-struct CollClassKeys { bool enableCollider = true; double dockZoneRadius = 1.5, destroyEnergy = -1; uint8_t meshProbe = 0; }; // meshProbe 1 = ONCE
+struct CollClassKeys { bool enableCollider = true; double dockZoneRadius = 1.5, destroyEnergy = -1; uint8_t meshProbe = 0; int8_t fixed = -1; double fixedClear = 0; }; // meshProbe 1 = ONCE; fixed: FixedStructure, -1 not set; fixedClear: FixedStructureClear [m] as read
+
+constexpr double COLL_FIXED_RHO = 1e-4; // [kg/m^3] a landed vessel lighter than this per m^3 of its size sphere has a placeholder mass (design fixed-structures)
+bool CollFixed (int key, bool landed, double mEmpty, double size); // landed and FixedStructure TRUE, or no key and a placeholder mass
+constexpr double COLL_FIXED_CLEAR_MAX = 5000.0; // [m] FixedStructureClear's cap (FixedVes::MaxClear)
+double CollFixedClear (double key);           // the clear zone radius a FixedStructureClear value gives: 0 when not finite or not positive, at most the cap
 
 class CollGeomView {
 public:
@@ -65,6 +70,7 @@ public:
 	virtual void WantSlots (uint32_t id, bool on) = 0;
 	virtual bool GroupAnimated (uint32_t id, uint32_t mesh, uint32_t grp) const = 0;
 	virtual const CollClassKeys &Keys (uint32_t id) const = 0;
+	virtual bool Fixed (uint32_t id) const { (void)id; return false; } // a fixed structure now (CollFixed)
 	virtual const std::vector<CollAssembly> &Assemblies () const = 0;
 	virtual const std::vector<CollPortRec> &Ports () const = 0;
 	virtual const std::vector<CollAttRec> &AttachPoints () const = 0;
@@ -108,6 +114,8 @@ struct CollVesselSrc {
 	std::vector<std::pair<uint32_t,uint8_t>> rebuildQ;
 	CollClassKeys keys;
 	bool wantSlots = false, polled = false, probeOnce = false, collider = true;
+	int8_t fixedLogged = -1;                     // the fixed verdict last logged
+	bool hiddenLogged = false;                   // its hidden groups logged once
 };
 
 // E2's part of CollSession (2.1); every stage function named as E4 11.4 calls it
@@ -134,6 +142,7 @@ public:
 	void WantSlots (uint32_t id, bool on) override;
 	bool GroupAnimated (uint32_t id, uint32_t mesh, uint32_t grp) const override;
 	const CollClassKeys &Keys (uint32_t id) const override;
+	bool Fixed (uint32_t id) const override;
 	const std::vector<CollAssembly> &Assemblies () const override { return asm_; }
 	const std::vector<CollPortRec> &Ports () const override { return port; }
 	const std::vector<CollAttRec> &AttachPoints () const override { return att; }
@@ -164,6 +173,7 @@ private:
 	void Predict (CollVesselSrc &r, const CollAnim &src);
 	void UpdateInfo (CollVesselSrc &r, uint32_t i);
 	void ClientCheck (CollVesselSrc &r);
+	void PollHidden (CollVesselSrc &r);             // the client's hidden groups (user flag 0x2) leave the collider (design fixed-structures rev 2)
 	void PollAssemblies ();
 	void ReadKeys (CollVesselSrc &r);
 	bool Active (const CollVesselSrc &r) const { return cfg.model != 0 && r.keys.enableCollider; }
@@ -174,6 +184,7 @@ private:
 	std::unordered_map<uint64_t, uint64_t> lastHash; // assembly root id -> memberHash
 	uint32_t ownId = 0, rr = 0;
 	bool inPreStep = false;
+	bool noGroupFlags = false;                      // the core or client gives no device mesh group flags
 	int renderMode = -1;
 	CollSlotView noView; std::vector<CollSlotView> noSlots; CollClassKeys noKeys;
 };

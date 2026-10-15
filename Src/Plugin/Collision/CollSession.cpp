@@ -180,6 +180,7 @@ public:
 		const CollBaseRec *r = geom.bases ? geom.BaseRec (planet, base) : nullptr;
 		return r ? r->hBase : nullptr;
 	}
+	bool Fixed (uint32_t id) override { return geom.Fixed (id); }
 	void PartToVessel (uint32_t id, int mesh, int grp, Vector &p, Vector &n) override
 	{
 		const CollVesselGeom *vg = geom.Geom (id);
@@ -416,8 +417,8 @@ void CollSession::PreStep (double simt, double simdt)
 	ground->Frame (simt, simdt, gv, ev, fc);
 	for (const CollImpactEvent &x : ev) {
 		n.events++;
-		CollLogF ("Collision impact t=%.6f '%s' '%s' vn=%.4f m/s vsep=%.4f m/s E=%.6g J J=%.6g N s", x.t, Who (x.s[0].owner).c_str (), Who (x.s[1].owner).c_str (),
-			x.vn, x.vn_post, x.dKE, x.Jn);
+		CollLogF ("Collision impact t=%.6f '%s' '%s' vn=%.4f m/s vsep=%.4f m/s E=%.6g J J=%.6g N s mesh.group %d.%d %d.%d", x.t, Who (x.s[0].owner).c_str (), Who (x.s[1].owner).c_str (),
+			x.vn, x.vn_post, x.dKE, x.Jn, x.s[0].mesh, x.s[0].grp, x.s[1].mesh, x.s[1].grp); // which parts touched (design fixed-structures test)
 	}
 	dmg->Commit (ev, simt, &fc);
 	Clock::time_point g = Clock::now ();

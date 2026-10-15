@@ -44,6 +44,7 @@ vec4	vBake;		// atlas bake: mode (0 flame strip, 1 flare, 2 mean colour)
 vec4	vFlow;		// flow prep: near, far, 2 x eye distance, texel m; reduce and blur: source size, block, direction
 vec4	vFlow2;
 vec4	vPal[24];	// per class: core rgb, k_L; diamond rgb, disk gain; soot, scatter, albedo, k_d; tail rgb, tail density
+vec4	vCond[6];	// per class: condensate albedo, optical depth scale in vacuum
 vec4	vPl[NPL * PLS];	// per plume, see PostPlume::FillPlume
 vec4	vPz[NPZ * PZS];	// per plasma vessel, see PostPlume::FillPlasma
 };
@@ -76,6 +77,11 @@ float Sq (float x) { return x * x; }
 float Lum (vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 float IGN (vec2 px) { return fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715)))); } // static per pixel, no frame term
 float HG4 (float c, float g) { float g2 = g * g; return (1.0 - g2) / pow(max(1e-4, 1.0 + g2 - 2.0 * g * c), 1.5); } // 4 pi HG
+float SmokeSun (float c, float g, float t)	// sun light scattered in smoke of optical depth t toward the sun: single scattering, then the two-stream diffuse transmission of the volume clouds (g 0.85 for the multiple scattering)
+{
+	float e = exp(-t);
+	return HG4(c, g) * e + 0.85 / (1.0 + 0.1125 * t) * (1.0 - e);
+}
 
 vec3 SoftCurve (vec3 x)	// the vessels' curve (Metalness.fx)
 {
@@ -211,7 +217,7 @@ void PlumeAt (int i, vec3 p, vec3 rd, float time, inout vec3 E, inout float S, i
 	vec3 nc = vec3(x - 25.0 * re * time, dot(q, b1), dot(q, b2)) / sx + P7.w;
 	vec4 n1 = textureLod(tNoiseP, nc * 0.11, 0.0);
 	float nn = n1.r * 0.65 + textureLod(tNoiseP, nc * 0.29 + 0.37, 0.0).g * 0.35;
-	float wN = Ss(0.15 * L, 0.5 * L, x) * Ss(0.25, 0.9, r / R) + 0.25;
+	float wN = Ss(0.15 * L, 0.5 * L, x) * Ss(0.25, 0.9, r / R) * (cls == CL_TEXTURE ? 1.0 : watm) + 0.25;	// the mixing layer's eddies erode a jet in air; a free expansion in vacuum keeps the light texture only (design-vacuum-plume)
 	float rho = mix(rhoV, rhoJ, watm);
 	rho = mix(rho, rho * clamp((nn - (1.0 - rho) * 0.6) / 0.4, 0.0, 1.0), clamp(wN, 0.0, 1.0));
 
@@ -229,6 +235,12 @@ void PlumeAt (int i, vec3 p, vec3 rd, float time, inout vec3 E, inout float S, i
 	}
 	E += core * (I * rho * fall * norm);
 
+	// condensate: the vacuum plume's ice scatters the sun, how a plume shows in space; it forms a few exit radii out (design-vacuum-plume)
+	vec4 CV = vCond[cls];
+	float cond = CV.w * P10.w * rho * norm * Ss(re, 6.0 * re, dd) * min(I * 4.0, 1.0);
+	S += cond;
+	Q += CV.rgb * cond * (P10.rgb * SmokeSun(dot(rd, vSun.xyz), 0.3, 0.2) + P11.rgb);
+
 	// shock diamonds and the Mach disk
 	if (watm > 0.01 && P2.z > 0.0 && cls != CL_TEXTURE) {
 		float Ls = P2.z, rj = P2.x;
@@ -240,8 +252,8 @@ void PlumeAt (int i, vec3 p, vec3 rd, float time, inout vec3 E, inout float S, i
 			E += C1.rgb * (I * watm * C1.w * md * 0.5 / (0.12 * rj * re));
 		}
 	}
-	// nozzle glow seen from behind
-	float back = Sq(Sq(max(0.0, -dot(rd, a))));
+	// nozzle glow seen from behind: the exit a disc of even brightness, the slab's longer oblique chord cancelled (design-vacuum-plume)
+	float back = max(0.0, -dot(rd, a));
 	if (back > 0.0 && cls != CL_TEXTURE) E += (C0.rgb + C1.rgb) * (2.0 * I * back * exp(-Sq(x / (0.15 * re))) * Ss(1.0, 0.7, r / re) / (0.27 * re));
 
 	// soot and scattering inside the jet
@@ -250,7 +262,7 @@ void PlumeAt (int i, vec3 p, vec3 rd, float time, inout vec3 E, inout float S, i
 	vec3 sunC = P10.rgb, amb = P11.rgb;
 	float cs = dot(rd, vSun.xyz);
 	S += (soot + scat) * min(I * 4.0, 1.0);
-	Q += (sunC * HG4(cs, 0.5) * 0.5 + amb) * (C2.z * scat * min(I * 4.0, 1.0));
+	Q += (sunC * SmokeSun(cs, 0.5, 0.7) + amb) * (C2.z * scat * min(I * 4.0, 1.0));	// the jet shades half the sun light (depth 0.7)
 
 	// ground: the wall jet spreads the flame along the plane
 	if (xg < 1e8 && h < 1e8) {
@@ -262,6 +274,7 @@ void PlumeAt (int i, vec3 p, vec3 rd, float time, inout vec3 E, inout float S, i
 		float w = exp(-max(h, 0.0) / hw) * exp(-s / Rw) * exp(-xg / (C0.w * L)) * watm;
 		E += core * (I * w / (2.0 * hw)) * 0.6;
 		S += (C2.x + C2.y) * w / (2.0 * hw) * 0.5;
+		Q += (sunC * SmokeSun(cs, 0.5, 0.7) + amb) * (C2.z * C2.y * w / (2.0 * hw) * 0.5);	// its smoke scatters light as the jet's (it only absorbed: a black cloud at the pad)
 	}
 
 	// smoke tail beyond the visible flame, in air
@@ -275,9 +288,8 @@ void PlumeAt (int i, vec3 p, vec3 rd, float time, inout vec3 E, inout float S, i
 		float spl = length(sp);
 		float tex = Rl;
 		if (spl > 1e-3) { vec3 sn = sp / spl; float b = dot(rv, sn), cc = dot(rv, rv) - Rl * Rl, D = b * b - cc; tex = D > 0.0 ? (max(-b + sqrt(D), 0.0) - max(-b - sqrt(D), 0.0)) / spl : 0.0; } // the chord inside the tail toward the sun
-		float tsun = exp(-C3.w * dens * tex / (1.8 * Rl));
 		S += st;
-		Q += C3.rgb * st * (sunC * HG4(cs, 0.5) * tsun + amb);
+		Q += C3.rgb * st * (sunC * SmokeSun(cs, 0.5, C3.w * dens * tex / (1.8 * Rl)) + amb);
 	}
 }
 
@@ -754,8 +766,9 @@ void main()
 	oD = texelFetch(tPuffData, b + ivec2(3, 0), 0);
 	oE = texelFetch(tPuffData, b + ivec2(4, 0), 0);
 	oF = texelFetch(tPuffData, b + ivec2(5, 0), 0);
-	if (oF.w >= 0.0) {	// an add-on texture's mean colour tints the light
-		vec3 al = texelFetch(tAtlasP, ivec2(int(oF.w + 0.5) * 32 + 24, 56), 0).rgb;
+	float slot = floor(oC.w / 16.0) - 1.0;	// C.w: noise seed + 16 (atlas slot + 1)
+	if (slot >= 0.0) {	// an add-on texture's mean colour tints the light
+		vec3 al = texelFetch(tAtlasP, ivec2(int(slot + 0.5) * 32 + 24, 56), 0).rgb;
 		al *= 1.0 / max(Lum(al), 0.05);
 		oB.rgb *= al; oC.rgb *= al; oD.rgb *= al;
 	}
@@ -772,10 +785,10 @@ void main()
 #if defined(PS_PuffPS)
 layout(location = 0) flat in vec4 iA;	// centre, radius
 layout(location = 1) flat in vec4 iB;	// sun light x albedo, extinction 1/m
-layout(location = 2) flat in vec4 iC;	// ambient x albedo, noise seed
+layout(location = 2) flat in vec4 iC;	// ambient x albedo, noise seed + 16 (atlas slot + 1)
 layout(location = 3) flat in vec4 iD;	// plume light x albedo, spin
 layout(location = 4) flat in vec4 iE;	// haze transmission, fog transmission
-layout(location = 5) flat in vec4 iF;	// haze in-scatter
+layout(location = 5) flat in vec4 iF;	// haze in-scatter, the column's optical depth toward the sun
 layout(location = 0) out vec4 oColor;
 
 vec3 PRay (vec2 uv) { return normalize(pCamX.xyz * ((uv.x * 2.0 - 1.0) * pCamX.w) + pCamY.xyz * ((1.0 - uv.y * 2.0) * pCamY.w) + pCamZ.xyz); }
@@ -801,7 +814,7 @@ void main()
 	vec3 mid = d * (0.5 * (t0 + t1));
 	vec3 lq = (mid - C) / R;
 	float ca = cos(iD.w), sa = sin(iD.w);
-	vec3 nq = vec3(ca * lq.x - sa * lq.z, lq.y, sa * lq.x + ca * lq.z) * 0.9 + iC.w;
+	vec3 nq = vec3(ca * lq.x - sa * lq.z, lq.y, sa * lq.x + ca * lq.z) * 0.9 + mod(iC.w, 16.0);
 	float n = textureLod(tNoiseP, nq * 0.35, 0.0).r * 0.7 + textureLod(tNoiseP, nq * 0.9 + 0.5, 0.0).g * 0.3;
 	float tau = iB.w * chord * (0.6 + 0.8 * n);
 	float alpha = 1.0 - exp(-tau);
@@ -809,9 +822,9 @@ void main()
 	vec3 s = pSun.xyz;
 	float bs = dot(mid - C, s), cs = dot(mid - C, mid - C) - R * R;
 	float te = -bs + sqrt(max(bs * bs - cs, 0.0));	// to the sphere's edge toward the sun
-	float tself = exp(-0.5 * iB.w * te * max(1.0 - dot(lq, lq), 0.0));
+	float tsun = iF.w + 0.5 * iB.w * te * max(1.0 - dot(lq, lq), 0.0);	// the column's depth and the puff's own toward the sun
 	float mu = dot(normalize(mid - C + 1e-4), pUp.xyz);
-	vec3 col = iB.rgb * tself * HG4(dot(d, s), 0.35) + iC.rgb * (0.75 + 0.25 * mu) + iD.rgb;
+	vec3 col = iB.rgb * SmokeSun(dot(d, s), 0.35, tsun) + iC.rgb * (0.75 + 0.25 * mu) + iD.rgb;
 #if !defined(_LIGHTGLOW)
 	col = LitCurve(col);	// LightBlur tone-maps later otherwise
 #endif

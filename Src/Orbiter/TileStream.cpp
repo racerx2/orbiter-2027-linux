@@ -32,8 +32,8 @@
 
 namespace fs = std::filesystem;
 
-static std::atomic<unsigned> tsWriteGen {0}; // not upstream: TsWriteGen
-unsigned TsWriteGen () { return tsWriteGen.load (std::memory_order_acquire); }
+static std::atomic<unsigned> tsElevGen {0}; // not upstream (elev-consistency): TsElevGen
+unsigned TsElevGen () { return tsElevGen.load (std::memory_order_acquire); }
 using Clock = TileStream::Clock;
 
 int (*TsFlock) (int, int) = flock;
@@ -263,6 +263,21 @@ struct TileStream::Impl {
 		int bldgState = 0;                 // 0 TileJSON not asked, 1 asking, 2 known
 		std::unordered_set<uint64_t> elev; // Elev files this stream wrote (elev.idx)
 		Toc arch[NARCH];                   // installed Archive/<Layer>.tree tables of contents
+		struct Inh {                       // elev-consistency: a key under a source: the source, its file's stamp, a file of ours written
+			uint64_t src = 0;
+			int64_t mtime = 0;
+			uint64_t size = 0;
+			bool has = false;
+			bool operator== (const Inh &) const = default;
+		};
+		bool modsKnown = false;                // elev-consistency: the startup scan ran (LoadBases)
+		std::unordered_set<uint64_t> addonMod; // elev-consistency: add-ons' Elev_mod files at startup, fixed after it
+		std::unordered_map<uint64_t, Inh> inh; // elev-consistency: keys under a source (inh.idx), under modMx
+		std::unordered_set<uint64_t> badSrc;   // elev-consistency: sources that would not read, logged once, under modMx
+		std::unordered_map<uint64_t, uint32_t> addonLevels; // elev-consistency: per add-on tile, the levels of the add-on's tiles under it (bits)
+		std::vector<uint64_t> elevArch;        // elev-consistency: the Elev archive's tiles, sorted, read when first needed, under modMx
+		bool elevArchRead = false;
+		size_t inhAppends = 0;
 		std::unordered_set<std::string> unclean; // indexes with dropped or doubled lines: rewritten at startup
 		uint64_t bytes = 0;                // the size cap's running total, once a scan has counted it
 		bool bytesKnown = false, writtenDirty = false;
@@ -431,6 +446,16 @@ struct TileStream::Impl {
 	void BaseSrcs (Body &B, Job &J);
 	void BaseHeights (Body &B, const Job &J, const std::vector<QImage> &et);
 	bool Mods (Body &B, uint64_t k, const std::string &elv);
+	std::mutex modMx; // elev-consistency: Elev_mod work, one key at a time; taken before mx
+	bool ModsAt (Body &B, uint64_t k, const std::string &elv, bool *changed);
+	bool ArchElev (Body &B, uint64_t k);
+	bool ElevData (Body &B, uint64_t k);
+	uint64_t ModSource (Body &B, uint64_t k);
+	Body::Inh Stamp (const Body &B, uint64_t src, bool has) const;
+	void SetInh (Body &B, uint64_t k, uint64_t src, bool has);
+	void InhLine (Body &B, uint64_t k, const Body::Inh &n);
+	void AddonMods (Body &B);
+	void Settle (Body &B, uint64_t k);
 	int WantBldg (int b, int x, int y);       // TileStreamMvt.cpp's tiles, below imagery
 	void StartBldg (Clock::time_point now);
 	void BldgDeliver (const std::string &url, int status, const std::shared_ptr<const QByteArray> &data, Clock::time_point now);
@@ -1125,6 +1150,7 @@ void TileStream::Impl::Build (Job J)
 		std::error_code ec;
 		bool theirs = !mine && fs::exists (Tile (B.dir, "Elev", J.key), ec); // someone else's Elev: never overwritten
 		bool ok = !theirs && !elv.empty() && Mods (B, J.key, elv) && Write (B, Tile (B.dir, "Elev", J.key), elv); // earth-sky: its Elev_mod first
+		if (ok) Settle (B, J.key); // elev-consistency: then the tiles under it
 		std::lock_guard<std::mutex> lk (mx);
 		if (ok) {
 			if (B.elev.insert (J.key).second) Append (B, "elev", J.key, -1);
@@ -1309,6 +1335,12 @@ bool TileStream::Impl::Write (const Body &B, const std::string &path, const std:
 	fs::create_directories (fs::path (path).parent_path(), ec);
 	size_t sl = path.compare (0, B.dir.size() + 1, B.dir + "/") ? std::string::npos : path.find ('/', B.dir.size() + 1);
 	std::string layer = sl == std::string::npos ? fs::path (path).parent_path().string() : path.substr (0, sl); // Textures/<Body>/<Layer>
+	auto ends = [&layer] (const std::string &s) { return layer.size() >= s.size() && !layer.compare (layer.size() - s.size(), s.size(), s); };
+	bool heights = ends ("/Elev") || ends ("/Elev_mod"); // elev-consistency: TsElevGen
+	auto placed = [heights] {
+		if (heights) tsElevGen.fetch_add (1, std::memory_order_release);
+		return true;
+	};
 	int seq;
 	bool cross;
 	{
@@ -1328,7 +1360,7 @@ bool TileStream::Impl::Write (const Body &B, const std::string &path, const std:
 	else if (!put (tmp)) ec = std::make_error_code (std::errc::io_error);
 	else if (opt.crossDisk) ec = std::make_error_code (std::errc::cross_device_link);
 	else fs::rename (tmp, path, ec);
-	if (!ec) { tsWriteGen.fetch_add (1, std::memory_order_release); return true; }
+	if (!ec) return placed ();
 	if (!cross) fs::remove (tmp, rc);
 	if (!cross && ec == std::errc::cross_device_link) {
 		std::lock_guard<std::mutex> lk (imx);
@@ -1338,7 +1370,7 @@ bool TileStream::Impl::Write (const Body &B, const std::string &path, const std:
 	std::error_code pc;
 	if (put (part)) {
 		fs::rename (part, path, pc);
-		if (!pc) { tsWriteGen.fetch_add (1, std::memory_order_release); return true; }
+		if (!pc) return placed ();
 	} else pc = std::make_error_code (std::errc::io_error);
 	fs::remove (part, rc);
 	if (!writeLogged.exchange (true)) Log ("TileStream: cannot write " + path + " (" + ec.message() + ", then " + pc.message() + ")");
@@ -1523,14 +1555,20 @@ void TileStream::Impl::Evict ()
 					fs::remove (f + ".part", ec);
 				}
 				if (!e.alone) gone.push_back (e.k);
-				if (e.elev) egone.push_back (e.k);
+				if (e.elev) {
+					egone.push_back (e.k);
+					tsElevGen.fetch_add (1, std::memory_order_release); // elev-consistency: the heights there changed
+				}
 			}
 		}
 		if (opt.evictScanned) opt.evictScanned ();
-		std::lock_guard<std::mutex> lk (mx);
-		B.bytes = total;
-		B.bytesKnown = true;
-		Drop (B, gone, egone, bgone);
+		{
+			std::lock_guard<std::mutex> lk (mx);
+			B.bytes = total;
+			B.bytesKnown = true;
+			Drop (B, gone, egone, bgone);
+		}
+		for (uint64_t k : egone) Settle (B, k); // elev-consistency: the tiles under a removed Elev
 	}
 }
 
@@ -2091,25 +2129,48 @@ std::string ReadAll (const std::string &p)
 	std::ifstream f (p, std::ios::binary);
 	return std::string (std::istreambuf_iterator<char> (f), std::istreambuf_iterator<char>());
 }
+
+// elev-consistency: exactly n integers on a line
+bool ParseInts (const std::string &line, long long *v, int n)
+{
+	const char *p = line.c_str();
+	for (int i = 0; i < n; i++) {
+		while (*p == ' ' || *p == '\t') p++;
+		char *e;
+		errno = 0;
+		v[i] = strtoll (p, &e, 10);
+		if (e == p || errno) return false;
+		p = e;
+	}
+	while (*p == ' ' || *p == '\t' || *p == '\r') p++;
+	return !*p;
+}
+
+bool KeyIn (long long L, long long a, long long b, int lmin)
+{
+	return L >= lmin && L <= 21 && a >= 0 && b >= 0 && a <= INT_MAX && b <= INT_MAX && InGrid ((int)L, (int)a, (int)b);
+}
 }
 
 // the body's bases, their known heights, and Elev_mod for Elev tiles already on disk (before the client loads them)
 void TileStream::Impl::LoadBases (Body &B)
 {
 	if (opt.radius) B.radius = opt.radius (B.cfg.name);
-	if (B.cfg.elev.kind.empty() || !opt.baseDir) return;
-	std::string dir = opt.baseDir (B.cfg.name);
+	if (B.cfg.elev.kind.empty()) return;
 	std::error_code ec;
-	std::vector<fs::path> files;
-	for (fs::directory_iterator it (dir, ec), end; !ec && it != end; it.increment (ec))
-		if (it->path().extension() == ".cfg") files.push_back (it->path());
-	std::sort (files.begin(), files.end());
-	for (const fs::path &p : files) {
-		TsBase b;
-		if (!TsReadBase (p.string(), b)) continue;
-		b.name = p.stem().string();
-		B.bases.push_back (b);
-		B.baseH.push_back (NAN);
+	if (opt.baseDir) { // elev-consistency: the Elev_mod scan below runs without bases too
+		std::string dir = opt.baseDir (B.cfg.name);
+		std::vector<fs::path> files;
+		for (fs::directory_iterator it (dir, ec), end; !ec && it != end; it.increment (ec))
+			if (it->path().extension() == ".cfg") files.push_back (it->path());
+		std::sort (files.begin(), files.end());
+		for (const fs::path &p : files) {
+			TsBase b;
+			if (!TsReadBase (p.string(), b)) continue;
+			b.name = p.stem().string();
+			B.bases.push_back (b);
+			B.baseH.push_back (NAN);
+		}
 	}
 	{
 		std::ifstream f (Idx (B, "bases"));
@@ -2130,7 +2191,6 @@ void TileStream::Impl::LoadBases (Body &B)
 		}
 		if (lines != B.mod.size()) B.unclean.insert ("mod");
 	}
-	int made = 0;
 	for (size_t i = 0; i < B.bases.size(); i++) {
 		const TsBase &b = B.bases[i];
 		double lng = b.lng * 180.0 / M_PI, lat = b.lat * 180.0 / M_PI;
@@ -2143,6 +2203,12 @@ void TileStream::Impl::LoadBases (Body &B)
 				std::ofstream (Idx (B, "bases"), std::ios::app) << b.name << ' ' << B.baseH[i] << '\n';
 			}
 		}
+	}
+	AddonMods (B); // elev-consistency: before the bases' tiles, which then follow it
+	int made = 0;
+	for (size_t i = 0; i < B.bases.size(); i++) {
+		const TsBase &b = B.bases[i];
+		double lng = b.lng * 180.0 / M_PI, lat = b.lat * 180.0 / M_PI;
 		if (std::isnan (B.baseH[i])) continue;
 		for (int L = ModLevel; L <= B.cfg.elev.lmax; L++) {
 			double span = 180.0 / (1 << (L - 4)), r = (b.ext + Blend) / B.radius * 180.0 / M_PI, rl = r / std::max (0.05, cos (b.lat));
@@ -2202,30 +2268,289 @@ void TileStream::Impl::BaseHeights (Body &B, const Job &J, const std::vector<QIm
 // the Elev_mod of tile k over elv, written before elv; false while a base it touches has no height yet
 bool TileStream::Impl::Mods (Body &B, uint64_t k, const std::string &elv)
 {
+	std::lock_guard<std::mutex> ml (modMx);
+	return ModsAt (B, k, elv, nullptr);
+}
+
+// with modMx held. elev-consistency: someone else's Elev_mod at k is left alone; under a source, k's is the source's carried down
+// (none if it modifies nothing here), never the bases' flattening; else the bases' as before. A file of ours no longer needed goes
+bool TileStream::Impl::ModsAt (Body &B, uint64_t k, const std::string &elv, bool *changed)
+{
+	if (changed) *changed = false;
+	if (!B.modsKnown) return true; // no startup scan (a region download): the next session's pass makes them
 	int L = KL (k);
-	if (B.bases.empty() || L < ModLevel) return true;
-	std::vector<std::pair<const TsBase *, double>> hit;
+	std::string path = Tile (B.dir, "Elev_mod", k);
+	std::error_code ec;
 	bool ours;
 	{
 		std::lock_guard<std::mutex> lk (mx);
-		for (size_t i = 0; i < B.bases.size(); i++) {
-			if (!TsSky::Hits (B.bases[i], B.radius, L, KLat (k), KLng (k), Blend)) continue;
-			if (std::isnan (B.baseH[i])) return false;
-			hit.push_back ({&B.bases[i], B.baseH[i]});
-		}
 		ours = B.mod.count (k) > 0;
 	}
-	if (hit.empty()) return true;
-	std::string path = Tile (B.dir, "Elev_mod", k);
-	std::error_code ec;
-	if (!ours && fs::exists (path, ec)) return true; // someone else's Elev_mod: left alone
-	std::string m = TsSky::ElevMod (L, KLat (k), KLng (k), hit, B.radius, B.cfg.elevScale, elv, Blend);
-	if (m.empty()) return true;
-	if (!Write (B, path, m)) return false;
-	if (ours) return true;
-	std::lock_guard<std::mutex> lk (mx);
-	if (B.mod.insert (k).second) Append (B, "mod", k, -1);
+	if (B.addonMod.count (k) || (!ours && fs::exists (path, ec))) { // someone else's Elev_mod: left alone
+		SetInh (B, k, 0, false);
+		return true;
+	}
+	std::string m;
+	uint64_t s = ModSource (B, k);
+	if (s) {
+		std::string src = ReadAll (Tile (B.dir, "Elev_mod", s));
+		if (TsSky::ModOk (src)) m = TsSky::InheritMod (L, KLat (k), KLng (k), KL (s), KLat (s), KLng (s), src, elv, B.cfg.elevScale);
+		else if (!src.empty() && B.badSrc.insert (s).second) Log ("TileStream: " + Tile (B.dir, "Elev_mod", s) + " can't be read, the Elev under it stays unmodified");
+	} else if (L >= ModLevel && !B.bases.empty()) {
+		std::vector<std::pair<const TsBase *, double>> hit;
+		{
+			std::lock_guard<std::mutex> lk (mx);
+			for (size_t i = 0; i < B.bases.size(); i++) {
+				if (!TsSky::Hits (B.bases[i], B.radius, L, KLat (k), KLng (k), Blend)) continue;
+				if (std::isnan (B.baseH[i])) return false;
+				hit.push_back ({&B.bases[i], B.baseH[i]});
+			}
+		}
+		if (!hit.empty()) m = TsSky::ElevMod (L, KLat (k), KLng (k), hit, B.radius, B.cfg.elevScale, elv, Blend);
+	}
+	bool ch = false;
+	if (m.empty()) {
+		if (ours) {
+			ch = fs::remove (path, ec);
+			fs::remove (path + ".part", ec);
+			std::lock_guard<std::mutex> lk (mx);
+			B.mod.erase (k);
+			Rewrite (B, "mod", B.mod);
+		}
+		if (ch) tsElevGen.fetch_add (1, std::memory_order_release);
+	} else if (m != ReadAll (path)) {
+		if (!Write (B, path, m)) return false;
+		ch = true;
+		if (!ours) {
+			std::lock_guard<std::mutex> lk (mx);
+			if (B.mod.insert (k).second) Append (B, "mod", k, -1);
+		}
+	}
+	SetInh (B, k, s, !m.empty());
+	if (changed) *changed = ch;
 	return true;
+}
+
+// elev-consistency, with modMx held: the installed Elev archive has tile k (the stream may hide it); its table of contents is walked once
+bool TileStream::Impl::ArchElev (Body &B, uint64_t k)
+{
+	if (!B.elevArchRead) {
+		B.elevArchRead = true;
+		Toc t;
+		if (ReadToc (B.dir + "/Archive/Elev.tree", t)) {
+			std::vector<std::pair<uint32_t, uint64_t>> st;
+			std::vector<bool> seen (t.node.size());
+			for (int b = 0; b < 2; b++)
+				if (t.root[3 + b] < t.node.size()) st.push_back ({t.root[3 + b], Key (4, 0, b)});
+			while (!st.empty()) {
+				auto [i, n] = st.back();
+				st.pop_back();
+				if (seen[i]) continue; // a damaged archive's loops
+				seen[i] = true;
+				if (t.node[i].size) B.elevArch.push_back (n);
+				int L = KL (n);
+				if (L >= 21) continue;
+				for (int q = 0; q < 4; q++) {
+					uint32_t c = t.node[i].child[q];
+					if (c < t.node.size()) st.push_back ({c, Key (L + 1, KLat (n) * 2 + (q >> 1), KLng (n) * 2 + (q & 1))});
+				}
+			}
+			std::sort (B.elevArch.begin(), B.elevArch.end());
+		}
+	}
+	return std::binary_search (B.elevArch.begin(), B.elevArch.end(), k);
+}
+
+// elev-consistency, with modMx held: Elev the core and the client read at k, a loose file or an archive tile no Elev of ours hides (elevmgr's StreamCovers)
+bool TileStream::Impl::ElevData (Body &B, uint64_t k)
+{
+	std::error_code ec;
+	if (fs::exists (Tile (B.dir, "Elev", k), ec)) return true;
+	int L = KL (k);
+	if (!ArchElev (B, k)) return false;
+	int d = L > B.cfg.elev.lmax ? L - B.cfg.elev.lmax : 1;
+	return L <= 4 || !fs::exists (Tile (B.dir, "Elev", Key (L - d, KLat (k) >> d, KLng (k) >> d)), ec);
+}
+
+// elev-consistency, with modMx held: the Elev_mod tile k is drawn under; 0 for none. An add-on was made with Elev wherever the archive
+// has it, and at the levels of its own tiles under its nearest tile above k: there it says itself how k looks. Below them, the first
+// coarser level with Elev data (a level without it never applies its Elev_mod): an add-on's there, or ours when that key is under one
+uint64_t TileStream::Impl::ModSource (Body &B, uint64_t k)
+{
+	int L = KL (k);
+	if (ArchElev (B, k)) return 0;
+	for (int d = 1; L - d >= 4; d++) {
+		auto it = B.addonLevels.find (Key (L - d, KLat (k) >> d, KLng (k) >> d));
+		if (it == B.addonLevels.end()) continue;
+		if (it->second >> L & 1) return 0;
+		break;
+	}
+	for (int d = 1; L - d >= 4; d++) {
+		uint64_t p = Key (L - d, KLat (k) >> d, KLng (k) >> d);
+		if (!ElevData (B, p)) continue;
+		return B.addonMod.count (p) || B.inh.count (p) ? p : 0;
+	}
+	return 0;
+}
+
+TileStream::Impl::Body::Inh TileStream::Impl::Stamp (const Body &B, uint64_t src, bool has) const
+{
+	Body::Inh n;
+	n.src = src;
+	n.has = has;
+	if (!src) return n;
+	std::error_code ec;
+	std::string f = Tile (B.dir, "Elev_mod", src);
+	auto t = fs::last_write_time (f, ec);
+	if (ec) return n;
+	uint64_t sz = fs::file_size (f, ec);
+	if (ec) return n;
+	n.mtime = (int64_t)t.time_since_epoch().count();
+	n.size = sz;
+	return n;
+}
+
+// elev-consistency, with modMx held: k's source, and its inh.idx line; a line with no source ends one
+void TileStream::Impl::SetInh (Body &B, uint64_t k, uint64_t src, bool has)
+{
+	auto it = B.inh.find (k);
+	if (!src) {
+		if (it == B.inh.end()) return;
+		B.inh.erase (it);
+		InhLine (B, k, Body::Inh());
+		return;
+	}
+	Body::Inh n = Stamp (B, src, has);
+	if (it != B.inh.end() && it->second == n) return;
+	B.inh[k] = n;
+	InhLine (B, k, n);
+}
+
+void TileStream::Impl::InhLine (Body &B, uint64_t k, const Body::Inh &n)
+{
+	B.inhAppends++;
+	if (ro) return;
+	std::ofstream f (Idx (B, "inh"), std::ios::app);
+	f << KL (k) << ' ' << KLat (k) << ' ' << KLng (k) << ' ' << KL (n.src) << ' ' << KLat (n.src) << ' ' << KLng (n.src) << ' ' << n.mtime << ' ' << n.size << ' ' << (n.has ? 1 : 0) << '\n';
+}
+
+// elev-consistency, at startup before the workers: the add-ons' Elev_mod files, inh.idx, and our Elev whose source moved, changed or
+// lost our file made again, coarse to fine so a source of ours is current before the tiles under it read it
+void TileStream::Impl::AddonMods (Body &B)
+{
+	std::lock_guard<std::mutex> ml (modMx);
+	std::unordered_set<uint64_t> mod;
+	std::vector<uint64_t> keys;
+	{
+		std::lock_guard<std::mutex> lk (mx);
+		mod = B.mod;
+		keys.assign (B.elev.begin(), B.elev.end());
+	}
+	std::error_code ec;
+	std::string top = B.dir + "/Elev_mod";
+	for (fs::recursive_directory_iterator it (top, ec), end; !ec && it != end; it.increment (ec)) {
+		std::error_code fe;
+		if (it.depth() != 2 || it->path().extension() != ".elv" || !it->is_regular_file (fe)) continue;
+		const fs::path &p = it->path();
+		long long v[3];
+		std::string name = p.parent_path().parent_path().filename().string() + ' ' + p.parent_path().filename().string() + ' ' + p.stem().string();
+		if (!ParseInts (name, v, 3) || !KeyIn (v[0], v[1], v[2], 4)) continue;
+		uint64_t k = Key ((int)v[0], (int)v[1], (int)v[2]);
+		if (!mod.count (k)) B.addonMod.insert (k);
+	}
+	for (uint64_t a : B.addonMod) {
+		B.addonLevels.emplace (a, 0u);
+		int L = KL (a);
+		for (int d = 1; L - d >= 4; d++) {
+			uint64_t p = Key (L - d, KLat (a) >> d, KLng (a) >> d);
+			if (B.addonMod.count (p)) B.addonLevels[p] |= 1u << L;
+		}
+	}
+	B.inh.clear();
+	size_t lines = 0;
+	{
+		std::ifstream f (Idx (B, "inh"));
+		std::string line;
+		while (std::getline (f, line)) {
+			if (line.find_first_not_of (" \t\r") == std::string::npos) continue;
+			lines++;
+			long long v[9];
+			if (!ParseInts (line, v, 9) || !KeyIn (v[0], v[1], v[2], 5)) continue;
+			uint64_t k = Key ((int)v[0], (int)v[1], (int)v[2]);
+			if (!v[3] && !v[4] && !v[5]) {
+				B.inh.erase (k);
+				continue;
+			}
+			int d = (int)(v[0] - v[3]);
+			if (!KeyIn (v[3], v[4], v[5], 4) || d < 1 || v[4] != v[1] >> d || v[5] != v[2] >> d || v[7] < 0 || (v[8] != 0 && v[8] != 1)) continue;
+			Body::Inh n;
+			n.src = Key ((int)v[3], (int)v[4], (int)v[5]);
+			n.mtime = v[6];
+			n.size = (uint64_t)v[7];
+			n.has = v[8] == 1;
+			B.inh[k] = n;
+		}
+	}
+	B.modsKnown = true;
+	size_t appends = B.inhAppends, carried = 0, redone = 0;
+	std::sort (keys.begin(), keys.end()); // Key: the level first
+	for (uint64_t k : keys) {
+		std::string ep = Tile (B.dir, "Elev", k), mp = Tile (B.dir, "Elev_mod", k);
+		if (!fs::exists (ep, ec)) continue; // Prune drops it
+		uint64_t s = ModSource (B, k);
+		auto it = B.inh.find (k);
+		Body::Inh rec = it != B.inh.end() ? it->second : Body::Inh();
+		if (!s && !rec.src) continue; // nothing of ours to undo; the bases' tiles follow
+		if (s && rec == Stamp (B, s, rec.has) && rec.has == fs::exists (mp, ec)) continue;
+		bool ch = false;
+		if (!ModsAt (B, k, ReadAll (ep), &ch) || !ch) continue;
+		if (B.inh.count (k)) carried++;
+		else redone++;
+	}
+	if (B.inhAppends != appends || lines != B.inh.size()) {
+		std::string text;
+		for (auto &p : B.inh) {
+			const Body::Inh &n = p.second;
+			text += std::to_string (KL (p.first)) + ' ' + std::to_string (KLat (p.first)) + ' ' + std::to_string (KLng (p.first)) + ' '
+				+ std::to_string (KL (n.src)) + ' ' + std::to_string (KLat (n.src)) + ' ' + std::to_string (KLng (n.src)) + ' '
+				+ std::to_string (n.mtime) + ' ' + std::to_string (n.size) + ' ' + (n.has ? "1" : "0") + '\n';
+		}
+		WriteText (Idx (B, "inh"), text);
+	}
+	Log ("TileStream: " + std::to_string (B.addonMod.size()) + " add-on Elev_mod tiles for " + B.cfg.name + ", " + std::to_string (carried) + " Elev_mod tiles carried from them, " + std::to_string (redone) + " redone without them");
+}
+
+// elev-consistency: after k's Elev is written or removed: k again when its source moved, then the stream's Elev among its children
+// when their source moved or the file they carry down changed, and theirs in turn
+void TileStream::Impl::Settle (Body &B, uint64_t k)
+{
+	if (!B.modsKnown) return;
+	std::lock_guard<std::mutex> ml (modMx);
+	std::error_code ec;
+	auto it = B.inh.find (k);
+	if (fs::exists (Tile (B.dir, "Elev", k), ec) && ModSource (B, k) != (it != B.inh.end() ? it->second.src : 0)) {
+		std::string e = ReadAll (Tile (B.dir, "Elev", k));
+		if (!e.empty()) ModsAt (B, k, e, nullptr);
+	}
+	std::vector<uint64_t> todo {k}; // the walk of a tile under one of these may now stop at it, or find it under a source
+	while (!todo.empty()) {
+		uint64_t p = todo.back();
+		todo.pop_back();
+		int L = KL (p);
+		if (L >= std::min (21, B.cfg.elev.lmax)) continue;
+		for (int q = 0; q < 4; q++) {
+			uint64_t c = Key (L + 1, KLat (p) * 2 + (q >> 1), KLng (p) * 2 + (q & 1));
+			{
+				std::lock_guard<std::mutex> lk (mx);
+				if (!B.elev.count (c)) continue;
+			}
+			auto ci = B.inh.find (c);
+			uint64_t s = ModSource (B, c), r = ci != B.inh.end() ? ci->second.src : 0;
+			if (s == r && (!s || ci->second == Stamp (B, s, ci->second.has))) continue;
+			std::string ce = ReadAll (Tile (B.dir, "Elev", c));
+			if (!ce.empty() && ModsAt (B, c, ce, nullptr)) todo.push_back (c);
+		}
+	}
 }
 
 // not upstream: Launchpad cache controls and region prefetch (TabStream.cpp)
@@ -2393,6 +2718,7 @@ size_t TileStream::Clear (const std::string &bodyDir, bool keepBase, bool *refus
 		WriteIdx (ts + "refetch.idx", r);
 	}
 	fs::remove (ts + "none.idx", ec);
+	fs::remove (ts + "inh.idx", ec); // elev-consistency
 	if (!keepBase) fs::remove (ts + "ocean.idx", ec);
 	for (fs::directory_iterator it (ts + "tmp", ec), end; !ec && it != end; it.increment (ec)) {
 		std::error_code rc;

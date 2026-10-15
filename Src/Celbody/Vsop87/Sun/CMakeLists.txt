@@ -28,7 +28,7 @@ target_link_libraries(${CELBODY}
 
 add_custom_command(
 	TARGET ${CELBODY} PRE_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/Config/ ${CMAKE_BINARY_DIR}/Config	
+	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_CURRENT_SOURCE_DIR}/Config/ ${CMAKE_BINARY_DIR}/Config # not upstream: copynewer.cmake keeps files changed in the build tree
 )
 
 add_custom_command(

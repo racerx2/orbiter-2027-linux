@@ -135,6 +135,7 @@ private:
 	void DestroyedTest (VesselDamageA &v, CollH h, double Ei, double t, uint32_t extraFlags);
 	void DoRepair (VesselDamageA &v, bool playback);
 	double Threshold (uint32_t id) const;
+	double DmgMass (uint32_t id, CollH h) const;                             // empty mass; a fixed structure's StructureMass
 	void Cut (CollH h, VesselDamageA &v, bool want);
 	void Lock (CollH h, VesselDamageA &v, bool want);           // not upstream: a destroyed craft takes no player commands and its control surfaces are off
 	void KeepLast (CollH h, ThrustCutA &c);

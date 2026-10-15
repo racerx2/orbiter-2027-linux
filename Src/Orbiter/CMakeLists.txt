@@ -90,6 +90,7 @@ set(common_src
 	Vesselstatus.cpp
 # Surface base classes
 	Base.cpp
+	BaseClear.cpp # not upstream: a base file's clear zones
 	Baseobj.cpp
 # Cockpit classes
 	Defpanel.cpp
@@ -121,6 +122,7 @@ set(common_src
 	MFDAPI.cpp
 	ModuleAPI.cpp
 	OrbiterAPI.cpp
+	FontResource.cpp # not upstream: oapiAddFontResource, oapiRemoveFontResource
 # Graphics utils
 	D3d7util.cpp
 	D3dmath.cpp

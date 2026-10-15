@@ -6,7 +6,7 @@
 #include "Planet.h"
 #include "Orbiter.h"
 #include "Log.h" // not upstream: LOGOUT_WARN for names that don't fit
-#include "TileStream.h" // not upstream: TsSessionElev
+#include "TileStream.h" // not upstream: TsSessionElev, TsElevGen
 #include <filesystem>
 
 using std::min;
@@ -109,7 +109,7 @@ bool ElevationManager::LooseFile (int lvl, int ilat, int ilng, std::string *path
 {
 	if (!(tilesource & 0x0001) || !bDirExists || lvl < 0 || ilat < 0 || ilng < 0) return false;
 	uint64_t key = ElevKey (lvl, ilat, ilng);
-	unsigned gen = TsWriteGen ();
+	unsigned gen = TsElevGen (); // not upstream (elev-consistency): Elev and Elev_mod writes only
 	std::lock_guard<std::mutex> lk (looseMx);
 	auto it = loose.find (key);
 	if (it != loose.end() && (it->second.there || it->second.gen == gen)) { // found once, or missing since the stream's last write
@@ -138,7 +138,7 @@ bool ElevationManager::LooseFile (int lvl, int ilat, int ilng, std::string *path
 void ElevationManager::TileBad (int lvl, int ilat, int ilng, bool isLoose) const // not upstream
 {
 	uint64_t key = ElevKey (lvl, ilat, ilng);
-	unsigned gen = TsWriteGen ();
+	unsigned gen = TsElevGen (); // not upstream (elev-consistency)
 	std::lock_guard<std::mutex> lk (looseMx);
 	if (!isLoose) { badNode[key] = true; return; }
 	auto it = loose.find (key);
@@ -413,7 +413,7 @@ INT16 *ElevationManager::SharedTile (int lvl, int ilat, int ilng) const // not u
 {
 	const size_t ndat = (size_t)elev_stride * elev_stride;
 	const uint64_t key = ElevKey (lvl, ilat, ilng);
-	const unsigned gen = TsWriteGen ();
+	const unsigned gen = TsElevGen (); // not upstream (elev-consistency): a tile or its Elev_mod written since: read again
 	{
 		std::lock_guard<std::mutex> lk (sharedMx);
 		auto miss = sharedMiss.find (key); // a level with no tile: the search below it goes on at once
@@ -468,9 +468,10 @@ double ElevationManager::Elevation (double lat, double lng, int reqlvl, std::vec
 
 		int i, lvl, ilat, ilng;
 		ElevationTile *t = 0;
+		const unsigned egen = TsElevGen (); // not upstream (elev-consistency)
 
 		for (i = 0; i < ntile; i++) {
-			if (tile[i].data &&
+			if (tile[i].data && tile[i].gen == egen && // not upstream: gen, the stream wrote Elev or Elev_mod since it was loaded
 				reqlvl == tile[i].tgtlvl && tile[i].mgr == this &&
 				lat >= tile[i].latmin && lat <= tile[i].latmax &&
 				lng >= tile[i].lngmin && lng <= tile[i].lngmax) {
@@ -506,6 +507,7 @@ double ElevationManager::Elevation (double lat, double lng, int reqlvl, std::vec
 					t->ilat = ilat;
 					t->ilng = ilng;
 					t->tgtlvl = reqlvl;
+					t->gen = egen; // not upstream (elev-consistency)
 					t->latmin = (0.5-(double)(ilat+1)/double(nlat))*Pi;
 					t->latmax = (0.5-(double)ilat/double(nlat))*Pi;
 					t->lngmin = (double)ilng/(double)nlng*Pi2 - Pi;

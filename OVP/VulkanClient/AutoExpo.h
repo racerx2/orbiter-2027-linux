@@ -6,6 +6,7 @@
 // not upstream: auto-exposure controller, pure maths (design-ground-graphics 6); night look maths (design-night-look)
 
 #pragma once
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -24,6 +25,8 @@ struct Params {
 	float nightMaxEV = 1.0f;			// the upper clamp at full night
 	float brake0 = 0.005f, brake1 = 0.03f;	// near-saturated share over which a rise slows to a stop
 	float satThrNight = 0.9f;			// the measure's near-saturation threshold at full night
+	float speed = 1.0f;					// adaptation speed, the time constants divided by it (0.25...4)
+	float snapWeight = 0.2f;			// the first measure after Reset with this weight or more darkens e at once; above 1 never
 };
 
 struct Sample {
@@ -36,8 +39,10 @@ class Controller {
 public:
 	explicit Controller (const Params &p = Params()) : prm(p) { Reset(); }
 	void Reset ();
-	void SetParams (const Params &p) { prm = p; }
-	float Exposure () const;				// e
+	void SetParams (const Params &p);		// ev kept inside the new clamps
+	void SetBias (float b) { bias = std::isfinite(b) ? b : 0.0f; } // EV added to e; measures are judged without it
+	float Bias () const { return bias; }
+	float Exposure () const;				// e, the bias included
 	float EV () const { return ev; }		// log2 e
 	void Used (uint32_t stamp);				// the frame with this stamp renders with the current e
 	// a measure of the frame with this stamp; topEV: the upper clamp now; false: stale or too weak, e held
@@ -53,8 +58,11 @@ private:
 	float ev;
 	float night = 0.0f;
 	float band = 1.0f;		// 0 in the cockpit: the night band drop and clamp off
+	float bias = 0.0f;
+	bool fresh = true;		// no measure since Reset
 	uint32_t histStamp[NHIST];
 	float histEV[NHIST];
+	float histBias[NHIST];
 	int histNext;
 };
 

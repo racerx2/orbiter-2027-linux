@@ -30,17 +30,17 @@ add_dependencies(ShuttlePB
 
 add_custom_command(
 	TARGET ShuttlePB PRE_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CONFIG_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Config/Vessels
+	COMMAND ${ORBITER_COPY_NEWER} ${CONFIG_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Config/Vessels # not upstream: copynewer.cmake keeps files changed in the build tree
 )
 
 add_custom_command(
 	TARGET ShuttlePB PRE_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${MESH_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Meshes
+	COMMAND ${ORBITER_COPY_NEWER} ${MESH_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Meshes # not upstream: copynewer.cmake keeps files changed in the build tree
 )
 
 add_custom_command(
 	TARGET ShuttlePB PRE_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${TEXTURE_SOURCE_DIR}/ ${ORBITER_BINARY_TEXTURES_DIR}   # this should really go to its own subdirectory
+	COMMAND ${ORBITER_COPY_NEWER} ${TEXTURE_SOURCE_DIR}/ ${ORBITER_BINARY_TEXTURES_DIR}   # this should really go to its own subdirectory # not upstream: copynewer.cmake keeps files changed in the build tree
 )
 
 orbiter_link_depends_dirs(ShuttlePB ${CONFIG_SOURCE_DIR} ${MESH_SOURCE_DIR} ${TEXTURE_SOURCE_DIR}) # not upstream: a changed data file relinks the module, so its PRE_BUILD copy runs

@@ -107,9 +107,12 @@ void D3D9Config::Reset ()
 	Trees				= 1;
 	TreeRange			= 2500.0f;
 	TreeDensity			= 1.0f;
+	BldgRange			= 20.0f;
 	AutoExposure		= 1;
 	AutoExpMinEV		= -1.5f;
-	AutoExpMaxEV		= 2.5f;
+	AutoExpMaxEV		= 1.0f; // not upstream: a dark view lifted 2x at most (design-exposure-override)
+	ExposureEV			= 0.0f; // not upstream
+	AutoExpSpeed		= 1.0f; // not upstream
 	CloudAtlas			= 1;
 	LensFlare			= 1;
 	LightShafts			= 1;
@@ -238,9 +241,13 @@ bool D3D9Config::ReadParams ()
 	if (oapiReadItem_int   (hFile, (char*)"Trees", i))						Trees = max(0, min(1, i));
 	if (oapiReadItem_float (hFile, (char*)"TreeRange", d))					TreeRange = float(max(500.0, min(4000.0, d)));
 	if (oapiReadItem_float (hFile, (char*)"TreeDensity", d))					TreeDensity = float(max(0.1, min(2.0, d)));
+	if (oapiReadItem_float (hFile, (char*)"BldgRange", d))					BldgRange = float(max(5.0, min(40.0, d)));
 	if (oapiReadItem_int   (hFile, (char*)"AutoExposure", i))					AutoExposure = max(0, min(1, i));
 	if (oapiReadItem_float (hFile, (char*)"AutoExpMinEV", d))					AutoExpMinEV = float(max(-4.0, min(0.0, d)));
 	if (oapiReadItem_float (hFile, (char*)"AutoExpMaxEV", d))					AutoExpMaxEV = float(max(0.0, min(4.0, d)));
+	if (oapiReadItem_float (hFile, (char*)"ExposureEV", d))					ExposureEV = float(max(-3.0, min(3.0, d))); // not upstream
+	else if (AutoExpMaxEV == 2.5f)											AutoExpMaxEV = 1.0f; // not upstream: a cfg from before the override, the old default goes
+	if (oapiReadItem_float (hFile, (char*)"AutoExpSpeed", d))					AutoExpSpeed = float(max(0.25, min(4.0, d))); // not upstream
 	if (oapiReadItem_int   (hFile, (char*)"CloudAtlas", i))					CloudAtlas = max(0, min(1, i));
 	if (oapiReadItem_int   (hFile, (char*)"LensFlare", i))					LensFlare = max(0, min(1, i));
 	if (oapiReadItem_int   (hFile, (char*)"LightShafts", i))					LightShafts = max(0, min(1, i));
@@ -367,9 +374,12 @@ void D3D9Config::WriteParams ()
 	oapiWriteItem_int   (hFile, (char*)"Trees", Trees);
 	oapiWriteItem_float (hFile, (char*)"TreeRange", TreeRange);
 	oapiWriteItem_float (hFile, (char*)"TreeDensity", TreeDensity);
+	oapiWriteItem_float (hFile, (char*)"BldgRange", BldgRange);
 	oapiWriteItem_int   (hFile, (char*)"AutoExposure", AutoExposure);
 	oapiWriteItem_float (hFile, (char*)"AutoExpMinEV", AutoExpMinEV);
 	oapiWriteItem_float (hFile, (char*)"AutoExpMaxEV", AutoExpMaxEV);
+	oapiWriteItem_float (hFile, (char*)"ExposureEV", ExposureEV); // not upstream
+	oapiWriteItem_float (hFile, (char*)"AutoExpSpeed", AutoExpSpeed); // not upstream
 	oapiWriteItem_int   (hFile, (char*)"CloudAtlas", CloudAtlas);
 	oapiWriteItem_int   (hFile, (char*)"LensFlare", LensFlare);
 	oapiWriteItem_int   (hFile, (char*)"LightShafts", LightShafts);

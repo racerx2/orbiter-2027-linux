@@ -27,6 +27,14 @@ extern void oapiSetVesselControlLock (OBJHANDLE hVessel, bool lock) __attribute_
 extern MESHHANDLE oapiCopyMesh (MESHHANDLE hMesh, DWORD dropFlag) __attribute__ ((weak)); // not upstream: weak, a host without it loads every debris mesh from file
 #define COLL_COPY_MESH 1
 #endif
+#if defined (OAPI_BASE_CLEARZONES) && !defined (_WIN32)
+extern DWORD oapiGetBaseClearZones (OBJHANDLE hBase, BASECLEARZONE *zone, DWORD nmax) __attribute__ ((weak)); // not upstream: weak, a host without it has no clear zones
+#define COLL_BASE_CLEARZONES 1
+#endif
+#if defined (OAPI_MESHGROUP_FLAGS) && !defined (_WIN32)
+extern int oapiGetMeshGroupFlags (DEVMESHHANDLE hMesh, DWORD grpidx, DWORD *usrFlag) __attribute__ ((weak)); // not upstream: weak, a host without it leaves hidden groups solid
+#define COLL_MESHGROUP_FLAGS 1
+#endif
 
 namespace {
 inline Vector V (const VECTOR3 &v) { return Vector (v.x, v.y, v.z); }
@@ -167,6 +175,19 @@ public:
 	double TankMaxMass (CollH v, CollH tk) override { return Ves (v)->GetPropellantMaxMass ((PROPELLANT_HANDLE)tk); }
 	CollH Visual (CollH v) override { VISHANDLE *p = oapiObjectVisualPtr (H (v)); return p ? *p : nullptr; }
 	CollH DevMesh (CollH v, CollH vis, uint32_t i) override { assert (vis); return Ves (v)->GetDevMesh ((VISHANDLE)vis, i); }
+	int DevGroupFlags (CollH dm, uint32_t g, uint32_t &flags) override
+	{
+#ifdef COLL_MESHGROUP_FLAGS
+		DWORD f = 0;
+		if (!oapiGetMeshGroupFlags || !dm) return -2;
+		int r = oapiGetMeshGroupFlags ((DEVMESHHANDLE)dm, g, &f);
+		flags = (uint32_t)f;
+		return r;
+#else
+		(void)dm; (void)g; (void)flags;
+		return -2;
+#endif
+	}
 	int ReadVtx (CollH dm, uint32_t g, const uint16_t *idx, uint32_t n, DentVtx *out) override
 	{
 		if (!dm) return -1;
@@ -498,6 +519,18 @@ public: // bldg: streamed 3D buildings, only with a core that has them (as COLL_
 	{
 		if (t.handle) oapiTileStreamBldgFree ((TSBLDGMESH *)t.handle);
 		t = CollBldgTile ();
+	}
+#endif
+#ifdef COLL_BASE_CLEARZONES
+	void BaseClearZones (CollH base, std::vector<CollClearZone> &out) override
+	{
+		out.clear ();
+		if (!oapiGetBaseClearZones || !base) return;
+		DWORD n = oapiGetBaseClearZones (H (base), nullptr, 0);
+		if (!n) return;
+		std::vector<BASECLEARZONE> z (n);
+		n = std::min (n, oapiGetBaseClearZones (H (base), z.data (), n));
+		for (DWORD i = 0; i < n; i++) out.push_back ({ z[i].lng, z[i].lat, z[i].rad });
 	}
 #endif
 };

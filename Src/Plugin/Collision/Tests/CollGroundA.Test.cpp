@@ -107,6 +107,7 @@ struct LaxView {
 	void ClientMeshRebuilt (uint32_t, uint32_t, uint8_t) {}
 	void WantSlots (uint32_t, bool) {}
 	K Keys (uint32_t) const { return K (); }
+	bool Fixed (uint32_t) const { return false; }
 	const O *BaseObject (int, int, int) const { return &any; }
 	void Bases (std::vector<const O *> &v) const { v = { &any }; }
 };

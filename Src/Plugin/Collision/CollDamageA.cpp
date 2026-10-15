@@ -133,7 +133,7 @@ void CollDmgSession::RecordTorn (uint32_t id, const DentTorn &t)
 
 void CollDmgSession::EmitHit (const CollDamageHit &hit)
 {
-	if (brk) brk->Hit (hit);
+	if (brk && !host.Fixed (hit.id)) brk->Hit (hit); // a fixed structure does not break: its mass is no vessel's
 	if (fx) fx->Hit (hit);
 }
 
@@ -583,7 +583,24 @@ void CollDmgSession::DoRepair (VesselDamageA &v, bool playback)
 double CollDmgSession::Threshold (uint32_t id) const
 {
 	double e = host.DestroyEnergy (id);
-	return e >= 0 ? e : cfg.destroyEnergy;
+	return e >= 0 ? e : host.Fixed (id) ? cfg.buildingDestroyEnergy : cfg.destroyEnergy; // a fixed structure without the class key: as a building
+}
+
+double CollDmgSession::DmgMass (uint32_t id, CollH h) const
+{
+	double m = sdk.EmptyMass (h);
+	if (!host.Fixed (id)) return m;
+	const CollShape *sh = host.Shape (id);
+	if (!sh || !sh->nPart ()) return m;
+	Vector lo (1e300, 1e300, 1e300), hi (-1e300, -1e300, -1e300);
+	for (uint32_t k = 0; k < sh->nPart (); k++) {
+		const CollPart &p = sh->Part (k);
+		for (int a = 0; a < 3; a++) {
+			lo.data[a] = std::min (lo.data[a], p.sc[1].data[a] - p.sr[1]);
+			hi.data[a] = std::max (hi.data[a], p.sc[1].data[a] + p.sr[1]);
+		}
+	}
+	return DentMath::StructureMass (m, hi - lo);
 }
 
 void CollDmgSession::Commit (const std::vector<CollImpactEvent> &ev, double simt, const std::vector<CollFxContact> *contacts)
@@ -842,7 +859,7 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, 
 	if (hingeOnly) sx.Esurplus = E, sx.hp.P = 0.0; // all energy to the hinge
 	if (res != DENT_OK && !hingeOnly) { // dmg3: energy only; the units still see the hit
 		CollDamageHit eh;
-		double em = sdk.EmptyMass (h);
+		double em = DmgMass (v.id, h);
 		eh.id = v.id, eh.other = other, eh.h = h, eh.mesh = mesh, eh.grp = s.grp, eh.tri = s.tri, eh.rec = -1;
 		eh.c = CollApply (P.pose[1], s.c), eh.n = Unit (CollApplyDir (P.pose[1], s.n)), eh.tdir = Unit (CollApplyDir (P.pose[1], s.tdir));
 		eh.E = E, eh.eSpec = em > 0 ? E / em : 0.0, eh.Esurplus = 0, eh.R = p.R;
@@ -1029,7 +1046,7 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, 
 	}
 	MarkDirty (v.id, mesh, false); // the mirror is rebuilt once per slot at the end of the commit
 	if (p.h >= note.depth) note.depth = p.h, note.pos = cw, note.nml = nw, note.mesh = (int32_t)mesh, note.group = (int32_t)grp, note.simt = t;
-	double m = sdk.EmptyMass (h);
+	double m = DmgMass (v.id, h);
 	if (cfg.logLevel >= 1)
 		Log ("Collision dent t=%.17g '%s' mesh=%u grp=%u E=%.6g R=%.6g h=%.6g T=%.6g mode=%u P=%.6g parts=%d copies=%u%s eabs=%.6g (%.6g J/kg)", t, v.name.c_str (), mesh, grp, E, p.R, p.h, p.T,
 			p.mode, p.P, nview, ncopy, k0 >= 0 ? " grown" : "", v.d.eabs, m > 0 ? v.d.eabs / m : 0.0);
@@ -1048,7 +1065,8 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, 
 
 void CollDmgSession::DestroyedTest (VesselDamageA &v, CollH h, double Ei, double t, uint32_t extraFlags)
 {
-	double me = sdk.EmptyMass (h), mt = sdk.Mass (h), m = me > 0 ? me : mt;
+	bool fixed = host.Fixed (v.id);
+	double me = fixed ? DmgMass (v.id, h) : sdk.EmptyMass (h), mt = fixed ? me : sdk.Mass (h), m = me > 0 ? me : mt;
 	if (m > 0 && Ei / m >= DENT_CATASTROPHIC) v.d.flags |= XDMG_CATASTROPHIC;
 	if (v.d.flags & XDMG_DESTROYED) return;
 	if (!DentMath::Destroyed (v.d.eabs, me, mt, Threshold (v.id))) return;
@@ -1056,7 +1074,7 @@ void CollDmgSession::DestroyedTest (VesselDamageA &v, CollH h, double Ei, double
 	NoticeA b;
 	b.simt = t, b.flags = extraFlags;
 	Queue (v.id, CDMG_KIND_DESTROYED, &b);
-	if (fx) fx->Destroyed (v.id);
+	if (fx && !fixed) fx->Destroyed (v.id); // a fixed structure: flag and notice only, as a building
 	Log ("Collision vessel destroyed '%s' eabs=%.6g (%.6g J/kg)", v.name.c_str (), v.d.eabs, m > 0 ? v.d.eabs / m : 0.0);
 	if (cfg.notify >= 1) sdk.Notification (COLLN_WARNING, "Vessel destroyed", v.name.c_str ());
 }
@@ -1179,7 +1197,7 @@ void CollDmgSession::EndFrame ()
 		if (!(v.d.flags & XDMG_DESTROYED) && !v.cut.dummy && !v.locked) continue;
 		CollH h = host.Vessel (kv.first);
 		if (!h) continue;
-		bool want = (v.d.flags & XDMG_DESTROYED) && !(v.d.flags & XDMG_MODULEFX) && !sdk.Playback (h) && cfg.thrustCut; // not upstream: also with Orbiter's own damage setting off; destroyed is this addon's verdict
+		bool want = (v.d.flags & XDMG_DESTROYED) && !(v.d.flags & XDMG_MODULEFX) && !sdk.Playback (h) && cfg.thrustCut && !host.Fixed (kv.first); // not upstream: also with Orbiter's own damage setting off; destroyed is this addon's verdict; a fixed structure keeps its controls
 		Cut (h, v, want);
 		Lock (h, v, want);
 	}
@@ -1508,7 +1526,7 @@ void CollDmgSession::Playback (double simt)
 			CollShape *psh = host.Shape (v.id);
 			int pj = psh && !r.grp.empty () ? psh->PartOf (r.slot, r.grp[0]) : -1;
 			if (pj >= 0) { const CollPart &Q = psh->Part ((uint32_t)pj); hit.c = CollApply (Q.pose[1], r.p.c), hit.n = Unit (CollApplyDir (Q.pose[1], r.p.n)); hit.grp = r.grp[0]; }
-			double em = sdk.EmptyMass (h);
+			double em = DmgMass (v.id, h);
 			const DentMaterial &pm = DentMath::DefaultMaterial (-1);
 			double placedP = r.p.mode == DENTM_HINGE ? 2.0 * DentMath::HingeMp (r.p, pm) * r.p.P : pm.sigma_c * r.p.h * Pi * r.p.R * r.p.R / 3.0; // stored geometry, disk area
 			hit.E = e.E, hit.eSpec = em > 0 ? e.E / em : 0.0, hit.R = r.p.R, hit.depth = r.p.h, hit.mode = r.p.mode, hit.vn = e.vn, hit.vt = e.vt;

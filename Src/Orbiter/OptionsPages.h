@@ -18,6 +18,7 @@
 #include "OrbiterAPI.h"
 #include <string>
 #include <vector>
+#include <QPointer>
 
 class QTreeWidgetItem;
 
@@ -105,6 +106,7 @@ private:
 	int m_vScrollRange;
 	int m_vScrollPage;
 	const HELPCONTEXT* m_contextHelp;
+	QMetaObject::Connection m_conn[2]; // page list and scroll bar: they end with the container, the dialog outlives it
 };
 
 /************************************************************************
@@ -227,7 +229,7 @@ protected:
 
 private:
 	OptionsPageContainer* m_container; ///< container owning the page
-	QWidget *m_hPage;      ///< page window handle (0 before MakePage has been called)
+	QPointer<QWidget> m_hPage; ///< page window handle (0 before MakePage has been called; 0 once the window is gone)
 	QTreeWidgetItem *m_hItem; ///< page title in the tree view control
 };
 
