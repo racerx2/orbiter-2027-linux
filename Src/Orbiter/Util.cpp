@@ -17,6 +17,7 @@
 #include <iomanip>
 #include <unordered_map>
 #include <algorithm>
+#include <map> // not upstream: ModuleLoad's counts
 
 LONGLONG NameToId (const char *name)
 {
@@ -316,10 +317,33 @@ void *ModuleProc (void *hModule, const char *name)
 	return proc;
 }
 
+static std::map<void*, int> &g_moduleRefs = *new std::map<void*, int>; // not upstream: ModuleLoad opens per handle, 0 once freed; never destroyed
+
+void *ModuleLoad (const char *path) // not upstream: LoadLibrary counterpart
+{
+	void *mapped = dlopen (path, RTLD_NOW | RTLD_NOLOAD);
+	void *hModule = dlopen (path, RTLD_NOW);
+	if (mapped) dlclose (mapped);
+	if (!hModule) return 0;
+	auto it = g_moduleRefs.find (hModule);
+	if (it == g_moduleRefs.end () || !mapped) g_moduleRefs[hModule] = 1; // a new mapping (a freed handle may be reused): its constructors ran
+	else if (!it->second++) { // freed before and kept loaded (unique symbols): DLL_PROCESS_ATTACH again
+		void (*attach)() = (void(*)())ModuleProc (hModule, "ModuleAttach");
+		if (attach) attach ();
+	}
+	return hModule;
+}
+
 void ModuleFree (void *hModule)
 {
-	void (*detach)() = (void(*)())ModuleProc (hModule, "ModuleDetach");
-	if (detach) detach ();
+	auto it = g_moduleRefs.find (hModule); // not upstream: only the last free of a ModuleLoad handle detaches
+	if (it != g_moduleRefs.end () && !it->second) return; // not upstream: freed already; another dlclose would underflow the loader's count
+	if (it != g_moduleRefs.end () && it->second > 1) it->second--; // not upstream: as above
+	else { // not upstream: as above
+		if (it != g_moduleRefs.end ()) it->second = 0; // not upstream: as above
+		void (*detach)() = (void(*)())ModuleProc (hModule, "ModuleDetach");
+		if (detach) detach ();
+	} // not upstream: as above
 	dlclose (hModule);
 }
 

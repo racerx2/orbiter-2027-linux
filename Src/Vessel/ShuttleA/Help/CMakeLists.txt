@@ -17,7 +17,7 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.ld.in ${CMAKE_CURRENT_BINARY_D
 # copy everything to the build directory and compile there
 
 add_custom_command(OUTPUT ${ORBITER_BINARY_HTML_DIR}/Vessels/${name}.chm
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/ ${CMAKE_CURRENT_BINARY_DIR}
+	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_CURRENT_SOURCE_DIR}/ ${CMAKE_CURRENT_BINARY_DIR} # not upstream: copynewer.cmake keeps files changed in the build tree
 	COMMAND ${CMAKE_COMMAND} -E copy ${ORBITER_SOURCE_HTML_DIR}/master.js ${CMAKE_CURRENT_BINARY_DIR}
 	COMMAND ${CMAKE_COMMAND} -E copy ${ORBITER_SOURCE_HTML_DIR}/Orbiter.css ${CMAKE_CURRENT_BINARY_DIR}
 	COMMAND ${ldoc} .

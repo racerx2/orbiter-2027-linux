@@ -12,7 +12,7 @@ srcdir_to_tgtlist("${CMAKE_CURRENT_SOURCE_DIR}/Config" "${ORBITER_BINARY_CONFIG_
 set(cfg_tgtlist ${tgtlist})
 add_custom_command(
 	OUTPUT ${tgtlist}
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CONFIG_SOURCE_DIR}/ ${ORBITER_BINARY_CONFIG_DIR}/Vessels
+	COMMAND ${ORBITER_COPY_NEWER} ${CONFIG_SOURCE_DIR}/ ${ORBITER_BINARY_CONFIG_DIR}/Vessels # not upstream: copynewer.cmake keeps files changed in the build tree
 	DEPENDS ${srclist}
 )
 
@@ -20,7 +20,7 @@ srcdir_to_tgtlist("${MESH_SOURCE_DIR}" "${ORBITER_BINARY_MESH_DIR}/ISS" srclist 
 set(msh_tgtlist ${tgtlist})
 add_custom_command(
 	OUTPUT ${tgtlist}
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${MESH_SOURCE_DIR}/ ${ORBITER_BINARY_MESH_DIR}/ISS
+	COMMAND ${ORBITER_COPY_NEWER} ${MESH_SOURCE_DIR}/ ${ORBITER_BINARY_MESH_DIR}/ISS # not upstream: copynewer.cmake keeps files changed in the build tree
 	DEPENDS ${srclist}
 )
 
@@ -28,7 +28,7 @@ srcdir_to_tgtlist("${TEXTURE_SOURCE_DIR}" "${ORBITER_BINARY_TEXTURES_DIR}/ISS" s
 set(tex_tgtlist ${tgtlist})
 add_custom_command(
 	OUTPUT ${tgtlist}
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${TEXTURE_SOURCE_DIR}/ ${ORBITER_BINARY_TEXTURES_DIR}/ISS
+	COMMAND ${ORBITER_COPY_NEWER} ${TEXTURE_SOURCE_DIR}/ ${ORBITER_BINARY_TEXTURES_DIR}/ISS # not upstream: copynewer.cmake keeps files changed in the build tree
 	DEPENDS ${srclist}
 )
 
@@ -36,7 +36,7 @@ srcdir_to_tgtlist("${THUMBNAIL_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/Images/Vessels/
 set(thmb_tgtlist ${tgtlist})
 add_custom_command(
 	OUTPUT ${tgtlist}
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${THUMBNAIL_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Images/Vessels/Default
+	COMMAND ${ORBITER_COPY_NEWER} ${THUMBNAIL_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Images/Vessels/Default # not upstream: copynewer.cmake keeps files changed in the build tree
 	DEPENDS ${srclist}
 )
 

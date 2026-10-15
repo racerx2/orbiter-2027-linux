@@ -4,7 +4,7 @@
 srcdir_to_tgtlist("${CMAKE_CURRENT_SOURCE_DIR}/Config" "${ORBITER_BINARY_CONFIG_DIR}" srclist tgtlist)
 add_custom_command(
 	OUTPUT ${tgtlist}
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/Config/ ${ORBITER_BINARY_CONFIG_DIR}
+	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_CURRENT_SOURCE_DIR}/Config/ ${ORBITER_BINARY_CONFIG_DIR} # not upstream: copynewer.cmake keeps files changed in the build tree
 	DEPENDS ${srclist}
 )
 add_custom_target(Sol

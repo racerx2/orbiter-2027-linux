@@ -28,12 +28,12 @@ target_link_libraries(Solarsail
 
 add_custom_command(
 	TARGET Solarsail PRE_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CONFIG_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Config/Vessels
+	COMMAND ${ORBITER_COPY_NEWER} ${CONFIG_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Config/Vessels # not upstream: copynewer.cmake keeps files changed in the build tree
 )
 
 add_custom_command(
 	TARGET Solarsail PRE_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${MESH_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Meshes
+	COMMAND ${ORBITER_COPY_NEWER} ${MESH_SOURCE_DIR}/ ${CMAKE_BINARY_DIR}/Meshes # not upstream: copynewer.cmake keeps files changed in the build tree
 )
 
 #add_custom_command(

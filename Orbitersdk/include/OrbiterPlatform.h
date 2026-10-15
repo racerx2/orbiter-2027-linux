@@ -91,8 +91,25 @@ typedef const char *PCSTR;
 #define IDCLOSE  8
 #define IDHELP   9
 
+// wingdi font weights, as oapiCreateFontEx takes them
+#ifndef FW_DONTCARE
+#define FW_DONTCARE   0
+#define FW_THIN       100
+#define FW_EXTRALIGHT 200
+#define FW_LIGHT      300
+#define FW_NORMAL     400
+#define FW_MEDIUM     500
+#define FW_SEMIBOLD   600
+#define FW_BOLD       700
+#define FW_EXTRABOLD  800
+#define FW_HEAVY      900
+#endif
+
 // handle types are native: HWND -> QWidget (dialogs) / QWindow (render window), HINSTANCE -> dlopen handle (void*),
 // HDC -> QPainter, HFONT -> QFont, HPEN -> QPen, HBRUSH -> QBrush, HBITMAP -> QImage, window messages -> QEvent
+#ifndef HINSTANCE
+typedef void *HINSTANCE; // the dlopen handle, so module entry points keep the Win32 signature
+#endif
 class QWidget;
 class QWindow;
 class QEvent;

@@ -5476,7 +5476,7 @@ OAPIFUNC oapi::Font *oapiCreateFont (int height, bool prop, const char *face, Fo
 * \param spacing Spacing between charters in a string (0.0f for default)
 * \return A pointer to a created or pre-existing font or NULL in a case of an error.
 */
-OAPIFUNC oapi::Font* oapiCreateFontEx(int height, char* face, int width = 0, int weight = 400, FontStyle style = FontStyle::FONT_NORMAL, float spacing = 0.0f);
+OAPIFUNC oapi::Font* oapiCreateFontEx(int height, const char* face, int width = 0, int weight = 400, FontStyle style = FontStyle::FONT_NORMAL, float spacing = 0.0f); // not upstream: const, face is only read
 
 /**
  * \brief Release a font resource.
@@ -5484,6 +5484,10 @@ OAPIFUNC oapi::Font* oapiCreateFontEx(int height, char* face, int width = 0, int
  * \sa oapiCreateFont
  */
 OAPIFUNC void oapiReleaseFont (oapi::Font *font);
+
+// not upstream: private font files, the Linux counterpart of AddFontResourceEx/RemoveFontResourceEx (FR_PRIVATE); Orbiter-relative path, reference counted
+OAPIFUNC bool oapiAddFontResource (const char *path);
+OAPIFUNC bool oapiRemoveFontResource (const char *path);
 
 /**
  * \brief Creates a pen resource for drawing lines and shape outlines.
@@ -6440,7 +6444,7 @@ OAPIFUNC void __writeLogError(const char *func, const char *file, int line, cons
 	* \param item item id
 	* \param string string to be written (zero-terminated)
 	*/
-OAPIFUNC void oapiWriteScenario_string (FILEHANDLE scn, const char *item, char *string); // not upstream: const, item is only read
+OAPIFUNC void oapiWriteScenario_string (FILEHANDLE scn, const char *item, const char *string); // not upstream: const, item and string are only read
 
 	/**
 	* \brief Writes an integer-valued item to a scenario file.
@@ -6456,7 +6460,7 @@ OAPIFUNC void oapiWriteScenario_int (FILEHANDLE scn, const char *item, int i); /
 	* \param item item id
 	* \param d floating point value to be written
 	*/
-OAPIFUNC void oapiWriteScenario_float (FILEHANDLE scn, char *item, double d);
+OAPIFUNC void oapiWriteScenario_float (FILEHANDLE scn, const char *item, double d); // not upstream: const, item is only read
 
 	/**
 	* \brief Writes a vector-valued item to a scenario file.

@@ -15,7 +15,7 @@ target_sources(Orbiter PRIVATE
 )
 
 add_custom_target(CopySkins ALL
-	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${CMAKE_SOURCE_DIR}/Skins/ ${CMAKE_BINARY_DIR}/Skins
+	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_SOURCE_DIR}/Skins/ ${CMAKE_BINARY_DIR}/Skins # not upstream: copynewer.cmake keeps files changed in the build tree
 )
 set_target_properties(CopySkins PROPERTIES FOLDER Data)
 

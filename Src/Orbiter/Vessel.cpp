@@ -6000,7 +6000,7 @@ bool Vessel::RegisterModule (const char *dllname)
 		dlerror (); // not upstream: clears a stale error, so LoadModule logs none
 		return false;
 	}
-	hMod = dlopen (oapiResolvePath (cbuf).c_str(), RTLD_NOW);
+	hMod = ModuleLoad (oapiResolvePath (cbuf).c_str()); // not upstream: counted, ModuleFree detaches on the last free
 	if (!hMod)
 		return false;
 

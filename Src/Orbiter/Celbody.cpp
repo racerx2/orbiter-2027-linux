@@ -757,13 +757,13 @@ void CelestialBody::RegisterModule (char *dllname)
 	memset (&modIntf, 0, sizeof (modIntf));  // reset old interface
 	hMod = 0; // not upstream: stays 0 when a module path doesn't fit
 	if (snprintf (cbuf, sizeof cbuf, "Modules/Celbody/%s.so", dllname) < (int)sizeof cbuf) // try new module location; not upstream: bounded, a path that doesn't fit is not tried
-		hMod = dlopen (oapiResolvePath (cbuf).c_str(), RTLD_NOW); // not upstream: only when the path fit
+		hMod = ModuleLoad (oapiResolvePath (cbuf).c_str()); // not upstream: only when the path fit; counted, ModuleFree detaches on the last free
 	if (!hMod) {
 		if (snprintf (cbuf, sizeof cbuf, "Modules/%s.so", dllname) >= (int)sizeof cbuf) {  // try legacy module location; not upstream: bounded, a name that doesn't fit: no dlopen
 			LOGOUT_WARN ("Path too long: Modules/%s.so", dllname);
 			return;
 		}
-		hMod = dlopen (oapiResolvePath (cbuf).c_str(), RTLD_NOW);
+		hMod = ModuleLoad (oapiResolvePath (cbuf).c_str()); // not upstream: counted, ModuleFree detaches on the last free
 	}
 	if (!hMod) {
 		// A body whose module cannot be loaded falls back to its config elements, or, if it has none, to a
