@@ -122,6 +122,7 @@ set(common_src
 	MFDAPI.cpp
 	ModuleAPI.cpp
 	OrbiterAPI.cpp
+	FontResource.cpp # not upstream: oapiAddFontResource, oapiRemoveFontResource
 # Graphics utils
 	D3d7util.cpp
 	D3dmath.cpp

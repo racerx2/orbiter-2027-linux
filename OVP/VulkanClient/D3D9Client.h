@@ -942,7 +942,7 @@ public:
 	 * \sa clbkReleaseFont, oapi::Font
 	 */
 	Font* clbkCreateFont(int height, bool prop, const char* face, FontStyle style = FontStyle::FONT_NORMAL, int orientation = 0) const;
-	Font* clbkCreateFontEx(int height, char* face, int width, int weight, FontStyle style, float spacing) const;
+	Font* clbkCreateFontEx(int height, const char* face, int width, int weight, FontStyle style, float spacing) const override; // not upstream: const face, override
 
 	/**
 	 * \brief De-allocate a font resource.

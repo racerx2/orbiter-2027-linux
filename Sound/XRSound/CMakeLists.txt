@@ -48,8 +48,8 @@ add_custom_target(XRSound_assets ALL
 	COMMAND ${CMAKE_COMMAND} -E copy "${ASSET_DIR}/Doc/XRSound User Manual.pdf" ${ORBITER_BINARY_ROOT_DIR}/Doc/
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SOLUTION_DIR}/XRSound.h ${ORBITER_BINARY_SDK_DIR}/XRSound/
 	# ikpMP3.dll, ikpFlac.dll and irrKlang.dll left out: the mixer and its decoders are built into XRSound.so
-	# copy_directory_if_different: the 200 MB of default sounds are not copied again on every build
-	COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${ASSET_DIR}/XRSound/Default ${ORBITER_BINARY_ROOT_DIR}/XRSound/Default
+	# copynewer.cmake: the 200 MB of default sounds are not copied again on every build
+	COMMAND ${ORBITER_COPY_NEWER} ${ASSET_DIR}/XRSound/Default ${ORBITER_BINARY_ROOT_DIR}/XRSound/Default # not upstream: copynewer.cmake keeps files changed in the build tree
 )
 
 install(DIRECTORY ${ORBITER_BINARY_ROOT_DIR}/XRSound

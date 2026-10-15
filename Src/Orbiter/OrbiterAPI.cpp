@@ -1975,7 +1975,7 @@ DLLEXPORT oapi::Font *oapiCreateFont (int height, bool prop, const char *face, F
 	* \return A pointer to a created or pre-existing font or NULL in a case of an error.
 	*/
 
-DLLEXPORT oapi::Font* oapiCreateFontEx(int height, char* face, int width, int weight, FontStyle style, float spacing)
+DLLEXPORT oapi::Font* oapiCreateFontEx(int height, const char* face, int width, int weight, FontStyle style, float spacing) // not upstream: const face
 {
 	oapi::GraphicsClient* gc = g_pOrbiter->GetGraphicsClient();
 	oapi::Font* font = NULL;
@@ -2426,7 +2426,7 @@ DLLEXPORT void __writeLogError(const char *func, const char *file, int line, con
 #endif
 }
 
-DLLEXPORT void oapiWriteScenario_string (FILEHANDLE file, const char *item, char *string) // not upstream: const item
+DLLEXPORT void oapiWriteScenario_string (FILEHANDLE file, const char *item, const char *string) // not upstream: const item and string
 {
 	ofstream &ofs = *(ofstream*)file;
 	ofs << "  " << item << ' ' << string << endl;
@@ -2438,7 +2438,7 @@ DLLEXPORT void oapiWriteScenario_int (FILEHANDLE file, const char *item, int i) 
 	ofs << "  " << item << ' ' << i << endl;
 }
 
-DLLEXPORT void oapiWriteScenario_float (FILEHANDLE file, char *item, double d)
+DLLEXPORT void oapiWriteScenario_float (FILEHANDLE file, const char *item, double d) // not upstream: const item
 {
 	ofstream &ofs = *(ofstream*)file;
 	FltFormat f{ 6 }; // default precision: 6
@@ -2732,7 +2732,10 @@ DLLEXPORT oapi::Font *oapiCreateFont (int height, bool prop, char *face, FontSty
 DLLEXPORT DWORD oapiRegisterCustomCmd (char *label, char *desc, CustomFunc func, void *context) { return oapiRegisterCustomCmd ((const char*)label, (const char*)desc, func, context); }
 DLLEXPORT void oapiWriteLine (FILEHANDLE file, char *line) { oapiWriteLine (file, (const char*)line); }
 DLLEXPORT void oapiWriteLog (char *line) { oapiWriteLog ((const char*)line); }
-DLLEXPORT void oapiWriteScenario_string (FILEHANDLE file, char *item, char *string) { oapiWriteScenario_string (file, (const char*)item, string); }
+DLLEXPORT oapi::Font* oapiCreateFontEx (int height, char* face, int width, int weight, FontStyle style, float spacing) { return oapiCreateFontEx (height, (const char*)face, width, weight, style, spacing); }
+DLLEXPORT void oapiWriteScenario_string (FILEHANDLE file, const char *item, char *string) { oapiWriteScenario_string (file, (const char*)item, (const char*)string); }
+DLLEXPORT void oapiWriteScenario_string (FILEHANDLE file, char *item, char *string) { oapiWriteScenario_string (file, (const char*)item, (const char*)string); }
+DLLEXPORT void oapiWriteScenario_float (FILEHANDLE file, char *item, double d) { oapiWriteScenario_float (file, (const char*)item, d); }
 DLLEXPORT void oapiWriteScenario_int (FILEHANDLE file, char *item, int i) { oapiWriteScenario_int (file, (const char*)item, i); }
 DLLEXPORT void oapiWriteItem_string (FILEHANDLE file, char *item, char *string) { oapiWriteItem_string (file, (const char*)item, string); }
 DLLEXPORT void oapiWriteItem_float (FILEHANDLE file, char *item, double d) { oapiWriteItem_float (file, (const char*)item, d); }

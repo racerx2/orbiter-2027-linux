@@ -14,7 +14,7 @@ file(GLOB ChmSources
 # copy everything to the build directory and compile there
 
 add_custom_command(OUTPUT ${ORBITER_BINARY_HTML_DIR}/${subdir}/${name}.chm
-	COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/ ${CMAKE_CURRENT_BINARY_DIR}
+	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_CURRENT_SOURCE_DIR}/ ${CMAKE_CURRENT_BINARY_DIR} # not upstream: copynewer.cmake keeps files changed in the build tree
 	COMMAND ${HHC_CMD} ${name}.hhp
 	COMMAND ${CMAKE_COMMAND} -E copy ${name}.chm ${ORBITER_BINARY_HTML_DIR}/${subdir}/
 	DEPENDS ${ChmSources}
