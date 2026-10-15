@@ -450,3 +450,78 @@ TEST_CASE("NightLook: a far camera on the sunward side is not in the night", "[a
 	CHECK(NightWeight(std::sin(-89.9f * 0.01745329f), cd) > 0.3f); // sun 1.9 deg under the camera's own horizon
 	CHECK(NightWeight(std::sin(-80.0f * 0.01745329f), cd) == 0.0f); // 8 deg over it
 }
+
+// not upstream: the exposure override (design-exposure-override)
+TEST_CASE("AutoExpo: the first measure after a reset darkens at once, a weak one or a rise adapts", "[autoexpo][override]")
+{
+	Sim s(1.1f); // 1 EV over hi
+	s.linear = true;
+	for (int i = 0; i < 3; i++) s.Step(); // the first measure comes back at the third frame
+	CHECK(std::fabs(s.c.EV() + 1.0f) < 1e-3f);
+	s.Run(5.0f);
+	CHECK(std::fabs(s.c.EV() + 1.0f) < 1e-3f);
+	Sim w(1.1f);
+	w.linear = true;
+	w.weight = 0.1f; // under snapWeight
+	for (int i = 0; i < 3; i++) w.Step();
+	CHECK(w.c.EV() < 0.0f);
+	CHECK(w.c.EV() > -0.1f);
+	Sim d(0.03f); // 2 EV under lo: rises as before
+	d.linear = true;
+	for (int i = 0; i < 3; i++) d.Step();
+	CHECK(d.c.EV() > 0.0f);
+	CHECK(d.c.EV() < 0.1f);
+	Sim m(8.0f); // the snap stops at the clamp
+	m.linear = true;
+	for (int i = 0; i < 3; i++) m.Step();
+	CHECK(m.c.EV() == -1.5f);
+}
+
+TEST_CASE("AutoExpo: a bias brightens by its EV and the controller does not undo it", "[autoexpo][override]")
+{
+	Sim a(0.03f), b(0.03f);
+	a.linear = b.linear = true;
+	b.c.SetBias(1.0f);
+	a.Run(20.0f);
+	b.Run(20.0f);
+	CHECK(std::fabs(a.c.EV() - b.c.EV()) < 1e-3f);
+	CHECK(std::fabs(b.c.Exposure() / a.c.Exposure() - 2.0f) < 1e-3f);
+	Sim c(0.3f); // in the band: e stays at 1 while the bias is dragged every frame
+	c.linear = true;
+	for (int i = 0; i < 10 * 60; i++) {
+		c.c.SetBias(float(i % 60) / 30.0f - 1.0f);
+		c.Step();
+	}
+	CHECK(std::fabs(c.c.EV()) < 1e-3f);
+	for (float b : { 1.0f, 3.0f }) { // through the tone curve: the bias is judged off a curved mean, in the band it still holds
+		Sim t(0.3f);
+		t.c.SetBias(b);
+		t.Run(20.0f);
+		CHECK(std::fabs(t.c.EV()) < 0.05f);
+	}
+}
+
+TEST_CASE("AutoExpo: speed 2 halves the adaptation time, new clamps hold at once", "[autoexpo][override]")
+{
+	auto rise = [](float speed) {
+		Sim s(0.03f);
+		s.linear = true;
+		Params p;
+		p.speed = speed;
+		p.snapWeight = 2.0f; // never snaps
+		s.c.SetParams(p);
+		int n = 0;
+		while (s.c.EV() < 2.0f * 0.632f && n < 60 * 60) { s.Step(); n++; }
+		return n;
+	};
+	int n1 = rise(1.0f), n2 = rise(2.0f);
+	CHECK(n1 > 100);
+	CHECK(std::abs(n1 - 2 * n2) <= 4);
+	Sim s(0.03f);
+	s.linear = true;
+	s.Run(5.0f);
+	Params p;
+	p.maxEV = 1.0f;
+	s.c.SetParams(p);
+	CHECK(s.c.EV() == 1.0f);
+}

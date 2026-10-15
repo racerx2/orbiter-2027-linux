@@ -124,6 +124,10 @@ private:
 	AutoExpo::Controller expo;
 	OBJHANDLE expoFocus = NULL;            // a focus or camera mode change resets e
 	bool expoInternal = false;
+	OBJHANDLE expoTarget = NULL;           // and a camera target or mode change (design-exposure-override)
+	int expoMode = -1;
+	bool expoAuto = false;                 // auto was on last frame: switching it on resets e
+	AutoExpo::Params expoPrm;              // as made at start; the Graphics Controls' values go over it each frame
 };
 
 #endif // !__SCENEFX_H
