@@ -221,18 +221,18 @@ BOOL OptionsPage_Stream::OnInitDialog(QWidget *hPage)
 	top->addWidget (gk);
 	top->addStretch (1);
 
-	QObject::connect (m_enable, &QCheckBox::toggled, hPage, [this] (bool on) { Cfg()->bTileStream = on; m_offline->setEnabled (on); });
-	QObject::connect (m_offline, &QCheckBox::toggled, hPage, [this] (bool on) { Cfg()->bTileStreamOffline = on; });
-	QObject::connect (m_cap, QOverload<int>::of (&QSpinBox::valueChanged), hPage, [this] (int v) { Cfg()->TileStreamCacheMB = v; m_capUser = true; });
-	QObject::connect (m_refresh, &QPushButton::clicked, hPage, [this] {
+	QObject::connect (m_enable, &QCheckBox::toggled, &m_life, [this] (bool on) { Cfg()->bTileStream = on; m_offline->setEnabled (on); });
+	QObject::connect (m_offline, &QCheckBox::toggled, &m_life, [this] (bool on) { Cfg()->bTileStreamOffline = on; });
+	QObject::connect (m_cap, QOverload<int>::of (&QSpinBox::valueChanged), &m_life, [this] (int v) { Cfg()->TileStreamCacheMB = v; m_capUser = true; });
+	QObject::connect (m_refresh, &QPushButton::clicked, &m_life, [this] {
 		if (m_sizeThread.joinable() || m_clearing || m_pendingClear || m_fetch) return; // a download counts when it ends
 		m_scanWanted = true; // Tick counts, at most once every 10 s
 		m_size->setText ("Counting...");
 	});
-	QObject::connect (m_clear, &QPushButton::clicked, hPage, [this] { OnClear (); });
-	QObject::connect (m_download, &QPushButton::clicked, hPage, [this] { OnDownload (); });
-	QObject::connect (m_cancel, &QPushButton::clicked, hPage, [this] { Cancel (); m_status->setText ("Cancelling..."); });
-	QObject::connect (m_where, QOverload<int>::of (&QComboBox::currentIndexChanged), hPage, [this] (int i) {
+	QObject::connect (m_clear, &QPushButton::clicked, &m_life, [this] { OnClear (); });
+	QObject::connect (m_download, &QPushButton::clicked, &m_life, [this] { OnDownload (); });
+	QObject::connect (m_cancel, &QPushButton::clicked, &m_life, [this] { Cancel (); m_status->setText ("Cancelling..."); });
+	QObject::connect (m_where, QOverload<int>::of (&QComboBox::currentIndexChanged), &m_life, [this] (int i) {
 		QVariant v = m_where->itemData (i);
 		if (!v.isValid()) return;
 		QPointF p = v.toPointF();
@@ -246,14 +246,14 @@ BOOL OptionsPage_Stream::OnInitDialog(QWidget *hPage)
 		m_where->setCurrentIndex (0);
 		Estimate ();
 	};
-	QObject::connect (m_lat, QOverload<double>::of (&QDoubleSpinBox::valueChanged), hPage, custom);
-	QObject::connect (m_lng, QOverload<double>::of (&QDoubleSpinBox::valueChanged), hPage, custom);
-	QObject::connect (m_radius, QOverload<double>::of (&QDoubleSpinBox::valueChanged), hPage, [this] { Estimate (); });
-	QObject::connect (m_level, QOverload<int>::of (&QSpinBox::valueChanged), hPage, [this] { Estimate (); });
+	QObject::connect (m_lat, QOverload<double>::of (&QDoubleSpinBox::valueChanged), &m_life, custom);
+	QObject::connect (m_lng, QOverload<double>::of (&QDoubleSpinBox::valueChanged), &m_life, custom);
+	QObject::connect (m_radius, QOverload<double>::of (&QDoubleSpinBox::valueChanged), &m_life, [this] { Estimate (); });
+	QObject::connect (m_level, QOverload<int>::of (&QSpinBox::valueChanged), &m_life, [this] { Estimate (); });
 
 	LoadBases ();
 	m_timer = new QTimer (hPage);
-	QObject::connect (m_timer, &QTimer::timeout, hPage, [this] { Tick (); });
+	QObject::connect (m_timer, &QTimer::timeout, &m_life, [this] { Tick (); });
 	m_timer->start (200);
 	UpdateControls (hPage);
 	Estimate ();
