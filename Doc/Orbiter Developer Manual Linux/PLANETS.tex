@@ -335,6 +335,18 @@ The files in the Elev\_mod layer, if present, use the same file format, except t
 \end{itemize}
 
 \noindent
+\textbf{Elev\_mod under the Earth tile stream (Linux)}\\
+An Elev\_mod tile applies only over the Elev tile of its own level. A level without an Elev tile is interpolated from its parent, modifications included. The Earth tile stream writes Elev tiles at finer levels than most add-ons ship Elev\_mod for, so it carries an add-on's modifications down to them. Every level then shows the same ground:
+\begin{itemize}
+\item An add-on is taken to be made for the levels the installed Elev archive has, and for the levels of its own tiles under its nearest tile above. A streamed tile at such a level is left to the add-on: its own Elev\_mod file there, or none.
+\item Below those levels, the source of a streamed tile is its first coarser level with Elev data. If that level has an add-on's Elev\_mod, or one the stream carried down there, that file is the source. Otherwise the tile has no source.
+\item Each node is interpolated bilinearly from the source's nodes. Where only some of them are modified, the node blends with the tile's own elevation by the weight of the unmodified ones. A tile with no modified node gets no file.
+\item Under a source, the stream does not flatten its own bases. The add-on owns that ground.
+\item The stream never writes over an add-on's file. It lists the files it made in TileStream/mod.idx and their sources in TileStream/inh.idx. At the next start, a file is made again or removed when its source changes or goes.
+\end{itemize}
+An add-on therefore needs Elev\_mod only down to the levels it was made for. The streamed levels below follow it.
+
+\noindent
 Note that the 259x259 grid elevation tile resolution is higher than the mesh patch resolution used by Orbiter for that tile (which can be user-defined). If the patch resolution has been set to 64x64 (corresponding to 67x67 including edges and padding) then Orbiter will query a subset of the tile's grandparent node to retrieve the mesh elevation data for that tile. This arrangement allows to reduce the number of files required for the elevation layer.
 
 

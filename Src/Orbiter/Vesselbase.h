@@ -39,6 +39,9 @@ struct SurfParam {//Surface-relative vessel state
 	void SetLanded (double lng, double lat, double alt, double dir, const Vector &nml, const CelestialBody *ref);
 	// Set surface parameters for a landed object
 
+	void Reseat (); // not upstream (elev-consistency): a landed object back on the ground when the stream changed elevation since
+	unsigned elevGen = 0; // not upstream: TsElevGen when seated
+
 	const CelestialBody *ref; // body to which data refer
 	Vector ploc;              // ship position in planet local cartesian coords
 	Vector groundvel_glob;    // ground-relative velocity in global frame

@@ -4760,6 +4760,7 @@ void Vessel::Update (bool force)
 	} else if (fstatus == FLIGHTSTATUS_LANDED) {
 
 		// simplified state update for idle vessels
+		sp.Reseat (); // not upstream (elev-consistency): on the ground the stream wrote since
 		proxyplanet->LocalToGlobal_t1 (sp.ploc, s1->pos);
 		double vground = Pi2 * proxyplanet->Size() * sp.clat / proxyplanet->RotT();
 		s1->vel.Set (-vground*sp.slng, 0.0, vground*sp.clng);

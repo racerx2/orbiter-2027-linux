@@ -1,15 +1,18 @@
 
-// not upstream: tile stream decoders on hostile input: TIFF, .elv, MVT, FLOOR boxes, the date line, odd orbits
+// not upstream: tile stream decoders on hostile input: TIFF, .elv, MVT, FLOOR boxes, the date line, odd orbits; add-ons' Elev_mod carried down
 
 #include <catch2/catch_test_macros.hpp>
 #include "TileStream.h"
 #include <QColor>
 #include <QCoreApplication>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <thread>
 #include <unistd.h>
 #include <zlib.h>
 
@@ -723,4 +726,287 @@ TEST_CASE ("The shipped FLOOR boxes hold the depressions and none of the sea nea
 		{39.80, 15.30}, {-114.70, 31.60}, {-117.40, 32.90}, {28.90, 31.00}, {25.20, 31.70}, {137.80, -33.20}, {38.00, 43.00}, {50.50, 27.00}})
 		CHECK (at (sea.first, sea.second) == 0.0); // Mediterranean, Haifa Bay, Aqaba, Ghoubbet, Tadjoura, Red Sea, Zula, Gulf of California, Pacific, ...
 	for (const TsBodyCfg::Floor &x : f) CHECK ((x.m < 0.0 && x.lng1 - x.lng0 < 12.0 && x.lat1 - x.lat0 < 14.0));
+}
+
+namespace {
+// elev-consistency: the L14 tile TL/TA/TG, its parent (TA, TG even: the parent's north-west quarter), an Elev_mod over bounds b
+const double D2r = M_PI / 180.0;
+const double Fb[4] = {(Tn - Dh) * D2r, Tn * D2r, Tw * D2r, (Tw + Dh) * D2r};
+const double Ab[4] = {(Tn - 2 * Dh) * D2r, Tn * D2r, Tw * D2r, (Tw + 2 * Dh) * D2r};
+
+std::string ModT (const double b[4], int32_t dt, double sc, double of, const std::function<int (int, int)> &v)
+{
+	std::string e (100, '\0');
+	int32_t hs = 100, nx = 259;
+	e[0] = 'E'; e[1] = 'L'; e[2] = 'E'; e[3] = 1;
+	memcpy (&e[4], &hs, 4); memcpy (&e[8], &dt, 4); memcpy (&e[12], &nx, 4); memcpy (&e[16], &nx, 4);
+	memcpy (&e[28], &sc, 8); memcpy (&e[36], &of, 8); memcpy (&e[44], b, 32);
+	for (int i = 0; dt && i < 259; i++)
+		for (int j = 0; j < 259; j++) {
+			int q = v (i, j);
+			if (dt == 8) e.push_back ((char)(uint8_t)q);
+			else {
+				int16_t s = (int16_t)q;
+				e.append ((const char *)&s, 2);
+			}
+		}
+	return e;
+}
+
+std::string RelE (int L, int a, int c)
+{
+	char s[48];
+	snprintf (s, sizeof s, "%02d/%06d/%06d.elv", L, a, c);
+	return s;
+}
+
+std::string ReadF (const fs::path &p)
+{
+	std::ifstream f (p, std::ios::binary);
+	return std::string (std::istreambuf_iterator<char> (f), std::istreambuf_iterator<char>());
+}
+
+bool Logged (const std::vector<std::string> &log, const std::string &s)
+{
+	for (const std::string &l : log) if (l.find (s) != std::string::npos) return true;
+	return false;
+}
+
+const char *ElevCfg = "BODY Earth\nSURF eox file:///none/{z}/{row}/{col}.jpg 1 16\nLIGHTS gibs file:///none/{n}/{row}/{col}.png 7\n"
+	"WATER gibs file:///none/{n}/{row}/{col}.png 8\nELEV terrarium file:///none/{z}/{col}/{row}.png 15 16\nEND\n";
+
+TileStream::Options ElevOpt (const fs::path &root, const fs::path &tex, std::vector<std::string> &log)
+{
+	TileStream::Options o;
+	o.cfgfile = (root / "ts.cfg").string();
+	o.bodyDir = [tex] (const std::string &) { return tex.string(); };
+	o.radius = [] (const std::string &) { return 6.371e6; };
+	o.bodies = {"Earth"};
+	o.offline = true;
+	o.log = [&log] (const std::string &s) { log.push_back (s); };
+	return o;
+}
+}
+
+TEST_CASE ("An add-on's Elev_mod carries to a finer tile: masked, partial and full nodes, dtype -16, 8 and 0", "[decode]")
+{
+	std::string own = Elv (Fb, -16, 259, 100.0);
+	std::string a16 = ModT (Ab, -16, 0.5, 10.0, [] (int, int j) { return j <= 64 ? 80 : SHRT_MAX; }); // 50 m up to the parent's column 64, the fine tile's 127
+	std::string m = TsSky::InheritMod (TL, TA, TG, TL - 1, TA / 2, TG / 2, a16, own, 0.5);
+	REQUIRE (m.size() == 100 + 259 * 259 * 2);
+	CHECK (Dtype (m) == -16);
+	double hb[4];
+	memcpy (hb, &m[44], 32);
+	for (int q = 0; q < 4; q++) CHECK (std::fabs (hb[q] - Fb[q]) < 1e-12);
+	CHECK (Node (m, 129, 127) == 100);
+	CHECK (Node (m, 129, 128) == 150); // half on column 64, half its own 100 m: 75 m
+	CHECK (Node (m, 129, 129) == SHRT_MAX);
+	CHECK (Node (m, 0, 0) == 100);     // the padding too
+	std::string blind = TsSky::InheritMod (TL, TA, TG, TL - 1, TA / 2, TG / 2, a16, "", 0.5);
+	CHECK (Node (blind, 129, 127) == 100);
+	CHECK (Node (blind, 129, 128) == SHRT_MAX); // no Elev to blend with: never toward 0 m
+	std::string a8 = ModT (Ab, 8, 1.0, 5.0, [] (int, int j) { return j <= 64 ? 20 : UCHAR_MAX; }); // 25 m
+	std::string m8 = TsSky::InheritMod (TL, TA, TG, TL - 1, TA / 2, TG / 2, a8, own, 0.5);
+	REQUIRE (m8.size() == 100 + 259 * 259 * 2);
+	CHECK (Node (m8, 129, 127) == 50);
+	CHECK (Node (m8, 129, 128) == 125); // 12.5 + 50 m
+	CHECK (Node (m8, 129, 129) == SHRT_MAX);
+	std::string m0 = TsSky::InheritMod (TL, TA, TG, TL - 1, TA / 2, TG / 2, ModT (Ab, 0, 1.0, 37.0, nullptr), own, 0.5);
+	REQUIRE (m0.size() == 100 + 259 * 259 * 2);
+	CHECK (Node (m0, 0, 0) == 74);
+	CHECK (Node (m0, 258, 258) == 74);
+	std::string east3 = TsSky::InheritMod (TL + 2, TA * 4, TG * 4 + 3, TL - 1, TA / 2, TG / 2, a16, own, 0.5); // three levels down, east of the 50 m
+	CHECK (east3.empty());
+	std::string west3 = TsSky::InheritMod (TL + 2, TA * 4 + 1, TG * 4, TL - 1, TA / 2, TG / 2, a16, own, 0.5);
+	REQUIRE (west3.size() == 100 + 259 * 259 * 2);
+	CHECK (Node (west3, 129, 129) == 100);
+	CHECK (TsSky::InheritMod (TL, TA, TG, TL - 1, TA / 2, TG / 2, ModT (Ab, -16, 0.5, 0.0, [] (int, int) { return SHRT_MAX; }), own, 0.5).empty());
+	CHECK (TsSky::InheritMod (TL, TA, TG + 2, TL - 1, TA / 2, TG / 2, a16, own, 0.5).empty()); // not its parent
+	CHECK (TsSky::InheritMod (TL, TA, TG, TL, TA, TG, a16, own, 0.5).empty());
+	CHECK (TsSky::InheritMod (TL, TA, TG, TL - 1, TA / 2, TG / 2, a16.substr (0, 1000), own, 0.5).empty());
+	CHECK (TsSky::ModOk (a16));
+	CHECK (TsSky::ModOk (a8));
+	CHECK (TsSky::ModOk (ModT (Ab, 0, 1.0, 37.0, nullptr)));
+	CHECK_FALSE (TsSky::ModOk (a16.substr (0, 1000)));
+	CHECK_FALSE (TsSky::ModOk (a8.substr (0, 100 + 259 * 259 - 1)));
+	CHECK_FALSE (TsSky::ModOk (ModT (Ab, 7, 1.0, 0.0, [] (int, int) { return 0; })));
+	CHECK_FALSE (TsSky::ModOk (std::string ("junk")));
+	std::string nan = a16;
+	double bad = NAN;
+	memcpy (&nan[28], &bad, 8);
+	CHECK_FALSE (TsSky::ModOk (nan));
+}
+
+TEST_CASE ("An add-on's Elev_mod carries to the padding across the date line", "[decode]")
+{
+	std::string a = ModT (Ab, -16, 0.5, 0.0, [] (int, int) { return 100; });
+	std::string m = TsSky::InheritMod (TL, TA, 2047, TL - 1, TA / 2, 1023, a, Elv (Fb, -16, 259, 30.0), 0.5); // the parent's east half, at 180 E
+	REQUIRE (m.size() == 100 + 259 * 259 * 2);
+	CHECK (Node (m, 129, 0) == 100);
+	CHECK (Node (m, 129, 257) == 100);
+	CHECK (Node (m, 129, 258) == 100); // past 180 E: the parent's own padding
+}
+
+TEST_CASE ("At stream start our Elev under an add-on's Elev_mod carries it instead of the bases' flattening, and lets go when it goes", "[decode]")
+{
+	Tmp t;
+	fs::path tex = t.root / "Textures" / "Earth", base = t.root / "Base", ts = tex / "TileStream";
+	Put (t.root / "ts.cfg", ElevCfg);
+	char loc[128];
+	snprintf (loc, sizeof loc, "Location = %.9f %.9f\nBEGIN_OBJECTLIST\nEND_OBJECTLIST\n", Tw + Dh / 2, Tn - Dh / 2);
+	Put (base / "Mid.cfg", loc);
+	Put (ts / "bases.idx", "Mid 20\n");
+	Put (tex / "Elev" / RelE (TL, TA, TG), Elv (Fb, -16, 259, 30.0));
+	Put (tex / "Elev" / RelE (TL - 1, TA / 2, TG / 2), Elv (Ab, -16, 259, 30.0));
+	Put (ts / "elev.idx", "13 200 500\n14 400 1000\n");
+	Put (tex / "Elev_mod" / RelE (TL - 1, TA / 2, TG / 2), ModT (Ab, -16, 0.5, 0.0, [] (int, int) { return 100; })); // an add-on's, 50 m
+	Put (tex / "Elev_mod" / RelE (TL, TA, TG), ModT (Fb, -16, 0.5, 0.0, [] (int, int) { return 40; }));  // ours from before: the base flat at 20 m
+	Put (ts / "mod.idx", "14 400 1000\n");
+	fs::path ours = tex / "Elev_mod" / RelE (TL, TA, TG);
+	auto run = [&] {
+		std::vector<std::string> log;
+		TileStream::Options o = ElevOpt (t.root, tex, log);
+		o.baseDir = [&] (const std::string &) { return base.string(); };
+		{ TileStream s (o); }
+		return log;
+	};
+	auto mid = [&] {
+		std::string m = ReadF (ours);
+		return m.size() == 100 + 259 * 259 * 2 ? (int)Node (m, 129, 129) : -1;
+	};
+	std::vector<std::string> log = run();
+	CHECK (mid() == 100); // the add-on's 50 m, not the base's 20 m
+	CHECK (Logged (log, "1 add-on Elev_mod tiles for Earth, 1 Elev_mod tiles carried from them, 0 redone without them"));
+	CHECK (ReadF (ts / "inh.idx").rfind ("14 400 1000 13 200 500 ", 0) == 0);
+	CHECK (ReadF (ts / "mod.idx").find ("13 200 500") == std::string::npos); // the add-on's file is never ours
+	auto t0 = fs::last_write_time (ours);
+	log = run();
+	CHECK (fs::last_write_time (ours) == t0); // nothing new: nothing written
+	CHECK (Logged (log, "0 Elev_mod tiles carried from them, 0 redone"));
+	fs::remove (tex / "Elev_mod" / RelE (TL - 1, TA / 2, TG / 2)); // the add-on goes
+	log = run();
+	CHECK (mid() == 40);
+	CHECK (Logged (log, "0 add-on Elev_mod tiles for Earth, 0 Elev_mod tiles carried from them, 1 redone without them"));
+	CHECK (ReadF (ts / "inh.idx").find ("14 400 1000") == std::string::npos);
+	CHECK (TileStream::Clear (tex.string(), false) > 0);
+	CHECK_FALSE (fs::exists (ts / "inh.idx"));
+}
+
+TEST_CASE ("The Elev_mod a tile is drawn under comes from the first coarser level with Elev", "[decode]")
+{
+	Tmp t;
+	fs::path tex = t.root / "Textures" / "Earth", ts = tex / "TileStream";
+	Put (t.root / "ts.cfg", ElevCfg);
+	Put (tex / "Elev" / RelE (12, 100, 250), Elv (Fb, -16, 259, 30.0)); // someone else's Elev, under an add-on's Elev_mod
+	Put (tex / "Elev_mod" / RelE (12, 100, 250), ModT (Ab, -16, 0.5, 0.0, [] (int, int) { return 100; }));
+	for (const auto &k : std::vector<std::array<int, 3>> {{14, 400, 1000}, {13, 200, 501}, {14, 400, 1002}, {12, 100, 251}, {13, 200, 502}})
+		Put (tex / "Elev" / RelE (k[0], k[1], k[2]), Elv (Fb, -16, 259, 30.0));
+	Put (ts / "elev.idx", "14 400 1000\n13 200 501\n14 400 1002\n12 100 251\n13 200 502\n");
+	std::vector<std::string> log;
+	{ TileStream s (ElevOpt (t.root, tex, log)); }
+	std::string m = ReadF (tex / "Elev_mod" / RelE (14, 400, 1000));
+	REQUIRE (m.size() == 100 + 259 * 259 * 2);
+	CHECK (Node (m, 129, 129) == 100);                              // its L13 has no Elev: from L12
+	CHECK (fs::exists (tex / "Elev_mod" / RelE (13, 200, 501)));    // L12 directly
+	CHECK (fs::exists (tex / "Elev_mod" / RelE (14, 400, 1002)));   // from ours at L13
+	CHECK_FALSE (fs::exists (tex / "Elev_mod" / RelE (13, 200, 502))); // its L12 has Elev and no add-on's Elev_mod
+	std::string inh = ReadF (ts / "inh.idx");
+	CHECK (inh.find ("14 400 1000 12 100 250 ") != std::string::npos);
+	CHECK (inh.find ("13 200 501 12 100 250 ") != std::string::npos);
+	CHECK (inh.find ("14 400 1002 13 200 501 ") != std::string::npos);
+	CHECK (inh.find ("13 200 502") == std::string::npos);
+	CHECK (Logged (log, "1 add-on Elev_mod tiles for Earth, 3 Elev_mod tiles carried from them"));
+}
+
+TEST_CASE ("A tile under an evicted Elev takes its Elev_mod from the next level with Elev", "[decode]")
+{
+	Tmp t;
+	fs::path tex = t.root / "Textures" / "Earth", ts = tex / "TileStream";
+	Put (t.root / "ts.cfg", ElevCfg);
+	Put (tex / "Elev" / RelE (12, 100, 250), Elv (Fb, -16, 259, 30.0));
+	Put (tex / "Elev_mod" / RelE (12, 100, 250), ModT (Ab, -16, 0.5, 0.0, [] (int, int) { return 100; }));
+	auto now = fs::file_time_type::clock::now();
+	Put (tex / "Elev" / RelE (13, 200, 501), Elv (Fb, -16, 259, 30.0, 1200 << 10)); // ours, old, over the 1 MB cap with the next
+	fs::last_write_time (tex / "Elev" / RelE (13, 200, 501), now - std::chrono::hours (20));
+	Put (tex / "Elev" / RelE (14, 400, 1002), Elv (Fb, -16, 259, 30.0));
+	fs::last_write_time (tex / "Elev" / RelE (14, 400, 1002), now - std::chrono::hours (1));
+	Put (ts / "elev.idx", "13 200 501\n14 400 1002\n");
+	std::vector<std::string> log;
+	TileStream::Options o = ElevOpt (t.root, tex, log);
+	o.capMB = 1;
+	bool moved = false;
+	{
+		TileStream s (o);
+		for (int i = 0; i < 200 && !moved; i++) {
+			std::this_thread::sleep_for (std::chrono::milliseconds (50));
+			moved = ReadF (ts / "inh.idx").find ("14 400 1002 12 100 250 ") != std::string::npos;
+		}
+	}
+	CHECK_FALSE (fs::exists (tex / "Elev" / RelE (13, 200, 501)));
+	CHECK (moved);
+	CHECK (fs::exists (tex / "Elev_mod" / RelE (14, 400, 1002)));
+}
+
+TEST_CASE ("An add-on that ships tiles of a level leaves its other tiles of that level as they are", "[decode]")
+{
+	Tmp t;
+	fs::path tex = t.root / "Textures" / "Earth", ts = tex / "TileStream";
+	Put (t.root / "ts.cfg", ElevCfg);
+	Put (tex / "Elev" / RelE (12, 100, 250), Elv (Fb, -16, 259, 30.0));
+	Put (tex / "Elev_mod" / RelE (12, 100, 250), ModT (Ab, -16, 0.5, 0.0, [] (int, int) { return 100; }));
+	Put (tex / "Elev_mod" / RelE (14, 401, 1003), ModT (Fb, -16, 0.5, 0.0, [] (int, int) { return 60; })); // the add-on's own L14 under it
+	Put (tex / "Elev" / RelE (14, 400, 1000), Elv (Fb, -16, 259, 30.0));
+	Put (tex / "Elev" / RelE (13, 200, 501), Elv (Fb, -16, 259, 30.0));
+	Put (ts / "elev.idx", "14 400 1000\n13 200 501\n");
+	std::vector<std::string> log;
+	{ TileStream s (ElevOpt (t.root, tex, log)); }
+	CHECK_FALSE (fs::exists (tex / "Elev_mod" / RelE (14, 400, 1000)));
+	CHECK (fs::exists (tex / "Elev_mod" / RelE (13, 200, 501)));
+	CHECK (Logged (log, "2 add-on Elev_mod tiles for Earth, 1 Elev_mod tiles carried from them"));
+}
+
+namespace {
+// elev-consistency: an Elev.tree whose table of contents holds tile (L, a, b) with data and its ancestors from L4 without
+std::string Tree (int L, int a, int b)
+{
+	int n = L - 3;
+	std::string s (48 + (size_t)n * 32, '\0');
+	auto u32 = [&s] (size_t at, uint32_t v) { memcpy (&s[at], &v, 4); };
+	s[0] = 'T'; s[1] = 'X'; s[2] = 1;
+	u32 (4, 48);
+	u32 (12, (uint32_t)s.size());
+	u32 (24, (uint32_t)n);
+	for (int r = 0; r < 5; r++) u32 (28 + 4 * r, (uint32_t)-1);
+	u32 (28 + 4 * (3 + (b >> (L - 4))), 0);
+	for (int i = 0; i < n; i++) {
+		size_t at = 48 + (size_t)i * 32;
+		u32 (at + 8, i == n - 1 ? 100 : 0);
+		for (int q = 0; q < 4; q++) u32 (at + 12 + 4 * q, (uint32_t)-1);
+		if (i == n - 1) continue;
+		int d = L - 5 - i; // the child's shift from (L, a, b)
+		u32 (at + 12 + 4 * ((((a >> d) & 1) << 1) + ((b >> d) & 1)), (uint32_t)(i + 1));
+	}
+	return s;
+}
+}
+
+TEST_CASE ("Where the Elev archive has the tile, the add-on was made with it and nothing is carried", "[decode]")
+{
+	Tmp t;
+	fs::path tex = t.root / "Textures" / "Earth", ts = tex / "TileStream";
+	Put (t.root / "ts.cfg", ElevCfg);
+	Put (tex / "Elev" / RelE (TL - 1, TA / 2, TG / 2), Elv (Ab, -16, 259, 30.0));
+	Put (tex / "Elev_mod" / RelE (TL - 1, TA / 2, TG / 2), ModT (Ab, -16, 0.5, 0.0, [] (int, int) { return 100; }));
+	Put (tex / "Elev" / RelE (TL, TA, TG), Elv (Fb, -16, 259, 30.0));
+	Put (ts / "elev.idx", "14 400 1000\n");
+	Put (tex / "Archive" / "Elev.tree", Tree (TL, TA, TG));
+	std::vector<std::string> log;
+	{ TileStream s (ElevOpt (t.root, tex, log)); }
+	CHECK_FALSE (fs::exists (tex / "Elev_mod" / RelE (TL, TA, TG)));
+	CHECK (Logged (log, "1 add-on Elev_mod tiles for Earth, 0 Elev_mod tiles carried from them"));
+	Put (tex / "Archive" / "Elev.tree", Tree (TL, TA, TG + 1)); // the archive without it
+	log.clear();
+	{ TileStream s (ElevOpt (t.root, tex, log)); }
+	CHECK (fs::exists (tex / "Elev_mod" / RelE (TL, TA, TG)));
+	CHECK (Logged (log, "1 Elev_mod tiles carried from them"));
 }
