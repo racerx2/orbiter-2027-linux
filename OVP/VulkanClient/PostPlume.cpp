@@ -59,12 +59,14 @@ struct PostPlume::Plume {
 	std::vector<DWORD> members;
 	D3DXVECTOR3 o, a, pa, pb;
 	double re = 1, L = 1, I = 0, lvl = 0, F0 = 0, isp0 = 0, env = 0, xg = 1e9, smoke = 0, rpx = 0, w = 0, Ad = 0, rate = 0, cr = 1, step = 1, R0 = 1, R1 = 1;
+	double lift = 0; // m: the ground cloud is born this far above the ground hit, on the deck around a pad's exhaust hole (design-pad-plume)
+	double wc = 0; // condensate: the exhaust expands far enough to freeze, from the ambient to exit pressure ratio (design-vacuum-plume)
+	double xs = 1e9, us = 0; // the ground cloud's source down the axis (m) and the jet's speed there (m/s), past the wall jet's reach (design-pad-plume rev 2)
 	int cls = 0, slot = -1, gtype = 0;
 	Jet jet;
 	D3DXVECTOR4 ground = D3DXVECTOR4(0, 0, 0, 0);
 	D3DXVECTOR3 Tr = D3DXVECTOR3(1, 1, 1), In = D3DXVECTOR3(0, 0, 0), sun = D3DXVECTOR3(1, 1, 1), amb = D3DXVECTOR3(0, 0, 0), up = D3DXVECTOR3(0, 1, 0);
 	float Tf = 1.0f, seed = 0.0f;
-	VECTOR3 vel = { 0, 0, 0 };
 };
 
 struct PostPlume::Plasma {
@@ -76,6 +78,8 @@ struct PostPlume::Plasma {
 };
 
 struct PostPlume::GroundPuff { VECTOR3 pos, vel; double size, t0, life; float col[3]; uint32_t seed; };
+
+struct PostPlume::BaseSurf { MATRIX3 rp, rb; VECTOR3 p; PlumeMath::SurfaceGrid g; double tNext = 0.0; }; // planet-local to the base's frame through rp, then rb, from its origin p
 
 static uint32_t Hash (uint32_t x) { x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16; return x; } // integer finaliser: lowbias32 (Wellons, hash-prospector, public domain)
 static double Rand01 (uint32_t x) { return double(Hash(x) >> 8) / 16777216.0; }
@@ -102,6 +106,7 @@ PostPlume::PostPlume (oapi::D3D9Client *_gc, Scene *_scn, DWORD w, DWORD h)
 	nozzles = new std::map<std::pair<OBJHANDLE, DWORD>, Nozzle>;
 	classes = new std::map<std::string, ClassCfg>;
 	ground = new std::map<OBJHANDLE, std::vector<GroundPuff>>;
+	pads = new std::map<OBJHANDLE, BaseSurf>;
 	hw = std::max(1u, W / 2);
 	hh = std::max(1u, H / 2);
 	vPl.assign(MAXPL * PLS, D3DXVECTOR4(0, 0, 0, 0));
@@ -157,6 +162,13 @@ PostPlume::PostPlume (oapi::D3D9Client *_gc, Scene *_scn, DWORD w, DWORD h)
 	P(HYPERGOLIC, D3DXVECTOR4(0.30f, 0.135f, 0.075f, 0.6f), D3DXVECTOR4(0.3f, 0.18f, 0.12f, 1.0f), D3DXVECTOR4(0.15f, 0.15f, 0.5f, 0.4f), D3DXVECTOR4(0.6f, 0.4f, 0.25f, 0.6f));
 	P(SOLID, D3DXVECTOR4(float(sb[0] * 4.0), float(sb[1] * 4.0), float(sb[2] * 4.0), 1.0f), D3DXVECTOR4(0.3f, 0.255f, 0.18f, 1.0f), D3DXVECTOR4(0.1f, 2.5f, 0.9f, 0.3f), D3DXVECTOR4(0.92f, 0.91f, 0.90f, 3.0f));
 	P(TEXTURE, D3DXVECTOR4(1.0f, 0.75f, 0.5f, 1.0f), D3DXVECTOR4(0, 0, 0, 0), D3DXVECTOR4(0, 0, 0, 0), D3DXVECTOR4(0, 0, 0, 0));
+	// [V] condensate in the vacuum plume: ice and frost that the sun lights; alumina is the solid class's scatter, an add-on flame keeps its texture
+	cond[HYDROLOX] = D3DXVECTOR4(0.96f, 0.98f, 1.00f, 4.0f);
+	cond[METHALOX] = D3DXVECTOR4(0.95f, 0.96f, 0.98f, 3.5f);
+	cond[KEROLOX] = D3DXVECTOR4(0.90f, 0.90f, 0.90f, 2.0f);
+	cond[HYPERGOLIC] = D3DXVECTOR4(0.95f, 0.93f, 0.90f, 3.0f);
+	cond[SOLID] = D3DXVECTOR4(0, 0, 0, 0);
+	cond[TEXTURE] = D3DXVECTOR4(0, 0, 0, 0);
 
 	LogAlw("PostPlume: march %d, puffs %d, flow %d", ok ? 1 : 0, ok ? 1 : 0, ok && flowOK ? 1 : 0);
 	inst = this;
@@ -183,6 +195,7 @@ PostPlume::~PostPlume ()
 	delete nozzles;
 	delete classes;
 	delete ground;
+	delete pads;
 }
 
 // the turbulence noise once, on a pool thread; no claims until it is there
@@ -467,6 +480,7 @@ void PostPlume::GatherPlumes ()
 		double pa = v->GetAtmPressure();
 		P.jet = JetState(rep->nz->pe, pa);
 		double watm = P.jet.watm;
+		P.wc = Condensate(pa, rep->nz->pe); // none at SRB separation, all by MECO
 		P.L = rep->es.lsize * (0.4 + 0.6 * P.lvl) * (1.0 + 1.5 * (1.0 - watm)); // [V]
 		uint32_t seed = Hash(uint32_t(uintptr_t(P.hV) >> 4) * 31u + rep->idx);
 		P.seed = float(Rand01(seed) * 17.0);
@@ -490,11 +504,20 @@ void PostPlume::GatherPlumes ()
 			P.up = up;
 			P.ground = D3DXVECTOR4(up.x, up.y, up.z, float(-Dot3(up, g0)));
 			double hn = Dot3(up, P.o) + P.ground.w, c = -Dot3(P.a, up);
-			if (c > 0.2 && hn > 0.0 && hn / c < 2.5 * P.L) { // [V] 2.5 L: the SRBs reach the pad's trench (design 5.4 had 1.5 L)
+			bool feed = pa > 10e3 && P.gtype > 0;
+			if (c > 0.2 && hn > 0.0 && (feed || hn / c < 2.5 * P.L)) {
+				D3DXVECTOR4 gt = P.ground;
 				P.xg = hn / c;
-				if (pa > 10e3 && hv < 300.0 && P.gtype > 0) P.rate = 6.0 * std::sqrt(std::max(P.F0, 1.0) * P.lvl * double(g.size()) / 1e6); // [V] ground cloud puffs per s
+				Pads(P, v, hP, cam);
+				P.xs = P.xg;
+				if (P.xg >= 2.5 * P.L) { P.xg = 1e9; P.ground = gt; } // [V] 2.5 L: the flame and its wall jet reach no further, the SRBs the pad's trench (design 5.4 had 1.5 L)
+				if (feed) {
+					double F = std::max(P.F0, 1.0) * P.lvl * double(g.size());
+					P.us = 6.8 * std::sqrt(F / std::max(v->GetAtmDensity(), 1e-3)) / std::max(P.xs, 0.1); // a round turbulent jet's centreline speed from its thrust
+					if (P.isp0 > 0.0) P.us = std::min(P.us, P.isp0);
+					P.rate = 6.0 * std::sqrt(F / 1e6) * Smoothstep(15.0, 40.0, P.us); // [V] ground cloud puffs per s, while the jet still stirs the ground
+				}
 			}
-			v->GetGlobalVel(P.vel);
 		}
 
 		// light and haze at the vessel, fog to the plume
@@ -536,7 +559,87 @@ void PostPlume::GatherPlumes ()
 	}
 }
 
-// ground clouds where a plume hits the ground in air (design 6.6), sim time
+// a base's upward-facing structure surfaces, made on first use from the meshes the base draws, add-on bases' own included (as BldgMgr::BaseOf)
+const PostPlume::BaseSurf &PostPlume::SurfOf (OBJHANDLE hP, OBJHANDLE hBase)
+{
+	double now = oapiGetSysTime();
+	auto it = pads->find(hBase);
+	if (it != pads->end() && (it->second.g.Count() || now < it->second.tNext)) return it->second;
+	BaseSurf &b = (*pads)[hBase];
+	b = BaseSurf();
+	b.tNext = now + 5.0; // none yet: asked again later, the base's meshes may come with its visual
+	VECTOR3 gp, gb;
+	oapiGetRotationMatrix(hP, &b.rp);
+	oapiGetRotationMatrix(hBase, &b.rb);
+	oapiGetGlobalPos(hP, &gp);
+	oapiGetGlobalPos(hBase, &gb);
+	b.p = tmul(b.rp, gb - gp);
+	MESHHANDLE *sbs = nullptr, *sas = nullptr;
+	DWORD nbs = 0, nas = 0;
+	gc->GetBaseStructures(hBase, &sbs, &nbs, &sas, &nas);
+	for (int pass = 0; pass < 2; pass++)
+		for (DWORD k = 0; k < (pass ? nas : nbs); k++) {
+			MESHHANDLE hm = pass ? sas[k] : sbs[k];
+			for (DWORD g = 0; hm && g < oapiMeshGroupCount(hm); g++) {
+				const MESHGROUP *G = oapiMeshGroup(hm, g);
+				if (!G || !G->Vtx || !G->Idx) continue;
+				for (DWORD i = 0; i + 2 < G->nIdx; i += 3) {
+					double p[3][3], nrm[3] = { 0, 0, 0 };
+					bool ok = true;
+					for (int c = 0; c < 3 && ok; c++) {
+						WORD n = G->Idx[i + c];
+						if (n >= G->nVtx) { ok = false; break; }
+						const NTVERTEX &V = G->Vtx[n];
+						p[c][0] = V.x; p[c][1] = V.y; p[c][2] = V.z;
+						nrm[0] += V.nx; nrm[1] += V.ny; nrm[2] += V.nz;
+					}
+					if (ok) b.g.Add(p[0], p[1], p[2], nrm);
+				}
+			}
+		}
+	char name[64] = "";
+	oapiGetObjectName(hBase, name, 64);
+	if (b.g.Count()) LogAlw("PostPlume: base %s: %u structure surfaces under plumes", name, unsigned(b.g.Count()));
+	return b;
+}
+
+// base structures under a plume: the flame meets a pad, deck or roof before the terrain, else the ground cloud rises from the deck round a pad's exhaust hole (design-pad-plume)
+void PostPlume::Pads (Plume &P, VESSEL *v, OBJHANDLE hP, const VECTOR3 &cam)
+{
+	using PlumeMath::SurfaceGrid;
+	VECTOR3 gv, gp;
+	v->GetGlobalPos(gv);
+	oapiGetGlobalPos(hP, &gp);
+	MATRIX3 rot;
+	oapiGetRotationMatrix(hP, &rot);
+	VECTOR3 lo = tmul(rot, cam + _V(P.o.x, P.o.y, P.o.z) - gp), la = tmul(rot, _V(P.a.x, P.a.y, P.a.z)), lv = unit(tmul(rot, gv - gp)); // planet-local
+	double R = oapiGetSize(hP), t0 = P.xg, hit = t0, lift = 0.0, rjm = std::max(P.jet.rj * P.re, 0.3);
+	for (DWORD i = 0, n = oapiGetBaseCount(hP); i < n; i++) {
+		OBJHANDLE hb = oapiGetBaseByIndex(hP, i);
+		double lng, lat, rad;
+		oapiGetBaseEquPos(hb, &lng, &lat, &rad);
+		VECTOR3 ub = _V(cos(lat) * cos(lng), sin(lat), cos(lat) * sin(lng));
+		if (R * std::acos(std::min(1.0, dotp(ub, lv))) > 20e3) continue; // a base's structures reach a few km from its origin
+		const BaseSurf &b = SurfOf(hP, hb);
+		if (!b.g.Count()) continue;
+		VECTOR3 bo = tmul(b.rb, mul(b.rp, lo - b.p)), bd = tmul(b.rb, mul(b.rp, la));
+		double o3[3] = { bo.x, bo.y, bo.z }, d3[3] = { bd.x, bd.y, bd.z };
+		double t = b.g.Hit(o3, d3, hit);
+		if (t > SurfaceGrid::NONE && t < hit) { hit = t; continue; }
+		int ring = 0;
+		double gx = bo.x + bd.x * t0, gy = bo.y + bd.y * t0, gz = bo.z + bd.z * t0; // the terrain hit, in the base's frame
+		double deck = b.g.Deck(gx, gz, std::max(10.0, 2.0 * rjm), bo.y + std::max(3.0, 2.0 * P.re), ring);
+		if (deck > SurfaceGrid::NONE && ring >= 5) lift = std::max(lift, deck - gy); // a hole ringed by its deck, not a building's edge
+	}
+	if (hit < t0) { // the wall jet and the ground cloud on the structure
+		P.xg = hit;
+		P.ground.w = float(-Dot3(P.up, P.o + P.a * float(hit)));
+		P.lift = 0.0;
+	} else P.lift = lift;
+	if (padN < 6) { padN++; LogAlw("PostPlume: plume of %s: the terrain %.1f m down its axis, a structure at %.1f m, the cloud lifted %.1f m", v->GetName(), t0, hit, P.lift); }
+}
+
+// ground clouds where a plume hits the ground in air (design 6.6), sim time; the puffs move first, then new ones are born, as Particle.cpp (design-pad-plume rev 2)
 void PostPlume::UpdateGround ()
 {
 	double simt = oapiGetSimTime(), dt = simt - lastSimt;
@@ -544,54 +647,20 @@ void PostPlume::UpdateGround ()
 	OBJHANDLE focus = oapiGetFocusObject();
 	if (dt < 0.0 || dt > 1.0 || focus != lastFocus) { ground->clear(); groundAcc.clear(); lastFocus = focus; return; } // a time jump or a new focus
 	if (dt <= 0.0) return; // paused
-	VECTOR3 cam = scn->Camera.pos;
-	for (const Plume &P : plumes) {
-		if (P.rate <= 0.0) continue;
-		std::vector<GroundPuff> &g = (*ground)[P.hV];
-		double &acc = groundAcc[P.hV];
-		acc += P.rate * dt;
-		D3DXVECTOR3 gpc = P.o + P.a * float(P.xg);
-		D3DXVECTOR3 rf = std::fabs(P.up.y) < 0.9f ? D3DXVECTOR3(0, 1, 0) : D3DXVECTOR3(1, 0, 0), e1, e2;
-		D3DXVec3Cross(&e1, &P.up, &rf);
-		e1 = Unit(e1);
-		D3DXVec3Cross(&e2, &P.up, &e1);
-		double rjm = std::max(P.jet.rj * P.re, 0.3);
-		double spd = std::min(0.15 * P.isp0, 60.0); // [V]
-		static const float cols[3][3] = { { 0.62f, 0.55f, 0.45f }, { 0.95f, 0.95f, 0.95f }, { 0.92f, 0.90f, 0.88f } };
-		const float *col = P.gtype == 2 ? cols[0] : (P.cls == SOLID ? cols[2] : cols[1]);
-		float kcol[3] = { 0.85f, 0.82f, 0.78f };
-		if (P.cls == KEROLOX && P.gtype == 1) col = kcol;
-		while (acc >= 1.0) {
-			acc -= 1.0;
-			if (g.size() >= 384) continue;
-			uint32_t s = Hash(uint32_t(simt * 1000.0) + uint32_t(g.size()) * 7919u + uint32_t(uintptr_t(P.hV) >> 4));
-			double phi = 2.0 * PI * Rand01(s), rr = 2.0 * rjm * Rand01(s + 1);
-			D3DXVECTOR3 dir = e1 * float(std::cos(phi)) + e2 * float(std::sin(phi));
-			GroundPuff q;
-			q.pos = cam + _V(gpc.x + dir.x * rr, gpc.y + dir.y * rr, gpc.z + dir.z * rr) + _V(P.up.x, P.up.y, P.up.z) * (0.5 * rjm);
-			q.vel = P.vel + _V(dir.x, dir.y, dir.z) * (spd * (0.5 + 0.5 * Rand01(s + 2)));
-			q.size = std::max(0.5 * rjm, 1.0);
-			q.t0 = simt;
-			q.life = 30.0 * (0.8 + 0.4 * Rand01(s + 3));
-			for (int c = 0; c < 3; c++) q.col[c] = col[c];
-			q.seed = s;
-			g.push_back(q);
-		}
-		if (acc > 1.0) acc = 1.0;
-	}
 	for (auto it = ground->begin(); it != ground->end();) {
 		std::vector<GroundPuff> &g = it->second;
 		OBJHANDLE hV = it->first;
 		VESSEL *v = oapiIsVessel(hV) ? oapiGetVesselInterface(hV) : nullptr;
 		OBJHANDLE hP = v ? v->GetSurfaceRef() : NULL;
-		if (!v || !hP) { it = ground->erase(it); continue; }
-		VECTOR3 pp, vg;
+		if (!v || !hP || g.empty()) { it = ground->erase(it); continue; }
+		VECTOR3 pp, cg = { 0, 0, 0 };
 		oapiGetGlobalPos(hP, &pp);
-		v->GetGlobalPos(vg);
-		VECTOR3 up = unit(vg - pp);
+		for (const GroundPuff &q : g) cg += q.pos;
+		cg /= double(g.size());
+		VECTOR3 up = unit(cg - pp);
 		double lng, lat, rad;
-		oapiGlobalToEqu(hP, vg, &lng, &lat, &rad);
-		VECTOR3 wind = oapiGetWindVector(hP, lng, lat, rad - oapiGetSize(hP), 3); // global, with the planet's motion, as Particle.cpp
+		oapiGlobalToEqu(hP, cg, &lng, &lat, &rad);
+		VECTOR3 wind = oapiGetWindVector(hP, lng, lat, rad - oapiGetSize(hP), 3); // at the cloud, not at the climbing vessel; global, with the planet's motion, as Particle.cpp
 		double kh = std::exp(-dt / 4.0), kv = std::exp(-dt / 2.0); // [V] drag toward the wind, buoyancy 3 m/s
 		for (size_t i = 0; i < g.size();) {
 			GroundPuff &q = g[i];
@@ -607,6 +676,52 @@ void PostPlume::UpdateGround ()
 		}
 		if (g.empty()) it = ground->erase(it);
 		else ++it;
+	}
+	VECTOR3 cam = scn->Camera.pos;
+	for (const Plume &P : plumes) {
+		if (P.rate <= 0.0) continue;
+		VESSEL *pv = oapiIsVessel(P.hV) ? oapiGetVesselInterface(P.hV) : nullptr;
+		OBJHANDLE hS = pv ? pv->GetSurfaceRef() : NULL;
+		if (!hS) continue;
+		std::vector<GroundPuff> &g = (*ground)[P.hV];
+		double &acc = groundAcc[P.hV];
+		acc += P.rate * dt;
+		D3DXVECTOR3 gpc = P.o + P.a * float(P.xs) + P.up * float(P.lift);
+		double slng, slat, srad;
+		oapiGlobalToEqu(hS, cam + _V(gpc.x, gpc.y, gpc.z), &slng, &slat, &srad);
+		VECTOR3 still = oapiGetWindVector(hS, slng, slat, srad - oapiGetSize(hS), 3); // the air at the source, global: the cloud leaves the ground, not the climbing vessel
+		D3DXVECTOR3 rf = std::fabs(P.up.y) < 0.9f ? D3DXVECTOR3(0, 1, 0) : D3DXVECTOR3(1, 0, 0), e1, e2;
+		D3DXVec3Cross(&e1, &P.up, &rf);
+		e1 = Unit(e1);
+		D3DXVec3Cross(&e2, &P.up, &e1);
+		double rjm = std::max(P.jet.rj * P.re, 0.3);
+		double spd = std::min({ P.isp0 > 0.0 ? 0.15 * P.isp0 : 60.0, 60.0, 0.5 * P.us }); // [V] the wall jet's outflow, slower as the jet that feeds it weakens
+		static const float cols[3][3] = { { 0.62f, 0.55f, 0.45f }, { 0.95f, 0.95f, 0.95f }, { 0.92f, 0.90f, 0.88f } };
+		const float *col = P.gtype == 2 ? cols[0] : (P.cls == SOLID ? cols[2] : cols[1]);
+		float kcol[3] = { 0.85f, 0.82f, 0.78f };
+		if (P.cls == KEROLOX && P.gtype == 1) col = kcol;
+		for (uint32_t n = 0; acc >= 1.0; n++) {
+			acc -= 1.0;
+			double tau = std::min(acc / P.rate, dt); // born this long ago, within the frame
+			if (g.size() >= 384) { // full: the oldest goes, so the source keeps its cloud through a long burn
+				size_t o = 0;
+				for (size_t k = 1; k < g.size(); k++) if (g[k].t0 < g[o].t0) o = k;
+				g[o] = g.back();
+				g.pop_back();
+			}
+			uint32_t s = Hash(uint32_t(simt * 1000.0) + n * 7919u + uint32_t(uintptr_t(P.hV) >> 4));
+			double phi = 2.0 * PI * Rand01(s), rr = 2.0 * rjm * Rand01(s + 1);
+			D3DXVECTOR3 dir = e1 * float(std::cos(phi)) + e2 * float(std::sin(phi));
+			GroundPuff q;
+			q.vel = still + _V(dir.x, dir.y, dir.z) * (spd * (0.5 + 0.5 * Rand01(s + 2)));
+			q.pos = cam + _V(gpc.x + dir.x * rr, gpc.y + dir.y * rr, gpc.z + dir.z * rr) + _V(P.up.x, P.up.y, P.up.z) * (0.5 * rjm) + (q.vel - still) * tau; // off the source, which moves with the ground
+			q.size = std::max(0.5 * rjm, 1.0) + 3.0 * tau;
+			q.t0 = simt - tau;
+			q.life = 30.0 * (0.8 + 0.4 * Rand01(s + 3));
+			for (int c = 0; c < 3; c++) q.col[c] = col[c];
+			q.seed = s;
+			g.push_back(q);
+		}
 	}
 }
 
@@ -813,7 +928,7 @@ void PostPlume::GatherPuffs ()
 		size_t i0 = pt.size();
 		for (const GroundPuff &g : gg.second) {
 			double age = simt - g.t0;
-			double a = 0.6 * (1.0 - age / g.life) * Smoothstep(0.0, 1.5, age); // [V]
+			double a = 0.6 * (1.0 - age / g.life) * Smoothstep(0.0, 0.3, age); // [V] in at once: the cloud is thickest at its source
 			if (a <= 0.005) continue;
 			PT q;
 			q.c = V3(g.pos - cam);
@@ -919,7 +1034,7 @@ void PostPlume::FillPlume (int i, const Plume &P)
 	q[7] = V4(P.In, P.seed);
 	q[8] = V4(P.pa, P.cr);
 	q[9] = V4(P.pb, P.step);
-	q[10] = V4(P.sun, 0.0);
+	q[10] = V4(P.sun, float(P.wc));
 	q[11] = V4(P.amb, 0.0);
 }
 
@@ -1219,6 +1334,7 @@ bool PostPlume::March (VkTex *dep)
 	ipi->SetTemplate(rectF[2], rectF[3], rectF[0], rectF[1]);
 	SetCommon(ipi);
 	ipi->SetFloat("vPal", pal, sizeof(pal));
+	ipi->SetFloat("vCond", cond, sizeof(cond));
 	ipi->SetFloat("vPl", vPl.data(), int(vPl.size() * sizeof(D3DXVECTOR4)));
 	ipi->SetFloat("vPz", vPz.data(), int(vPz.size() * sizeof(D3DXVECTOR4)));
 	ipi->SetTextureNative("tDepthP", dep, IPF_POINT | IPF_CLAMP);

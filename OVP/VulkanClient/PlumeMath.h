@@ -9,6 +9,7 @@
 #ifndef __PLUMEMATH_H
 #define __PLUMEMATH_H
 
+#include <unordered_map>
 #include <vector>
 
 namespace PlumeMath {
@@ -20,6 +21,7 @@ const double GAMMA = 1.2;        // [P] combustion products
 const double PC = 7.0e6;         // [V] chamber pressure, Pa
 
 double Smoothstep (double e0, double e1, double x);
+double Condensate (double pa, double pe); // 0..1: the plume expands to under ~1e-4 of its exit pressure, cold enough to freeze (design-vacuum-plume)
 double PressureRatio (double M, double g);         // p0/p
 double AreaRatio (double M, double g);             // A/A*
 double MachFromPressureRatio (double r, double g); // inverse of PressureRatio, r >= 1
@@ -70,6 +72,22 @@ void Cluster (const std::vector<Nozzle> &nz, int budget, std::vector<std::vector
 
 bool CapsuleVisible (const double planes[6][4], const double a[3], const double b[3], double r); // planes: n.p + w >= 0 inside
 void FrustumPlanes (const double vp[16], double planes[6][4]); // from a row-vector view-projection, z in [0,1]
+
+// a base's upward-facing structure surfaces in its own frame (y up), 16 m cells: where exhaust meets a pad (design-pad-plume)
+class SurfaceGrid {
+public:
+	void Add (const double a[3], const double b[3], const double c[3], const double nrm[3]); // nrm: its vertex normals' sum; kept when within 45 deg of up (no normals: either side)
+	double Top (double x, double z, double ceil) const;                 // highest surface at (x, z) not above ceil, NONE if there is none
+	double Hit (const double o[3], const double d[3], double tmax) const; // first t <= tmax where the ray passes under a surface, NONE if none
+	double Deck (double x, double z, double r, double ceil, int &ring) const; // highest Top at the point and rings of 8 at r/2 and r; ring: outer samples within 3 m of it
+	size_t Count () const { return tris.size(); }
+	static constexpr double NONE = -1e30;
+private:
+	struct T { double x[3], y[3], z[3]; };
+	std::vector<T> tris;
+	std::unordered_map<long long, std::vector<unsigned>> cells;
+	double ymax = NONE; // the highest vertex kept: a march starts there
+};
 
 }
 

@@ -306,3 +306,74 @@ TEST_CASE("PlumeMath: capsule culling", "[plumemath]")
 	double g[3] = { 503, 0, 500 }; // just outside, its radius reaches in
 	CHECK(CapsuleVisible(pl, g, g, 10.0));
 }
+
+namespace {
+// a flat rectangle at height y as two triangles, its vertex normals up or down
+TEST_CASE("PlumeMath: condensate in the vacuum plume", "[plumemath]")
+{
+	CHECK(Condensate(101325.0, 8000.0) == 0.0); // sea level
+	CHECK(Condensate(150.0, 8000.0) == 0.0);    // SRB separation, ~45 km: no ice yet
+	CHECK(Condensate(0.8, 8000.0) == 0.0);      // 1e-4 of the exit pressure: onset
+	CHECK(Condensate(0.08, 8000.0) == 1.0);     // 1e-5
+	CHECK(Condensate(0.0, 8000.0) == 1.0);      // vacuum
+	double m = Condensate(0.8 / std::sqrt(10.0), 8000.0);
+	CHECK_THAT(m, WithinAbs(0.5, 1e-9));
+	CHECK(Condensate(0.0, 0.0) == 1.0);         // no exit pressure known
+}
+
+void Rect (SurfaceGrid &g, double x0, double z0, double x1, double z1, double y, bool up = true)
+{
+	double a[3] = { x0, y, z0 }, b[3] = { x1, y, z0 }, c[3] = { x1, y, z1 }, d[3] = { x0, y, z1 }, n[3] = { 0, up ? 3.0 : -3.0, 0 };
+	g.Add(a, b, c, n);
+	g.Add(a, c, d, n);
+}
+// a launch pad: a mound at 16 m with a trench along x, a platform deck at 30 m with its underside at 22 m and a hole in the middle
+SurfaceGrid Pad ()
+{
+	SurfaceGrid g;
+	Rect(g, -60, 5, 60, 60, 16);
+	Rect(g, -60, -60, 60, -5, 16);
+	Rect(g, -20, 5, 20, 15, 30);
+	Rect(g, -20, -15, 20, -5, 30);
+	Rect(g, -20, -5, -5, 5, 30);
+	Rect(g, 5, -5, 20, 5, 30);
+	Rect(g, -20, 5, 20, 15, 22, false);
+	Rect(g, -20, -15, 20, -5, 22, false);
+	Rect(g, 200, -10, 220, 10, 8); // a roof
+	return g;
+}
+}
+
+TEST_CASE("PlumeMath: base surfaces under a plume, a pad's hole and deck", "[plumemath]")
+{
+	SurfaceGrid g = Pad();
+	CHECK(g.Count() == 2 * 7); // the undersides face down: left out
+	double wall[3][3] = { { 0, 0, 0 }, { 10, 0, 0 }, { 0, 10, 0 } }, nz[3] = { 0, 0, 1 };
+	g.Add(wall[0], wall[1], wall[2], nz);
+	double big[3][3] = { { -900, 0, -900 }, { 900, 0, -900 }, { 0, 0, 900 } }, ny[3] = { 0, 1, 0 };
+	g.Add(big[0], big[1], big[2], ny);
+	CHECK(g.Count() == 2 * 7); // a wall and a ground sheet: left out
+	CHECK(g.Top(0, 0, 100) == SurfaceGrid::NONE); // the hole over the trench: nothing down to the terrain
+	CHECK_THAT(g.Top(10, 10, 100), WithinAbs(30.0, 1e-9));
+	CHECK_THAT(g.Top(10, 10, 29), WithinAbs(16.0, 1e-9)); // the ceiling: under the deck, the mound
+	CHECK(g.Top(500, 500, 100) == SurfaceGrid::NONE);
+	int ring = 0;
+	CHECK_THAT(g.Deck(0, 0, 10, 33, ring), WithinAbs(30.0, 1e-9)); // the deck round the hole, a little above the nozzle
+	CHECK(ring == 8);
+	CHECK_THAT(g.Deck(0, 0, 10, 29, ring), WithinAbs(16.0, 1e-9));
+	CHECK(ring == 6); // under the deck: the mound, but not over the trench on two sides
+	CHECK_THAT(g.Deck(195, 0, 10, 50, ring), WithinAbs(8.0, 1e-9));
+	CHECK(ring == 3); // a building's edge, not a hole
+	double o[3] = { 10, 50, 10 }, down[3] = { 0, -1, 0 };
+	CHECK_THAT(g.Hit(o, down, 100), WithinAbs(20.0, 1e-9));
+	double oh[3] = { 0, 28, 0 };
+	CHECK(g.Hit(oh, down, 28) == SurfaceGrid::NONE); // down the hole
+	double os[3] = { -25, 40, 10 }, slant[3] = { 1 / std::sqrt(2.0), -1 / std::sqrt(2.0), 0 };
+	CHECK_THAT(g.Hit(os, slant, 60), WithinAbs(10 * std::sqrt(2.0), 1e-6)); // the deck's top at x -15
+	CHECK(g.Hit(o, down, 10) == SurfaceGrid::NONE); // the deck is past tmax
+	SurfaceGrid p;
+	Rect(p, 298, -3, 304, 3, 30); // a 6 m platform
+	double of[3] = { 301 - 970, 1000, 0 };
+	CHECK_THAT(p.Hit(of, slant, 1000 * std::sqrt(2.0)), WithinAbs(970 * std::sqrt(2.0), 1e-6)); // from 1 km up the march starts at the top
+	CHECK(p.Hit(of, slant, 900 * std::sqrt(2.0)) == SurfaceGrid::NONE); // the top is past tmax
+}
