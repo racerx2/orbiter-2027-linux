@@ -35,6 +35,10 @@ The module reads these optional keys from the vessel class configuration file (a
 	DockZoneRadius & Float & Largest sideways offset between two docking ports' axes at which a slow approach does not collide [m]. The larger value of the two vessels counts. Default: 1.5\\
 	\hline\rule{0pt}{2ex}
 	DestroyEnergy & Float & Absorbed energy per kg of empty mass that destroys a vessel of this class [J/kg]. Default: DestroyEnergy of Config/Collision.cfg (1000)\\
+	\hline\rule{0pt}{2ex}
+	FixedStructure & Bool & TRUE: a landed vessel of this class is a ground structure (a launch pad, a hangar). It is never pushed or woken by a collision, its damage counts as a building's and it does not break; the graphics client and this module keep streamed buildings and trees off its meshes. FALSE: never a fixed structure. Without the key, a landed vessel is one when its empty mass is below $10^{-4}$ kg per m$^3$ of the sphere of its size (a placeholder mass), but only for collisions, not for streamed buildings. Default: not set\\
+	\hline\rule{0pt}{2ex}
+	FixedStructureClear & Float & With FixedStructure = TRUE: no streamed building whose footprint reaches within this distance of the vessel's origin, and no streamed tree there, for an add-on that models a whole site (a launch pad as it stood in the add-on's era, when the map data shows today's towers beside it) [m]. 0 or unset: off; at most 5000. The graphics client and this module read the same key, so a building left out is not solid. A whole site that should be clear in every scenario, with or without its vessels, is better declared in a base file (BEGIN\_CLEARZONES, section \ref{ssec:surface_bases}). Default: 0\\
 	\hline
 	\end{longtable}
 %\end{table}

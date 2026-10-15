@@ -416,6 +416,7 @@ public:
 	 * \default None, returns -2.
 	 */
 	int clbkGetMeshGroup (DEVMESHHANDLE hMesh, DWORD grpidx, GROUPREQUESTSPEC *grs);
+	int clbkGetMeshGroupFlags (DEVMESHHANDLE hMesh, DWORD grpidx, DWORD *usrFlag) override; // not upstream
 
 	/**
 	 * \brief Mesh group editing interface for device-specific meshes.

@@ -95,6 +95,7 @@ public:
 	void Bound (int slot, Vector &c, double &r) const; // whole vessel, slot 0 = t0, 1 = t1, centre = vessel origin
 	int  PartOf (uint32_t mesh, uint32_t grp) const;   // part index, -1 if the group has no collider
 	void SetGroupHidden (uint32_t mesh, uint32_t grp, bool hidden); // indices >= COLL_RANGE_MAX ignored; a slot rebuild clears the mesh's flags (new client mesh)
+	bool SetMeshHidden (uint32_t mesh, const std::vector<uint8_t> &grp); // every group's flag of the slot at once (nonzero hidden), one mask update; true if any changed
 	const uint8_t *GroupMask (uint32_t part) const;    // per srcTab index, nonzero = hidden (all if matrix singular); null: none; valid until next Update
 	// damage API (7.3): mesh = vessel mesh index; vectors in the part rest frame (pre-animation mesh)
 	CollGeom &MakePrivate (uint32_t part);                                                     // copy on write; rest = template vertices

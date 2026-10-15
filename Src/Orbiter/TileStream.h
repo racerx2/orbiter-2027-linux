@@ -70,19 +70,21 @@ namespace TsTrack {
 namespace TsBldg {
 	struct Pt { double x, y; };
 	struct Feature { std::vector<std::vector<Pt>> rings; double height = 0.0, minHeight = 0.0; bool hide = false; }; // tile units, y down
-	struct Building { double lat, lng; float hmin, hmax; uint32_t v0, nv, i0, ni; }; // anchor in radians
+	struct Building { double lat, lng; float hmin, hmax; uint32_t v0, nv, i0, ni; uint32_t r0 = 0, nr = 0; }; // anchor in radians; r0, nr: its rings in rsz
 	struct Mesh {
 		int z = 0, x = 0, y = 0;
 		std::vector<Building> b;
 		std::vector<float> vtx;     // x east, y up, z north (m from the anchor), nx, ny, nz
 		std::vector<uint32_t> idx;  // per building, from its v0
+		std::vector<uint32_t> rsz;  // ring sizes, buildings in order, outer ring first; none from a version 1 file
+		std::vector<float> pts;     // the rings' points: x east, z north (m from the anchor)
 	};
 	bool Inflate (const std::string &in, std::string &out);   // gzip or zlib
 	bool Decode (const std::string &pbf, std::vector<Feature> &out, uint32_t &extent); // layer "building"
 	bool Triangulate (const std::vector<std::vector<Pt>> &rings, std::vector<uint32_t> &tri); // ring 0 outer, then holes; indices into the rings in order
 	Mesh Build (int z, int x, int y, const std::vector<Feature> &f, uint32_t extent);
-	std::string Encode (const Mesh &m);
-	bool Read (const std::string &bytes, Mesh &m);
+	std::string Encode (const Mesh &m); // version 2 (footprints) when every building has its rings, else version 1 (walls)
+	bool Read (const std::string &bytes, Mesh &m); // either version; the same vtx and idx
 	void TileOf (double lat, double lng, int z, int &x, int &y); // radians
 	void LatLng (int z, double x, double y, double &lat, double &lng); // tile coordinates to radians
 }

@@ -352,6 +352,97 @@ TEST_CASE ("bldg: base exclusion, a building 4 m from a base wall is never built
 	CHECK (r.s.misuse == 0);
 }
 
+TEST_CASE ("bldg: a fixed structure keeps buildings out as a base does; gone, they are built; back, the built one is freed", "[CollBldgA]")
+{
+	Rig r;
+	auto mesh = std::make_shared<CollRestMesh> (); // a 20 x 20 m block 10 m tall, its walls only, vessel frame x east, y up, z north
+	CollGroupData g;
+	const double c[4][2] = { { -10, -10 }, { 10, -10 }, { 10, 10 }, { -10, 10 } };
+	for (int k = 0; k < 4; k++) {
+		const double *a = c[k], *b = c[(k + 1) % 4];
+		uint16_t i0 = (uint16_t)g.vtx.size ();
+		for (double h : { 0.0, 10.0 }) for (const double *p : { a, b }) g.vtx.push_back (CollVtx { (float)p[0], (float)h, (float)p[1], 0, 0, 0, 0, 0 });
+		g.idx.insert (g.idx.end (), { i0, (uint16_t)(i0 + 1), (uint16_t)(i0 + 3), i0, (uint16_t)(i0 + 3), (uint16_t)(i0 + 2) });
+	}
+	mesh->grp.push_back (g);
+	Vector u = Up (LAT0, LNG0), e = East (LNG0), n = North (LAT0, LNG0);
+	CollBldgA::FixedIn f { (CollH)0x1234, "Pad", u * (R0 + r.Ground (LAT0, LNG0)), Matrix (e.x, u.x, n.x, e.y, u.y, n.y, e.z, u.z, n.z), 7, { { mesh, Vector () } } };
+	r.Add (17, 0, Box (6, 6), 0.0f, 15.0f);   // west wall 4 m east of the block's east wall
+	r.Add (-23, 0, Box (6, 6), 0.0f, 15.0f);  // east wall 10 m west of its west wall
+	r.At (0, 60, 10);
+	r.Start ();
+	auto run = [&] (bool on, int frames) { for (int k = 0; k < frames; k++) { r.b->Fixed (on ? std::vector<CollBldgA::FixedIn> { f } : std::vector<CollBldgA::FixedIn> {}); r.Frame (); } };
+	run (true, 3);
+	CHECK (r.Parts () == std::vector<uint32_t> { 1 });
+	CHECK (r.b->st.excluded == 1);
+	run (false, 30);                          // a want round later: no structure, both are built
+	CHECK (r.Parts () == std::vector<uint32_t> { 0, 1 });
+	run (true, 30);                           // back: the built one is freed and excluded
+	CHECK (r.Parts () == std::vector<uint32_t> { 1 });
+	CHECK (r.b->st.excluded == 2);
+	f.x = f.x + e * 200.0;                    // moved 200 m east: the old place's building is built again
+	run (true, 30);
+	CHECK (r.Parts () == std::vector<uint32_t> { 0, 1 });
+	CHECK (r.s.misuse == 0);
+}
+
+TEST_CASE ("bldg: a fixed structure's clear zone keeps out a building off its faces; without one it stays (design fixed-clear)", "[CollBldgA]")
+{
+	for (double clear : { 50.0, 0.0 }) {
+		Rig r;
+		auto mesh = std::make_shared<CollRestMesh> (); // the 20 x 20 m block 10 m tall, its walls only
+		CollGroupData g;
+		const double c[4][2] = { { -10, -10 }, { 10, -10 }, { 10, 10 }, { -10, 10 } };
+		for (int k = 0; k < 4; k++) {
+			const double *a = c[k], *b = c[(k + 1) % 4];
+			uint16_t i0 = (uint16_t)g.vtx.size ();
+			for (double h : { 0.0, 10.0 }) for (const double *p : { a, b }) g.vtx.push_back (CollVtx { (float)p[0], (float)h, (float)p[1], 0, 0, 0, 0, 0 });
+			g.idx.insert (g.idx.end (), { i0, (uint16_t)(i0 + 1), (uint16_t)(i0 + 3), i0, (uint16_t)(i0 + 3), (uint16_t)(i0 + 2) });
+		}
+		mesh->grp.push_back (g);
+		Vector u = Up (LAT0, LNG0), e = East (LNG0), n = North (LAT0, LNG0);
+		CollBldgA::FixedIn f { (CollH)0x1234, "Pad", u * (R0 + r.Ground (LAT0, LNG0)), Matrix (e.x, u.x, n.x, e.y, u.y, n.y, e.z, u.z, n.z), 7, { { mesh, Vector () } }, clear };
+		r.Add (37, 0, Box (6, 6), 0.0f, 15.0f);   // west wall 24 m from the block, 34 m from its origin
+		r.Add (75, 0, Box (6, 6), 0.0f, 15.0f);   // west wall 72 m from its origin
+		r.At (55, 60, 10);
+		r.Start ();
+		for (int k = 0; k < 3; k++) { r.b->Fixed ({ f }); r.Frame (); }
+		if (clear > 0) {
+			CHECK (r.Parts () == std::vector<uint32_t> { 1 });
+			CHECK (r.b->st.excluded == 1);
+		} else {
+			CHECK (r.Parts () == std::vector<uint32_t> { 0, 1 });
+			CHECK (r.b->st.excluded == 0);
+		}
+		CHECK (r.s.misuse == 0);
+	}
+}
+
+TEST_CASE ("bldg: a base file's clear zone keeps out a building reaching into it, wherever the base is; without one it stays (design base-clear)", "[CollBldgA]")
+{
+	for (double rad : { 50.0, 0.0 }) {
+		Rig r;
+		r.s.bodies.push_back ({});
+		CollFakeSdk::Body &P = r.s.bodies.back ();
+		P.name = "Site"; P.type = 20; P.lng = LNG0 + 0.2; P.lat = LAT0; // the base's own point far away
+		r.E->base.push_back (&P);
+		if (rad > 0) r.s.zonesB[(CollH)&P] = { { LNG0, LAT0, rad } };
+		r.Add (37, 0, Box (6, 6), 0.0f, 15.0f);   // west wall 34 m from the zone's centre
+		r.Add (75, 0, Box (6, 6), 0.0f, 15.0f);   // west wall 72 m from it
+		r.At (55, 60, 10);
+		r.Start ();
+		for (int k = 0; k < 3; k++) r.Frame ();
+		if (rad > 0) {
+			CHECK (r.Parts () == std::vector<uint32_t> { 1 });
+			CHECK (r.b->st.excluded == 1);
+		} else {
+			CHECK (r.Parts () == std::vector<uint32_t> { 0, 1 });
+			CHECK (r.b->st.excluded == 0);
+		}
+		CHECK (r.s.misuse == 0);
+	}
+}
+
 TEST_CASE ("bldg: the switch off, or collisions off, make no SDK call for buildings", "[CollBldgA]")
 {
 	for (int mode = 0; mode < 2; mode++) {

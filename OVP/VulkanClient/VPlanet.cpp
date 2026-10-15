@@ -563,9 +563,10 @@ vPlanet::~vPlanet ()
 	}
 	delete treemgr; // not upstream: first, its worker reads the surface manager
 	treemgr = NULL;
+	delete bldgmgr; // not upstream: before the surface manager too, its workers read it
+	bldgmgr = NULL;
 	if (surfmgr) delete surfmgr;
 	else if (surfmgr2) delete surfmgr2;
-	delete bldgmgr; // not upstream
 	if (cloudmgr2) delete cloudmgr2;
 
 	// overlays' y->Release() left out: the textures belong to their SURFHANDLEs (upstream released a reference it didn't own)

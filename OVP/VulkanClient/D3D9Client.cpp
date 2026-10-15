@@ -1707,6 +1707,11 @@ int D3D9Client::clbkGetMeshGroup (DEVMESHHANDLE hMesh, DWORD grpidx, GROUPREQUES
 	return ((D3D9Mesh*)hMesh)->GetGroup (grpidx, grs);
 }
 
+int D3D9Client::clbkGetMeshGroupFlags (DEVMESHHANDLE hMesh, DWORD grpidx, DWORD *usrFlag) // not upstream: oapiGetMeshGroupFlags
+{
+	return ((D3D9Mesh*)hMesh)->GetGroupFlags (grpidx, usrFlag);
+}
+
 #pragma endregion
 
 // ==============================================================

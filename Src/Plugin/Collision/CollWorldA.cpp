@@ -190,7 +190,7 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 				sdk.GlobalState (rd.gref, pr, vr, Rp);
 				wg = std::fabs (T) > 0 ? mul (Rp, Vector (0, 1, 0))*(2.0*3.14159265358979323846/T) : Vector ();
 				a = B.aTot;
-				B.wakeable = true; B.wakeV = B.v; B.wakeWb = B.wb;
+				B.wakeable = !geom.Fixed (r->id); B.wakeV = B.v; B.wakeWb = B.wb; // a fixed structure stays kinematic, as a base
 			}
 			CollKinMotion (B, a, wg, simdt);
 		}

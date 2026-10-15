@@ -70,6 +70,8 @@ set(SourceFiles
 	VBase.cpp
 	BldgMgr.cpp # not upstream
 	BldgGeom.cpp # not upstream
+	FixedVes.cpp # not upstream: fixed structures keep streamed buildings and trees out
+	ClearZones.cpp # not upstream: base files' clear zones keep streamed buildings and trees out
 	GfxPool.cpp # not upstream: ground graphics
 	HorizonMap.cpp # not upstream
 	SceneFx.cpp # not upstream

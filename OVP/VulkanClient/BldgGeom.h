@@ -33,7 +33,20 @@ struct Out {
 };
 
 // one .bld building: vtx 6 floats a vertex (x east, y up, z north, normal), idx its triangles; walls are quads before the roof
-void Build (const float *vtx, uint32_t nv, const uint32_t *idx, uint32_t ni, float hmin, float hmax, uint32_t hash, Out &out);
+// far (not upstream): one wall piece a face with as many floors of windows as the height holds, up to 6; roofs as near
+void Build (const float *vtx, uint32_t nv, const uint32_t *idx, uint32_t ni, float hmin, float hmax, uint32_t hash, Out &out, bool far = false);
+
+// not upstream (far buildings): distance classes by on-screen height, design-far-buildings A and D
+namespace Lod {
+const int NClass = 6;                                       // class c >= 1 keeps the buildings of H[c] m and up; 0 keeps all in full
+const double H[NClass] = {0.0, 4.0, 8.0, 16.0, 32.0, 64.0};
+const int NScale = 7;                                       // budget scales 1 to 8, a factor sqrt 2 apart
+double Scale (int s);
+// h: metres 1.5 px tall at the tile's distance; s: the budget scale (classes 1 and up only); cur: the class held, -1 none
+int Class (double h, double s, int cur);
+// the budget scale after one step: up past the budget, down when one step lower fits in 90 % (est the vertices at s, down those one step lower, < 0 at the lowest)
+int Step (int s, double est, double down, double budget);
+}
 
 // not upstream (trees): the footprint rings Build finds, outer ring first, x east, z north
 void Rings (const float *vtx, uint32_t nv, std::vector<std::vector<std::array<double, 2>>> &rings);
@@ -55,6 +68,9 @@ private:
 	std::vector<T> tris;
 	std::unordered_map<int64_t, std::vector<uint32_t>> cells; // 64 m buckets
 };
+
+// not upstream (fixed structure clear zone): the footprint, in a frame with y up and its origin at the structure, encloses the origin or an edge passes within r of it
+bool Reaches (const std::vector<std::array<double, 2>> &poly, double r);
 
 } // namespace BldgGeom
 

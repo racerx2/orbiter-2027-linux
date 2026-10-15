@@ -23,6 +23,7 @@ public:
 	virtual void Bases (double h, std::vector<CollABody> &out) { out.clear (); (void)h; } // kinematic base bodies (kind COLLB_BASE) with parts and motion
 	virtual void Zones (const std::vector<CollABody> &b, double h, std::vector<CollZone> &out) { out.clear (); (void)b; (void)h; } // active docking and attachment zones (8) over the step h
 	virtual CollH BaseHandle (int planet, int base) { (void)planet; (void)base; return nullptr; }
+	virtual bool Fixed (uint32_t id) { (void)id; return false; } // a fixed structure: its LANDED body never wakes (design fixed-structures)
 	virtual void PartToVessel (uint32_t id, int mesh, int grp, Vector &p, Vector &n) { (void)id; (void)mesh; (void)grp; (void)p; (void)n; } // part rest frame -> vessel frame with pose[1]
 };
 

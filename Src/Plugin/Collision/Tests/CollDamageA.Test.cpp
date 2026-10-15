@@ -166,6 +166,8 @@ public:
 	void ClientMeshRebuilt (uint32_t, uint32_t) override { rebuilt++; }
 	void WantSlots (uint32_t, bool) override {}
 	double DestroyEnergy (uint32_t) override { return -1; }
+	std::vector<uint32_t> fixed;                 // fixed-structures test
+	bool Fixed (uint32_t id) override { return std::find (fixed.begin (), fixed.end (), id) != fixed.end (); }
 	bool BaseObject (int planet, int base, int obj, CollDmgBaseObj &out) override
 	{
 		for (auto &b : bases) if (b.planetIdx == planet && b.baseIdx == base && (int)b.obj == obj) { out = b; return true; }
@@ -468,6 +470,28 @@ TEST_CASE ("E3-U9 thrust cut through the dummy tank")
 	uint64_t w = r.sdk.Count ().Writes ();
 	for (int k = 0; k < 10; k++) r.Frame ();
 	CHECK (r.sdk.Count ().Writes () == w);
+}
+
+TEST_CASE ("fixed structures: a 2 kg pad counts its damage per kg of its structure, as a building; destroyed, it keeps thrust and controls (design fixed-structures)")
+{
+	for (int mode = 0; mode < 3; mode++) { // 0 a vessel, 1 a fixed structure, 2 a fixed structure with a tiny BuildingDestroyEnergy
+		Rig r;
+		uint32_t a = r.Add ("Pad", "SSV_LC39"), b = r.Add ("ET");
+		r.B (a).v->empty = 2; r.B (a).v->mass = 2;
+		if (mode) r.host.fixed = { a };
+		if (mode == 2) r.cfg.buildingDestroyEnergy = 1e-9;
+		r.Begin ();
+		r.Frame ();
+		r.Frame ({ Hit (a, -1, b, 10.0, 3.0e4) });
+		r.Frame ();
+		const VesselDamageA *v = r.s.Damage (a);
+		REQUIRE (v);
+		CAPTURE (mode, v->d.eabs);
+		CHECK (bool (v->d.flags & XDMG_DESTROYED) == (mode != 1));
+		CHECK (r.B (a).v->lock == (mode == 0));
+		CHECK (r.B (a).v->tkList.size () == (mode == 0 ? 1u : 0u)); // the thrust cut's dummy tank
+		if (mode == 1) CHECK (v->d.eabs / DentMath::StructureMass (2, Vector (14, 14, 1)) < 1000);
+	}
 }
 
 TEST_CASE ("E3-U12 notices, replies and the exported API")

@@ -221,8 +221,10 @@ in `Textures/Earth` like installed tiles. The sources are listed in
   10 m water mask and the land classes for the ground detail, from level 12
 - `s3.amazonaws.com` (`elevation-tiles-prod`): elevation, Terrain Tiles on AWS
 - `eoimages.gsfc.nasa.gov`: clouds, the NASA Visible Earth cloud map (levels 1 to 7)
-- `tiles.openfreemap.org`: 3D buildings within 3 to 6 km of the camera below
-  15 km altitude, set on the terrain with textured walls, roofs and lit windows
+- `tiles.openfreemap.org`: 3D buildings out to the building range (20 km by
+  default, 5 to 40 km in the VulkanClient's advanced setup) below 15 km
+  altitude, nearest first; past about 4 km only those tall enough to show.
+  They are set on the terrain with textured walls, roofs and lit windows
   at night; the textures are drawn by the build itself (`Utils/bldgtex`, into
   `Textures/Bldg`), and a building inside a base's own buildings is left out
 

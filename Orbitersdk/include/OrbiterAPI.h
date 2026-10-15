@@ -4530,6 +4530,10 @@ OAPIFUNC MESHHANDLE oapiLoadMesh (const char *fname);
 #define OAPI_COPY_MESH 1 // not upstream: feature test for add-ons
 OAPIFUNC MESHHANDLE oapiCopyMesh (MESHHANDLE hMesh, DWORD dropFlag = 0);
 
+// not upstream: the user flags a device mesh group has now (0x2 hidden, as oapiEditMeshGroup sets them); 0 ok, -1 no graphics client, -2 the client cannot tell, else the client's error
+#define OAPI_MESHGROUP_FLAGS 1 // not upstream: feature test for add-ons
+OAPIFUNC int oapiGetMeshGroupFlags (DEVMESHHANDLE hMesh, DWORD grpidx, DWORD *usrFlag);
+
 	/**
 	* \brief Retrieves a mesh handle from the global mesh manager. 
 	* \details When called for the first time for any given file name, the mesh is loaded from file 
@@ -6370,6 +6374,12 @@ OAPIFUNC int  oapiTileStreamBldgWant (OBJHANDLE hBody, int x, int y);
 // the tile's buildings, NULL if not there; free with oapiTileStreamBldgFree
 OAPIFUNC TSBLDGMESH *oapiTileStreamBldgLoad (OBJHANDLE hBody, int x, int y);
 OAPIFUNC void oapiTileStreamBldgFree (TSBLDGMESH *mesh);
+
+// not upstream: a base file's clear zones (BEGIN_CLEARZONES): no streamed building or tree within rad of the centre
+#define OAPI_BASE_CLEARZONES 1 // not upstream: feature test for add-ons
+typedef struct { double lng, lat, rad; } BASECLEARZONE; // centre [rad], radius [m]
+// returns how many zones the base has; fills zone[0..] with up to nmax of them
+OAPIFUNC DWORD oapiGetBaseClearZones (OBJHANDLE hBase, BASECLEARZONE *zone, DWORD nmax);
 
 	/**
 	* \brief Writes the current simulation state to a scenario file.

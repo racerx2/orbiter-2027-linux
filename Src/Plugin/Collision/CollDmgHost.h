@@ -37,6 +37,7 @@ public:
 	virtual void     ClientMeshRebuilt (uint32_t id, uint32_t m) = 0; // E2 ClientMeshRebuilt (id, m, E3_SENTINEL)
 	virtual void     WantSlots (uint32_t id, bool on) = 0;
 	virtual double   DestroyEnergy (uint32_t id) = 0;                // E2 Keys (id).destroyEnergy, -1 = not set
+	virtual bool     Fixed (uint32_t id) { (void)id; return false; } // E2 Fixed (id): damaged as a building (design fixed-structures)
 	virtual bool     BaseObject (int planet, int base, int obj, CollDmgBaseObj &out) = 0;
 	virtual void     Bases (std::vector<CollDmgBaseObj> &all) = 0;
 };
@@ -61,6 +62,7 @@ public:
 	void ClientMeshRebuilt (uint32_t id, uint32_t m) override { gv.ClientMeshRebuilt (id, m, CDMG_SRC_SENTINEL); }
 	void WantSlots (uint32_t id, bool on) override { gv.WantSlots (id, on); }
 	double DestroyEnergy (uint32_t id) override { return gv.Keys (id).destroyEnergy; }
+	bool Fixed (uint32_t id) override { return gv.Fixed (id); }
 	bool BaseObject (int planet, int base, int obj, CollDmgBaseObj &out) override
 	{
 		if (base < 0) return false; // the ground side of an impact (CA-ground), or a streamed building (base <= -2, bldg): no record

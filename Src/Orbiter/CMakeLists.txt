@@ -90,6 +90,7 @@ set(common_src
 	Vesselstatus.cpp
 # Surface base classes
 	Base.cpp
+	BaseClear.cpp # not upstream: a base file's clear zones
 	Baseobj.cpp
 # Cockpit classes
 	Defpanel.cpp

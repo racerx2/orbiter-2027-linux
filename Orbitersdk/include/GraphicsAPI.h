@@ -1679,6 +1679,11 @@ protected:
 	 */
 	virtual void clbkStoreMeshPersistent (MESHHANDLE hMesh, const char *fname) {}
 
+public: // not upstream
+	// not upstream: a device mesh group's user flags now (oapiGetMeshGroupFlags); 0 ok, -2 not supported. Last virtual: the vtable's earlier slots stay
+	virtual int clbkGetMeshGroupFlags (DEVMESHHANDLE hMesh, DWORD grpidx, DWORD *usrFlag) { return -2; }
+protected: // not upstream: as before
+
 	/**
 	 * \brief Displays the default Orbiter splash screen on top of
 	 *   the render window.
