@@ -28,6 +28,8 @@ struct Geom : CollPhysGeom {
 	void Assemblies (std::vector<CollPhysAsm> &out) override { out = asmb; }
 	Vector shift;                                    // dmg3 L4 test: part rest frame -> vessel frame offset
 	void PartToVessel (uint32_t, int, int, Vector &p, Vector &) override { p += shift; }
+	std::vector<uint32_t> fixed;                     // fixed-structures test: these vessel ids are fixed structures
+	bool Fixed (uint32_t id) override { return std::find (fixed.begin (), fixed.end (), id) != fixed.end (); }
 	Geom () { CollSrcGroup s { &g, CollSrc { 0, 0, 0, 0, 0 } }; geom.Build (&s, 1, COLL_WELD_DEFAULT, nullptr); }
 	bool Parts (uint32_t id, std::vector<CollPartRef> &fwd, std::vector<CollPartRef> &past, double &rmax) override
 	{
@@ -204,6 +206,33 @@ TEST_CASE ("E1 session: LANDED motion carries the landed acceleration, groundNew
 		REQUIRE (D);
 		CAPTURE (f);
 		REQUIRE (D->groundNew == (f == 1));
+	}
+}
+
+TEST_CASE ("fixed structures: a 2 kg landed body hit by a 1000 kg one wakes; a fixed one stays kinematic and stops it (design fixed-structures)", "[CollWorldA]")
+{
+	for (bool fixed : { false, true }) {
+		World W;
+		W.sdk.applyWrites = true;
+		W.sdk.bodies.push_back (CollFakeSdk::Body ());
+		CollFakeSdk::Body *earth = &W.sdk.bodies.back ();
+		CollFakeSdk::Ves *a = W.Add ("Pad", Vector (0, 6371010, 0), Vector ());
+		CollFakeSdk::Ves *b = W.Add ("Stack", Vector (2.4, 6371010, 0), Vector (-2, 0, 0));
+		a->rd.status = 1; a->rd.gref = earth; a->rd.m = 2;
+		if (fixed) W.geom.fixed = { 1 };
+		bool woke = false, landedSeen = false;
+		for (int f = 0; f < 30; f++) {
+			W.Frame (1.0/60);
+			for (const CollABody &x : W.ps->Bodies ()) {
+				woke = woke || x.woke;
+				if (x.kind == COLLB_LANDED) { landedSeen = true; REQUIRE (x.wakeable == !fixed); }
+			}
+		}
+		CAPTURE (fixed, b->rd.v.x);
+		REQUIRE (landedSeen);
+		REQUIRE (woke == !fixed);
+		if (fixed) REQUIRE (b->rd.v.x >= -1e-6); // the stack stopped or bounced off it
+		REQUIRE (W.sdk.misuse == 0);
 	}
 }
 

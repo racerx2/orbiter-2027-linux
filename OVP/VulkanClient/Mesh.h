@@ -326,6 +326,7 @@ public:
 	void			TransformGroup(DWORD n, const D3DXMATRIX *m);
 	void			Transform(const D3DXMATRIX *m);
 	int				GetGroup (DWORD grp, GROUPREQUESTSPEC *grs);
+	int				GetGroupFlags (DWORD grp, DWORD *usrFlag) const; // not upstream: oapiGetMeshGroupFlags; 1 out of range or deleted
 	int				EditGroup (DWORD grp, GROUPEDITSPEC *ges);
 
 	void			SetSunLight(const D3D9Sun *pLight);

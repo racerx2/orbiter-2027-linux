@@ -819,6 +819,27 @@ void CollShape::SetGroupHidden (uint32_t mesh, uint32_t grp, bool hide)
 	UpdateMasks ();
 }
 
+bool CollShape::SetMeshHidden (uint32_t mesh, const std::vector<uint8_t> &grp)
+{
+	if (mesh >= INDEX_MAX || grp.size () >= INDEX_MAX) return false;
+	std::vector<uint8_t> want (grp.size ());
+	bool any = false;
+	for (size_t g = 0; g < grp.size (); g++) { want[g] = grp[g] ? 1 : 0; any = any || want[g]; }
+	while (!want.empty () && !want.back ()) want.pop_back ();
+	const std::vector<uint8_t> none;
+	const std::vector<uint8_t> &have = mesh < hidden.size () ? hidden[mesh] : none;
+	std::vector<uint8_t> h = have;
+	while (!h.empty () && !h.back ()) h.pop_back ();
+	if (h == want) return false;
+	if (mesh >= hidden.size ()) {
+		if (!any) return false;
+		hidden.resize (mesh + 1);
+	}
+	hidden[mesh] = want;
+	UpdateMasks ();
+	return true;
+}
+
 void CollShape::UpdateMasks ()
 {
 	masks.assign (parts.size(), std::vector<uint8_t> ());

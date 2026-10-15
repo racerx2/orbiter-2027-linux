@@ -131,7 +131,22 @@ public:
 	double TankMaxMass (CollH, CollH tk) override { return TankDead (tk) ? 0 : ((const struct Tank *)tk)->max; }
 	// visuals and the client
 	CollH Visual (CollH v) override { Ves *x = V (v); return x ? x->visual : nullptr; }
-	CollH DevMesh (CollH, CollH vis, uint32_t) override { if (!vis) Bad ("DevMesh NULL visual"); return nullptr; }
+	std::map<std::pair<const void *, uint32_t>, std::vector<uint32_t>> devFlags; // fixed-structures rev 2: a slot's device mesh as its group user flags
+	bool groupFlags = true;                    // false: the host gives no group flags (-2)
+	CollH DevMesh (CollH v, CollH vis, uint32_t i) override
+	{
+		if (!vis) Bad ("DevMesh NULL visual");
+		auto it = devFlags.find ({ (const void *)V (v), i });
+		return it == devFlags.end () ? nullptr : (CollH)&it->second;
+	}
+	int DevGroupFlags (CollH dm, uint32_t g, uint32_t &f) override
+	{
+		if (!groupFlags) return -2;
+		const std::vector<uint32_t> *x = (const std::vector<uint32_t> *)dm;
+		if (!x || g >= x->size ()) return 1;
+		f = (*x)[g];
+		return 0;
+	}
 	int ReadVtx (CollH, uint32_t, const uint16_t *, uint32_t, DentVtx *) override { return -1; }
 	bool ClientCore () override { return clientCore; }
 	int ClientMatrix (int, CollH, uint32_t, uint32_t, float m[16]) override { for (int i = 0; i < 16; i++) m[i] = (i % 5) ? 0.0f : 1.0f; return clientCore ? 0 : -1; }
@@ -276,6 +291,8 @@ public: // bldg area B: streamed building tiles "on disk" by planet, x, y
 	bool Serves (CollH p) const { for (CollH b : bldgBodyB) if (b == p) return true; return false; }
 	int BldgWant (CollH p, int x, int y) override { bldgWantB++; return !Serves (p) ? -1 : bldgB.count ({ p, x, y }) ? 1 : 0; }
 	bool BldgStream (CollH p) override { bldgStreamB++; return Serves (p); }
+	std::map<CollH, std::vector<CollClearZone>> zonesB;  // a base's clear zones (design base-clear)
+	void BaseClearZones (CollH b, std::vector<CollClearZone> &out) override { auto it = zonesB.find (b); out = it == zonesB.end () ? std::vector<CollClearZone> {} : it->second; }
 	bool BldgLoad (CollH p, int x, int y, CollBldgTile &out) override
 	{
 		bldgLoadB++;

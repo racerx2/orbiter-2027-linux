@@ -3421,7 +3421,7 @@ const MESHHANDLE Vessel::GetMeshTemplate (UINT idx) const
 
 const char *Vessel::GetMeshName (UINT idx) const
 {
-	if (idx < nmesh && meshlist[idx]->meshname[0]) return meshlist[idx]->meshname;
+	if (idx < nmesh && meshlist[idx] && meshlist[idx]->meshname[0]) return meshlist[idx]->meshname; // not upstream: a deleted slot is NULL
 	else return NULL;
 }
 
@@ -7706,7 +7706,7 @@ void VESSEL::ShiftMeshes (const VECTOR3 &ofs) const
 
 bool VESSEL::GetMeshOffset (UINT idx, VECTOR3 &ofs) const
 {
-	if (idx >= vessel->nmesh) return false;
+	if (idx >= vessel->nmesh || !vessel->meshlist[idx]) return false; // not upstream: a deleted slot is NULL
 	memcpy (&ofs, &vessel->meshlist[idx]->meshofs, sizeof(VECTOR3));
 	return true;
 }
@@ -7744,7 +7744,7 @@ MESHHANDLE VESSEL::CopyMeshFromTemplate (UINT idx) const
 
 WORD VESSEL::GetMeshVisibilityMode (UINT idx) const
 {
-	return (idx < vessel->nmesh ? vessel->meshlist[idx]->vismode : 0);
+	return (idx < vessel->nmesh && vessel->meshlist[idx] ? vessel->meshlist[idx]->vismode : 0); // not upstream: a deleted slot is NULL
 }
 
 void VESSEL::SetMeshVisibilityMode (UINT idx, WORD mode) const

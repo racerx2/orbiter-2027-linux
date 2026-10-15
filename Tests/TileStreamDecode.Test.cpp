@@ -382,6 +382,83 @@ TEST_CASE ("An empty building mesh round-trips", "[decode]")
 	CHECK (r.b.empty());
 }
 
+TEST_CASE ("Version 2 building files keep footprints, read back the same walls and refuse hostile counts", "[decode]")
+{
+	std::vector<TsBldg::Feature> fs (2);
+	fs[0].rings = Holed (3);
+	fs[0].height = 20;
+	fs[1].rings = {{{100, 100}, {300, 100}, {300, 300}, {100, 300}}};
+	fs[1].height = 8;
+	fs[1].minHeight = 3;
+	TsBldg::Mesh m = TsBldg::Build (14, 8000, 6000, fs, 4096);
+	REQUIRE (m.b.size() == 2);
+	REQUIRE (m.rsz.size() == 5);
+	std::string s = TsBldg::Encode (m);
+	uint32_t ver = 0;
+	memcpy (&ver, s.data() + 4, 4);
+	CHECK (ver == 2);
+	TsBldg::Mesh r;
+	REQUIRE (TsBldg::Read (s, r));
+	CHECK (r.vtx == m.vtx); // the same floats: Build extrudes from the points as the file keeps them
+	CHECK (r.idx == m.idx);
+	CHECK (r.rsz == m.rsz);
+	CHECK (r.pts == m.pts);
+	for (size_t i = 0; i < 2; i++) {
+		CHECK (r.b[i].v0 == m.b[i].v0);
+		CHECK (r.b[i].nv == m.b[i].nv);
+		CHECK (r.b[i].i0 == m.b[i].i0);
+		CHECK (r.b[i].ni == m.b[i].ni);
+		CHECK (r.b[i].hmin == m.b[i].hmin);
+		CHECK (r.b[i].hmax == m.b[i].hmax);
+	}
+	CHECK (r.b[1].hmin == 3.0f);
+	CHECK (TsBldg::Encode (r) == s);
+	TsBldg::Mesh w = m; // no rings, as read from a version 1 file: version 1 again
+	w.rsz.clear();
+	w.pts.clear();
+	for (TsBldg::Building &b : w.b) b.nr = 0;
+	std::string s1 = TsBldg::Encode (w);
+	memcpy (&ver, s1.data() + 4, 4);
+	CHECK (ver == 1);
+	REQUIRE (TsBldg::Read (s1, r));
+	CHECK (r.vtx == m.vtx);
+	CHECK (r.rsz.empty());
+	CHECK (TsBldg::Encode (r) == s1);
+	CHECK (s.size() * 5 < s1.size());
+	const size_t tb = 32, tr = tb + 2 * 26, tp = tr + m.rsz.size() * 2; // building table, ring sizes, points
+	auto bad = [] (const std::string &x) { TsBldg::Mesh q; return !TsBldg::Read (x, q); };
+	std::string x = s;
+	x[tb + 24] = 0; x[tb + 25] = 0;
+	CHECK (bad (x)); // a building with no ring
+	x = s;
+	uint16_t two = 2, five = 5;
+	memcpy (&x[tr], &two, 2); memcpy (&x[tr + 2], &five, 2);
+	CHECK (bad (x)); // a ring of 2 points, the total kept
+	CHECK (bad (s.substr (0, s.size() - 4))); // a point cut
+	x = s;
+	float v = NAN;
+	memcpy (&x[tp], &v, 4);
+	CHECK (bad (x));
+	x = s;
+	v = 5000.0f;
+	memcpy (&x[tb + 20], &v, 4);
+	CHECK (bad (x)); // taller than 1000 m
+	x = s;
+	uint32_t big = 0xFFFFFFFFu;
+	memcpy (&x[24], &big, 4);
+	CHECK (bad (x)); // ring count wraps the size check
+	x = s;
+	memcpy (&x[28], &big, 4);
+	CHECK (bad (x)); // point count too
+	x = s;
+	x[tb + 24] = 2;
+	CHECK (bad (x)); // ring counts no longer add up
+	x = s;
+	uint16_t many = 2001;
+	memcpy (&x[tr], &many, 2);
+	CHECK (bad (x)); // a ring past MaxPoly
+}
+
 TEST_CASE ("FLOOR boxes parse per body and bad ones are refused", "[decode]")
 {
 	Tmp t;

@@ -482,6 +482,11 @@ END_OBJECTLIST
 BEGIN_SURFTILELIST
 	<Surface tile list>
 END_SURFTILELIST
+
+BEGIN_CLEARZONES
+	<lng> <lat> <radius>
+	...
+END_CLEARZONES
 \end{lstlisting}
 
 \noindent
@@ -497,6 +502,7 @@ where
 Note: Currently this function is only implemented for a limited number of base object types.
 \item <\textit{NAV list}> $\Rightarrow$ Contains a list of navigation radio transmitters associated with the base. The format of the list is identical to the <\textit{NAV list}> in the planet configuration file (see section \ref{ssec:planets}).
 \item <\textit{Object list}> $\Rightarrow$ Contains a list of objects which make up the visual elements of the base. See next section for details.
+\item BEGIN\_CLEARZONES $\Rightarrow$ Optional (Orbiter Linux). Each line is a clear zone: no streamed building whose footprint reaches within <\textit{radius}> [m] of the point at <\textit{lng}> <\textit{lat}> [deg], and no streamed tree there. It is for an add-on that models a whole site as it stood in its era, when the map data shows today's buildings and towers there (the Space Shuttle Vessel clears its pads this way). The zones hold in every scenario that loads the base, whatever vessels it has. Text after the three numbers is a comment; a line that does not give them, a latitude outside $\pm 90^\circ$ or a radius of 0 or less is skipped with a warning in Orbiter.log, and a radius above 5000 m is taken as 5000 m. The graphics client and the collision module read the same zones, so a building left out is not solid. Other Orbiter versions skip the block. A base given only in a planet's base list (without a file) has none. Add-ons read them with \textit{oapiGetBaseClearZones}.
 \item <\textit{Surface tile list}> $\Rightarrow$ This list is deprecated and is only retained for backward compatibility of old planet definitions. See section \ref{ssec:planetery_tex} for details on how to define surface textures for new planet definitions, including high-resolution patches around surface bases.
 \end{itemize}
 

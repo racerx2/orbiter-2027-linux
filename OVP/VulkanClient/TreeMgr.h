@@ -12,6 +12,8 @@
 #include "VObject.h"
 #include "TreeGeom.h"
 #include "BldgGeom.h"
+#include "FixedVes.h"
+#include "ClearZones.h"
 #include <condition_variable>
 #include <deque>
 #include <map>
@@ -45,6 +47,8 @@ public:
 		long long key = 0;
 		double lat0 = 0, lat1 = 0, lng0 = 0, lng1 = 0;
 		std::vector<std::shared_ptr<const Base>> bases;
+		std::vector<std::shared_ptr<const FixedVes::Rec>> fixed; // fixed structures within 25 km, every triangle (design fixed-structures)
+		std::vector<ClearZones::Zone> zones; // the base files' clear zones within 25 km (design base-clear)
 		std::shared_ptr<const Horizon::Map> hor;
 		double hb[4] = {0, 0, 0, 0}; // its owner's bounds
 		std::vector<std::pair<int, int>> bldg; // z14 tiles to read
@@ -69,6 +73,7 @@ private:
 		double tCheck = 0.0;
 		bool hasHor = false, complete = true;
 		bool pending = true;   // given to the worker, result not taken yet
+		bool stale = false;    // a fixed structure near it changed after it was asked
 		int miss = 0;          // results in a row without the L16 Class tile
 	};
 	void Work ();
@@ -86,6 +91,9 @@ private:
 	std::string root;           // the body's texture folder, as PlanetTexturePath (backslashes, oapiResolvePath)
 	std::map<long long, Cell> cells;
 	std::map<OBJHANDLE, std::shared_ptr<const Base>> bases;
+	FixedVes::Set fixed{true};  // the fixed structures on this planet, every triangle
+	std::vector<ClearZones::Zone> zones; // the base files' clear zones on this planet, read at the first job (design base-clear)
+	bool zonesRead = false;
 	double tWant = 0.0, camLat = 0.0, camLng = 0.0;
 	bool active = false;        // camera low enough: cells kept and drawn
 

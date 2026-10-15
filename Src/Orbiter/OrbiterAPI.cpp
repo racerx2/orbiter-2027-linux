@@ -1277,6 +1277,14 @@ DLLEXPORT void oapiGetBaseEquPos (OBJHANDLE hBase, double *lng, double *lat, dou
 	if (rad) *rad = base->RefPlanet()->Size(); // for now
 }
 
+DLLEXPORT DWORD oapiGetBaseClearZones (OBJHANDLE hBase, BASECLEARZONE *zone, DWORD nmax) // not upstream (design base-clear)
+{
+	if (!hBase) return 0;
+	const std::vector<BaseClearZone> &z = ((Base*)hBase)->ClearZones ();
+	for (DWORD i = 0; zone && i < nmax && i < (DWORD)z.size(); i++) zone[i] = {z[i].lng, z[i].lat, z[i].rad};
+	return (DWORD)z.size();
+}
+
 DLLEXPORT DWORD oapiGetBasePadCount (OBJHANDLE hBase)
 {
 	return ((Base*)hBase)->nPad();
@@ -1585,6 +1593,14 @@ DLLEXPORT int oapiEditMeshGroup (DEVMESHHANDLE hMesh, DWORD grpidx, GROUPEDITSPE
 {
 	oapi::GraphicsClient *gc = g_pOrbiter->GetGraphicsClient();
 	return (gc ? gc->clbkEditMeshGroup (hMesh, grpidx, ges) : -1);
+}
+
+DLLEXPORT int oapiGetMeshGroupFlags (DEVMESHHANDLE hMesh, DWORD grpidx, DWORD *usrFlag) // not upstream
+{
+	oapi::GraphicsClient *gc = g_pOrbiter->GetGraphicsClient();
+	if (!gc) return -1;
+	if (!hMesh || !usrFlag) return -2;
+	return gc->clbkGetMeshGroupFlags (hMesh, grpidx, usrFlag);
 }
 
 DLLEXPORT DWORD oapiMeshMaterialCount (MESHHANDLE hMesh)

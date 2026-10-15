@@ -35,6 +35,7 @@ struct CollTplGroup { const CollVtx *vtx; const uint16_t *idx; uint32_t nvtx, ni
 struct CollPortInfo { Vector pos, dir, rot; CollH mate; };          // vessel frame
 struct CollAttInfo  { Vector pos, dir, rot; CollH mate; char id[9]; };
 struct CollBldgRec { double lat, lng; float hmin, hmax; uint32_t v0, nv, i0, ni; }; // bldg: one streamed building as TSBLDG (anchor rad, ranges)
+struct CollClearZone { double lng, lat, rad; }; // bldg: a base file's clear zone as BASECLEARZONE: centre [rad], radius [m] (design base-clear)
 struct CollBldgTile {                        // bldg: a z14 tile of streamed buildings; vtx and idx view the core's TSBLDGMESH until BldgFree
 	int x = 0, y = 0;
 	uint32_t nv = 0, ni = 0;
@@ -143,6 +144,7 @@ public:
 	// visuals and the client (E2, E3)
 	virtual CollH    Visual (CollH v) = 0;                     // *oapiObjectVisualPtr (v); read in every pass, never cached
 	virtual CollH    DevMesh (CollH v, CollH vis, uint32_t i) = 0; // vis never NULL
+	virtual int      DevGroupFlags (CollH dm, uint32_t g, uint32_t &flags) { (void)dm; (void)g; (void)flags; return -2; } // oapiGetMeshGroupFlags: 0 ok, -2 the core or client cannot tell (design fixed-structures rev 2)
 	virtual int      ReadVtx (CollH dm, uint32_t g, const uint16_t *idx, uint32_t n, DentVtx *out) = 0; // 0 ok, 1 bad group, -1 no client, -2 unsupported
 	virtual bool     ClientCore () = 0;                        // gcCore bound for this session (1.6)
 	virtual int      ClientMatrix (int id, CollH v, uint32_t mesh, uint32_t grp, float m[16]) = 0; // gcCore GetMatrix; client codes
@@ -242,6 +244,7 @@ public: // bldg: streamed 3D buildings (OAPI_TILESTREAM_BLDG); the defaults are 
 	virtual bool   BldgLoad (CollH, int, int, CollBldgTile &) { return false; } // oapiTileStreamBldgLoad; false if not there
 	virtual void   BldgFree (CollBldgTile &t) { t = CollBldgTile (); } // oapiTileStreamBldgFree; the views go
 	virtual bool   BldgStream (CollH) { return false; }               // oapiTileStreamEnabled: the planet's tiles are streamed
+	virtual void   BaseClearZones (CollH, std::vector<CollClearZone> &out) { out.clear (); } // oapiGetBaseClearZones; none from a core without it (design base-clear)
 private:
 	CollSdkCount cnt;
 	double noteUntil = -1;                                      // system time the annotation expires, -1 none
