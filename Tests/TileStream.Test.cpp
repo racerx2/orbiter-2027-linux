@@ -16,6 +16,8 @@
 #include <set>
 #include <thread>
 #include <unistd.h>
+#include <fcntl.h> // not upstream: utimensat (design dropin-addons)
+#include <sys/stat.h> // not upstream: as above
 #include <zlib.h>
 
 namespace fs = std::filesystem;
@@ -385,6 +387,89 @@ TEST_CASE ("The size cap takes the oldest streamed tiles, never L8 and below or 
 	CHECK (idx.find ("8 0 0") != std::string::npos);
 }
 
+// not upstream: design dropin-addons
+TEST_CASE ("An add-on's tile put over a streamed one is neither evicted nor replaced, and its key leaves the index", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	fs::path tex = t.root / "Earth";
+	std::string cfg = (t.root / "ts.cfg").string();
+	std::ofstream (cfg) << "BODY Earth\nSURF eox file:///none/{z}/{row}/{col} 1 16\nLIGHTS gibs file:///none/{n}/{row}/{col} 7\nWATER gibs file:///none/{n}/{row}/{col} 8\nEND\n";
+	std::string mb (1 << 20, 'x');
+	auto now = std::chrono::system_clock::now();
+	auto put = [&] (const char *rel, int hours, long ns) { // ns: the stream's mark 271828100, or an add-on's copy
+		for (const char *layer : {"Surf", "Mask"}) {
+			fs::path p = tex / layer / rel;
+			fs::create_directories (p.parent_path());
+			std::ofstream (p, std::ios::binary) << mb;
+			struct timespec ts[2] = {{0, UTIME_OMIT}, {std::chrono::system_clock::to_time_t (now - std::chrono::hours (hours)), ns}};
+			REQUIRE (utimensat (AT_FDCWD, p.c_str(), ts, 0) == 0);
+		}
+	};
+	put ("09/000000/000000.dds", 3, 271828100);
+	put ("09/000000/000001.dds", 5, 0); // the oldest, but an add-on's copy over the stream's
+	put ("09/000000/000002.dds", 2, 271828100);
+	fs::create_directories (tex / "TileStream");
+	std::ofstream (tex / "TileStream" / "written.idx") << "9 0 0\n9 0 1\n9 0 2\n";
+	std::ofstream (tex / "TileStream" / "marked") << "x\n";
+	TileStream::Options o;
+	o.cfgfile = cfg;
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	o.capMB = 3;
+	o.offline = true;
+	{
+		TileStream ts (o);
+		REQUIRE (ts.Enabled ("Earth"));
+		CHECK (ts.Want ("Earth", 9, 0, 1, 1) == -1); // a replace request: never over the add-on's file
+		ts.Evict();
+		std::this_thread::sleep_for (std::chrono::milliseconds (300));
+	}
+	CHECK (fs::exists (tex / "Surf" / "09" / "000000" / "000001.dds"));
+	CHECK (fs::exists (tex / "Mask" / "09" / "000000" / "000001.dds"));
+	CHECK_FALSE (fs::exists (tex / "Surf" / "09" / "000000" / "000000.dds"));
+	std::string idx = Read (tex / "TileStream" / "written.idx");
+	CHECK (idx.find ("9 0 1") == std::string::npos);
+	CHECK (idx.find ("9 0 2") != std::string::npos);
+	fs::path used = tex / "Surf" / "09" / "000000" / "000002.dds";
+	auto mtime = [&used] { struct stat st; stat (used.c_str(), &st); return st.st_mtim; };
+	long sec0 = mtime().tv_sec;
+	{
+		TileStream ts (o);
+		CHECK (ts.Want ("Earth", 9, 0, 2, 2) == 1); // a use: its time moves to now, the mark stays
+		CHECK (WaitFor ([&] { return mtime().tv_sec > sec0 + 3600; }, 10.0));
+	}
+	CHECK (mtime().tv_nsec == 271828100);
+	CHECK (Read (tex / "TileStream" / "written.idx").find ("9 0 2") != std::string::npos);
+}
+
+TEST_CASE ("The stream marks its files once, so a tile from before stays its own", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	fs::path tex = t.root / "Earth";
+	std::string cfg = (t.root / "ts.cfg").string();
+	std::ofstream (cfg) << "BODY Earth\nSURF eox file:///none/{z}/{row}/{col} 1 16\nLIGHTS gibs file:///none/{n}/{row}/{col} 7\nWATER gibs file:///none/{n}/{row}/{col} 8\nEND\n";
+	fs::path p = tex / "Surf" / "09" / "000000" / "000000.dds";
+	fs::create_directories (p.parent_path());
+	std::ofstream (p, std::ios::binary) << "x";
+	fs::create_directories (tex / "TileStream");
+	std::ofstream (tex / "TileStream" / "written.idx") << "9 0 0\n";
+	TileStream::Options o;
+	o.cfgfile = cfg;
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	o.offline = true;
+	{
+		TileStream ts (o);
+		REQUIRE (WaitFor ([&] { return fs::exists (tex / "TileStream" / "marked"); }, 5.0));
+	}
+	struct stat st;
+	REQUIRE (stat (p.c_str(), &st) == 0);
+	CHECK (st.st_mtim.tv_nsec == 271828100);
+	CHECK (Read (tex / "TileStream" / "written.idx").find ("9 0 0") != std::string::npos);
+}
+
 TEST_CASE ("Wants go stale, required tiles stay, and the queue is capped", "[TileStream]")
 {
 	App app;
@@ -508,6 +593,8 @@ TEST_CASE ("The service writes stock tiles from file:// sources", "[TileStream]"
 
 	// a file of ours that failed to load is made again
 	fs::resize_file (l14, 1000);
+	struct timespec mark[2] = {{0, UTIME_OMIT}, {time (nullptr), 271828100}}; // not upstream: damaged in place, still the stream's file (design dropin-addons)
+	REQUIRE (utimensat (AT_FDCWD, l14.c_str(), mark, 0) == 0); // not upstream: as above
 	CHECK (ts.Want ("Earth", 14, 1000, 1500, 1) == 0);
 	REQUIRE (WaitFor ([&] { ts.Want ("Earth", 14, 1000, 1500, 0); std::error_code ec; return fs::file_size (l14, ec) == 174904; }, 20.0));
 

@@ -374,3 +374,18 @@ std::vector<std::filesystem::directory_entry> SortedEntries (std::filesystem::di
 	});
 	return v;
 }
+
+// not upstream: drop-in parts of a config file (design dropin-addons)
+std::vector<std::string> ConfigFragments (const char *cfgpath)
+{
+	std::vector<std::string> v;
+	std::string d = cfgpath ? cfgpath : "";
+	if (d.size () < 4 || strcasecmp (d.c_str () + d.size () - 4, ".cfg")) return v;
+	d.replace (d.size () - 4, 4, ".d");
+	std::error_code ec;
+	for (const auto &e : SortedEntries (std::filesystem::directory_iterator (oapiResolvePath (d.c_str ()), ec))) {
+		std::error_code fe;
+		if (!strcasecmp (e.path ().extension ().string ().c_str (), ".cfg") && e.is_regular_file (fe)) v.push_back (e.path ().string ());
+	}
+	return v;
+}

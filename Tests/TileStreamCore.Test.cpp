@@ -350,6 +350,7 @@ TEST_CASE ("Elev belongs to the stream only when elev.idx lists it: Evict, Clear
 	Put (tex / "Elev" / Rel (13, 5, 5, "elv"), 30);
 	std::ofstream (ts / "written.idx") << "12 1 2\n12 1 3\n";
 	std::ofstream (ts / "elev.idx") << "12 1 2\n13 5 5\n";
+	fs::remove (ts / "marked"); // not upstream: files made by hand carry no mark, so the indexes alone decide (design dropin-addons)
 	size_t tiles = 0;
 	CHECK (TileStream::CacheBytes (tex.string(), nullptr, &tiles) == 280);
 	CHECK (tiles == 3);
