@@ -242,6 +242,38 @@ std::string StreamFile (const std::string &dir, const std::string &idx, uint64_t
 	return idx == "bldg" ? BldgFile (dir, k) : Tile (dir, idx == "mod" ? "Elev_mod" : "Cloud", k);
 }
 
+// design dropin-addons: a file the stream wrote has this in its mtime's nanoseconds (a multiple of 100 ns); a copy over it hasn't
+const long OwnNs = 271828100;
+
+void MarkFile (const std::string &p)
+{
+	struct stat st;
+	if (stat (p.c_str(), &st)) return;
+	struct timespec t[2] = {{0, UTIME_OMIT}, {st.st_mtim.tv_sec, OwnNs}};
+	utimensat (AT_FDCWD, p.c_str(), t, 0);
+}
+
+// a file that isn't there, or carries the mark; marked: the body's files carry it (TileStream/marked)
+bool OwnFile (const std::string &p, bool marked)
+{
+	struct stat st;
+	if (!marked || stat (p.c_str(), &st)) return true;
+	return st.st_mtim.tv_nsec == OwnNs;
+}
+
+// a use moves the file's time to now; the mark goes with it, and a file without it doesn't gain it
+void TouchFile (const std::string &p)
+{
+	struct stat st;
+	struct timespec now;
+	if (stat (p.c_str(), &st) || clock_gettime (CLOCK_REALTIME, &now)) return;
+	long ns = st.st_mtim.tv_nsec == OwnNs ? OwnNs : (now.tv_nsec == OwnNs ? OwnNs + 100 : now.tv_nsec);
+	struct timespec t[2] = {{0, UTIME_OMIT}, {now.tv_sec, ns}};
+	utimensat (AT_FDCWD, p.c_str(), t, 0);
+}
+
+int MarkAll (const std::string &dir); // the mark on every file the indexes list: 0, -1 no sub-second times, -2 TileStream/marked not written
+
 }
 
 struct TileStream::Impl {
@@ -281,6 +313,7 @@ struct TileStream::Impl {
 		std::unordered_set<std::string> unclean; // indexes with dropped or doubled lines: rewritten at startup
 		uint64_t bytes = 0;                // the size cap's running total, once a scan has counted it
 		bool bytesKnown = false, writtenDirty = false;
+		std::atomic<bool> marked {false};  // design dropin-addons: its files carry the mark, so a file without it is someone else's
 		bool Arch (int layer, uint64_t k) const { return arch[layer].Has (KL (k), KLat (k), KLng (k)); }
 	};
 	struct BJob { int body = 0, stage = 0, tries = 0; uint64_t key = 0; Clock::time_point want, retry; };
@@ -435,6 +468,9 @@ struct TileStream::Impl {
 	void MarkNone (Body &B, uint64_t k);
 	void CleanTmp ();
 	void Evict ();
+	bool Ours (const Body &B, const std::string &p) const { return OwnFile (p, B.marked.load (std::memory_order_acquire)); } // design dropin-addons
+	void Disown (Body &B, const char *idx, uint64_t k, const std::string &file); // design dropin-addons, with mx held
+	bool markLogged = false;
 	// earth-sky: prefetch, clouds, base flattening (end of this file)
 	uint64_t preSeq = 0;
 	int Prefetch (const std::string &name, int L, int ilat, int ilng);
@@ -614,7 +650,13 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 		return 1;
 	}
 	if (flags & 1) {
-		if (ro || !B.written.erase (k)) return -1; // not ours: never replaced
+		if (ro || !B.written.count (k)) return -1; // not ours: never replaced
+		for (const char *layer : {"Surf", "Mask", "Class"})
+			if (!Ours (B, Tile (B.dir, layer, k))) { // design dropin-addons: an add-on's file over ours
+				Disown (B, "written", k, Tile (B.dir, layer, k));
+				return -1;
+			}
+		B.written.erase (k);
 		Dirty (B);
 		lk.unlock();
 		std::error_code ec;
@@ -958,6 +1000,13 @@ bool TileStream::Impl::AddLow (Clock::time_point now)
 			uint64_t k = B.refetchQueue.front();
 			B.refetchQueue.pop_front();
 			if (!B.refetch.count (k) || !B.written.count (k) || jobs.count (Id (b, k))) continue;
+			bool theirs = false;
+			for (const char *layer : {"Surf", "Mask", "Class"})
+				if (!theirs && !Ours (B, Tile (B.dir, layer, k))) { // design dropin-addons: not fetched again over an add-on's file
+					Disown (B, "written", k, Tile (B.dir, layer, k));
+					theirs = true;
+				}
+			if (theirs) continue;
 			NewJob (b, k, now).low = true;
 			return true;
 		}
@@ -1082,9 +1131,7 @@ void TileStream::Impl::Hits ()
 	}
 	if (paths.empty()) return;
 	Queue ([paths] {
-		std::error_code ec;
-		auto t = fs::file_time_type::clock::now();
-		for (const std::string &p : paths) fs::last_write_time (p, t, ec);
+		for (const std::string &p : paths) TouchFile (p); // design dropin-addons: the stream's mark kept
 	});
 }
 
@@ -1149,6 +1196,11 @@ void TileStream::Impl::Build (Job J)
 		}
 		std::error_code ec;
 		bool theirs = !mine && fs::exists (Tile (B.dir, "Elev", J.key), ec); // someone else's Elev: never overwritten
+		if (mine && !Ours (B, Tile (B.dir, "Elev", J.key))) { // design dropin-addons: an add-on's Elev over ours
+			std::lock_guard<std::mutex> lk (mx);
+			Disown (B, "elev", J.key, Tile (B.dir, "Elev", J.key));
+			theirs = true;
+		}
 		bool ok = !theirs && !elv.empty() && Mods (B, J.key, elv) && Write (B, Tile (B.dir, "Elev", J.key), elv); // earth-sky: its Elev_mod first
 		if (ok) Settle (B, J.key); // elev-consistency: then the tiles under it
 		std::lock_guard<std::mutex> lk (mx);
@@ -1169,8 +1221,28 @@ void TileStream::Impl::Build (Job J)
 		Failed (J);
 		return;
 	}
-	bool ocean = false, ok = true;
+	bool ocean = false, ok = true, theirs = false;
 	uint64_t made = 0; // bytes written, for the size cap's total
+	{
+		bool over;
+		{
+			std::lock_guard<std::mutex> lk (mx);
+			over = B.written.count (J.key) > 0;
+		}
+		for (const char *layer : {"Surf", "Mask", "Class"})
+			if (over && !theirs && !Ours (B, Tile (B.dir, layer, J.key))) { // design dropin-addons: never written over an add-on's file
+				std::lock_guard<std::mutex> lk (mx);
+				Disown (B, "written", J.key, Tile (B.dir, layer, J.key));
+				theirs = true;
+			}
+	}
+	if (theirs) {
+		std::lock_guard<std::mutex> lk (mx);
+		jobs.erase (J.id);
+		kick = true;
+		cv.notify_all();
+		return;
+	}
 	if (sv.kind == "eox" && L >= 4) {
 		std::vector<bool> fill (st.size());
 		size_t nfill = 0;
@@ -1337,7 +1409,8 @@ bool TileStream::Impl::Write (const Body &B, const std::string &path, const std:
 	std::string layer = sl == std::string::npos ? fs::path (path).parent_path().string() : path.substr (0, sl); // Textures/<Body>/<Layer>
 	auto ends = [&layer] (const std::string &s) { return layer.size() >= s.size() && !layer.compare (layer.size() - s.size(), s.size(), s); };
 	bool heights = ends ("/Elev") || ends ("/Elev_mod"); // elev-consistency: TsElevGen
-	auto placed = [heights] {
+	auto placed = [heights, &path] {
+		MarkFile (path); // design dropin-addons: the stream's file
 		if (heights) tsElevGen.fetch_add (1, std::memory_order_release);
 		return true;
 	};
@@ -1406,6 +1479,7 @@ void TileStream::Impl::LoadIdx (Body &B)
 		B.none[k] = t;
 		return fresh;
 	});
+	B.marked.store (fs::exists (B.dir + "/TileStream/marked", ec), std::memory_order_release); // design dropin-addons
 	if (fs::exists (Idx (B, "elev"), ec)) load ("elev", false, 4, 21, [&] (uint64_t k, int64_t) { return B.elev.insert (k).second; });
 	else { // from before elev.idx: the Elev of every streamed tile is the stream's, once
 		B.elev = B.written;
@@ -1542,6 +1616,22 @@ void TileStream::Impl::Evict ()
 				if (total <= cap / 10 * 9) break;
 				std::error_code ec;
 				if (e.alone && fs::exists (Tile (B.dir, "Surf", e.k), ec)) continue; // its tile made again since the scan
+				std::string other; // design dropin-addons: an add-on's file over ours is left, its key leaves the index
+				const char *oidx = e.bldg ? "bldg" : "written";
+				if (e.bldg) { if (!Ours (B, BldgFile (B.dir, e.k))) other = BldgFile (B.dir, e.k); }
+				else for (const char *layer : {"Surf", "Mask", "Elev", "Class"}) {
+					if ((!e.elev && !strcmp (layer, "Elev")) || (e.alone && strcmp (layer, "Elev"))) continue;
+					if (other.empty() && !Ours (B, Tile (B.dir, layer, e.k))) {
+						other = Tile (B.dir, layer, e.k);
+						oidx = strcmp (layer, "Elev") ? "written" : "elev";
+					}
+				}
+				if (!other.empty()) {
+					total -= e.size; // no longer the stream's bytes
+					std::lock_guard<std::mutex> lk (mx);
+					Disown (B, oidx, e.k, other);
+					continue;
+				}
 				total -= e.size;
 				if (e.bldg) {
 					fs::remove (BldgFile (B.dir, e.k), ec);
@@ -1592,11 +1682,39 @@ void TileStream::Impl::Drop (Body &B, const std::vector<uint64_t> &gone, const s
 	if (e) Rewrite (B, "elev", B.elev);
 }
 
+// design dropin-addons, with mx held: someone else put a file over one of key k's (an add-on's zip): the key leaves the index, the file stays
+void TileStream::Impl::Disown (Body &B, const char *idx, uint64_t k, const std::string &file)
+{
+	bool had;
+	if (!strcmp (idx, "written")) {
+		had = B.written.erase (k) > 0;
+		if (B.refetch.erase (k)) Rewrite (B, "refetch", B.refetch);
+		if (had) Rewrite (B, "written", B.written);
+	} else if (!strcmp (idx, "elev")) {
+		if ((had = B.elev.erase (k) > 0)) Rewrite (B, "elev", B.elev);
+	} else if (!strcmp (idx, "mod")) {
+		if ((had = B.mod.erase (k) > 0)) Rewrite (B, "mod", B.mod);
+	} else if (!strcmp (idx, "bldg")) {
+		if ((had = B.bldg.erase (k) > 0)) Rewrite (B, "bldg", B.bldg);
+	} else return;
+	if (had) Log ("TileStream: " + file + " is not the stream's file now (an add-on's?): left alone");
+}
+
 // at startup, on a worker: index lines whose file is gone go, doubled or bad lines are written out, and the size total is counted
 void TileStream::Impl::Prune ()
 {
 	for (int bi = 0; bi < (int)bodies.size(); bi++) {
 		Body &B = *bodies[bi];
+		if (!ro && !B.marked.load()) { // design dropin-addons: once, the mark on the files the indexes list
+			int m = MarkAll (B.dir);
+			if (!m) {
+				B.marked.store (true, std::memory_order_release);
+				Log ("TileStream: the stream's files in " + B.dir + " carry its mark; an add-on's file put over one is left alone");
+			} else if (!markLogged) {
+				markLogged = true;
+				Log ("TileStream: " + B.dir + (m == -1 ? " keeps no sub-second file times" : ": TileStream/marked can't be written") + ", an add-on's tile over a streamed one is not told apart");
+			}
+		}
 		std::vector<std::pair<uint64_t, bool>> keys;
 		std::vector<uint64_t> ekeys, bkeys, gone, egone, bgone;
 		{
@@ -1642,6 +1760,7 @@ void TileStream::Impl::Prune ()
 			std::error_code ec;
 			if (B.written.count (k) && !jobs.count (Id (bi, k)) && !fs::exists (Tile (B.dir, "Surf", k), ec))
 				for (const char *layer : {"Surf", "Mask", "Class"}) {
+					if (!Ours (B, Tile (B.dir, layer, k))) continue; // design dropin-addons: an add-on's file stays
 					fs::remove (Tile (B.dir, layer, k), ec);
 					fs::remove (Tile (B.dir, layer, k) + ".part", ec);
 				}
@@ -1675,6 +1794,7 @@ void TileStream::Impl::LoadArchives (Body &B)
 	std::error_code ec;
 	auto rm = [&] (const char *layer, uint64_t k) {
 		std::string f = Tile (B.dir, layer, k);
+		if (!Ours (B, f)) return; // design dropin-addons: an add-on's file stays (its key leaves the index below)
 		fs::remove (f, ec);
 		fs::remove (f + ".part", ec);
 	};
@@ -2058,7 +2178,7 @@ void TileStream::Impl::Clouds (Body &B)
 		for (auto it = B.cloud.begin(); it != B.cloud.end(); ) { // the installed archive's clouds go first
 			std::error_code ec;
 			if (B.Arch (A_CLOUD, *it)) {
-				fs::remove (Tile (B.dir, "Cloud", *it), ec);
+				if (Ours (B, Tile (B.dir, "Cloud", *it))) fs::remove (Tile (B.dir, "Cloud", *it), ec); // design dropin-addons
 				it = B.cloud.erase (it);
 				held = true;
 			} else ++it;
@@ -2286,6 +2406,11 @@ bool TileStream::Impl::ModsAt (Body &B, uint64_t k, const std::string &elv, bool
 		std::lock_guard<std::mutex> lk (mx);
 		ours = B.mod.count (k) > 0;
 	}
+	if (ours && !Ours (B, path)) { // design dropin-addons: an add-on's Elev_mod over ours
+		std::lock_guard<std::mutex> lk (mx);
+		Disown (B, "mod", k, path);
+		ours = false;
+	}
 	if (B.addonMod.count (k) || (!ours && fs::exists (path, ec))) { // someone else's Elev_mod: left alone
 		SetInh (B, k, 0, false);
 		return true;
@@ -2456,6 +2581,11 @@ void TileStream::Impl::AddonMods (Body &B)
 		std::string name = p.parent_path().parent_path().filename().string() + ' ' + p.parent_path().filename().string() + ' ' + p.stem().string();
 		if (!ParseInts (name, v, 3) || !KeyIn (v[0], v[1], v[2], 4)) continue;
 		uint64_t k = Key ((int)v[0], (int)v[1], (int)v[2]);
+		if (mod.count (k) && !Ours (B, p.string())) { // design dropin-addons: an add-on's Elev_mod over ours
+			std::lock_guard<std::mutex> lk (mx);
+			Disown (B, "mod", k, p.string());
+			mod.erase (k);
+		}
 		if (!mod.count (k)) B.addonMod.insert (k);
 	}
 	for (uint64_t a : B.addonMod) {
@@ -2583,6 +2713,29 @@ std::vector<uint64_t> ElevIdx (const std::string &dir)
 	return ReadIdx (dir, fs::exists (dir + "/TileStream/elev.idx", ec) ? "elev" : "written");
 }
 
+// design dropin-addons: the mark on every file the indexes list, then TileStream/marked
+int MarkAll (const std::string &dir)
+{
+	std::string ts = dir + "/TileStream/", probe = ts + "tmp/mark.probe";
+	std::error_code ec;
+	fs::create_directories (ts + "tmp", ec);
+	std::ofstream (probe, std::ios::trunc) << '\n';
+	MarkFile (probe);
+	struct stat st;
+	bool ok = !stat (probe.c_str(), &st) && st.st_mtim.tv_nsec == OwnNs;
+	fs::remove (probe, ec);
+	if (!ok) return -1;
+	for (uint64_t k : ReadIdx (dir, "written"))
+		for (const char *layer : {"Surf", "Mask", "Class"}) MarkFile (Tile (dir, layer, k));
+	for (uint64_t k : ElevIdx (dir)) MarkFile (Tile (dir, "Elev", k));
+	for (const char *idx : {"bldg", "mod", "cloud"})
+		for (uint64_t k : ReadIdx (dir, idx)) MarkFile (StreamFile (dir, idx, k));
+	std::ofstream f (ts + "marked", std::ios::trunc);
+	f << "the stream's files carry its mark (design dropin-addons)\n";
+	f.close();
+	return f.fail() ? -2 : 0;
+}
+
 // to <file>.new, then renamed over it
 bool WriteIdx (const std::string &file, const std::vector<uint64_t> &v)
 {
@@ -2685,6 +2838,8 @@ size_t TileStream::Clear (const std::string &bodyDir, bool keepBase, bool *refus
 	}
 	std::vector<uint64_t> kept, w = ReadIdx (dir, "written"), el = ElevIdx (dir), elKept;
 	size_t n = 0;
+	bool marked = fs::exists (ts + "marked", ec); // design dropin-addons: an add-on's file over ours stays, its line goes
+	auto rmOurs = [marked] (const std::string &p) { return OwnFile (p, marked) && RemoveFile (p); };
 	bool had = fs::exists (ts + "written.idx", ec);
 	for (uint64_t k : w) {
 		if (keepBase && KL (k) <= 8) {
@@ -2693,13 +2848,13 @@ size_t TileStream::Clear (const std::string &bodyDir, bool keepBase, bool *refus
 		}
 		bool any = false;
 		for (const char *layer : {"Surf", "Mask", "Elev", "Class"})
-			if (strcmp (layer, "Elev") || std::binary_search (el.begin(), el.end(), k)) any |= RemoveFile (Tile (dir, layer, k));
+			if (strcmp (layer, "Elev") || std::binary_search (el.begin(), el.end(), k)) any |= rmOurs (Tile (dir, layer, k));
 		if (any) n++;
 	}
 	if (had) WriteIdx (ts + "written.idx", kept);
 	for (uint64_t k : el) { // Elev this stream wrote: with its tile above, alone here
 		if (keepBase && KL (k) <= 8) elKept.push_back (k);
-		else if (!std::binary_search (w.begin(), w.end(), k) && RemoveFile (Tile (dir, "Elev", k))) n++;
+		else if (!std::binary_search (w.begin(), w.end(), k) && rmOurs (Tile (dir, "Elev", k))) n++;
 	}
 	WriteIdx (ts + "elev.idx", elKept);
 	for (const char *idx : {"bldg", "mod", "cloud"}) { // buildings, Elev_mod and clouds this stream wrote
@@ -2707,7 +2862,7 @@ size_t TileStream::Clear (const std::string &bodyDir, bool keepBase, bool *refus
 		std::vector<uint64_t> keep;
 		for (uint64_t k : ReadIdx (dir, idx)) {
 			if (keepBase && KL (k) <= 8 && std::string (idx) != "bldg") { keep.push_back (k); continue; }
-			if (RemoveFile (StreamFile (dir, idx, k))) n++;
+			if (rmOurs (StreamFile (dir, idx, k))) n++;
 		}
 		WriteIdx (ts + idx + ".idx", keep);
 	}

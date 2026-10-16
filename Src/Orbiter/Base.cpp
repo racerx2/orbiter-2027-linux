@@ -208,15 +208,22 @@ void Base::CreateStaticDeviceObjects ()
 	ngenericmesh = 0;
 	ngenerictex  = 0;
 	ifstream ifs (oapiResolvePath (g_pOrbiter->ConfigPath ("Base")));
-	if (ifs) {
+	std::vector<std::string> parts = ConfigFragments (g_pOrbiter->ConfigPath ("Base")); // not upstream: drop-in parts' textures after Base.cfg's (design dropin-addons)
+	for (size_t part = 0; part <= parts.size(); part++) { // not upstream: as above; 0 is Base.cfg
+		ifstream pfs; // not upstream: as above
+		if (part) pfs.open (parts[part-1]); // not upstream: as above
+		std::istream &ifs2 = part ? (std::istream&)pfs : (std::istream&)ifs; // not upstream: as above
+		if (!ifs2) continue; // not upstream: as above
 		char cbuf[256], **tmp_list;
 		LONGLONG *tmp_id;
 		// load list of generic texture names
-		if (FindLine (ifs, "begin_textures")) {
+		if (FindLine (ifs2, "begin_textures")) { // not upstream: ifs2
 			for (;;) {
-				if (!ifs.getline (cbuf, 256) || !strncasecmp (cbuf, "end_textures", 12)) break;
+				if (!ifs2.getline (cbuf, 256) || !strncasecmp (cbuf, "end_textures", 12)) break; // not upstream: ifs2
 				char *str = trim_string (cbuf);
-				if (*str) {
+				bool known = false; // not upstream: a name listed already (Base.cfg or another part) is not added again
+				for (int i = 0; i < ngenerictex && *str; i++) known |= !strcasecmp (generic_tex_name[i], str); // not upstream: as above
+				if (*str && !known) { // not upstream: as above
 					tmp_list = new char*[ngenerictex+1]; TRACENEW
 					tmp_id   = new LONGLONG[ngenerictex+1]; TRACENEW
 					if (ngenerictex) {
@@ -237,12 +244,12 @@ void Base::CreateStaticDeviceObjects ()
 				}
 			}
 		}
-		// load generic textures
-		if (ngenerictex) {
-			generic_dtex = new SURFHANDLE[ngenerictex]; TRACENEW
-			generic_ntex = new SURFHANDLE[ngenerictex]; TRACENEW
-			// the actual load is performed by InitStaticDeviceObjects
-		}
+	} // not upstream: the parts' loop
+	// load generic textures
+	if (ngenerictex) {
+		generic_dtex = new SURFHANDLE[ngenerictex]; TRACENEW
+		generic_ntex = new SURFHANDLE[ngenerictex]; TRACENEW
+		// the actual load is performed by InitStaticDeviceObjects
 	}
 
 	oapi::GraphicsClient *gclient = g_pOrbiter->GetGraphicsClient();
