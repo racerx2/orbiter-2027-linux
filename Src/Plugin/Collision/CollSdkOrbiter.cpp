@@ -18,6 +18,7 @@
 #include "CollisionAPI.h"
 #include "CollSdkOrbiter.h"
 #include "CollPlatform.h"
+#include "DentMath.h"
 
 static_assert (sizeof (NTVERTEX) == 32, "NTVERTEX must keep the CollVtx layout");
 #if defined (OAPI_VESSEL_CONTROL_LOCK) && !defined (_WIN32)
@@ -30,6 +31,11 @@ extern MESHHANDLE oapiCopyMesh (MESHHANDLE hMesh, DWORD dropFlag) __attribute__ 
 #if defined (OAPI_BASE_CLEARZONES) && !defined (_WIN32)
 extern DWORD oapiGetBaseClearZones (OBJHANDLE hBase, BASECLEARZONE *zone, DWORD nmax) __attribute__ ((weak)); // not upstream: weak, a host without it has no clear zones
 #define COLL_BASE_CLEARZONES 1
+#endif
+#if defined (OAPI_BASE_DENT) && !defined (_WIN32)
+extern bool oapiBaseSetDent (OBJHANDLE hBase, const BASEDENTSPEC *d) __attribute__ ((weak)); // not upstream: weak, a host without it draws no building damage
+extern void oapiBaseClearDents (OBJHANDLE hBase, DWORD obj) __attribute__ ((weak));
+#define COLL_BASE_DENT 1
 #endif
 #if defined (OAPI_MESHGROUP_FLAGS) && !defined (_WIN32)
 extern int oapiGetMeshGroupFlags (DEVMESHHANDLE hMesh, DWORD grpidx, DWORD *usrFlag) __attribute__ ((weak)); // not upstream: weak, a host without it leaves hidden groups solid
@@ -281,6 +287,16 @@ protected:
 		vs.status = 0;
 		Ves (v)->DefSetStateEx (&vs);
 	}
+	void DoSetLanded (CollH v, const CollLandWrite &s) override // Vesselstatus.cpp: status 1 with arot.x <= 4 takes arot as R_planet^T R_vessel and vrot.x as the CG height over the terrain
+	{
+		VESSELSTATUS2 vs; memset (&vs, 0, sizeof vs);
+		vs.version = 2; vs.flag = 0;
+		vs.rbody = H (s.rbody); vs.base = nullptr; vs.port = -1;
+		vs.status = 1;
+		vs.surf_lng = s.lng; vs.surf_lat = s.lat; vs.surf_hdg = s.hdg;
+		vs.arot = O (s.arot); vs.vrot = _V (s.alt, 0, 0);
+		Ves (v)->DefSetStateEx (&vs);
+	}
 	void DoSetAttitude (CollH v, const Matrix &R) override { Ves (v)->SetRotationMatrix (O (R)); }
 	void DoSetSpin (CollH v, const Vector &w) override { Ves (v)->SetAngularVel (O (w)); }
 	void DoAddForce (CollH v, const Vector &F, const Vector &r) override { Ves (v)->AddForce (O (F), O (r)); }
@@ -520,6 +536,19 @@ public: // bldg: streamed 3D buildings, only with a core that has them (as COLL_
 		if (t.handle) oapiTileStreamBldgFree ((TSBLDGMESH *)t.handle);
 		t = CollBldgTile ();
 	}
+#endif
+#ifdef COLL_BASE_DENT
+	bool BaseDentOn () override { return oapiBaseSetDent && oapiBaseClearDents; }
+	bool BaseSetDent (CollH base, uint32_t obj, uint32_t k, const DentRecord &r) override
+	{
+		if (!oapiBaseSetDent || !base) return false;
+		BASEDENTSPEC d; memset (&d, 0, sizeof d);
+		d.size = sizeof d; d.obj = obj; d.k = k; d.mode = r.p.mode; d.seed = r.p.seed; d.bits = r.p.bits; d.flags = r.flags;
+		d.c = O (r.p.c); d.n = O (r.p.n); d.t = O (r.p.t);
+		d.R = r.p.R; d.h = r.p.h; d.T = r.p.T; d.P = r.p.P; d.hd = r.p.hd; d.hz = r.p.hz;
+		return oapiBaseSetDent (H (base), &d);
+	}
+	void BaseClearDents (CollH base, uint32_t obj) override { if (oapiBaseClearDents && base) oapiBaseClearDents (H (base), obj == ~0u ? (DWORD)-1 : (DWORD)obj); }
 #endif
 #ifdef COLL_BASE_CLEARZONES
 	void BaseClearZones (CollH base, std::vector<CollClearZone> &out) override

@@ -79,7 +79,22 @@ struct PostPlume::Plasma {
 
 struct PostPlume::GroundPuff { VECTOR3 pos, vel; double size, t0, life; float col[3]; uint32_t seed; };
 
-struct PostPlume::BaseSurf { MATRIX3 rp, rb; VECTOR3 p; PlumeMath::SurfaceGrid g; double tNext = 0.0; }; // planet-local to the base's frame through rp, then rb, from its origin p
+struct PostPlume::BaseSurf { MATRIX3 rp, rb; VECTOR3 p; PlumeMath::SurfaceGrid g; double tNext = 0.0; DWORD serial = 0; }; // planet-local to the base's frame through rp, then rb, from its origin p; serial: the structures' (coll-bounded 5.7)
+
+static DWORD StructSerial (oapi::GraphicsClient *gc, OBJHANDLE hBase) // not upstream (coll-bounded 5.7): changes when the core dents a structure
+{
+	DWORD s = 0;
+#ifdef OAPI_BASE_DENT
+	MESHHANDLE *sbs = nullptr, *sas = nullptr;
+	DWORD nbs = 0, nas = 0;
+	gc->GetBaseStructures(hBase, &sbs, &nbs, &sas, &nas);
+	for (DWORD i = 0; i < nbs; i++) s += oapiBaseStructureSerial(hBase, i, false);
+	for (DWORD i = 0; i < nas; i++) s += oapiBaseStructureSerial(hBase, i, true);
+#else
+	(void)gc; (void)hBase;
+#endif
+	return s;
+}
 
 static uint32_t Hash (uint32_t x) { x ^= x >> 16; x *= 0x7feb352dU; x ^= x >> 15; x *= 0x846ca68bU; x ^= x >> 16; return x; } // integer finaliser: lowbias32 (Wellons, hash-prospector, public domain)
 static double Rand01 (uint32_t x) { return double(Hash(x) >> 8) / 16777216.0; }
@@ -563,10 +578,12 @@ void PostPlume::GatherPlumes ()
 const PostPlume::BaseSurf &PostPlume::SurfOf (OBJHANDLE hP, OBJHANDLE hBase)
 {
 	double now = oapiGetSysTime();
+	DWORD ser = StructSerial(gc, hBase);
 	auto it = pads->find(hBase);
-	if (it != pads->end() && (it->second.g.Count() || now < it->second.tNext)) return it->second;
+	if (it != pads->end() && it->second.serial == ser && (it->second.g.Count() || now < it->second.tNext)) return it->second;
 	BaseSurf &b = (*pads)[hBase];
 	b = BaseSurf();
+	b.serial = ser;
 	b.tNext = now + 5.0; // none yet: asked again later, the base's meshes may come with its visual
 	VECTOR3 gp, gb;
 	oapiGetRotationMatrix(hP, &b.rp);

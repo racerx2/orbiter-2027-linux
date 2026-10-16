@@ -70,6 +70,24 @@ if (have LESS 3)
 	endif ()
 endif ()
 
+# v3 -> v4: the triangle test budget and the debris time per frame (design coll-bounded 3, 6.2), each appended with its comment when no key line has it
+if (have LESS 4)
+	string(TOUPPER "${text}" utext)
+	foreach (kv "COLLISIONFRAMETESTS|; Triangle pair tests per frame for the contact search; past it, contacts that barely move reuse their last result. 0 = no limit\nCollisionFrameTests = 25000\n"
+		"COLLISIONDEBRISMS|; Time per frame spent making debris vessels after a breakup [ms]; at least one is made each frame\nCollisionDebrisMs = 6\n")
+		string(FIND "${kv}" "|" bar)
+		string(SUBSTRING "${kv}" 0 ${bar} key)
+		math(EXPR from "${bar} + 1")
+		string(SUBSTRING "${kv}" ${from} -1 lines)
+		if (NOT utext MATCHES "(^|\n)[ \t]*${key}[ \t]*=")
+			if (NOT text STREQUAL "" AND NOT text MATCHES "\n$")
+				string(APPEND text "\n")
+			endif ()
+			string(APPEND text "${lines}")
+		endif ()
+	endforeach ()
+endif ()
+
 # the version line: replaced in place if present, else inserted after the first line when that is a comment, else at the top
 string(TOUPPER "${text}" utext)
 string(REGEX MATCH "(^|\n)([ \t]*COLLISIONCFGVERSION[ \t]*=)[^\r\n]*" m "${utext}")

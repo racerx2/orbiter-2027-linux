@@ -13,6 +13,8 @@
 #include "Util.h"
 #include "GraphicsAPI.h"
 #include <fstream>
+#include <algorithm> // not upstream
+#include <cstring> // not upstream
 
 using namespace std;
 
@@ -492,6 +494,7 @@ void Base::ScanObjectMeshes () const
 	if (nobjmsh_us) { objmsh_us = new Mesh*[nobjmsh_us]; nobjmsh_us = 0; TRACENEW }
 	if (nobjmsh_sh) { objmsh_sh = new Mesh*[nobjmsh_sh]; sh_elev = new double[nobjmsh_sh]; nobjmsh_sh = 0; TRACENEW }
 
+	dentRange.clear ();
 	for (i = 0; i < nobj; i++) {
 		BaseObject *bo = obj[i];
 		spec = bo->GetSpecs();
@@ -505,14 +508,19 @@ void Base::ScanObjectMeshes () const
 				for (k = 0; k < ngrp; k++) {
 					if (grp[k].TexIdx == texidx && (grp[k].UsrFlag & 0x1) != groundsh) break;
 				}
+				dentRange.push_back ({ i, !undersh, (DWORD)-1, k, grp[k].nVtx, nvtx, grp[k].nIdx, nidx }); // not upstream: the generic mesh, its index set below
 				bo->ExportGroup (j, grp[k].Vtx+grp[k].nVtx, grp[k].Idx+grp[k].nIdx, grp[k].nVtx);
 				grp[k].nVtx += nvtx;
 				grp[k].nIdx += nidx;
 			}
 		}
 		if (spec & OBJSPEC_EXPORTMESH) {
-			if (spec & OBJSPEC_UNDERSHADOW) objmsh_us[nobjmsh_us++] = bo->ExportMesh();
-			else                            objmsh_os[nobjmsh_os++] = bo->ExportMesh();
+			Mesh *em = bo->ExportMesh();
+			bool after = !(spec & OBJSPEC_UNDERSHADOW);
+			DWORD mi = after ? nobjmsh_os : nobjmsh_us;
+			for (j = 0; em && j < em->nGroup(); j++) dentRange.push_back ({ i, after, mi, j, 0, em->GetGroup(j)->nVtx, 0, em->GetGroup(j)->nIdx }); // not upstream: its own mesh
+			if (spec & OBJSPEC_UNDERSHADOW) objmsh_us[nobjmsh_us++] = em;
+			else                            objmsh_os[nobjmsh_os++] = em;
 		}
 		if (bshadow && (spec & OBJSPEC_EXPORTSHADOWMESH)) {
 			Mesh *shmsh = bo->ExportShadowMesh (sh_elev[nobjmsh_sh]);
@@ -541,11 +549,120 @@ void Base::ScanObjectMeshes () const
 			}
 			delete []grp;
 			grp = NULL;
+			DWORD mi = (i==0 ? nobjmsh_us : nobjmsh_os);
+			for (DentRange &r : dentRange) if (r.mesh == (DWORD)-1 && r.after == (i != 0)) r.mesh = mi; // not upstream
 			if (i==0) objmsh_us[nobjmsh_us++] = mesh;
 			else      objmsh_os[nobjmsh_os++] = mesh;
 		}
 	}
 	objmsh_valid = true;
+	serial_os.assign (nobjmsh_os, 0); serial_us.assign (nobjmsh_us, 0); // not upstream (coll-bounded 5.7)
+	for (auto &d : dentObj) d.second.dirty = true; // records set before the structures existed
+	dentDirty = !dentObj.empty ();
+}
+
+// not upstream (coll-bounded 5.7): building dents and holes, made in the core's update from each object's rest with the add-on's DentMath
+
+bool Base::SetDent (const BASEDENTSPEC &d)
+{
+	if (d.size < sizeof (BASEDENTSPEC) || d.obj >= nobj) return false;
+	DentObj &o = dentObj[d.obj];
+	if (d.k > o.rec.size ()) return false;
+	if (d.k == o.rec.size ()) o.rec.push_back (d);
+	else if (!memcmp (&o.rec[d.k], &d, sizeof (BASEDENTSPEC))) return true;
+	else o.rec[d.k] = d;
+	o.dirty = dentDirty = true;
+	return true;
+}
+
+void Base::ClearDents (DWORD o)
+{
+	for (auto &d : dentObj)
+		if (o == (DWORD)-1 || d.first == o) { d.second.rec.clear (); d.second.dirty = dentDirty = true; }
+}
+
+DWORD Base::StructureSerial (DWORD mesh, bool after) const
+{
+	const std::vector<DWORD> &s = after ? serial_os : serial_us;
+	return mesh < s.size () ? s[mesh] : 0;
+}
+
+void Base::ApplyDents ()
+{
+	if (!dentDirty || !objmsh_valid) return;
+	dentDirty = false;
+	for (auto it = dentObj.begin (); it != dentObj.end (); ) {
+		if (it->second.dirty) ApplyDent (it->first, it->second);
+		if (it->second.rec.empty ()) it = dentObj.erase (it); // restored: nothing kept
+		else ++it;
+	}
+}
+
+void Base::ApplyDent (DWORD o, DentObj &d)
+{
+	d.dirty = false;
+	std::vector<DentRange *> rg;
+	for (DentRange &r : dentRange) if (r.obj == o && r.after) rg.push_back (&r); // pads, runways and aprons under the shadows stay
+	if (rg.empty ()) return;
+	auto meshOf = [&] (const DentRange &r) -> Mesh * {
+		Mesh **l = r.after ? objmsh_os : objmsh_us;
+		DWORD n = r.after ? nobjmsh_os : nobjmsh_us;
+		return r.mesh < n ? l[r.mesh] : 0;
+	};
+	if (!d.haveRest) { // the first damage: the object's groups as the structures hold them now
+		d.rest.clear ();
+		for (DentRange *r : rg) {
+			Mesh *m = meshOf (*r);
+			GroupSpec *gs = m ? m->GetGroup (r->grp) : 0;
+			BaseDentGroup g;
+			if (gs && r->v0 + r->nv <= gs->nVtx && r->i0 + r->ni <= gs->nIdx) {
+				g.vtx.resize (r->nv);
+				memcpy (g.vtx.data (), gs->Vtx + r->v0, r->nv * sizeof (NTVERTEX));
+				for (DWORD k = 0; k < r->ni; k++) g.idx.push_back ((uint16_t)(gs->Idx[r->i0 + k] - r->v0));
+				g.room = gs->nVtx < 65535 ? 65535 - gs->nVtx : 0;
+			}
+			d.rest.push_back (g);
+		}
+		d.haveRest = true;
+	}
+	std::vector<BaseDentGroup> out;
+	if (d.rec.empty ()) out = d.rest;
+	else {
+		std::vector<BaseDentRec> rec;
+		for (const BASEDENTSPEC &s : d.rec)
+			rec.push_back ({ s.mode, s.seed, s.bits, s.flags, { s.c.x, s.c.y, s.c.z }, { s.n.x, s.n.y, s.n.z }, { s.t.x, s.t.y, s.t.z }, s.R, s.h, s.T, s.P, s.hd, s.hz });
+		BaseDentApply (d.rest, rec, out);
+	}
+	std::vector<Mesh *> touched;
+	for (size_t k = 0; k < rg.size () && k < out.size (); k++) {
+		DentRange &r = *rg[k];
+		Mesh *m = meshOf (r);
+		GroupSpec *gs = m ? m->GetGroup (r.grp) : 0;
+		if (!gs || r.v0 + r.nv > gs->nVtx || r.i0 + r.ni > gs->nIdx) continue;
+		const BaseDentGroup &g = out[k];
+		DWORD nv = (DWORD)g.vtx.size (), ni = (DWORD)g.idx.size ();
+		DWORD nV = gs->nVtx - r.nv + nv, nI = gs->nIdx - r.ni + ni;
+		if (nV > 65535) continue; // WORD indices
+		NTVERTEX *V = new NTVERTEX[nV ? nV : 1]; TRACENEW
+		WORD *I = new WORD[nI ? nI : 1]; TRACENEW
+		memcpy (V, gs->Vtx, r.v0 * sizeof (NTVERTEX));
+		if (nv) memcpy (V + r.v0, g.vtx.data (), nv * sizeof (NTVERTEX));
+		memcpy (V + r.v0 + nv, gs->Vtx + r.v0 + r.nv, (gs->nVtx - r.v0 - r.nv) * sizeof (NTVERTEX));
+		long dv = (long)nv - (long)r.nv;
+		memcpy (I, gs->Idx, r.i0 * sizeof (WORD));
+		for (DWORD q = 0; q < ni; q++) I[r.i0 + q] = (WORD)(g.idx[q] + r.v0);
+		for (DWORD q = r.i0 + r.ni; q < gs->nIdx; q++) I[r.i0 + ni + (q - r.i0 - r.ni)] = (WORD)((long)gs->Idx[q] + (gs->Idx[q] >= r.v0 + r.nv ? dv : 0));
+		delete []gs->Vtx; delete []gs->Idx;
+		gs->Vtx = V; gs->Idx = I; gs->nVtx = nV; gs->nIdx = nI;
+		long di = (long)ni - (long)r.ni;
+		for (DentRange &x : dentRange) // the later slices of this group move
+			if (&x != &r && x.after == r.after && x.mesh == r.mesh && x.grp == r.grp && x.v0 >= r.v0 + r.nv) { x.v0 = (DWORD)((long)x.v0 + dv); x.i0 = (DWORD)((long)x.i0 + di); }
+		r.nv = nv; r.ni = ni;
+		std::vector<DWORD> &s = r.after ? serial_os : serial_us;
+		if (r.mesh < s.size ()) s[r.mesh]++;
+		if (std::find (touched.begin (), touched.end (), m) == touched.end ()) touched.push_back (m);
+	}
+	for (Mesh *m : touched) m->Setup ();
 }
 
 void Base::Update (bool force)
@@ -558,6 +675,8 @@ void Base::Update (bool force)
 
 	s1->pos.Set (mul (cbody->s1->R, rpos) + cbody->s1->pos);
 	s1->vel.Set (mul (cbody->s1->R, rotvel) + cbody->s1->vel);
+
+	ApplyDents (); // not upstream (coll-bounded 5.7)
 
 	// periodically update some secondary parameters
 	if (td.SimT1 > sundir_updt || force) {

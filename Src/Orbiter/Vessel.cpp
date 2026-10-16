@@ -3747,7 +3747,10 @@ void Vessel::SetCtrlLock (bool lock) // not upstream
 {
 	if (lock == bCtrlLock) return;
 	bCtrlLock = lock;
-	if (lock) for (int i = 0; i < 7; i++) if (navmode & (1 << i)) ClrNavMode (i+1); // the nav modes go with the controls
+	if (!lock) return;
+	for (int i = 0; i < 7; i++) if (navmode & (1 << i)) ClrNavMode (i+1); // the nav modes go with the controls
+	if (g_pOrbiter && g_camera && this == g_focusobj && g_camera->IsInternal ()) g_pOrbiter->SetView (this, 1); // out of the cockpit (design wreck-view 2)
+	if (g_pane) g_pane->VesselLocked (this); // its external MFDs go off
 }
 
 int Vessel::ConsumeDirectKey (char *buffer)
@@ -5619,7 +5622,7 @@ void Vessel::RegisterVisual (VISHANDLE vis)
 
 	if (modIntf.v && modIntf.v->Version() >= 1)
 		((VESSEL2*)modIntf.v)->clbkVisualCreated (vis, 1);
-	g_pane->RedrawCockpitAreas (PANEL_REDRAW_INIT);
+	if (this == g_focusobj) g_pane->RedrawCockpitAreas (PANEL_REDRAW_INIT); // not upstream: the cockpit areas live on the focus vessel's visual only (design coll-bounded 6.5)
 }
 
 void Vessel::UnregisterVisual ()

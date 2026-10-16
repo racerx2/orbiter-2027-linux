@@ -154,6 +154,7 @@ struct CollBaseObj {
 	uint32_t obj;                      // object index in Base::obj (= BaseGeomObj::obj)
 	uint32_t geomVersion = 0, topo = 0; // BaseGeomObj::version and ::topo followed, stored by CollBaseShape::Follow (SetObject leaves them)
 	uint16_t mat = 0;                  // resolved material id (5.4 step 4)
+	uint32_t ver = 0;                  // coll-bounded 5.4: bumps on each Build of this object, its part version
 	CollGeom geom;                     // welded double copy of BaseGeomObj::cur plus BVH; CollTri.otri = triangle index in BaseGeom group
 };
 // collider of one surface base, base frame (5.3); i = object slot in BaseGeom order
@@ -164,6 +165,7 @@ public:
 	void Follow (uint32_t i, uint32_t geomVersion, uint32_t topo); // SyncBase stores version and topo after SetObject; 5.4 step 1 compares obj, version and topo
 	void Finish (const Vector &rpos, const Matrix &rrot, double rPlanet); // rmax, htop; version++ if any Build ran
 	uint32_t nObj () const; const CollBaseObj &Obj (uint32_t i) const;
+	int      SlotOf (uint32_t obj) const;              // slot of core object index obj, -1 if none
 	bool     RenderFeature (uint32_t i, uint32_t tri, uint32_t &obj, uint32_t &grp, uint32_t &otri) const;
 	uint16_t Material (uint32_t i) const;              // resolved at sync (5.4), never 0 after a sync
 	double   rmax = 0, htop = 0;                       // farthest collider point from the base origin; highest point above the planet radius [m]

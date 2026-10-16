@@ -498,3 +498,83 @@ TEST_CASE ("etsep: an undock without a push gets a joint scope at the dock ports
 		REQUIRE (con == 0);
 	}
 }
+
+namespace {
+// coll-bounded 4: a 2 m box on a fixed 2 m pad (or a free one), both at the planet's surface radius plus 10 m
+struct RestScene {
+	World W;
+	CollFakeSdk::Body *earth = nullptr;
+	CollFakeSdk::Ves *pad = nullptr, *box = nullptr;
+	RestScene (bool fixedPad, const Vector &v, bool apply)
+	{
+		W.sdk.applyWrites = apply;
+		W.sdk.bodies.push_back (CollFakeSdk::Body ());
+		earth = &W.sdk.bodies.back ();
+		pad = W.Add ("Pad", Vector (0, 6371010, 0), Vector ());
+		box = W.Add ("Box", Vector (0, 6371012.001, 0), v);
+		pad->rd.gref = pad->rd.sref = earth; box->rd.gref = box->rd.sref = earth;
+		if (fixedPad) { pad->rd.status = 1; W.geom.fixed = { 1 }; }
+	}
+	int Landed () const { int n = 0; for (const CollFakeSdk::Wr &w : W.sdk.wr) if (w.op == 'L') n++; return n; }
+};
+}
+
+TEST_CASE ("coll-bounded 4: a box resting on a fixed pad lands after COLL_T_REST with the planned pose", "[CollWorldA]")
+{
+	RestScene S (true, Vector (), true);
+	const Vector x0 = S.box->rd.x;
+	int at = -1;
+	for (int f = 0; f < 240 && at < 0; f++) { S.W.Frame (1.0/60); if (S.Landed ()) at = f; }
+	CAPTURE (at);
+	REQUIRE (at > 0);
+	CHECK (at/60.0 >= COLL_T_REST - 1e-9);
+	CHECK (at/60.0 < COLL_T_REST + 0.1);
+	CHECK (S.box->rd.status == 1);
+	CHECK ((S.box->rd.x - x0).length () < 1e-6);
+	CHECK (S.W.sdk.LogCount ("Collision rest: 'Box' landed on 'Pad'") == 1);
+	for (int f = 0; f < 120; f++) S.W.Frame (1.0/60);
+	CHECK (S.Landed () == 1);                                     // the pose held: no write back, no re-seat
+	CHECK (S.W.sdk.LogCount ("off the planned pose") == 0);
+	CHECK (S.W.ps->Rests () == 1);
+	std::vector<std::pair<std::string, double>> l;
+	S.W.ps->RestLines (l);
+	REQUIRE (l.size () == 1);
+	CHECK (l[0].first == "Box");
+	CHECK (std::fabs (l[0].second - 6371012.001) < 1e-6);
+	S.W.sdk.bodies.back ().elev = 0.5;                            // finer terrain: Orbiter keeps the height above it, the add-on the radius
+	S.box->rd.x = S.box->rd.x + Vector (0, 0.5, 0);
+	for (int f = 0; f < 70; f++) S.W.Frame (1.0/60);
+	CHECK (S.Landed () == 2);
+	CHECK (std::fabs (S.box->rd.x.y - 6371012.001) < 1e-6);
+	CHECK (S.W.sdk.misuse == 0);
+}
+
+TEST_CASE ("coll-bounded 4: a box sliding at 2 cm/s or resting on a free body does not land", "[CollWorldA]")
+{
+	{
+		RestScene S (true, Vector (0.02, 0, 0), false);
+		for (int f = 0; f < 300; f++) S.W.Frame (1.0/60);
+		CHECK (S.Landed () == 0);
+	}
+	{
+		RestScene S (false, Vector (), false);
+		for (int f = 0; f < 300; f++) S.W.Frame (1.0/60);
+		CHECK (S.Landed () == 0);
+		CHECK (S.W.sdk.LogCount ("Collision rest:") == 0);
+	}
+}
+
+TEST_CASE ("coll-bounded 4: a takeoff right after landing allows no rest for 30 s", "[CollWorldA]")
+{
+	RestScene S (true, Vector (), true);
+	int f = 0;
+	for (; f < 240 && !S.Landed (); f++) S.W.Frame (1.0/60);
+	REQUIRE (S.Landed () == 1);
+	S.box->rd.status = 0;                                         // the module's force: Orbiter switched it to free flight
+	S.W.Frame (1.0/60);
+	CHECK (S.W.sdk.LogCount ("took off right after landing") == 1);
+	for (int k = 0; k < 600; k++) S.W.Frame (1.0/60);              // 10 s resting again
+	CHECK (S.Landed () == 1);
+	for (int k = 0; k < 1500 && S.Landed () == 1; k++) S.W.Frame (1.0/60); // past the 30 s
+	CHECK (S.Landed () == 2);
+}

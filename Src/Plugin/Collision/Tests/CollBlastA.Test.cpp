@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <set>
 #include <tuple>
@@ -246,4 +247,78 @@ TEST_CASE ("custom-fix2 B7: Reset gives the cached asset's first actor again, ma
 	CHECK (m.Broken () == w.Broken ());
 	CHECK (m.Partition () == w.Partition ());
 	CHECK (CollBlastA::logErrors == 0);
+}
+
+namespace {
+
+// the map-and-set pair sums CollBlastPairs replaced, kept as the reference
+std::vector<CollBlastPair> PairsRef (const CollBlastInput &in, const std::vector<uint32_t> &chOf)
+{
+	size_t nt = in.v.size () / 3;
+	std::map<uint32_t, Vector> wpos;
+	std::map<uint32_t, std::set<uint32_t>> wch;
+	std::map<std::pair<uint32_t, uint32_t>, std::pair<double, std::set<uint32_t>>> edge;
+	for (size_t i = 0; i < nt; i++) for (int k = 0; k < 3; k++) {
+		uint32_t a = in.w[3 * i + k], b = in.w[3 * i + (k + 1) % 3];
+		wpos.emplace (a, in.v[3 * i + k]);
+		wch[a].insert (chOf[i]);
+		if (a == b) continue;
+		auto &e = edge[{ std::min (a, b), std::max (a, b) }];
+		e.first = (in.v[3 * i + (k + 1) % 3] - in.v[3 * i + k]).length ();
+		e.second.insert (chOf[i]);
+	}
+	std::map<std::pair<uint32_t, uint32_t>, CollBlastPair> pair;
+	for (auto &kv : wch) if (kv.second.size () > 1) {
+		std::vector<uint32_t> l (kv.second.begin (), kv.second.end ());
+		for (size_t i = 0; i < l.size (); i++) for (size_t j = i + 1; j < l.size (); j++) { CollBlastPair &a = pair[{ l[i], l[j] }]; a.c += wpos[kv.first]; a.n++; }
+	}
+	for (auto &kv : edge) if (kv.second.second.size () > 1) {
+		std::vector<uint32_t> l (kv.second.second.begin (), kv.second.second.end ());
+		for (size_t i = 0; i < l.size (); i++) for (size_t j = i + 1; j < l.size (); j++) pair[{ l[i], l[j] }].len += kv.second.first;
+	}
+	std::vector<CollBlastPair> out;
+	for (auto &kv : pair) { CollBlastPair x = kv.second; x.a = kv.first.first; x.b = kv.first.second; out.push_back (x); }
+	return out;
+}
+
+bool SamePairs (const std::vector<CollBlastPair> &x, const std::vector<CollBlastPair> &y)
+{
+	if (x.size () != y.size ()) return false;
+	for (size_t i = 0; i < x.size (); i++)
+		if (x[i].a != y[i].a || x[i].b != y[i].b || x[i].n != y[i].n || std::memcmp (&x[i].len, &y[i].len, sizeof (double)) || std::memcmp (x[i].c.data, y[i].c.data, sizeof (x[i].c.data))) return false;
+	return true;
+}
+
+}
+
+TEST_CASE ("blast 7: the pair sums equal the map-and-set reference bit for bit (design coll-bounded 6.4)", "[blast]")
+{
+	CollBlastInput in = Box (4, 6, 5000, 10);
+	CollBlastA a;
+	REQUIRE (a.Build (in));
+	std::vector<uint32_t> chOf (a.cellOf.size ());
+	for (size_t i = 0; i < chOf.size (); i++) chOf[i] = (uint32_t)a.cellOf[i];
+	std::vector<CollBlastPair> p;
+	CollBlastPairs (in, chOf, p);
+	CHECK (!p.empty ());
+	CHECK (SamePairs (p, PairsRef (in, chOf)));
+	uint64_t s = 7;
+	auto rnd = [&] () { s = s * 6364136223846793005ull + 1442695040888963407ull; return (uint32_t)(s >> 33); };
+	for (int round = 0; round < 50; round++) {                     // random soups: shared ids, degenerate edges, chunks in any order
+		CollBlastInput r;
+		size_t nt = 20 + rnd () % 400, nw = 4 + rnd () % 200, nc = 1 + rnd () % 12;
+		std::vector<uint32_t> ch (nt);
+		for (size_t i = 0; i < nt; i++) {
+			for (int k = 0; k < 3; k++) {
+				r.w.push_back (rnd () % nw);
+				r.v.push_back (Vector ((rnd () % 1000) * 0.01, (rnd () % 1000) * 0.01, (rnd () % 1000) * 0.01));
+			}
+			r.piece.push_back (-1);
+			ch[i] = rnd () % nc;
+		}
+		if (round % 2) for (uint32_t &w : r.w) w = w * 40009u + 7u;  // sparse ids: made dense in their order
+		CollBlastPairs (r, ch, p);
+		INFO ("round " << round);
+		CHECK (SamePairs (p, PairsRef (r, ch)));
+	}
 }

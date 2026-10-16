@@ -2383,7 +2383,7 @@ void Orbiter::KbdInputImmediate_OnRunning (char *kstate)
 {
 	if (g_focusobj->ConsumeDirectKey (kstate)) return;  // key is consumed by focus vessel
 
-	if (!g_focusobj->CtrlLock()) { // not upstream: a locked (destroyed) vessel takes no control keys; its MFDs still work
+	if (!g_focusobj->CtrlLock()) { // not upstream: a locked (destroyed) vessel takes no control keys, nor MFD keys
 	// main/retro/hover thruster settings
 	if (keymap.IsLogicalKey (kstate, OAPI_LKEY_IncMainThrust))   g_focusobj->IncMainRetroLevel ( 0.2*td.SimDT);
 	if (keymap.IsLogicalKey (kstate, OAPI_LKEY_DecMainThrust))   g_focusobj->IncMainRetroLevel (-0.2*td.SimDT);
@@ -2434,7 +2434,7 @@ void Orbiter::KbdInputImmediate_OnRunning (char *kstate)
 	} // not upstream: CtrlLock
 
 	// left/right MFD control
-	if (KEYMOD_SHIFT (kstate)) {
+	if (KEYMOD_SHIFT (kstate) && !g_focusobj->CtrlLock()) { // not upstream: CtrlLock
 		if (KEYMOD_LSHIFT (kstate) && g_pane->MFD(0)) g_pane->MFD(0)->ConsumeKeyImmediate (kstate);
 		if (KEYMOD_RSHIFT (kstate) && g_pane->MFD(1)) g_pane->MFD(1)->ConsumeKeyImmediate (kstate);
 	}
@@ -2535,7 +2535,7 @@ void Orbiter::KbdInputBuffered_OnRunning (char *kstate, KeyData *dod, DWORD n)
 		} else if (KEYMOD_SHIFT (kstate)) {  // Shift-key combinations (reserved for MFD control)
 
 			int id = (KEYDOWN (kstate, OAPI_KEY_LSHIFT) ? 0 : 1); // DIK_LSHIFT
-			g_pane->MFDConsumeKeyBuffered (id, key);
+			if (!g_focusobj->CtrlLock()) g_pane->MFDConsumeKeyBuffered (id, key); // not upstream: CtrlLock
 
 		} else if (KEYMOD_ALT (kstate)) {    // ALT-Key combinations
 

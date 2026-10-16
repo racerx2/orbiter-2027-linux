@@ -2376,3 +2376,77 @@ TEST_CASE("dmg3 L5 pair filter: a filtered body pair gives no results, the other
 	Frame (d1, p, h, scene (), r1);
 	REQUIRE (pairs (r1) == a);
 }
+
+static CollBody RestOn (uint32_t id, const Vector &c0, double h, const CollGeom *box)
+{
+	Vector g (0, 0, -9.81);
+	CollBody b = Body (id, c0, Vector (), c0 + g*(0.5*h*h), g*h, h);
+	b.m.a0 = g; b.m.a1 = g;
+	AddPart (b, box, VKey (id));
+	return b;
+}
+
+TEST_CASE("coll-bounded 3: a resting pair past the budget is carried, a moved one and a new one run, the 9th frame runs in full", "[colldetect][bounded]")
+{
+	const CollGeom *box = Geom (BoxM (Vector (0.5, 0.5, 0.5)));
+	const CollGeom *plate = Geom (PlateM (5, 5));
+	const double h = 1.0/60.0;
+	CollParams p;
+	p.frameTt = 1;
+	auto scene = [&] (double ax, bool withB) {
+		std::vector<CollBody> b { Still (9, Vector (), h, COLLB_BASE), RestOn (1, Vector (ax, 0, 0.54), h, box) };
+		AddPart (b[0], plate, BKey (0, 0, 1));
+		if (withB) { b.push_back (RestOn (2, Vector (2, 0, 0.54), h, box)); b.back ().entry = COLLE_NEW; } // new every frame: its tests use the budget
+		return b;
+	};
+	auto of = [] (const std::vector<CollPairResult> &r, int body) -> const CollPairResult * {
+		for (const CollPairResult &x : r) if (x.kind == COLL_RESTING && (x.bodyA == body || x.bodyB == body)) return &x;
+		return nullptr;
+	};
+	CollDetect d;
+	std::vector<CollPairResult> r0, r1;
+	Frame (d, p, h, scene (-2, false), r0);
+	const CollPairResult *a0 = of (r0, 1);
+	REQUIRE (a0);
+	CHECK ((a0->flags & COLLF_CARRIED) == 0);
+	Frame (d, p, h, scene (-2, true), r1);
+	const CollPairResult *a1 = of (r1, 1), *b1 = of (r1, 2);
+	REQUIRE (a1); REQUIRE (b1);
+	CHECK ((a1->flags & COLLF_CARRIED) != 0);
+	CHECK ((b1->flags & COLLF_CARRIED) == 0);
+	CHECK (a1->kind == COLL_RESTING);
+	REQUIRE (a1->npt == a0->npt);
+	for (int i = 0; i < a1->npt; i++) {
+		CHECK ((a1->pt[i].flags & COLLP_FIRST) == 0);
+		CHECK ((a1->pt[i].pA - a0->pt[i].pA).length () < 1e-9);
+		CHECK (std::fabs (a1->pt[i].gap - a0->pt[i].gap) < 1e-9);
+	}
+	CHECK (d.Carried () == 1);
+	{
+		CollDetect e;                                              // the same two frames without a limit: more tests
+		CollParams q;
+		std::vector<CollPairResult> s;
+		Frame (e, q, h, scene (-2, false), s);
+		Frame (e, q, h, scene (-2, true), s);
+		CHECK (e.FrameTests () > d.FrameTests ());
+	}
+	int carried = 1, full = -1;
+	for (int f = 2; f < 12 && full < 0; f++) {
+		Frame (d, p, h, scene (-2, true), r1);
+		const CollPairResult *a = of (r1, 1);
+		REQUIRE (a);
+		if (a->flags & COLLF_CARRIED) carried++; else full = f;
+	}
+	CHECK (carried == (int)COLL_CARRY_AGE);
+	CHECK (full == (int)COLL_CARRY_AGE + 1);
+	Frame (d, p, h, scene (-2, true), r1);                          // a full result again: carried from here
+	REQUIRE (of (r1, 1));
+	CHECK ((of (r1, 1)->flags & COLLF_CARRIED) != 0);
+	Frame (d, p, h, scene (-1.7, true), r1);                        // 0.3 m: past COLL_CARRY_MOVE, in full
+	REQUIRE (of (r1, 1));
+	CHECK ((of (r1, 1)->flags & COLLF_CARRIED) == 0);
+	CollDetect u;                                                   // no limit: nothing carried
+	std::vector<CollPairResult> s;
+	for (int f = 0; f < 4; f++) Frame (u, CollParams (), h, scene (-2, true), s);
+	CHECK (u.Carried () == 0);
+}
