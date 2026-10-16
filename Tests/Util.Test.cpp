@@ -71,6 +71,22 @@ TEST_CASE("ModuleFree detaches on the last free, ModuleLoad attaches a reopened 
 	dlclose (keep);
 }
 
+TEST_CASE("ConfigFragments lists <cfg>.d/*.cfg in NTFS order", "[util]")
+{
+	TmpDir t;
+	fs::create_directories ("Config/Earth.d");
+	for (const char *n : {"Zeta.cfg", "ssv.cfg", "Alpha.CFG", "notes.txt"})
+		std::ofstream (std::string ("Config/Earth.d/") + n) << "x\n";
+	fs::create_directories ("Config/Earth.d/Sub.cfg");
+	std::vector<std::string> v = ConfigFragments ("Config/Earth.cfg");
+	std::vector<std::string> names;
+	for (const std::string &p : v) names.push_back (fs::path (p).filename ().string ());
+	REQUIRE(names == std::vector<std::string>{"Alpha.CFG", "ssv.cfg", "Zeta.cfg"});
+	REQUIRE(ConfigFragments ("config/earth.cfg").size () == 3); // case-insensitive, as every config path
+	REQUIRE(ConfigFragments ("Config/Mars.cfg").empty ());
+	REQUIRE(ConfigFragments ("Config/Earth").empty ());
+}
+
 TEST_CASE("ModuleLoad doesn't attach a module unmapped by its last free", "[util]")
 {
 	void *h = ModuleLoad (UTIL_MODULE);

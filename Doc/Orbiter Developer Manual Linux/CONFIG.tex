@@ -424,6 +424,16 @@ where
 \noindent
 The easiest way to find the coordinates for a new observer spot is to open the Camera dialog (\Ctrl+\keystroke{F1}), and select a nearby location under the Ground tab. Then move the camera to the new spot using \Ctrl\DArrow\UArrow\RArrow\LArrow and \keystroke{PageUp}\keystroke{PageDown}. The coordinates are displayed in the dialog and can be directly copied into the configuration file.
 
+% not upstream: drop-in parts (design dropin-addons)
+\subsubsection*{Add-on drop-in parts (Linux)}
+An add-on does not edit or replace a planet's configuration file or Base.cfg. It ships its own part in a folder named after the file, with \texttt{.d} in place of \texttt{.cfg}: for example \texttt{Config/Earth.d/MyAddon.cfg} next to \texttt{Config/Earth.cfg}, or \texttt{Config/Base.d/MyAddon.cfg} next to \texttt{Config/Base.cfg}. Orbiter reads every \texttt{.cfg} file in that folder with the main file, in name order, so the add-on installs by extracting its zip into the Orbiter folder.
+\begin{itemize}
+\item A planet part may hold a BEGIN\_SURFBASE block, read before the planet's own list, so that an add-on's base replaces a stock base of the same name, and a BEGIN\_OBSERVER block, added after the planet's own observers. A DIR line, or an observer site and spot, already read is not read again.
+\item A Base.cfg part may hold a BEGIN\_TEXTURES block, added after Base.cfg's own generic textures. A name already listed is not added again.
+\item Other lines in a part are ignored. Orbiter for Windows ignores the \texttt{.d} folders.
+\end{itemize}
+An add-on's terrain tiles go straight into \texttt{Textures/<planet>/<layer>}. When one replaces a tile the tile stream made, the stream sees that the file is no longer its own (it marks the files it writes) and leaves it alone from then on.
+
 
 \subsubsection*{Navbeacon transmitter list (optional)}
 This is a list containing the specs of all navigation radio transmitters on the planet surface except for those directly associated with a spaceport, which are defined in the base definition file (see section \ref{ssec:surface_bases}). The list format is as follows:

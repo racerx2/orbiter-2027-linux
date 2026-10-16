@@ -23,6 +23,8 @@
 #include "Orbiter.h"
 #include "Util.h" // not upstream: SortedEntries
 #include <functional>
+#include <set> // not upstream: ReadSurfBases
+#include <string> // not upstream: as above
 #include <filesystem>
 namespace fs = std::filesystem;
 
@@ -119,6 +121,12 @@ public:
 
 	void ScanBases (char *path);
 	// create surface bases by scanning config files in directory 'path'
+
+	void ReadSurfBases (std::istream &is, const char *file, std::set<std::string> &scanned);
+	// not upstream: the lines of a SURFBASE block, from the planet's config or a drop-in part; a DIR in 'scanned' is skipped (design dropin-addons)
+
+	void ReadObservers (std::istream &is);
+	// not upstream: the lines of an OBSERVER block; a site:address already listed is skipped (design dropin-addons)
 
 	void BeginStateUpdate ();
 	void EndStateUpdate ();
