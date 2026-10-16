@@ -28,6 +28,7 @@ struct CollTimers {                         // microseconds summed over the fram
 	double prestep = 0, prestepMax = 0, e1 = 0, e2 = 0, e3 = 0, post = 0, build = 0, firstFrame = 0;
 	uint64_t posts = 0;
 };
+struct CollStageTimes { double geom = 0, spawn = 0, phys = 0, dmg = 0, bldg = 0, notice = 0; }; // one pre-step's stages [us] (design coll-bounded 8)
 
 class CollSession {
 public:
@@ -84,5 +85,11 @@ private:
 	std::unique_ptr<CollShapeSink> sink;    // E2 Deliver -> E3 ShapesUpdated
 	std::unique_ptr<CollGroundA> ground;    // ground impacts for E3 (CA-ground)
 	Clock::time_point t0;
+	CollStageTimes stage;                   // the last pre-step's stages
+	double slowSimT = -1e300;               // sim time of the last slow-frame line
+	double simtNow = 0;
+	double budgetSimT = -1e300;             // design coll-bounded 3: start of the minute of the budget line
+	uint64_t budgetCarried = 0;             // carried results at that start
+	long long budgetMax = 0;                // most triangle tests in a frame of that minute
 };
 #endif

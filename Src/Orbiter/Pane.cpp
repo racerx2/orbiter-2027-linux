@@ -130,6 +130,15 @@ void Pane::DelVessel (const Vessel *vessel)
 	if (hud) hud->ProcessMessage (MSG_KILLVESSEL, (void*)vessel);
 }
 
+void Pane::VesselLocked (const Vessel *vessel) // not upstream: a locked (destroyed) vessel's external MFDs go off
+{
+	for (DWORD i = 0; i < nemfd; i++)
+		if ((Vessel*)emfd[i]->GetVessel() == vessel && emfd[i]->Active()) {
+			emfd[i]->SetMode (MFD_NONE);
+			emfd[i]->clbkRefreshDisplay (0);
+		}
+}
+
 bool Pane::MFDConsumeKeyBuffered (int id, DWORD key)
 {
 	if (key == OAPI_KEY_ESCAPE) {

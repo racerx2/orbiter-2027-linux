@@ -14,15 +14,15 @@ Without help, Orbiter lets spacecraft pass through each other and through the bu
 
 \subsection{Turning collisions on}
 Tick \textit{Collision} in the \textit{Physics} category of the Launchpad's \textit{Modules} tab (see section \ref{ssec:launchpad_modules}). Collisions are on as soon as the module is active. Its settings are in Config/Collision.cfg (see section \ref{ssec:coll_cfg}); \textit{CollisionModel = 0} there turns collisions and new damage off while the module still loads, saves, shows and repairs the damage of a scenario.\\
-A destroyed vessel is out of your control: its engines stop, its control surfaces go slack, and keys, joystick, cockpit switches and navigation modes no longer reach it. Its MFDs can still be read and switched with the Shift keys, not with their cockpit buttons. This does not depend on the \textit{Damage and failure simulation} option; \textit{CollisionThrustCut = FALSE} in Config/Collision.cfg turns it off. A repair gives the controls back.
+A destroyed vessel is out of your control: its engines stop, its control surfaces go slack, and keys, joystick, cockpit switches and navigation modes no longer reach it. You are taken out of its cockpit to the outside view, and its cockpit and MFDs can no longer be used; external MFD windows showing it go blank. Everything else still works: the camera, time controls, the dialogs, and switching to another vessel (F3) or adding one with the scenario editor and flying it. This does not depend on the \textit{Damage and failure simulation} option; \textit{CollisionThrustCut = FALSE} in Config/Collision.cfg turns it off. A repair gives the controls back.
 
 
 \subsection{What collides}
 \begin{itemize}
 \item \textbf{Vessels:} each vessel's collider is made from the triangles of its own meshes, so open cargo bays, gaps and overhangs stay open. Moving parts (doors, gear, robot arms) move their colliders with them. Docked and attached vessels respond as one body, and every impact conserves momentum.
-\item \textbf{Base buildings:} blocks, hangars, tanks and mesh buildings of surface bases collide. Runways, landing pads and objects that follow the terrain do not. A building keeps the energy it has absorbed and is destroyed when it reaches its limit, but it is not drawn dented.
+\item \textbf{Base buildings:} blocks, hangars, tanks and mesh buildings of surface bases collide. Runways, landing pads and objects that follow the terrain do not. A building takes damage like a vessel: it is dented where it is hit, a hit deeper than its wall holds tears a hole, and a wrecked vessel lodged in a wall breaks the wall's triangles out where it passes through. The building is drawn damaged, its collider changes with it, and its damage is saved. It keeps the energy it has absorbed and is destroyed when it reaches its limit.
 \item \textbf{The ground:} a vessel that hits the terrain at 5 m/s or more dents and breaks as in a crash with another vessel. Slower touchdowns, landing and rolling are left to Orbiter's own ground contact, as before.
-\item \textbf{Streamed buildings:} the 3D buildings of the tile stream are solid with the shape they are drawn with, gable roofs included: a vessel crashes into their walls and can rest on their roofs. Buildings the graphics client hides next to base structures or fixed structures are not solid. They take no damage and nothing of them is saved; the vessel is damaged as usual. They exist only with the graphics client (the tile stream needs it) and below 2 km above the ground.
+\item \textbf{Streamed buildings:} the 3D buildings of the tile stream are solid with the shape they are drawn with, gable roofs included: a vessel crashes into their walls and can rest on their roofs. Buildings the graphics client hides next to base structures or fixed structures are not solid. A crash dents or tears their collider as a base building's, but they are drawn undamaged and nothing of them is saved; the vessel is damaged as usual. They exist only with the graphics client (the tile stream needs it) and below 2 km above the ground.
 \item \textbf{Fixed structures:} a landed vessel that stands for a ground structure, such as an add-on's launch pad, assembly building or control centre, stays fixed to the ground like a base building: a launching stack or a crash never pushes it, and its damage counts as a building's. Its add-on marks it with \textit{FixedStructure = TRUE} in its class file (the Space Shuttle Vessel's launch pads, VAB and LCC are marked); a landed vessel whose mass is only a placeholder (a few kg for a large pad) is treated the same. Streamed buildings and trees are kept off a marked structure as off a base's buildings. A class can also clear the ground round a structure with \textit{FixedStructureClear} = a radius in metres: no streamed building or tree stands within it (the Space Shuttle Vessel's pads clear 400 m and SLC-6 500 m, so today's towers in the map data do not stand beside the shuttle-era pads). An add-on's base file can declare such clear zones too (BEGIN\_CLEARZONES); they hold in every scenario that loads the base, with or without the pad vessels, and a building left out there is not solid either.
 \end{itemize}
 
@@ -39,7 +39,8 @@ The damage of an impact comes from the kinetic energy that the impact takes out 
 \item \textbf{Destroyed vessels:} a vessel is destroyed when the energy it has absorbed reaches 1 kJ per kg of its empty mass (1000 J/kg, \textit{DestroyEnergy}; a vessel class may set its own value). A destroyed vessel loses its engines and the player's controls (see above); a vessel module may handle the destruction in its own way instead. A single impact of more than 40 kJ/kg counts as catastrophic.
 \item \textbf{Parts breaking off:} on destructive impacts, parts tear off and fly away as debris, glass breaks, and the interior groups of a hull that is broken open are hidden. Torn sections leave a cut edge on the remaining hull.
 \item \textbf{Structural fracture:} the module splits each vessel mesh into structural cells (64 by default) joined by bonds, and runs NVIDIA Blast's stress solver on them. Where an impact overloads the structure, the bonds break and the pieces fly as debris; a vessel loses the mass of the pieces it has lost.
-\item \textbf{Debris:} pieces become vessels of their own (class \textit{CollDebris}) that fly on, fall and come to rest on the ground. They do not collide with the vessel they came from, the vessel that hit it or other debris. At most 48 pieces exist at once; each lives 30 minutes of simulation time.
+\item \textbf{Debris:} pieces become vessels of their own (class \textit{CollDebris}) that fly on, fall and come to rest on the ground. They collide as their convex hull. They do not collide with the vessel they came from, the vessel that hit it or other debris. At most 48 pieces exist at once; each lives 30 minutes of simulation time. When a crash breaks off many pieces at once, they appear over a few frames, so the frame of the impact stays short.
+\item \textbf{Building damage:} the energy a building takes dents it where it was hit, with the same rules as a vessel's hull. When the dent would be deeper than the wall holds, the wall is torn open: a hole with a jagged, inward-bent rim. A damaged vessel that ends up inside a wall (a wreck in a saved scenario, or one that went through in a crash) breaks out every wall triangle it passes through, so it is never stuck in a solid wall; it rests in the hole it made, or falls. A building can take up to 64 dents and holes.
 \item \textbf{Impact effects:} paint and insulation flakes, venting gas from vessels hit hard enough, sparks of scraping metal and dust on the ground.
 \end{itemize}
 
@@ -79,6 +80,8 @@ The module reads Config/Collision.cfg once at the start of each simulation sessi
 	CollisionGroundMinSpeed & Float & Slowest approach to the terrain that damages [m/s]. Default: 5\\
 	\hline\rule{0pt}{2ex}
 	CollisionStreamBuildings & Bool & The streamed 3D buildings are solid: vessels crash into them and rest on their roofs. Default: TRUE\\
+	\hline\rule{0pt}{2ex}
+	CollisionFrameTests & Int & Triangle pair tests per frame for the contact search. Past it, contacts that barely move reuse their last result for a few frames; 0: no limit. Default: 25000\\
 	\hline
 	\multicolumn{3}{|c|}{\rule{0pt}{2ex}\textbf{\textit{Damage}}}\\
 	\hline\rule{0pt}{2ex}
@@ -108,6 +111,8 @@ The module reads Config/Collision.cfg once at the start of each simulation sessi
 	\hline\rule{0pt}{2ex}
 	CollisionDebrisLife & Float & Lifetime of a debris piece [s]. Default: 1800\\
 	\hline\rule{0pt}{2ex}
+	CollisionDebrisMs & Float & Time per frame spent making debris pieces after a breakup [ms]; at least one is made each frame. Default: 6\\
+	\hline\rule{0pt}{2ex}
 	CollisionNotify & Int & On-screen notifications: 0 none, 1 destroyed vessels and buildings, 2 also the first damage of a building. Default: 1\\
 	\hline
 	\multicolumn{3}{|c|}{\rule{0pt}{2ex}\textbf{\textit{Impact effects}}}\\
@@ -134,7 +139,7 @@ The module reads Config/Collision.cfg once at the start of each simulation sessi
 	\hline
 	\multicolumn{3}{|c|}{\rule{0pt}{2ex}\textbf{\textit{Advanced and debugging}}}\\
 	\hline\rule{0pt}{2ex}
-	CollisionCfgVersion & Int & Version of the file's defaults, kept by the update. Default: 3\\
+	CollisionCfgVersion & Int & Version of the file's defaults, kept by the update. Default: 4\\
 	\hline\rule{0pt}{2ex}
 	CollisionLog & Int & Detail of the module's lines in Orbiter.log, 0 to 4: 1 events, 2 also state writes, 3 also distances, 4 also poses. Default: 1\\
 	\hline\rule{0pt}{2ex}
@@ -161,9 +166,9 @@ Add-on vessels and bases collide without changes: their colliders are made from 
 \subsection{Limits}
 \begin{itemize}
 \item The module works from Orbiter's frame and predicts each coming step. A contact that the prediction misses is found and corrected one frame late, so two bodies can overlap for one frame, most visibly at large time steps.
-\item Buildings are not drawn dented.
-\item A vessel resting on a building roof is held by the module; Orbiter does not store it as landed there.
-\item Every vessel and building in contact adds to the frame time; a typical scene costs well under a millisecond per frame.
+\item Streamed buildings are not drawn damaged, and their damage is not saved.
+\item A vessel that rests on a building (a roof, a ledge, the floor of a hole) for 3 seconds without engines is landed there, as on the ground, and costs nothing more. A vessel whose module keeps adding forces is not held landed; it stays resting on the building, and the module tries again after 30 seconds.
+\item Every vessel and building in contact adds to the frame time; a typical scene costs well under a millisecond per frame. The contact search of a frame is limited (\textit{CollisionFrameTests}), and a pre-step that takes longer than 20 ms writes one line with its stages to Orbiter.log.
 \end{itemize}
 
 \end{document}

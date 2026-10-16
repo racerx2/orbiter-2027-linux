@@ -1063,7 +1063,14 @@ bool CollBaseShape::SetObject (uint32_t i, uint32_t obj, const CollGroupData *gr
 		CollLog (COLLLOG_WARN, "Collider: base object %u: %u triangles with an index out of range, %u with an invalid vertex (non-finite or beyond 1e6 m): dropped",
 			obj, st.dropIndex, st.dropInvalid);
 	built = true;
+	o.ver++;
 	return ok;
+}
+
+int CollBaseShape::SlotOf (uint32_t obj) const
+{
+	for (size_t i = 0; i < objs.size(); i++) if (objs[i].obj == obj && !objs[i].geom.tri.empty()) return (int)i;
+	return -1;
 }
 
 void CollBaseShape::Follow (uint32_t i, uint32_t geomVersion, uint32_t topo)

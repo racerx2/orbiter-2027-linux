@@ -1285,6 +1285,21 @@ DLLEXPORT DWORD oapiGetBaseClearZones (OBJHANDLE hBase, BASECLEARZONE *zone, DWO
 	return (DWORD)z.size();
 }
 
+DLLEXPORT bool oapiBaseSetDent (OBJHANDLE hBase, const BASEDENTSPEC *d) // not upstream (design coll-bounded 5.7)
+{
+	return hBase && d && ((Base*)hBase)->SetDent (*d);
+}
+
+DLLEXPORT void oapiBaseClearDents (OBJHANDLE hBase, DWORD obj) // not upstream
+{
+	if (hBase) ((Base*)hBase)->ClearDents (obj);
+}
+
+DLLEXPORT DWORD oapiBaseStructureSerial (OBJHANDLE hBase, DWORD mesh, bool after) // not upstream
+{
+	return hBase ? ((Base*)hBase)->StructureSerial (mesh, after) : 0;
+}
+
 DLLEXPORT DWORD oapiGetBasePadCount (OBJHANDLE hBase)
 {
 	return ((Base*)hBase)->nPad();

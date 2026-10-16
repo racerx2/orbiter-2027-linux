@@ -166,8 +166,14 @@ set(Orbiter_depends
 	DlgCtrl
 )
 
+# not upstream (coll-bounded 5.7): the collision add-on's dent math in the core, for the building dents it draws; its own Vecmat and headers only, symbols hidden
+add_library(OrbCore_Dent OBJECT ${CMAKE_SOURCE_DIR}/Src/Plugin/Collision/DentMath.cpp ${CMAKE_SOURCE_DIR}/Src/Plugin/Collision/Vecmat.cpp BaseDent.cpp)
+target_include_directories(OrbCore_Dent PRIVATE ${CMAKE_SOURCE_DIR}/Src/Plugin/Collision)
+target_compile_options(OrbCore_Dent PRIVATE -ffp-contract=off)
+set_target_properties(OrbCore_Dent PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON POSITION_INDEPENDENT_CODE ON FOLDER Core)
+
 # Orbiter executable (graphics server version)
-add_executable(Orbiter ${common_src})
+add_executable(Orbiter ${common_src} $<TARGET_OBJECTS:OrbCore_Dent>)
 include(Custom/Custom.cmake) # custom: launcher skins
 
 # the dialog templates, bitmaps, icons and strings of Orbiter.rc as a C++ resource table

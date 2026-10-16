@@ -60,6 +60,7 @@ struct CollBldgA::Bldg {
 	std::unique_ptr<CollGeom> geom;
 	uint32_t version = 0, stamp = 0;           // stamp: frame of best
 	double best = 0, g = 0, farSince = -1, tGround = 0;
+	std::unique_ptr<std::vector<CollGroupData>> rest0; // coll-bounded 5.4: the undamaged collider of a damaged building
 };
 
 struct CollBldgA::Tile {
@@ -228,6 +229,51 @@ size_t CollBldgA::BuiltCount () const
 	return n;
 }
 
+bool CollBldgA::Groups (int planet, int base, uint32_t obj, std::vector<CollGroupData> &out, double &rb) const
+{
+	out.clear (); rb = 0;
+	if (base > -2) return false;
+	auto it = tiles.find ((uint32_t)(-2 - (int64_t)base));
+	if (it == tiles.end () || it->second->p->idx != planet || obj >= it->second->b.size ()) return false;
+	const Bldg &b = it->second->b[obj];
+	if (b.state != Bldg::BUILT || !b.geom) return false;
+	rb = std::max (b.rb, b.geom->bsRadius);
+	if (b.rest0) { out = *b.rest0; return true; }
+	std::vector<CollVtx> v (b.geom->vtx.size ());
+	for (size_t k = 0; k < v.size (); k++) { const Vector &p = b.geom->vtx[k]; v[k] = CollVtx { (float)p.x, (float)p.y, (float)p.z, 0, 0, 0, 0, 0 }; }
+	std::vector<std::array<uint32_t, 3>> tri;
+	for (const CollTri &x : b.geom->tri) tri.push_back ({ x.v[0], x.v[1], x.v[2] });
+	Split (v, tri, out);
+	return !out.empty ();
+}
+
+bool CollBldgA::SetGroups (int planet, int base, uint32_t obj, const std::vector<CollGroupData> &grp)
+{
+	if (base > -2) return false;
+	auto it = tiles.find ((uint32_t)(-2 - (int64_t)base));
+	if (it == tiles.end () || it->second->p->idx != planet || obj >= it->second->b.size ()) return false;
+	Bldg &b = it->second->b[obj];
+	if (b.state != Bldg::BUILT || !b.geom) return false;
+	if (!b.rest0) {
+		auto r = std::make_unique<std::vector<CollGroupData>> ();
+		double rb;
+		if (!Groups (planet, base, obj, *r, rb)) return false;
+		b.rest0 = std::move (r);
+	}
+	std::vector<CollSrcGroup> src;
+	for (size_t k = 0; k < grp.size (); k++) if (grp[k].idx.size () >= 3) src.push_back (CollSrcGroup { &grp[k], CollSrc { obj, (uint32_t)k, 0, 0, obj } });
+	auto g = std::make_unique<CollGeom> ();
+	CollBuildStats bs;
+	if (src.empty () || !g->Build (src.data (), src.size (), COLL_WELD_DEFAULT, &bs)) { // torn away whole: nothing left to hit
+		b.geom = std::make_unique<CollGeom> ();
+		b.version = ++verSerial;
+		return true;
+	}
+	b.geom = std::move (g);
+	b.version = ++verSerial;
+	return true;
+}
+
 bool CollBldgA::Name (int planet, int base, int obj, std::string &out) const
 {
 	if (base > -2) return false;
@@ -243,6 +289,7 @@ void CollBldgA::Free (Tile &t, uint32_t i)
 	Bldg &b = t.b[i];
 	if (b.geom) st.freed++;
 	b.geom.reset ();
+	b.rest0.reset ();
 	b.state = Bldg::IDLE;
 	b.wasPart = false;
 	b.farSince = -1;
@@ -737,8 +784,8 @@ void CollBldgA::Frame (double simt, const std::vector<Live> &v)
 			}
 			if (!far) b.farSince = -1;
 			else if (b.farSince < 0) b.farSince = simt;
-			else if (simt - b.farSince >= COLL_BLDG_IDLE) { Free (t, i); t.active[k] = t.active.back (); t.active.pop_back (); continue; }
-			if (part && simt >= b.tGround && fElevN < COLL_BLDG_ELEVS) { // the core's terrain refines: rebuilt when its ground moved (BldgMgr::Reground)
+			else if (simt - b.farSince >= COLL_BLDG_IDLE && !b.rest0) { Free (t, i); t.active[k] = t.active.back (); t.active.pop_back (); continue; } // a damaged one stays with its tile
+			if (part && simt >= b.tGround && fElevN < COLL_BLDG_ELEVS && !b.rest0) { // the core's terrain refines: rebuilt when its ground moved (BldgMgr::Reground); a damaged one keeps its shape
 				const CollBldgRec &R = t.tile.b[i];
 				double g = Elev (t.p->h, R.lng, R.lat);
 				b.tGround = simt + COLL_BLDG_GROUND;
@@ -753,7 +800,7 @@ void CollBldgA::Frame (double simt, const std::vector<Live> &v)
 					}
 				}
 			}
-			if (!part) { b.wasPart = false; k++; continue; }
+			if (!part || b.geom->tri.empty ()) { b.wasPart = false; k++; continue; } // torn away whole: nothing to hit
 			const CollGeom &G = *b.geom;
 			if (!b.wasPart) // a building gained this frame inside a vessel's bound: the entry check opens GRACE, no deep impact (CollDetect.cpp EntryCheck)
 				for (const VQ &w : vq) B.entry = B.entry || touches (G, w);

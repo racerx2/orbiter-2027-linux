@@ -148,6 +148,8 @@ public:
 	const std::vector<CollAttRec> &AttachPoints () const override { return att; }
 	const CollBaseRec *BaseRec (int planet, int base) const override;
 	const CollBaseObjView *BaseObject (int planet, int base, int obj) const override;
+	bool BuildingRest (int planet, int base, int obj, std::vector<CollGroupData> &grp, double &rb); // coll-bounded 5.2: an object's or streamed building's undamaged collider (base or tile frame)
+	bool BuildingSet (int planet, int base, int obj, const std::vector<CollGroupData> &grp); // coll-bounded 5.4: its damaged collider
 	void Bases (std::vector<const CollBaseObjView *> &all) const override;
 	// state
 	CollSdk &sdk;

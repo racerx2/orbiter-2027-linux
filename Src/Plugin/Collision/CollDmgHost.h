@@ -40,6 +40,9 @@ public:
 	virtual bool     Fixed (uint32_t id) { (void)id; return false; } // E2 Fixed (id): damaged as a building (design fixed-structures)
 	virtual bool     BaseObject (int planet, int base, int obj, CollDmgBaseObj &out) = 0;
 	virtual void     Bases (std::vector<CollDmgBaseObj> &all) = 0;
+	virtual bool     BuildingRest (int planet, int base, int obj, std::vector<CollGroupData> &grp, double &rb) { (void)planet; (void)base; (void)obj; grp.clear (); rb = 0; return false; } // coll-bounded 5.2: undamaged collider, base or tile frame; rb: half its box diagonal
+	virtual bool     BuildingSet (int planet, int base, int obj, const std::vector<CollGroupData> &grp) { (void)planet; (void)base; (void)obj; (void)grp; return false; } // coll-bounded 5.4: the damaged collider
+	virtual bool     BuildingName (int planet, int base, int obj, std::string &out) { (void)planet; (void)base; (void)obj; out.clear (); return false; } // a streamed building's name for the log
 };
 
 // adapter over E2's CollGeomView (duck-typed on its names) and E4's session id map; instantiated by the integrator

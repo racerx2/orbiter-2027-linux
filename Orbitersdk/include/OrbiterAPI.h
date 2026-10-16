@@ -6358,7 +6358,7 @@ OAPIFUNC int  oapiTileStreamElev (OBJHANDLE hBody);
 // finished tiles as (lvl, ilat, ilng) triples, keys holds 3*nmax; returns the count
 OAPIFUNC int  oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax);
 
-// not upstream: a locked vessel (e.g. destroyed in a collision) takes no player commands: keys, joystick, cockpit panel and VC switches (MFD buttons too), nav modes; its MFDs still work by the Shift keys; the lock is not saved with the scenario
+// not upstream: a locked vessel (e.g. destroyed in a collision) takes no player commands: keys, joystick, cockpit panel and VC switches, MFDs (Shift keys and external MFD windows), nav modes; it has no cockpit view, so the camera leaves the cockpit when it is locked; the lock is not saved with the scenario
 #define OAPI_VESSEL_CONTROL_LOCK 1 // not upstream: feature test for add-ons
 OAPIFUNC void oapiSetVesselControlLock (OBJHANDLE hVessel, bool lock);
 OAPIFUNC bool oapiGetVesselControlLock (OBJHANDLE hVessel);
@@ -6384,6 +6384,16 @@ OAPIFUNC void oapiTileStreamBldgFree (TSBLDGMESH *mesh);
 typedef struct { double lng, lat, rad; } BASECLEARZONE; // centre [rad], radius [m]
 // returns how many zones the base has; fills zone[0..] with up to nmax of them
 OAPIFUNC DWORD oapiGetBaseClearZones (OBJHANDLE hBase, BASECLEARZONE *zone, DWORD nmax);
+
+// not upstream: building dents and holes drawn by the core (collision add-on, design coll-bounded 5.7); base frame, quantised as saved
+#define OAPI_BASE_DENT 1 // not upstream: feature test for add-ons
+typedef struct { DWORD size, obj, k, mode, seed, bits, flags; VECTOR3 c, n, t; double R, h, T, P, hd, hz; } BASEDENTSPEC; // size = sizeof (BASEDENTSPEC); record k of object obj
+// sets record k of object obj (k = the object's record count appends); the object's structure is made again from its rest in the core's next update
+OAPIFUNC bool  oapiBaseSetDent (OBJHANDLE hBase, const BASEDENTSPEC *d);
+// drops the records of object obj ((DWORD)-1: every object) and restores its structure
+OAPIFUNC void  oapiBaseClearDents (OBJHANDLE hBase, DWORD obj);
+// change count of structure mesh 'mesh' of the before (after = false) or after shadow list of oapiGetBaseStructures; the client reloads a changed one
+OAPIFUNC DWORD oapiBaseStructureSerial (OBJHANDLE hBase, DWORD mesh, bool after);
 
 	/**
 	* \brief Writes the current simulation state to a scenario file.

@@ -108,7 +108,18 @@ void CollDmgSession::FlushLater ()
 	std::vector<std::function<void ()>> q;
 	q.swap (later);
 	laterCuts.clear ();
+	bool was = batch, asked = batchFlush;
+	batch = true; batchFlush = false;               // the queue's cuts sync once, after the last (design coll-bounded 6.4)
 	for (auto &f : q) f ();
+	bool need = batchFlush;
+	batch = was; batchFlush = asked;
+	if (need) Flush ();
+}
+
+void CollDmgSession::Flush ()
+{
+	if (batch) batchFlush = true;
+	else FlushDirty ();
 }
 
 void CollDmgSession::AddTorn (uint32_t id, const DentTorn &t)
@@ -155,7 +166,7 @@ void CollDmgSession::SetSites (uint32_t id, const DentSites &s)
 	if (same) return;
 	bool vc = false; // records already cut with other sites: replay the slot
 	for (size_t r = 0; r < vd.d.rec.size () && r < vd.match.size (); r++) vc = vc || (vd.match[r] == (int)s.slot && vd.d.rec[r].p.mode == DENTM_VCUT);
-	if (vc) { MarkDirty (id, s.slot, true); if (!inDent) FlushDirty (); }
+	if (vc) { MarkDirty (id, s.slot, true); if (!inDent) Flush (); }
 	CollH h = host.Vessel (id);
 	if (rec.active && h && !sdk.Playback (h)) { std::vector<std::string> l; CollSide::Sites (frameT - rec.t0, Alias (vd, h), s, l); for (auto &x : l) Side (x); }
 }
@@ -222,7 +233,7 @@ void CollDmgSession::AddCellCuts (uint32_t id, uint32_t slot, const std::vector<
 		}
 	}
 	MarkDirty (id, slot, false);
-	FlushDirty ();
+	Flush ();
 }
 
 void CollDmgSession::AddBrokenBonds (uint32_t id, uint32_t slot, const std::vector<uint32_t> &bonds)
@@ -368,6 +379,14 @@ void CollDmgSession::MatchAll ()
 			const CollDmgBaseObj &lv = *view[k];
 			BuildingDamageA &bd = building[{ { lv.planetIdx, lv.baseIdx }, lv.obj }];
 			bd.obj = lv, bd.eabs = o.eabs, bd.flags = o.flags;
+			for (auto it = dorm.rec.begin (); it != dorm.rec.end ();) { // coll-bounded 5.6: ODENT lines map through their object's OBJ match and leave the dormant set
+				if (it->slot != o.index || bd.rec.size () >= DENT_MAX_OBJECT) { ++it; continue; }
+				DentRecord r = *it;
+				r.slot = lv.obj;
+				bd.rec.push_back (r);
+				it = dorm.rec.erase (it);
+			}
+			if (!bd.rec.empty ()) { BldgJobA q; q.kind = 2; q.k = { { lv.planetIdx, lv.baseIdx }, lv.obj }; bq.push_back (q); } // made again, one object a pre-step
 			nobj++;
 		}
 		if (!dorm.obj.empty () || !dorm.rec.empty ()) dormantBase.push_back (dorm);
@@ -529,6 +548,11 @@ void CollDmgSession::PrePhysics ()
 				const CollDmgBaseObj &o = it->second.obj;
 				if ((o.planet + ":" + o.base) == r.planetBase && (r.obj < 0 || (int)o.obj == r.obj)) {
 					Log ("Collision repair building '%s:%s' obj=%u", o.planet.c_str (), o.base.c_str (), o.obj);
+					auto g = bgeo.find (it->first);
+					if (g != bgeo.end ()) { host.BuildingSet (it->first.first.first, it->first.first.second, (int)it->first.second, g->second.rest0); bgeo.erase (g); } // coll-bounded 5: the undamaged collider
+					if (!it->second.rec.empty () && it->second.obj.hBase) sdk.BaseClearDents (it->second.obj.hBase, it->first.second); // and structure
+					const BKey rk = it->first;
+					bq.erase (std::remove_if (bq.begin (), bq.end (), [&] (const BldgJobA &q) { return q.k == rk; }), bq.end ());
 					it = building.erase (it);
 				} else ++it;
 			}
@@ -631,6 +655,20 @@ void CollDmgSession::Commit (const std::vector<CollImpactEvent> &ev, double simt
 		if (!DentMath::SplitEnergy (e.dKE, e.Wf, e.vn, (e.flags & COLLEV_FIRST) != 0, *mat[0], *mat[1], E, ea) && !loggedNoFirst) {
 			loggedNoFirst = true;
 			Log ("Collision damage: event energy without FIRST at t=%.17g, counted", e.t);
+		}
+		for (int i = 0; i < 2; i++) { // coll-bounded 5.1: a FIRST impact on a building (base object or streamed) queues its dent
+			const CollOwnerRef &o = e.s[i].owner;
+			int j = 1 - i;
+			if (isV[i] || o.base == -1 || o.obj < 0 || !isV[j] || !ok[j] || !(e.flags & COLLEV_FIRST)) continue;
+			BKey k { { o.planet, o.base }, (uint32_t)o.obj };
+			lastFirst[{ e.s[j].owner.vesselId, k }] = e.t;
+			if (pb[j] || IsDebris (h[j]) || !(E[i] > 0) || (o.base >= 0 && !ok[i])) continue;
+			size_t queued = 0;
+			for (const BldgJobA &q : bq) if (q.k == k) queued++;
+			if (queued >= DENT_MAX_OBJECT) continue;
+			BldgJobA q;
+			q.kind = 0; q.k = k; q.c = e.s[i].c; q.n = e.s[i].n; q.a = e.s[i].a; q.E = E[i]; q.vessel = e.s[j].owner.vesselId;
+			bq.push_back (q);
 		}
 		for (int i = 0; i < 2; i++) {
 			if (!ok[i] || pb[i] || !(ea[i] > 0)) continue;
@@ -736,15 +774,23 @@ static void RebaseCut (const VesselDamageA &v, uint32_t mesh, DentViewData &view
 	for (const DentSites &x : v.d.sites) if (x.slot == mesh) sites = &x;
 	for (size_t k = 0; k < v.d.rec.size () && k < v.match.size (); k++) any = any || (v.match[k] == (int)mesh && DentMath::IsCut (v.d.rec[k].p.mode));
 	if (!any) return;
+	std::map<int, std::pair<std::vector<const DentParams *>, DentVCut>> byGrp; // m6: records that list a group, and their VCUT set, once per group (design coll-bounded 6.4)
 	for (size_t i = 0; i < view.rest.size () && i < view.cur.size (); i++) {
 		int g = i < grp.size () ? grp[i] : -1;
-		std::vector<const DentParams *> op; // m6: records that list the vertex's group
-		for (size_t k = 0; k < v.d.rec.size () && k < v.match.size (); k++) {
-			const DentRecord &R = v.d.rec[k];
-			if (v.match[k] == (int)mesh && (R.grp.empty () || g < 0 || std::find (R.grp.begin (), R.grp.end (), (uint16_t)g) != R.grp.end ())) op.push_back (&R.p);
+		auto it = byGrp.find (g);
+		if (it == byGrp.end ()) {
+			std::vector<const DentParams *> op;
+			for (size_t k = 0; k < v.d.rec.size () && k < v.match.size (); k++) {
+				const DentRecord &R = v.d.rec[k];
+				if (v.match[k] == (int)mesh && (R.grp.empty () || g < 0 || std::find (R.grp.begin (), R.grp.end (), (uint16_t)g) != R.grp.end ())) op.push_back (&R.p);
+			}
+			DentVCut vc;
+			if (sites) DentMath::VCutSet (op.data (), op.size (), sites, vc);
+			it = byGrp.emplace (g, std::make_pair (std::move (op), std::move (vc))).first;
 		}
+		const std::vector<const DentParams *> &op = it->second.first;
 		bool cut = false;
-		DentMath::Fold (op.data (), op.size (), view.rest[i], false, &cut, sites);
+		DentMath::Fold (op.data (), op.size (), view.rest[i], false, &cut, sites ? &it->second.second : nullptr);
 		if (cut) view.rest[i] = view.cur[i];
 	}
 }
@@ -768,12 +814,14 @@ static void CapView (const CollShape *sh, uint32_t mesh, const CollDmgSlot &slot
 		std::vector<const DentParams *> op;
 		bool anyCut = false;
 		for (const DentRecord *R : on) op.push_back (&R->p), anyCut = anyCut || DentMath::IsCut (R->p.mode);
+		DentVCut vc;                                 // once per group (design coll-bounded 6.4)
+		if (anyCut && sites) DentMath::VCutSet (op.data (), op.size (), sites, vc);
 		for (const CollVtx &x : slot.rest->grp[g].vtx) {
 			Vector p (x.x, x.y, x.z), w = CollApply (X, p);
 			if (!((w - c).length () < r)) continue;
 			bool cut = false;
 			Vector q = p;
-			if (anyCut) q = p + DentMath::Fold (op.data (), op.size (), p, false, &cut, sites); // dmg3 tear: cuts as maps, not bowls
+			if (anyCut) q = p + DentMath::Fold (op.data (), op.size (), p, false, &cut, sites ? &vc : nullptr); // dmg3 tear: cuts as maps, not bowls
 			else for (const DentRecord *R : on) q += DentMath::DisplaceLow (R->p, p); // m7: the old summation order
 			Vector wq = CollApply (X, q);
 			out.rest.push_back (cut ? wq : w), out.cur.push_back (wq); // dmg3 tear: stump rest is post-cut
@@ -1425,11 +1473,12 @@ void CollDmgSession::SaveLines (std::vector<std::string> &out)
 		std::vector<DentBaseText> bt;
 		for (const auto &kv : building) {
 			const BuildingDamageA &b = kv.second;
-			if (b.eabs == 0 && b.flags == 0) continue;
+			if (b.eabs == 0 && b.flags == 0 && b.rec.empty ()) continue;
 			DentBaseText *t = nullptr;
 			for (DentBaseText &x : bt) if (x.planet == b.obj.planet && x.name == b.obj.base) t = &x;
 			if (!t) { bt.emplace_back (); t = &bt.back (); t->planet = b.obj.planet, t->name = b.obj.base; }
 			t->obj.push_back (DentBaseObjText { b.obj.obj, b.obj.type, b.obj.x, b.obj.z, b.eabs, b.flags });
+			for (const DentRecord &r : b.rec) { DentRecord x = r; x.slot = b.obj.obj; t->rec.push_back (x); } // coll-bounded 5.6: ODENT after its OBJ line
 			Log ("Collision damage base '%s:%s' obj=%u eabs=%.17g flags=0x%x", b.obj.planet.c_str (), b.obj.base.c_str (), b.obj.obj, b.eabs, b.flags);
 		}
 		for (const DentBaseText &d : dormantBase) {
@@ -1495,6 +1544,21 @@ void CollDmgSession::Playback (double simt)
 				if (o.planet + ":" + o.base == e.base && o.obj == e.obj) {
 					BuildingDamageA &b = building[{ { o.planetIdx, o.baseIdx }, o.obj }];
 					b.obj = o, b.eabs = e.eabs, b.flags = e.flags;
+				}
+			continue;
+		}
+		if (e.kind == 'O') { // coll-bounded 5.6: a building record, set at its index, the object made again
+			std::vector<CollDmgBaseObj> all;
+			host.Bases (all);
+			for (const CollDmgBaseObj &o : all)
+				if (o.planet + ":" + o.base == e.base && o.obj == e.obj) {
+					BKey k { { o.planetIdx, o.baseIdx }, o.obj };
+					BuildingDamageA &b = building[k];
+					b.obj = o;
+					if (e.recidx > b.rec.size ()) break;
+					if (e.recidx == b.rec.size ()) b.rec.push_back (e.rec); else b.rec[e.recidx] = e.rec;
+					bgeo.erase (k);
+					BldgJobA q; q.kind = 2; q.k = k; bq.push_back (q);
 				}
 			continue;
 		}
@@ -1603,4 +1667,285 @@ void CollUiA::OnCommand (CollSdk &proc, CollDmgSession *s, void *dialog)
 	char b[160];
 	std::snprintf (b, sizeof b, "Collision: %zu damaged vessels, %zu damaged buildings (report in Orbiter.log)", s->Vessels ().size (), s->Buildings ().size ());
 	s->Sdk ().Annotation (b, 8.0);
+}
+
+// buildings break (design coll-bounded 5): dents and holes in the building's own collider, one queued step a pre-step
+
+void CollDmgSession::Overlaps (const std::vector<CollDmgOver> &o, double simt)
+{
+	if (!begun) return;
+	for (const CollDmgOver &x : o) {
+		if (x.pts.empty () || !(x.nsum.length () > 0.0) || x.obj < 0 || x.base == -1) continue;
+		CollH h = host.Vessel (x.vessel);
+		if (!h || sdk.Playback (h) || IsDebris (h)) continue;
+		BKey k { { x.planet, x.base }, (uint32_t)x.obj };
+		const VesselDamageA *v = Damage (x.vessel);
+		bool damaged = v && (v->d.eabs > 0.0 || (v->d.flags & XDMG_DESTROYED));
+		auto lf = lastFirst.find ({ x.vessel, k });
+		bool recent = lf != lastFirst.end () && simt - lf->second <= COLL_BREAK_RECENT;
+		if (!damaged && !recent) continue; // an undamaged vessel overlapping at load, takeoff or a part change keeps GRACE
+		bool queued = false;
+		for (const BldgJobA &q : bq) queued = queued || (q.kind == 1 && q.k == k && q.vessel == x.vessel);
+		if (queued) continue;
+		int &nb = nBreak[{ x.vessel, k }];
+		if (nb >= COLL_BREAK_MAX) {
+			if (!loggedBreakCap) Log ("Collision building: '%s' still crosses an object after %d breaks; GRACE keeps the rest", sdk.Name (h).c_str (), COLL_BREAK_MAX);
+			loggedBreakCap = true;
+			continue;
+		}
+		nb++;
+		BldgJobA q;
+		q.kind = 1; q.k = k; q.vessel = x.vessel; q.pts = x.pts; q.n = x.nsum / x.nsum.length ();
+		bq.push_back (q);
+	}
+}
+
+void CollDmgSession::BreakVessels (std::vector<uint32_t> &out) const
+{
+	out.clear ();
+	for (const BldgJobA &q : bq) if (q.kind == 1 && std::find (out.begin (), out.end (), q.vessel) == out.end ()) out.push_back (q.vessel);
+}
+
+BuildingDamageA *CollDmgSession::BRec (const BKey &k)
+{
+	if (k.first.second <= -2) return &streamed[k];
+	auto it = building.find (k);
+	if (it != building.end ()) return &it->second;
+	CollDmgBaseObj bo;
+	if (!host.BaseObject (k.first.first, k.first.second, (int)k.second, bo)) return nullptr;
+	BuildingDamageA &b = building[k];
+	b.obj = bo;
+	return &b;
+}
+
+CollDmgSession::BldgGeoA *CollDmgSession::BGeo (const BKey &k, const BuildingDamageA &b)
+{
+	auto it = bgeo.find (k);
+	if (it != bgeo.end ()) return &it->second;
+	BldgGeoA g;
+	if (!host.BuildingRest (k.first.first, k.first.second, (int)k.second, g.rest0, g.rb) || !(g.rb > 0.0)) return nullptr;
+	BldgGeoA &r = bgeo[k];
+	r = std::move (g);
+	BldgRemake (r, b.rec);
+	return &r;
+}
+
+void CollDmgSession::BldgRemake (BldgGeoA &g, const std::vector<DentRecord> &rec)
+{
+	g.o = DentObject ();
+	for (const CollGroupData &G : g.rest0) {
+		std::vector<DentVtx> v (G.vtx.size ());
+		if (!v.empty ()) std::memcpy (v.data (), G.vtx.data (), v.size () * sizeof (DentVtx));
+		g.o.rest.push_back (v);
+		g.o.cur.push_back (v);
+		g.o.idx.push_back (G.idx);
+	}
+	g.o.nweld = DentMath::WeldMap (g.o.rest, DENT_WELD, g.o.weld);
+	std::vector<DentParams> pri;
+	for (const DentRecord &r : rec) {
+		if (!(r.flags & DENTR_NOREFINE)) DentMath::Refine (g.o, r.p.c, r.p.R, pri.data (), pri.size (), nullptr);
+		pri.push_back (r.p);
+	}
+}
+
+void CollDmgSession::BldgApply (const BKey &k, BldgGeoA &g, const BuildingDamageA &b)
+{
+	std::vector<const DentParams *> pl;
+	for (const DentRecord &r : b.rec) pl.push_back (&r.p);
+	std::vector<CollGroupData> out (g.o.rest.size ());
+	for (size_t gi = 0; gi < g.o.rest.size (); gi++) {
+		const std::vector<DentVtx> &R = g.o.rest[gi];
+		if (g.o.cur.size () <= gi) g.o.cur.resize (gi + 1);
+		std::vector<DentVtx> &C = g.o.cur[gi];
+		C = R;
+		CollGroupData &G = out[gi];
+		if (gi < g.rest0.size ()) G.usrflag = g.rest0[gi].usrflag, G.texid = g.rest0[gi].texid, G.undersh = g.rest0[gi].undersh, G.groundsh = g.rest0[gi].groundsh;
+		G.vtx.resize (R.size ());
+		for (size_t v = 0; v < R.size (); v++) {
+			Vector p (R[v].x, R[v].y, R[v].z);
+			Vector q = p + DentMath::Fold (pl.data (), pl.size (), p, true);
+			C[v].x = (float)q.x, C[v].y = (float)q.y, C[v].z = (float)q.z;
+			std::memcpy (&G.vtx[v], &C[v], sizeof (CollVtx));
+		}
+		const std::vector<uint16_t> &I = gi < g.o.idx.size () ? g.o.idx[gi] : std::vector<uint16_t> ();
+		for (size_t t = 0; t + 2 < I.size (); t += 3) {
+			if (I[t] >= R.size () || I[t + 1] >= R.size () || I[t + 2] >= R.size ()) continue;
+			const DentVtx &a = R[I[t]], &c = R[I[t + 1]], &d = R[I[t + 2]];
+			if (!DentMath::HoleKeeps (b.rec, Vector (a.x, a.y, a.z), Vector (c.x, c.y, c.z), Vector (d.x, d.y, d.z))) continue;
+			G.idx.insert (G.idx.end (), { I[t], I[t + 1], I[t + 2] });
+		}
+	}
+	if (!host.BuildingSet (k.first.first, k.first.second, (int)k.second, out)) Log ("Collision building: '%s' collider not set", BName (k, b).c_str ());
+	if (k.first.second < 0 || !cfg.visuals || !b.obj.hBase) return; // streamed buildings are the tile stream's meshes: their collider only
+	if (!sdk.BaseDentOn ()) {
+		if (!loggedNoDraw) Log ("Collision building: this core draws no building damage (no oapiBaseSetDent); the colliders still break");
+		loggedNoDraw = true;
+		return;
+	}
+	for (size_t i = 0; i < b.rec.size (); i++) sdk.BaseSetDent (b.obj.hBase, k.second, (uint32_t)i, b.rec[i]); // design coll-bounded 5.7: the core makes the structure again from rest
+}
+
+int CollDmgSession::HoleGrow (std::vector<DentRecord> &rec, const DentRecord &r)
+{
+	const double cmin = std::cos (DENT_COALESCE_ANGLE * 3.14159265358979323846 / 180.0);
+	for (size_t i = 0; i < rec.size (); i++) {
+		DentRecord &o = rec[i];
+		if (o.p.mode != DENTM_HOLE || o.slot != r.slot || !(dotp (o.p.n, r.p.n) > cmin)) continue;
+		Vector d = r.p.c - o.p.c;
+		if (!((d - o.p.n * dotp (d, o.p.n)).length () < o.p.P)) continue;
+		double A0 = o.p.P * o.p.P, A1 = r.p.P * r.p.P;
+		o.p.c = (o.p.c * A0 + r.p.c * A1) / (A0 + A1);
+		o.p.P = std::max (o.p.P, r.p.P), o.p.R = std::max (o.p.R, r.p.R), o.p.h = std::max (o.p.h, r.p.h);
+		o.p.P = std::min (o.p.P, o.p.R);
+		o.flags |= r.flags;
+		DentMath::Quantise (o.p);
+		return (int)i;
+	}
+	return -1;
+}
+
+bool CollDmgSession::BldgHit (BldgGeoA &g, BuildingDamageA &b, const BldgJobA &j, bool &grew, std::string &what)
+{
+	grew = false;
+	const DentMaterial &mat = j.k.first.second <= -2 ? DentMath::DefaultMaterial (DENTB_BLOCK) : MaterialOf (b.obj.mat, b.obj.cls);
+	double Rmax = DENT_RMAX_SIZE * g.rb, R = DentMath::Radius (j.E, mat.sigma_c, j.a, Rmax);
+	if (!(R > 0.0) || !(mat.sigma_c > 0.0)) return false;
+	double nl = j.n.length ();
+	if (!(nl > 0.0)) return false;
+	Vector nu = j.n / nl;
+	DentObject keep = g.o;                                     // refined before the solve (a coarse wall has no vertex in the kernel), undone if it makes no record
+	std::vector<DentParams> pri;
+	for (const DentRecord &r : b.rec) pri.push_back (r.p);
+	int rr = DentMath::Refine (g.o, j.c, R, pri.data (), pri.size (), nullptr);
+	DentViewData view;
+	DentMath::MakeView (g.o, view);
+	DentMeshView mv = view.View ();
+	double rt = 0, rayT = DentMath::RayCast (mv, j.c, -nu, DENT_RAY_TMIN, DENT_LIM_T, rt) ? rt : -1.0;
+	DentInput in { j.E, &mat, j.c, nu, j.a, Rmax, g.rb, rayT, false };
+	DentSolveX sx;
+	in.x = &sx;
+	DentParams p;
+	if (DentMath::Solve (in, mv, p) != DENT_OK) { g.o = keep; return false; }
+	double V = j.E / mat.sigma_c, hfree = sx.S > 0.0 ? V / sx.S : 0.0, Dm = DentMath::Dmax (mat.t_cap, p.T, p.R, g.rb);
+	DentRecord r {};
+	r.slot = j.k.second; r.key = 0; r.ngrp = 0; r.nvtx = 0; r.flags = rr < 0 ? DENTR_NOREFINE : 0;
+	if (Dm > 0.0 && hfree > Dm) {                              // deeper than the wall holds: torn open, the rim bent in by Dmax
+		p.mode = DENTM_HOLE, p.h = Dm, p.t = Vector ();
+		p.P = std::min (p.R, std::max (j.a, p.R * std::sqrt (1.0 - Dm / hfree)));
+		DentParams q = p; DentMath::Quantise (q);
+		p.seed = DentMath::ParamsHash (q) | 1u;
+	}
+	DentMath::Quantise (p);
+	r.p = p;
+	char buf[160];
+	if (p.mode == DENTM_HOLE) {
+		std::snprintf (buf, sizeof buf, "torn Rh=%.3g (impact)", p.P);
+		int k = HoleGrow (b.rec, r);
+		if (k >= 0) { grew = true; g.o = keep; }
+		else b.rec.push_back (r);
+		bldgTorn++;
+	} else {
+		std::snprintf (buf, sizeof buf, "dent R=%.3g h=%.3g", p.R, p.h);
+		int k = DentMath::FindCoalesce (b.rec, r);
+		if (k >= 0) {                                          // the same spot again: deeper, and torn once past what the wall holds
+			DentParams &o = b.rec[k].p;
+			double So = DentMath::VolumeFactor (o, mv), Do = DentMath::Dmax (mat.t_cap, o.T, o.R, g.rb), hf = o.h + (So > 0.0 ? V / So : 0.0);
+			if (Do > 0.0 && hf > Do) {
+				o.mode = DENTM_HOLE, o.h = Do, o.t = Vector ();
+				o.P = std::min (o.R, std::max (j.a, o.R * std::sqrt (1.0 - Do / hf)));
+				DentParams q = o; DentMath::Quantise (q);
+				o.seed = DentMath::ParamsHash (q) | 1u;
+				std::snprintf (buf, sizeof buf, "torn Rh=%.3g (impact)", o.P);
+				bldgTorn++;
+			} else o.h += DentMath::CoalesceDepth (o, V, mv, Do);
+			DentMath::Quantise (o);
+			grew = true;
+			g.o = keep;
+			n.coalesced++;
+		} else b.rec.push_back (r);
+		if (p.mode != DENTM_HOLE) bldgDents++;
+	}
+	what = buf;
+	return true;
+}
+
+bool CollDmgSession::BldgBreak (BldgGeoA &g, BuildingDamageA &b, const BldgJobA &j, bool &grew, std::string &what)
+{
+	grew = false;
+	if (j.pts.empty ()) return false;
+	Vector c;
+	for (const Vector &x : j.pts) c += x;
+	c /= (double)j.pts.size ();
+	double dmax = 0.0;
+	for (const Vector &x : j.pts) dmax = std::max (dmax, (x - c).length ());
+	double Rh = (dmax + 0.5) / 0.75;                           // the jagged rim (J >= 0.75) still takes every crossing point
+	DentRecord r {};
+	r.slot = j.k.second; r.key = 0; r.ngrp = 0; r.nvtx = 0;
+	r.p.c = c; r.p.n = j.n; r.p.R = 1.5 * Rh; r.p.h = 0.3 * Rh; r.p.T = 0.0;
+	r.p.mode = DENTM_HOLE; r.p.P = Rh;
+	DentParams q = r.p; DentMath::Quantise (q);
+	r.p.seed = DentMath::ParamsHash (q) | 1u;
+	DentMath::Quantise (r.p);
+	if (!(r.p.R <= DENT_LIM_R)) return false;
+	int k = HoleGrow (b.rec, r);
+	if (k >= 0) grew = true;
+	else {
+		std::vector<DentParams> pri;
+		for (const DentRecord &x : b.rec) pri.push_back (x.p);
+		if (DentMath::Refine (g.o, r.p.c, r.p.R, pri.data (), pri.size (), nullptr) < 0) r.flags |= DENTR_NOREFINE;
+		b.rec.push_back (r);
+	}
+	CollH h = host.Vessel (j.vessel);
+	char buf[200];
+	std::snprintf (buf, sizeof buf, "torn Rh=%.3g (penetration '%s')", r.p.P, h ? sdk.Name (h).c_str () : "?");
+	what = buf;
+	bldgBreaks++;
+	return true;
+}
+
+std::string CollDmgSession::BName (const BKey &k, const BuildingDamageA &b)
+{
+	std::string s;
+	if (k.first.second <= -2) { if (!host.BuildingName (k.first.first, k.first.second, (int)k.second, s)) s = "streamed building #" + std::to_string (k.second); return s; }
+	return b.obj.planet + ":" + b.obj.base + "' " + b.obj.type + " #" + std::to_string (b.obj.obj);
+}
+
+void CollDmgSession::BldgSide (const BKey &k, const BuildingDamageA &b, size_t idx, uint32_t vessel)
+{
+	if (!rec.active || k.first.second < 0 || idx >= b.rec.size ()) return;
+	CollH h = host.Vessel (vessel);
+	if (!h) return;
+	Side (CollSide::BuildingDent (frameT - rec.t0, Alias (Get (vessel), h), b.obj.planet + ":" + b.obj.base, (uint32_t)idx, b.rec[idx]));
+}
+
+void CollDmgSession::BuildingStep ()
+{
+	while (!bq.empty ()) {
+		BldgJobA j = std::move (bq.front ());
+		bq.pop_front ();
+		BuildingDamageA *b = BRec (j.k);
+		if (!b) continue;
+		BldgGeoA *g = BGeo (j.k, *b);
+		if (!g) continue;
+		if (j.kind == 2) { BldgApply (j.k, *g, *b); return; }
+		size_t n0 = b->rec.size ();
+		if (n0 >= DENT_MAX_OBJECT && j.kind == 0) {
+			if (!loggedBldgCap) Log ("Collision building: '%s' has %u records; later impacts there add energy only", BName (j.k, *b).c_str (), DENT_MAX_OBJECT);
+			loggedBldgCap = true;
+			continue;
+		}
+		std::vector<DentRecord> before = b->rec;
+		bool grew = false;
+		std::string what;
+		bool done = j.kind == 0 ? BldgHit (*g, *b, j, grew, what) : (n0 < DENT_MAX_OBJECT && BldgBreak (*g, *b, j, grew, what));
+		if (!done) continue;
+		if (grew) BldgRemake (*g, b->rec);                     // a grown record: every refinement again from rest, as a load makes it
+		BldgApply (j.k, *g, *b);
+		for (size_t i = 0; i < b->rec.size (); i++)            // recorder: the new or grown record
+			if (i >= before.size () || std::memcmp (&before[i].p, &b->rec[i].p, sizeof (DentParams)) != 0) BldgSide (j.k, *b, i, j.vessel);
+		const char *kind = what.compare (0, 4, "torn") == 0 ? "torn" : "dent";
+		if (j.k.first.second <= -2) Log ("Collision building %s %s %s", kind, BName (j.k, *b).c_str (), what.c_str () + 5);
+		else Log ("Collision building %s '%s %s", kind, BName (j.k, *b).c_str (), what.c_str () + 5);
+		return;
+	}
 }

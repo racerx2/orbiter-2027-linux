@@ -211,6 +211,44 @@ void CollGeomSession::UpdateInfo (CollVesselSrc &r, uint32_t i)
 	s.info.collide = s.present && (s.mode & MESHVIS_EXTERNAL) && !ExcludesAll (s.info.side.get ()) && r.keys.enableCollider;
 }
 
+// design coll-bounded 6.1: a debris piece collides as the hull of its collidable groups; flat, or still holding the parent's hidden groups: its triangles
+static std::shared_ptr<CollRestMesh> DebrisHull (const CollRestMesh &rm)
+{
+	std::vector<Vector> pts;
+	std::vector<uint8_t> on;
+	std::vector<uint16_t> mat;
+	CollGroupRules (nullptr, rm, on, mat);
+	for (size_t g = 0; g < rm.grp.size (); g++) {
+		if (!on[g]) return nullptr;
+		for (const CollVtx &x : rm.grp[g].vtx) pts.push_back (Vector (x.x, x.y, x.z));
+	}
+	std::vector<Vector> hv;
+	std::vector<uint32_t> ht;
+	double vol = 0;
+	if (!CollConvexHull (pts, 48, hv, ht, &vol)) return nullptr;
+	Vector lo = hv[0], hi = hv[0];
+	for (const Vector &x : hv) for (int k = 0; k < 3; k++) { lo.data[k] = std::min (lo.data[k], x.data[k]); hi.data[k] = std::max (hi.data[k], x.data[k]); }
+	Vector d = hi - lo;
+	if (!(vol >= 1e-6) || !(vol >= 0.01*d.x*d.y*d.z)) return nullptr;
+	auto m = std::make_shared<CollRestMesh> ();
+	m->name = "#hull";
+	m->grp.resize (1);
+	CollGroupData &G = m->grp[0];
+	std::vector<Vector> nrm (hv.size ());
+	for (size_t k = 0; k + 2 < ht.size (); k += 3) {
+		Vector n = crossp (hv[ht[k + 1]] - hv[ht[k]], hv[ht[k + 2]] - hv[ht[k]]);
+		for (int j = 0; j < 3; j++) nrm[ht[k + j]] += n;
+	}
+	for (size_t k = 0; k < hv.size (); k++) {
+		double l = nrm[k].length ();
+		Vector n = l > 0 ? nrm[k]/l : Vector ();
+		G.vtx.push_back (CollVtx { (float)hv[k].x, (float)hv[k].y, (float)hv[k].z, (float)n.x, (float)n.y, (float)n.z, 0, 0 });
+	}
+	for (uint32_t x : ht) G.idx.push_back ((uint16_t)x);
+	m->nvtx = (uint32_t)G.vtx.size ();
+	return m;
+}
+
 void CollGeomSession::Replace (CollVesselSrc &r, uint32_t i)
 {
 	CollSlotRec &s = r.slot[i];
@@ -231,6 +269,7 @@ void CollGeomSession::Replace (CollVesselSrc &r, uint32_t i)
 	if (!s.name.empty ()) s.info.side = cache.Sidecar (sdk, dirs, s.name, ngrp);
 	if (s.info.side && !s.info.side->mesh.empty ()) s.info.coll = cache.ByName (sdk, dirs, s.info.side->mesh).rest;
 	if (!s.info.rest && s.present) s.info.rest = std::make_shared<CollRestMesh> ();
+	if (!s.info.coll && s.info.rest && CollLower (r.cls) == "colldebris") s.info.coll = DebrisHull (*s.info.rest); // CollBreakA's BRK_CLASS
 	r.present[i] = s.present ? 1 : 0;
 	UpdateInfo (r, i);
 	r.anim.OnMeshInsert (i);
@@ -769,3 +808,25 @@ bool CollGeomSession::Fixed (uint32_t id) const
 const CollBaseRec *CollGeomSession::BaseRec (int planet, int base) const { return bases->Rec (planet, base); }
 const CollBaseObjView *CollGeomSession::BaseObject (int planet, int base, int obj) const { return bases->Object (planet, base, obj); }
 void CollGeomSession::Bases (std::vector<const CollBaseObjView *> &all) const { bases->All (all); }
+
+bool CollGeomSession::BuildingRest (int planet, int base, int obj, std::vector<CollGroupData> &grp, double &rb)
+{
+	grp.clear (); rb = 0;
+	if (obj < 0) return false;
+	if (base <= -2) return bldg && bldg->Groups (planet, base, (uint32_t)obj, grp, rb);
+	if (base < 0 || !bases || !bases->Rest (sdk, dirs, planet, base, (uint32_t)obj, grp)) return false;
+	Vector lo (1e30, 1e30, 1e30), hi (-1e30, -1e30, -1e30);
+	for (const CollGroupData &g : grp) for (const CollVtx &v : g.vtx) {
+		lo.x = std::min (lo.x, (double)v.x); lo.y = std::min (lo.y, (double)v.y); lo.z = std::min (lo.z, (double)v.z);
+		hi.x = std::max (hi.x, (double)v.x); hi.y = std::max (hi.y, (double)v.y); hi.z = std::max (hi.z, (double)v.z);
+	}
+	rb = hi.x >= lo.x ? 0.5 * (hi - lo).length () : 0.0;
+	return true;
+}
+
+bool CollGeomSession::BuildingSet (int planet, int base, int obj, const std::vector<CollGroupData> &grp)
+{
+	if (obj < 0) return false;
+	if (base <= -2) return bldg && bldg->SetGroups (planet, base, (uint32_t)obj, grp);
+	return base >= 0 && bases && bases->Set (planet, base, (uint32_t)obj, grp);
+}

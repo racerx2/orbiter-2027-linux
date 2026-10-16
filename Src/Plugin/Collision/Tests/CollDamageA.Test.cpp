@@ -174,6 +174,19 @@ public:
 		return false;
 	}
 	void Bases (std::vector<CollDmgBaseObj> &all) override { all = bases; }
+	std::map<int, std::vector<CollGroupData>> brest;  // coll-bounded 5: object index -> undamaged collider
+	std::vector<CollGroupData> bset; int nset = 0;    // the last collider set
+	bool BuildingRest (int, int base, int obj, std::vector<CollGroupData> &grp, double &rb) override
+	{
+		auto it = brest.find (obj);
+		if (base < 0 || it == brest.end ()) return false;
+		grp = it->second;
+		Vector lo (1e30, 1e30, 1e30), hi (-1e30, -1e30, -1e30);
+		for (auto &g : grp) for (auto &v : g.vtx) { lo.x = std::min (lo.x, (double)v.x); lo.y = std::min (lo.y, (double)v.y); lo.z = std::min (lo.z, (double)v.z); hi.x = std::max (hi.x, (double)v.x); hi.y = std::max (hi.y, (double)v.y); hi.z = std::max (hi.z, (double)v.z); }
+		rb = 0.5 * (hi - lo).length ();
+		return true;
+	}
+	bool BuildingSet (int, int, int, const std::vector<CollGroupData> &grp) override { bset = grp; nset++; return true; }
 };
 
 std::shared_ptr<CollRestMesh> Plate () // 21 x 21 grid over [-5, 5]^2 in z = 0, outward +z
@@ -2036,3 +2049,201 @@ TEST_CASE ("custom-fix B4: blast cell debris rows are recorded only; playback ha
 	CHECK ((!p.s.Damage (a) || p.s.Damage (a)->d.torn.empty ()));      // never a saved row
 	std::filesystem::remove_all (dir);
 }
+
+namespace {
+// coll-bounded 5: a wall 20 m wide and 10 m high in z = 0, outward +z, as two triangles (a coarse BLOCK) or a 0.5 m grid; and a box behind it
+CollGroupData Wall (bool coarse)
+{
+	CollGroupData g;
+	int nx = coarse ? 1 : 40, ny = coarse ? 1 : 20;
+	for (int j = 0; j <= ny; j++) for (int i = 0; i <= nx; i++) g.vtx.push_back (CollVtx { -10.0f + 20.0f * i / nx, -5.0f + 10.0f * j / ny, 0, 0, 0, 1, 0, 0 });
+	for (int j = 0; j < ny; j++) for (int i = 0; i < nx; i++) {
+		uint16_t a = (uint16_t)(j * (nx + 1) + i), b = (uint16_t)(a + 1), c = (uint16_t)(a + nx + 1), d = (uint16_t)(c + 1);
+		g.idx.insert (g.idx.end (), { a, b, d, a, d, c });
+	}
+	return g;
+}
+void WallRig (Rig &r, bool coarse)
+{
+	CollDmgBaseObj o;
+	o.planet = "Earth", o.base = "KSC", o.type = "BLOCK", o.planetIdx = 0, o.baseIdx = 0, o.obj = 7, o.cls = DENTB_BLOCK, o.size = Vector (20, 10, 10), o.x = 12.5, o.z = -40;
+	r.host.bases = { o };
+	r.host.brest[7] = { Wall (coarse) };
+}
+CollImpactEvent WallHit (uint32_t v, const Vector &c, double dKE, double vn = 30)
+{
+	CollImpactEvent e = Hit (v, 0, 7, vn, dKE);
+	e.s[1].c = c, e.s[1].n = Vector (0, 0, 1), e.s[1].a = 0.3;
+	return e;
+}
+size_t Tris (const std::vector<CollGroupData> &g) { size_t n = 0; for (auto &x : g) n += x.idx.size () / 3; return n; }
+bool InTri (const Vector &p, const CollGroupData &g, size_t t)
+{
+	Vector a (g.vtx[g.idx[t]].x, g.vtx[g.idx[t]].y, 0), b (g.vtx[g.idx[t + 1]].x, g.vtx[g.idx[t + 1]].y, 0), c (g.vtx[g.idx[t + 2]].x, g.vtx[g.idx[t + 2]].y, 0);
+	auto s = [&] (const Vector &u, const Vector &v) { return (v.x - u.x) * (p.y - u.y) - (v.y - u.y) * (p.x - u.x); };
+	double d1 = s (a, b), d2 = s (b, c), d3 = s (c, a);
+	return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+}
+}
+
+TEST_CASE ("coll-bounded 5: an impact on a coarse BLOCK wall dents it (refined before the solve), the next one there grows it; nothing in the impact pre-step", "[bldg]")
+{
+	Rig r; WallRig (r, true);
+	uint32_t a = r.Add ("A");
+	r.Begin ();
+	r.Frame ({ WallHit (a, Vector (0.2, 0.1, 0), 2e6) });
+	CHECK (r.s.BuildingQueue () == 1);
+	CHECK (r.host.nset == 0);                                         // queued: not in the impact pre-step
+	r.s.BuildingStep ();
+	REQUIRE (r.host.nset == 1);
+	const BuildingDamageA *b = nullptr;
+	for (auto &kv : r.s.Buildings ()) b = &kv.second;
+	REQUIRE (b);
+	REQUIRE (b->rec.size () == 1);
+	CHECK (b->rec[0].p.mode == DENTM_BOWL);
+	CHECK (b->rec[0].p.h > 0.01);
+	CHECK (Tris (r.host.bset) > 2);                                   // refined
+	bool moved = false;
+	for (auto &v : r.host.bset[0].vtx) moved = moved || v.z < -0.01f;
+	CHECK (moved);
+	CHECK (r.sdk.Logged ("Collision building dent 'Earth:KSC' BLOCK #7 R="));
+	double h0 = b->rec[0].p.h;
+	r.Frame ({ WallHit (a, Vector (0.4, 0.0, 0), 2e6) });
+	r.s.BuildingStep ();
+	REQUIRE (b->rec.size () == 1);                                    // coalesced
+	CHECK (b->rec[0].p.h > h0);
+	CHECK (r.host.nset == 2);
+	r.s.BuildingStep ();
+	CHECK (r.host.nset == 2);                                         // one step a pre-step, nothing left
+}
+
+TEST_CASE ("coll-bounded 5: a hit deeper than the wall holds tears a HOLE: its triangles leave the collider", "[bldg]")
+{
+	Rig r; WallRig (r, false);
+	uint32_t a = r.Add ("A");
+	r.Begin ();
+	r.Frame ({ WallHit (a, Vector (0.0, 0.0, 0), 4e8, 80) });
+	r.s.BuildingStep ();
+	const BuildingDamageA *b = nullptr;
+	for (auto &kv : r.s.Buildings ()) b = &kv.second;
+	REQUIRE (b);
+	REQUIRE (b->rec.size () == 1);
+	CHECK (b->rec[0].p.mode == DENTM_HOLE);
+	CHECK (b->rec[0].p.P > 0.5);
+	CHECK (b->rec[0].p.P <= b->rec[0].p.R);
+	CHECK (Tris (r.host.bset) < Tris ({ Wall (false) }));
+	bool centre = false;
+	for (size_t t = 0; t + 2 < r.host.bset[0].idx.size (); t += 3) centre = centre || InTri (Vector (0, 0, 0), r.host.bset[0], t);
+	CHECK (!centre);
+	CHECK (r.sdk.Logged ("Collision building torn 'Earth:KSC' BLOCK #7 Rh="));
+	CHECK (r.sdk.Logged ("(impact)"));
+}
+
+TEST_CASE ("coll-bounded 5: a damaged vessel crossing a wall breaks every crossing triangle out; an undamaged one at load does not", "[bldg]")
+{
+	Rig r; WallRig (r, false);
+	uint32_t a = r.Add ("A"), c = r.Add ("C");
+	r.Begin ();
+	r.Frame ();
+	std::vector<Vector> pts;
+	for (int i = 0; i < 12; i++) pts.push_back (Vector (-1.2 + 0.2 * i, -0.4 + 0.07 * i, 0.0));
+	CollDmgOver ov { c, 0, 0, 7, pts, Vector (0, 0, 3) };
+	r.s.Overlaps ({ ov }, r.sdk.simt);
+	CHECK (r.s.BuildingQueue () == 0);                                // undamaged, no recent impact: GRACE keeps it
+	r.Frame ({ WallHit (a, Vector (6, 3, 0), 2e5) });                  // A hit the wall: its overlap now is a penetration
+	r.s.BuildingStep ();
+	CollDmgOver oa { a, 0, 0, 7, pts, Vector (0, 0, 3) };
+	r.s.Overlaps ({ oa }, r.sdk.simt);
+	REQUIRE (r.s.BuildingQueue () == 1);
+	std::vector<uint32_t> bv;
+	r.s.BreakVessels (bv);
+	CHECK (bv == std::vector<uint32_t> { a });
+	r.s.Overlaps ({ oa }, r.sdk.simt);
+	CHECK (r.s.BuildingQueue () == 1);                                // one queued break a vessel and object
+	r.s.BuildingStep ();
+	CHECK (r.s.bldgBreaks == 1);
+	size_t crossing = 0;
+	for (const Vector &p : pts) for (size_t t = 0; t + 2 < r.host.bset[0].idx.size (); t += 3) if (InTri (p, r.host.bset[0], t)) crossing++;
+	CHECK (crossing == 0);
+	CHECK (r.sdk.Logged ("(penetration 'A')"));
+}
+
+TEST_CASE ("coll-bounded 5.6: building records save with their OBJ line, load through the OBJ match once, and make the same collider", "[bldg]")
+{
+	std::vector<std::string> lines;
+	std::vector<CollGroupData> made;
+	{
+		Rig r; WallRig (r, false);
+		uint32_t a = r.Add ("A");
+		r.Begin ();
+		r.Frame ({ WallHit (a, Vector (-4, 1, 0), 2e6), WallHit (a, Vector (5, -2, 0), 4e8, 80) });
+		r.s.BuildingStep ();
+		r.s.BuildingStep ();
+		const BuildingDamageA *b = nullptr;
+		for (auto &kv : r.s.Buildings ()) b = &kv.second;
+		REQUIRE (b);
+		REQUIRE (b->rec.size () == 2);
+		made = r.host.bset;
+		r.s.SaveLines (lines);
+	}
+	size_t nodent = 0, nobj = 0;
+	for (auto &l : lines) { nodent += l.rfind ("ODENT ", 0) == 0; nobj += l.rfind ("OBJ 7 ", 0) == 0; }
+	CHECK (nodent == 2);
+	CHECK (nobj == 1);
+	CollStoreBlock blk;
+	std::vector<std::string> body (lines.begin () + 1, lines.end ());
+	CollStore::ParseBody (body, blk);
+	blk.found = true; blk.version = 1;
+	Rig q; WallRig (q, false);
+	q.Add ("A");
+	q.Begin (std::move (blk));
+	q.Frame ();
+	CHECK (q.s.BuildingQueue () == 1);
+	q.s.BuildingStep ();
+	REQUIRE (q.host.nset == 1);
+	REQUIRE (q.host.bset.size () == made.size ());
+	CHECK (q.host.bset[0].idx == made[0].idx);
+	CHECK (std::memcmp (q.host.bset[0].vtx.data (), made[0].vtx.data (), made[0].vtx.size () * sizeof (CollVtx)) == 0);
+	std::vector<std::string> again;
+	q.s.SaveLines (again);
+	size_t n2 = 0;
+	for (auto &l : again) n2 += l.rfind ("ODENT ", 0) == 0;
+	CHECK (n2 == 2);                                                  // not written twice (dormant)
+}
+
+#if COLL_HAVE_BASEDENT
+#include "../../../Orbiter/BaseDent.h"
+TEST_CASE ("coll-bounded 5.7: the core's dent adapter makes the collider's vertices and triangles from the same records", "[bldg]")
+{
+	Rig r; WallRig (r, false);
+	uint32_t a = r.Add ("A");
+	r.Begin ();
+	r.Frame ({ WallHit (a, Vector (-4, 1, 0), 2e6), WallHit (a, Vector (5, -2, 0), 4e8, 80) });
+	r.s.BuildingStep ();
+	r.s.BuildingStep ();
+	const BuildingDamageA *b = nullptr;
+	for (auto &kv : r.s.Buildings ()) b = &kv.second;
+	REQUIRE (b);
+	REQUIRE (b->rec.size () == 2);
+	CollGroupData w = Wall (false);
+	std::vector<BaseDentGroup> rest (1), out;
+	rest[0].vtx.resize (w.vtx.size ());
+	std::memcpy (rest[0].vtx.data (), w.vtx.data (), w.vtx.size () * sizeof (CollVtx));
+	rest[0].idx = w.idx;
+	rest[0].room = 65535 - (uint32_t)w.vtx.size ();
+	std::vector<BaseDentRec> rec;
+	for (const DentRecord &x : b->rec)
+		rec.push_back ({ x.p.mode, x.p.seed, x.p.bits, x.flags, { x.p.c.x, x.p.c.y, x.p.c.z }, { x.p.n.x, x.p.n.y, x.p.n.z }, { x.p.t.x, x.p.t.y, x.p.t.z }, x.p.R, x.p.h, x.p.T, x.p.P, x.p.hd, x.p.hz });
+	BaseDentApply (rest, rec, out);
+	REQUIRE (out.size () == 1);
+	REQUIRE (out[0].vtx.size () == r.host.bset[0].vtx.size ());
+	CHECK (out[0].idx == r.host.bset[0].idx);
+	bool same = true;
+	for (size_t i = 0; i < out[0].vtx.size (); i++)
+		same = same && out[0].vtx[i].x == r.host.bset[0].vtx[i].x && out[0].vtx[i].y == r.host.bset[0].vtx[i].y && out[0].vtx[i].z == r.host.bset[0].vtx[i].z;
+	CHECK (same);
+	bool turned = false;
+	for (size_t i = 0; i < out[0].vtx.size (); i++) turned = turned || out[0].vtx[i].nz < 0.999f;
+	CHECK (turned);                                                    // the core's normals follow the dent
+}
+#endif

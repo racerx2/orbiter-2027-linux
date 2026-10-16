@@ -142,6 +142,8 @@ bool CollKey::ParseVesselLine (const std::string &line, const char *kw, uint32_t
 
 bool CollStore::Line200 (const std::string &l) { return l.size () <= (size_t)DENT_LINE_MAX && l.find (';') == std::string::npos; }
 
+std::string CollStore::RestLine (const std::string &name, double rad) { return "REST " + CollKey::Escape (name) + " " + CollSide::Fmt17 (rad); }
+
 bool CollStore::Parse (const LineIn &in, CollStoreBlock &out)
 {
 	out = CollStoreBlock ();
@@ -210,6 +212,12 @@ void CollStore::ParseBody (const std::vector<std::string> &lines, CollStoreBlock
 			p.Finish (b);
 			out.skipped += p.Skipped ();
 			out.base.insert (out.base.end (), b.begin (), b.end ());
+			continue;
+		}
+		if (Kw (t[0], "REST")) {
+			std::string n; double r;
+			if (t.size () >= 3 && CollKey::Unescape (t[1], n) && Real (t[2], r) && r > 0) out.rest.push_back ({ n, r });
+			else out.skipped++;
 			continue;
 		}
 		if (Kw (t[0], "TESTREPAIR")) {
@@ -335,6 +343,11 @@ std::string CollSide::Building (double t, uint32_t alias, uint32_t obj, double e
 	return Fmt17 (t) + " B " + std::to_string (alias) + " " + std::to_string (obj) + " " + DentMath::FormatStateEvent (eabs, flags) + " " + CollKey::Escape (planetBase);
 }
 
+std::string CollSide::BuildingDent (double t, uint32_t alias, const std::string &planetBase, uint32_t k, const DentRecord &r)
+{
+	return Fmt17 (t) + " O " + std::to_string (alias) + " " + CollKey::Escape (planetBase) + " " + std::to_string (k) + " " + DentMath::FormatBaseDentEvent (0, 0, (int)r.slot, r.p, r.flags);
+}
+
 bool CollSide::Parse (const std::string &text, CollSideFile &out)
 {
 	out = CollSideFile ();
@@ -426,6 +439,10 @@ bool CollSide::Parse (const std::string &text, CollSideFile &out)
 			kopen = ok && more;
 		} else if (ev.kind == 'B' && t.size () >= 7 && Num (t[3], ev.obj)) {
 			ok = DentMath::ParseStateEvent ((t[4] + " " + t[5]).c_str (), ev.eabs, ev.flags) && CollKey::Unescape (t[6], ev.base);
+		} else if (ev.kind == 'O' && t.size () >= 6 && Num (t[4], ev.recidx) && CollKey::Unescape (t[3], ev.base)) {
+			int pl, bs, ob;
+			ok = DentMath::ParseBaseDentEvent (l.c_str () + TokStart (l, 5), pl, bs, ob, ev.rec.p, ev.rec.flags) && ev.recidx < DENT_MAX_OBJECT;
+			ev.obj = (uint32_t)ob; ev.rec.slot = ev.obj;
 		}
 		if (ev.kind != 'D') {
 			if (open && over) { out.ev.pop_back (); out.skipped++; }

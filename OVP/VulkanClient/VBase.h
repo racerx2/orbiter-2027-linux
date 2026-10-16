@@ -86,6 +86,8 @@ private:
 	int nBuried = -1;          // not upstream: last logged count
 	double Tburied = -1e9;     // not upstream: system time of the last buried check
 	void UpdateBuried();       // not upstream
+	std::vector<DWORD> serial_bs, serial_as; // not upstream (coll-bounded 5.7): the core's structure mesh serials this visual holds
+	void ReloadDented();       // not upstream: structure meshes the core changed (building dents) made again
 	double csun_lights;
 	DWORD ntile;               // number of surface tiles
 	const SurftileSpec *tspec; // list of tile specs

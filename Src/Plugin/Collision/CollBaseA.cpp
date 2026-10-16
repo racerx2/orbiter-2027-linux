@@ -216,6 +216,8 @@ void CollBaseA::Build (CollSdk &sdk, const CollDirs &d, bool geometry, bool bldg
 						r->shape.SetObject (slotI, o.index, o.grp.data (), o.grp.size (), v.mat, true);
 						r->shape.Follow (slotI, 1, 1);
 						r->objOf.push_back (o.index);
+						o.grp.clear ();
+						r->def.push_back (o);
 						slotI++;
 					}
 					for (auto &w : warn) sdk.Log (1, ("Collision bases: " + bname + ": " + w).c_str ());
@@ -223,6 +225,7 @@ void CollBaseA::Build (CollSdk &sdk, const CollDirs &d, bool geometry, bool bldg
 				}
 				r->view.push_back (v);
 			}
+			r->mapToSphere = m->f.mapToSphere;
 			if (geometry && slotI) r->shape.Finish (r->rposP, r->rrotP, R);
 #if COLL_HAVE_BLDGGEOM
 			if (sidx && !sidx->Empty ()) { r->bidx = sidx; nIdx++; nFaces += sidx->Count (); }
@@ -278,4 +281,37 @@ void CollBaseA::All (std::vector<const CollBaseObjView *> &all) const
 {
 	all.clear ();
 	for (auto &r : rec) for (auto &v : r->view) all.push_back (&v);
+}
+
+bool CollBaseA::Rest (CollSdk &sdk, const CollDirs &d, int planet, int base, uint32_t obj, std::vector<CollGroupData> &grp) const
+{
+	grp.clear ();
+	const CollBaseRec *r = Rec (planet, base);
+	if (!r) return false;
+	for (size_t i = 0; i < r->def.size () && i < r->objOf.size (); i++) {
+		if (r->objOf[i] != obj) continue;
+		CollBaseObjDef o = r->def[i];
+		std::vector<std::string> warn;
+		CollBaseElev el;
+		el.lng = r->lng; el.lat = r->lat; el.elev = r->elev;
+		CollH hp = r->hPlanet;
+		el.at = [&sdk, hp] (double l, double b) { return sdk.Elevation (hp, l, b); };
+		if (!CollBaseObjGeometry (o, sdk, d, r->rPlanet, r->mapToSphere, warn, &el)) return false;
+		grp.swap (o.grp);
+		return !grp.empty ();
+	}
+	return false;
+}
+
+bool CollBaseA::Set (int planet, int base, uint32_t obj, const std::vector<CollGroupData> &grp)
+{
+	CollBaseRec *r = nullptr;
+	for (auto &x : rec) if (x->planetIdx == planet && x->baseIdx == base) r = x.get ();
+	if (!r) return false;
+	int s = r->shape.SlotOf (obj);
+	if (s < 0) return false;
+	uint16_t mat = r->shape.Obj ((uint32_t)s).mat;
+	bool ok = r->shape.SetObject ((uint32_t)s, obj, grp.data (), grp.size (), mat, true);
+	r->shape.Finish (r->rposP, r->rrotP, r->rPlanet);
+	return ok;
 }

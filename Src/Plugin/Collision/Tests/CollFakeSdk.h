@@ -1,6 +1,7 @@
 // not upstream: collision addon, the one fake CollSdk for unit tests: scripted world, files in memory, call counts (design E2 1.5)
 #ifndef __COLLFAKESDK_H
 #define __COLLFAKESDK_H
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -37,7 +38,7 @@ public:
 	std::vector<std::string> log, calls;
 	std::string annotation;
 	int misuse = 0, noteCalls = 0, dialogs = 0, cmdNext = 1, annotationCalls = 0, forgets = 0;
-	struct Wr { char op; CollH h; Vector a, b; Matrix R; CollStateWrite s; }; // op: S state, A attitude, W spin, F force
+	struct Wr { char op; CollH h; Vector a, b; Matrix R; CollStateWrite s; CollLandWrite l {}; }; // op: S state, A attitude, W spin, F force, L landed
 	std::vector<Wr> wr;                     // state-changing vessel calls in order
 	bool applyWrites = false;               // apply them to rd; a vessel with sv and svcg moves as a stack component (SuperVessel.cpp:309-388)
 	double simT = 0, mjd = 51544.5, sysT = 0, warp = 1;
@@ -173,6 +174,18 @@ protected:
 		Matrix R; R.Set (st.arot);
 		Vector cg = xr + st.rpos + mul (x->rd.R, x->rd.svcg); // RPlace with the current rotation, then the orientation about the CG
 		x->rd.x = cg - mul (R, x->rd.svcg); x->rd.R = R; x->rd.v = vr + st.rvel; x->rd.w = st.vrot;
+	}
+	void DoSetLanded (CollH v, const CollLandWrite &l) override // Vesselstatus.cpp status 1: rad = size + alt + elevation, R = R_planet Set (arot)
+	{
+		wr.push_back ({ 'L', v, Vector (), Vector (), Matrix (), CollStateWrite {}, l });
+		Ves *x = V (v);
+		if (!x || !applyWrites || !l.rbody) return;
+		Vector pp, pv; Matrix Rp;
+		GlobalState (l.rbody, pp, pv, Rp);
+		double r = Size (l.rbody) + l.alt + Elevation (l.rbody, l.lng, l.lat);
+		Vector loc (r * std::cos (l.lat) * std::cos (l.lng), r * std::sin (l.lat), r * std::cos (l.lat) * std::sin (l.lng));
+		Matrix Rl; Rl.Set (l.arot);
+		x->rd.x = pp + mul (Rp, loc); x->rd.R = Rp * Rl; x->rd.v = pv; x->rd.w = Vector (); x->rd.status = 1;
 	}
 	void DoSetAttitude (CollH v, const Matrix &R) override
 	{

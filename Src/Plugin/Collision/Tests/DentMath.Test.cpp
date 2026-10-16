@@ -3728,3 +3728,76 @@ TEST_CASE ("custom-fix2 D2: a cell debris row keeps its head room: the K payload
 	CHECK (kin == 1);
 	CHECK (cells == w.cells); CHECK (pieces == w.pieces);            // every cell and piece once, in order
 }
+
+TEST_CASE("coll-bounded 5.3: a HOLE drops the triangles in its jagged rim, keeps those outside, bends its rim along -n and round-trips through ODENT", "[dent][hole]")
+{
+	DentObject g;
+	AddGrid (g, Vector (-8, -8, 0), Vector (0.25, 0, 0), Vector (0, 0.25, 0), 64, 64, Vector (0, 0, 1));
+	DentRecord r {};
+	r.slot = 3;
+	r.p.c = Vector (0.1, -0.2, 0.0); r.p.n = Vector (0, 0, 1); r.p.R = 4.5; r.p.h = 0.9; r.p.T = 0.0;
+	r.p.mode = DENTM_HOLE; r.p.P = 3.0; r.p.seed = 0x1234abcdu;
+	DentMath::Quantise (r.p);
+	std::vector<DentRecord> rec { r };
+	size_t in = 0, out = 0, wrong = 0;
+	double rmin = 1e9, rmax = 0;
+	const std::vector<DentVtx> &v = g.rest[0];
+	const std::vector<uint16_t> &I = g.idx[0];
+	for (size_t t = 0; t + 2 < I.size (); t += 3) {
+		Vector a = P (v[I[t]]), b = P (v[I[t + 1]]), c = P (v[I[t + 2]]), m = (a + b + c) / 3.0;
+		double d = (m - r.p.c).length ();
+		bool keep = DentMath::HoleKeeps (rec, a, b, c);
+		if (!keep) { in++; rmax = std::max (rmax, d); } else { out++; rmin = std::min (rmin, d); }
+		if (d < 0.75 * r.p.P - 1e-9 && keep) wrong++;
+		if (d > r.p.P + 1e-9 && !keep) wrong++;
+	}
+	CHECK (wrong == 0);
+	CHECK (in > 0);
+	CHECK (out > 0);
+	CHECK (rmax <= r.p.P + 1e-9);
+	CHECK (rmin >= 0.75 * r.p.P - 0.2);
+	CHECK (rmax - rmin > 0.05);                                      // jagged: the rim radius changes with the angle
+	Vector rim = r.p.c + Vector (r.p.P + 0.2, 0, 0), far = r.p.c + Vector (r.p.R + 0.1, 0, 0), off = r.p.c + Vector (1, 0, 3.5);
+	Vector dr = DentMath::Displace (r.p, rim);
+	CHECK (dr.z < -0.1);                                             // the torn rim folds inward, away from the impactor
+	CHECK (std::fabs (dr.x) + std::fabs (dr.y) < 1e-12);
+	CHECK (DentMath::Displace (r.p, far).length () == 0.0);
+	CHECK (DentMath::Displace (r.p, off).length () == 0.0);          // off the plane band: a back wall stays
+	CHECK (DentMath::HoleKeeps (r.p, off, off + Vector (0.1, 0, 0), off + Vector (0, 0.1, 0)));
+	std::vector<DentBaseText> bt (1);
+	bt[0].planet = "Earth", bt[0].name = "KSC";
+	bt[0].obj.push_back ({ 3, "MESH", 1.5, -2.5, 1.0e6, 0 });
+	DentRecord bowl {};
+	bowl.slot = 3; bowl.p.c = Vector (5, 5, 0); bowl.p.n = Vector (0, 0, 1); bowl.p.R = 1.25; bowl.p.h = 0.2; bowl.p.T = 0.0;
+	DentMath::Quantise (bowl.p);
+	bt[0].rec = { bowl, r };
+	std::vector<std::string> lines;
+	DentMath::FormatBases (bt, lines);
+	int sk = -1;
+	std::vector<DentBaseText> back = ParseBases (lines, &sk);
+	REQUIRE ((sk == 0 && back.size () == 1 && back[0].rec.size () == 2));
+	CHECK (back[0].rec[0].p.mode == DENTM_BOWL);
+	CHECK (back[0].rec[1].p.mode == DENTM_HOLE);
+	CHECK (back[0].rec[1].p.P == r.p.P);
+	CHECK (back[0].rec[1].p.seed == r.p.seed);
+	CHECK (std::memcmp (&back[0].rec[1].p, &r.p, sizeof (DentParams)) == 0);
+	bool tail = false, plain = false;
+	for (const std::string &l : lines) {
+		if (l.rfind ("ODENT 3 0.1", 0) == 0) tail = l.find (" 0 5 3 1234abcd") != std::string::npos;
+		if (l.rfind ("ODENT 3 5 5", 0) == 0) plain = std::count (l.begin (), l.end (), ' ') == 10;
+	}
+	CHECK (tail);
+	CHECK (plain);                                                   // a bowl keeps the old line
+	std::vector<std::string> old = { "BEGIN_XDMG_BASES", "BASE Earth:KSC", "OBJ 3 MESH 1.5 -2.5 1000000 0", "ODENT 3 0.1 -0.2 0 0 0 1 4.5 0.9 0 0 5 3 1234abcd", "END_BASE", "END_XDMG_BASES" };
+	back = ParseBases (old, &sk);
+	REQUIRE ((sk == 0 && back.size () == 1 && back[0].rec.size () == 1));
+	CHECK (back[0].rec[0].p.mode == DENTM_HOLE);
+	DentRecord b2 {};
+	int pl, bs, ob;
+	REQUIRE (DentMath::ParseBaseDentEvent (DentMath::FormatBaseDentEvent (1, 2, 3, r.p, 0).c_str (), pl, bs, ob, b2.p, b2.flags));
+	CHECK (std::memcmp (&b2.p, &r.p, sizeof (DentParams)) == 0);
+	DentParams nob = r.p;
+	nob.mode = DENTM_BOWL; nob.P = 0; nob.seed = 0;
+	REQUIRE (DentMath::ParseBaseDentEvent (DentMath::FormatBaseDentEvent (1, 2, 3, nob, 0).c_str (), pl, bs, ob, b2.p, b2.flags));
+	CHECK (b2.p.mode == DENTM_BOWL);
+}

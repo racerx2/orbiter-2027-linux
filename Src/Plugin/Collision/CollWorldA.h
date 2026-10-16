@@ -57,6 +57,10 @@ public:
 	const std::vector<CollAWrite> &Writes () const { return wr; }  // this frame's planned writes (tests)
 	const std::vector<Vector> &GExact () const { return gx; }      // gravity per body handed to Finish by the last WriteBack (tests)
 	uint64_t Notices () const { return nNotices; }
+	void SetRestBlock (const std::vector<uint32_t> &ids) { restBlock = ids; } // coll-bounded 4: vessel ids with a queued building break, no rest for them
+	void SetRestLines (const std::vector<std::pair<std::string, double>> &l) { restLoad = l; } // REST lines of a loaded scenario: name, CG radius
+	void RestLines (std::vector<std::pair<std::string, double>> &out) const; // the bodies the add-on landed that are still landed, for the save
+	uint64_t Rests () const { return nRest; }
 	double LastW () const { return lastW; }
 	CollAddonFrame frame;
 	CollOrbMirror mirror;
@@ -82,6 +86,20 @@ private:
 	std::vector<std::pair<double, double>> frameDt;// system time, real frame time: the longest of the last 2 s (9.2)
 	bool started = false, inClamp = false, jumpPending = false;
 	uint64_t nNotices = 0;
+	struct RestWin { uint32_t id; double t0; Vector p; Matrix R; };         // coll-bounded 4: rest window start, CG and attitude in the planet frame
+	struct Rested { uint32_t id; std::string name; CollH planet; double rad; Vector p; Matrix R; double tLand, tCheck; int frames; bool woke; Vector vRel, w; }; // landed by the add-on: planned pose, the state before (vRel planet frame, w body)
+	struct LandNow { uint32_t id; CollH h; CollLandWrite w; std::string partner; };
+	std::vector<RestWin> restWin;
+	std::vector<Rested> rested;
+	std::vector<std::pair<uint32_t, double>> restBack;  // vessel id, sim time rest is allowed again
+	std::vector<uint32_t> restBlock;
+	std::vector<std::pair<std::string, double>> restLoad;
+	std::vector<LandNow> landNow;
+	uint64_t nRest = 0;
+	void RestPass ();                              // after the frame driver: windows, bodies that land now (their writes dropped)
+	void RestAfter ();                             // after WriteBack: SetLanded, then the checks of the bodies landed before
+	bool PlanetOf (const CollVesselRead &rd, CollH &planet, Vector &pp, Vector &pv, Matrix &Rp, Vector &wp);
+	CollLandWrite LandAt (CollH planet, const Vector &p, const Matrix &Rl, double rad);
 	const Snap *SnapOf (uint32_t id) const;
 	void Log (int level, const char *fmt, ...);
 };

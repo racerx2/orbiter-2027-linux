@@ -63,7 +63,8 @@ enum : uint32_t {                 // CollPairResult::flags
 	COLLF_NEWPAIR    = 16,        // pair had no result in the previous frame
 	COLLF_GRACE      = 32,        // some leaf pairs excluded by a GRACE scope
 	COLLF_ZONE       = 64,        // some triangle pairs dropped by a zone
-	COLLF_ENTRY      = 128        // a side had an entry event this frame
+	COLLF_ENTRY      = 128,       // a side had an entry event this frame
+	COLLF_CARRIED    = 256        // the last full result of a persistent pair, re-placed at the current poses (design coll-bounded 3)
 };
 enum : uint8_t {                  // CollContact::flags
 	COLLP_DEGENERATE = 1,         // fallback normal (5.5)
@@ -121,8 +122,13 @@ struct CollRestart {
 	Vector c1, v1, w1g;     // corrected state at t1, global
 	Quaternion q1;          // corrected orientation at t1
 };
-// tolerances of 5.1
-struct CollParams { double deltaToi = COLL_DELTA_TOI, deltaCt = COLL_DELTA_CT, kappaCore = COLL_KAPPA_CORE, sRel = COLL_S_REL, sTouch = COLL_S_TOUCH, eTol = COLL_E_TOL, eMax = COLL_E_MAX, thetaMax = COLL_THETA_MAX, vPartMax = COLL_V_PART_MAX, mFront = COLL_M_FRONT; int nCa = COLL_N_CA, nTt = COLL_N_TT, sapThreshold = COLL_SAP_THRESHOLD; };
+// tolerances of 5.1; frameTt: triangle pair tests per frame before persistent pairs are carried, 0 = no limit (design coll-bounded 3)
+struct CollParams { double deltaToi = COLL_DELTA_TOI, deltaCt = COLL_DELTA_CT, kappaCore = COLL_KAPPA_CORE, sRel = COLL_S_REL, sTouch = COLL_S_TOUCH, eTol = COLL_E_TOL, eMax = COLL_E_MAX, thetaMax = COLL_THETA_MAX, vPartMax = COLL_V_PART_MAX, mFront = COLL_M_FRONT; int nCa = COLL_N_CA, nTt = COLL_N_TT, sapThreshold = COLL_SAP_THRESHOLD; long long frameTt = 0; };
+constexpr long long COLL_FRAME_TT     = 25000; // CollisionFrameTests default
+constexpr long long COLL_FRAME_TT_VER = 8000;  // the past check's share of that default
+constexpr uint32_t  COLL_CARRY_AGE    = 8;     // a pair carried this many frames in a row runs in full
+constexpr double    COLL_CARRY_MOVE   = 0.25;  // relative move at the carried points since the full result [m]
+constexpr double    COLL_CARRY_TURN   = 0.1;   // relative turn since the full result [rad]
 // one active zone, spheres in the two body frames (3.3, 3.4)
 struct CollZone { int bodyA, bodyB; CollOwnerKey ownerA, ownerB; Vector ca, cb; double ra, rb; };
 struct CollSplit { uint32_t a, b; std::vector<Vector> joint; }; // etsep: bodies that were one assembly last frame, joint points (global, frame start)
@@ -250,8 +256,37 @@ public:
 	bool Embedded (const CollEmbedQuery &q);                             // 3.4 step 3 (chosen here)
 	void SetNoPair (const std::vector<std::pair<uint32_t, uint32_t>> &p); // dmg3 L5: non-base body id pairs (low, high) the broadphase skips; kept until set again
 	void SetSplit (const std::vector<CollSplit> &p, const std::vector<uint32_t> &spawned = {}); // etsep: splits and bodies spawned this frame; set every frame
+	// bounded cost (design coll-bounded 3)
+	long long FrameTests () const { return m_ttFrame; }                  // triangle pair tests since Begin
+	long long *TestCounter () { return &m_ttFrame; }                     // CollScratch::tt of queries made outside, counted into this frame
+	int  FrameCandidates () const { return m_candN; }                    // candidate pairs of the last Detect
+	long long ResweepTests () const { return m_ttRes; }                  // of FrameTests: the re-sweeps since Begin
+	int  Resweeps () const { return m_nRes; }                            // re-swept pairs since Begin
+	long long DetectTests () const { return m_ttDet; }                   // of FrameTests: the first passes since Begin
+	uint32_t Frame () const { return m_frame; }                          // frame number of the last Begin; CollPairEntry::lastFrame of a result this frame
+	void SetPersistentSource (const CollDetect *f) { m_persist = f; }    // past check: pairs f has a carry record of are persistent
+	uint64_t Carried () const { return m_carriedN; }                     // results carried since Reset
+	long long TestsMax () const { return m_ttMax; }                      // most tests in one frame since Reset
+	struct Over { uint32_t body; CollOwnerKey building; std::vector<Vector> pts; Vector nsum; }; // a dynamic body crossing a building part this frame: crossing points and summed outward normals, the building's base frame (design coll-bounded 5.1)
+	const std::vector<Over> &Overlaps () const { return m_over; }       // after Detect
+	void FlushCarry () { m_carry.clear (); m_over.clear (); }            // time jump: nothing carried across it
 private:
+	struct CarryPt { Vector pA, pB, n; double gap, wn; uint32_t triA, triB; uint16_t partA, partB; uint8_t patch, flags; }; // pA in A's body frame, pB and n in B's; wn: (pA - pB).n at the result
+	struct CarryRes { uint8_t kind; uint32_t flags; double E; int npt; CarryPt pt[16]; };
+	struct Carry { uint64_t ka, kb; uint32_t frame = 0, age = 0; long long cost = 0; uint64_t verA = 0, verB = 0; Vector relC; Matrix relR; double lever = 0; std::vector<CarryRes> res; bool now = false; };
+	std::vector<Carry> m_carry;                                          // by (ka, kb): the last full results of pairs with results
+	mutable long long m_ttFrame = 0;
+	long long m_ttMax = 0;
+	int m_candN = 0;
+	long long m_ttRes = 0;
+	int m_nRes = 0;
+	long long m_ttDet = 0;
+	uint64_t m_carriedN = 0;
+	const CollDetect *m_persist = nullptr;
+	mutable std::vector<Over> m_over;                                    // Released adds a GRACE scope's crossing points too
 	struct Impl;                                                         // query machinery (CollDetect.cpp)
+	struct HeapPair { double key, g, s, rhoA, muA, rhoB, muB; int k; uint32_t i, j; bool splitA; }; // a node pair waiting in a best-first query (design coll-bounded 7.2, 7.3)
+	std::vector<HeapPair> m_heap;                                        // reused by every best-first query (review 35)
 	struct PartIdx { CollOwnerKey owner; uint32_t partKey; int body, part; }; // owner part -> body part, sorted
 	struct PairInfo { int a, b; uint8_t res; double E, thetaEff; };      // candidate pair of this frame; res: 1 RESTING, 2 TOI or SPECULATIVE seen
 	struct FrontPart { CollOwnerKey owner; uint32_t partKey, version, nnode; const CollGeom *geom; CollAffine X; }; // part placement at a front-cache build

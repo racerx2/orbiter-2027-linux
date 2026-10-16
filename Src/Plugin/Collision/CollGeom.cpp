@@ -266,8 +266,50 @@ inline const Vector &XVtx (const CollGeom &G, const CollAffine &X, bool ident, s
 	return xv[v];
 }
 
-// one triangle of a leaf in the pair frame
-struct LeafTri { uint32_t id; Vector v[3]; Box b; };
+// one triangle of a leaf in the pair frame; n: unit normal, pl false without one
+struct LeafTri { uint32_t id; Vector v[3]; Box b; Vector n; bool pl; };
+
+// unit normal of triangle t; false when it has none
+inline bool TriPlane (const Vector *t, Vector &n)
+{
+	n = crossp (t[1] - t[0], t[2] - t[0]);
+	double l = n.length();
+	if (!(l > 0.0) || !std::isfinite (l)) return false;
+	n = n / l;
+	return true;
+}
+
+// box o's distance to the nearest plane of leaf n's triangles, a lower bound of its distance to them; -BIG when a triangle has no plane (design coll-bounded 7.5)
+inline double LeafPlaneDist (const CollGeom &G, const CollNode &n, const CollAffine &X, bool ident, std::vector<Vector> &xv, std::vector<uint32_t> &st, uint32_t stamp, const Box &o)
+{
+	if (n.count > COLL_BVH_LEAF*8) return -BIG;
+	Vector c ((o.mn[0]+o.mx[0])*0.5, (o.mn[1]+o.mx[1])*0.5, (o.mn[2]+o.mx[2])*0.5);
+	Vector e ((o.mx[0]-o.mn[0])*0.5, (o.mx[1]-o.mn[1])*0.5, (o.mx[2]-o.mn[2])*0.5);
+	double s = BIG;
+	for (uint32_t i = n.first; i < n.first + n.count; i++) {
+		const CollTri &T = G.tri[G.perm[i]];
+		Vector v[3], nv;
+		for (int j = 0; j < 3; j++) v[j] = XVtx (G, X, ident, xv, st, stamp, T.v[j]);
+		if (!TriPlane (v, nv)) return -BIG;
+		double q = std::fabs (dotp (nv, c - v[0])) - (std::fabs (nv.x)*e.x + std::fabs (nv.y)*e.y + std::fabs (nv.z)*e.z) - COLL_PLANE_EPS;
+		if (!std::isfinite (q)) return -BIG;
+		s = std::min (s, q);
+	}
+	return s;
+}
+
+// triangle v lies on one side of L's plane, at least d from it (design coll-bounded 7.5)
+inline bool PlaneApart (const LeafTri &L, const Vector *v, double d)
+{
+	if (!L.pl) return false;
+	double lo = BIG, hi = -BIG;
+	for (int j = 0; j < 3; j++) {
+		double q = dotp (L.n, v[j] - L.v[0]);
+		if (!std::isfinite (q)) return false;
+		lo = std::min (lo, q); hi = std::max (hi, q);
+	}
+	return lo - COLL_PLANE_EPS >= d || hi + COLL_PLANE_EPS <= -d;
+}
 
 inline int LoadLeaf (const CollGeom &G, const CollNode &n, const CollAffine &X, bool ident, const uint8_t *mask,
 	std::vector<Vector> &xv, std::vector<uint32_t> &st, uint32_t stamp, LeafTri *out)
@@ -281,6 +323,7 @@ inline int LoadLeaf (const CollGeom &G, const CollNode &n, const CollAffine &X, 
 		L.id = t;
 		for (int j = 0; j < 3; j++) L.v[j] = XVtx (G, X, ident, xv, st, stamp, T.v[j]);
 		TriBox (L.v, L.b);
+		L.pl = TriPlane (L.v, L.n);
 	}
 	return k;
 }
@@ -304,6 +347,8 @@ void PairWalk (const CollGeom &A, const CollAffine &XA, const CollGeom &B, const
 		XBox (na, XA, idA, ba);
 		XBox (nb, XB, idB, bb);
 		if (BoxDist2 (ba, bb) >= bound*bound) continue;
+		if (na.count && LeafPlaneDist (A, na, XA, idA, s.xa, s.sa, s.stamp, bb) >= bound) continue;
+		if (nb.count && LeafPlaneDist (B, nb, XB, idB, s.xb, s.sb, s.stamp, ba) >= bound) continue;
 		if (na.count && nb.count) {
 			if (na.count > COLL_BVH_LEAF*8 || nb.count > COLL_BVH_LEAF*8) {
 				for (uint32_t i = na.first; i < na.first + na.count; i++) {
@@ -317,6 +362,7 @@ void PairWalk (const CollGeom &A, const CollAffine &XA, const CollGeom &B, const
 						Vector vb[3];
 						for (int j = 0; j < 3; j++) vb[j] = XVtx (B, XB, idB, s.xb, s.sb, s.stamp, B.tri[tb].v[j]);
 						Vector pa, pb;
+						if (s.tt) ++*s.tt;
 						double d = CollTriTriDistance (va, vb, pa, pb);
 						if (d < bound && leaf (ta, tb, d, pa, pb)) return;
 					}
@@ -329,7 +375,9 @@ void PairWalk (const CollGeom &A, const CollAffine &XA, const CollGeom &B, const
 			for (int i = 0; i < nla; i++)
 				for (int k = 0; k < nlb; k++) {
 					if (BoxDist2 (la[i].b, lb[k].b) >= bound*bound) continue;
+					if (PlaneApart (lb[k], la[i].v, bound) || PlaneApart (la[i], lb[k].v, bound)) continue;
 					Vector pa, pb;
+					if (s.tt) ++*s.tt;
 					double d = CollTriTriDistance (la[i].v, lb[k].v, pa, pb);
 					if (d < bound && leaf (la[i].id, lb[k].id, d, pa, pb)) return;
 				}
@@ -1013,4 +1061,81 @@ double CollPoseMotion (const CollGeom &G, const CollAffine &P0, const CollAffine
 		scale = P0.t.length() + P1.t.length() + (Frob (P0.A) + Frob (P1.A)) * xmax;
 	}
 	return m + 1e-13 * scale;
+}
+
+// incremental hull: a tetrahedron, then each point replaces the faces it sees by a fan over their horizon
+bool CollConvexHull (const std::vector<Vector> &in, size_t maxV, std::vector<Vector> &v, std::vector<uint32_t> &tri, double *volume)
+{
+	v.clear (); tri.clear ();
+	if (volume) *volume = 0.0;
+	if (in.size () < 4 || maxV < 4) return false;
+	Vector c;
+	for (const Vector &x : in) c += x;
+	c /= (double)in.size ();
+	std::vector<Vector> p;
+	if (in.size () > maxV) {
+		std::vector<double> md (in.size (), 1e300);
+		size_t cur = 0;
+		double fd = -1.0;
+		for (size_t i = 0; i < in.size (); i++) { double d = (in[i] - c).length2 (); if (d > fd) fd = d, cur = i; }
+		while (p.size () < maxV) {
+			p.push_back (in[cur]);
+			size_t nx = 0; double nd = -1.0;
+			for (size_t i = 0; i < in.size (); i++) { md[i] = std::min (md[i], (in[i] - in[cur]).length2 ()); if (md[i] > nd) nd = md[i], nx = i; }
+			if (!(nd > 0.0)) break;
+			cur = nx;
+		}
+	} else p = in;
+	Vector lo = p[0], hi = p[0];
+	for (const Vector &x : p) for (int k = 0; k < 3; k++) { lo.data[k] = std::min (lo.data[k], x.data[k]); hi.data[k] = std::max (hi.data[k], x.data[k]); }
+	const double ext = (hi - lo).length ();
+	if (!(ext > 0.0) || !std::isfinite (ext)) return false;
+	const double eps = 1e-9*ext;
+	size_t i0 = 0, i1 = 0, i2 = 0, i3 = 0;
+	double b = -1.0;
+	for (size_t i = 0; i < p.size (); i++) { double d = (p[i] - p[i0]).length2 (); if (d > b) b = d, i1 = i; }
+	Vector e = p[i1] - p[i0];
+	b = -1.0;
+	for (size_t i = 0; i < p.size (); i++) { double d = crossp (p[i] - p[i0], e).length (); if (d > b) b = d, i2 = i; }
+	if (!(b > eps*e.length ())) return false;
+	Vector n0 = crossp (e, p[i2] - p[i0]);
+	n0 /= n0.length ();
+	b = -1.0;
+	for (size_t i = 0; i < p.size (); i++) { double d = std::fabs (dotp (p[i] - p[i0], n0)); if (d > b) b = d, i3 = i; }
+	if (!(b > eps)) return false;
+	const Vector ic = (p[i0] + p[i1] + p[i2] + p[i3])/4.0;
+	struct F { uint32_t a, b, c; Vector n; double d; bool dead; };
+	std::vector<F> f;
+	auto add = [&] (uint32_t a, uint32_t bb, uint32_t cc) {
+		Vector n = crossp (p[bb] - p[a], p[cc] - p[a]);
+		double l = n.length ();
+		if (!(l > 0.0)) return;
+		n /= l;
+		if (dotp (n, ic - p[a]) > 0.0) { std::swap (bb, cc); n = -n; }
+		f.push_back (F { a, bb, cc, n, dotp (n, p[a]), false });
+	};
+	add ((uint32_t)i0, (uint32_t)i1, (uint32_t)i2); add ((uint32_t)i0, (uint32_t)i1, (uint32_t)i3);
+	add ((uint32_t)i0, (uint32_t)i2, (uint32_t)i3); add ((uint32_t)i1, (uint32_t)i2, (uint32_t)i3);
+	if (f.size () != 4) return false;
+	std::vector<std::pair<uint32_t, uint32_t>> ed, hz;
+	for (size_t k = 0; k < p.size (); k++) {
+		if (k == i0 || k == i1 || k == i2 || k == i3) continue;
+		ed.clear (); hz.clear ();
+		for (F &q : f) if (!q.dead && dotp (q.n, p[k]) - q.d > eps) {
+			q.dead = true;
+			ed.push_back ({ q.a, q.b }); ed.push_back ({ q.b, q.c }); ed.push_back ({ q.c, q.a });
+		}
+		if (ed.empty ()) continue;
+		for (const auto &x : ed) if (std::find (ed.begin (), ed.end (), std::make_pair (x.second, x.first)) == ed.end ()) hz.push_back (x);
+		for (const auto &x : hz) add (x.first, x.second, (uint32_t)k);
+		f.erase (std::remove_if (f.begin (), f.end (), [] (const F &q) { return q.dead; }), f.end ());
+	}
+	std::vector<int> map (p.size (), -1);
+	double vol = 0.0;
+	for (const F &q : f) {
+		for (uint32_t i : { q.a, q.b, q.c }) { if (map[i] < 0) { map[i] = (int)v.size (); v.push_back (p[i]); } tri.push_back ((uint32_t)map[i]); }
+		vol += dotp (p[q.a] - ic, crossp (p[q.b] - ic, p[q.c] - ic))/6.0;
+	}
+	if (volume) *volume = vol;
+	return tri.size () >= 12;
 }
