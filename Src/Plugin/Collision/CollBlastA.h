@@ -39,6 +39,8 @@ struct CollBlastInput {                      // triangles of one slot, rest fram
 };
 struct CollBlastChunk { int cell = -1, piece = -1; Vector c; double area = 0, mass = 0; std::vector<Vector> pts; }; // pts: triangle corners (rest frame)
 struct CollBlastBond { uint32_t a = 0, b = 0; double area = 0, len = 0; Vector c, n; uint32_t asset = 0; bool prox = false; }; // chunks a < b; asset: Blast bond index; prox: joins an unwelded island
+struct CollBlastPair { uint32_t a = 0, b = 0; double len = 0; Vector c; uint32_t n = 0; }; // chunks a < b: summed shared edge length, summed and counted shared weld vertices
+void CollBlastPairs (const CollBlastInput &in, const std::vector<uint32_t> &chOf, std::vector<CollBlastPair> &out); // ascending (a, b), the sums in ascending vertex and edge order (design coll-bounded 6.4)
 struct CollBlastSplit { std::vector<uint32_t> chunks; double mass = 0; Vector c, n; bool crushed = false; }; // one actor separated from the main one: chunks, mass, centroid, unit kick direction (rest frame)
 
 class CollBlastA {

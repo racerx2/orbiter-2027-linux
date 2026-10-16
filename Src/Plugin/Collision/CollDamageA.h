@@ -2,6 +2,7 @@
 #ifndef COLLDAMAGEA_H
 #define COLLDAMAGEA_H
 #include <cstdint>
+#include <deque>
 #include <fstream>
 #include <map>
 #include <set>
@@ -40,7 +41,10 @@ struct VesselDamageA {
 	bool locked = false;                                      // not upstream: destroyed, the player's controls taken (Lock)
 	int adPrev = -1;                                          // not upstream: the control-surface mode before the lock, -1 none
 };
-struct BuildingDamageA { CollDmgBaseObj obj; double eabs = 0; uint32_t flags = 0; };
+struct BuildingDamageA { CollDmgBaseObj obj; double eabs = 0; uint32_t flags = 0; std::vector<DentRecord> rec; }; // rec: coll-bounded 5 dents and holes in application order, slot = object index
+struct CollDmgOver { uint32_t vessel = 0; int planet = -1, base = -1, obj = -1; std::vector<Vector> pts; Vector nsum; }; // coll-bounded 5.1: a single vessel crossing a building part this frame, part frame
+constexpr double COLL_BREAK_RECENT = 10.0;                    // a FIRST impact this recent makes an overlap a penetration [s] (design coll-bounded 5.1)
+constexpr int    COLL_BREAK_MAX    = 16;                      // breaks of one vessel in one object; past it GRACE keeps the rest
 struct NoticeA {                                              // one notice of this pre-step
 	uint32_t id = 0; int kind = 0; uint32_t flags = 0;
 	CollH hOther = nullptr; int32_t otherObj = -1, mesh = -1, group = -1;
@@ -115,12 +119,39 @@ public:
 	bool AddCut (uint32_t id, const DentRecord &r, bool playback);          // dmg3 tear: append a cut record (cap, match, frameT); deferred inside Dent
 	size_t PendingCuts () const { return later.size (); }                    // dmg3 tear: deferred cut and torn actions
 	bool InDent () const { return inDent; }
+	// buildings break (design coll-bounded 5)
+	void Overlaps (const std::vector<CollDmgOver> &o, double simt);         // after Commit: penetrations of damaged or just-hit vessels queue breaks
+	void BuildingStep ();                                                    // pre-step start: the oldest queued building step, at most one
+	void BreakVessels (std::vector<uint32_t> &out) const;                    // vessels with a queued break (no rest for them)
+	size_t BuildingQueue () const { return bq.size (); }
+	const BuildingDamageA *Streamed (int planet, int base, uint32_t obj) const { auto it = streamed.find ({ { planet, base }, obj }); return it == streamed.end () ? nullptr : &it->second; }
+	uint64_t bldgDents = 0, bldgTorn = 0, bldgBreaks = 0;
 private:
+	typedef std::pair<std::pair<int, int>, uint32_t> BKey;                  // (planet, base) indices, object; streamed buildings: base <= -2
+	struct BldgJobA { int kind = 0; BKey k; Vector c, n; double a = 0, E = 0; uint32_t vessel = 0; std::vector<Vector> pts; }; // kind 0 impact, 1 penetration, 2 remake
+	struct BldgGeoA { std::vector<CollGroupData> rest0; DentObject o; double rb = 0; }; // undamaged collider and the refined working object
+	std::deque<BldgJobA> bq;
+	std::map<BKey, BldgGeoA> bgeo;
+	std::map<BKey, BuildingDamageA> streamed;                               // streamed buildings: records only, never saved
+	std::map<std::pair<uint32_t, BKey>, double> lastFirst;                  // vessel and object: sim time of their last FIRST impact
+	std::map<std::pair<uint32_t, BKey>, int> nBreak;
+	bool loggedBldgCap = false, loggedBreakCap = false, loggedNoDraw = false;
+	BuildingDamageA *BRec (const BKey &k);
+	BldgGeoA *BGeo (const BKey &k, const BuildingDamageA &b);
+	void BldgRemake (BldgGeoA &g, const std::vector<DentRecord> &rec);      // rest plus every record's refinement, in order
+	void BldgApply (const BKey &k, BldgGeoA &g, const BuildingDamageA &b);   // cur = rest + Fold, holes' triangles dropped, the collider set
+	bool BldgHit (BldgGeoA &g, BuildingDamageA &b, const BldgJobA &j, bool &grew, std::string &what);
+	bool BldgBreak (BldgGeoA &g, BuildingDamageA &b, const BldgJobA &j, bool &grew, std::string &what);
+	int  HoleGrow (std::vector<DentRecord> &rec, const DentRecord &r);       // a hole within another's rim grows that one; its index, -1 none
+	std::string BName (const BKey &k, const BuildingDamageA &b);
+	void BldgSide (const BKey &k, const BuildingDamageA &b, size_t idx, uint32_t vessel);
 	void ApplyCut (uint32_t id, const DentRecord &r, bool playback);
 	void FlushLater ();                                                      // dmg3 tear: deferred actions after the solve returns
 	std::vector<std::function<void ()>> later;
 	std::map<uint32_t, size_t> laterCuts;                                    // deferred cuts per vessel (cap)
 	bool inDent = false;
+	bool batch = false, batchFlush = false;                                  // in FlushLater: a cut asks for a sync, done once at its end
+	void Flush ();                                                           // FlushDirty, or after the FlushLater queue when inside it
 	VesselDamageA *Find (uint32_t id);
 	VesselDamageA &Get (uint32_t id);
 	void MatchAll ();

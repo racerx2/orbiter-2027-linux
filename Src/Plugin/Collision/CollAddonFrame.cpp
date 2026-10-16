@@ -133,10 +133,11 @@ struct CollAddonFrame::Impl {
 	std::vector<Wk> w;
 	std::vector<int> fwdOf, verOf;                       // detector index -> body index
 	CollScratch scr;
+	long long ttPre = 0;                                 // triangle tests of this pre-step before fwd.Begin, then counted into fwd (design coll-bounded 3)
 	std::vector<char> frz;                               // dynamic bodies taken as kinematic partners of another island this round (M3 cap)
 
 	Impl (CollAddonFrame &f, CollDetect &fd, CollDetect &vd, const CollOrbMirror &m, std::vector<CollABody> &bb, CollSolveHost &hs, double hh, double t0)
-		: F (f), fwd (fd), ver (vd), mir (m), b (bb), host (hs), h (hh), simt0 (t0) {}
+		: F (f), fwd (fd), ver (vd), mir (m), b (bb), host (hs), h (hh), simt0 (t0) { scr.tt = &ttPre; }
 
 	Vector Ib (int i) const { return b[i].pmi*b[i].m; }
 	bool Dyn (int i) const { return w[i].dyn && !frz[i]; }
@@ -453,7 +454,9 @@ bool CollAddonFrame::Impl::KinTouch (const CollAIslandRec &I, const CollAPairRec
 	const double hh = I.h;
 	if (ia < 0 || ib < 0 || !(hh > 0)) return false;
 	F.kt.Reset ();
-	F.kt.Begin (F.dprm, hh);
+	CollParams kp = F.dprm;
+	kp.frameTt = 0;                                        // a fresh detector each call: nothing to carry
+	F.kt.Begin (kp, hh);
 	int idx[2] = { ia, ib }, dk[2] = { -1, -1 };
 	for (int pass = 0; pass < 2; pass++)
 		for (int s = 0; s < 2; s++) {
@@ -479,6 +482,7 @@ bool CollAddonFrame::Impl::KinTouch (const CollAIslandRec &I, const CollAPairRec
 	std::vector<CollPairResult> res;
 	CollFrameStats fs {};
 	F.kt.Detect (res, fs);
+	*scr.tt += F.kt.FrameTests ();
 	const CollPairResult *best = nullptr;
 	for (const CollPairResult &r : res) if (r.kind != COLL_NONE && r.npt > 0 && (!best || r.tau < best->tau)) best = &r;
 	std::vector<CollHit> hs; std::vector<std::pair<int,int>> pp; double sk;
@@ -598,7 +602,10 @@ void CollAddonFrame::Impl::PastCheck (std::vector<CollImpactEvent> &ev)
 	bool any = false;
 	for (const Wk &k : w) any = any || (k.dyn && k.past && !k.entry);
 	if (!any || !(hp > 0)) return;
-	ver.Begin (F.dprm, hp);
+	CollParams vp = F.dprm;                                  // the past check's own budget (design coll-bounded 3)
+	vp.frameTt = F.dprm.frameTt > 0 ? std::max (1LL, F.dprm.frameTt*COLL_FRAME_TT_VER/COLL_FRAME_TT) : 0;
+	ver.SetPersistentSource (&fwd);
+	ver.Begin (vp, hp);
 	verOf.clear ();
 	for (int pass = 0; pass < 2; pass++)
 		for (int i = 0; i < nb; i++) {
@@ -1240,6 +1247,8 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 	// 6: predict, forward detection (kinematic bodies first)
 	for (int i = 0; i < nb; i++) if (w[i].dyn) Predict (i);
 	fwd.Begin (F.dprm, h);
+	*fwd.TestCounter () += ttPre;
+	scr.tt = fwd.TestCounter ();
 	fwdOf.clear ();
 	for (int pass = 0; pass < 2; pass++)
 		for (int i = 0; i < nb; i++) {
@@ -1253,6 +1262,12 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 	std::vector<CollPairResult> res;
 	CollFrameStats fst {};
 	fwd.Detect (res, fst);
+	F.crossing.clear ();
+	for (const CollPairResult &r : res)
+		for (int k = 0; k < r.npt; k++)
+			if (r.pt[k].flags & COLLP_INTERSECT) { F.crossing.push_back (b[fwdOf[r.bodyA]].id); F.crossing.push_back (b[fwdOf[r.bodyB]].id); break; }
+	std::sort (F.crossing.begin (), F.crossing.end ());
+	F.crossing.erase (std::unique (F.crossing.begin (), F.crossing.end ()), F.crossing.end ());
 	std::vector<APt> pts;
 	Convert (res, pts);
 	auto resweep = [&] (int i, const Vector &v0, const Vector &w0g, const Vector &c1, const Vector &v1, const Quaternion &q1, const Vector &w1g) {
@@ -1665,7 +1680,7 @@ void CollAddonFrame::Impl::Run (std::vector<CollAWrite> &out, std::vector<CollIm
 void CollAddonFrame::Run (CollDetect &fwd, CollDetect &ver, const CollOrbMirror &mir, std::vector<CollABody> &b, const std::vector<CollZone> &zones,
 	double h, double simt0, CollSolveHost &host, std::vector<CollAWrite> &out, std::vector<CollImpactEvent> &ev)
 {
-	out.clear (); ev.clear (); pend.clear (); contacts.clear ();
+	out.clear (); ev.clear (); pend.clear (); contacts.clear (); crossing.clear ();
 	if (!(h > 0.0)) return;                                    // simdt == 0: no physics, records kept (1.2)
 	Impl im (*this, fwd, ver, mir, b, host, h, simt0);
 	im.Run (out, ev, zones);

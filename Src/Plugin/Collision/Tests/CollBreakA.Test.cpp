@@ -215,7 +215,14 @@ struct Rig {
 	struct Body { BFake::V *v; uint32_t id; std::unique_ptr<CollShape> sh; CollAnim ca; CollMeshInfo mi; };
 	std::deque<Body> body; CollTemplateCache cache;
 	Rig () { cfg.blast = false; sdk.mesh.push_back (Ship ()); sdk.files["Meshes/ship.col"] = "COLLIDER-V1\nMAT glass GROUP 2\nEXCLUDE GROUP 3\n"; sdk.onCreate = [this] (CollH h) { host.IdOf (h); }; }
-	CollDmgSession &S () { if (!s) s.reset (new CollDmgSession (sdk, host, cfg)); return *s; }
+	CollDmgSession &S ()
+	{
+		if (!s) {
+			s.reset (new CollDmgSession (sdk, host, cfg));
+			if (s->brk) ((CollBreakA *)s->brk.get ())->allAtOnce = true; // every queued piece in its pre-step, as without a render window; the timed tests turn it off
+		}
+		return *s;
+	}
 	CollBreakA &B () { return *(CollBreakA *)S ().brk.get (); }
 	uint32_t Add (const std::string &name)
 	{
@@ -1685,4 +1692,69 @@ TEST_CASE ("custom-fix5: a dock-pinned panel under spin loads after a hit is not
 	CollDamageHit h = r.P (40, 800, 0.5); h.id = r.a; h.h = r.host.Vessel (r.a);
 	r.B ().Hit (h);                                                  // past the pin: the deferred reset puts the panel back, the hit tears it off
 	CHECK (r.B ().Hidden (r.a, 0, 6));
+}
+
+TEST_CASE ("coll-bounded 6.2: past the debris time one piece a pre-step, in queue order, rows kept; playback spawns at once", "[dmg3P][bounded]")
+{
+	Rig r; r.cfg.debrisMs = 1e-9; r.cfg.debrisMax = 2;
+	std::vector<uint32_t> c;
+	for (int i = 0; i < 3; i++) { c.push_back (r.Add ("C" + std::to_string (i))); r.B ().Hit (r.H (c.back (), 1, 70, 0.9)); }
+	r.B ().allAtOnce = false;
+	r.B ().PreStep (0, 0.01); r.B ().Post (0, 0.01);
+	CHECK (r.sdk.Logged ("1 debris past CollisionDebrisMax (2) not spawned")); // the cap once, when queued
+	REQUIRE (r.sdk.Calls ("VesselCreate") == 1);
+	CHECK (r.B ().Pending () == 1);
+	CHECK (r.S ().Damage (c[1])->d.debris.size () == 1);                   // the queued piece keeps its row
+	r.B ().PreStep (0.01, 0.01); r.B ().Post (0.01, 0.01);
+	CHECK (r.sdk.Calls ("VesselCreate") == 2);
+	CHECK (r.B ().Pending () == 0);
+	REQUIRE (r.B ().Debris ().size () == 2);
+	CHECK (r.B ().Debris ()[0].row.name == "C0_D1");
+	CHECK (r.B ().Debris ()[1].row.name == "C1_D1");
+	r.B ().PreStep (0.02, 0.01); r.B ().Post (0.02, 0.01);
+	CHECK (r.sdk.Calls ("VesselCreate") == 2);                            // nothing carried past the cap
+	Rig p; p.cfg.debrisMs = 1e-9;
+	std::vector<uint32_t> q;
+	for (int i = 0; i < 2; i++) {
+		q.push_back (p.Add ("P" + std::to_string (i)));
+		p.body.back ().v->playback = true;
+		CollDamageHit h = p.H (q.back (), 1, 70, 0.9); h.playback = true;
+		p.B ().Hit (h);
+		DentTorn t; t.kind = CBRK_PART; t.slot = 0; t.key = DentMath::MeshKey ("ship"); t.ngrp = 4; t.debris = "P" + std::to_string (i) + "_D1"; t.grp = { 1 };
+		p.B ().Torn (q.back (), t);
+	}
+	p.B ().allAtOnce = false;
+	p.B ().PreStep (0, 0.01); p.B ().Post (0, 0.01);
+	CHECK (p.sdk.Calls ("VesselCreate") == 2);                            // playback: the recorded timing
+}
+
+TEST_CASE ("coll-bounded 6.1: hulls of a cube and a sampled sphere; a flat piece has none", "[dmg3P][bounded]")
+{
+	std::vector<Vector> cube;
+	for (int i = 0; i < 8; i++) cube.push_back (Vector ((i & 1) ? 1 : -1, (i & 2) ? 1 : -1, (i & 4) ? 1 : -1));
+	for (int i = 0; i < 20; i++) cube.push_back (Vector (0.1*i - 1, 0.05*i - 0.5, 0.0));  // inside points
+	cube.push_back (Vector (1, 1, 0));                                                    // on a face's edge
+	std::vector<Vector> v; std::vector<uint32_t> tri; double vol = 0;
+	REQUIRE (CollConvexHull (cube, 48, v, tri, &vol));
+	CHECK (v.size () == 8);
+	CHECK (tri.size () == 36);
+	CHECK (std::fabs (vol - 8.0) < 1e-9);
+	for (size_t k = 0; k + 2 < tri.size (); k += 3) {                                     // outward
+		Vector n = crossp (v[tri[k + 1]] - v[tri[k]], v[tri[k + 2]] - v[tri[k]]);
+		CHECK (dotp (n, (v[tri[k]] + v[tri[k + 1]] + v[tri[k + 2]])/3.0) > 0);
+	}
+	std::vector<Vector> ball;
+	for (int i = 0; i < 600; i++) {
+		double z = 1.0 - 2.0*(i + 0.5)/600, r = std::sqrt (1 - z*z), a = i*2.39996322972865332;
+		ball.push_back (Vector (r*std::cos (a), r*std::sin (a), z));
+	}
+	REQUIRE (CollConvexHull (ball, 48, v, tri, &vol));
+	CHECK (v.size () <= 48);
+	CHECK (v.size () >= 40);
+	CHECK (vol > 0.6*4.18879);
+	CHECK (vol < 4.18879);
+	std::vector<Vector> flat;
+	for (int i = 0; i < 30; i++) flat.push_back (Vector (std::cos (0.2*i), std::sin (0.2*i), 0.0));
+	CHECK (!CollConvexHull (flat, 48, v, tri, &vol));
+	CHECK (v.empty ());
 }

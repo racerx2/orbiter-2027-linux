@@ -22,6 +22,7 @@ constexpr double COLL_COORD_MAX      = 1e6;   // a vertex beyond this |coordinat
 constexpr double COLL_DEGEN_CROSS2   = 1e-24; // |cross|^2 below this: degenerate triangle, dropped at Build, edges only in distance code [m^4]
 constexpr int    COLL_BVH_BINS       = 16;    // binned SAH
 constexpr int    COLL_BVH_LEAF       = 4;     // triangles per leaf
+constexpr double COLL_PLANE_EPS      = 1e-9;  // plane bound: margin below a box's or triangle's distance to a triangle plane [m] (design coll-bounded 7.4)
 constexpr int    COLL_BVH_DEPTH      = 64;    // depth cap
 constexpr double COLL_REBUILD_GROWTH = 2.0;   // Refit flags a loose tree when root box size (sum of extents) > this x built size; never rebuilds
 constexpr double COLL_RIGID_TOL      = 1e-9;  // CollIsRigid: |A^T A - I| below this and det A > 0
@@ -101,7 +102,8 @@ private:
 struct CollHit { uint32_t ta, tb; double d; Vector pa, pb; };   // triangle ids, pair frame
 struct CollRayHit { uint32_t tri; double t; Vector p; };        // triangle id, ray parameter, point (ray frame)
 struct CollScratch { std::vector<Vector> xa, xb; std::vector<uint32_t> sa, sb; uint32_t stamp = 0;
-	std::vector<std::pair<uint32_t,uint32_t>> stack; };
+	std::vector<std::pair<uint32_t,uint32_t>> stack;
+	long long *tt = nullptr; };                                  // triangle pair tests of the queries made with it are added here (design coll-bounded 3)
 
 // masks: indexed by CollTri::src (srcTab index), nonzero = skip that group's triangles; null = none
 double CollDistance (const CollGeom &A, const CollAffine &XA, const CollGeom &B, const CollAffine &XB,
@@ -115,6 +117,9 @@ double CollTriTriDistance (const Vector a[3], const Vector b[3], Vector &pa, Vec
 bool   CollRayCast (const CollGeom &G, const CollAffine &X, const Vector &o, const Vector &d, double tmin, double tmax,
 	CollRayHit &hit, const uint8_t *mask = nullptr);  // o, d in the frame X maps into; first hit
 double CollClosestPoint (const CollGeom &G, const Vector &p, double cap, uint32_t &tri, Vector &q); // local frame; min(distance, cap)
+
+// convex hull of at most maxV points (farthest-point reduction above that); tri: outward triangles into v; false: fewer than 4 points or flat (design coll-bounded 6.1)
+bool CollConvexHull (const std::vector<Vector> &pts, size_t maxV, std::vector<Vector> &v, std::vector<uint32_t> &tri, double *volume = nullptr);
 
 // part pose inside a step; c = part sphere centre in its rest frame (bsCentre) (D1 1.6)
 bool       CollIsRigid (const CollAffine &P);                 // |A^T A - I| < 1e-9 and det A > 0

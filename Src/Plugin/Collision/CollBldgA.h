@@ -69,6 +69,8 @@ public:
 	static void Split (const std::vector<CollVtx> &v, const std::vector<std::array<uint32_t, 3>> &tri, std::vector<CollGroupData> &grp); // groups of at most 65535 vertices (uint16 indices)
 	const std::vector<Body> &Bodies () const { return bodies; }
 	bool Name (int planet, int base, int obj, std::string &out) const; // "building <planet> z14 x/y #n" of a streamed building owner
+	bool Groups (int planet, int base, uint32_t obj, std::vector<CollGroupData> &out, double &rb) const; // coll-bounded 5.4: a built building's undamaged collider, tile frame; rb: its footprint radius
+	bool SetGroups (int planet, int base, uint32_t obj, const std::vector<CollGroupData> &grp); // its damaged collider; it is then kept while its tile is (no idle free, no ground rebuild)
 	static uint32_t BodyId (int planet, uint32_t slot) { return ((uint32_t)(planet & 0xFFFF) << 16) | (0x8000u + slot); }
 	static int32_t BaseOf (uint32_t slot) { return -2 - (int32_t)slot; }
 	bool On () const { return on; }

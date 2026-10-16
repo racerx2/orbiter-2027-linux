@@ -35,6 +35,7 @@ struct CollStoreBlock {                      // the parsed plugin block: E4 keep
 	std::vector<DentBaseText> base;          // BEGIN_XDMG_BASES content
 	std::vector<std::string> unknown;        // unknown top-level lines, kept raw
 	std::vector<CollTestRepair> testRepair;
+	std::vector<std::pair<std::string, double>> rest; // coll-bounded 4: REST <name> <CG radius [m]> of vessels the add-on landed
 	int skipped = 0;
 };
 
@@ -50,12 +51,13 @@ namespace CollStore {
 	int MatchObj (const DentBaseObjText &o, const std::vector<CollLiveObj> &objs, const std::vector<uint8_t> &taken); // 7.4; -1 dormant
 	bool SameBase (const DentBaseText &b, const std::string &planet, const std::string &base);
 	bool Line200 (const std::string &l);                                // within DENT_LINE_MAX and free of ';'
+	std::string RestLine (const std::string &name, double rad);         // "REST <escaped name> <radius>"
 }
 
 // recorder side file (8.3)
 struct CollSideAlias { uint32_t alias = 0, occ = 0; bool hashed = false; std::string name, cls; uint32_t hName = 0, hClass = 0; };
 struct CollSideEvent {
-	double t = 0; char kind = 0;             // D, S, R, B
+	double t = 0; char kind = 0;             // D, S, R, B, O (coll-bounded 5.6: rec of object obj, index recidx)
 	uint32_t alias = 0, recidx = 0;
 	DentRecord rec {};                       // D
 	double eabs = 0; uint32_t flags = 0;     // S, B
@@ -79,6 +81,7 @@ namespace CollSide {
 	void Sites (double t, uint32_t alias, const DentSites &s, std::vector<std::string> &lines); // blast V (S is the state event)
 	void Bonds (double t, uint32_t alias, uint32_t slot, const std::vector<uint32_t> &b, std::vector<std::string> &lines); // blast K
 	std::string Building (double t, uint32_t alias, uint32_t obj, double eabs, uint32_t flags, const std::string &planetBase);
+	std::string BuildingDent (double t, uint32_t alias, const std::string &planetBase, uint32_t k, const DentRecord &r); // coll-bounded 5.6: O, record k of object r.slot (k = count appends)
 	bool Parse (const std::string &text, CollSideFile &out);            // a truncated last line is skipped
 	std::string Fmt17 (double v);
 }

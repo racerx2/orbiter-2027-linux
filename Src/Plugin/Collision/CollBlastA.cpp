@@ -97,6 +97,75 @@ std::vector<Vector> CollBlastA::Sites (const CollBlastInput &in)
 	return s;
 }
 
+void CollBlastPairs (const CollBlastInput &in, const std::vector<uint32_t> &chOf, std::vector<CollBlastPair> &out)
+{
+	out.clear ();
+	const uint32_t NONE = UINT32_MAX;
+	size_t nt = std::min (std::min (in.v.size (), in.w.size ()) / 3, chOf.size ());
+	std::vector<uint32_t> wid (in.w.begin (), in.w.begin () + 3 * nt); // weld ids made dense in their order, so the sums keep it
+	uint64_t top = 0;
+	for (uint32_t w : wid) top = std::max<uint64_t> (top, (uint64_t)w + 1);
+	if (top > wid.size ()) {
+		std::vector<uint32_t> u (wid);
+		std::sort (u.begin (), u.end ());
+		u.erase (std::unique (u.begin (), u.end ()), u.end ());
+		for (uint32_t &w : wid) w = (uint32_t)(std::lower_bound (u.begin (), u.end (), w) - u.begin ());
+		top = u.size ();
+	}
+	uint32_t nw = (uint32_t)top;
+	std::vector<uint32_t> first (nw, NONE), at (nw, NONE); // a weld vertex's first chunk and the corner of its first use
+	std::vector<char> multi (nw, 0);                        // in more than one chunk
+	for (size_t i = 0; i < nt; i++) for (int k = 0; k < 3; k++) {
+		uint32_t a = wid[3 * i + k];
+		if (first[a] == NONE) first[a] = chOf[i], at[a] = (uint32_t)(3 * i + k);
+		else if (first[a] != chOf[i]) multi[a] = 1;
+	}
+	std::vector<std::pair<uint32_t, uint32_t>> vc;          // (vertex, chunk) of the shared vertices
+	struct Edge { uint32_t lo, hi, seq, ch; double len; };
+	std::vector<Edge> ed;                                   // edges with both ends shared: only they can join two chunks
+	for (size_t i = 0; i < nt; i++) for (int k = 0; k < 3; k++) {
+		uint32_t a = wid[3 * i + k], b = wid[3 * i + (k + 1) % 3];
+		if (multi[a]) vc.push_back ({ a, chOf[i] });
+		if (a == b || !multi[a] || !multi[b]) continue;
+		ed.push_back (Edge { std::min (a, b), std::max (a, b), (uint32_t)(3 * i + k), chOf[i], (Corner (in, i, (k + 1) % 3) - Corner (in, i, k)).length () });
+	}
+	std::sort (vc.begin (), vc.end ());
+	vc.erase (std::unique (vc.begin (), vc.end ()), vc.end ());
+	std::sort (ed.begin (), ed.end (), [] (const Edge &x, const Edge &y) { return x.lo != y.lo ? x.lo < y.lo : x.hi != y.hi ? x.hi < y.hi : x.seq < y.seq; });
+	struct Add { uint32_t a, b; Vector p; double len; };
+	std::vector<Add> va, ea;                                // contributions in the order the sums take them: vertices, then edges, ascending
+	std::vector<uint32_t> l;
+	for (size_t s = 0; s < vc.size ();) {
+		size_t e = s;
+		l.clear ();
+		for (; e < vc.size () && vc[e].first == vc[s].first; e++) l.push_back (vc[e].second);
+		const Vector &p = in.v[at[vc[s].first]];
+		for (size_t i = 0; i < l.size (); i++) for (size_t j = i + 1; j < l.size (); j++) va.push_back (Add { l[i], l[j], p, 0.0 });
+		s = e;
+	}
+	for (size_t s = 0; s < ed.size ();) {
+		size_t e = s;
+		l.clear ();
+		for (; e < ed.size () && ed[e].lo == ed[s].lo && ed[e].hi == ed[s].hi; e++) l.push_back (ed[e].ch);
+		double len = ed[e - 1].len;                         // the last use of the edge sets its length
+		std::sort (l.begin (), l.end ());
+		l.erase (std::unique (l.begin (), l.end ()), l.end ());
+		for (size_t i = 0; i < l.size (); i++) for (size_t j = i + 1; j < l.size (); j++) ea.push_back (Add { l[i], l[j], Vector (), len });
+		s = e;
+	}
+	auto byPair = [] (const Add &x, const Add &y) { return x.a != y.a ? x.a < y.a : x.b < y.b; };
+	std::stable_sort (va.begin (), va.end (), byPair);
+	std::stable_sort (ea.begin (), ea.end (), byPair);
+	for (size_t i = 0, j = 0; i < va.size () || j < ea.size ();) {
+		bool fromV = j >= ea.size () || (i < va.size () && !byPair (ea[j], va[i]));
+		const Add &k = fromV ? va[i] : ea[j];
+		CollBlastPair x { k.a, k.b, 0.0, Vector (), 0 };
+		for (; i < va.size () && va[i].a == x.a && va[i].b == x.b; i++) x.c += va[i].p, x.n++;
+		for (; j < ea.size () && ea[j].a == x.a && ea[j].b == x.b; j++) x.len += ea[j].len;
+		out.push_back (x);
+	}
+}
+
 bool CollBlastA::Build (const CollBlastInput &in, const std::vector<Vector> *given, const Vector &cgIn)
 {
 	Release ();
@@ -137,35 +206,15 @@ bool CollBlastA::Build (const CollBlastInput &in, const std::vector<Vector> *giv
 		c.mass = in.mass * c.area / Atotal;
 	}
 	// bonds: chunks sharing welded vertices; shared edge length
-	std::map<uint32_t, Vector> wpos;
-	std::map<uint32_t, std::set<uint32_t>> wch;
-	std::map<std::pair<uint32_t, uint32_t>, std::pair<double, std::set<uint32_t>>> edge;
-	for (size_t i = 0; i < nt; i++) for (int k = 0; k < 3; k++) {
-		uint32_t a = in.w[3 * i + k], b = in.w[3 * i + (k + 1) % 3];
-		wpos.emplace (a, Corner (in, i, k));
-		wch[a].insert (chOf[i]);
-		if (a == b) continue;
-		auto &e = edge[{ std::min (a, b), std::max (a, b) }];
-		e.first = (Corner (in, i, (k + 1) % 3) - Corner (in, i, k)).length ();
-		e.second.insert (chOf[i]);
-	}
-	struct Acc { double len = 0; Vector c; uint32_t n = 0; };
-	std::map<std::pair<uint32_t, uint32_t>, Acc> pair;
-	for (auto &kv : wch) if (kv.second.size () > 1) {
-		std::vector<uint32_t> l (kv.second.begin (), kv.second.end ());
-		for (size_t i = 0; i < l.size (); i++) for (size_t j = i + 1; j < l.size (); j++) { Acc &a = pair[{ l[i], l[j] }]; a.c += wpos[kv.first]; a.n++; }
-	}
-	for (auto &kv : edge) if (kv.second.second.size () > 1) {
-		std::vector<uint32_t> l (kv.second.second.begin (), kv.second.second.end ());
-		for (size_t i = 0; i < l.size (); i++) for (size_t j = i + 1; j < l.size (); j++) pair[{ l[i], l[j] }].len += kv.second.first;
-	}
+	std::vector<CollBlastPair> pair;
+	CollBlastPairs (in, chOf, pair);
 	double lmin = 0.1 * std::sqrt (Acell);
-	for (auto &kv : pair) {
-		if (!kv.second.n) continue;
+	for (const CollBlastPair &x : pair) {
+		if (!x.n) continue;
 		CollBlastBond b;
-		b.a = kv.first.first; b.b = kv.first.second; b.len = kv.second.len;
-		b.area = std::max (kv.second.len, lmin) * t;
-		b.c = kv.second.c / (double)kv.second.n;
+		b.a = x.a; b.b = x.b; b.len = x.len;
+		b.area = std::max (x.len, lmin) * t;
+		b.c = x.c / (double)x.n;
 		const CollBlastChunk &ca = chunk[b.a], &cb = chunk[b.b];
 		b.n = Unit (ca.cell >= 0 && cb.cell >= 0 ? site[cb.cell] - site[ca.cell] : cb.c - ca.c);
 		if (!(b.n.length () > 0)) b.n = Vector (1, 0, 0);

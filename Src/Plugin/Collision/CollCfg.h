@@ -44,6 +44,8 @@ struct CollCfgValues {
 	bool ground = true;                     // CollisionGround (ground): vessel colliders against the terrain make impact events
 	double groundMinSpeed = 5;              // CollisionGroundMinSpeed (ground) [m/s]: slowest approach to the terrain that makes one
 	bool streamBuildings = true;            // CollisionStreamBuildings (bldg): vessels hit the streamed 3D buildings
+	int frameTests = 25000;                 // CollisionFrameTests (coll-bounded 3): triangle pair tests per frame before resting contacts reuse their last result; 0 no limit
+	double debrisMs = 6;                    // CollisionDebrisMs (coll-bounded 6.2): debris vessels made per pre-step until this time is spent [ms], at least one
 };
 
 // every key in file order, with its field; Read, Keys and the template test walk this one list; CollisionCfgVersion is the build's (cmake/CollisionCfgOnce.cmake)
@@ -87,6 +89,8 @@ template <class V, class F> void CollCfgFields (V &v, F &&f)
 	f ("CollisionGround", v.ground);
 	f ("CollisionGroundMinSpeed", v.groundMinSpeed);
 	f ("CollisionStreamBuildings", v.streamBuildings);
+	f ("CollisionFrameTests", v.frameTests);
+	f ("CollisionDebrisMs", v.debrisMs);
 }
 
 namespace CollCfg {

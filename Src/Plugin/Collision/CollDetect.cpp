@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include "CollDetect.h"
 
+constexpr size_t COLL_OVER_PTS = 512;      // crossing points kept per body and building part in a frame (design coll-bounded 5.1)
+constexpr double COLL_NEAR_TIE = 1e-9;    // widening: a Collect runs at an ext within this of the nearest d - rs [m] (design coll-bounded 7.3)
 constexpr double MERGE_GAP_TOL = 1e-9;   // a duplicate replaces the kept manifold point only when deeper by more than this [m]
 constexpr double SPEC_LOG_INTERVAL = 60.0; // one CA-cap INFO line per body pair per this sim time [s]
 constexpr double ORDER_GAP_TOL = 1e-3;     // manifold points this close in gap to their group's deepest point are ordered by feature key [m]
@@ -864,6 +867,32 @@ struct CollDetect::Impl {
 		return s;
 	}
 
+	// box o's distance to the nearest plane of leaf n's triangles, a lower bound of its distance to them; -1e300 when a triangle has no plane (design coll-bounded 7.4)
+	static double PlaneBound (CollDetect &d, const Placed &p, const CollNode &n, const Box &o)
+	{
+		double s = 1e300;
+		for (uint32_t x = n.first; x < n.first + n.count; x++) {
+			Vector v[3];
+			TriAt (d, p, p.g->perm[x], v);
+			Vector nv = crossp (v[1] - v[0], v[2] - v[0]);
+			double l = nv.length ();
+			if (!(l > 0.0) || !std::isfinite (l)) return -1e300;
+			nv = nv/l;
+			double q = fabs ((o.g - v[0]) & nv) - HalfW (o, nv) - COLL_PLANE_EPS;
+			if (!std::isfinite (q)) return -1e300;
+			s = std::min (s, q);
+		}
+		return s;
+	}
+
+	// lb raised by the triangle planes of the leaf sides (review 42)
+	static double LeafBound (CollDetect &d, const Placed &a, const CollNode &na, const Box &Ba, const Placed &b, const CollNode &nb, const Box &Bb, double lb)
+	{
+		if (na.count) lb = std::max (lb, PlaneBound (d, a, na, Bb));
+		if (nb.count) lb = std::max (lb, PlaneBound (d, b, nb, Ba));
+		return lb;
+	}
+
 	// node distance from the body CG over the step (rho) and part motion per unit tau (mu)
 	static void NodeMotion (const Placed &p, const CollNode &n, double &rho, double &mu)
 	{
@@ -944,98 +973,203 @@ struct CollDetect::Impl {
 
 	// conservative advancement (5.2, 5.3)
 
-	// one traversal at the current pose: 1 hit, 0 no hit (best = safe step), -1 triangle cap reached
+	static bool HeapLater (const HeapPair &x, const HeapPair &y)    // smallest key on top; ties by part pair and nodes (review 36)
+	{
+		if (x.key != y.key) return x.key > y.key;
+		if (x.k != y.k) return x.k > y.k;
+		if (x.i != y.i) return x.i > y.i;
+		return x.j > y.j;
+	}
+
+	// one traversal at the current pose, best first by the safe step: 1 hit, 0 no hit (best = safe step), -1 triangle cap reached (design coll-bounded 7.2)
 	static int CaPass (Ctx &cx, bool core, double &best, std::vector<std::pair<double, double>> &gs, Raw &hit, long long ttCap)
 	{
 		CollDetect &d = *cx.d;
 		const CollParams &p = d.m_prm;
+		struct Tg { double mg, tg, gm; };
+		std::vector<Tg> tgs (cx.pp.size ());
+		std::vector<HeapPair> &hp = d.m_heap;
+		hp.clear ();
+		auto push = [&] (int k, uint32_t i, uint32_t j) {
+			const PP &q = cx.pp[k];
+			const Placed &a = cx.pa[q.a], &b = cx.pb[q.b];
+			const Tg &w = tgs[k];
+			cx.bv++;
+			const CollNode &na = a.g->node[i], &nb = b.g->node[j];
+			Box Ba, Bb;
+			MakeBox (a, na, Ba); MakeBox (b, nb, Bb);
+			HeapPair h;
+			NodeMotion (a, na, h.rhoA, h.muA); NodeMotion (b, nb, h.rhoB, h.muB);
+			Vector ax[7];
+			int n = Axes (Ba, Bb, ax);
+			h.key = -1.0; h.g = 0.0; h.s = 0.0;
+			for (int t = 0; t < n; t++) {
+				double s = Sep (Ba, Bb, ax[t]);
+				double g = s - w.mg - 0.5*w.tg;
+				if (g <= 0.0) continue;
+				double S = Speed (cx, ax[t], h.rhoA, h.muA, h.rhoB, h.muB);
+				double dt = S > 0.0 ? g/S : 1e300;
+				if (dt > h.key) { h.key = dt; h.g = s - w.gm; h.s = S; }
+			}
+			auto plane = [&] (const Placed &pl, const CollNode &nd, const Box &o) { // leaf triangle planes as axes (design coll-bounded 7.4)
+				double dmin = 1e300, gmin = 1e300, smax = 0.0;
+				for (uint32_t x = nd.first; x < nd.first + nd.count; x++) {
+					Vector v[3];
+					TriAt (d, pl, pl.g->perm[x], v);
+					Vector nv = crossp (v[1] - v[0], v[2] - v[0]);
+					double l = nv.length ();
+					if (!(l > 0.0) || !std::isfinite (l)) return;
+					nv = nv/l;
+					double s = fabs ((o.g - v[0]) & nv) - HalfW (o, nv) - COLL_PLANE_EPS;
+					double g = s - w.mg - 0.5*w.tg;
+					if (!(g > 0.0) || !std::isfinite (g)) return;
+					double S = Speed (cx, nv, h.rhoA, h.muA, h.rhoB, h.muB);
+					if (!(S >= 0.0) || !std::isfinite (S)) return;
+					dmin = std::min (dmin, S > 0.0 ? g/S : 1e300);
+					gmin = std::min (gmin, s - w.gm);
+					smax = std::max (smax, S);
+				}
+				if (dmin > h.key) { h.key = dmin; h.g = gmin; h.s = smax; }
+			};
+			if (na.count) plane (a, na, Bb);
+			if (nb.count) plane (b, nb, Ba);
+			h.splitA = nb.count > 0 || (!na.count && Ba.e.length2 () >= Bb.e.length2 ());
+			h.k = k; h.i = i; h.j = j;
+			hp.push_back (h);
+			std::push_heap (hp.begin (), hp.end (), HeapLater);
+		};
 		std::vector<std::pair<uint32_t, uint32_t>> fl;
 		for (size_t k = 0; k < cx.pp.size (); k++) {
 			const PP &q = cx.pp[k];
 			if (q.culled) continue;
 			const Placed &a = cx.pa[q.a], &b = cx.pb[q.b];
 			double rs = a.r->skin + b.r->skin;
-			double mg = core ? std::min (cx.Em, 0.5*(rs - p.kappaCore)) + a.marg + b.marg : rs + cx.Em + a.marg + b.marg;
-			double tg = core ? p.kappaCore : p.deltaToi;
-			double gm = rs + cx.Em + a.marg + b.marg;
-			bool cache = core && q.front;
-			if (cache) FrontLeaves (cx, q, fl);
-			size_t fi = 0;
-			cx.stk.clear ();
-			if (!cache) cx.stk.push_back ({ 0u, 0u });
-			for (;;) {
-				uint32_t i, j;
-				if (cache) {
-					if (fi >= fl.size ()) break;
-					i = fl[fi].first; j = fl[fi].second; fi++;
-					if (!IsLeaf (*a.g, i) || !IsLeaf (*b.g, j)) continue;
-				} else {
-					if (cx.stk.empty ()) break;
-					i = cx.stk.back ().first; j = cx.stk.back ().second; cx.stk.pop_back ();
-				}
-				cx.bv++;
-				const CollNode &na = a.g->node[i], &nb = b.g->node[j];
+			tgs[k].mg = core ? std::min (cx.Em, 0.5*(rs - p.kappaCore)) + a.marg + b.marg : rs + cx.Em + a.marg + b.marg;
+			tgs[k].tg = core ? p.kappaCore : p.deltaToi;
+			tgs[k].gm = rs + cx.Em + a.marg + b.marg;
+			if (core && q.front) {
+				FrontLeaves (cx, q, fl);
+				for (const auto &x : fl) if (IsLeaf (*a.g, x.first) && IsLeaf (*b.g, x.second)) push ((int)k, x.first, x.second);
+			} else push ((int)k, 0u, 0u);
+		}
+		while (!hp.empty ()) {
+			std::pop_heap (hp.begin (), hp.end (), HeapLater);
+			const HeapPair h = hp.back ();
+			hp.pop_back ();
+			if (h.key >= best) {                                   // it and every pair left are pruned (review 38)
+				gs.push_back ({ h.g, h.s });
+				for (const HeapPair &x : hp) gs.push_back ({ x.g, x.s });
+				break;
+			}
+			const PP &q = cx.pp[h.k];
+			const Placed &a = cx.pa[q.a], &b = cx.pb[q.b];
+			const Tg &w = tgs[h.k];
+			const CollNode &na = a.g->node[h.i], &nb = b.g->node[h.j];
+			if (!q.zones.empty ()) {
 				Box Ba, Bb;
 				MakeBox (a, na, Ba); MakeBox (b, nb, Bb);
-				double rhoA, muA, rhoB, muB;
-				NodeMotion (a, na, rhoA, muA); NodeMotion (b, nb, rhoB, muB);
-				Vector ax[7];
-				int n = Axes (Ba, Bb, ax);
-				double dtMax = -1.0, gB = 0.0, sB = 0.0;
-				for (int t = 0; t < n; t++) {
-					double s = Sep (Ba, Bb, ax[t]);
-					double g = s - mg - 0.5*tg;
-					if (g <= 0.0) continue;
-					double S = Speed (cx, ax[t], rhoA, muA, rhoB, muB);
-					double dt = S > 0.0 ? g/S : 1e300;
-					if (dt > dtMax) { dtMax = dt; gB = s - gm; sB = S; }
-				}
-				if (dtMax >= best) { gs.push_back ({ gB, sB }); continue; }
-				if (!q.zones.empty () && ZonePrune (cx, q, Ba, Bb)) { cx.flags |= COLLF_ZONE; continue; }
-				bool lA = na.count > 0, lB = nb.count > 0;
-				if (lA && lB) {
-					if (Scoped (cx, q, i, j)) { cx.flags |= COLLF_GRACE; continue; }
-					for (uint32_t x = na.first; x < na.first + na.count; x++) {
-						uint32_t ta = a.g->perm[x];
-						if (a.r->mask && a.r->mask[a.g->tri[ta].src]) continue;
-						Vector va[3];
-						TriAt (d, a, ta, va);
-						for (uint32_t y = nb.first; y < nb.first + nb.count; y++) {
-							uint32_t tb = b.g->perm[y];
-							if (b.r->mask && b.r->mask[b.g->tri[tb].src]) continue;
-							Vector vb[3], pa, pb;
-							TriAt (d, b, tb, vb);
-							cx.tt++;
-							double dd = CollTriTriDistance (va, vb, pa, pb);
-							if (!q.zones.empty () && ZoneDrop (cx, q, pa, pb)) { cx.flags |= COLLF_ZONE; continue; }
-							if (dd - mg <= tg) { hit = Raw { (int)k, ta, tb, i, j, dd, pa, pb }; return 1; }
-							Vector u = (pb - pa)/dd;
-							double S = Speed (cx, u, rhoA, muA, rhoB, muB);
-							double dt = S > 0.0 ? (dd - mg - 0.5*tg)/S : 1e300;
-							gs.push_back ({ dd - gm, S });
-							if (dt < best) best = dt;
-						}
-					}
-					if (cx.tt > ttCap) return -1;
-					continue;
-				}
-				bool splitA = lB || (!lA && Ba.e.length2 () >= Bb.e.length2 ());
-				if (splitA) {
-					uint32_t c1 = na.first, c2 = na.first + 1;
-					double d1 = (CollApply (a.X, NodeCentre (a.g->node[c1])) - Bb.g).length2 ();
-					double d2 = (CollApply (a.X, NodeCentre (a.g->node[c2])) - Bb.g).length2 ();
-					if (d1 <= d2) { cx.stk.push_back ({ c2, j }); cx.stk.push_back ({ c1, j }); }
-					else { cx.stk.push_back ({ c1, j }); cx.stk.push_back ({ c2, j }); }
-				} else {
-					uint32_t c1 = nb.first, c2 = nb.first + 1;
-					double d1 = (CollApply (b.X, NodeCentre (b.g->node[c1])) - Ba.g).length2 ();
-					double d2 = (CollApply (b.X, NodeCentre (b.g->node[c2])) - Ba.g).length2 ();
-					if (d1 <= d2) { cx.stk.push_back ({ i, c2 }); cx.stk.push_back ({ i, c1 }); }
-					else { cx.stk.push_back ({ i, c1 }); cx.stk.push_back ({ i, c2 }); }
-				}
+				if (ZonePrune (cx, q, Ba, Bb)) { cx.flags |= COLLF_ZONE; continue; }
 			}
+			if (na.count > 0 && nb.count > 0) {
+				if (Scoped (cx, q, h.i, h.j)) { cx.flags |= COLLF_GRACE; continue; }
+				for (uint32_t x = na.first; x < na.first + na.count; x++) {
+					uint32_t ta = a.g->perm[x];
+					if (a.r->mask && a.r->mask[a.g->tri[ta].src]) continue;
+					Vector va[3];
+					TriAt (d, a, ta, va);
+					for (uint32_t y = nb.first; y < nb.first + nb.count; y++) {
+						uint32_t tb = b.g->perm[y];
+						if (b.r->mask && b.r->mask[b.g->tri[tb].src]) continue;
+						Vector vb[3], pa, pb;
+						TriAt (d, b, tb, vb);
+						cx.tt++;
+						double dd = CollTriTriDistance (va, vb, pa, pb);
+						if (!q.zones.empty () && ZoneDrop (cx, q, pa, pb)) { cx.flags |= COLLF_ZONE; continue; }
+						if (dd - w.mg <= w.tg) { hit = Raw { h.k, ta, tb, h.i, h.j, dd, pa, pb }; return 1; }
+						Vector u = (pb - pa)/dd;
+						double S = Speed (cx, u, h.rhoA, h.muA, h.rhoB, h.muB);
+						double dt = S > 0.0 ? (dd - w.mg - 0.5*w.tg)/S : 1e300;
+						gs.push_back ({ dd - w.gm, S });
+						if (dt < best) best = dt;
+					}
+				}
+				if (cx.tt > ttCap) return -1;
+				continue;
+			}
+			if (h.splitA) { push (h.k, na.first, h.j); push (h.k, na.first + 1, h.j); }
+			else { push (h.k, h.i, nb.first); push (h.k, h.i, nb.first + 1); }
 		}
 		return 0;
+	}
+
+	// smallest d - rs over the triangle pairs Collect sees at the current pose, best first on lb - rs; false if none below lim (design coll-bounded 7.3, review 37)
+	static bool Nearest (Ctx &cx, double lim, double &dn)
+	{
+		CollDetect &d = *cx.d;
+		std::vector<HeapPair> &hp = d.m_heap;
+		hp.clear ();
+		std::vector<double> rs (cx.pp.size (), 0.0);
+		dn = lim;
+		bool any = false;
+		auto push = [&] (int k, uint32_t i, uint32_t j) {
+			const PP &q = cx.pp[k];
+			const Placed &a = cx.pa[q.a], &b = cx.pb[q.b];
+			cx.bv++;
+			const CollNode &na = a.g->node[i], &nb = b.g->node[j];
+			Box Ba, Bb;
+			MakeBox (a, na, Ba); MakeBox (b, nb, Bb);
+			HeapPair h {};
+			h.key = LowerBound (Ba, Bb) - rs[k];
+			if (h.key >= dn) return;
+			if (na.count || nb.count) {
+				h.key = LeafBound (d, a, na, Ba, b, nb, Bb, h.key + rs[k]) - rs[k];
+				if (h.key >= dn) return;
+			}
+			if (!q.zones.empty () && ZonePrune (cx, q, Ba, Bb)) return;
+			h.splitA = nb.count > 0 || (!na.count && Ba.e.length2 () >= Bb.e.length2 ());
+			h.k = k; h.i = i; h.j = j;
+			hp.push_back (h);
+			std::push_heap (hp.begin (), hp.end (), HeapLater);
+		};
+		for (size_t k = 0; k < cx.pp.size (); k++) {
+			const PP &q = cx.pp[k];
+			if (q.culled) continue;
+			rs[k] = cx.pa[q.a].r->skin + cx.pb[q.b].r->skin;
+			push ((int)k, 0u, 0u);
+		}
+		while (!hp.empty ()) {
+			std::pop_heap (hp.begin (), hp.end (), HeapLater);
+			const HeapPair h = hp.back ();
+			hp.pop_back ();
+			if (h.key >= dn) break;
+			const PP &q = cx.pp[h.k];
+			const Placed &a = cx.pa[q.a], &b = cx.pb[q.b];
+			const CollNode &na = a.g->node[h.i], &nb = b.g->node[h.j];
+			if (na.count > 0 && nb.count > 0) {
+				if (Scoped (cx, q, h.i, h.j)) continue;
+				for (uint32_t x = na.first; x < na.first + na.count; x++) {
+					uint32_t ta = a.g->perm[x];
+					if (a.r->mask && a.r->mask[a.g->tri[ta].src]) continue;
+					Vector va[3];
+					TriAt (d, a, ta, va);
+					for (uint32_t y = nb.first; y < nb.first + nb.count; y++) {
+						uint32_t tb = b.g->perm[y];
+						if (b.r->mask && b.r->mask[b.g->tri[tb].src]) continue;
+						Vector vb[3], pa, pb;
+						TriAt (d, b, tb, vb);
+						cx.tt++;
+						double dd = CollTriTriDistance (va, vb, pa, pb);
+						if (!(dd - rs[h.k] < dn)) continue;
+						if (!q.zones.empty () && ZoneDrop (cx, q, pa, pb)) continue;
+						dn = dd - rs[h.k]; any = true;
+					}
+				}
+				continue;
+			}
+			if (h.splitA) { push (h.k, na.first, h.j); push (h.k, na.first + 1, h.j); }
+			else { push (h.k, h.i, nb.first); push (h.k, h.i, nb.first + 1); }
+		}
+		return any;
 	}
 
 	static Vector NodeCentre (const CollNode &n)
@@ -1100,9 +1234,13 @@ struct CollDetect::Impl {
 			MakeBox (a, na, Ba); MakeBox (b, nb, Bb);
 			double lb = LowerBound (Ba, Bb);
 			if ((opt & Q_RAWX) ? lb > 0.0 : lb >= ncut) continue;
+			bool lA = na.count > 0, lB = nb.count > 0;
+			if (lA || lB) {
+				lb = LeafBound (d, a, na, Ba, b, nb, Bb, lb);
+				if ((opt & Q_RAWX) ? lb > 0.0 : lb >= ncut) continue;
+			}
 			bool zones = (opt & Q_ZONES) && !q.zones.empty ();
 			if (zones && !build && ZonePrune (cx, q, Ba, Bb)) { cx.flags |= COLLF_ZONE; continue; }
-			bool lA = na.count > 0, lB = nb.count > 0;
 			if (lA && lB) {
 				if (build) build->push_back (LeafKey (cx, q, i, j)); // a front holds every leaf pair within its cut, zones or not (it outlives them)
 				if (!(opt & Q_RAWX) && lb >= cut) continue;
@@ -1511,10 +1649,15 @@ struct CollDetect::Impl {
 		SetPose (cx, POSE_MODEL, cx.tau);
 		double ext = spec + p.deltaCt, lim = cx.Dstep*(1.0 - cx.tau) + p.deltaCt;
 		if (!std::isfinite (lim)) lim = ext;                     // NaN or inf step bound: no widening (fix2)
+		double dn;
+		if (!Nearest (cx, std::max (ext, lim) + COLL_NEAR_TIE, dn)) return; // every Collect of the widening would be empty (design coll-bounded 7.3)
 		for (int it = 0; it < 64; it++) {
-			raws.clear ();
-			Collect (cx, ext, false, raws);
-			if (!raws.empty () || !(ext < lim)) break;
+			if (ext + COLL_NEAR_TIE >= dn) {
+				raws.clear ();
+				Collect (cx, ext, false, raws);
+				if (!raws.empty ()) break;
+			}
+			if (!(ext < lim)) break;
 			ext = std::min (2.0*ext + p.deltaCt, lim);
 		}
 		if (raws.empty ()) return;
@@ -1704,6 +1847,7 @@ struct CollDetect::Impl {
 				}
 				EntryAt (d.m_store, req[m].e).touch[req[m].t].state = st;
 			}
+			d.m_ttFrame += cx.tt;
 			k = l;
 		}
 		for (size_t ei = 0; ei < d.m_store.Size (); ei++) {
@@ -1869,6 +2013,7 @@ struct CollDetect::Impl {
 		for (size_t k = 0; k < cx.pp.size (); k++)
 			if (!cx.pp[k].culled && !cx.pp[k].support) Cutoff (cx, k, 0.0, Q_RAWX, raws, raws.size () + COLL_ENTRY_RAW_MAX, nullptr);
 		if (raws.empty ()) return;
+		AddOver (cx, raws);                                // design coll-bounded 5.1: a damaged body that starts crossing a building breaks it
 		std::vector<std::pair<OwnerPair, CollLeafPair>> lp;
 		for (const Raw &w : raws) lp.push_back ({ cx.pp[w.k].key, LeafKey (cx, cx.pp[w.k], w.la, w.lb) });
 		std::sort (lp.begin (), lp.end (), [] (const std::pair<OwnerPair, CollLeafPair> &x, const std::pair<OwnerPair, CollLeafPair> &y) {
@@ -1956,6 +2101,8 @@ struct CollDetect::Impl {
 		const CollNode &na = ra.geom->node[l.leafA], &nb = rb.geom->node[l.leafB];
 		double dmin = 1e300;
 		int n = 0;
+		const int over = A.kind == COLLB_BASE && B.kind == COLLB_DYNAMIC ? 0 : B.kind == COLLB_BASE && A.kind == COLLB_DYNAMIC ? 1 : -1; // a GRACE scope in a building: its crossing points too (design coll-bounded 5.1)
+		const CollAffine XAi = over == 0 ? CollInverse (XA) : CollAffine (), XBi = over == 1 ? CollInverse (XB) : CollAffine ();
 		for (uint32_t x = na.first; x < na.first + na.count; x++) {
 			const CollTri &ta = ra.geom->tri[ra.geom->perm[x]];
 			if (ra.mask && ra.mask[ta.src]) continue;
@@ -1966,8 +2113,14 @@ struct CollDetect::Impl {
 				if (n >= COLL_GRACE_RELEASE_TRI) return LeafSpheresApart (d, XA, XB, na, nb, ra.skin + rb.skin, rel);  // too big to judge per triangle: release only on bounding sphere separation
 				Vector vb[3] = { CollApply (XB, rb.geom->vtx[tb.v[0]]), CollApply (XB, rb.geom->vtx[tb.v[1]]), CollApply (XB, rb.geom->vtx[tb.v[2]]) };
 				Vector pa2, pb2;
-				dmin = std::min (dmin, CollTriTriDistance (va, vb, pa2, pb2));
+				double dd = CollTriTriDistance (va, vb, pa2, pb2);
+				dmin = std::min (dmin, dd);
 				n++;
+				d.m_ttFrame++;
+				if (over >= 0 && dd <= 0.0) {
+					if (over == 0) OverPt (d, B.id, ra.owner, *ra.geom, ra.geom->perm[x], CollApply (XAi, pa2));
+					else OverPt (d, A.id, rb.owner, *rb.geom, rb.geom->perm[y], CollApply (XBi, pb2));
+				}
 			}
 		}
 		return dmin - ra.skin - rb.skin >= rel;
@@ -1983,7 +2136,7 @@ struct CollDetect::Impl {
 		st.candidates++;
 		bool jump = cx.A->jump1 || cx.B->jump1;
 		if ((cx.A->entry | cx.B->entry) || jump) EntryCheck (cx, jump ? POSE_T1 : POSE_T0);
-		if (jump || cx.pp.empty ()) { st.bvPairs += (int)cx.bv; st.triPairs += (int)cx.tt; return; }
+		if (jump || cx.pp.empty ()) { st.bvPairs += (int)cx.bv; st.triPairs += (int)cx.tt; d.m_ttFrame += cx.tt; return; }
 		SplitUpdate (cx);
 		Bind (cx, true);
 		SetPose (cx, POSE_T0, 0.0);
@@ -2005,6 +2158,7 @@ struct CollDetect::Impl {
 		}
 		for (auto &b : builds) FrontStore (cx, b.first, b.second);
 		if (!builds.empty ()) Bind (cx, true);
+		AddOver (cx, raws);                                // crossing pairs with a building (design coll-bounded 5.1)
 		// support distance (Y10)
 		for (const Raw &w : raws) {
 			const PP &q = cx.pp[w.k];
@@ -2036,6 +2190,237 @@ struct CollDetect::Impl {
 			RunAndReport (cx, 0.0, false, 0, out, &st);
 		st.bvPairs += (int)cx.bv;
 		st.triPairs += (int)cx.tt;
+		d.m_ttFrame += cx.tt;
+	}
+
+	// bounded cost (design coll-bounded 3): carry records of persistent pairs, the ordered pass, crossings of buildings (5.1)
+
+	static uint64_t BKey (const CollBody &b) { return ((uint64_t)(b.kind == COLLB_BASE ? 1 : 0) << 32) | b.id; }
+
+	static uint64_t VerHash (const CollBody &b)
+	{
+		uint64_t h = 1469598103934665603ull ^ b.kind;
+		for (const CollPartRef &p : b.parts) {
+			const uint64_t v[3] = { p.partKey, p.version, (uint64_t)(uintptr_t)p.geom };
+			for (uint64_t x : v) { h ^= x; h *= 1099511628211ull; }
+		}
+		return h;
+	}
+
+	static std::vector<Carry>::iterator CarryAt (CollDetect &d, uint64_t lo, uint64_t hi)
+	{
+		return std::lower_bound (d.m_carry.begin (), d.m_carry.end (), std::make_pair (lo, hi), [] (const Carry &c, const std::pair<uint64_t, uint64_t> &k) {
+			return c.ka != k.first ? c.ka < k.first : c.kb < k.second; });
+	}
+
+	static Carry *FindCarry (CollDetect &d, int ia, int ib)
+	{
+		uint64_t a = BKey (d.m_body[ia]), b = BKey (d.m_body[ib]), lo = std::min (a, b), hi = std::max (a, b);
+		auto it = CarryAt (d, lo, hi);
+		return it != d.m_carry.end () && it->ka == lo && it->kb == hi ? &*it : nullptr;
+	}
+
+	static const Carry *FindCarryOf (const CollDetect &f, const CollBody &A, const CollBody &B) // a record in another detector (the forward one), by body keys
+	{
+		uint64_t a = BKey (A), b = BKey (B), lo = std::min (a, b), hi = std::max (a, b);
+		auto it = std::lower_bound (f.m_carry.begin (), f.m_carry.end (), std::make_pair (lo, hi), [] (const Carry &c, const std::pair<uint64_t, uint64_t> &k) {
+			return c.ka != k.first ? c.ka < k.first : c.kb < k.second; });
+		return it != f.m_carry.end () && it->ka == lo && it->kb == hi ? &*it : nullptr;
+	}
+
+	static void BodyState (const CollDetect &d, const CollBody &b, double tau, const Vector &org, CollBodyAt &s)
+	{
+		const CollMotion &m = b.m;
+		double t = std::min (std::max (tau, m.ta), m.tb);
+		s.c = m.Pos (t) - org; s.v = m.Vel (t); s.q.Set (m.Rot (t)); s.w = m.Omega (t);
+		(void)d;
+	}
+
+	// results of one full pass from index `from` become the pair's record; none: the record goes
+	static void Record (CollDetect &d, int ia, int ib, const std::vector<CollPairResult> &res, size_t from, long long cost)
+	{
+		const CollBody &A = d.m_body[ia], &B = d.m_body[ib];
+		uint64_t ka = BKey (A), kb = BKey (B);
+		bool sw = kb < ka;
+		uint64_t lo = sw ? kb : ka, hi = sw ? ka : kb;
+		auto it = CarryAt (d, lo, hi);
+		bool have = it != d.m_carry.end () && it->ka == lo && it->kb == hi;
+		if (from >= res.size ()) { if (have) d.m_carry.erase (it); return; }
+		if (!have) it = d.m_carry.insert (it, Carry {});
+		Carry &c = *it;
+		const CollBody &X = sw ? B : A, &Y = sw ? A : B;
+		c.ka = lo; c.kb = hi; c.frame = d.m_frame; c.age = 0; c.cost = cost; c.now = false;
+		c.verA = VerHash (X); c.verB = VerHash (Y);
+		c.res.clear (); c.lever = 0.0;
+		for (size_t i = from; i < res.size (); i++) {
+			const CollPairResult &r = res[i];
+			const CollBodyAt &sx = sw ? r.b : r.a, &sy = sw ? r.a : r.b;
+			Matrix RX = QMat (sx.q), RY = QMat (sy.q);
+			if (i == from) { c.relC = tmul (RY, sx.c - sy.c); c.relR = transp (RY) * RX; }
+			CarryRes cr {};
+			cr.kind = r.kind; cr.flags = r.flags; cr.E = r.E; cr.npt = std::min (r.npt, 16);
+			for (int k = 0; k < cr.npt; k++) {
+				const CollContact &p = r.pt[k];
+				CarryPt &q = cr.pt[k];
+				Vector px = sw ? p.pB : p.pA, py = sw ? p.pA : p.pB, n = sw ? -p.n : p.n; // n from Y to X
+				q.pA = tmul (RX, px - sx.c); q.pB = tmul (RY, py - sy.c); q.n = tmul (RY, n);
+				q.gap = p.gap; q.wn = dotp (px - py, n);
+				q.triA = sw ? p.triB : p.triA; q.triB = sw ? p.triA : p.triB;
+				q.partA = sw ? p.partB : p.partA; q.partB = sw ? p.partA : p.partB;
+				q.patch = p.patch; q.flags = (uint8_t)(p.flags & ~(COLLP_FIRST | COLLP_INTERSECT));
+				c.lever = std::max (c.lever, q.pA.length ());
+			}
+			c.res.push_back (cr);
+		}
+	}
+
+	// the record still describes the pair: same parts, no entry, split or zone, small relative move at tau since the full result
+	static bool Carriable (const CollDetect &d, const Carry &c, int ia, int ib, double tau, bool sameFrame)
+	{
+		const CollBody &A = d.m_body[ia], &B = d.m_body[ib];
+		if (c.res.empty () || c.age >= COLL_CARRY_AGE) return false;
+		if (!(c.frame + 1 == d.m_frame || (sameFrame && c.frame == d.m_frame))) return false;
+		if (A.entry || B.entry || A.jump1 || B.jump1) return false;
+		bool sw = BKey (B) < BKey (A);
+		const CollBody &X = sw ? B : A, &Y = sw ? A : B;
+		if (VerHash (X) != c.verA || VerHash (Y) != c.verB) return false;
+		if (FindSplit (d, A, B)) return false;
+		for (const CollZone &z : d.m_zone) if (z.bodyA == ia || z.bodyB == ia || z.bodyA == ib || z.bodyB == ib) return false;
+		CollBodyAt sx, sy;
+		BodyState (d, X, tau, Vector (), sx); BodyState (d, Y, tau, Vector (), sy);
+		Matrix RX = QMat (sx.q), RY = QMat (sy.q);
+		Vector relC = tmul (RY, sx.c - sy.c);
+		double turn = MAngle (transp (RY) * RX * transp (c.relR));
+		return turn < COLL_CARRY_TURN && (relC - c.relC).length () + c.lever*turn < COLL_CARRY_MOVE;
+	}
+
+	// the record's points placed at tau: RESTING within deltaCt, else SPECULATIVE at the smallest gap; booked as a computed result
+	static void CarryOut (CollDetect &d, const Carry &c, int ia, int ib, double tau, uint32_t extra, std::vector<CollPairResult> &out)
+	{
+		const CollBody &A = d.m_body[ia], &B = d.m_body[ib];
+		bool sw = BKey (B) < BKey (A);
+		const Vector &org = d.m_org[ia];
+		CollBodyAt sa, sb;
+		BodyState (d, A, tau, org, sa); BodyState (d, B, tau, org, sb);
+		const CollBodyAt &sx = sw ? sb : sa, &sy = sw ? sa : sb;
+		Matrix RX = QMat (sx.q), RY = QMat (sy.q);
+		double th = std::max (ThetaEff (A.m), ThetaEff (B.m));
+		for (const CarryRes &cr : c.res) {
+			CollPairResult r {};
+			r.bodyA = ia; r.bodyB = ib; r.tau = std::min (std::max (tau, std::max (A.m.ta, B.m.ta)), 1.0); r.origin = org; r.a = sa; r.b = sb; r.E = cr.E;
+			r.flags = (cr.flags & ~(uint32_t)(COLLF_NEWPAIR | COLLF_ENTRY | COLLF_RESWEEP | COLLF_CORE)) | COLLF_CARRIED | extra;
+			r.npt = cr.npt;
+			double gmin = 1e300;
+			for (int k = 0; k < cr.npt; k++) {
+				const CarryPt &q = cr.pt[k];
+				Vector px = sx.c + mul (RX, q.pA), py = sy.c + mul (RY, q.pB), n = mul (RY, q.n);
+				CollContact &p = r.pt[k];
+				p.gap = q.gap + dotp (px - py, n) - q.wn;
+				p.pA = sw ? py : px; p.pB = sw ? px : py; p.n = sw ? -n : n;
+				p.triA = sw ? q.triB : q.triA; p.triB = sw ? q.triA : q.triB;
+				p.partA = sw ? q.partB : q.partA; p.partB = sw ? q.partA : q.partB;
+				p.patch = q.patch; p.flags = q.flags; p.vsA = p.vsB = Vector ();
+				gmin = std::min (gmin, p.gap);
+			}
+			if (!r.npt) continue;
+			if (gmin <= d.m_prm.deltaCt) { r.kind = COLL_RESTING; r.specGap = 0.0; }
+			else { r.kind = COLL_SPECULATIVE; r.specGap = gmin; }
+			bool seen = false;
+			for (int k = 0; k < r.npt; k++) {
+				const CollContact &p = r.pt[k];
+				if (p.partA >= A.parts.size () || p.partB >= B.parts.size ()) continue;
+				const CollOwnerKey &oa = A.parts[p.partA].owner, &ob = B.parts[p.partB].owner;
+				OwnerPair key = ob < oa ? OwnerPair (ob, oa) : OwnerPair (oa, ob);
+				if (SortedHas (d.m_resPrev, key)) seen = true;
+				SortedAdd (d.m_resCur, key);
+				CollPairEntry &e = d.m_store.Get (key.first, key.second);
+				e.lastKind = r.kind; e.lastFrame = d.m_frame;
+			}
+			if (!seen) r.flags |= COLLF_NEWPAIR;
+			AddInfo (d, ia, ib, r.kind == COLL_RESTING ? 1 : 2, r.E, th);
+			out.push_back (r);
+		}
+		d.m_carriedN++;
+	}
+
+	// candidate pairs: new ones in full, in their order; persistent ones (a carriable record) oldest carried first, then cheapest, in full while the
+	// frame has tests left, else carried (the past check skips them); results go out in candidate order
+	static void RunPairs (CollDetect &d, const std::vector<std::pair<int, int>> &cand, std::vector<CollPairResult> &out, CollFrameStats &st)
+	{
+		const long long cap = d.m_prm.frameTt;
+		if (!(cap > 0)) { for (const auto &c : cand) FirstPass (d, c.first, c.second, out, st); return; }
+		std::vector<std::vector<CollPairResult>> bucket (cand.size ());
+		std::vector<size_t> fresh, held;
+		std::vector<uint32_t> age (cand.size (), 0);
+		std::vector<long long> cost (cand.size (), 0);
+		for (size_t k = 0; k < cand.size (); k++) {
+			int ia = cand[k].first, ib = cand[k].second;
+			bool persistent = false;
+			if (d.m_persist) {
+				const Carry *f = FindCarryOf (*d.m_persist, d.m_body[ia], d.m_body[ib]);
+				persistent = f && f->frame == d.m_persist->m_frame && !(d.m_body[ia].entry | d.m_body[ib].entry);
+				if (f) { age[k] = f->age; cost[k] = f->cost; }
+			} else {
+				const Carry *c = FindCarry (d, ia, ib);
+				persistent = c && Carriable (d, *c, ia, ib, std::max (d.m_body[ia].m.ta, d.m_body[ib].m.ta), false);
+				if (c) { age[k] = c->age; cost[k] = c->cost; }
+			}
+			(persistent ? held : fresh).push_back (k);
+		}
+		std::stable_sort (held.begin (), held.end (), [&] (size_t x, size_t y) { return age[x] != age[y] ? age[x] > age[y] : cost[x] < cost[y]; });
+		auto full = [&] (size_t k) {
+			int ia = cand[k].first, ib = cand[k].second;
+			long long t0 = d.m_ttFrame;
+			FirstPass (d, ia, ib, bucket[k], st);
+			d.m_ttDet += d.m_ttFrame - t0;
+			if (!d.m_persist) Record (d, ia, ib, bucket[k], 0, d.m_ttFrame - t0);
+		};
+		for (size_t k : fresh) full (k);
+		for (size_t k : held) {
+			int ia = cand[k].first, ib = cand[k].second;
+			if (d.m_ttFrame < cap) { full (k); continue; }
+			if (d.m_persist) continue;                       // past check: the forward pass carries it
+			Carry *c = FindCarry (d, ia, ib);
+			if (!c) { full (k); continue; }
+			CarryOut (d, *c, ia, ib, std::max (d.m_body[ia].m.ta, d.m_body[ib].m.ta), 0, bucket[k]);
+			c->age++; c->frame = d.m_frame; c->now = true;
+		}
+		for (auto &b : bucket) out.insert (out.end (), b.begin (), b.end ());
+	}
+
+	// one crossing point of a dynamic body in a building part, the part's frame, and that triangle's outward normal (design coll-bounded 5.1)
+	static void OverPt (const CollDetect &d, uint32_t body, const CollOwnerKey &own, const CollGeom &g, uint32_t t, const Vector &p)
+	{
+		if (t >= g.tri.size ()) return;
+		Over *o = nullptr;
+		for (Over &x : d.m_over) if (x.body == body && x.building == own) { o = &x; break; }
+		if (!o) { d.m_over.push_back (Over { body, own, {}, Vector () }); o = &d.m_over.back (); }
+		if (o->pts.size () >= COLL_OVER_PTS) return;
+		o->pts.push_back (p);
+		const CollTri &T = g.tri[t];
+		Vector v0 = g.Pos (T.v[0]), v1 = g.Pos (T.v[1]), v2 = g.Pos (T.v[2]);
+		Vector nt = crossp (v1 - v0, v2 - v0);
+		double l = nt.length ();
+		if (!(l > 0.0)) return;
+		nt /= l;
+		if (dotp (nt, (v0 + v1 + v2)/3.0 - g.bsCentre) < 0.0) nt = -nt; // away from the part's centre: outward for a closed building
+		o->nsum += nt;
+	}
+
+	// crossing triangle pairs of a dynamic body and a building part from a pass's raws
+	static void AddOver (Ctx &cx, const std::vector<Raw> &raws)
+	{
+		CollDetect &d = *cx.d;
+		bool aBase = cx.A->kind == COLLB_BASE, bBase = cx.B->kind == COLLB_BASE;
+		if (aBase == bBase || (aBase ? cx.B : cx.A)->kind != COLLB_DYNAMIC) return;
+		uint32_t body = (aBase ? cx.B : cx.A)->id;
+		for (const Raw &w : raws) {
+			if (w.d > 0.0 || w.k < 0 || w.k >= (int)cx.pp.size ()) continue;
+			const PP &q = cx.pp[w.k];
+			const Placed &s = aBase ? cx.pa[q.a] : cx.pb[q.b];
+			if (!s.g) continue;
+			OverPt (d, body, s.r->owner, *s.g, aBase ? w.ta : w.tb, CollApply (CollInverse (s.X), aBase ? w.pa : w.pb));
+		}
 	}
 };
 
@@ -2058,6 +2443,11 @@ void CollDetect::Begin (const CollParams &prm, double h)
 	m_warnCur.clear ();
 	m_badPrev.swap (m_badCur);
 	m_badCur.clear ();
+	m_ttMax = std::max (m_ttMax, m_ttFrame);
+	m_ttFrame = 0;
+	m_ttRes = 0; m_nRes = 0; m_ttDet = 0;
+	m_over.clear ();
+	for (Carry &c : m_carry) c.now = false;
 }
 
 static bool Finite (const Vector &v) { return std::isfinite (v.x) && std::isfinite (v.y) && std::isfinite (v.z); }
@@ -2133,10 +2523,12 @@ void CollDetect::Detect (std::vector<CollPairResult> &out, CollFrameStats &st)
 	Impl::CheckVersions (*this);
 	std::vector<std::pair<int, int>> cand;
 	Impl::Broad (*this, -1, cand);
+	m_candN = (int)cand.size ();
 	Impl::UpdateTouch (*this, cand);
 	size_t n0 = out.size ();
-	for (const auto &c : cand) Impl::FirstPass (*this, c.first, c.second, out, st);
+	Impl::RunPairs (*this, cand, out, st);
 	Impl::Release (*this);
+	m_carry.erase (std::remove_if (m_carry.begin (), m_carry.end (), [this] (const Carry &c) { return c.frame != m_frame; }), m_carry.end ()); // pairs that were no candidates
 	st.results = (int)(out.size () - n0);
 	for (size_t i = 0; i < m_store.Size (); i++) if (!m_store.At (i).grace.empty ()) st.graceScopes++;
 }
@@ -2154,27 +2546,40 @@ void CollDetect::Resweep (int b, double tau, const CollRestart &r, std::vector<C
 	Impl::Broad (*this, b, cand);
 	for (const auto &c : cand) {
 		if (m_body[c.first].jump1 || m_body[c.second].jump1) continue;
-		Impl::Ctx cx;
-		Impl::Prepare (*this, cx, c.first, c.second);
-		if (cx.pp.empty ()) continue;
-		Impl::Bind (cx, false);
-		Impl::SetPose (cx, Impl::POSE_MODEL, cx.s0);
-		std::vector<Impl::Raw> raws;
-		Impl::Collect (cx, m_prm.deltaCt + cx.Em, true, raws);
-		if (raws.empty ()) { Impl::RunAndReport (cx, cx.s0, false, COLLF_RESWEEP, out, nullptr); continue; }
-		std::vector<CollPairResult> tmp;
-		if (!Impl::Result (cx, COLL_TOI, COLLF_RESWEEP, 0.0, raws, m_prm.deltaCt + cx.Em, true, tmp, false)) continue;
-		Impl::Bind (cx, false);
-		CollPairResult &t = tmp.back ();
-		bool appr = false;
-		for (int i = 0; i < t.npt && !appr; i++) {
-			const CollContact &p = t.pt[i];
-			Vector va = t.a.v + Xc (t.a.w, p.pA - t.a.c) + p.vsA;
-			Vector vb = t.b.v + Xc (t.b.w, p.pB - t.b.c) + p.vsB;
-			if (((va - vb) & p.n) < -COLL_APPROACH_TOL) appr = true;
+		if (m_prm.frameTt > 0 && !m_persist) { // a pair carried this frame, or any carriable one past the budget, is re-placed on the new motion (design coll-bounded 3)
+			Carry *r = Impl::FindCarry (*this, c.first, c.second);
+			double ts = std::max (m_body[c.first].m.ta, m_body[c.second].m.ta);
+			if (r && (r->now || m_ttFrame >= m_prm.frameTt) && Impl::Carriable (*this, *r, c.first, c.second, ts, true)) {
+				Impl::CarryOut (*this, *r, c.first, c.second, ts, COLLF_RESWEEP, out);
+				continue;
+			}
 		}
-		if (appr) { Impl::Book (cx, t); out.push_back (t); }
-		else Impl::RunAndReport (cx, cx.s0, true, COLLF_RESWEEP, out, nullptr);
+		Impl::Ctx cx;
+		auto pass = [&] () {
+			Impl::Prepare (*this, cx, c.first, c.second);
+			if (cx.pp.empty ()) return;
+			Impl::Bind (cx, false);
+			Impl::SetPose (cx, Impl::POSE_MODEL, cx.s0);
+			std::vector<Impl::Raw> raws;
+			Impl::Collect (cx, m_prm.deltaCt + cx.Em, true, raws);
+			if (raws.empty ()) { Impl::RunAndReport (cx, cx.s0, false, COLLF_RESWEEP, out, nullptr); return; }
+			std::vector<CollPairResult> tmp;
+			if (!Impl::Result (cx, COLL_TOI, COLLF_RESWEEP, 0.0, raws, m_prm.deltaCt + cx.Em, true, tmp, false)) return;
+			Impl::Bind (cx, false);
+			CollPairResult &t = tmp.back ();
+			bool appr = false;
+			for (int i = 0; i < t.npt && !appr; i++) {
+				const CollContact &p = t.pt[i];
+				Vector va = t.a.v + Xc (t.a.w, p.pA - t.a.c) + p.vsA;
+				Vector vb = t.b.v + Xc (t.b.w, p.pB - t.b.c) + p.vsB;
+				if (((va - vb) & p.n) < -COLL_APPROACH_TOL) appr = true;
+			}
+			if (appr) { Impl::Book (cx, t); out.push_back (t); }
+			else Impl::RunAndReport (cx, cx.s0, true, COLLF_RESWEEP, out, nullptr);
+		};
+		pass ();
+		m_ttFrame += cx.tt;
+		m_ttRes += cx.tt; m_nRes++;
 	}
 }
 
@@ -2306,6 +2711,8 @@ void CollDetect::Reset ()
 	m_info.clear ();
 	m_specLog.clear ();
 	m_badPrev.clear (); m_badCur.clear ();
+	m_carry.clear (); m_over.clear ();
+	m_ttFrame = m_ttMax = 0; m_carriedN = 0;
 }
 
 int CollDetect::nBody () const
