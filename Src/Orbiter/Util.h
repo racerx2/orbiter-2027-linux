@@ -107,4 +107,7 @@ const char *ModuleFileName (void *hModule);
 // not upstream: a folder's entries in FindFirstFile's NTFS order; directory_iterator lists them unsorted on Linux
 std::vector<std::filesystem::directory_entry> SortedEntries (std::filesystem::directory_iterator it);
 
+// not upstream: an add-on's drop-in parts of a config file: <cfg without .cfg>.d/*.cfg, resolved, in NTFS order (design dropin-addons)
+std::vector<std::string> ConfigFragments (const char *cfgpath);
+
 #endif //!__UTIL_H

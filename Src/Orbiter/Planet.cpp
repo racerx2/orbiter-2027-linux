@@ -341,27 +341,14 @@ Planet::Planet (char *fname)
 	navlist.Read (ifs, this);
 
 	// read surface bases from list
+	std::vector<std::string> frag = ConfigFragments (g_pOrbiter->ConfigPath (fname)); // not upstream: drop-in parts first, so an add-on's base replaces a stock one of its name
+	std::set<std::string> scanned; // not upstream: as above, a DIR is scanned once
+	for (const std::string &f : frag) { // not upstream: as above
+		std::ifstream pf (f);
+		if (FindLine (pf, "BEGIN_SURFBASE")) ReadSurfBases (pf, f.c_str(), scanned);
+	} // not upstream: as above
 	if (FindLine (ifs, "BEGIN_SURFBASE")) {
-		char cbuf[256], *nm, *ps;
-		double lng, lat;
-		for (;;) {
-			if (!ifs.getline (cbuf, 256) || !strncasecmp (cbuf, "END_SURFBASE", 12)) break;
-			pc = trim_string (cbuf);
-			if (!pc[0]) continue;
-			if (!strncasecmp (pc, "DIR", 3)) { // scan folder
-				ScanBases (trim_string (pc+3));
-			} else {                        // read single base definition
-				nm = strtok (trim_string(cbuf), ":");
-				ps = strtok (NULL, ";");
-				if (nm && strlen(nm) && ps && sscanf (ps, "%lf%lf", &lng, &lat) == 2) {
-					Base *base = new Base (nm, this, Rad(lng), Rad(lat)); TRACENEW
-					if (!AddBase (base))
-						delete base;
-				} else {
-					LOGOUT_WARN("Parse error in configuration file for %s:\nSyntax error in SURFBASE list. Skipping line.", fname);
-				}
-			}
-		}
+		ReadSurfBases (ifs, fname, scanned); // not upstream: the block's lines moved to ReadSurfBases
 	} else { // by default, scan folder 'Config/<pname>/Base'
 		if (snprintf (cbuf, sizeof cbuf, "%s/Base", name.c_str()) >= (int)sizeof cbuf) LOGOUT_WARN ("Path too long: %s", name.c_str()); // not upstream: bounded; a name that doesn't fit: no ScanBases
 		else ScanBases (cbuf); // not upstream: only when the path fit
@@ -384,19 +371,12 @@ Planet::Planet (char *fname)
 
 	nobserver = 0;
 	if (FindLine (ifs, "BEGIN_OBSERVER")) { // read observer positions
-		char cbuf[256], *site, *addr, *equp;
-		double lng, lat, alt;
-		for (;;) {
-			if (!ifs.getline (cbuf, 256) || !strncasecmp (cbuf, "END_OBSERVER", 12)) break;
-			site = strtok (trim_string(cbuf), ":");
-			addr = strtok (NULL, ":");
-			equp = strtok (NULL, ";");
-			if (!site || !addr || !equp) continue;
-			if (sscanf (equp, "%lf%lf%lf", &lng, &lat, &alt) != 3) continue;
-			lng *= RAD, lat *= RAD;
-			AddObserverSite (lng, lat, alt, site, addr);
-		}
+		ReadObservers (ifs); // not upstream: the block's lines moved to ReadObservers
 	}
+	for (const std::string &f : frag) { // not upstream: drop-in parts' observers after the planet's own
+		std::ifstream pf (f);
+		if (FindLine (pf, "BEGIN_OBSERVER")) ReadObservers (pf);
+	} // not upstream: as above
 
 	// read user label list
 	labellist = 0;
@@ -460,6 +440,57 @@ Planet::~Planet ()
 	g_pOrbiter->UpdateDeallocationProgress();
 
 	delete emgr;
+}
+
+// not upstream: a SURFBASE block's lines, as the constructor read them; a DIR line once (design dropin-addons)
+void Planet::ReadSurfBases (std::istream &is, const char *file, std::set<std::string> &scanned)
+{
+	char cbuf[256], *pc, *nm, *ps;
+	double lng, lat;
+	for (;;) {
+		if (!is.getline (cbuf, 256) || !strncasecmp (cbuf, "END_SURFBASE", 12)) break;
+		pc = trim_string (cbuf);
+		if (!pc[0]) continue;
+		if (!strncasecmp (pc, "DIR", 3)) { // scan folder
+			std::string key;
+			for (const char *c = pc+3; *c; c++) // the line as typed: case, separators and blank runs don't make another DIR
+				if (*c == ' ' || *c == '\t') { if (!key.empty() && key.back() != ' ') key += ' '; }
+				else key += (*c == '/') ? '\\' : (char)tolower ((unsigned char)*c);
+			while (!key.empty() && key.back() == ' ') key.pop_back();
+			if (!scanned.insert (key).second) continue;
+			ScanBases (trim_string (pc+3));
+		} else {                        // read single base definition
+			nm = strtok (trim_string(cbuf), ":");
+			ps = strtok (NULL, ";");
+			if (nm && strlen(nm) && ps && sscanf (ps, "%lf%lf", &lng, &lat) == 2) {
+				Base *base = new Base (nm, this, Rad(lng), Rad(lat)); TRACENEW
+				if (!AddBase (base))
+					delete base;
+			} else {
+				LOGOUT_WARN("Parse error in configuration file for %s:\nSyntax error in SURFBASE list. Skipping line.", file);
+			}
+		}
+	}
+}
+
+// not upstream: an OBSERVER block's lines, as the constructor read them; a site:address once (design dropin-addons)
+void Planet::ReadObservers (std::istream &is)
+{
+	char cbuf[256], *site, *addr, *equp;
+	double lng, lat, alt;
+	for (;;) {
+		if (!is.getline (cbuf, 256) || !strncasecmp (cbuf, "END_OBSERVER", 12)) break;
+		site = strtok (trim_string(cbuf), ":");
+		addr = strtok (NULL, ":");
+		equp = strtok (NULL, ";");
+		if (!site || !addr || !equp) continue;
+		if (sscanf (equp, "%lf%lf%lf", &lng, &lat, &alt) != 3) continue;
+		site = trim_string (site);
+		addr = trim_string (addr);
+		if (GetGroundObserver (site, addr)) continue;
+		lng *= RAD, lat *= RAD;
+		AddObserverSite (lng, lat, alt, site, addr);
+	}
 }
 
 void Planet::ScanBases (char *path)
