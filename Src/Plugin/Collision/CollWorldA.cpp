@@ -16,6 +16,12 @@ Vector EulerOf (const Matrix &R)                          // inverse of Vessel::
 	return Vector (std::atan2 (R(1,2), R(2,2)), -std::asin (std::max (-1.0, std::min (1.0, R(0,2)))), std::atan2 (R(0,1), R(0,0)));
 }
 VECTOR3 V3 (const Vector &v) { VECTOR3 r; r.x = v.x; r.y = v.y; r.z = v.z; return r; }
+constexpr double PI_W = 3.14159265358979323846;
+constexpr double COLL_REST_MOVE = 0.04;                   // largest CG move over the rest window [m] (design coll-bounded 4)
+constexpr double COLL_REST_TURN = 0.02;                   // largest turn over the rest window [rad]
+constexpr double COLL_REST_BACK = 30.0;                   // no rest after a pose mismatch or a takeoff right after landing [s]
+constexpr double COLL_REST_REZ  = 0.01;                   // landed CG radius change that is written again [m]
+double RotAngle (const Matrix &R) { return std::acos (std::max (-1.0, std::min (1.0, 0.5*(R(0,0) + R(1,1) + R(2,2) - 1.0)))); }
 }
 
 Vector CollSurfaceVel (const Vector &pp, const Vector &pv, const Vector &w, const Vector &x) { return pv + crossp (x - pp, w); }
@@ -37,6 +43,7 @@ void CollKinMotion (CollABody &B, const Vector &a, const Vector &w, double h)
 CollPhysSession::CollPhysSession (CollSdk &s, CollPhysGeom &g, const CollCfgValues &c) : sdk (s), geom (g), cfg (c)
 {
 	frame.check = cfg.check;
+	frame.dprm.frameTt = cfg.frameTests > 0 ? cfg.frameTests : 0;
 }
 
 void CollPhysSession::Log (int level, const char *fmt, ...)
@@ -67,6 +74,9 @@ void CollPhysSession::OnDeleteVessel (uint32_t id)
 	last.erase (std::remove_if (last.begin (), last.end (), [id] (const Last &l) { return l.id == id; }), last.end ());
 	for (CollImpactEvent &e : ev) for (CollImpactSide &s : e.s) if (s.owner.vesselId == id) s.owner.vesselId = 0xFFFFFFFFu; // no notice to it
 	fxc.erase (std::remove_if (fxc.begin (), fxc.end (), [id] (const CollFxContact &c) { return c.id == id; }), fxc.end ());
+	restWin.erase (std::remove_if (restWin.begin (), restWin.end (), [id] (const RestWin &w) { return w.id == id; }), restWin.end ());
+	rested.erase (std::remove_if (rested.begin (), rested.end (), [id] (const Rested &r) { return r.id == id; }), rested.end ());
+	landNow.erase (std::remove_if (landNow.begin (), landNow.end (), [id] (const LandNow &l) { return l.id == id; }), landNow.end ());
 }
 
 void CollPhysSession::OnTimeJump ()
@@ -74,6 +84,8 @@ void CollPhysSession::OnTimeJump ()
 	frame.OnTimeJump ();
 	fwd.Pairs ().FlushFront ();
 	ver.Pairs ().Clear ();
+	fwd.FlushCarry (); ver.FlushCarry ();
+	restWin.clear ();
 	for (const Snap &s : snap) jumped.push_back (s.id);
 }
 
@@ -300,7 +312,180 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 	}
 	queuedNew.clear (); jumped.clear ();
 	if (!cfg.response) { frame.OnTimeJump (); return; }       // detect and log only (1.1)
+	RestPass ();
 	WriteBack (wr);
+	RestAfter ();
+}
+
+bool CollPhysSession::PlanetOf (const CollVesselRead &rd, CollH &planet, Vector &pp, Vector &pv, Matrix &Rp, Vector &wp)
+{
+	planet = rd.sref;
+	if (!planet || sdk.ObjType (planet) != OBJTP_PLANET_W) return false;
+	sdk.GlobalState (planet, pp, pv, Rp);
+	double T = sdk.PlanetPeriod (planet);
+	wp = std::fabs (T) > 0 ? mul (Rp, Vector (0, 1, 0))*(2.0*PI_W/T) : Vector ();
+	return true;
+}
+
+// VESSELSTATUS2 status 1 of CG p and attitude Rl in the planet frame, the CG at radius rad (Vesselstatus.cpp:591-595, Vesselbase.cpp:140)
+CollLandWrite CollPhysSession::LandAt (CollH planet, const Vector &p, const Matrix &Rl, double rad)
+{
+	CollLandWrite w {};
+	w.rbody = planet;
+	double r = p.length ();
+	w.lng = std::atan2 (p.z, p.x);
+	w.lat = r > 0 ? std::asin (std::max (-1.0, std::min (1.0, p.y/r))) : 0.0;
+	w.alt = rad - sdk.Size (planet) - sdk.Elevation (planet, w.lng, w.lat);
+	w.arot = EulerOf (Rl);
+	double sl = std::sin (w.lng), cl = std::cos (w.lng), sb = std::sin (w.lat), cb = std::cos (w.lat);
+	Vector f (Rl(0,2), Rl(1,2), Rl(2,2));                     // the vessel's +z in the planet frame, then east and north as SurfParam::L2H
+	w.hdg = std::atan2 (-sl*f.x + cl*f.z, -sb*cl*f.x + cb*f.y - sb*sl*f.z);
+	if (w.hdg < 0) w.hdg += 2.0*PI_W;
+	return w;
+}
+
+// design coll-bounded 4: a single free vessel touching only static partners that stays within 4 cm and 0.02 rad for COLL_T_REST lands; its writes go
+void CollPhysSession::RestPass ()
+{
+	landNow.clear ();
+	restBack.erase (std::remove_if (restBack.begin (), restBack.end (), [this] (const std::pair<uint32_t, double> &b) { return b.second <= simt; }), restBack.end ());
+	std::vector<RestWin> keep;
+	const uint32_t fr = fwd.Frame ();
+	for (size_t i = 0; i < body.size (); i++) {
+		const CollABody &B = body[i];
+		if (B.kind != COLLB_DYNAMIC || B.stack || B.member.size () != 1) continue;
+		const uint32_t vid = B.member[0];
+		const Snap *s = SnapOf (vid);
+		if (!s || s->rd.playback || s->rd.thrust || s->rd.sv || (s->rd.status & 1)) continue;
+		if (std::find (restBlock.begin (), restBlock.end (), vid) != restBlock.end ()) continue;
+		if (std::binary_search (frame.crossing.begin (), frame.crossing.end (), B.id)) continue;
+		if (std::any_of (restBack.begin (), restBack.end (), [vid] (const std::pair<uint32_t, double> &b) { return b.first == vid; })) continue;
+		bool bad = false;
+		int nStatic = 0;
+		std::string partner;
+		auto onVessel = [&] (uint32_t pid) {
+			for (const CollABody &C : body) {
+				if (C.kind == COLLB_BASE || std::find (C.member.begin (), C.member.end (), pid) == C.member.end ()) continue;
+				if (C.kind == COLLB_LANDED && geom.Fixed (pid)) {
+					nStatic++;
+					const Snap *x = SnapOf (pid);
+					if (partner.empty () && x) partner = sdk.Name (x->h);
+				} else bad = true;
+				return;
+			}
+			bad = true;
+		};
+		auto onBuilding = [&] (int planet, int base) {
+			nStatic++;
+			if (!partner.empty ()) return;
+			CollH hb = base <= -2 ? nullptr : geom.BaseHandle (planet, base);
+			partner = hb ? sdk.Name (hb) : "streamed building";
+		};
+		for (const CollContactRec &r : frame.contacts)
+			for (int side = 0; side < 2; side++) {
+				if (r.s[side].owner.vesselId != vid) continue;
+				const CollOwnerRef &o = r.s[1 - side].owner;
+				if (o.vesselId) onVessel (o.vesselId); else onBuilding (o.planet, o.base);
+			}
+		for (size_t e = 0; e < fwd.Pairs ().Size () && !bad; e++) {
+			const CollPairEntry &x = fwd.Pairs ().At (e);
+			bool sa = x.a.kind == COLLO_VESSEL && x.a.id == vid, sb = x.b.kind == COLLO_VESSEL && x.b.id == vid;
+			if (sa == sb || x.lastFrame != fr) continue;
+			bool touch = x.lastKind == COLL_RESTING;
+			for (const CollTouch &c : x.touch) touch = touch || c.state == COLLT_TOUCHING;
+			if (!touch) continue;
+			const CollOwnerKey &o = sa ? x.b : x.a;
+			if (o.kind == COLLO_VESSEL) onVessel (o.id); else onBuilding (o.planet, o.base);
+		}
+		if (bad || !nStatic) continue;
+		CollH planet; Vector pp, pv, wp; Matrix Rp;
+		if (!PlanetOf (s->rd, planet, pp, pv, Rp, wp)) continue;
+		Vector p = tmul (Rp, s->rd.x - pp);
+		Matrix Rl = transp (Rp)*s->rd.R;
+		const RestWin *w0 = nullptr;
+		for (const RestWin &x : restWin) if (x.id == vid) w0 = &x;
+		if (!w0 || (p - w0->p).length () >= COLL_REST_MOVE || RotAngle (Rl*transp (w0->R)) >= COLL_REST_TURN) { keep.push_back (RestWin { vid, simt, p, Rl }); continue; }
+		if (simt - w0->t0 < COLL_T_REST) { keep.push_back (*w0); continue; }
+		landNow.push_back (LandNow { vid, s->h, LandAt (planet, p, Rl, p.length ()), partner });
+		rested.erase (std::remove_if (rested.begin (), rested.end (), [vid] (const Rested &r) { return r.id == vid; }), rested.end ());
+		rested.push_back (Rested { vid, sdk.Name (s->h), planet, p.length (), p, Rl, simt, simt, -1, false, tmul (Rp, s->rd.v - CollSurfaceVel (pp, pv, wp, s->rd.x)), s->rd.w });
+		const int bi = (int)i;
+		wr.erase (std::remove_if (wr.begin (), wr.end (), [bi] (const CollAWrite &w) { return w.body == bi; }), wr.end ());
+	}
+	restWin.swap (keep);
+}
+
+// after WriteBack: the landing writes, then the pose, takeoff and terrain checks of the bodies landed before (design coll-bounded 4)
+void CollPhysSession::RestAfter ()
+{
+	for (size_t k = 0; k < restLoad.size (); k++)               // loaded REST lines: landed vessels of that name keep their CG radius
+		for (const Snap &s : snap) {
+			if (!(s.rd.status & 1) || sdk.Name (s.h) != restLoad[k].first) continue;
+			CollH planet; Vector pp, pv, wp; Matrix Rp;
+			if (!PlanetOf (s.rd, planet, pp, pv, Rp, wp)) break;
+			Vector p = tmul (Rp, s.rd.x - pp);
+			rested.push_back (Rested { s.id, restLoad[k].first, planet, restLoad[k].second, p, transp (Rp)*s.rd.R, simt, simt - 1.0, 3, false, Vector (), Vector () });
+			break;
+		}
+	restLoad.clear ();
+	for (size_t k = 0; k < rested.size ();) {
+		Rested &r = rested[k];
+		r.frames++;
+		const Snap *s = SnapOf (r.id);
+		if (!s) { rested.erase (rested.begin () + k); continue; }
+		if (r.frames == 0) { k++; continue; }                     // landed this frame: checked from the next
+		bool woke = false;
+		for (const CollABody &B : body) if (B.woke && std::find (B.member.begin (), B.member.end (), r.id) != B.member.end ()) woke = true;
+		if (woke) { rested.erase (rested.begin () + k); continue; } // a hit woke it: an ordinary dynamic body again
+		if (!(s->rd.status & 1)) {
+			if (r.frames <= 2) {
+				restBack.push_back ({ r.id, simt + COLL_REST_BACK });
+				Log (1, "Collision rest: '%s' took off right after landing; no rest for %.0f s", r.name.c_str (), COLL_REST_BACK);
+			}
+			rested.erase (rested.begin () + k);
+			continue;
+		}
+		CollH planet; Vector pp, pv, wp; Matrix Rp;
+		if (!PlanetOf (s->rd, planet, pp, pv, Rp, wp) || planet != r.planet) { rested.erase (rested.begin () + k); continue; }
+		Vector p = tmul (Rp, s->rd.x - pp);
+		Matrix Rl = transp (Rp)*s->rd.R;
+		double dp = (p - r.p).length (), dr = RotAngle (Rl*transp (r.R));
+		if (r.frames == 1 && (dp > COLL_LAND_POS_TOL || dr > COLL_LAND_ROT_TOL)) { // the core did not hold the planned pose: the state before landing again
+			CollStateWrite w {};
+			Vector x = pp + mul (Rp, r.p);
+			w.rbody = planet; w.rpos = x - pp;
+			w.rvel = CollSurfaceVel (pp, pv, wp, x) - pv + mul (Rp, r.vRel);
+			w.vrot = r.w; w.arot = EulerOf (Rp*r.R);
+			sdk.SetState (s->h, w);
+			restBack.push_back ({ r.id, simt + COLL_REST_BACK });
+			Log (1, "Collision rest: '%s' landed %.4f m and %.6f rad off the planned pose; state written back, no rest for %.0f s", r.name.c_str (), dp, dr, COLL_REST_BACK);
+			rested.erase (rested.begin () + k);
+			continue;
+		}
+		if (simt - r.tCheck >= 1.0) {                            // finer terrain under a roof landing: the CG radius kept
+			r.tCheck = simt;
+			double rl = p.length ();
+			if (std::fabs (rl - r.rad) > COLL_REST_REZ && rl > 0) {
+				sdk.SetLanded (s->h, LandAt (planet, p, Rl, r.rad));
+				Log (2, "Collision rest: '%s' re-seated by %.3f m to its landed height", r.name.c_str (), r.rad - rl);
+				r.p = p*(r.rad/rl); r.R = Rl;
+			}
+		}
+		k++;
+	}
+	for (const LandNow &L : landNow) {
+		sdk.SetLanded (L.h, L.w);
+		nRest++;
+		Log (1, "Collision rest: '%s' landed on '%s' at %.2f m", sdk.Name (L.h).c_str (), L.partner.c_str (), L.w.alt);
+	}
+	landNow.clear ();
+}
+
+void CollPhysSession::RestLines (std::vector<std::pair<std::string, double>> &out) const
+{
+	out.clear ();
+	for (const Rested &r : rested) out.push_back ({ r.name, r.rad });
+	for (const auto &l : restLoad) out.push_back (l);          // saved before the first frame: as loaded
 }
 
 void CollPhysSession::WriteBack (std::vector<CollAWrite> &wl)
@@ -424,6 +609,7 @@ void CollPhysSession::PS6Warp ()
 void CollPhysSession::End ()
 {
 	snap.clear (); body.clear (); ev.clear (); wr.clear (); last.clear (); queuedNew.clear (); jumped.clear (); belowLogged.clear ();
+	restWin.clear (); rested.clear (); restBack.clear (); restBlock.clear (); restLoad.clear (); landNow.clear ();
 	frame.Reset (); fwd.Reset (); ver.Reset ();
 	started = false;
 }

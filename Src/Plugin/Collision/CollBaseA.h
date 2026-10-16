@@ -59,6 +59,8 @@ struct CollBaseRec {
 	CollBaseShape shape;
 	std::vector<CollBaseObjView> view; // included objects
 	std::vector<uint32_t> objOf;       // shape slot -> core object index
+	std::vector<CollBaseObjDef> def;   // coll-bounded 5.2: shape slot -> the parsed object, its geometry made again on its first damage
+	bool mapToSphere = false;
 	bool checkedOk = true; uint32_t nextCheck = 0;
 	std::shared_ptr<const BldgGeom::BaseIndex> bidx; // bldg: every object's steep faces, base frame; keeps streamed buildings out; null without
 };
@@ -76,6 +78,8 @@ public:
 	const CollBaseRec *Rec (int planet, int base) const;
 	const CollBaseObjView *Object (int planet, int base, int obj) const;
 	void All (std::vector<const CollBaseObjView *> &all) const;
+	bool Rest (CollSdk &sdk, const CollDirs &d, int planet, int base, uint32_t obj, std::vector<CollGroupData> &grp) const; // coll-bounded 5.2: an object's undamaged collider groups, base frame
+	bool Set (int planet, int base, uint32_t obj, const std::vector<CollGroupData> &grp); // coll-bounded 5.4: a damaged object's collider built again, its part version bumped
 	std::vector<std::unique_ptr<CollBaseRec>> rec;
 	uint32_t nObjects = 0, nIncluded = 0;
 };

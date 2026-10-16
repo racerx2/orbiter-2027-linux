@@ -54,7 +54,7 @@ constexpr double   DENT_CRUSH_CORE     = 0.6;     // dmg3: flat core r_perp < th
 constexpr double   DENT_CRUSH_MOVE     = 0.25;    // dmg3: contact move along n <= this * R and <= P / 2
 constexpr int      DENT_CRUSH_STEPS    = 48;      // dmg3: bisection steps for P
 constexpr int      DENT_VERSION_X      = 2;       // dmg3: extension section version
-enum : uint32_t { DENTM_BOWL = 0, DENTM_CRUSH = 1, DENTM_HINGE = 2, DENTM_CUT = 3, DENTM_VCUT = 4 }; // DentParams::mode; VCUT: blast Voronoi cell cut (P = cell, seed = site count)
+enum : uint32_t { DENTM_BOWL = 0, DENTM_CRUSH = 1, DENTM_HINGE = 2, DENTM_CUT = 3, DENTM_VCUT = 4, DENTM_HOLE = 5 }; // DentParams::mode; VCUT: blast Voronoi cell cut (P = cell, seed = site count); HOLE: a building torn open (P = rim radius, h = rim bend, seed = jag)
 enum : uint32_t { DENTI_CRUSH = 1, DENTI_HINGE = 2, DENTI_NOISE = 4 }; // DentInput::modes bits
 enum : uint32_t { DENTB_LOBES = 1 };              // DentParams::bits
 enum : uint32_t { DENTC_KEEP = 2 };               // dmg3 tear: cut bits, complement side (debris)
@@ -195,6 +195,9 @@ namespace DentMath {
 	Vector VCutMap (const DentVCut &v, bool keep, const Vector &rest, const Vector &cur, bool full); // blast: cells by rest; cur of removed cells to the bisector with the nearest kept site; keep: the complement
 	Vector MapVCut (const void *ctx, const Vector &rest, const Vector &cur); // blast: CollMapFn of VCutMap low, ctx = const DentVCut * (on = keep set)
 	bool   IsCut (uint32_t mode);                                 // blast: DENTM_CUT or DENTM_VCUT
+	double HoleRim (const DentParams &p, const Vector &x);        // coll-bounded 5.3: jagged rim radius P J (angle) of a hole at x, J in [0.75, 1]
+	bool   HoleKeeps (const DentParams &p, const Vector &a, const Vector &b, const Vector &c); // false: a rest triangle the hole tears out (centroid within the rim and max (1 m, P / 2) of the plane)
+	bool   HoleKeeps (const std::vector<DentRecord> &rec, const Vector &a, const Vector &b, const Vector &c); // every HOLE record of the list keeps it
 	Vector MapLow (const void *ctx, const Vector &rest, const Vector &cur); // dmg3 tear: CollMapFn of CutMap low, ctx = const DentRecord *
 	bool   HasCut (const std::vector<DentRecord> &rec, int g); // dmg3 tear: a mode-3 record lists group g (g < 0: any)
 	Vector FieldLow (const void *ctx, const Vector &rest);       // dmg3: CollDisplaceFn of DisplaceLow

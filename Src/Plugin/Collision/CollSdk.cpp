@@ -19,6 +19,7 @@ void CollSdk::LogCall (CollSdkKind k, CollH v)
 }
 
 void CollSdk::SetState (CollH v, const CollStateWrite &s) { cnt.n[CSK_STATE]++; LogCall (CSK_STATE, v); DoSetState (v, s); }
+void CollSdk::SetLanded (CollH v, const CollLandWrite &s) { cnt.n[CSK_STATE]++; LogCall (CSK_STATE, v); DoSetLanded (v, s); }
 void CollSdk::SetAttitude (CollH v, const Matrix &R) { cnt.n[CSK_ATTITUDE]++; LogCall (CSK_ATTITUDE, v); DoSetAttitude (v, R); }
 void CollSdk::SetSpin (CollH v, const Vector &w) { cnt.n[CSK_SPIN]++; LogCall (CSK_SPIN, v); DoSetSpin (v, w); }
 void CollSdk::AddForce (CollH v, const Vector &F, const Vector &r) { cnt.n[CSK_FORCE]++; LogCall (CSK_FORCE, v); DoAddForce (v, F, r); }

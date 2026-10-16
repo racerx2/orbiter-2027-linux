@@ -66,6 +66,7 @@ const char *ExternMFD::GetButtonLabel (int bt) const
 
 bool ExternMFD::ProcessButton (int bt, int event)
 {
+	if (hVessel && ((Vessel*)hVessel)->CtrlLock ()) return false; // not upstream: a locked (destroyed) vessel's MFDs take no input
 	if (event & PANEL_MOUSE_LBDOWN)
 		btpressed = bt;
 	else if (event & PANEL_MOUSE_LBUP)
@@ -75,6 +76,7 @@ bool ExternMFD::ProcessButton (int bt, int event)
 
 bool ExternMFD::SendKey (DWORD key)
 {
+	if (hVessel && ((Vessel*)hVessel)->CtrlLock ()) return false; // not upstream: a locked (destroyed) vessel's MFDs take no input
 	if (key == OAPI_KEY_ESCAPE) { // needs thought
 		SetMode (instr ? MFD_NONE : pmode);
 		if (!instr) clbkRefreshDisplay (0);
@@ -117,6 +119,7 @@ bool ExternMFD::SetMode (int mode)
 	spec.bt_y0 = bty0;
 	spec.bt_dy = btdy;
 	Instrument *newinstr = 0;
+	if (hVessel && ((Vessel*)hVessel)->CtrlLock ()) mode = MFD_NONE; // not upstream: a locked (destroyed) vessel shows no MFD
 	if (mode != MFD_NONE) {
 		newinstr = Instrument::Create (mode, g_pane, (INT_PTR)Id(), spec, (Vessel*)hVessel);
 		if (!newinstr) return false;

@@ -253,6 +253,18 @@ bool ParseParams (const std::vector<Tok> &t, size_t i, DentParams &p)
 	return true;
 }
 
+// coll-bounded 5.6: "<mode> <P> <seed8>" after a building record's flags; a HOLE needs 0 < P <= R
+bool ParseHoleTok (const std::vector<Tok> &t, size_t i, DentParams &p)
+{
+	uint32_t mode, seed;
+	double P;
+	if (t.size () < i + 3 || !ParseInt (t[i], mode) || !ParseD (t[i+1], P) || t[i+2].n > 8 || !ParseInt (t[i+2], seed, 16)) return false;
+	if (mode != DENTM_BOWL && mode != DENTM_HOLE) return false;
+	if (mode == DENTM_HOLE && !(P > 0.0 && P <= p.R)) return false;
+	p.mode = mode, p.P = Q9 (P), p.seed = seed;
+	return true;
+}
+
 // "2,31,51" or "*" (empty list); a trailing ',' marks a list continued on the next line (more)
 bool ParseGroups (const Tok &t, std::vector<uint16_t> &g, bool &more)
 {
@@ -560,12 +572,31 @@ double BowlQ (const DentParams &p, const Vector &rest, bool full)
 	return k;
 }
 
+double HoleBand (const DentParams &p) { return std::max (1.0, 0.5 * p.P); }
+
+// coll-bounded 5.3: 1 within the rim, the kernel from the rim out to R, 0 off the plane band
+double HoleQ (const DentParams &p, const Vector &rest)
+{
+	if (!(p.R > 0.0) || !(p.P > 0.0)) return 0.0;
+	Vector d = rest - p.c;
+	double s = Dot (d, p.n);
+	if (std::fabs (s) > HoleBand (p)) return 0.0;
+	double r = Len (d - p.n * s), rim = DentMath::HoleRim (p, rest);
+	if (!(r < p.R)) return 0.0;
+	if (r <= rim || !(p.R > rim)) return 1.0;
+	double u = (r - rim) / (p.R - rim);
+	return DentMath::Kernel (u * u);
+}
+
 // dmg3 crush: k_flat * max(0, P + delta N - max(s, 0)) / P, s = (c - x).n, lateral r < R
 double CrushQ (const DentParams &p, const Vector &rest, bool full)
 {
 	if (!(p.R > 0.0) || !(p.P > 0.0)) return 0.0;
 	Vector d = rest - p.c;
 	double s = Dot (p.c - rest, p.n);
+	double r2 = Len2 (d) - s * s;
+	double r = r2 > 0.0 ? std::sqrt (r2) : 0.0;
+	if (!(r < p.R)) return 0.0;                      // outside the crush the noise is not needed (design coll-bounded 6.4)
 	double dn = 0.0;
 	if (full && p.seed) {
 		double u, w;
@@ -574,9 +605,6 @@ double CrushQ (const DentParams &p, const Vector &rest, bool full)
 	}
 	double a = p.P + dn - (s > 0.0 ? s : 0.0);
 	if (!(a > 0.0)) return 0.0;
-	double r2 = Len2 (d) - s * s;
-	double r = r2 > 0.0 ? std::sqrt (r2) : 0.0;
-	if (!(r < p.R)) return 0.0;
 	double k = 1.0 - Smooth (DENT_CRUSH_CORE * p.R, p.R, r);
 	return k * a / p.P;
 }
@@ -608,6 +636,7 @@ Vector DisplaceAny (const DentParams &p, const Vector &rest, bool full)
 {
 	if (DentMath::IsCut (p.mode)) return Vector ();
 	if (p.mode == DENTM_HINGE) return HingeD (p, rest, 1.0);
+	if (p.mode == DENTM_HOLE) return p.n * (-(p.h * HoleQ (p, rest)));
 	double q = p.mode == DENTM_CRUSH ? CrushQ (p, rest, full) : BowlQ (p, rest, full);
 	return p.n * (-(p.h * q));
 }
@@ -639,9 +668,9 @@ bool ParseExtFields (const std::vector<Tok> &t, size_t i, DentParams &e)
 	if (t.size () < i + 9) return false;
 	uint32_t mode, seed, bits;
 	double P, tx, ty, tz, hd, hz;
-	if (!ParseInt (t[i], mode) || mode > DENTM_VCUT || !ParseD (t[i+1], P) || t[i+2].n > 8 || !ParseInt (t[i+2], seed, 16) || !ParseD (t[i+3], tx) || !ParseD (t[i+4], ty)
+	if (!ParseInt (t[i], mode) || mode > DENTM_HOLE || !ParseD (t[i+1], P) || t[i+2].n > 8 || !ParseInt (t[i+2], seed, 16) || !ParseD (t[i+3], tx) || !ParseD (t[i+4], ty)
 		|| !ParseD (t[i+5], tz) || !ParseInt (t[i+6], bits) || !ParseD (t[i+7], hd) || !ParseD (t[i+8], hz)) return false;
-	if (!(P >= 0.0 && P <= (mode == DENTM_VCUT ? 65535.0 : DENT_LIM_H)) || std::fabs (hd) > DENT_LIM_R || std::fabs (hz) > DENT_LIM_R || std::fabs (tx) > 2.0 || std::fabs (ty) > 2.0 || std::fabs (tz) > 2.0) return false;
+	if (!(P >= 0.0 && P <= (mode == DENTM_VCUT ? 65535.0 : mode == DENTM_HOLE ? DENT_LIM_R : DENT_LIM_H)) || std::fabs (hd) > DENT_LIM_R || std::fabs (hz) > DENT_LIM_R || std::fabs (tx) > 2.0 || std::fabs (ty) > 2.0 || std::fabs (tz) > 2.0) return false;
 	e.mode = mode, e.P = Q9 (P), e.seed = seed, e.t = Vector (Q9 (tx), Q9 (ty), Q9 (tz)), e.bits = bits, e.hd = Q9 (hd), e.hz = Q9 (hz);
 	return true;
 }
@@ -800,6 +829,7 @@ double DentMath::Kernel (double t2)
 double DentMath::Weight (const DentParams &p, const Vector &rest)
 {
 	if (IsCut (p.mode)) return 0.0;
+	if (p.mode == DENTM_HOLE) return HoleQ (p, rest);
 	if (p.mode == DENTM_CRUSH) return CrushWeight (p, rest);
 	if (p.mode == DENTM_HINGE) return p.h > 0.0 ? std::min (1.0, Len (HingeD (p, rest, 1.0)) / p.h) : 0.0;
 	if (p.seed) return BowlQ (p, rest, true);
@@ -944,6 +974,30 @@ Vector DentMath::Fold (const std::vector<DentRecord> &rec, int g, const Vector &
 }
 
 bool DentMath::IsCut (uint32_t mode) { return mode == DENTM_CUT || mode == DENTM_VCUT; }
+
+double DentMath::HoleRim (const DentParams &p, const Vector &x)
+{
+	Vector d = x - p.c;
+	Vector dp = d - p.n * Dot (d, p.n);
+	Vector t = Len2 (p.t) > 0.25 ? p.t : Tangent (p.n, Vector (), 0.0), e = Cross (p.n, t);
+	double a = std::atan2 (Dot (dp, e), Dot (dp, t));
+	return p.P * (0.875 + 0.125 * Noise (p.seed, 3.0 * std::cos (a) + 7.0, 3.0 * std::sin (a) + 11.0));
+}
+
+bool DentMath::HoleKeeps (const DentParams &p, const Vector &a, const Vector &b, const Vector &c)
+{
+	if (p.mode != DENTM_HOLE || !(p.P > 0.0)) return true;
+	Vector g = (a + b + c) / 3.0, d = g - p.c;
+	double s = Dot (d, p.n);
+	if (std::fabs (s) > HoleBand (p)) return true;
+	return !(Len (d - p.n * s) < HoleRim (p, g));
+}
+
+bool DentMath::HoleKeeps (const std::vector<DentRecord> &rec, const Vector &a, const Vector &b, const Vector &c)
+{
+	for (const DentRecord &r : rec) if (!HoleKeeps (r.p, a, b, c)) return false;
+	return true;
+}
 
 void DentMath::VCutSet (const DentParams *const *rec, size_t n, const DentSites *s, DentVCut &o)
 {
@@ -2248,7 +2302,8 @@ void DentMath::FormatBases (const std::vector<DentBaseText> &b, std::vector<std:
 			s = "ODENT ";
 			PutInt (s, r.slot);
 			PutParams (s, r.p);
-			if (r.flags) s += ' ', PutInt (s, r.flags); // refinement outcome (4.9 item 5); absent = 0
+			if (r.flags || r.p.mode) s += ' ', PutInt (s, r.flags); // refinement outcome (4.9 item 5); absent = 0
+			if (r.p.mode) { s += ' '; PutInt (s, r.p.mode); PutNumArg (s, r.p.P); PutHexArg (s, r.p.seed); } // coll-bounded 5.6: an older parser reads the flags only
 			lines.push_back (s);
 		}
 		lines.push_back ("END_BASE");
@@ -2296,7 +2351,8 @@ std::string DentMath::FormatBaseDentEvent (int planet, int base, int obj, const 
 	PutInt (s, base); s += ':';
 	PutInt (s, obj);
 	PutParams (s, p);
-	if (flags) s += ' ', PutInt (s, flags);
+	if (flags || p.mode) s += ' ', PutInt (s, flags);
+	if (p.mode) { s += ' '; PutInt (s, p.mode); PutNumArg (s, p.P); PutHexArg (s, p.seed); } // coll-bounded 5.6
 	return s;
 }
 
@@ -2321,6 +2377,7 @@ bool DentMath::ParseBaseDentEvent (const char *payload, int &planet, int &base, 
 	DentParams q {};
 	if (!ParseInt (s, c1, a) || !ParseInt (c1 + 1, c2, b) || !ParseInt (c2 + 1, e, c) || a < 0 || b < 0 || c < 0 || !ParseParams (t, 1, q)) return false;
 	if (t.size () > 10 && !ParseInt (t[10], f)) return false;
+	if (t.size () >= 14 && !ParseHoleTok (t, 11, q)) return false;
 	planet = a, base = b, obj = c, p = q, flags = f;
 	return true;
 }
@@ -2681,9 +2738,10 @@ bool DentBasesParser::Line (const char *line)
 		o.type.assign (t[2].p, t[2].n);
 		o.eabs = Q9 (o.eabs);
 		m_base.back ().obj.push_back (o);
-	} else if (kw ("ODENT")) { // ODENT <index> <c> <n> <R> <h> <T> [<flags>]
+	} else if (kw ("ODENT")) { // ODENT <index> <c> <n> <R> <h> <T> [<flags> [<mode> <P> <seed8>]]
 		DentRecord r {};
 		if (!m_inBase || t.size () < 11 || !ParseInt (t[1], r.slot) || !ParseParams (t, 2, r.p) || (t.size () > 11 && !ParseInt (t[11], r.flags))) { m_skipped++; return true; }
+		if (t.size () >= 15 && !ParseHoleTok (t, 12, r.p)) { m_skipped++; return true; }
 		if (++m_nrec[r.slot] > DENT_MAX_OBJECT) { m_skipped++; return true; } // records per object (R7)
 		r.key = 0, r.ngrp = 0, r.nvtx = 0;
 		m_base.back ().rec.push_back (r);

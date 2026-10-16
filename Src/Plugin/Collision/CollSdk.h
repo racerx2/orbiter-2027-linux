@@ -31,6 +31,7 @@ struct CollVesselRead {                      // E1 1.2: one vessel at t0, s0 cop
 };
 enum : uint32_t { CVR_NOWEIGHT = 1 };        // skip GetWeightVector, which primes weight_valid (review CA-3 10)
 struct CollStateWrite { CollH rbody; Vector rpos, rvel, vrot, arot; }; // DefSetStateEx with version 2, flag 0, status 0 (E1 6.2)
+struct CollLandWrite { CollH rbody; double lng, lat, hdg, alt; Vector arot; }; // DefSetStateEx version 2, status 1: arot of R_planet^T R_vessel, alt = CG over the terrain (design coll-bounded 4)
 struct CollTplGroup { const CollVtx *vtx; const uint16_t *idx; uint32_t nvtx, nidx, usrflag; }; // MESHGROUPEX view, no copy
 struct CollPortInfo { Vector pos, dir, rot; CollH mate; };          // vessel frame
 struct CollAttInfo  { Vector pos, dir, rot; CollH mate; char id[9]; };
@@ -161,6 +162,7 @@ public:
 	virtual void     Log (int level, const char *msg) = 0;
 	// counted calls: non-virtual, count + log line + forward (CollSdk.cpp)
 	void  SetState (CollH v, const CollStateWrite &s);
+	void  SetLanded (CollH v, const CollLandWrite &s);          // rest on a structure or the ground at this pose
 	void  SetAttitude (CollH v, const Matrix &R);
 	void  SetSpin (CollH v, const Vector &w);
 	void  AddForce (CollH v, const Vector &F, const Vector &r);
@@ -185,6 +187,7 @@ public:
 	int logLevel = 1;                                           // CollisionLog
 protected:
 	virtual void  DoSetState (CollH v, const CollStateWrite &s) = 0;
+	virtual void  DoSetLanded (CollH v, const CollLandWrite &s) { (void)v; (void)s; }
 	virtual void  DoSetAttitude (CollH v, const Matrix &R) = 0;
 	virtual void  DoSetSpin (CollH v, const Vector &w) = 0;
 	virtual void  DoAddForce (CollH v, const Vector &F, const Vector &r) = 0;
@@ -245,6 +248,9 @@ public: // bldg: streamed 3D buildings (OAPI_TILESTREAM_BLDG); the defaults are 
 	virtual void   BldgFree (CollBldgTile &t) { t = CollBldgTile (); } // oapiTileStreamBldgFree; the views go
 	virtual bool   BldgStream (CollH) { return false; }               // oapiTileStreamEnabled: the planet's tiles are streamed
 	virtual void   BaseClearZones (CollH, std::vector<CollClearZone> &out) { out.clear (); } // oapiGetBaseClearZones; none from a core without it (design base-clear)
+	virtual bool   BaseDentOn () { return false; }                                  // coll-bounded 5.7: the core draws building dents (oapiBaseSetDent bound)
+	virtual bool   BaseSetDent (CollH base, uint32_t obj, uint32_t k, const struct DentRecord &r) { (void)base; (void)obj; (void)k; (void)r; return false; } // record k of object obj, drawn
+	virtual void   BaseClearDents (CollH base, uint32_t obj) { (void)base; (void)obj; } // obj ~0u: every object
 private:
 	CollSdkCount cnt;
 	double noteUntil = -1;                                      // system time the annotation expires, -1 none

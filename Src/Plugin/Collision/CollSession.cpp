@@ -17,6 +17,8 @@
 
 namespace {
 
+constexpr double COLL_SLOW_US = 20000.0; // a pre-step above this logs its stages, at most once a sim second
+
 double Us (CollSession::Clock::duration d) { return std::chrono::duration<double, std::micro> (d).count (); }
 
 Matrix QM (const Quaternion &q) { Matrix R; R.Set (q); return R; }
@@ -24,6 +26,17 @@ Matrix QM (const Quaternion &q) { Matrix R; R.Set (q); return R; }
 Vector Unit (const Vector &v) { double l = v.length (); return l > 0 ? v / l : v; }
 
 CollOwnerKey VKey (uint32_t id) { return CollOwnerKey { COLLO_VESSEL, id, -1, -1, -1, -1 }; }
+
+// E3's host with the building collider calls of design coll-bounded 5
+class SessionDmgHost : public CollDmgHostOf<CollGeomSession, CollSession> {
+public:
+	SessionDmgHost (CollGeomSession &g, CollSession &s) : CollDmgHostOf<CollGeomSession, CollSession> (g, s), geo (g) {}
+	bool BuildingRest (int planet, int base, int obj, std::vector<CollGroupData> &grp, double &rb) override { return geo.BuildingRest (planet, base, obj, grp, rb); }
+	bool BuildingSet (int planet, int base, int obj, const std::vector<CollGroupData> &grp) override { return geo.BuildingSet (planet, base, obj, grp); }
+	bool BuildingName (int planet, int base, int obj, std::string &out) override { return geo.bldg && geo.bldg->Name (planet, base, obj, out); }
+private:
+	CollGeomSession &geo;
+};
 
 // E1's view of E2 (E1 4.3, 8.1): parts and poses, assemblies, base bodies, docking zones
 class PhysGeomA : public CollPhysGeom {
@@ -104,7 +117,7 @@ public:
 				CollPartRef p {};
 				p.geom = &o.geom; p.skin = o.geom.skin;
 				p.owner = CollOwnerKey { COLLO_BUILDING, 0, r.planetIdx, r.baseIdx, (int32_t)o.obj, 0 };
-				p.partKey = 0; p.version = sh.version; p.mesh = (uint16_t)o.obj; p.mask = nullptr;
+				p.partKey = 0; p.version = o.ver; p.mesh = (uint16_t)o.obj; p.mask = nullptr; // the object's own version: a damaged one drops only its scopes (design coll-bounded 5.4)
 				B.parts.push_back (p);
 			}
 			out.push_back (B);
@@ -263,7 +276,7 @@ CollSession::CollSession (uint32_t s, const CollCfgValues &c) : serial (s), cfg 
 	shost = std::move (sh);
 	phys = std::make_unique<CollPhysSession> (*sdk, *pgeom, cfg);
 	shp->phys = phys.get ();
-	dhost = std::make_unique<CollDmgHostOf<CollGeomSession, CollSession>> (*geom, *this);
+	dhost = std::make_unique<SessionDmgHost> (*geom, *this);
 	dmg = std::make_unique<CollDmgSession> (*sdk, *dhost, cfg);
 	sink = std::make_unique<ShapeSinkA> (*dmg);
 	ground = std::make_unique<CollGroundA> (*sdk, cfg);
@@ -339,7 +352,10 @@ void CollSession::Load (FILEHANDLE scn)
 
 void CollSession::Save (FILEHANDLE scn)
 {
-	if (started) { dmg->Save ((CollH)scn); return; }
+	std::vector<std::pair<std::string, double>> rest;
+	if (started) phys->RestLines (rest); else rest = pending.rest;
+	auto restOut = [&] { for (const auto &r : rest) { std::string l = CollStore::RestLine (r.first, r.second); if (CollStore::Line200 (l)) sdk->ScnWrite ((CollH)scn, l); } };
+	if (started) { dmg->Save ((CollH)scn); restOut (); return; }
 	std::vector<std::string> out { "COLLA " + std::to_string (COLL_STORE_VERSION) }; // before the start: the pending block as read
 	for (const CollStoreVessel &v : pending.vessel)
 		for (size_t i = 0; i < v.raw.size (); i++) {
@@ -349,6 +365,7 @@ void CollSession::Save (FILEHANDLE scn)
 	DentMath::FormatBases (pending.base, out);
 	for (const std::string &u : pending.unknown) out.push_back (u);
 	for (const std::string &l : out) sdk->ScnWrite ((CollH)scn, l);
+	restOut ();
 }
 
 void CollSession::Start (int renderMode)
@@ -359,6 +376,8 @@ void CollSession::Start (int renderMode)
 	CollSdkOrbiterBindClient (*sdk);
 	geom->SimulationStart (renderMode, renderMode != 0);
 	phys->Start ([this] (const char *k, std::string &v) { return geom->orbCfg.String (k, v); });
+	phys->SetRestLines (pending.rest);
+	if (CollBreakA *bk = dynamic_cast<CollBreakA *> (dmg->brk.get ())) bk->allAtOnce = renderMode == 0; // no render window: every debris piece in the hit's pre-step (design coll-bounded 6.2)
 	dmg->Begin (std::move (pending));
 	pending = CollStoreBlock ();
 	started = true;
@@ -383,9 +402,14 @@ std::string CollSession::Who (const CollOwnerRef &o)
 
 void CollSession::PreStep (double simt, double simdt)
 {
+	// buildings break (design coll-bounded 5): the oldest queued building step, before the colliders are read this frame
+	Clock::time_point a0 = Clock::now ();
+	if (started) dmg->BuildingStep ();
 	// PS1 BeginFrame: E2 PreStep, E1 snapshot (reads only)
 	Clock::time_point a = Clock::now ();
+	simtNow = simt;
 	geom->BeginFrame (simt, simdt);
+	Clock::time_point a1 = Clock::now ();
 	dmg->Spawns (simt, simdt);                                   // blast: debris and the parents' kicks before the snapshot, so the solver starts from them
 	Clock::time_point b = Clock::now ();
 	std::vector<CollPhysVessel> v;
@@ -404,6 +428,9 @@ void CollSession::PreStep (double simt, double simdt)
 	std::vector<std::pair<uint32_t, uint32_t>> np;
 	for (const auto &kv : dmg->noPair) np.push_back (kv.first);
 	phys->SetNoPair (np);
+	std::vector<uint32_t> rb;
+	dmg->BreakVessels (rb);
+	phys->SetRestBlock (rb);                                     // design coll-bounded 4: no rest while a building break is queued for it
 	phys->PS3Physics (*shost);
 	Clock::time_point f = Clock::now ();
 	// PS4 damage: the solver's events and the ground events (CA-ground)
@@ -421,6 +448,18 @@ void CollSession::PreStep (double simt, double simdt)
 			x.vn, x.vn_post, x.dKE, x.Jn, x.s[0].mesh, x.s[0].grp, x.s[1].mesh, x.s[1].grp); // which parts touched (design fixed-structures test)
 	}
 	dmg->Commit (ev, simt, &fc);
+	if (!phys->fwd.Overlaps ().empty ()) {                      // design coll-bounded 5.1: single free vessels crossing building parts
+		std::vector<CollDmgOver> ov;
+		for (const CollDetect::Over &x : phys->fwd.Overlaps ()) {
+			if (x.building.kind != COLLO_BUILDING) continue;
+			for (const CollABody &B : phys->Bodies ())
+				if (B.id == x.body && B.kind == COLLB_DYNAMIC && !B.stack && B.member.size () == 1) {
+					ov.push_back (CollDmgOver { B.member[0], x.building.planet, x.building.base, x.building.obj, x.pts, x.nsum });
+					break;
+				}
+		}
+		dmg->Overlaps (ov, simt);
+	}
 	Clock::time_point g = Clock::now ();
 	// PS5 notices: E1 CONTACT, then E3
 	phys->PS5Notices ();
@@ -436,6 +475,12 @@ void CollSession::PreStep (double simt, double simdt)
 	t.e2 += Us (b - a) + Us (d - c);
 	t.e1 += Us (c - b) + Us (f - e) + Us (h - g) + Us (j - i);
 	t.e3 += Us (e - d) + Us (g - f) + Us (i - h) + Us (k - j);
+	stage.bldg = Us (a - a0);
+	stage.geom = Us (a1 - a) + Us (d - c);
+	stage.spawn = Us (b - a1);
+	stage.phys = Us (c - b) + Us (f - e) + Us (h - g) + Us (j - i);
+	stage.dmg = Us (e - d) + Us (g - f);
+	stage.notice = Us (i - h) + Us (k - j);
 }
 
 void CollSession::TimeJump ()
@@ -490,7 +535,7 @@ void CollSession::PostStep ()
 	t.posts++;
 }
 
-void CollSession::FrameBegin () { t0 = Clock::now (); }
+void CollSession::FrameBegin () { t0 = Clock::now (); stage = CollStageTimes (); }
 
 void CollSession::FrameEnd ()
 {
@@ -499,6 +544,21 @@ void CollSession::FrameEnd ()
 	n.frames++;
 	t.prestep += us;
 	t.prestepMax = std::max (t.prestepMax, us);
+	if (started) {                          // once a sim minute when results were carried (design coll-bounded 3)
+		budgetMax = std::max (budgetMax, phys->fwd.FrameTests ());
+		if (budgetSimT < -1e299 || simtNow < budgetSimT) { budgetSimT = simtNow; budgetCarried = phys->fwd.Carried (); budgetMax = 0; }
+		else if (simtNow - budgetSimT >= 60.0) {
+			uint64_t c = phys->fwd.Carried () - budgetCarried;
+			if (c) CollLogF ("Collision budget: %llu pairs carried in the last 60 s, most tests in a frame %lld", (unsigned long long)c, budgetMax);
+			budgetSimT = simtNow; budgetCarried = phys->fwd.Carried (); budgetMax = 0;
+		}
+	}
+	if (us > COLL_SLOW_US && started && simtNow - slowSimT >= 1.0) { // wall clock: diagnostics only, never part of a check (design coll-bounded 8)
+		slowSimT = simtNow;
+		CollLogF ("Collision slow frame: %.1f ms (geometry %.1f, spawn %.1f, physics %.1f, damage %.1f, buildings %.1f, notices %.1f), %zu bodies, %d pairs, %lld tests (first pass %lld, %d re-sweeps %lld, past check %lld)",
+			us * 1e-3, stage.geom * 1e-3, stage.spawn * 1e-3, stage.phys * 1e-3, stage.dmg * 1e-3, stage.bldg * 1e-3, stage.notice * 1e-3,
+			phys->Bodies ().size (), phys->fwd.FrameCandidates (), phys->fwd.FrameTests (), phys->fwd.DetectTests (), phys->fwd.Resweeps (), phys->fwd.ResweepTests (), phys->ver.FrameTests ());
+	}
 }
 
 void CollSession::Close ()
@@ -510,8 +570,9 @@ void CollSession::Close ()
 	n.contacts = (uint64_t)std::max (0, st.real); n.spec = (uint64_t)std::max (0, st.spec); n.free = (uint64_t)std::max (0, st.freePath); n.missed = (uint64_t)std::max (0, st.missed);
 	auto u = [] (uint64_t v) { return (unsigned long long)v; };
 	double f = n.frames ? (double)n.frames : 1.0, p = t.posts ? (double)t.posts : 1.0;
-	CollLogF ("Collision summary: frames=%llu contacts=%llu events=%llu writes=%llu probes=%llu vtx=%llu matrix=%llu notices=%llu spec=%llu free=%llu missed=%llu",
-		u (n.frames), u (n.contacts), u (n.events), u (n.writes), u (n.probes), u (n.vtx), u (n.matrix), u (n.notices), u (n.spec), u (n.free), u (n.missed));
+	CollLogF ("Collision summary: frames=%llu contacts=%llu events=%llu writes=%llu probes=%llu vtx=%llu matrix=%llu notices=%llu spec=%llu free=%llu missed=%llu carried=%llu tests_max=%lld rest=%llu",
+		u (n.frames), u (n.contacts), u (n.events), u (n.writes), u (n.probes), u (n.vtx), u (n.matrix), u (n.notices), u (n.spec), u (n.free), u (n.missed),
+		u (phys->fwd.Carried ()), std::max (phys->fwd.TestsMax (), phys->fwd.FrameTests ()), u (phys->Rests ()));
 	{
 		const CollFxA *fx = dynamic_cast<const CollFxA *> (dmg->fx.get ());
 		const CollBreakA *bk = dynamic_cast<const CollBreakA *> (dmg->brk.get ());

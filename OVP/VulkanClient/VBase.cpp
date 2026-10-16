@@ -314,6 +314,35 @@ bool vBase::GetMinMaxDistance(float *zmin, float *zmax, float *dmin)
 
 
 // ===========================================================================================
+// not upstream (coll-bounded 5.7): a structure mesh whose serial changed is made again from the core's mesh; the old one's buffers go deferred
+void vBase::ReloadDented()
+{
+#ifdef OAPI_BASE_DENT
+	MESHHANDLE *sbs = NULL, *sas = NULL;
+	DWORD nsbs = 0, nsas = 0;
+	bool got = false, any = false;
+	for (int pass = 0; pass < 2; pass++) {
+		DWORD n = pass ? nstructure_as : nstructure_bs;
+		std::vector<DWORD> &ser = pass ? serial_as : serial_bs;
+		if (ser.size() != n) ser.assign(n, 0);
+		for (DWORD i = 0; i < n; i++) {
+			DWORD s = oapiBaseStructureSerial(hObj, i, pass == 1);
+			if (s == ser[i]) continue;
+			if (!got) { gc->GetBaseStructures(hObj, &sbs, &nsbs, &sas, &nsas); got = true; }
+			if (nsbs != nstructure_bs || nsas != nstructure_as) return;
+			D3D9Mesh *&m = pass ? structure_as[i] : structure_bs[i];
+			delete m;
+			m = new D3D9Mesh(pass ? sas[i] : sbs[i]);
+			m->SetTexMixture(1, lights ? 1.0f : 0.0f);
+			ser[i] = s;
+			any = true;
+		}
+	}
+	if (any) { UpdateBoundingBox(); buried.clear(); }
+#endif
+}
+
+// ===========================================================================================
 //
 void vBase::UpdateBoundingBox()
 {
@@ -357,6 +386,8 @@ bool vBase::Update (bool bMainScene)
 		terrainSun = vP->TerrainSunVisibility(gpos, tsCache); // not upstream: structures above shadows only, the ground meshes match the terrain
 		Tlghtchk = simt;
 	}
+
+	ReloadDented(); // not upstream (coll-bounded 5.7)
 
 	const double syst = oapiGetSysTime(); // not upstream: the buried check once a real second, also under time warp
 	if (fabs(syst - Tburied) > 1.0 || buried.size() != nstructure_as) { UpdateBuried(); Tburied = syst; }

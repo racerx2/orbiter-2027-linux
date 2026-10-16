@@ -68,7 +68,7 @@ TEST_CASE ("E3-U13 defaults")
 {
 	int asked = 0;
 	CollCfgValues v = CollCfg::Read ([&] (const char *, std::string &) { asked++; return false; });
-	CHECK (asked == 38);
+	CHECK (asked == 40);
 	CHECK (v.model == 1);
 	CHECK (v.response);
 	CHECK_FALSE (v.check);
@@ -99,7 +99,8 @@ TEST_CASE ("E3-U13 keys")
 		"CollisionKeyPass", "CollisionCullFix", "CollisionNotify", "CollisionRecorder", "CollisionTestRecId", "CollisionTestSlotCheck",
 		"CollisionDentModes", "CollisionDentNoise", "CollisionDentFacetNormals", "CollisionBreak", "CollisionDebrisMax", "CollisionDebrisLife", "CollisionDebrisPlayback",
 		"CollisionFx", "CollisionFxMask", "CollisionFxIntensity", "CollisionFxPlayback", "CollisionFxVentSpec", "CollisionFxMaxStreams", "CollisionFxRollDust",
-		"CollisionBlast", "CollisionBlastCells", "CollisionBlastESpec", "CollisionGround", "CollisionGroundMinSpeed", "CollisionStreamBuildings" };
+		"CollisionBlast", "CollisionBlastCells", "CollisionBlastESpec", "CollisionGround", "CollisionGroundMinSpeed", "CollisionStreamBuildings",
+		"CollisionFrameTests", "CollisionDebrisMs" };
 	std::vector<std::string> keys;
 	for (const char *k : CollCfg::Keys ()) keys.push_back (k);
 	CHECK (keys == want);
@@ -139,7 +140,7 @@ TEST_CASE ("E3-U13 template file")
 	CHECK (bad.empty ());
 	std::string ver;
 	CHECK (ItemString (text, "CollisionCfgVersion", ver)); // the build's upgrade key, not a parser key
-	CHECK (ver == "3");
+	CHECK (ver == "4");
 	for (const char *k : CollCfg::Keys ()) CHECK_FALSE (SameNoCase (k, "CollisionCfgVersion"));
 	CHECK_FALSE (ItemString (text, "CollisionTestKick", ver)); // removed keys (review R9)
 	CHECK_FALSE (ItemString (text, "CollisionTestModelAt", ver));

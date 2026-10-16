@@ -240,6 +240,7 @@ void Camera::SetCMode (const CameraMode *cm)
 	Body *tgt = (Body*)cm->GetTarget();
 	Body *ctgt = (tgt ? tgt : target); // not upstream: the body a cockpit mode would attach to
 	if (!ext && ctgt && ctgt->Type() != OBJTP_VESSEL) return; // not upstream: a cockpit mode for a non-vessel is unusable (as Create treats an unknown target); SetFocusObject cast it to Vessel
+	if (!ext && ctgt && ((Vessel*)ctgt)->CtrlLock ()) return; // not upstream: nor one for a locked (destroyed) vessel
 
 	if ((tgt && tgt != target) || ext != external_view) {
 		if (!tgt) tgt = target;
@@ -380,6 +381,7 @@ void Camera::Attach (Body *_target, int mode)
 {
 	// sanity check
 	if (_target->Type() != OBJTP_VESSEL) mode = 1;
+	else if (((Vessel*)_target)->CtrlLock () && (mode == 0 || (mode == 2 && !external_view))) mode = 1; // not upstream: a locked (destroyed) vessel has no cockpit view
 
 	// save current cockpit parameters for later restore
 	if (!external_view && intmode == CAMERA_VIRTUALCOCKPIT)

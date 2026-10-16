@@ -2,6 +2,7 @@
 #ifndef COLLBREAKA_H
 #define COLLBREAKA_H
 #include <cstdint>
+#include <chrono>
 #include <map>
 #include <memory>
 #include <set>
@@ -92,7 +93,8 @@ public:
 	const CollSlotA *Slot (uint32_t id, uint32_t mesh);   // pieces of a slot, cached
 	const std::vector<CollDebrisA> &Debris () const { return live; }
 	const std::vector<CollPairA> &Pairs () const { return pairs; }
-	size_t Pending () const { return spawn.size (); }
+	size_t Pending () const { return spawn.size () + restoreQ.size (); }
+	bool allAtOnce = false;                               // coll-bounded 6.2: every queued piece in one pre-step (no render window: tests)
 	uint64_t reasserts = 0, breaks = 0;
 	static bool TearGate (const CollDamageHit &h, const DentParams &crush, double L); // dmg3 tear: section gate
 	static bool TipGate (const CollDamageHit &h, const DentParams &hinge);         // dmg3 tear: wing/fin tip gate
@@ -112,7 +114,9 @@ private:
 	void Assert (uint32_t id, VesB &b);                   // visual flags of hidden groups
 	void Collider (uint32_t id, VesB &b, bool force);     // collider hides
 	void Adopt ();                                        // rows loaded by the session
-	void Rebuild (double simt);                           // first Post: debris from saved rows
+	void Rebuild (double simt);                           // first pass: debris from saved rows queued for RestoreStep
+	void RestoreStep (double simt, std::chrono::steady_clock::time_point t0); // queued restores until CollisionDebrisMs is spent, at least one
+	bool Spent (std::chrono::steady_clock::time_point t0) const; // the pre-step's debris time is used up
 	void Spawn (CollSpawnA &sp, double simt, std::map<uint32_t, CollParentA> &pc);
 	void Kill (size_t i, const char *why);
 	void SyncRows (uint32_t parent);
@@ -142,6 +146,9 @@ private:
 	std::map<std::pair<uint32_t, uint32_t>, CollSlotA> slots;
 	std::vector<CollDebrisA> live;
 	std::vector<CollSpawnA> spawn;
+	size_t spawnCarried = 0;                              // coll-bounded 6.2: the first ones of spawn were queued and capped before the last pre-step
+	struct RestoreA { uint32_t parent; DentDebris row; CollH h; };
+	std::vector<RestoreA> restoreQ;                       // loaded debris vessels waiting for their mesh, in row order
 	std::vector<CollPairA> pairs;
 	std::map<std::pair<uint32_t, uint32_t>, CollBlastSlotA> blast; // blast: (vessel, slot)
 	double postDt = 0, preDt = 0;                                  // blast: last post-step frame [s]

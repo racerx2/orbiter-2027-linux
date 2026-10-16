@@ -86,6 +86,7 @@ public:
 	// Called after focus has changed to "focus"
 
 	void DelVessel (const Vessel *vessel);
+	void VesselLocked (const Vessel *vessel);   // not upstream: its external MFDs go off (design wreck-view 2)
 	// notification that "vessel" is about to be destroyed
 
 	void SetSketchpadDefault (oapi::Sketchpad *skp);

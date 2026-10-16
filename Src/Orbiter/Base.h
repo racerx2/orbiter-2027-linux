@@ -10,6 +10,8 @@
 #include "Body.h"
 #include "Nav.h"
 #include "BaseClear.h" // not upstream
+#include "BaseDent.h" // not upstream
+#include <map> // not upstream
 #include <vector> // not upstream
 
 class Planet;
@@ -161,6 +163,10 @@ public:
 
 	inline const std::vector<BaseClearZone> &ClearZones () const { return clear; } // not upstream: BEGIN_CLEARZONES (design base-clear)
 
+	bool SetDent (const BASEDENTSPEC &d);  // not upstream (coll-bounded 5.7): record d.k of object d.obj, k = count appends
+	void ClearDents (DWORD obj);           // not upstream: (DWORD)-1 every object
+	DWORD StructureSerial (DWORD mesh, bool after) const; // not upstream: change count of a structure mesh
+
 	void DestroySurfaceTiles ();
 	// Destroy the meshes and textures of the high-res surface tiles
 
@@ -209,6 +215,16 @@ private:
 	DWORD ntile;                   // number of surface tiles
 
 	std::vector<BaseClearZone> clear; // not upstream: no streamed building or tree in these
+
+	// not upstream (coll-bounded 5.7): building dents; ScanObjectMeshes records where each object's groups went
+	struct DentRange { DWORD obj; bool after; DWORD mesh, grp, v0, nv, i0, ni; }; // a slice of a structure mesh group: vertices [v0, v0+nv), indices [i0, i0+ni)
+	struct DentObj { std::vector<BASEDENTSPEC> rec; std::vector<BaseDentGroup> rest; bool dirty = false, haveRest = false; };
+	mutable std::vector<DentRange> dentRange;
+	mutable std::vector<DWORD> serial_os, serial_us;
+	mutable std::map<DWORD, DentObj> dentObj;
+	mutable bool dentDirty = false;
+	void ApplyDents ();
+	void ApplyDent (DWORD obj, DentObj &d);
 
 	Vector sundir;                 // sun direction in base coordinates
 	double sundir_updt;            // time of next buffered sun direction update

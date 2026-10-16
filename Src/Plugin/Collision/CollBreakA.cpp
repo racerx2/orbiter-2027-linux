@@ -874,6 +874,7 @@ void CollBreakA::SyncRows (uint32_t parent)
 	std::vector<DentDebris> r;
 	for (auto &d : live) if (d.parent == parent) r.push_back (d.row);
 	for (auto &x : spawn) if (x.parent == parent) r.push_back (x.row); // queued for the next pre-step: a save in between keeps them
+	for (auto &j : restoreQ) if (j.parent == parent) r.push_back (j.row); // loaded, its mesh not set up yet
 	const VesselDamageA *vd = s.Damage (parent);
 	if (r.empty () && (!vd || vd->d.debris.empty ())) return;
 	s.SetDebris (parent, r);
@@ -1111,6 +1112,7 @@ void CollBreakA::DropVessel (uint32_t id, CollH h)
 		SyncRows (parent);
 	}
 	for (auto &f : freeMesh) if (h && f.h == h) f.dropped = true;
+	restoreQ.erase (std::remove_if (restoreQ.begin (), restoreQ.end (), [h] (const RestoreA &j) { return h && j.h == h; }), restoreQ.end ());
 	for (size_t k = pairs.size (); k-- > 0;) if (pairs[k].a == id || pairs[k].b == id) { s.noPair.erase ({ pairs[k].a, pairs[k].b }); pairs.erase (pairs.begin () + (long)k); }
 	ves.erase (id); massCut.erase (id); massPending.erase (id);
 	for (auto it = slots.begin (); it != slots.end ();) { if (it->first.first == id) it = slots.erase (it); else ++it; }
@@ -1174,26 +1176,7 @@ void CollBreakA::Rebuild (double simt)
 			}
 			if (!CollKey::IEqual (sdk.ClassName (h), BRK_CLASS)) continue;
 			claimed.insert (row.name);
-			const CollSlotA *sl = vh ? Slot (pid, row.slot) : nullptr;
-			CollH mesh = sl && sl->ok && sl->key == row.key ? sdk.MeshLoad (sl->name.c_str ()) : nullptr;
-			Geo geo;
-			if (!mesh || !BuildMesh (mesh, row, geo, pid)) {
-				if (mesh) sdk.MeshFree (mesh);
-				Log ("Collision: debris '%s' mesh missing or changed, deleted", row.name.c_str ());
-				sdk.VesselDelete (h);
-				continue;
-			}
-			mesh = sdk.MeshCompact (mesh);
-			std::vector<int> pk;
-			for (auto &ps : row.pose) for (uint16_t g : ps.grp) if (g < sl->pieceOf.size () && sl->pieceOf[g] >= 0 && std::find (pk.begin (), pk.end (), sl->pieceOf[g]) == pk.end ()) pk.push_back (sl->pieceOf[g]);
-			uint32_t fnv = 0;
-			CollSdk::DebrisCaps caps = Caps (geo, row.mass > 0 ? row.mass : Mass (pid, *sl, pk), &fnv); // dmg3 tear: the B row mass
-			sdk.DebrisSetup (h, mesh, caps);
-			CollDebrisA d;
-			d.h = h; d.mesh = mesh; d.parent = pid; d.other = NameId (row.other); d.birth = std::min (row.simt, simt); d.row = row; d.fnv = fnv; d.id = FindId (h); d.restored = true; // birth: sim time restarts on load
-			live.push_back (d);
-			AddPairs (live.back (), simt); // the filters are not saved: parent, impactor and other debris again
-			Log ("Collision break restored '%s' fnv=%08x", row.name.c_str (), fnv);
+			restoreQ.push_back (RestoreA { pid, row, h }); // its mesh in RestoreStep, within the pre-step's debris time (design coll-bounded 6.2)
 		}
 		SyncRows (pid);
 	}
@@ -1202,10 +1185,54 @@ void CollBreakA::Rebuild (double simt)
 		if (!x || !CollKey::IEqual (sdk.ClassName (x), BRK_CLASS) || claimed.count (sdk.Name (x))) continue;
 		bool ours = false;
 		for (auto &d : live) if (d.h == x) ours = true;
+		for (auto &j : restoreQ) if (j.h == x) ours = true;
 		if (ours) continue;
 		Log ("Collision: debris '%s' without rows deleted", sdk.Name (x).c_str ());
 		sdk.VesselDelete (x);
 	}
+}
+
+bool CollBreakA::Spent (std::chrono::steady_clock::time_point t0) const
+{
+	if (allAtOnce || !(cfg.debrisMs > 0)) return false;
+	return std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now () - t0).count () >= cfg.debrisMs;
+}
+
+void CollBreakA::RestoreStep (double simt, std::chrono::steady_clock::time_point t0)
+{
+	size_t k = 0;
+	std::set<uint32_t> par;
+	for (; k < restoreQ.size (); k++) {
+		if (k > 0 && Spent (t0)) break;
+		const RestoreA j = restoreQ[k];
+		const uint32_t pid = j.parent;
+		const DentDebris &row = j.row;
+		CollH h = j.h, vh = s.VesselHandle (pid);
+		par.insert (pid);
+		if (!h || !sdk.IsVessel (h)) continue;
+		const CollSlotA *sl = vh ? Slot (pid, row.slot) : nullptr;
+		CollH mesh = sl && sl->ok && sl->key == row.key ? sdk.MeshLoad (sl->name.c_str ()) : nullptr;
+		Geo geo;
+		if (!mesh || !BuildMesh (mesh, row, geo, pid)) {
+			if (mesh) sdk.MeshFree (mesh);
+			Log ("Collision: debris '%s' mesh missing or changed, deleted", row.name.c_str ());
+			sdk.VesselDelete (h);
+			continue;
+		}
+		mesh = sdk.MeshCompact (mesh);
+		std::vector<int> pk;
+		for (auto &ps : row.pose) for (uint16_t g : ps.grp) if (g < sl->pieceOf.size () && sl->pieceOf[g] >= 0 && std::find (pk.begin (), pk.end (), sl->pieceOf[g]) == pk.end ()) pk.push_back (sl->pieceOf[g]);
+		uint32_t fnv = 0;
+		CollSdk::DebrisCaps caps = Caps (geo, row.mass > 0 ? row.mass : Mass (pid, *sl, pk), &fnv); // dmg3 tear: the B row mass
+		sdk.DebrisSetup (h, mesh, caps);
+		CollDebrisA d;
+		d.h = h; d.mesh = mesh; d.parent = pid; d.other = NameId (row.other); d.birth = std::min (row.simt, simt); d.row = row; d.fnv = fnv; d.id = FindId (h); d.restored = true; // birth: sim time restarts on load
+		live.push_back (d);
+		AddPairs (live.back (), simt); // the filters are not saved: parent, impactor and other debris again
+		Log ("Collision break restored '%s' fnv=%08x", row.name.c_str (), fnv);
+	}
+	restoreQ.erase (restoreQ.begin (), restoreQ.begin () + (long)k);
+	for (uint32_t p : par) SyncRows (p);
 }
 
 void CollBreakA::Post (double simt, double simdt)
@@ -1251,26 +1278,46 @@ void CollBreakA::PreStep (double simt, double simdt)
 {
 	if (quiet) return;
 	preDt = simdt;
+	const auto t0 = std::chrono::steady_clock::now ();
 	Boot (simt);
+	RestoreStep (simt, t0);
 	std::vector<CollSpawnA> sp;
 	sp.swap (spawn);
-	size_t cap = (size_t)std::max (0, cfg.debrisMax);
-	if (sp.size () > cap) { // past the cap the heaviest pieces fly; the rest are only hidden (spawned, the cap deleted them in the same post-step, a frame of work for nothing)
-		std::vector<size_t> ord (sp.size ());
-		for (size_t i = 0; i < ord.size (); i++) ord[i] = i;
+	const size_t carried = std::min (spawnCarried, sp.size ());
+	size_t cap = (size_t)std::max (0, cfg.debrisMax), room = cap > carried ? cap - carried : 0;
+	if (sp.size () - carried > room) { // the pieces queued since the last pre-step, capped once: past the cap the heaviest fly, the rest are only hidden
+		std::vector<size_t> ord;
+		for (size_t i = carried; i < sp.size (); i++) ord.push_back (i);
 		std::stable_sort (ord.begin (), ord.end (), [&] (size_t a, size_t b) { return sp[a].mass > sp[b].mass; });
 		std::vector<char> keep (sp.size (), 0);
-		for (size_t i = 0; i < cap; i++) keep[ord[i]] = 1;
+		for (size_t i = 0; i < carried; i++) keep[i] = 1;
+		for (size_t i = 0; i < room; i++) keep[ord[i]] = 1;
 		std::vector<CollSpawnA> kept; // the kept ones in their queue order
 		std::vector<uint32_t> par;
 		for (size_t i = 0; i < sp.size (); i++) if (keep[i]) kept.push_back (std::move (sp[i])); else par.push_back (sp[i].parent);
-		Log ("Collision: %zu debris past CollisionDebrisMax (%zu) not spawned", sp.size () - cap, cap);
+		Log ("Collision: %zu debris past CollisionDebrisMax (%zu) not spawned", sp.size () - carried - room, cap);
 		sp.swap (kept);
 		for (uint32_t p : par) SyncRows (p);
 	}
 	played.clear ();
 	std::map<uint32_t, CollParentA> pc;
-	for (auto &x : sp) Spawn (x, simt, pc); // in the pre-step: the core places the new vessel and the parent's write where they were read
+	std::vector<CollSpawnA> later;                     // design coll-bounded 6.2: past the pre-step's debris time the rest wait, in order
+	size_t made = 0;
+	for (auto &x : sp) {
+		CollH ph = s.VesselHandle (x.parent);
+		bool now = (ph && sdk.Playback (ph)) || (made == 0 && restoreQ.empty ()) || !Spent (t0); // playback: the recorded timing
+		if (!now) { later.push_back (std::move (x)); continue; }
+		Spawn (x, simt, pc); // in the pre-step: the core places the new vessel and the parent's write where they were read
+		made++;
+	}
+	if (!later.empty ()) {
+		later.insert (later.end (), std::make_move_iterator (spawn.begin ()), std::make_move_iterator (spawn.end ())); // none expected: nothing queues inside the pre-step
+		spawn.swap (later);
+		std::set<uint32_t> par;
+		for (auto &x : spawn) par.insert (x.parent);
+		for (uint32_t p : par) SyncRows (p);           // Spawn synced its parent without the ones still queued
+	}
+	spawnCarried = spawn.size ();
 	for (auto &kv : pc) { // one write per parent: the sum of its debris' impulses
 		CollParentA &P = kv.second;
 		CollH vh = s.VesselHandle (kv.first);
@@ -1294,6 +1341,7 @@ void CollBreakA::End ()
 		for (auto &f : freeMesh) if (f.mesh) sdk.MeshFree (f.mesh);
 	}
 	live.clear (); freeMesh.clear (); spawn.clear (); played.clear (); pairs.clear (); ves.clear (); slots.clear (); blast.clear (); massCut.clear (); massPending.clear ();
+	restoreQ.clear (); spawnCarried = 0;
 	rebuilt = false; cfgOk = -1; loggedNoCfg = false;
 }
 
