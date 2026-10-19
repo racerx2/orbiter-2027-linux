@@ -22,6 +22,7 @@
 
 #include "Orbiter.h"
 #include "Vessel.h"
+#include "GltfVesselAnim.h" // not upstream
 #include "SuperVessel.h"
 #include "Config.h"
 #include "Camera.h"
@@ -207,6 +208,8 @@ Vessel::~Vessel ()
 	ClearAttachments();
 	ClearAnimSeqs(); // obsolete
 	ClearAnimations (false);
+	delete gltfanim; // not upstream
+	gltfanim = nullptr;
 	ClearTouchdownPoints();
 	ClearReentryStreams();
 	ClearLightEmitters();
@@ -267,6 +270,7 @@ void Vessel::SetClassCaps (ifstream &classf)
 
 	// Read specs from class or vessel cfg file
 	ReadGenericCaps (classf);
+	GltfVesselAnim::Check (this); // not upstream
 }
 
 // ==============================================================
@@ -785,6 +789,7 @@ void Vessel::ModulePostCreation ()
 	// now let the module do its post-creation stuff
 	if (modIntf.v->Version() >= 1)
 		((VESSEL2*)modIntf.v)->clbkPostCreation ();
+	GltfVesselAnim::Check (this); // not upstream
 }
 
 // ==============================================================
@@ -3330,6 +3335,7 @@ UINT Vessel::InsertMesh (const char *mname, UINT idx, const VECTOR3 *ofs)
 		*((BYTE*)&mesh_crc + (i%4)) += *((BYTE*)&ofs+i); // encode offset
 	ScanMeshCaps();
 	BroadcastVisMsg (EVENT_VESSEL_INSMESH, idx); // notify visuals
+	GltfVesselAnim::InsertedMesh (this, idx); // not upstream
 
 	return idx;
 }
@@ -3356,6 +3362,7 @@ UINT Vessel::InsertMesh (MESHHANDLE hMesh, UINT idx, const VECTOR3 *ofs)
 		*((BYTE*)&mesh_crc + (i%4)) += *((BYTE*)&ofs+i); // encode offset
 	ScanMeshCaps();
 	BroadcastVisMsg (EVENT_VESSEL_INSMESH, idx); // notify visuals
+	GltfVesselAnim::InsertedMesh (this, idx); // not upstream
 
 	return idx;
 }
@@ -3364,6 +3371,7 @@ bool Vessel::DelMesh (UINT idx, bool retain_anim)
 {
 	if (idx >= nmesh) return false; // mesh index out of range
 	if (!meshlist[idx]) return false; // mesh already deleted
+	GltfVesselAnim::DeletingMesh (this, idx, retain_anim); // not upstream
 	
 	BroadcastVisMsg (EVENT_VESSEL_DELMESH, idx); // notify visuals
 	//g_pOrbiter->VesselEvent (this, EVENT_VESSEL_DELMESH, (void*)idx);
@@ -3392,6 +3400,7 @@ bool Vessel::DelMesh (UINT idx, bool retain_anim)
 void Vessel::ClearMeshes (bool retain_anim)
 {
 	if (!nmesh) return;
+	GltfVesselAnim::DeletingMesh (this, (UINT)-1, retain_anim); // not upstream
 
 	if (!retain_anim) ClearAnimations (true);
 
@@ -5804,7 +5813,9 @@ UINT Vessel::CreateAnimation (double initial_state)
 	anim[nanim].state    = initial_state;
 	anim[nanim].ncomp    = 0;
 	BroadcastVisMsg (EVENT_VESSEL_NEWANIM, nanim);
-	return nanim++;
+	UINT an = nanim++; // not upstream: the glTF hook sees the new animation
+	GltfVesselAnim::CreatedAnimation (this, an);
+	return an;
 }
 
 ANIMATIONCOMP *Vessel::AddAnimationComponent (UINT an, double state0, double state1,
@@ -5838,6 +5849,7 @@ ANIMATIONCOMP *Vessel::AddAnimationComponent (UINT an, double state0, double sta
 		parent->children[parent->nchildren++] = ac;
 	}
 	A->ncomp++;
+	GltfVesselAnim::AddedComponent (this, an, ac); // not upstream
 	return ac;
 }
 
@@ -5850,6 +5862,7 @@ bool Vessel::DelAnimationComponent (UINT an, ANIMATIONCOMP *comp)
 	for (i = 0; i < ncomp; i++)
 		if (A->comp[i] == comp) break;
 	if (i == ncomp) return false; // not found
+	GltfVesselAnim::DeletingComponent (this, comp); // not upstream
 
 	// delete all children of comp
 	while (comp->nchildren) {
@@ -5946,6 +5959,7 @@ bool Vessel::DelAnimation (UINT an)
 
 void Vessel::ClearAnimations (bool reset)
 {
+	GltfVesselAnim::ClearingAnimations (this); // not upstream
 	BroadcastVisMsg (EVENT_VESSEL_CLEARANIM, (UINT)reset); // clear animations on visuals
 
 	for (UINT i = 0; i < nanim; i++) {

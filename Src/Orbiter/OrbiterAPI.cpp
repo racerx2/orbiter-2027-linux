@@ -22,6 +22,7 @@
 #include "resource.h"
 #include "Mesh.h"
 #include "GltfLoader.h" // not upstream: glTF meshes
+#include "GltfDropIn.h" // not upstream
 #include "MenuInfoBar.h"
 #include <zlib.h>
 #include "DrawAPI.h"
@@ -1011,7 +1012,7 @@ DLLEXPORT double oapiGetSimMJD ()
 
 DLLEXPORT double oapiGetSysMJD ()
 {
-	return MJD (time (NULL)) + UTC_CT_diff*day;
+	return UtcToTtMjd (MJD (time (NULL)));
 }
 
 DLLEXPORT bool oapiSetSimMJD (double mjd, int pmode)
@@ -1420,9 +1421,16 @@ DLLEXPORT MESHHANDLE oapiLoadMesh (const char *fname)
 		if (LoadGltfMesh (fname, *mesh)) mesh->SetName (fname);
 		return (MESHHANDLE)mesh;
 	}
+	if (GltfDropInMesh (fname, *mesh)) return (MESHHANDLE)mesh; // not upstream: a drop-in glTF file (claude/design-gltf-roundtrip.md 2)
 	ifstream ifs(oapiResolvePath(g_pOrbiter->MeshPath(fname)));
 	ifs >> *mesh;
 	return (MESHHANDLE)mesh;
+}
+
+DLLEXPORT bool oapiHasGltfDropInMesh (const char *fname)
+{
+	GltfDropSlot slot;
+	return GltfDropInSlot (fname, slot);
 }
 
 DLLEXPORT MESHHANDLE oapiCopyMesh (MESHHANDLE hMesh, DWORD dropFlag) // not upstream

@@ -28,6 +28,7 @@
 #include "Log.h"
 
 class Elements;
+class GltfVesselAnim; // not upstream
 class CelestialBody;
 class Planet;
 class PlanetarySystem;
@@ -219,6 +220,7 @@ class Vessel: public VesselBase {
 	friend class Instrument_Docking;
 	friend class Instrument_Comms;
 	friend class HUD_Docking;
+	friend class GltfVesselAnim; // not upstream
 
 public:
 	Vessel (const PlanetarySystem *psys, const char *_name, const char *_classname, const VESSELSTATUS &status);
@@ -1849,6 +1851,7 @@ private:
 
 	UINT nanim;			// number of animations
 	ANIMATION *anim;	// list of animations
+	GltfVesselAnim *gltfanim = nullptr; // not upstream: animations on meshes from a drop-in glTF file (claude/design-gltf-roundtrip.md 5.4)
 
 	bool EditorModule (char *cbuf) const;
 	// Returns the file name of the module containing the scenario editor

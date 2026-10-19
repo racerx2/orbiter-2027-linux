@@ -68,7 +68,25 @@ void DeepOpacity (const std::vector<Puff> &puffs, const double sun[3], int N, st
 void FlowViewProj (const double c[3], const double f[3], double ext, double eyeDist, double zn, double zf, double vp[16], double X[3], double Y[3]); // row-major, row vectors; RH look-at + ortho as RenderShadowMap
 
 struct Nozzle { double ref[3], axis[3]; double re, level, rpx; int cls, vessel; };
+const int TOUCH_MAX = 8; // [V] touching nozzles stay apart up to this many: the march keeps 8 capsules per ray (design-plume-nozzles 1)
 void Cluster (const std::vector<Nozzle> &nz, int budget, std::vector<std::vector<int>> &groups);
+
+// the exit and the Mach disk are sheets: integrated along a ray in closed form, not marched (design-plume-light 1)
+double ExitSheet ();             // the exit slab exp(-(x/0.15 re)^2)/(0.27 re) times back, along a ray from behind: 0.15 sqrt(pi)/0.27
+double MachSheet (double cosA);  // the Mach disk exp(-(x/0.06 rj re)^2) 0.5/(0.12 rj re) along a ray at cosA to the axis; either side, edge-on capped
+
+// the plumes' own light on meshes and the ground (design-plume-light 2)
+const double LIGHT_FAR = 2000.0;   // [V] m from the camera
+const int LIGHT_MAX = 8, LIGHT_PER_VESSEL = 2; // [V] the most flux first; a vessel's per class (design-plume-nozzles 3)
+struct Light { double rgb[3]; double k, x, att2, range, flux; }; // colour (max 1), strength, metres past the exit, 1/falloff^2, range, k rf^2
+Light PlumeLight (int cls, double I, double re, const double c0[3], const double c1[3], double scale);
+double LightRange (double k, double rf2); // where k / (1 + d^2/rf2) drops to 0.01, at most 300 m
+double SphereMean (double k, double a, double r, double d); // mean of k / (1 + a s^2) over a sphere of radius r whose centre is d away: how a plume light ranks for a mesh (design-plume-nozzles 3)
+double SphereMeanAtt (double I, double c, double b, double a, double r, double d); // the same for I / (c + b s + a s^2): a point light inside a mesh's bounds (design-plume-nozzles 3c)
+
+// a vessel's exhaust lights merged into one: flux kept, the fall-off their second moment (design-plume-light 2.3)
+struct Spot { double p[3], rgb[3]; double k, rf2; };
+Spot MergeSpots (const std::vector<Spot> &s);
 
 bool CapsuleVisible (const double planes[6][4], const double a[3], const double b[3], double r); // planes: n.p + w >= 0 inside
 void FrustumPlanes (const double vp[16], double planes[6][4]); // from a row-vector view-projection, z in [0,1]

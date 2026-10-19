@@ -37,6 +37,9 @@ extern bool oapiBaseSetDent (OBJHANDLE hBase, const BASEDENTSPEC *d) __attribute
 extern void oapiBaseClearDents (OBJHANDLE hBase, DWORD obj) __attribute__ ((weak));
 #define COLL_BASE_DENT 1
 #endif
+#if defined (OAPI_GLTF_DROPIN_MESH) && !defined (_WIN32)
+extern bool oapiHasGltfDropInMesh (const char *fname) __attribute__ ((weak));
+#endif
 #if defined (OAPI_MESHGROUP_FLAGS) && !defined (_WIN32)
 extern int oapiGetMeshGroupFlags (DEVMESHHANDLE hMesh, DWORD grpidx, DWORD *usrFlag) __attribute__ ((weak)); // not upstream: weak, a host without it leaves hidden groups solid
 #define COLL_MESHGROUP_FLAGS 1
@@ -130,6 +133,15 @@ public:
 	}
 	int ADCtrlMode (CollH v) override { VESSEL *x = Ves (v); return x ? (int)x->GetADCtrlMode () : -1; }
 	void SetADCtrlMode (CollH v, int mode) override { VESSEL *x = Ves (v); if (x && mode >= 0) x->SetADCtrlMode ((DWORD)mode); }
+bool MeshHasGltfDropIn (const char *name) override
+	{
+#if defined (OAPI_GLTF_DROPIN_MESH) && !defined (_WIN32)
+		return oapiHasGltfDropInMesh && oapiHasGltfDropInMesh (name);
+#else
+		(void)name;
+		return false;
+#endif
+	}
 	uint32_t MeshCount (CollH v) override { return Ves (v)->GetMeshCount (); }
 	CollH MeshTemplate (CollH v, uint32_t i) override { return Ves (v)->GetMeshTemplate (i); }
 	const char *MeshName (CollH v, uint32_t i) override { return Ves (v)->GetMeshName (i); }

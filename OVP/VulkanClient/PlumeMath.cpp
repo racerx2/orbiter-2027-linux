@@ -312,23 +312,29 @@ struct UF {
 	bool Join (int a, int b) { a = Find(a); b = Find(b); if (a == b) return false; p[std::max(a, b)] = std::min(a, b); n--; return true; }
 };
 
-// touching nozzles always; engines below the volume LOD within 3 radii; then nearest pairs while over the budget (design review M4)
+// touching nozzles in groups of more than TOUCH_MAX; engines below the volume LOD within 3 radii; then nearest pairs while over the budget (design review M4, design-plume-nozzles 1)
 void Cluster (const std::vector<Nozzle> &nz, int budget, std::vector<std::vector<int>> &groups)
 {
 	int n = int(nz.size());
-	UF uf(n);
+	UF uf(n), touch(n);
 	struct Pair { double k; int a, b; };
-	std::vector<Pair> pairs;
+	std::vector<Pair> pairs, touching;
 	for (int i = 0; i < n; i++)
 		for (int j = i + 1; j < n; j++) {
 			const Nozzle &A = nz[i], &B = nz[j];
 			if (A.vessel != B.vessel || A.cls != B.cls || Dot(A.axis, B.axis) <= 0.98) continue;
 			double d[3] = { A.ref[0] - B.ref[0], A.ref[1] - B.ref[1], A.ref[2] - B.ref[2] };
-			double dist = std::sqrt(Dot(d, d)), rs = A.re + B.re;
-			if (dist < 1.2 * rs) uf.Join(i, j);
+			double dist = std::sqrt(Dot(d, d)), rs = A.re + B.re, k = dist / std::max(rs, 1e-6);
+			if (dist < 1.2 * rs) { touch.Join(i, j); touching.push_back({ k, i, j }); }
 			else if (A.rpx < 3.0 && B.rpx < 3.0 && dist < 3.0 * std::max(A.re, B.re)) uf.Join(i, j);
-			else pairs.push_back({ dist / std::max(rs, 1e-6), i, j });
+			else pairs.push_back({ k, i, j });
 		}
+	std::vector<int> cnt(n, 0);
+	for (int i = 0; i < n; i++) cnt[touch.Find(i)]++;
+	for (const Pair &p : touching) {
+		if (cnt[touch.Find(p.a)] > TOUCH_MAX) uf.Join(p.a, p.b); // a big cluster: one volume, the exits per nozzle
+		else pairs.push_back(p); // apart, first to join when over the budget
+	}
 	if (uf.n > budget) {
 		std::sort(pairs.begin(), pairs.end(), [](const Pair &p, const Pair &q) { return p.k < q.k; });
 		for (const Pair &p : pairs) { if (uf.n <= budget) break; uf.Join(p.a, p.b); }
@@ -357,6 +363,81 @@ void FrustumPlanes (const double m[16], double pl[6][4])
 		double l = std::sqrt(pl[i][0] * pl[i][0] + pl[i][1] * pl[i][1] + pl[i][2] * pl[i][2]);
 		if (l > 0.0) for (int k = 0; k < 4; k++) pl[i][k] /= l;
 	}
+}
+
+double ExitSheet ()
+{
+	return 0.15 * std::sqrt(PI) / 0.27; // the chord's 1/back cancels the slab's back
+}
+
+double MachSheet (double cosA)
+{
+	return 0.5 * 0.06 * std::sqrt(PI) / 0.12 / std::max(std::fabs(cosA), 0.25); // [V] 0.25: an edge-on sheet as a chord of 4 thicknesses
+}
+
+Light PlumeLight (int cls, double I, double re, const double c0[3], const double c1[3], double scale)
+{
+	const double K = 1.0, X = 1.0, R = 1.5; // [V] strength, metres past the exit and fall-off radius, in exit radii
+	Light L = {};
+	double c[3] = { 1.0, 0.7, 0.45 }, k = K * I * scale; // a texture flame: the puffs' orange
+	if (cls != TEXTURE) {
+		for (int i = 0; i < 3; i++) c[i] = c0[i] + c1[i]; // the exit's colour
+		double mx = std::max(c[0], std::max(c[1], c[2]));
+		if (!(mx > 0.0)) return L;
+		for (int i = 0; i < 3; i++) c[i] /= mx;
+		k = K * 2.0 * I * mx * scale; // the exit's brightness, 2 I (C0 + C1)
+	}
+	if (!(k > 0.0) || !(re > 0.0)) return L;
+	double rf = R * re;
+	for (int i = 0; i < 3; i++) L.rgb[i] = c[i];
+	L.k = k;
+	L.x = X * re;
+	L.att2 = 1.0 / (rf * rf);
+	L.range = LightRange(k, rf * rf);
+	L.flux = k * rf * rf;
+	return L;
+}
+
+double SphereMean (double k, double a, double r, double d)
+{
+	double A = 1.0 + a * (r * r + d * d), B = 2.0 * a * r * d;
+	if (B < 1e-9 * A) return k / A;
+	return k * std::log((A + B) / (A - B)) / (2.0 * B); // A - B = 1 + a (r - d)^2 > 0
+}
+
+double SphereMeanAtt (double I, double c, double b, double a, double r, double d)
+{
+	c = std::max(c, 1e-6);
+	auto f = [&](double s) { return I * s / (c + b * s + a * s * s); };
+	if (r <= 0.0 || d < 1e-6 * r) return I / (c + b * r + a * r * r);
+	double s0 = std::fabs(r - d), s1 = r + d, h = (s1 - s0) / 64.0, sum = f(s0) + f(s1);
+	for (int i = 1; i < 64; i++) sum += f(s0 + i * h) * (i & 1 ? 4.0 : 2.0);
+	return sum * h / 3.0 / (2.0 * r * d); // the mean over the sphere in s: du = -s ds/(r d)
+}
+
+double LightRange (double k, double rf2)
+{
+	return std::min(std::sqrt(rf2 * std::max(0.0, 100.0 * k - 1.0)), 300.0);
+}
+
+Spot MergeSpots (const std::vector<Spot> &s)
+{
+	Spot m = {};
+	double F = 0.0, P[3] = {}, C[3] = {}, M = 0.0;
+	for (const Spot &a : s) {
+		double f = a.k * a.rf2;
+		if (!(f > 0.0)) continue;
+		F += f;
+		for (int i = 0; i < 3; i++) { P[i] += f * a.p[i]; C[i] += f * a.rgb[i]; }
+		M += f * (a.rf2 + Dot(a.p, a.p));
+	}
+	if (!(F > 0.0)) return m;
+	for (int i = 0; i < 3; i++) m.p[i] = P[i] / F;
+	m.rf2 = std::max(M / F - Dot(m.p, m.p), 1e-6); // the second moment about the centre
+	m.k = F / m.rf2;
+	double mx = std::max(C[0], std::max(C[1], C[2]));
+	for (int i = 0; i < 3; i++) m.rgb[i] = mx > 0.0 ? C[i] / mx : 0.0;
+	return m;
 }
 
 bool CapsuleVisible (const double pl[6][4], const double a[3], const double b[3], double r)

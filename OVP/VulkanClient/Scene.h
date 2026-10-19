@@ -304,6 +304,8 @@ public:
 	void DelParticleStream (DWORD idx);
 
 	void AddLocalLight(const LightEmitter *le, const vObject *vo);
+	void AddLocalLight(const D3D9Light &lght); // not upstream: also a light with no emitter, the plumes' (design-plume-light 2)
+	void AddLocalLightFree(const D3D9Light &lght); // not upstream: only into a free slot, never replacing a light (design-plume-nozzles 3b)
 	void ClearLocalLights();
 
 	/**
@@ -516,6 +518,7 @@ private:
 
 	float		fDisplayScale;
 	float		lmaxdst2;
+	bool		lightsFullLogged = false; // not upstream (design-plume-nozzles 3b)
 	DWORD		nLights;
 	DWORD		nplanets;		// Number of distance sorted planets to render
 	DWORD		dwTurn;

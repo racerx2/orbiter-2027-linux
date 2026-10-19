@@ -114,9 +114,15 @@ Ships no longer have to be converted to Orbiter's `.msh` format:
 - **Old models unchanged**: `.msh` meshes look exactly as before. They can get PBR materials too, through
   `PBR` lines in their `Config/GC` material file.
 - **Collisions**: with the collision add-on, glTF ships collide on their real shape.
+- **Back from Blender**: a `.glb` made from an Orbiter vessel and edited in Blender (export with
+  *Include > Custom Properties* ticked) goes in the vessel's mesh folder, for example `Meshes\dg-xr1`. Orbiter then
+  uses it in place of the `.msh` meshes it was made from, outside and cockpit, keeping the part, material and
+  texture numbers the vessel's program uses. What was left alone in Blender stays exactly as before; what was
+  changed (shapes, new parts, hinges, keyframes, colours, painted images) comes from the file, animations
+  included. Remove the file to go back.
 
-Not supported yet: animations, skeletons, morph targets, a second UV set, texture transforms, and Draco or
-KTX2 compression.
+Not supported yet: animations in a `.glb` named in a cfg, skeletons, morph targets, a second UV set, texture
+transforms, and Draco or KTX2 compression.
 
 Try it with the **Delta-glider > DG and DG-S and DGTest** scenario, and **Graphics > PBR material bench**,
 which shows every material on its own sphere.

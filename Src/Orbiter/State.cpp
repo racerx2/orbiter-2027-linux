@@ -29,7 +29,7 @@ extern TimeData td;
 
 State::State ()
 {
-	mjd = mjd0 = MJD (time (NULL)); // default to current system time
+	mjd = mjd0 = UtcToTtMjd (MJD (time (NULL))); // current UTC -> TT
 	solsys = "Sol";         // default name
 }
 
@@ -52,8 +52,7 @@ bool State::Read (const char *fname)
 
 	char cbuf[256], *pc;
 	double t;
-	mjd0 = MJD (time (NULL)); // default to current system time
-	mjd0 += UTC_CT_diff*day;  // map from UTC to CT (or TDB) time scales
+	mjd0 = UtcToTtMjd (MJD (time (NULL))); // current UTC -> TT; explicit scenario dates are unchanged
 	mjd = mjd0;
 	solsys.clear();           // no scenario solsys by default
 	context.clear();          // no scenario context by default

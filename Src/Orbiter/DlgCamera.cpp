@@ -352,8 +352,10 @@ void DlgCamera::DrawGround() {
             ApplyObserver();
         }
 
-        if(ImGui::Checkbox("Target lock", &m_TargetLock))
-			g_camera->SetGroundObserver_TargetLock (m_TargetLock);
+        // Bind the checkbox to the camera's actual lock state, not an unsynchronised dialog member.
+        bool targetLock = g_camera->GroundObserver_TargetLock();
+        if (ImGui::Checkbox("Target lock", &targetLock))
+            g_camera->SetGroundObserver_TargetLock(targetLock);
 
     ImGui::EndChild();
 }
@@ -381,7 +383,7 @@ void DlgCamera::SetCurrentGroundpos() {
 	if (g_camera->GetExtMode() == CAMERA_GROUNDOBSERVER) return; // nothing to do
 	ApplyObserver ();
 
-	if (!m_TargetLock) {
+	if (!g_camera->GroundObserver_TargetLock()) {
 		// force lock to target to initialise camera direction
 		g_camera->SetGroundObserver_TargetLock (true);
 		g_camera->SetGroundObserver_TargetLock (false);

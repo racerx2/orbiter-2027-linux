@@ -4526,6 +4526,9 @@ OAPIFUNC VISHANDLE *oapiObjectVisualPtr (OBJHANDLE hObject);
 	*/
 OAPIFUNC MESHHANDLE oapiLoadMesh (const char *fname);
 
+#define OAPI_GLTF_DROPIN_MESH 1
+OAPIFUNC bool oapiHasGltfDropInMesh (const char *fname);
+
 // not upstream: a private copy of a loaded mesh without reading the file again (textures shared by reference), without the groups that have any of the dropFlag user flags; free it with oapiDeleteMesh
 #define OAPI_COPY_MESH 1 // not upstream: feature test for add-ons
 OAPIFUNC MESHHANDLE oapiCopyMesh (MESHHANDLE hMesh, DWORD dropFlag = 0);

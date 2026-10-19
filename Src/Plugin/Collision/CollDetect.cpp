@@ -367,6 +367,29 @@ bool CollAttachIdMatch (const char *parentId, const char *childId)
 	return true;
 }
 
+// Exempt mating fixtures, not surrounding cargo-bay surfaces.
+void CollAttachmentZones(const std::vector<CollAttachZonePoint> &points,
+                         std::vector<CollZone> &out)
+{
+    for (const CollAttachZonePoint &parent : points) {
+        if (parent.toparent || !parent.id[0]) continue;
+        for (const CollAttachZonePoint &child : points) {
+            if (!child.toparent || parent.body == child.body ||
+                !CollAttachIdMatch(parent.id, child.id)) continue;
+            bool active = false;
+            for (int t = 0; t < 2 && !active; ++t)
+                active = CollAttachZoneActive(parent.at[t], child.at[t],
+                                              COLL_ZONE_ANGLE, COLL_ZONE_SPEED);
+            if (active)
+                out.push_back(CollZone {
+                    parent.body, child.body, parent.owner, child.owner,
+                    parent.cb, child.cb, COLL_ATTACH_ZONE_RADIUS,
+                    COLL_ATTACH_ZONE_RADIUS
+                });
+        }
+    }
+}
+
 // pair store (6.1, R22)
 
 bool CollLeafPair::operator< (const CollLeafPair &o) const
@@ -636,13 +659,20 @@ struct CollDetect::Impl {
 		std::sort (b.begin (), b.end ()); b.erase (std::unique (b.begin (), b.end ()), b.end ());
 	}
 
+	static std::pair<uint32_t,uint32_t> SplitPartKey (const Ctx &cx, const PP &q)
+	{
+		const uint32_t a = cx.pa[q.a].r->partKey, b = cx.pb[q.b].r->partKey;
+		return q.swap ? std::make_pair(b,a) : std::make_pair(a,b);
+	}
+
 	// binds GRACE scopes; with front, also the valid front caches (5.6)
 	static void Bind (Ctx &cx, bool front)
 	{
 		CollDetect &d = *cx.d;
 		for (PP &q : cx.pp) {
 			CollPairEntry *e = d.m_store.Find (q.key.first, q.key.second);
-			if (e && e->split) q.culled = true;                     // etsep: a split pair still at its joint runs no query
+			if (e && e->split && (!e->splitLocal || e->splitAge <= 0.0 ||
+				std::binary_search (e->splitParts.begin (), e->splitParts.end (), SplitPartKey (cx,q)))) q.culled = true;
 			q.grace = (e && !e->grace.empty ()) ? &e->grace : nullptr;
 			q.joint = (e && !e->joint.empty ()) ? &e->joint : nullptr;
 			if (q.joint) cx.flags |= COLLF_GRACE;
@@ -1940,6 +1970,36 @@ struct CollDetect::Impl {
 			if (pushed) {
 				if (e.split) continue;
 				e.split = true; e.splitFrame = d.m_frame; e.splitAge = 0.0;
+				e.splitLocal = sp != nullptr;
+				e.splitParts.clear ();
+				if (e.splitLocal) {
+					SetPose (cx, POSE_T0, 0.0);
+					auto atJoint = [&joint] (const Placed &p) {
+						Box box;
+						MakeBox (p, p.g->node[0], box);
+						for (const Vector &j : joint) {
+							if (!box.orth) {
+								if ((j - box.g).length () <= BoxRad (box) + COLL_JOINT_R) return true;
+								continue;
+							}
+							Vector v = tmul (box.L, j - box.g);
+							v = Vector (std::max (0.0, fabs (v.x) - box.e.x),
+								std::max (0.0, fabs (v.y) - box.e.y),
+								std::max (0.0, fabs (v.z) - box.e.z));
+							if (v.length2 () <= COLL_JOINT_R*COLL_JOINT_R) return true;
+						}
+						return false;
+					};
+					for (size_t k = cx.grp[g]; k < cx.grp[g+1]; k++) {
+						const PP &q = cx.pp[cx.ord[k]];
+						bool ja = atJoint (cx.pa[q.a]), jb = atJoint (cx.pb[q.b]);
+						if (!q.support && ja && jb)
+							e.splitParts.push_back (SplitPartKey (cx,q));
+					}
+					std::sort (e.splitParts.begin (), e.splitParts.end ());
+					e.splitParts.erase (std::unique (e.splitParts.begin (), e.splitParts.end ()), e.splitParts.end ());
+					if (e.splitParts.empty ()) e.splitLocal = false;
+				}
 				CollLog (COLLLOG_INFO, "Collision: split scope start (%s, %.3g m/s), owners %u/%d.%d.%d - %u/%d.%d.%d (entry 0x%x)", sp ? "pushed" : "spawned, pushed", vrad,
 					e.a.id, e.a.planet, e.a.base, e.a.obj, e.b.id, e.b.planet, e.b.base, e.b.obj, (unsigned)(cx.A->entry | cx.B->entry));
 				continue;
@@ -1986,13 +2046,16 @@ struct CollDetect::Impl {
 			SetPose (cx, POSE_T1, 1.0);
 			for (size_t k = cx.grp[g]; k < cx.grp[g + 1] && clear; k++) {
 				size_t i = cx.ord[k];
-				if (cx.pp[i].culled || cx.pp[i].support) continue;
+				const PP &q = cx.pp[i];
+				if (q.support || (q.culled && (!e->splitLocal ||
+					!std::binary_search (e->splitParts.begin (), e->splitParts.end (), SplitPartKey (cx,q))))) continue;
 				raws.clear ();
 				Cutoff (cx, i, d.m_prm.sRel, Q_FIRST, raws, 1, nullptr);
 				if (!raws.empty ()) clear = false;
 			}
 			if (!clear && d1 > d0) continue;
 			e->split = false;
+			e->splitParts.clear ();
 			CollLog (COLLLOG_INFO, "Collision: split scope end (%s), owners %u/%d.%d.%d - %u/%d.%d.%d after %.3g s", clear ? "clear" : "not separating",
 				e->a.id, e->a.planet, e->a.base, e->a.obj, e->b.id, e->b.planet, e->b.base, e->b.obj, e->splitAge);
 			if (clear) continue;
@@ -2044,6 +2107,7 @@ struct CollDetect::Impl {
 				bool apart = e.splitFrame != d.m_frame, old = e.splitAge > COLL_GRACE_LOG_AGE;
 				if (apart || old) {
 					e.split = false;
+					e.splitParts.clear ();
 					CollLog (old ? COLLLOG_WARN : COLLLOG_INFO, "Collision: split scope end (%s), owners %u/%d.%d.%d - %u/%d.%d.%d after %.3g s", apart ? "apart" : "too old",
 						e.a.id, e.a.planet, e.a.base, e.a.obj, e.b.id, e.b.planet, e.b.base, e.b.obj, e.splitAge);
 				}
@@ -2153,7 +2217,13 @@ struct CollDetect::Impl {
 		for (size_t k = 0; k < cx.pp.size (); k++) {
 			const PP &q = cx.pp[k];
 			std::vector<CollLeafPair> *bl = bi[k] >= 0 ? &builds[bi[k]].second : nullptr;
-			if (q.culled && !bl) continue;
+			if (q.culled) {
+				if (bl) {
+					std::vector<Raw> discard;
+					Cutoff (cx, k, p.deltaCt, Q_SCOPES | Q_ZONES | Q_FRONT, discard, 4096, bl);
+				}
+				continue;
+			}
 			Cutoff (cx, k, p.deltaCt, Q_SCOPES | Q_ZONES | Q_FRONT, raws, 4096, bl);
 		}
 		for (auto &b : builds) FrontStore (cx, b.first, b.second);
@@ -2285,6 +2355,10 @@ struct CollDetect::Impl {
 		const CollBody &X = sw ? B : A, &Y = sw ? A : B;
 		if (VerHash (X) != c.verA || VerHash (Y) != c.verB) return false;
 		if (FindSplit (d, A, B)) return false;
+		for (const CollPartRef &p : A.parts)
+			for (const CollPartRef &q : B.parts)
+				if (const CollPairEntry *e = d.m_store.Find (p.owner, q.owner))
+					if (e->split) return false;
 		for (const CollZone &z : d.m_zone) if (z.bodyA == ia || z.bodyB == ia || z.bodyA == ib || z.bodyB == ib) return false;
 		CollBodyAt sx, sy;
 		BodyState (d, X, tau, Vector (), sx); BodyState (d, Y, tau, Vector (), sy);

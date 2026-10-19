@@ -120,6 +120,7 @@ public:
 	virtual int      ADCtrlMode (CollH v) { (void)v; return -1; }        // not upstream: GetADCtrlMode, -1 unknown
 	virtual void     SetADCtrlMode (CollH v, int mode) { (void)v; (void)mode; } // not upstream: SetADCtrlMode
 	// meshes and animations (E2)
+	virtual bool     MeshHasGltfDropIn (const char *name) { (void)name; return false; }
 	virtual uint32_t MeshCount (CollH v) = 0;
 	virtual CollH    MeshTemplate (CollH v, uint32_t i) = 0;   // NULL for name slots and holes
 	virtual const char *MeshName (CollH v, uint32_t i) = 0;    // live slots only

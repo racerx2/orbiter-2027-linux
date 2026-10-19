@@ -700,7 +700,9 @@
       shock diamonds at sea level and a wide faint cone in vacuum, and
       coloured by the propellant. Smoke and steam are lit by the sun, a cloud
       of steam or dust rises where a plume hits the ground, and fast vessels
-      entering an atmosphere glow in a plasma sheath.
+      entering an atmosphere glow in a plasma sheath. Running engines light
+      their own hull, the vessels near them and the ground in the colour of
+      their flame, best seen at night (with <i>Local light sources</i> on).
     </p>
     <p>
       Their hulls heat up and glow on their own: the nose and the leading
@@ -717,7 +719,8 @@
       A file per vessel class, <code>Config/GC/Plume/&lt;class&gt;.cfg</code>,
       can set each engine's propellant (hydrolox, methalox, kerolox,
       hypergolic, solid, or the add-on's own flame texture), the smoke, the
-      ground cloud (steam, dust or none) and the hull heating; Atlantis, its
+      ground cloud (steam, dust or none), the plumes' light and the hull
+      heating; Atlantis, its
       boosters and the Delta-glider come with one. A line such as
       <code>HEAT nose=0.4 emis=0.8 lag=30 glow=1.5</code> sets the nose radius
       in metres (by default 3&nbsp;% of the vessel's largest dimension, 0.25
@@ -725,6 +728,9 @@
       the emissivity of the heat shield (0.85), how many seconds its
       temperature lags behind the heating (25) and the brightness of the glow
       (1); <code>HEAT off</code> turns the hull heating off for that class.
+      <code>LIGHT 0.5</code> halves the light its plumes cast (0 to 4, 1 by
+      default); <code>LIGHT 0</code> turns it off, for an add-on that lights
+      its engines with its own lights.
       The Developer Manual (<i>Add-on content and the VulkanClient
       graphics</i>) describes these files in full.
     </p>

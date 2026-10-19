@@ -3,6 +3,7 @@
 
 #include "Mesh.h"
 #include "GltfLoader.h" // not upstream
+#include "GltfDropIn.h" // not upstream
 #include <stdio.h>
 #include "D3dmath.h"
 #include "Orbiter.h"
@@ -1122,7 +1123,7 @@ const Mesh *MeshManager::LoadMesh (const char *fname, bool *firstload)
 	Mesh *mesh = new Mesh; TRACENEW
 	bool gltf = GltfIsName (fname); // not upstream: glTF meshes
 	if (gltf) LoadGltfMesh (fname, *mesh);
-	else {
+	else if (!GltfDropInMesh (fname, *mesh)) { // not upstream: a drop-in glTF file (claude/design-gltf-roundtrip.md 2)
 		ifstream ifs (oapiResolvePath(g_pOrbiter->MeshPath (fname)), ios::in);
 		ifs >> *mesh;
 	}
@@ -1161,6 +1162,7 @@ bool LoadMesh (const char *meshname, Mesh &mesh)
 		mesh.SetName (meshname);
 		return true;
 	}
+	if (GltfDropInMesh (meshname, mesh)) return true; // not upstream: a drop-in glTF file (claude/design-gltf-roundtrip.md 2)
 	ifstream ifs (oapiResolvePath(g_pOrbiter->MeshPath (meshname)), ios::in);
 	ifs >> mesh;
 	if (ifs.good()) {

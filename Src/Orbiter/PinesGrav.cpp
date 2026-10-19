@@ -23,6 +23,9 @@
 #include <fstream>
 #include <cmath>
 #include <cerrno>
+#include <algorithm>
+#include <memory>
+#include <new>
 #include "Vecmat.h"
 #include "PinesGrav.h"
 #include "Orbiter.h"
@@ -110,78 +113,81 @@ inline void PinesGravProp::GenerateAssocLegendreMatrix(int maxDegree)
 
 int PinesGravProp::readGravModel(char* filename, int cutoff, int &actualLoadedTerms, int &maxModelTerms)
 {
-	FILE* gravModelFile = nullptr;
-	char gravFileLine[512];
-	bool isEOF = false;
-	CoeffCutoff = cutoff;
-	unsigned int linecount = 0;
-	unsigned int cutoffLines = (cutoff * cutoff + cutoff) / 2 + cutoff;
-	unsigned int maxLines = cutoffLines;
+    actualLoadedTerms = maxModelTerms = 0;
+    // Validate normalized gravity header before allocation.
+    if (!filename || cutoff < 2) return 3;
+    FILE *raw = fopen(oapiResolvePath(filename).c_str(), "rt");
+    if (!raw) return 1;
+    struct FileCloser { void operator()(FILE *f) const { fclose(f); } };
+    std::unique_ptr<FILE, FileCloser> file(raw);
 
-	try {
-		C = new double[(size_t)NM(cutoff + 1, cutoff + 1)];
-		S = new double[(size_t)NM(cutoff + 1, cutoff + 1)];
-		R = new double[(size_t)cutoff + 2];
-		I = new double[(size_t)cutoff + 2];
-		A = new double[NM((size_t)cutoff + 3, (size_t)cutoff + 3)];
-	}
-	catch (std::bad_alloc) {
-		return 2; //Could not allocate space
-	}
-	numCoeff = 0;
+    char line[512];
+    double fileRadius, fileGM, fileLat, fileLon;
+    unsigned int fileDegree, fileOrder, fileNormalized;
+    if (!fgets(line, sizeof(line), file.get()) ||
+        sscanf(line, " %lf , %lf , %*f , %u , %u , %u , %lf , %lf",
+               &fileRadius, &fileGM, &fileDegree, &fileOrder,
+               &fileNormalized, &fileLat, &fileLon) != 7 ||
+        !std::isfinite(fileRadius) || fileRadius <= 0 ||
+        !std::isfinite(fileGM) || fileGM <= 0 ||
+        !std::isfinite(fileLat) || !std::isfinite(fileLon) ||
+        fileDegree < 2 || fileOrder < 2 || fileOrder > fileDegree ||
+        fileNormalized != 1) {
+        return 3;
+    }
+    const unsigned int N = std::min((unsigned int)cutoff,
+                                    std::min(fileDegree, fileOrder));
+    // Publish coefficients only after validating the entire file.
+    std::unique_ptr<double[]> newC, newS, newA, newR, newI;
+    try {
+        newC.reset(new double[NM(N+1, N+1)]());
+        newS.reset(new double[NM(N+1, N+1)]());
+        newR.reset(new double[N+2]());
+        newI.reset(new double[N+2]());
+        newA.reset(new double[NM(N+3, N+3)]());
+    } catch (const std::bad_alloc &) {
+        return 2;
+    }
 
-	C[0] = 0;	//This needs to be 0 unless you want the point-mass gravity as well.
-	S[0] = 0; 
+    // SHA/TAB rows start at (1,0), ordered by degree and order.
+    for (unsigned int n=1; n<=N; ++n) {
+        for (unsigned int m=0; m<=n; ++m) {
+            int rowDegree, rowOrder;
+            double c, s;
+            if (!fgets(line, sizeof(line), file.get()) ||
+                sscanf(line, " %d , %d , %lf , %lf",
+                       &rowDegree, &rowOrder, &c, &s) != 4 ||
+                rowDegree != (int)n || rowOrder != (int)m ||
+                !std::isfinite(c) || !std::isfinite(s))
+                return 4;
+            newC[NM(n,m)] = c;
+            newS[NM(n,m)] = s;
+        }
+    }
 
-	gravModelFile = fopen(oapiResolvePath(filename).c_str(), "rt"); // fopen_s counterpart
-	int file_error = (gravModelFile ? 0 : errno);
+    delete[] C;
+    delete[] S;
+    delete[] A;
+    delete[] R;
+    delete[] I;
+    C = newC.release();
+    S = newS.release();
+    A = newA.release();
+    R = newR.release();
+    I = newI.release();
 
-	if (file_error == 0 && gravModelFile) {
-		while (fgets(gravFileLine, 511, gravModelFile))
-		{
-			if (feof(gravModelFile))
-			{
-				break;
-			}
-
-			if (linecount == 0) {
-				if (!sscanf(gravFileLine, " %lf , %lf , %*f , %d , %d , %d , %lf , %lf \n", // not upstream: %*f, the l does nothing on a skipped value
-					&refRad,
-					&GM,
-					&order,
-					&degree,
-					&normalized,
-					&referenceLat,
-					&referenceLon)) {
-					return 3; //Bad first line format
-				}
-				maxLines = NM(order, degree);
-
-				if (maxLines < cutoffLines) {
-					cutoffLines = maxLines;
-					CoeffCutoff = (int)std::lround((sqrt(9+8*cutoffLines)-3)/2); //Solution to n for (2^2+n)/n+2 = orderDegree
-				}
-				numCoeff = linecount += 2;
-			}
-			else if (linecount <= cutoffLines + 1) {
-
-				unsigned int lineindex = linecount - 1; //this is so we start loading coefficients at n=1
-
-				if (!sscanf(gravFileLine, " %*d , %*d , %lf , %lf , %*f , %*f \n", // not upstream: %*f, the l does nothing on a skipped value
-					&C[lineindex],
-					&S[lineindex])) {
-					return 4;//Bad coefficient line format
-				}
-				numCoeff = linecount++;
-			}
-		}
-		actualLoadedTerms = NM(CoeffCutoff, CoeffCutoff);
-		maxModelTerms = NM(order,degree);
-		return 0; //successfully loaded gravity coefficients
-	}
-	else {
-		return 1; //Could Not Open File
-	}
+    refRad = fileRadius;
+    GM = fileGM;
+    degree = fileDegree;
+    order = fileOrder;
+    normalized = fileNormalized;
+    referenceLat = fileLat;
+    referenceLon = fileLon;
+    CoeffCutoff = N;
+    numCoeff = NM(N,N);
+    actualLoadedTerms = (int)numCoeff;
+    maxModelTerms = (int)NM(fileDegree,fileOrder);
+    return 0;
 }
 
 Vector PinesGravProp::GetPinesGrav(const Vector rpos, const int maxDegree, const int maxOrder)

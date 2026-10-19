@@ -279,6 +279,23 @@ TEST_CASE("PlumeMath: clustering", "[plumemath]")
 	for (auto &s : ssme) { double l = std::sqrt(s.axis[1] * s.axis[1] + s.axis[2] * s.axis[2]); s.axis[1] /= l; s.axis[2] /= l; }
 	Cluster(ssme, 32, g);
 	CHECK(g.size() == 3);
+	std::vector<Nozzle> ssv = { // SSV's exits: the lower pair 2.3 m apart, closer than 1.2 (re + re), the top 3.2 m away (design-plume-nozzles 1)
+		{ { 0.0, 1.63, -15.83 }, { 0, 0, -1 }, 1.19, 1.0, 40.0, 0, 0 },
+		{ { -1.14, -1.28, -16.5 }, { 0, 0, -1 }, 1.19, 1.0, 40.0, 0, 0 },
+		{ { 1.14, -1.28, -16.5 }, { 0, 0, -1 }, 1.19, 1.0, 40.0, 0, 0 } };
+	Cluster(ssv, 32, g);
+	CHECK(g.size() == 3);
+	std::vector<Nozzle> f1 = { { { 0, 0, 0 }, { 0, 0, -1 }, 1.88, 1.0, 40.0, 2, 0 } }; // five touching F-1s stay five
+	for (int i = 0; i < 4; i++) f1.push_back({ { 2.9 * ((i & 1) ? 1 : -1), 2.9 * ((i & 2) ? 1 : -1), 0 }, { 0, 0, -1 }, 1.88, 1.0, 40.0, 2, 0 });
+	Cluster(f1, 32, g);
+	CHECK(g.size() == 5);
+	std::vector<Nozzle> nine; // nine touching: more than TOUCH_MAX, one volume
+	for (int i = 0; i < 9; i++) nine.push_back({ { 1.0 * (i % 3), 1.0 * (i / 3), 0 }, { 0, 0, -1 }, 0.46, 1.0, 40.0, 2, 0 });
+	Cluster(nine, 32, g);
+	CHECK(g.size() == 1);
+	Cluster(ssv, 2, g); // over the budget the touching pair joins first
+	REQUIRE(g.size() == 2);
+	CHECK(((g[0].size() == 1 && g[0][0] == 0) || (g[1].size() == 1 && g[1][0] == 0)));
 	std::vector<Nozzle> opp = { { { 0, 0, 0 }, { 0, 0, 1 }, 1.0, 1.0, 50.0, 0, 0 }, { { 0, 0, 0.5 }, { 0, 0, -1 }, 1.0, 1.0, 50.0, 0, 0 } };
 	Cluster(opp, 32, g);
 	CHECK(g.size() == 2);
@@ -376,4 +393,116 @@ TEST_CASE("PlumeMath: base surfaces under a plume, a pad's hole and deck", "[plu
 	double of[3] = { 301 - 970, 1000, 0 };
 	CHECK_THAT(p.Hit(of, slant, 1000 * std::sqrt(2.0)), WithinAbs(970 * std::sqrt(2.0), 1e-6)); // from 1 km up the march starts at the top
 	CHECK(p.Hit(of, slant, 900 * std::sqrt(2.0)) == SurfaceGrid::NONE); // the top is past tmax
+}
+
+TEST_CASE("PlumeMath: the exit and the Mach disk in closed form (design-plume-light 1)", "[plumemath]")
+{
+	for (double re : { 0.3, 1.19, 2.1 })
+		for (double back : { 1.0, 0.7, 0.3 }) { // the old slab, marched finely along a ray from behind
+			double s = 0.0, dt = 1e-4;
+			for (double t = -5.0; t <= 5.0; t += dt) { double x = -back * t; s += back * std::exp(-std::pow(x / (0.15 * re), 2.0)) / (0.27 * re) * dt; }
+			CHECK_THAT(s, WithinRel(ExitSheet(), 1e-4));
+		}
+	CHECK_THAT(ExitSheet(), WithinAbs(0.9847, 1e-4)); // Plume.glsl EXIT_SHEET
+	for (double rj : { 0.6, 1.0 })
+		for (double c : { 1.0, -0.6, 0.3, 0.25 }) { // the old Mach disk term, either side
+			double re = 1.19, s = 0.0, dt = 1e-4, xm = 0.55 * re;
+			for (double t = -8.0; t <= 8.0; t += dt) { double x = xm + c * t; s += std::exp(-std::pow((x - xm) / (0.06 * rj * re), 2.0)) * 0.5 / (0.12 * rj * re) * dt; }
+			CHECK_THAT(s, WithinRel(MachSheet(c), 1e-4));
+		}
+	CHECK_THAT(MachSheet(1.0), WithinAbs(0.4431, 1e-4)); // Plume.glsl MACH_K
+	CHECK(MachSheet(0.05) == MachSheet(0.25)); // edge-on capped
+}
+
+TEST_CASE("PlumeMath: the plumes' own light (design-plume-light 2)", "[plumemath]")
+{
+	const double c0[3] = { 0.30 * 0.06, 0.40 * 0.06, 1.00 * 0.06 }, c1[3] = { 0.8, 0.68, 0.52 }; // hydrolox, PostPlume's palette
+	Light L = PlumeLight(HYDROLOX, 1.0, 1.19, c0, c1, 1.0); // an SSME at full thrust
+	CHECK_THAT(L.k, WithinAbs(2.0 * 0.818, 1e-9));
+	CHECK_THAT(L.rgb[0], WithinAbs(1.0, 1e-12));
+	CHECK_THAT(L.rgb[1], WithinAbs(0.704 / 0.818, 1e-9));
+	CHECK_THAT(L.rgb[2], WithinAbs(0.580 / 0.818, 1e-9));
+	CHECK_THAT(L.x, WithinAbs(1.19, 1e-12));
+	CHECK_THAT(L.att2, WithinRel(1.0 / (1.785 * 1.785), 1e-9));
+	CHECK_THAT(L.k / (1.0 + L.range * L.range * L.att2), WithinRel(0.01, 1e-9)); // the range is where it drops to 0.01
+	CHECK_THAT(L.flux, WithinRel(L.k * 1.785 * 1.785, 1e-12));
+	CHECK_THAT(L.k / (1.0 + 1.5 * 1.5 * L.att2), WithinAbs(0.96, 0.01)); // the bell's inside, ~1.5 m
+	Light R = PlumeLight(HYDROLOX, 1.0, 0.1, c0, c1, 1.0); // an RCS-sized exit: the same brightness, far less flux
+	CHECK_THAT(R.k, WithinAbs(L.k, 1e-12));
+	CHECK(R.flux < 0.01 * L.flux);
+	Light T = PlumeLight(TEXTURE, 0.5, 0.4, c0, c1, 2.0); // an add-on flame: the puffs' orange
+	CHECK_THAT(T.k, WithinAbs(1.0, 1e-12));
+	CHECK(T.rgb[0] == 1.0);
+	CHECK(T.rgb[1] == 0.7);
+	CHECK(T.rgb[2] == 0.45);
+	CHECK(PlumeLight(HYDROLOX, 0.0, 1.19, c0, c1, 1.0).k == 0.0);
+	CHECK(PlumeLight(HYDROLOX, 1.0, 1.19, c0, c1, 0.0).k == 0.0);
+	CHECK(PlumeLight(SOLID, 1.0, 2.0, c0, c1, 1000.0).range == 300.0);
+}
+
+TEST_CASE("PlumeMath: a vessel's exhaust lights merged into one (design-plume-light 2.3)", "[plumemath]")
+{
+	auto at = [](const Spot &s, const double q[3]) { double d[3] = { q[0] - s.p[0], q[1] - s.p[1], q[2] - s.p[2] }; return s.k / (1.0 + (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) / s.rf2); };
+	Spot a = { { 1.0, 2.0, -3.0 }, { 1.0, 0.8, 0.6 }, 1.64, 1.785 * 1.785 };
+	Spot one = MergeSpots({ a });
+	for (int i = 0; i < 3; i++) { CHECK_THAT(one.p[i], WithinAbs(a.p[i], 1e-12)); CHECK_THAT(one.rgb[i], WithinAbs(a.rgb[i], 1e-12)); }
+	CHECK_THAT(one.k, WithinRel(a.k, 1e-9));
+	CHECK_THAT(one.rf2, WithinRel(a.rf2, 1e-9));
+	Spot b = a, c = a;
+	b.p[0] = -2.0; c.p[0] = 2.0;
+	Spot two = MergeSpots({ b, c }); // at their middle, wider by the half distance
+	CHECK_THAT(two.p[0], WithinAbs(0.0, 1e-12));
+	CHECK_THAT(two.rf2, WithinRel(a.rf2 + 4.0, 1e-9));
+	CHECK_THAT(two.k * two.rf2, WithinRel(2.0 * a.k * a.rf2, 1e-9)); // flux kept
+	Spot w = a;
+	w.rgb[0] = 0.5; w.rgb[1] = 1.0; w.rgb[2] = 0.0; w.k = 3.0 * a.k;
+	Spot mix = MergeSpots({ a, w }); // the flux-weighted colour, largest channel 1
+	CHECK_THAT(mix.rgb[1], WithinAbs(1.0, 1e-12));
+	CHECK_THAT(mix.rgb[0], WithinRel((1.0 + 3.0 * 0.5) / (0.8 + 3.0), 1e-9));
+	// the SSMEs at their install angles: exits 3.1 to 3.4 m apart, the lights 1.19 m past them
+	const double ex[3][3] = { { 0.0, 1.63, -15.83 }, { -1.56, -1.28, -16.50 }, { 1.56, -1.28, -16.50 } }, ax[3][3] = { { 0.0, 0.276, -0.961 }, { -0.061, 0.173, -0.983 }, { 0.061, 0.173, -0.983 } };
+	std::vector<Spot> sm;
+	for (int i = 0; i < 3; i++) {
+		Spot s = a;
+		for (int j = 0; j < 3; j++) s.p[j] = ex[i][j] + 1.19 * ax[i][j];
+		sm.push_back(s);
+	}
+	Spot m = MergeSpots(sm);
+	CHECK_THAT(m.k, WithinAbs(2.2, 0.15));
+	CHECK_THAT(std::sqrt(m.rf2), WithinAbs(2.6, 0.15));
+	CHECK_THAT(LightRange(m.k, m.rf2), WithinAbs(38.0, 3.0));
+	double sum = 0.0;
+	for (const Spot &s : sm) sum += at(s, m.p);
+	CHECK_THAT(at(m, m.p), WithinRel(sum, 0.06)); // at the middle as the three
+	for (double D : { 200.0, 1000.0 }) { // and far away as the three
+		double q[3] = { m.p[0] + 0.3 * D, m.p[1] - 0.5 * D, m.p[2] + 0.81 * D }, far = 0.0;
+		for (const Spot &s : sm) far += at(s, q);
+		CHECK_THAT(at(m, q), WithinRel(far, 0.002));
+	}
+	CHECK(MergeSpots({}).k == 0.0);
+	Spot off = a; off.k = 0.0;
+	CHECK(MergeSpots({ off }).k == 0.0);
+}
+
+TEST_CASE("PlumeMath: a plume light's mean over a mesh's bounding sphere (design-plume-nozzles 3)", "[plumemath]")
+{
+	auto numeric = [](double k, double a, double r, double d) { double s = 0.0; int N = 200000; for (int i = 0; i < N; i++) { double u = -1.0 + (i + 0.5) * 2.0 / N; s += k / (1.0 + a * (r * r + d * d - 2.0 * r * d * u)); } return s / N; };
+	for (double r : { 0.5, 3.0, 33.0 })
+		for (double d : { 0.0, 1.0, 7.0, 20.0, 200.0 }) CHECK_THAT(SphereMean(2.2, 1.0 / 6.8, r, d), WithinRel(numeric(2.2, 1.0 / 6.8, r, d), 1e-6));
+	CHECK_THAT(SphereMean(2.2, 1.0 / 6.8, 33.0, 7.0), WithinAbs(0.014, 0.001)); // the SSME light on the MLP: far below a floodlight
+	CHECK_THAT(SphereMean(2.2, 1.0 / 6.8, 1e-4, 10.0), WithinRel(2.2 / (1.0 + 100.0 / 6.8), 1e-6)); // a small mesh: the old rule's value
+	CHECK_THAT(SphereMean(2.2, 1.0 / 6.8, 2.0, 0.0), WithinRel(2.2 / (1.0 + 4.0 / 6.8), 1e-12));
+}
+
+TEST_CASE("PlumeMath: a point light's mean over a mesh's bounding sphere (design-plume-nozzles 3c)", "[plumemath]")
+{
+	auto brute = [](double I, double c, double b, double a, double r, double d) { double sum = 0.0; int N = 400000; for (int i = 0; i < N; i++) { double u = -1.0 + (i + 0.5) * 2.0 / N, s = std::sqrt(std::max(0.0, r * r + d * d - 2.0 * r * d * u)); sum += I / (c + b * s + a * s * s); } return sum / N; };
+	for (double r : { 2.0, 33.0 })
+		for (double d : { 0.5, 7.0, 25.0 }) {
+			CHECK_THAT(SphereMeanAtt(0.92, 1.0, 0.05, 0.0005, r, d), WithinRel(brute(0.92, 1.0, 0.05, 0.0005, r, d), 1e-4)); // SSV's SSMELight
+			CHECK_THAT(SphereMeanAtt(2.2, 1.0, 0.0, 1.0 / 6.8, r, d), WithinRel(SphereMean(2.2, 1.0 / 6.8, r, d), 1e-4));
+		}
+	CHECK_THAT(SphereMeanAtt(0.92, 1.0, 0.05, 0.0005, 33.0, 7.0), WithinAbs(0.3, 0.05)); // on the MLP: below a stadium light's 0.55 at 60 m
+	CHECK(SphereMeanAtt(0.92, 1.0, 0.05, 0.0005, 33.0, 7.0) < 1.0 / (1e-3 + 0.0005 * 3600.0));
+	CHECK_THAT(SphereMeanAtt(1.0, 1.0, 0.0, 0.01, 10.0, 0.0), WithinRel(1.0 / 2.0, 1e-12)); // at the centre
 }

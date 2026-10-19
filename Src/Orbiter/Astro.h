@@ -34,9 +34,13 @@ inline double E_grav (double M, double d2)
 const double day = (1.0/86400.0);
 // Julian days/second
 
-const double UTC_CT_diff = 66.184;
-// Current difference between UTC (Coordinated Universal Time) and CT (Coordinate Time)
-// This may change in the future if additional leap seconds are added to UTC.
+// Historical UTC-to-TAI offset, in seconds, from 1960 onward.
+// Before 1960 UTC was undefined; returns NaN. After the latest IERS
+// bulletin entry, assumes no new leap seconds until the table is updated.
+double TaiMinusUtc (double utcMjd);
+// Ordinary POSIX/UTC time to TT (not TDB) MJD; excludes the 23:59:60 instant.
+// Explicit scenario MJD values are already dynamical and must not be converted.
+double UtcToTtMjd (double utcMjd);
 
 inline double Day (double sec)
 { return sec * day; }

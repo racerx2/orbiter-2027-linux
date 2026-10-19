@@ -215,6 +215,7 @@ public:
 
 		float	GetIlluminance(D3DXVECTOR3 &pos, float r) const;
 		void	UpdateLight(const LightEmitter *le, const class vObject *vo);
+		void	SetPoint(const D3DXVECTOR3 &lpos, const class vObject *vo, const D3DXCOLOR &col, float k, const D3DXVECTOR3 &att, float rng); // not upstream: a point light with no emitter, the plumes' (design-plume-light 2)
 		void	Reset();
 		const   LightEmitter *GetEmitter() const;
 

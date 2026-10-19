@@ -78,6 +78,8 @@ add_unit_test(Port.Harness)
 # not upstream: core utilities
 add_unit_test(Vecmat.Test ${ORBITER_SOURCE_DIR}/Vecmat.cpp)
 add_unit_test(Astro.Test ${ORBITER_SOURCE_DIR}/Astro.cpp ${ORBITER_SOURCE_DIR}/TimeData.cpp)
+# not upstream: independent validation of Pines gravity
+add_unit_test(PinesGrav.Test ${ORBITER_SOURCE_DIR}/PinesGrav.cpp ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
 add_unit_test(PathResolve.Test ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
 add_unit_test(Input.Test ${ORBITER_SOURCE_DIR}/Di7frame.cpp ${ORBITER_SOURCE_DIR}/Memstat.cpp)
 # not upstream: Celbody modules, loaded like Orbiter loads them; the test exports the exe-side API they bind to
@@ -168,6 +170,9 @@ endif()
 add_unit_test(GltfLoader.Test ${ORBITER_SOURCE_DIR}/GltfLoader.cpp)
 target_link_libraries(GltfLoader.Test Qt6::Core)
 target_compile_definitions(GltfLoader.Test PRIVATE GLTF_TEST_ROOT="${ORBITER_SOURCE_ROOT_DIR}")
+# custom: the glTF round trip: records, default pose, unchanged test, fitted components (synthetic files)
+add_unit_test(GltfRoundTrip.Test ${ORBITER_SOURCE_DIR}/GltfLoader.cpp ${ORBITER_SOURCE_DIR}/GltfRoundTrip.cpp)
+target_link_libraries(GltfRoundTrip.Test Qt6::Gui)
 # custom: VulkanClient PBR material records and their config text
 add_unit_test(PbrMaterial.Test ${ORBITER_SOURCE_ROOT_DIR}/OVP/VulkanClient/PbrMaterial.cpp)
 target_include_directories(PbrMaterial.Test PRIVATE ${ORBITER_SOURCE_ROOT_DIR}/OVP/VulkanClient)

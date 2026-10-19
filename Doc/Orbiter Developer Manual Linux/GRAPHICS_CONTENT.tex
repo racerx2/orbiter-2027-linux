@@ -518,7 +518,7 @@ The class is taken from the vessel's plume file when it names one, otherwise fro
 \noindent
 Only the texture class uses an add-on's exhaust texture. An engine with a custom flame texture and a specific impulse in the ranges above is drawn with the colours of its propellant class, unless its plume file sets it to texture.\\
 \\
-Exhausts smaller than one pixel on screen (by their exit radius) stay legacy flames; between one and three pixels the two are blended. Neighbouring exhausts of one vessel with the same class and direction merge into one plume, and the 32 largest plumes on screen are drawn as volumes, the others as legacy flames. The legacy flame of an exhaust drawn as a volume is not drawn. Plumes light the smoke around them, but not meshes or the ground: engine light on the vessel and the pad still comes from the vessel's local lights (AddPointLight, AddSpotLight), as before. Height fog and the volumetric clouds cover plumes behind them.\\
+Exhausts smaller than one pixel on screen (by their exit radius) stay legacy flames; between one and three pixels the two are blended. Each engine is its own plume. Only clusters of more than 8 touching nozzles of one vessel with the same class and direction, engines below 3 pixels, and the smallest when more than 32 remain are merged into one plume, which still shows each nozzle's glowing exit and Mach disk. The 32 largest plumes on screen are drawn as volumes, the others as legacy flames. The legacy flame of an exhaust drawn as a volume is not drawn. Plumes light the smoke around them, and each lit exhaust within 2\,km of the camera casts a light of its exit's colour on the meshes and the ground near it, just past the nozzle exit, while local lights are enabled. A vessel's exhausts of one propellant class share one light, two classes at most, for the 8 strongest. The scene keeps the 24 nearest local lights, and the plume lights only take places the vessels' own lights left. A mesh takes only its strongest few of them; a plume light, and an add-on's point light inside the mesh's bounds (an engine light inside a launch tower's, say), competes by the light it spreads over the whole mesh, so it never takes the place of a floodlight on a large structure. Spot lights inside the bounds keep their place. It adds to the vessel's own local lights (AddPointLight, AddSpotLight); a plume file can scale it or turn it off (LIGHT). Height fog and the volumetric clouds cover plumes behind them.\\
 \\
 \textbf{Ground clouds.} When a plume reaches the ground in air, a cloud of steam or dust rises where it hits: while the vessel is less than 300 m above the ground, the ambient pressure is above 10 kPa, the plume points within about 78$^{\circ}$ of straight down and the ground lies within 2.5 plume lengths of the nozzle. More thrust gives more cloud, up to 384 puffs per vessel; each lasts about 30 s, rises and drifts with the wind. Steam is white, dust tan.\\
 \\
@@ -527,7 +527,7 @@ Exhausts smaller than one pixel on screen (by their exit radius) stay legacy fla
 
 \subsubsection{Plume files}
 \label{sssec:vk_plumecfg}
-A vessel class can give its exhausts their classes, and tune its smoke, its ground cloud and the heating of its hull, in Config/GC/Plume/<class>.cfg, where <class> is the class name with each / or $\backslash$ replaced by \_. The file name must match the class name exactly, including upper and lower case. Orbiter comes with plume files for Atlantis, its boosters (Atlantis\_SRB) and the Delta-glider.
+A vessel class can give its exhausts their classes, and tune its smoke, its ground cloud, its plumes' light and the heating of its hull, in Config/GC/Plume/<class>.cfg, where <class> is the class name with each / or $\backslash$ replaced by \_. The file name must match the class name exactly, including upper and lower case. Orbiter comes with plume files for Atlantis, its boosters (Atlantis\_SRB) and the Delta-glider.
 
 \begin{lstlisting}[language=OSFS]
 ; Config/GC/Plume/MyRocket.cfg
@@ -538,6 +538,7 @@ EXHAUST 8 solid               ; escape tower motor
 SMOKE 1.5
 GROUND steam
 PUFFS 1
+LIGHT 0.5                     ; half the plumes' light on the hull and the pad
 HEAT nose=1.5 lag=40          ; blunt nose, thick heat shield
 \end{lstlisting}
 
@@ -557,6 +558,8 @@ Each line holds a keyword and its values; a semicolon starts a comment. Keywords
 	GROUND <type> & The ground cloud: steam, dust or none; other values count as steam. Default: dust for the texture class, steam for the others.\\
 	\hline\rule{0pt}{2ex}
 	PUFFS <0|1> & Which of the vessel's diffuse particle streams become lit puffs (section \ref{sssec:vk_puffs}): 1 all of them, 0 none. Default: those with Orbiter's default particle texture.\\
+	\hline\rule{0pt}{2ex}
+	LIGHT <f> & Scale of the light the class's plumes cast on meshes and the ground, 0 to 4; 0 turns it off, for a vessel that lights its engines with its own local lights. Default 1.\\
 	\hline\rule{0pt}{2ex}
 	HEAT [off|on] [nose=<m>]\newline [emis=<e>] [lag=<s>]\newline [glow=<g>] & The re-entry hull heating of the class (section \ref{sssec:vk_heat}). Default: on, with the defaults given there.\\
 	\hline

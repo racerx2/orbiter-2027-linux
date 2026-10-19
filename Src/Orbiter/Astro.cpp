@@ -5,8 +5,80 @@
 #include <stdio.h>
 #include <string.h>
 #include <fstream>
+#include <cmath>
+#include <limits>
 #include "Astro.h"
 #include "Vecmat.h"
+
+// Historical TAI-UTC values, 1960-1971 drift and later leap-second steps.
+// Source: SOFA/ERFA eraDat historical table; IERS leap-second bulletins.
+// Updated through the 2017-01-01 step (IERS Bulletin C 72: no leap in 2026).
+// If a new leap second is announced, update the entries below.
+struct UtcTaiOffset {
+    double startMjd, baseSeconds, referenceMjd, rateSecondsPerDay;
+};
+
+double TaiMinusUtc (double utcMjd)
+{
+    static constexpr UtcTaiOffset changes[] = {
+        {36934, 1.417818, 37300, .001296},
+        {37300, 1.422818, 37300, .001296},
+        {37512, 1.372818, 37300, .001296},
+        {37665, 1.845858, 37665, .0011232},
+        {38334, 1.945858, 37665, .0011232},
+        {38395, 3.240130, 38761, .001296},
+        {38486, 3.340130, 38761, .001296},
+        {38639, 3.440130, 38761, .001296},
+        {38761, 3.540130, 38761, .001296},
+        {38820, 3.640130, 38761, .001296},
+        {38942, 3.740130, 38761, .001296},
+        {39004, 3.840130, 38761, .001296},
+        {39126, 4.313170, 39126, .002592},
+        {39887, 4.213170, 39126, .002592},
+        {41317, 10, 0, 0},
+        {41499, 11, 0, 0},
+        {41683, 12, 0, 0},
+        {42048, 13, 0, 0},
+        {42413, 14, 0, 0},
+        {42778, 15, 0, 0},
+        {43144, 16, 0, 0},
+        {43509, 17, 0, 0},
+        {43874, 18, 0, 0},
+        {44239, 19, 0, 0},
+        {44786, 20, 0, 0},
+        {45151, 21, 0, 0},
+        {45516, 22, 0, 0},
+        {46247, 23, 0, 0},
+        {47161, 24, 0, 0},
+        {47892, 25, 0, 0},
+        {48257, 26, 0, 0},
+        {48804, 27, 0, 0},
+        {49169, 28, 0, 0},
+        {49534, 29, 0, 0},
+        {50083, 30, 0, 0},
+        {50630, 31, 0, 0},
+        {51179, 32, 0, 0},
+        {53736, 33, 0, 0},
+        {54832, 34, 0, 0},
+        {56109, 35, 0, 0},
+        {57204, 36, 0, 0},
+        {57754, 37, 0, 0},
+    };
+    // UTC did not exist before 1960. Do not fabricate a historic offset.
+    if (!std::isfinite(utcMjd) || utcMjd < changes[0].startMjd)
+        return std::numeric_limits<double>::quiet_NaN();
+    for (int i = int(sizeof(changes)/sizeof(changes[0]))-1; i >= 0; --i) {
+        const UtcTaiOffset &c = changes[i];
+        if (utcMjd >= c.startMjd)
+            return c.baseSeconds + (utcMjd - c.referenceMjd)*c.rateSecondsPerDay;
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+}
+
+double UtcToTtMjd (double utcMjd)
+{
+    return utcMjd + (TaiMinusUtc(utcMjd) + 32.184)*day; // TT-TAI is 32.184 s
+}
 
 // transforms a date and time (UT) into MJD format
 double date2mjd (struct tm *date)

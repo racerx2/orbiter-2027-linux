@@ -703,6 +703,84 @@ static void ZoneScene (std::vector<CollBody> &bs, double h)
 	bs.push_back (Still (2, Vector (2.12, 0, 0), h)); AddPart (bs.back (), Geom (rb), VKey (2));
 }
 
+TEST_CASE("Cargo attachment zones are matched, local, and never hide bay walls", "[colldetect][cargo]")
+{
+    const double h=1.0/60.0;
+    std::vector<CollBody> bodies;
+    ZoneScene(bodies,h); // mating fixtures near y=0; wing collision at y=6 remains
+
+    auto pt=[](int body, uint32_t id, bool toparent, const char* name,
+               const Vector& local, const Vector& global, const Vector& dir) {
+        CollAttachZonePoint z {};
+        z.body=body;
+        z.owner=VKey(id);
+        z.toparent=toparent;
+        std::strncpy(z.id,name,8);
+        z.cb=local;
+        z.at[0].g=global;
+        z.at[0].d=dir;
+        z.at[0].r=Vector(0,1,0);
+        z.at[0].v=Vector();
+        z.at[1]=z.at[0];
+        return z;
+    };
+    const auto parent=pt(0,1,false,"X",Vector(1.05,0,0),Vector(1.05,0,0),Vector(1,0,0));
+    const auto child=pt(1,2,true,"XS",Vector(-1.05,0,0),Vector(1.07,0,0),Vector(-1,0,0));
+
+    auto count=[&](const std::vector<CollZone>& zones) {
+        CollDetect d;
+        d.Begin(CollParams(),h);
+        for (const CollBody &b : bodies) d.AddBody(b);
+        d.SetZones(zones);
+        std::vector<CollPairResult> results;
+        CollFrameStats stats {};
+        d.Detect(results,stats);
+        std::pair<int,int> hits {0,0};
+        for (const auto &r : results)
+            for(int i=0;i<r.npt;++i)
+                (fabs(r.pt[i].pA.y)<1.0 ? hits.first : hits.second)++;
+        return hits;
+    };
+
+    std::vector<CollZone> active;
+    CollAttachmentZones({parent,child},active);
+    REQUIRE(active.size()==1);
+    CHECK(active[0].ra==COLL_ATTACH_ZONE_RADIUS);
+    CHECK(active[0].rb==COLL_ATTACH_ZONE_RADIUS);
+    auto noZone=count({});
+    auto withZone=count(active);
+    REQUIRE(noZone.first>0);
+    REQUIRE(noZone.second>0);
+    CHECK(withZone.first==0); // latch triangles suppressed
+    CHECK(withZone.second>0); // remote bay walls / airframe still collide
+
+    auto checkInactive=[&](CollAttachZonePoint modified) {
+        std::vector<CollZone> result;
+        CollAttachmentZones({parent,modified},result);
+        CHECK(result.empty());
+    };
+    auto wrongId=child; std::strcpy(wrongId.id,"ZZ");
+    checkInactive(wrongId);
+    auto wrongRole=child; wrongRole.toparent=false;
+    checkInactive(wrongRole);
+    auto sameBody=child; sameBody.body=0;
+    checkInactive(sameBody);
+    auto far=child; far.at[0].g.x+=3.0; far.at[1].g.x+=3.0;
+    checkInactive(far);
+    auto flipped=child; flipped.at[0].d=Vector(1,0,0); flipped.at[1]=flipped.at[0];
+    checkInactive(flipped);
+    auto fast=child; fast.at[0].v=Vector(2,0,0); fast.at[1].v=Vector(2,0,0);
+    checkInactive(fast);
+
+    // Predicted alignment can enable the zone.
+    auto approaching=child;
+    approaching.at[0].g.x+=3.0;
+    approaching.at[1].g=child.at[1].g;
+    std::vector<CollZone> predicted;
+    CollAttachmentZones({parent,approaching},predicted);
+    REQUIRE(predicted.size()==1);
+}
+
 TEST_CASE("U12 docking zone AND rule, owner restriction and embedded attachments", "[colldetect][U12]")
 {
 	double h = 1.0/60.0;
@@ -758,6 +836,60 @@ TEST_CASE("U12 docking zone AND rule, owner restriction and embedded attachments
 	const CollPairEntry *e = d.Pairs ().Find (VKey (11), VKey (10));
 	REQUIRE (e);
 	CHECK (e->embed.size () == 2);
+}
+
+TEST_CASE("Cargo release does not bypass a closed bay door", "[colldetect][cargo]")
+{
+    const double h = 0.05;
+    const CollGeom *floor = Geom(BoxM(Vector(2, 0.1, 2), Vector(0, -0.6, 0)));
+    const CollGeom *door = Geom(BoxM(Vector(2, 0.1, 2), Vector(0, 2.0, 0)));
+    const CollGeom *guide = Geom(BoxM(Vector(0.08, 2.0, 2.0), Vector(0.83, 0.8, 0)));
+    const CollGeom *payload = Geom(BoxM(Vector(0.7, 0.7, 0.7)));
+
+    auto run = [&](bool closed, bool local) {
+        CollDetect detector;
+        int doorHits = 0;
+        int entryHits = 0;
+        bool splitAtDoor = false;
+        double y = 0.1;
+        for (int k = 0; k < 100; ++k) {
+            CollBody A = Still(1, Vector(), h);
+            AddPart(A, floor, VKey(1), 10);
+            if (closed) AddPart(A, door, VKey(1), 11);
+            AddPart(A, guide, VKey(1), 12);
+            CollBody B = Lin(2, Vector(0, y, 0), Vector(0, 0.5, 0), h);
+            AddPart(B, payload, VKey(2), 20);
+            if (k == 0) {
+                A.entry = COLLE_MEMBERS;
+                B.entry = COLLE_NEW;
+                detector.SetSplit({CollSplit{1, 2, {Vector(0, -0.5, 0)}}});
+            } else {
+                detector.SetSplit({});
+            }
+            std::vector<CollPairResult> contacts;
+            if (k == 1 && !local) {
+                CollPairEntry *e = detector.Pairs().Find(VKey(1), VKey(2));
+                REQUIRE(e);
+                e->splitLocal = false;
+            }
+            Frame(detector, CollParams(), h, {A, B}, contacts);
+            const CollPairEntry *e = detector.Pairs().Find(VKey(1), VKey(2));
+            if (closed && y > 1.35 && y < 1.45 && e && e->split) splitAtDoor = true;
+            for (const auto &r : contacts)
+                for (int i = 0; i < r.npt; ++i)
+                    if (closed && r.pt[i].partA == 1) {
+                        doorHits++;
+                        if (k == 0) entryHits++;
+                    }
+            y += 0.5*h;
+        }
+        CHECK(entryHits == 0);
+        if (closed) CHECK(splitAtDoor);
+        return doorHits;
+    };
+    CHECK(run(false, true) == 0);
+    CHECK(run(true, false) == 0);
+    CHECK(run(true, true) > 0);
 }
 
 TEST_CASE("U13 entry events, GRACE scopes and supports", "[colldetect][U13]")
