@@ -149,9 +149,10 @@ public:
 		pvel.push_back (PlanetV { p, t, v, Vector () });
 		return Vector ();
 	}
-	void Zones (const std::vector<CollABody> &b, double hs, std::vector<CollZone> &out) override // docking zones (E1 8.1); attachment zones are not wired
+	void Zones (const std::vector<CollABody> &b, double hs, std::vector<CollZone> &out) override // free docking and cargo-attachment zones (E1 8.1)
 	{
 		out.clear ();
+		if (geom.cfg.dockZone) {
 		struct Port { int body; uint32_t id; CollPortAt at[2]; Vector cb; double rdz; };
 		std::vector<Port> ports;
 		const auto &pr = geom.Ports ();
@@ -187,6 +188,39 @@ public:
 				if (!on) continue;
 				out.push_back (CollZone { A.body, C.body, VKey (A.id), VKey (C.id), A.cb, C.cb, rdz, rdz });
 			}
+		}
+
+		if (geom.cfg.attachZone) {
+			std::vector<CollAttachZonePoint> points;
+			const auto &attachments = geom.AttachPoints ();
+			for (int i = 0; i < (int)b.size (); ++i) {
+				const CollABody &B = b[i];
+				if (B.kind == COLLB_BASE) continue;
+				Matrix Rb = QM (B.q);
+				Vector wg = mul (Rb, B.wb);
+				for (const CollAttRec &a : attachments) {
+					if (a.mate || !a.id[0] ||
+						std::find(B.member.begin(), B.member.end(), a.vessel) == B.member.end()) continue;
+					CollH h = vessel(a.vessel);
+					if (!h) continue;
+					Vector x, vel; Matrix R;
+					sdk.GlobalState(h, x, vel, R);
+					CollAttachZonePoint q {};
+					q.body = i; q.owner = VKey(a.vessel); q.toparent = a.toparent;
+					std::memcpy(q.id, a.id, sizeof(q.id));
+					Vector g = x + mul(R, a.pos);
+					q.cb = tmul(Rb, g-B.x);
+					q.at[0].g = g;
+					q.at[0].d = mul(R, a.dir);
+					q.at[0].r = mul(R, a.rot);
+					q.at[0].v = B.v + crossp(g-B.x, wg);
+					q.at[1] = q.at[0];
+					q.at[1].g = g + q.at[0].v*hs;
+					points.push_back(q);
+				}
+			}
+			CollAttachmentZones(points, out);
+		}
 	}
 	CollH BaseHandle (int planet, int base) override
 	{

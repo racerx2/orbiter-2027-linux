@@ -443,9 +443,50 @@ CollMeshCache::NameMesh CollMeshCache::ByName (CollSdk &sdk, const CollDirs &d, 
 	if (it != rest.end ())
 		if (auto sp = it->second.lock ()) { r.rest = sp; r.present = presentOf[r.key]; return r; }
 	if (missing.count (r.key)) return r;
-	if (CollIsGltfName (name)) { // not upstream: the core reads glTF meshes; by name they get no collision geometry here (templates do)
-		missing.insert (r.key);
-		sdk.Log (1, ("Collision: glTF mesh loaded by name, no collision geometry: " + name).c_str ());
+	const bool gltf = CollIsGltfName (name);
+	const bool dropin = !gltf && sdk.MeshHasGltfDropIn (name.c_str ());
+	if (gltf || dropin) {
+		CollH mesh = sdk.MeshLoad (name.c_str ());
+		if (!mesh) {
+			missing.insert (r.key);
+			sdk.Log (1, ("Collision: mesh not found: " + name).c_str ());
+			return r;
+		}
+		struct MeshOwner {
+			CollSdk &sdk;
+			CollH mesh;
+			~MeshOwner () { sdk.MeshFree (mesh); }
+		} owned { sdk, mesh };
+		auto m = std::make_shared<CollRestMesh> ();
+		const uint32_t count = sdk.TplGroups (mesh);
+		for (uint32_t g = 0; g < count; ++g) {
+			CollTplGroup t {};
+			if (!sdk.TplGroup (mesh, g, t) ||
+				(t.nvtx && !t.vtx) || (t.nidx && !t.idx)) {
+				missing.insert (r.key);
+				sdk.Log (1, ("Collision: mesh group unavailable: " + name).c_str ());
+				return r;
+			}
+			CollGroupData group;
+			if (t.nvtx) group.vtx.assign (t.vtx, t.vtx + t.nvtx);
+			if (t.nidx) group.idx.assign (t.idx, t.idx + t.nidx);
+			group.usrflag = t.usrflag;
+			m->nvtx += t.nvtx;
+			m->grp.push_back (std::move (group));
+		}
+		if (!count) {
+			missing.insert (r.key);
+			return r;
+		}
+		m->name = name;
+		if (dropin)
+			sdk.Log (1, ("Collision: glTF drop-in collider " + name + ": " + std::to_string (count) + " groups").c_str ());
+		r.rest = m;
+		r.present = true;
+		rest[r.key] = m;
+		presentOf[r.key] = true;
+		nParsed++;
+		Keep (m);
 		return r;
 	}
 	std::string path = CollMeshPath (d, name, ".msh");
@@ -507,7 +548,12 @@ std::shared_ptr<const CollSidecar> CollMeshCache::Sidecar (CollSdk &sdk, const C
 	auto it = side.find (key);
 	if (it != side.end ()) return it->second;
 	std::string path = CollMeshPath (d, name, ".col"), text;
-	if (path.empty () || !sdk.ReadText (sdk.Resolve (path), text)) { noSide.insert (key); return nullptr; }
+	bool found = !path.empty () && sdk.ReadText (sdk.Resolve (path), text);
+	if (!found && CollIsGltfName (name)) {
+		std::string alt = CollMeshPath (d, name.substr (0, name.find_last_of ('.')), ".col");
+		if (!alt.empty () && sdk.ReadText (sdk.Resolve (alt), text)) { path = alt; found = true; }
+	}
+	if (!found) { noSide.insert (key); return nullptr; }
 	auto sc = std::make_shared<CollSidecar> ();
 	std::vector<std::string> warn;
 	if (!CollParseSidecar (text.data (), text.size (), path.c_str (), *sc, warn)) {

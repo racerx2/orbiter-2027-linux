@@ -10,6 +10,7 @@
 #define NPZ 4		// plasma vessels
 #define PLS 12		// vec4 per plume
 #define PZS 10		// vec4 per plasma vessel
+#define NEX 64		// nozzle exits over all plumes (design-plume-nozzles 2)
 #define CL_HYDROLOX 0
 #define CL_TEXTURE 5
 
@@ -47,6 +48,7 @@ vec4	vPal[24];	// per class: core rgb, k_L; diamond rgb, disk gain; soot, scatte
 vec4	vCond[6];	// per class: condensate albedo, optical depth scale in vacuum
 vec4	vPl[NPL * PLS];	// per plume, see PostPlume::FillPlume
 vec4	vPz[NPZ * PZS];	// per plasma vessel, see PostPlume::FillPlasma
+vec4	vEx[NEX * 2];	// per nozzle: exit (camera-relative), r_e; flow axis, intensity. A plume's first and count in vPl[k+11].w
 };
 #endif
 
@@ -71,6 +73,8 @@ layout(binding = 21) uniform sampler2D tSrc2P;
 layout(binding = 22) uniform sampler2D tFogP;	// height fog, half res: in-scatter premultiplied, opacity
 
 const float PI = 3.14159265;
+const float EXIT_SHEET = 0.9847;	// PlumeMath::ExitSheet (design-plume-light 1)
+const float MACH_K = 0.4431;	// PlumeMath::MachSheet before its edge-on cap
 
 float Ss (float a, float b, float x) { float t = clamp((x - a) / (b - a), 0.0, 1.0); return t * t * (3.0 - 2.0 * t); } // either edge order
 float Sq (float x) { return x * x; }
@@ -247,14 +251,8 @@ void PlumeAt (int i, vec3 p, vec3 rd, float time, inout vec3 E, inout float S, i
 		float u = 2.0 * fract(xs / Ls) - 1.0;
 		float dia = P5.x * watm * exp(-xs / (4.0 * Ls)) * Ss(0.9, 0.4, abs(u) + r / R) * ax;
 		E += C1.rgb * (I * dia / (1.8 * R));
-		if (P2.w > 0.0) {
-			float md = exp(-Sq((xs - P2.w) / (0.06 * rj))) * Ss(0.6, 0.3, r / (rj * re));
-			E += C1.rgb * (I * watm * C1.w * md * 0.5 / (0.12 * rj * re));
-		}
 	}
-	// nozzle glow seen from behind: the exit a disc of even brightness, the slab's longer oblique chord cancelled (design-vacuum-plume)
-	float back = max(0.0, -dot(rd, a));
-	if (back > 0.0 && cls != CL_TEXTURE) E += (C0.rgb + C1.rgb) * (2.0 * I * back * exp(-Sq(x / (0.15 * re))) * Ss(1.0, 0.7, r / re) / (0.27 * re));
+	// the Mach disk and the nozzle glow are sheets: PSPlumeMarch adds them where the ray crosses them (design-plume-light 1)
 
 	// soot and scattering inside the jet
 	float soot = C2.x * (0.3 + 0.7 * Ss(0.5, 1.0, r / R)) * rho / (1.8 * R);
@@ -537,6 +535,49 @@ vec4 PSPlumeMarch (float x, float y)
 	bool crossed[NPZ];
 	for (int k = 0; k < NPZ; k++) { dprev[k] = 1e30; crossed[k] = false; if (k < nz) pst[k] = PlasmaState(k); }
 
+	// the sheets on this ray in closed form, per nozzle: the exit from behind, the Mach disk from either side (design-plume-light 1, design-plume-nozzles 2)
+	const int NXS = 16;
+	float tX[NXS];
+	vec3 sX[NXS];
+	int nx = 0;
+	for (int i = 0; i < nh; i++) {
+		if (hid[i] >= NPL) continue;
+		int k = hid[i] * PLS;
+		vec4 Q0 = vPl[k], Q1 = vPl[k + 1], Q2 = vPl[k + 2], Q3 = vPl[k + 3], Q4 = vPl[k + 4], Q6 = vPl[k + 6];
+		int cls = int(Q3.x + 0.5);
+		if (cls == CL_TEXTURE) continue;
+		float I = Q3.z, watm = Q3.w;
+		vec4 C0 = vPal[cls * 4], C1 = vPal[cls * 4 + 1];
+		vec3 Tr = Q6.rgb * Q6.w;
+		bool gnd = dot(Q4.xyz, Q4.xyz) > 0.5;	// PlumeAt's ground plane
+		bool mach = watm > 0.01 && Q2.z > 0.0 && Q2.w > 0.0;
+		float code = vPl[k + 11].w;
+		int cnt = int(floor(code / 4096.0 + 1e-3));
+		int first = int(code - 4096.0 * float(cnt) + 0.5);
+		int mc = max(cnt, 1);
+		for (int m = 0; m < NEX; m++) {
+			if (m >= mc || nx >= NXS) break;
+			vec3 o = Q0.xyz, a = Q1.xyz;
+			float re = Q0.w, Im = I;
+			if (cnt > 0) { vec4 E0 = vEx[2 * (first + m)], E1 = vEx[2 * (first + m) + 1]; o = E0.xyz; re = E0.w; a = E1.xyz; Im = E1.w; }
+			float ca = dot(rd, a);
+			if (abs(ca) < 1e-5) continue;
+			float ap = dot(o, a);
+			if (ca < 0.0) {
+				float t = ap / ca;
+				vec3 p = rd * t;
+				float r = length(p - o);
+				if (t >= h0[i] && t <= h1[i] && r < re && (!gnd || dot(Q4.xyz, p) + Q4.w >= 0.0)) { tX[nx] = t; sX[nx] = Tr * (C0.rgb + C1.rgb) * (2.0 * Im * EXIT_SHEET * Ss(1.0, 0.7, r / re)); nx++; }
+			}
+			if (mach && nx < NXS) {
+				float xm = Q2.w * re, t = (ap + xm) / ca;
+				vec3 p = rd * t;
+				float r = length(p - o - a * xm);
+				if (t >= h0[i] && t <= h1[i] && (!gnd || dot(Q4.xyz, p) + Q4.w >= 0.0)) { tX[nx] = t; sX[nx] = Tr * C1.rgb * (Im * watm * C1.w * MACH_K / max(abs(ca), 0.25) * Ss(0.6, 0.3, r / (Q2.x * re))); nx++; }
+			}
+		}
+	}
+
 	float jit = IGN(hp);
 	vec3 L = vec3(0.0);
 	float T = 1.0, tw = 0.0, ts = 0.0;
@@ -549,6 +590,11 @@ vec4 PSPlumeMarch (float x, float y)
 		for (int k2 = 0; k2 < 24; k2++) {
 			if (k2 >= n || T < 0.01) break;
 			float t = a + (float(k2) + jit) * dt;
+			float lo = a + float(k2) * dt, hi = k2 + 1 >= n ? b + 1e-4 : lo + dt;
+			for (int i = 0; i < NXS; i++) {	// a sheet in this step: at the step's transmittance
+				if (i >= nx) break;
+				if (tX[i] >= lo && tX[i] < hi) { L += T * sX[i]; float ws = T * Lum(sX[i]); tw += ws * tX[i]; ts += ws; }
+			}
 			vec3 p = rd * t;
 			vec3 E = vec3(0.0), Q = vec3(0.0);
 			float S = 0.0;

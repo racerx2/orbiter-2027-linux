@@ -1137,6 +1137,10 @@ bool Scene::UpdateCamVis()
 				}
 			}
 		}
+		if (pPlume) { // not upstream: the plumes' own lights after every vessel's own, in free slots (design-plume-light 2, design-plume-nozzles 3b)
+			for (pv = vobjFirst; pv; pv = pv->next)
+				if (pv->vobj->IsActive() && oapiGetObjectType(pv->vobj->Object()) == OBJTP_VESSEL) pPlume->AddLights(pv->vobj->Object(), pv->vobj);
+		}
 	}
 
 
@@ -1184,23 +1188,41 @@ void Scene::AddLocalLight(const LightEmitter *le, const vObject *vo)
 
 	assert(vo != NULL);
 
-	D3D9Light lght(le, vo);
+	AddLocalLight(D3D9Light(le, vo)); // not upstream: the replace or add below, shared with the plumes' lights (design-plume-light 2)
+}
+
+// ===========================================================================================
+//
+void Scene::AddLocalLight(const D3D9Light &lght)
+{
+	if (Lights==NULL) return;
 
 	// -----------------------------------------------------------------------------
 	// Replace or Add
 	//
 	if (nLights == MAX_SCENE_LIGHTS) {
-		if (lght.Dst2 > lmaxdst2) return;
+		if (!lightsFullLogged) { lightsFullLogged = true; LogAlw("Scene: more than %u local lights, the nearest kept", MAX_SCENE_LIGHTS); } // not upstream (design-plume-nozzles 3b)
+		if (lght.Dst2 >= lmaxdst2) return;
 		DWORD imax = 0;
-		for (DWORD i = 0; i < MAX_SCENE_LIGHTS; i++) if (Lights[i].Dst2 > lmaxdst2) imax = i;
+		for (DWORD i = 0; i < MAX_SCENE_LIGHTS; i++) if (Lights[i].Dst2 >= lmaxdst2) imax = i; // not upstream: >=, the farthest itself (was >, which always hit slot 0)
 		Lights[imax] = lght;
-		lmaxdst2 = lght.Dst2;
+		lmaxdst2 = 0.0f; // not upstream: the new farthest (was the new light's distance)
+		for (DWORD i = 0; i < MAX_SCENE_LIGHTS; i++) lmaxdst2 = std::max(lmaxdst2, Lights[i].Dst2);
 	}
 	else {
 		Lights[nLights] = lght;
 		if (lght.Dst2>lmaxdst2) lmaxdst2 = lght.Dst2;
 		nLights++;
 	}
+}
+
+// ===========================================================================================
+// not upstream: the plumes' lights take only the slots the vessels' own lights left (design-plume-nozzles 3b)
+void Scene::AddLocalLightFree(const D3D9Light &lght)
+{
+	if (Lights == NULL || nLights >= MAX_SCENE_LIGHTS) return;
+	Lights[nLights++] = lght;
+	if (lght.Dst2 > lmaxdst2) lmaxdst2 = lght.Dst2;
 }
 
 // ===========================================================================================
@@ -2784,6 +2806,11 @@ void Scene::RenderSecondaryScene(std::set<vVessel*> &RndList, std::set<vVessel*>
 				const LightEmitter *em = vessel->GetLightEmitter(j);
 				if ((em->GetVisibility() == LightEmitter::VIS_EXTERNAL) || (em->GetVisibility() == LightEmitter::VIS_ALWAYS)) AddLocalLight(em, vVes);
 			}
+		}
+
+		if (pPlume) { // not upstream: the plumes' own lights after every vessel's own, in free slots (design-plume-light 2, design-plume-nozzles 3b)
+			for (auto vVes : RndList) if (vVes->IsActive()) pPlume->AddLights(vVes->Object(), vVes);
+			for (auto vVes : LightsList) if (vVes->IsActive() && !RndList.count(vVes)) pPlume->AddLights(vVes->Object(), vVes);
 		}
 	}
 

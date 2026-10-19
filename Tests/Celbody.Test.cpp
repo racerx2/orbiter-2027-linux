@@ -329,6 +329,109 @@ TEST_CASE("Interpolated ephemerides follow the exact ones", "[celbody]")
 	}
 }
 
+// Independent Horizons reference: Neptune system barycenter (NAIF 8)
+// about the Sun (NAIF 10), geometric ICRF/J2000 ecliptic, TDB epochs.
+// Retrieved separately from the table-generation requests, including
+// non-grid times. Orbiter axis convention here is x,z,y, SI units.
+struct NeptuneJplState {
+    double mjd;
+    double p[3], v[3];
+};
+static const NeptuneJplState neptuneJpl[] = {
+    {40418.375, {-2395202940851.933, 134450284345.304, -3850168881407.955},
+                 {4582.085449869, -47.055893048, -2848.861625813}}, // Apollo era
+    {47762.375, {897272926684.906, 70537824223.031, -4429369461818.978},
+                 {5282.726487506, -144.623620941, 1111.212868219}}, // Voyager 2 1989
+    {51544.375, {2514998196564.188, 19034065423.290, -3738747740541.318},
+                 {4465.943304619, -166.063104243, 3076.570158211}}, // J2000
+    {61331.125, {4463190797890.476, -107271115512.229, 214542339912.248},
+                 {-306.175774798, -105.425688221, 5456.707693154}}, // 2026
+    {90000.625, {-4509424933316.255, 96809270276.837, 345942772407.014},
+                {-441.399520550, 120.976566772, -5372.259655849}}, // 2105
+    {124000.375, {4249632337328.852, -125992490536.295, 1359565059331.954},
+                  {-1679.269318641, -68.668631392, 5216.544664823}}, // 2198
+};
+
+TEST_CASE("Neptune's Chebyshev system barycenter follows independent JPL Horizons", "[celbody][jpl]")
+{
+    CelbodyModule neptune("Neptune");
+    REQUIRE(neptune.body);
+    for (const NeptuneJplState &jpl : neptuneJpl) {
+        double actual[6];
+        const int flags = neptune.Ephem(jpl.mjd, actual);
+        INFO("Neptune system barycenter TDB MJD " << jpl.mjd);
+        REQUIRE((flags & (EPHEM_BARYPOS|EPHEM_BARYVEL)) ==
+                (EPHEM_BARYPOS|EPHEM_BARYVEL));
+        REQUIRE(!(flags & EPHEM_POLAR)); // Cartesian during table coverage
+        double pos2 = 0.0, vel2 = 0.0;
+        for (int a = 0; a < 3; ++a) {
+            pos2 += (actual[a]-jpl.p[a])*(actual[a]-jpl.p[a]);
+            vel2 += (actual[a+3]-jpl.v[a])*(actual[a+3]-jpl.v[a]);
+        }
+        INFO("JPL position error " << sqrt(pos2) << " m, velocity error "
+             << sqrt(vel2) << " m/s");
+        CHECK(sqrt(pos2) < 50.0);  // independent, off-grid: less than 50 metres
+        CHECK(sqrt(vel2) < 0.003); // and 3 mm/s
+    }
+}
+
+TEST_CASE("Neptune's Chebyshev segments and VSOP fallback are continuous", "[celbody][jpl]")
+{
+    CelbodyModule neptune("Neptune");
+    REQUIRE(neptune.body);
+
+    // Across a data segment seam, P and V must be C1 continuous.
+    const double epsilon = 1e-7; // days = 0.00864 s on each side
+    const double boundaries[] = {
+        -21504.0,                       // beginning of table; VSOP blended in
+        -21504.0+64*1150,               // interior seam; two Cheb segments
+        -21504.0+64*1640,               // another interior seam
+        -21504.0+64*2283,               // end of table; VSOP blended out
+    };
+    for (double when : boundaries) {
+        double before[6], after[6];
+        const int beforeFlags = neptune.Ephem(when-epsilon, before);
+        const int afterFlags = neptune.Ephem(when+epsilon, after);
+        auto polarToCart = [](double* a, int flg) {
+            if (!(flg & EPHEM_POLAR)) return;
+            const double lon=a[0], lat=a[1], rad=a[2]*AU;
+            const double dlon=a[3], dlat=a[4], drad=a[5]*AU;
+            const double cl=cos(lon), sl=sin(lon);
+            const double cb=cos(lat), sb=sin(lat);
+            const double rcos=rad*cb;
+            const double p[6] = {
+                rcos*cl, rad*sb, rcos*sl,
+                cb*cl*drad-rad*sb*cl*dlat-rcos*sl*dlon,
+                sb*drad+rad*cb*dlat,
+                cb*sl*drad-rad*sb*sl*dlat+rcos*cl*dlon
+            };
+            std::copy(p,p+6,a);
+        };
+        polarToCart(before, beforeFlags);
+        polarToCart(after, afterFlags);
+        INFO("boundary at MJD " << when);
+        for (int a = 0; a < 3; ++a) {
+            INFO("axis " << a);
+            CHECK(std::isfinite(before[a]));
+            CHECK(std::isfinite(after[a]));
+            // Trapezoidal prediction over a 2*epsilon-day interval.
+            const double predicted=(before[a+3]+after[a+3])*epsilon*86400.0;
+            CHECK(fabs((after[a]-before[a])-predicted) < 1.0);
+            CHECK(fabs(after[a+3]-before[a+3]) < 0.002);
+        }
+    }
+
+    // Outside table coverage the original VSOP87B polar data are returned.
+    for (double mjd : {-30000.0, 130000.0}) {
+        double state[6];
+        const int flags = neptune.Ephem(mjd, state);
+        INFO("VSOP fallback MJD " << mjd);
+        CHECK(flags & EPHEM_POLAR);
+        CHECK(flags & EPHEM_BARYPOS);
+        for (double value : state) CHECK(std::isfinite(value));
+    }
+}
+
 struct HorizonsState { const char *name; double mjd, x, y, z, tol; };
 
 // JPL Horizons positions [m] in Orbiter's x, z, y order (nep098_merged, JPL#36, sat441l), fetched 2026-10-01; tables at 2000, a seam, 2026, the first and last segment

@@ -90,10 +90,11 @@ struct Ctx {
 	size_t jsonOff = 0;          // its offset in the file
 	QJsonObject root;
 	std::vector<Buffer> buffers;
-	GltfModel *out = nullptr;
+	GltfModel *out = nullptr;             // G0 groups
+	std::vector<std::string> *textures = nullptr, *warnings = nullptr;
 	std::string err;
 	std::set<std::string> warned;
-	void Warn (const std::string &w) { if (warned.insert (w).second) out->warnings.push_back (w); }
+	void Warn (const std::string &w) { if (warned.insert (w).second) warnings->push_back (w); }
 	bool Fail (const std::string &e) { if (err.empty()) err = e; return false; }
 };
 
@@ -364,16 +365,31 @@ bool ReadAccessor (Ctx &c, int ai, std::vector<double> &out, size_t &count, int 
 
 namespace {
 
+std::string ImageRef (Ctx &c, int ii);
+
+// image of texture ti, -1 if it has none
+int TextureImage (Ctx &c, int ti)
+{
+	QJsonArray texs = c.root["textures"].toArray (), imgs = c.root["images"].toArray ();
+	if (ti < 0 || ti >= texs.size()) { c.Warn ("texture index out of range"); return -1; }
+	QJsonObject t = texs[ti].toObject ();
+	int ii = t["source"].toInt (-1);
+	if (ii < 0) { c.Warn ("texture " + std::to_string (ti) + " has no PNG/JPEG source (KTX2/WebP not supported)"); return -1; }
+	if (ii >= imgs.size()) { c.Warn ("image index out of range"); return -1; }
+	return ii;
+}
+
 // image reference of texture ti, "" if it has none
 std::string TextureRef (Ctx &c, int ti)
 {
-	QJsonArray texs = c.root["textures"].toArray (), imgs = c.root["images"].toArray ();
-	if (ti < 0 || ti >= texs.size()) { c.Warn ("texture index out of range"); return ""; }
-	QJsonObject t = texs[ti].toObject ();
-	int ii = t["source"].toInt (-1);
-	if (ii < 0) { c.Warn ("texture " + std::to_string (ti) + " has no PNG/JPEG source (KTX2/WebP not supported)"); return ""; }
-	if (ii >= imgs.size()) { c.Warn ("image index out of range"); return ""; }
-	QJsonObject im = imgs[ii].toObject ();
+	int ii = TextureImage (c, ti);
+	return ii < 0 ? "" : ImageRef (c, ii);
+}
+
+// image reference of image ii, "" if it can't be referenced
+std::string ImageRef (Ctx &c, int ii)
+{
+	QJsonObject im = c.root["images"].toArray().at (ii).toObject ();
 	GltfImageRef r;
 	if (im.contains ("bufferView")) {
 		QJsonObject v = c.root["bufferViews"].toArray().at (im["bufferView"].toInt (-1)).toObject ();
@@ -425,8 +441,8 @@ int AddTexture (Ctx &c, std::map<std::string, int> &index, const std::string &re
 {
 	auto it = index.find (ref);
 	if (it != index.end()) return it->second;
-	int n = (int)c.out->textures.size ();
-	c.out->textures.push_back (ref);
+	int n = (int)c.textures->size ();
+	c.textures->push_back (ref);
 	index[ref] = n;
 	return n;
 }
@@ -564,9 +580,10 @@ void LocalMatrix (const QJsonObject &n, Mat4 m)
 	m[12] = t[0]; m[13] = t[1]; m[14] = t[2];
 }
 
-// one primitive in world space, Orbiter axes, into groups of at most 65535 vertices
-bool AddPrimitive (Ctx &c, const QJsonObject &p, const Mat4 world, DWORD defMtrl, const std::vector<int> &mtrlTex, const std::string &label)
+// a primitive's triangles and attributes in node space; prim.tri stays empty when there is nothing to draw
+bool ReadPrim (Ctx &c, const QJsonObject &p, const std::string &label, GltfPrim &prim)
 {
+	prim = GltfPrim ();
 	int mode = p["mode"].toInt (4);
 	if (mode < 4 || mode > 6) { c.Warn (label + ": points and lines are not drawn"); return true; }
 	QJsonObject at = p["attributes"].toObject ();
@@ -613,6 +630,26 @@ bool AddPrimitive (Ctx &c, const QJsonObject &p, const Mat4 world, DWORD defMtrl
 	}
 	if (bad) c.Warn (label + ": " + std::to_string (bad) + " triangles with an index past the vertices dropped");
 	if (ok.empty()) return true;
+	if (p.contains ("material")) {
+		prim.material = p["material"].toInt (0);
+		if (prim.material < 0) return c.Fail (label + ": material index out of range");
+	}
+	prim.pos.swap (pos);
+	if (hasN) prim.nrm.swap (nrm);
+	if (hasUV) prim.uv.swap (uv);
+	prim.tri.swap (ok);
+	return true;
+}
+
+// one primitive in world space, Orbiter axes, into groups of at most 65535 vertices
+bool AddPrimitive (Ctx &c, const QJsonObject &p, const Mat4 world, DWORD defMtrl, const std::vector<int> &mtrlTex, const std::string &label)
+{
+	GltfPrim pr;
+	if (!ReadPrim (c, p, label, pr)) return false;
+	if (pr.tri.empty()) return true;
+	const std::vector<double> &pos = pr.pos, &nrm = pr.nrm, &uv = pr.uv;
+	const std::vector<uint32_t> &ok = pr.tri;
+	bool hasN = !nrm.empty(), hasUV = !uv.empty();
 
 	double nm[3][3];
 	if (!NormalMat (world, nm)) { c.Warn (label + ": node scale 0, skipped"); return true; }
@@ -642,7 +679,7 @@ bool AddPrimitive (Ctx &c, const QJsonObject &p, const Mat4 world, DWORD defMtrl
 	};
 
 	GltfGroup g;
-	g.mtrl = p.contains ("material") ? (DWORD)p["material"].toInt (0) : defMtrl;
+	g.mtrl = pr.material >= 0 ? (DWORD)pr.material : defMtrl;
 	if (g.mtrl >= mtrlTex.size()) return c.Fail (label + ": material index out of range");
 	g.tex = mtrlTex[g.mtrl];
 	std::map<uint32_t, WORD> remap;
@@ -720,6 +757,8 @@ static bool ReadModel (const std::string &path, GltfModel &out, std::string &err
 	out = GltfModel ();
 	Ctx c;
 	c.out = &out;
+	c.textures = &out.textures;
+	c.warnings = &out.warnings;
 	std::error_code ec;
 	c.path = fs::absolute (fs::path (path), ec).lexically_normal().string();
 	if (ec) c.path = path;
@@ -781,4 +820,211 @@ bool GltfRead (const std::string &path, GltfModel &out, std::string &err)
 {
 	try { return ReadModel (path, out, err); }
 	catch (const std::bad_alloc &) { out = GltfModel (); err = "out of memory"; return false; }
+}
+
+// ----------------------------------------------------------------------------------------------
+// not upstream: the scene for the round trip (claude/design-gltf-roundtrip.md 6)
+
+namespace {
+
+std::string JsonText (const QJsonValue &v)
+{
+	if (v.isObject()) return QJsonDocument (v.toObject()).toJson (QJsonDocument::Compact).toStdString();
+	return "";
+}
+
+bool ReadSampler (Ctx &c, const QJsonObject &s, GltfSamplerSrc &out, const std::string &label)
+{
+	std::vector<double> in, val;
+	size_t ni = 0, nv = 0;
+	int ci = 0, cv = 0;
+	if (!ReadAccessor (c, s["input"].toInt (-1), in, ni, ci) || ci != 1) return c.Fail (label + ": bad input");
+	if (!ReadAccessor (c, s["output"].toInt (-1), val, nv, cv)) return c.Fail (label + ": bad output");
+	QString ip = s["interpolation"].toString ("LINEAR");
+	out.interp = ip == "STEP" ? GLTF_STEP : ip == "CUBICSPLINE" ? GLTF_CUBIC : GLTF_LINEAR;
+	if (ip != "LINEAR" && ip != "STEP" && ip != "CUBICSPLINE") c.Warn (label + ": interpolation " + ip.toStdString() + " read as LINEAR");
+	if (nv != ni * (out.interp == GLTF_CUBIC ? 3 : 1)) return c.Fail (label + ": output count doesn't match its input");
+	for (size_t i = 1; i < ni; i++) if (!(in[i] > in[i - 1])) return c.Fail (label + ": key times not increasing");
+	out.comps = cv;
+	out.in.swap (in);
+	out.out.swap (val);
+	return true;
+}
+
+bool ReadScene (const std::string &path, GltfScene &out, std::string &err)
+{
+	out = GltfScene ();
+	Ctx c;
+	GltfModel unused;
+	c.out = &unused;
+	c.textures = &out.textures;
+	c.warnings = &out.warnings;
+	std::error_code ec;
+	c.path = fs::absolute (fs::path (path), ec).lexically_normal().string();
+	if (ec) c.path = path;
+	c.dir = fs::path (c.path).parent_path().string();
+	auto fail = [&]() { err = c.err.empty() ? "unknown error" : c.err; out = GltfScene (); return false; };
+	if (!LoadContainer (c)) return fail ();
+	for (const auto &v : c.root["extensionsRequired"].toArray()) {
+		std::string e = v.toString().toStdString();
+		if (e != "KHR_materials_unlit" && e.compare (0, 14, "KHR_materials_")) { c.Fail ("required extension " + e + " is not supported"); return fail (); }
+	}
+	if (!LoadBuffers (c)) return fail ();
+
+	QJsonArray imgs = c.root["images"].toArray ();
+	for (int i = 0; i < imgs.size(); i++) out.images.push_back (ImageRef (c, i));
+	std::map<std::string, int> texIndex;
+	QJsonArray mats = c.root["materials"].toArray ();
+	for (int i = 0; i < mats.size(); i++) {
+		QJsonObject m = mats[i].toObject ();
+		out.materials.push_back (MakeMaterial (c, m, "material " + std::to_string (i) + " (" + m["name"].toString().toStdString() + ")", texIndex));
+		out.materialJson.push_back (JsonText (m));
+		int ti = m["pbrMetallicRoughness"].toObject()["baseColorTexture"].toObject()["index"].toInt (-1);
+		out.materialImage.push_back (ti >= 0 ? TextureImage (c, ti) : -1);
+	}
+	out.materials.push_back (MakeMaterial (c, QJsonObject (), "default material", texIndex));
+	if (!c.err.empty()) return fail ();
+
+	QJsonArray meshes = c.root["meshes"].toArray ();
+	for (int mi = 0; mi < meshes.size(); mi++) {
+		QJsonObject m = meshes[mi].toObject ();
+		std::string label = "mesh " + std::to_string (mi) + " (" + m["name"].toString().toStdString() + ")";
+		std::vector<GltfPrim> prims;
+		QJsonArray pa = m["primitives"].toArray ();
+		for (int k = 0; k < pa.size(); k++) {
+			GltfPrim pr;
+			if (!ReadPrim (c, pa[k].toObject(), label, pr)) return fail ();
+			if (pr.material >= mats.size()) { c.Fail (label + ": material index out of range"); return fail (); }
+			prims.push_back (std::move (pr));
+		}
+		out.meshes.push_back (std::move (prims));
+	}
+
+	QJsonArray nodes = c.root["nodes"].toArray ();
+	out.nodes.resize (nodes.size());
+	for (int i = 0; i < nodes.size(); i++) {
+		QJsonObject n = nodes[i].toObject ();
+		GltfNodeSrc &d = out.nodes[i];
+		d.name = n["name"].toString().toStdString();
+		d.mesh = n.contains ("mesh") ? n["mesh"].toInt (-1) : -1;
+		if (d.mesh >= meshes.size()) { c.Fail ("mesh index out of range"); return fail (); }
+		QJsonArray mm = n["matrix"].toArray ();
+		if (mm.size() == 16) { d.hasMatrix = true; for (int k = 0; k < 16; k++) d.matrix[k] = mm[k].toDouble (d.matrix[k]); }
+		Vec (n, "translation", d.t, 3);
+		Vec (n, "rotation", d.r, 4);
+		Vec (n, "scale", d.s, 3);
+		d.extras = JsonText (n["extras"]);
+		for (const auto &cv : n["children"].toArray()) {
+			int k = cv.toInt (-1);
+			if (k < 0 || k >= nodes.size() || k == i) { c.Fail ("node index out of range"); return fail (); }
+			d.children.push_back (k);
+		}
+		if (n.contains ("skin")) c.Warn ("skins are not supported, rest pose used");
+	}
+	for (int i = 0; i < (int)out.nodes.size(); i++)
+		for (int k : out.nodes[i].children) {
+			if (out.nodes[k].parent >= 0) { c.Fail ("node " + std::to_string (k) + " has two parents"); return fail (); }
+			out.nodes[k].parent = i;
+		}
+	for (int i = 0; i < (int)out.nodes.size(); i++) { // cycles
+		int d = 0;
+		for (int k = out.nodes[i].parent; k >= 0; k = out.nodes[k].parent)
+			if (++d > 256) { c.Fail ("node hierarchy is too deep or has a cycle"); return fail (); }
+	}
+
+	QJsonArray scenes = c.root["scenes"].toArray ();
+	if (scenes.isEmpty()) {
+		for (int i = 0; i < (int)out.nodes.size(); i++) if (out.nodes[i].parent < 0) out.roots.push_back (i);
+	} else {
+		int si = c.root["scene"].toInt (0);
+		if (si < 0 || si >= scenes.size()) { c.Fail ("scene index out of range"); return fail (); }
+		QJsonObject sc = scenes[si].toObject ();
+		for (const auto &nv : sc["nodes"].toArray()) {
+			int k = nv.toInt (-1);
+			if (k < 0 || k >= (int)out.nodes.size() || out.nodes[k].parent >= 0) { c.Fail ("scene node index out of range"); return fail (); }
+			out.roots.push_back (k);
+		}
+		out.sceneExtras = JsonText (sc["extras"]);
+	}
+
+	QJsonArray anims = c.root["animations"].toArray ();
+	for (int ai = 0; ai < anims.size(); ai++) {
+		QJsonObject a = anims[ai].toObject ();
+		GltfAnimSrc an;
+		an.name = a["name"].toString().toStdString();
+		std::string label = "animation " + std::to_string (ai) + " (" + an.name + ")";
+		QJsonArray sa = a["samplers"].toArray ();
+		for (int k = 0; k < sa.size(); k++) {
+			GltfSamplerSrc sm;
+			if (!ReadSampler (c, sa[k].toObject(), sm, label + " sampler " + std::to_string (k))) return fail ();
+			an.samplers.push_back (std::move (sm));
+		}
+		for (const auto &cv : a["channels"].toArray()) {
+			QJsonObject ch = cv.toObject (), tg = ch["target"].toObject ();
+			QString path = tg["path"].toString ();
+			GltfChannelSrc d;
+			d.node = tg.contains ("node") ? tg["node"].toInt (-1) : -1;
+			d.sampler = ch["sampler"].toInt (-1);
+			if (path == "translation") d.path = GLTF_TRANSLATION;
+			else if (path == "rotation") d.path = GLTF_ROTATION;
+			else if (path == "scale") d.path = GLTF_SCALE;
+			else { c.Warn (label + ": " + path.toStdString() + " channels are not supported, ignored"); continue; }
+			if (d.node < 0 || d.node >= (int)out.nodes.size() || d.sampler < 0 || d.sampler >= (int)an.samplers.size()) { c.Fail (label + ": bad channel"); return fail (); }
+			if (an.samplers[d.sampler].comps != (d.path == GLTF_ROTATION ? 4 : 3)) { c.Fail (label + ": channel output has the wrong type"); return fail (); }
+			an.channels.push_back (d);
+		}
+		out.anims.push_back (std::move (an));
+	}
+	return true;
+}
+
+} // namespace
+
+bool GltfReadScene (const std::string &path, GltfScene &out, std::string &err)
+{
+	try { return ReadScene (path, out, err); }
+	catch (const std::bad_alloc &) { out = GltfScene (); err = "out of memory"; return false; }
+}
+
+bool GltfReadJson (const std::string &path, std::string &json, std::string &err)
+{
+	json.clear ();
+	std::ifstream f (path, std::ios::binary);
+	if (!f) { err = "can't read the file"; return false; }
+	char h[20];
+	if (f.read (h, 12) && U32 (h) == 0x46546C67u) {
+		if (!f.read (h + 12, 8) || U32 (h + 16) != 0x4E4F534Au) { err = "GLB first chunk is not JSON"; return false; }
+		size_t len = U32 (h + 12);
+		if (len > 256u * 1024 * 1024) { err = "GLB JSON chunk is too large"; return false; }
+		json.resize (len);
+		if (len && !f.read (&json[0], len)) { err = "GLB JSON chunk runs past the file"; json.clear (); return false; }
+		return true;
+	}
+	f.clear ();
+	f.seekg (0, std::ios::end);
+	std::streamoff n = f.tellg ();
+	if (n < 0 || n > 256ll * 1024 * 1024) { err = "file is too large"; return false; }
+	f.seekg (0);
+	json.resize ((size_t)n);
+	if (n && !f.read (&json[0], n)) { err = "can't read the file"; json.clear (); return false; }
+	return true;
+}
+
+bool GltfImageBytes (const std::string &ref, std::vector<unsigned char> &out)
+{
+	out.clear ();
+	GltfImageRef r;
+	if (!GltfParseImageRef (ref.c_str(), r)) return false;
+	std::ifstream f (r.file, std::ios::binary);
+	if (!f) return false;
+	std::vector<char> raw ((size_t)r.len);
+	f.seekg ((std::streamoff)r.off);
+	if (r.len && !f.read (raw.data(), (std::streamsize)r.len)) return false;
+	std::vector<unsigned char> d;
+	if (r.b64) { if (!GltfBase64 (raw.data(), raw.size(), d)) return false; }
+	else d.assign (raw.begin(), raw.end());
+	if (r.sliceOff > d.size() || (r.sliceLen && r.sliceOff + r.sliceLen > d.size())) return false;
+	size_t end = r.sliceLen ? (size_t)(r.sliceOff + r.sliceLen) : d.size();
+	out.assign (d.begin() + (size_t)r.sliceOff, d.begin() + end);
+	return true;
 }

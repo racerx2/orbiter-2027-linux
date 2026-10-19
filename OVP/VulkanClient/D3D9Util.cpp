@@ -16,6 +16,7 @@
 #include "D3D9Config.h"
 #include "VPlanet.h"
 #include "Mesh.h"
+#include "PlumeMath.h" // not upstream
 #include <functional>
 #include <cctype>
 #include <unordered_map>
@@ -1298,6 +1299,10 @@ float D3D9Light::GetIlluminance(D3DXVECTOR3 &_pos, float r) const
 	float d = D3DXVec3Length(&pos);
 	float d2 = d*d;
 
+	if (le == NULL) return d > (r + range) ? -1.0f : float(PlumeMath::SphereMean(intensity, Attenuation.z, r, d)); // not upstream: a plume light (SetPoint, no emitter) never counts as inside (design-plume-nozzles 3)
+
+	if (d < r && Type == 0) return float(PlumeMath::SphereMeanAtt(intensity, Attenuation.x, Attenuation.y, Attenuation.z, r, d)); // not upstream: a point light inside ranks by its mean over the bounds, not above every floodlight (design-plume-nozzles 3c)
+
 	if (d < r) return 1e6;	// Light is inside the sphere
 	if (d > (r + range)) return -1.0f; // Light can't reach the sphere
 
@@ -1309,6 +1314,26 @@ float D3D9Light::GetIlluminance(D3DXVECTOR3 &_pos, float r) const
 
 	// The sphere is lit from outside
 	return intensity / (Attenuation.x + Attenuation.y*d + Attenuation.z*d2);
+}
+
+// ============================================================================
+// not upstream: a point light with no emitter, lpos in the vessel frame; cone 0, so no glare (design-plume-light 2)
+void D3D9Light::SetPoint(const D3DXVECTOR3 &lpos, const class vObject *vo, const D3DXCOLOR &col, float k, const D3DXVECTOR3 &att, float rng)
+{
+	le = NULL;
+	D3DXVec3TransformCoord(&Position, &lpos, vo->MWorld());
+	Dst2 = D3DXVec3Dot(&Position, &Position);
+	Type = 0;
+	Attenuation = att;
+	tanp = 0.0f; cosu = 1.0f; cosp = 1.0f;
+	cone = 0.0f;
+	GPUId = -1;
+	intensity = k;
+	Diffuse = D3DXCOLOR(col.r * k, col.g * k, col.b * k, col.a * k);
+	range = rng;
+	range2 = rng * rng;
+	Param = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+	Param[D3D9LRange] = rng;
 }
 
 // ============================================================================

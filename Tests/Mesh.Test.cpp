@@ -14,6 +14,7 @@ DWORDLONG Str2Crc (const char *str) { return 0; }
 void LogOut_Error (const char *func, const char *file, int line, const char *msg, ...) {}
 void LogOut_Warning (const char *func, const char *file, int line, const char *msg, ...) {} // glTF meshes
 void LogOut (const char *msg, ...) {}
+bool GltfDropInMesh (const char *meshname, Mesh &mesh) { return false; } // custom: drop-in glTF files (GltfDropIn.cpp) need the core
 
 static const char *tri3 =
 	"0 0 0 0 0 1 0 0\n"

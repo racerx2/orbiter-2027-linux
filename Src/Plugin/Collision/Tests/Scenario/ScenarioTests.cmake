@@ -178,6 +178,12 @@ coll_scenario_test(Coll.Base.KSC SCN gen:ksc FRAMES 600 CHECK ksc RUNS "main|hea
 coll_scenario_test(Coll.Base.Hangar SCN gen:hangar FRAMES 300 CHECK hangar LABELS slow RUNS "main|headless|on||||") # a building impact and its damage line
 coll_scenario_test(Coll.Stack.Hit SCN gen:stack FRAMES 450 CHECK stackhit RUNS "off|headless|off||||" "on|headless|on||||")
 coll_scenario_test(Coll.Stack.Attached SCN gen:attached FRAMES 300 CHECK stackhit RUNS "off|headless|off||||" "on|headless|on||||")
+coll_scenario_test(Coll.Stack.DetachImpact SCN gen:detachimpact FRAMES 300 EVERY 5 CHECK detachimpact
+    RUNS "off|headless|off||||" "on|headless|on||||")
+foreach (door closed open opening closing)
+    coll_scenario_test(Coll.Bay.Impact.${door} SCN gen:bayimpact:door=${door} STEP 0.05 FRAMES 220 EVERY 5 CHECK bayimpact
+        RUNS "off|headless|off||||" "on|headless|on||||")
+endforeach ()
 coll_scenario_test(Coll.Landed.Wake SCN gen:wake FRAMES 150 CHECK landedwake RUNS "main|headless|on||||")
 
 # dmg3: DGs head-on (pair noses 6 + g0 m apart is a PB value, DG CGs 106 m and 46 m apart), contact near t 1.3 s and 1.8 s

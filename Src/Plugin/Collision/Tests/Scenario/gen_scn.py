@@ -54,6 +54,14 @@ def pair(p):  # P0 LEO pair (T 7.2): A at the P0 orbit, B 6 m + g0 ahead along z
     return s + 'END_SHIPS\n' + BLOCKS.get(p.get('block', ''), '')
 
 
+def bayimpact(p):
+    state = p.get('door', 'closed')
+    door = {'closed': '0 0.0000', 'open': '1 1.0000',
+            'opening': '2 0.2500', 'closing': '3 0.7500'}[state]
+    s = pair({'A': 'Atlantis', 'B': 'CollTestVessel', 'g0': 0, 'vB': -0.4})
+    return s.replace('PB-A:Atlantis\n', 'PB-A:Atlantis\n  CARGODOOR ' + door + '\n', 1)
+
+
 def surface(p):  # BB: DG landed on pad 1, ShuttlePB landed on pad 2 (G4)
     s = head('GL', 'Brighton Beach surface pair', 'Moon')
     if p.get('director') == '1':
@@ -143,6 +151,11 @@ def attached(p):  # Coll.Stack.Attached: PL attached on top of PB-A (CollTestVes
     s += 'PL:CollTestVessel\n  STATUS Orbiting Earth\n  RPOS %s 3.8 0\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0\n  ATTACHED 0:0,PB-A\nEND\n' % (g(R_P0), g(v0))
     s += 'TC:CollTestVessel\n  STATUS Orbiting Earth\n  RPOS %s 0 -120\n  RVEL 0 0 %s\n  AROT 0 0 0\n  PRPLEVEL 0:0\nEND\n' % (g(R_P0), g(v0))
     return s + 'END_SHIPS\n'
+
+
+def detachimpact(p):
+    s = attached(p)
+    return s.replace('  TESTPLACEREL 3 TC', '  TESTDETACH 120 PB-A 0 0.15\n  TESTPLACEREL 3 TC', 1)
 
 
 def wake(p):  # Coll.Landed.Wake: LP landed on Brighton Beach pad 2 (heading 90), HT placed in frame 1 east of it, nose to nose, closing at u
@@ -240,7 +253,7 @@ def bldg(p, args):  # bldg: one synthetic streamed building on open ground near 
     return s + 'END_SHIPS\n', {'Textures/Earth/Bldg/14/%d/%d.bld' % (tx, ty): bld_tile(tx, ty, [(lat, lng, ring, 0.0, top)])}
 
 
-GENERATORS = {'pair': pair, 'surface': surface, 'ascent': ascent, 'synthplay': synthplay, 'hvc': hvc, 'ksc': ksc, 'hangar': hangar, 'crash': crash, 'stack': stack, 'attached': attached,
+GENERATORS = {'pair': pair, 'bayimpact': bayimpact, 'surface': surface, 'ascent': ascent, 'synthplay': synthplay, 'hvc': hvc, 'ksc': ksc, 'hangar': hangar, 'crash': crash, 'stack': stack, 'attached': attached, 'detachimpact': detachimpact,
               'wake': wake, 'bldg': bldg}
 
 

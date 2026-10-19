@@ -18,6 +18,7 @@
 
 class Scene;
 class vVessel;
+class vObject;
 class vPlanet;
 class ImageProcessing;
 class D3D9ParticleStream;
@@ -33,6 +34,7 @@ public:
 	static float LegacyReentry (const vVessel *vv);            // the legacy re-entry billboard's factor
 	static const D3DXMATRIX *FlowVP ();                        // RENDERPASS_FLOWMAP's view projection while a flow map renders
 	static void HazeShape (const vVessel *vv, DWORD idx, double *r0, double *r1, double *len); // PostLook's haze: the volume plume's radii and length
+	void AddLights (OBJHANDLE hV, const vObject *vo); // the plumes' own light of this vessel into the scene's local lights (design-plume-light 2)
 
 private:
 	struct NoiseBox;
@@ -49,6 +51,7 @@ private:
 	Nozzle &NozzleOf (VESSEL *v, DWORD idx, const EXHAUSTSPEC &es, const ClassCfg &cfg);
 	int SlotOf (SURFHANDLE h); // atlas slot when baked, else -1 (the bake is queued)
 	void GatherPlumes ();
+	void GatherLights ();
 	void UpdateGround ();
 	void Pads (Plume &P, VESSEL *v, OBJHANDLE hP, const VECTOR3 &cam); // base structures under the plume (design-pad-plume)
 	const BaseSurf &SurfOf (OBJHANDLE hP, OBJHANDLE hBase);
@@ -95,8 +98,11 @@ private:
 	double planes[6][4];
 	float time = 0.0f;
 	std::vector<Plume> plumes;
+	struct PlumeLight { OBJHANDLE hV; D3DXVECTOR3 pos; D3DXCOLOR col; float k, att2, range; }; // vessel frame, next frame's (design-plume-light 2)
+	std::vector<PlumeLight> lights;
 	std::vector<Plasma> plasma;
-	std::vector<D3DXVECTOR4> vPl, vPz, puffData;
+	std::vector<D3DXVECTOR4> vPl, vPz, vEx, puffData;
+	int nEx = 0;
 	std::vector<int> puffLayer;
 	int nPuff = 0, puffRows = 0;
 	std::vector<D3D9ParticleStream *> claimed;

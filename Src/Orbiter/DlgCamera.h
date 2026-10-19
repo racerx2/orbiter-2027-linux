@@ -37,7 +37,6 @@ private:
     char latitude[64]="";
     char altitude[64]="";
     char followterrain[64]="";
-    bool m_TargetLock;
 
     void AddCbodyNode(const CelestialBody *body);
     void ApplyObserver();

@@ -32,6 +32,7 @@ using namespace PlumeMath;
 static const VkImageUsageFlags RTUsage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 static const char *PlumeFile = "Modules/VulkanClient/Plume.glsl";
 static const int MAXPL = 32, MAXPZ = 4, PLS = 12, PZS = 10, MAXPUFF = 8192, FLOWN = 128, PUFFROW = 64, MAXINSIDE = 16;
+static const int EXMAX = 64; // nozzle exits over all plumes, Plume.glsl NEX (design-plume-nozzles 2)
 static const int puffRowsOf[3] = { 8, 32, 128 };
 
 PostPlume *PostPlume::inst = nullptr;
@@ -44,6 +45,7 @@ struct PostPlume::ClassCfg {
 	double smoke = 1.0;
 	int ground = -1; // -1 by class, 0 none, 1 steam, 2 dust
 	int puffs = -1;  // -1 streams with the default texture, 0 none, 1 every diffuse stream (design review S5)
+	double light = 1.0; // the plumes' own light on meshes and the ground, 0 none (design-plume-light 2)
 };
 
 struct PostPlume::Nozzle {
@@ -57,6 +59,8 @@ struct PostPlume::Plume {
 	const vVessel *vv = nullptr;
 	OBJHANDLE hV = NULL;
 	std::vector<DWORD> members;
+	struct Ex { D3DXVECTOR3 o, a; double re, I; }; // each member's exit, camera-relative, its flow axis, radius and intensity (design-plume-nozzles 2)
+	std::vector<Ex> ex;
 	D3DXVECTOR3 o, a, pa, pb;
 	double re = 1, L = 1, I = 0, lvl = 0, F0 = 0, isp0 = 0, env = 0, xg = 1e9, smoke = 0, rpx = 0, w = 0, Ad = 0, rate = 0, cr = 1, step = 1, R0 = 1, R1 = 1;
 	double lift = 0; // m: the ground cloud is born this far above the ground hit, on the deck around a pad's exhaust hole (design-pad-plume)
@@ -126,6 +130,7 @@ PostPlume::PostPlume (oapi::D3D9Client *_gc, Scene *_scn, DWORD w, DWORD h)
 	hh = std::max(1u, H / 2);
 	vPl.assign(MAXPL * PLS, D3DXVECTOR4(0, 0, 0, 0));
 	vPz.assign(MAXPZ * PZS, D3DXVECTOR4(0, 0, 0, 0));
+	vEx.assign(EXMAX * 2, D3DXVECTOR4(0, 0, 0, 0));
 	std::string f;
 	if (scn->pOffscreenTarget) f += "_LIGHTGLOW "; // LightBlur: HDR, no curve, the plumes bloom
 	if (Config->Filmic) f += "_FILMIC ";
@@ -246,7 +251,7 @@ bool PostPlume::NoiseReady ()
 	return tNoise != nullptr;
 }
 
-// Config/GC/Plume/<class>.cfg: EXHAUST <i|i-j|*|main|retro|hover|att> <class> [pe=<kPa>], SMOKE <0..2>, GROUND <steam|dust|none>, PUFFS <0|1>; later lines win
+// Config/GC/Plume/<class>.cfg: EXHAUST <i|i-j|*|main|retro|hover|att> <class> [pe=<kPa>], SMOKE <0..2>, GROUND <steam|dust|none>, PUFFS <0|1>, LIGHT <0..4>; later lines win
 const PostPlume::ClassCfg &PostPlume::CfgOf (VESSEL *v)
 {
 	char cn[256];
@@ -291,6 +296,7 @@ const PostPlume::ClassCfg &PostPlume::CfgOf (VESSEL *v)
 		else if (key == "SMOKE") { double s; if (is >> s) c.smoke = std::clamp(s, 0.0, 2.0); }
 		else if (key == "GROUND") { std::string g; if (is >> g) c.ground = g == "none" ? 0 : (g == "dust" ? 2 : 1); }
 		else if (key == "PUFFS") { int p; if (is >> p) c.puffs = p ? 1 : 0; }
+		else if (key == "LIGHT") { double l; if (is >> l) c.light = std::clamp(l, 0.0, 4.0); }
 	}
 	LogAlw("PostPlume: %s, %d exhaust rules", path.c_str(), int(c.rules.size()));
 	return c;
@@ -374,9 +380,10 @@ void PostPlume::Collect ()
 		for (auto it = nozzles->begin(); it != nozzles->end();) it = oapiIsVessel(it->first.first) ? std::next(it) : nozzles->erase(it);
 		for (auto it = groundAcc.begin(); it != groundAcc.end();) it = oapiIsVessel(it->first) ? std::next(it) : groundAcc.erase(it);
 	}
+	time = float(std::fmod(oapiGetSysTime(), 3600.0)); // the wall clock, as the haze
+	GatherLights(); // before the early outs: a light never outlives its exhaust (design-plume-light 2)
 	if (!ok || !scn->pFx || !scn->pFx->DepthOK()) return; // SceneFx draws tDepth every main frame for us
 	if (!NoiseReady()) return;
-	time = float(std::fmod(oapiGetSysTime(), 3600.0)); // the wall clock, as the haze
 	double vp[16];
 	const float *m = (const float *)&scn->Camera.mProjView;
 	for (int i = 0; i < 16; i++) vp[i] = m[i];
@@ -389,6 +396,7 @@ void PostPlume::Collect ()
 	GatherPuffs();
 	if ((nLit > 0 || !plasma.empty() || nPuff > 0) && diagN < 3) { diagN++; LogAlw("PostPlume: frame %u: %d lit exhausts, %d plumes, %d plasma, %d puffs", frame, nLit, int(plumes.size()), int(plasma.size()), nPuff); }
 	if (plumes.empty() && plasma.empty() && nPuff == 0) return;
+	nEx = 0;
 	for (size_t i = 0; i < plumes.size(); i++) FillPlume(int(i), plumes[i]);
 	for (size_t k = 0; k < plasma.size(); k++) FillPlasma(int(k), plasma[k]);
 	ScreenRect();
@@ -396,6 +404,66 @@ void PostPlume::Collect ()
 	for (D3D9ParticleStream *s : claimed) s->Claim(frame);
 	collectMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - c0).count();
 	if (++collectN == 600) LogAlw("PostPlume: Collect %.3f ms mean over 600 frames (now %d plumes, %d plasma, %d puffs)", collectMs / collectN, int(plumes.size()), int(plasma.size()), nPuff);
+}
+
+// the plumes' own light, used by the next frame's meshes and terrain: every lit exhaust near the camera, on screen or not, merged per vessel and class; the most flux (design-plume-light 2.3, design-plume-nozzles 3)
+void PostPlume::GatherLights ()
+{
+	lights.clear();
+	struct C { PlumeLight l; double flux; };
+	std::vector<C> all, own;
+	std::vector<Spot> mine[NCLASS];
+	for (Scene::VOBJREC *pv = scn->vobjFirst; pv; pv = pv->next) {
+		vObject *vo = pv->vobj;
+		if (!vo || !vo->IsActive() || vo->GetMeshCount() < 1) continue;
+		if (oapiGetObjectType(vo->Object()) != OBJTP_VESSEL || vo->CamDist() > LIGHT_FAR) continue;
+		VESSEL *v = ((vVessel *)vo)->GetInterface();
+		if (!v) continue;
+		DWORD n = v->GetExhaustCount();
+		if (!n) continue;
+		const ClassCfg &cfg = CfgOf(v);
+		if (!(cfg.light > 0.0)) continue;
+		for (std::vector<Spot> &m : mine) m.clear();
+		for (DWORD i = 0; i < n; i++) {
+			double lvl = v->GetExhaustLevel(i);
+			if (lvl <= 0.0) continue;
+			EXHAUSTSPEC es;
+			if (!v->GetExhaustSpec(i, &es) || !es.lpos || !es.ldir || es.lsize <= 0.0) continue;
+			Nozzle &nz = NozzleOf(v, i, es, cfg);
+			uint32_t seed = Hash(uint32_t(uintptr_t(v->GetHandle()) >> 4) * 31u + i); // the plume's own flicker (GatherPlumes)
+			double I = lvl * (1.0 - std::clamp(es.modulate, 0.0, 1.0) * VNoise(time * 12.0, seed));
+			const D3DXVECTOR4 &p0 = pal[nz.cls * 4], &p1 = pal[nz.cls * 4 + 1];
+			double c0[3] = { p0.x, p0.y, p0.z }, c1[3] = { p1.x, p1.y, p1.z };
+			PlumeMath::Light L = PlumeMath::PlumeLight(nz.cls, I, nz.re, c0, c1, cfg.light);
+			if (!(L.k > 0.0)) continue;
+			VECTOR3 r = *es.lpos - *es.ldir * (es.lofs + L.x); // the exit, then L.x down the plume
+			if (nz.cls >= 0 && nz.cls < NCLASS) mine[nz.cls].push_back({ { r.x, r.y, r.z }, { L.rgb[0], L.rgb[1], L.rgb[2] }, L.k, 1.0 / L.att2 });
+		}
+		own.clear();
+		for (const std::vector<Spot> &ms : mine) {
+			if (ms.empty()) continue;
+			Spot m = MergeSpots(ms);
+			if (!(m.k > 0.0)) continue;
+			PlumeLight l = { v->GetHandle(), D3DXVECTOR3(float(m.p[0]), float(m.p[1]), float(m.p[2])), D3DXCOLOR(float(m.rgb[0]), float(m.rgb[1]), float(m.rgb[2]), 1.0f), float(m.k), float(1.0 / m.rf2), float(LightRange(m.k, m.rf2)) };
+			own.push_back({ l, m.k * m.rf2 });
+		}
+		std::sort(own.begin(), own.end(), [](const C &a, const C &b) { return a.flux > b.flux; });
+		if (own.size() > size_t(LIGHT_PER_VESSEL)) own.resize(LIGHT_PER_VESSEL);
+		all.insert(all.end(), own.begin(), own.end());
+	}
+	std::sort(all.begin(), all.end(), [](const C &a, const C &b) { return a.flux > b.flux; });
+	if (all.size() > size_t(LIGHT_MAX)) all.resize(LIGHT_MAX);
+	for (const C &c : all) lights.push_back(c.l);
+}
+
+void PostPlume::AddLights (OBJHANDLE hV, const vObject *vo)
+{
+	for (const PlumeLight &l : lights) {
+		if (l.hV != hV) continue;
+		D3D9Light d;
+		d.SetPoint(l.pos, vo, l.col, l.k, D3DXVECTOR3(1.0f, 0.0f, l.att2), l.range);
+		scn->AddLocalLightFree(d); // never replaces a vessel's own light (design-plume-nozzles 3b)
+	}
 }
 
 // every lit exhaust in view: LOD crossfade, clustering (design review M4), the 32 nearest by size and level
@@ -501,6 +569,7 @@ void PostPlume::GatherPlumes ()
 		P.seed = float(Rand01(seed) * 17.0);
 		double mod = std::clamp(rep->es.modulate, 0.0, 1.0);
 		P.I = P.lvl * (1.0 - mod * VNoise(time * 12.0, seed)) * P.w; // smooth flicker, the add-on's modulate (design 5.5)
+		for (int i : g) P.ex.push_back({ cs[i].ref, cs[i].axis, cs[i].nz->re, P.I * cs[i].lvl / std::max(P.lvl, 1e-6) });
 		P.Ad = P.jet.jet ? Smoothstep(0.1, 0.7, std::fabs(std::log(std::max(P.jet.n, 1e-6)))) * pal[P.cls * 4 + 2].w : 0.0;
 		bool own = std::find(smokers.begin(), smokers.end(), P.hV) != smokers.end();
 		P.smoke = pal[P.cls * 4 + 3].w > 0.0f ? rep->cfg->smoke * (own ? 0.3 : 1.0) : 0.0;
@@ -1052,7 +1121,13 @@ void PostPlume::FillPlume (int i, const Plume &P)
 	q[8] = V4(P.pa, P.cr);
 	q[9] = V4(P.pb, P.step);
 	q[10] = V4(P.sun, float(P.wc));
-	q[11] = V4(P.amb, 0.0);
+	int first = nEx, cnt = int(P.ex.size()); // the exits per nozzle; when they do not all fit, the plume's own centre (design-plume-nozzles 2)
+	if (nEx + cnt > EXMAX) cnt = 0;
+	for (int m = 0; m < cnt; m++, nEx++) {
+		vEx[size_t(nEx) * 2] = V4(P.ex[m].o, P.ex[m].re);
+		vEx[size_t(nEx) * 2 + 1] = V4(P.ex[m].a, P.ex[m].I);
+	}
+	q[11] = V4(P.amb, float(first + 4096 * cnt));
 }
 
 // plasma vessel k's uniforms (Plume.glsl FlowSurf, PlasmaAt, BandAt)
@@ -1354,6 +1429,7 @@ bool PostPlume::March (VkTex *dep)
 	ipi->SetFloat("vCond", cond, sizeof(cond));
 	ipi->SetFloat("vPl", vPl.data(), int(vPl.size() * sizeof(D3DXVECTOR4)));
 	ipi->SetFloat("vPz", vPz.data(), int(vPz.size() * sizeof(D3DXVECTOR4)));
+	ipi->SetFloat("vEx", vEx.data(), int(vEx.size() * sizeof(D3DXVECTOR4)));
 	ipi->SetTextureNative("tDepthP", dep, IPF_POINT | IPF_CLAMP);
 	ipi->SetTextureNative("tNoiseP", tNoise, IPF_LINEAR);
 	ipi->SetTextureNative("tAtlasP", tAtlas, IPF_LINEAR | IPF_CLAMP);

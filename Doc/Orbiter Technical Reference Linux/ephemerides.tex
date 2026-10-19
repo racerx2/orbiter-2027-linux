@@ -72,7 +72,7 @@ and the velocity is its analytic derivative. Depending on the body, the series g
 
 
 \subsection{Planet and Moon series}
-VSOP87 (planets) and ELP82 (Moon) are truncated by the module's ErrorLimit. The Linux edition sets ErrorLimit = 10$^{-8}$ for Mercury, Venus, Mars and the Moon, the value Earth already used: Venus, Mars and the Moon then use all their terms, Mercury 4932 of 7123. The Sun and the giant planets stay at 10$^{-6}$.
+VSOP87 (planets) and ELP82 (Moon) are truncated by the module's ErrorLimit. The Linux edition sets ErrorLimit = 10$^{-8}$ for Mercury, Venus, Mars and the Moon, the value Earth already used: Venus, Mars and the Moon then use all their terms, Mercury 4932 of 7123. The Sun, Jupiter, Saturn and Uranus stay at 10$^{-6}$. Neptune now uses an ephemeris of its DE441 system barycentre from a JPL Horizons-fitted Chebyshev table (32-day segments, 1800--2200) with the old VSOP87B as fallback. The existing moon models locate the planet centre relative to this barycentre. A one-year blend at either table edge preserves position and velocity continuity.
 
 
 \subsection{Rotation}

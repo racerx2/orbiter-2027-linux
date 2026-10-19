@@ -254,6 +254,124 @@ TEST_CASE ("E2-U4 animation diff and E2-U6 prediction", "[CollSourceA]")
 	REQUIRE (s.misuse == 0);
 }
 
+TEST_CASE("glTF filename slots retain collision geometry and animated doors", "[CollSourceA][gltf]")
+{
+    CollFakeSdk sdk;
+    auto slab=[](double cx, double cy, double cz, double sx, double sy, double sz) {
+        CollGroupData mesh=Box(1);
+        for (auto &v : mesh.vtx) {
+            v.x=(float)(v.x*sx+cx);
+            v.y=(float)(v.y*sy+cy);
+            v.z=(float)(v.z*sz+cz);
+        }
+        return mesh;
+    };
+    const auto *tpl = sdk.AddTpl("Cargo/bay.glb", {
+        slab(0,-1,0, 1,.1,2),
+        slab(-1,0,0, .1,1,2),
+        slab(1,0,0, .1,1,2),
+        slab(0,1,0, 1,.08,2),
+    });
+    (void)tpl;
+    auto *v=sdk.AddVessel("CargoShip");
+    v->slot.resize(1);
+    v->slot[0].kind=CollFakeSdk::NAME;
+    v->slot[0].name="Cargo/bay.glb";
+
+    {
+        CollMeshCache cache;
+        CollDirs dirs;
+        auto first=cache.ByName(sdk,dirs,"Cargo/bay.glb");
+        REQUIRE(first.present);
+        REQUIRE(first.rest);
+        REQUIRE(first.rest->grp.size()==4);
+        REQUIRE(first.rest->nvtx==32);
+        CHECK(sdk.meshP.back().freed);
+        CHECK(first.rest->grp[3].vtx[0].y > .8f);
+        auto again=cache.ByName(sdk,dirs,"CARGO/BAY.GLB");
+        REQUIRE(again.rest==first.rest);
+        CHECK(cache.Parsed()==1);
+        CHECK(sdk.callsP.size()==2);
+
+        auto missing=cache.ByName(sdk,dirs,"Cargo/missing.gltf");
+        CHECK_FALSE(missing.present);
+        CHECK_FALSE(missing.rest);
+        CHECK(sdk.LogCount("mesh not found")==1);
+        sdk.File(".\\Meshes\\Cargo\\bay.col", "COLLIDER-V1\nMAT BAYDOOR GROUP 3\n");
+        auto side=cache.Sidecar(sdk,dirs,"Cargo/bay.glb",4);
+        REQUIRE(side);
+        CHECK(side->rule.size()==1);
+    }
+
+    TestModule mod;
+    UINT an=v->anim.CreateAnimation(0);
+    v->anim.AddAnimationComponent(an,0,1,
+        mod.Rot(0,mod.Grp({3}),1,_V(-1,1,0),_V(0,0,1),(float)1.5));
+
+    CollGeomSession g(sdk,Cfg());
+    g.SimulationStart(0,false);
+    g.BeginFrame(0,0.1);
+    const CollVesselGeom *geo=g.Geom(0);
+    REQUIRE(geo);
+    REQUIRE(geo->shape);
+    CHECK(geo->shape->PartOf(0,0)>=0);
+    CHECK(geo->shape->PartOf(0,1)>=0);
+    CHECK(geo->shape->PartOf(0,2)>=0);
+    CHECK(geo->shape->PartOf(0,3)>=0);
+    CHECK(g.GroupAnimated(0,0,3));
+    CHECK_FALSE(g.GroupAnimated(0,0,0));
+    REQUIRE(sdk.meshP.back().freed);
+
+    CollRayHit hit;
+    const Vector origin(0,0,0);
+    CHECK(geo->shape->RayRest(0,0,origin,Vector(0,1,0),0,5,hit));
+    CHECK(geo->shape->RayRest(0,0,origin,Vector(0,-1,0),0,5,hit));
+    CHECK(geo->shape->RayRest(0,0,origin,Vector(1,0,0),0,5,hit));
+
+    CollAffine closed,opened;
+    REQUIRE(geo->shape->GroupPose(0,3,closed));
+    v->anim.SetAnimation(an,1);
+    g.BeginFrame(0.1,0.1);
+    geo=g.Geom(0);
+    REQUIRE((geo && geo->shape));
+    REQUIRE(geo->shape->GroupPose(0,3,opened));
+    CHECK((opened.A.data[0]-closed.A.data[0])!=0);
+    CollAffine unchanged;
+    REQUIRE(geo->shape->GroupPose(0,0,unchanged));
+    CHECK(unchanged.A.data[0]==1);
+    CHECK_FALSE(geo->shape->RayRest(0,0,origin,Vector(0,1,0),0,5,hit));
+    CHECK(geo->shape->RayRest(0,0,origin,Vector(0,-1,0),0,5,hit));
+    CHECK(geo->shape->RayRest(0,0,origin,Vector(1,0,0),0,5,hit));
+    CHECK(sdk.misuse==0);
+}
+
+TEST_CASE("glTF drop-in collision uses Orbiter's replacement groups", "[CollSourceA][gltf]")
+{
+	CollFakeSdk sdk;
+	sdk.File (".\\\\Meshes\\\\Cargo\\\\bay.msh", BoxMsh ());
+	sdk.AddTpl ("Cargo/bay", { Box (4), Box (2) });
+	sdk.dropinMesh[CollFakeSdk::Norm ("Cargo/bay")] = true;
+	auto *v = sdk.AddVessel ("Carrier");
+	v->slot.resize (1);
+	v->slot[0].kind = CollFakeSdk::NAME;
+	v->slot[0].name = "Cargo/bay";
+
+	CollGeomSession g (sdk, Cfg ());
+	g.SimulationStart (0, false);
+	g.BeginFrame (0, 0.1);
+	auto *geom = g.Geom (0);
+	REQUIRE (geom);
+	REQUIRE (geom->shape);
+	REQUIRE (g.Slots (0)[0].rest);
+	CHECK (g.Slots (0)[0].nvtx == 16);
+	CHECK (g.Slots (0)[0].rest->grp.size() == 2);
+	CHECK (g.Slots (0)[0].rest->grp[0].vtx[0].x == -4.0f);
+	CHECK (geom->shape->PartOf (0, 1) >= 0);
+	REQUIRE (!sdk.meshP.empty());
+	CHECK (sdk.meshP.back().freed);
+	CHECK (sdk.misuse == 0);
+}
+
 TEST_CASE ("E2-U7 assemblies", "[CollSourceA]")
 {
 	CollFakeSdk s;

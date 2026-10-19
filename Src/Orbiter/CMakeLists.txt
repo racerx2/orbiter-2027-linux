@@ -22,6 +22,9 @@ set(common_src
 	LightEmitter.cpp
 	Mesh.cpp
 	GltfLoader.cpp # not upstream: glTF meshes
+	GltfRoundTrip.cpp # not upstream: glTF round trip (claude/design-gltf-roundtrip.md)
+	GltfDropIn.cpp
+	GltfVesselAnim.cpp
 	Nav.cpp
 	Orbiter.cpp
 	PlaybackEd.cpp

@@ -95,6 +95,8 @@ public:
 	bool Playback (CollH) override { return false; }
 	int DamageModel (CollH) override { return damageModelE; }
 	// meshes and animations
+	std::map<std::string, bool> dropinMesh;
+	bool MeshHasGltfDropIn (const char *name) override { return name && dropinMesh[Norm (name)]; }
 	uint32_t MeshCount (CollH v) override { Ves *x = V (v); calls.push_back ("MeshCount"); return x ? (uint32_t)x->slot.size () : 0; }
 	CollH MeshTemplate (CollH v, uint32_t i) override { Ves *x = V (v); return (x && i < x->slot.size () && x->slot[i].kind == TPL) ? x->slot[i].tpl : nullptr; }
 	const char *MeshName (CollH v, uint32_t i) override
@@ -106,13 +108,19 @@ public:
 	Vector MeshOffset (CollH v, uint32_t i) override { Ves *x = V (v); if (!x || i >= x->slot.size () || x->slot[i].kind == HOLE) { Bad ("MeshOffset on a hole"); return Vector (); } return x->slot[i].ofs; }
 	uint16_t MeshVisMode (CollH v, uint32_t i) override { Ves *x = V (v); if (!x || i >= x->slot.size () || x->slot[i].kind == HOLE) { Bad ("MeshVisMode on a hole"); return 0; } return x->slot[i].mode; }
 	const char *TplName (CollH tpl) override { auto *t = (const Tpl *)tpl; return t->anon ? nullptr : t->name.c_str (); }
-	uint32_t TplGroups (CollH tpl) override { return (uint32_t)((const Tpl *)tpl)->grp.size (); }
+	uint32_t TplGroups (CollH tpl) override
+	{
+		for (const auto &m : meshP) if (&m == tpl) return (uint32_t)m.grp.size ();
+		return tpl ? (uint32_t)((const Tpl *)tpl)->grp.size () : 0;
+	}
 	bool TplGroup (CollH tpl, uint32_t g, CollTplGroup &out) override
 	{
 		if (!tpl) { Bad ("TplGroup NULL"); return false; }
-		auto *t = (const Tpl *)tpl;
-		if (g >= t->grp.size ()) return false;
-		const CollGroupData &d = t->grp[g];
+		const std::vector<CollGroupData> *groups = nullptr;
+		for (const auto &m : meshP) if (&m == tpl) { groups = &m.grp; break; }
+		if (!groups) groups = &((const Tpl *)tpl)->grp;
+		if (g >= groups->size ()) return false;
+		const CollGroupData &d = (*groups)[g];
 		out = { d.vtx.data (), d.idx.data (), (uint32_t)d.vtx.size (), (uint32_t)d.idx.size (), d.usrflag };
 		return true;
 	}

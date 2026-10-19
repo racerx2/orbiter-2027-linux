@@ -24,6 +24,7 @@
 #include "Psys.h"
 #include "Base.h"
 #include "Vessel.h"
+#include "GltfDropIn.h" // not upstream
 #include "resource.h"
 #include "Orbiter.h"
 #include "Launchpad.h"
@@ -958,6 +959,7 @@ void Orbiter::CloseSession ()
 		if (pDlgMgr)  { delete pDlgMgr; pDlgMgr = 0; }
 		Instrument::GlobalExit (gclient);
 		meshmanager.Flush(); // destroy buffered meshes
+		GltfDropInFlush (); // not upstream: drop-in glTF files are read again next session
 		DestroyWorld ();     // destroy logical objects
 		if (gclient)
 			gclient->clbkDestroyRenderWindow (false); // destroy graphics objects

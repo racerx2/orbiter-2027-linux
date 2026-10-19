@@ -50,6 +50,7 @@ constexpr double COLL_LOOKAHEAD     = 2.0;    // look-ahead span H = this * h (7
 constexpr double COLL_DOCK_ZONE_RADIUS = 1.5; // DockZoneRadius default [m] (3.3)
 constexpr double COLL_DOCK_ZONE_ON  = 3.0;    // R_dz_on [m]
 constexpr double COLL_ATTACH_ZONE_ON = 2.5;   // R_az_on [m] (3.4)
+constexpr double COLL_ATTACH_ZONE_RADIUS = 1.0; // local fixture radius [m]
 constexpr double COLL_ZONE_ANGLE    = 15.0;   // CollisionZoneAngle default [deg] (U4)
 constexpr double COLL_ZONE_SPEED    = 1.0;    // CollisionZoneSpeed default [m/s]
 
@@ -131,6 +132,19 @@ constexpr double    COLL_CARRY_MOVE   = 0.25;  // relative move at the carried p
 constexpr double    COLL_CARRY_TURN   = 0.1;   // relative turn since the full result [rad]
 // one active zone, spheres in the two body frames (3.3, 3.4)
 struct CollZone { int bodyA, bodyB; CollOwnerKey ownerA, ownerB; Vector ca, cb; double ra, rb; };
+struct CollPortAt { Vector g, d, r, v; };                          // port or attachment point at one time, global: ref point, direction, rotation ref, point velocity
+// Free attachment fixture in the owning body frame.
+struct CollAttachZonePoint {
+    int body;
+    CollOwnerKey owner;
+    bool toparent;
+    char id[9];
+    CollPortAt at[2]; // global port state at frame start and predicted frame end
+    Vector cb;        // port centre in its physics-body local frame
+};
+// Exempt compatible attachment fixtures only.
+void CollAttachmentZones(const std::vector<CollAttachZonePoint> &points,
+                         std::vector<CollZone> &out);
 struct CollSplit { uint32_t a, b; std::vector<Vector> joint; }; // etsep: bodies that were one assembly last frame, joint points (global, frame start)
 // corrected t1 state of one body for the look-ahead (7.2)
 struct CollEnd { Vector c1, v1, a1; double rmax, disp; };
@@ -206,7 +220,9 @@ struct CollPairEntry {
 	uint32_t lastFrame = 0;                  // frame of the last result
 	std::vector<CollTouch> touch;            // per part pair, sorted by (partKeyA, partKeyB) (3.6)
 	std::vector<std::pair<uint64_t, uint8_t>> embed; // attachment embedding cache: query key -> 0/1 (3.4)
-	bool split = false;                      // etsep: parts of one assembly until a split; no part pair is queried while they separate and touch
+	bool split = false;                      // etsep: parts of one assembly until a split
+	bool splitLocal = false;
+	std::vector<std::pair<uint32_t, uint32_t>> splitParts;
 	uint32_t splitFrame = 0;                 // etsep: frame the split scope was last checked
 	double splitAge = 0;                     // etsep: sim time since the split [s]
 	std::vector<CollLeafPair> joint;         // etsep: joint scope of an unpushed split, sorted; released all at once at COLL_JOINT_REL
@@ -326,7 +342,6 @@ double CollWarpAllowed (const CollWarpInput &w, double warp, double dtSys); // 7
 enum { COLLJP_T0 = 1, COLLJP_INSTEP = 2 };
 int    CollJumpPhase (bool s1IsS0, bool p1Ran);                   // 1.7 phase rule: INSTEP iff s1 != s0 and P1 has not run this frame
 double CollGeomJump (const Vector &dr, const Vector *dofs, size_t n); // 1.7 FRAME: max over collider meshes |dr + d_ofs|; |dr| if n == 0
-struct CollPortAt { Vector g, d, r, v; };                          // port or attachment point at one time, global: ref point, direction, rotation ref, point velocity
 bool   CollDockZoneActive (const CollPortAt &a, const CollPortAt &b, double rdz, double angleDeg, double vmax); // 3.3 rule step 3 at one time
 bool   CollAttachZoneActive (const CollPortAt &p, const CollPortAt &c, double angleDeg, double vmax);          // 3.4 rule step 4 at one time
 bool   CollAttachIdMatch (const char *parentId, const char *childId); // 3.4 step 2: non-empty parent id, prefix rule over the 8-char fields
