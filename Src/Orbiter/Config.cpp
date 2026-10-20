@@ -44,7 +44,7 @@ CFG_DIRPRM CfgDirPrm_default = {
 
 CFG_PHYSICSPRM CfgPhysicsPrm_default = {
 	false,		// bDistributedMass (no gravity gradient torque effect)
-	true,		// bNonsphericalGrav (enable available harmonic gravity models)
+	false,		// bNonsphericalGrav (no nonspherical gravity effects)
 	false,		// bRadiationPressure (no radiation pressure effects)
 	false,      // bAtmWind (enable wind effects)
 	true,		// bOrbitStabilise (use Encke orbit stabilisation)
