@@ -288,7 +288,9 @@ QWindow *GraphicsClient::clbkCreateRenderWindow ()
 	hWnd->setSurfaceType (QSurface::VulkanSurface); // must precede create(); the client attaches its QVulkanInstance
 
 	if (VideoData.fullscreen) {
-		hWnd->showFullScreen (); // the Direct3D client resized a 10x10 dummy popup; Qt shows the window fullscreen directly
+		hWnd->setFlags (Qt::Window | Qt::FramelessWindowHint); // WS_POPUP (WS_EX_TOPMOST in a style has no effect)
+		hWnd->resize (10, 10); // dummy window
+		// not upstream: WS_VISIBLE left out, the client shows it in its mode so its state is set before it is mapped
 	} else {
 		qreal dpr = (hWnd->screen() ? hWnd->screen()->devicePixelRatio() : 1.0); // winw/winh are device pixels
 		QSize size ((int)(VideoData.winw/dpr), (int)(VideoData.winh/dpr));

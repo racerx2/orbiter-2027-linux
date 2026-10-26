@@ -22,6 +22,7 @@
 #include <QScreen>
 #include <QGuiApplication>
 #include <QMessageBox>
+#include <QElapsedTimer>
 #include <chrono> // not upstream: Present's pacing while the window is hidden
 #include <thread>
 
@@ -65,6 +66,15 @@ static VkPhysicalDevice PickAdapter (DWORD idx)
 	std::vector<VkPhysicalDevice> pd(n);
 	vkEnumeratePhysicalDevices (g_pD3DObject->vkInstance(), &n, pd.data());
 	return pd[idx < n ? idx : 0];
+}
+
+// not upstream: the window manager places a shown window and sizes it in its first configure
+static void WaitPlaced (QWindow *w)
+{
+	QElapsedTimer t;
+	t.start ();
+	while (!w->isExposed() && t.elapsed() < 1000)
+		QCoreApplication::processEvents (QEventLoop::ExcludeUserInputEvents, 20);
 }
 
 //-----------------------------------------------------------------------------
@@ -121,6 +131,7 @@ void CD3DFramework9::Clear()
 	swapchain		  = VK_NULL_HANDLE;
 	swapFormat		  = VK_FORMAT_UNDEFINED;
 	swapExtent		  = { 0, 0 };
+	bFreeExtent		  = false;
 	iAcquire		  = 0;
 	tPace			  = std::chrono::steady_clock::time_point(); // not upstream: the epoch, so the first hidden frame starts the deadline from now
 	for (int i = 0; i < VkDev::NFRAMES; i++) acquireSem[i] = VK_NULL_HANDLE;
@@ -237,8 +248,12 @@ int CD3DFramework9::Initialize(QWindow *_hWnd, GraphicsClient::VIDEODATA *vData)
 				QRect r = scr ? scr->geometry() : QRect(0, 0, 1024, 768); // SM_CXSCREEN, SM_CYSCREEN
 				if (vData->pageflip && scr) r = scr->virtualGeometry(); // SM_CXVIRTUALSCREEN
 				hWnd->setFlags(hWnd->flags() | Qt::FramelessWindowHint); // WS_CLIPCHILDREN | WS_VISIBLE, no frame
-				hWnd->setGeometry(r);
-				hWnd->show();
+				if (scr && r != scr->geometry() && !QGuiApplication::platformName().startsWith("wayland")) {
+					hWnd->setGeometry(r);
+					hWnd->setVisible(true); // SWP_SHOWWINDOW
+				}
+				else hWnd->showFullScreen(); // not upstream: a frameless window over its whole screen is the full screen state, on the screen the window manager picks
+				WaitPlaced(hWnd);
 				bIsFullscreen = false;
 			}
 			break;
@@ -247,12 +262,9 @@ int CD3DFramework9::Initialize(QWindow *_hWnd, GraphicsClient::VIDEODATA *vData)
 			case 2:
 			{
 				dwDisplayMode = 1;
-				QRect rect = scr ? scr->availableGeometry() : QRect(0, 0, 1024, 768); // SPI_GETWORKAREA
 				hWnd->setFlags(hWnd->flags() | Qt::FramelessWindowHint);
-				int x = scr ? scr->geometry().width() : rect.width();
-				if (vData->pageflip) x = rect.width();
-				hWnd->setGeometry(rect.left(), rect.top(), x, rect.height());
-				hWnd->show();
+				hWnd->showMaximized(); // not upstream: the work area of the screen the window manager picks (SPI_GETWORKAREA, SetWindowPos)
+				WaitPlaced(hWnd);
 				bIsFullscreen = false;
 			}
 			break;
@@ -260,7 +272,7 @@ int CD3DFramework9::Initialize(QWindow *_hWnd, GraphicsClient::VIDEODATA *vData)
 	}
 	else {
 		dwDisplayMode = 2;
-		hWnd->show(); // WS_CLIPCHILDREN | WS_VISIBLE
+		hWnd->setVisible(true); // WS_CLIPCHILDREN | WS_VISIBLE
 		if (vData->trystencil)
 			hWnd->resize((int)(vData->winw / dpr), (int)(vData->winh / dpr));
 	}
@@ -456,6 +468,14 @@ int CD3DFramework9::Initialize(QWindow *_hWnd, GraphicsClient::VIDEODATA *vData)
 int CD3DFramework9::CreateFullscreenMode()
 {
 
+	hWnd->showFullScreen(); // Windowed = false: the device takes the window full screen
+	WaitPlaced(hWnd);
+	if (hWnd->isExposed()) { // not upstream: the screen the window manager picked, at its mode
+		qreal dpr = hWnd->devicePixelRatio();
+		dwRenderWidth = (DWORD)(hWnd->width() * dpr);
+		dwRenderHeight = (DWORD)(hWnd->height() * dpr);
+	}
+
 	// Get the dimensions of the screen bounds
 	// Store the rectangle which contains the renderer
 	rcScreenRect = { 0, 0, (LONG)dwRenderWidth, (LONG)dwRenderHeight };
@@ -569,9 +589,11 @@ int CD3DFramework9::CreateSwapchain()
 	}
 
 	swapExtent = sc.currentExtent;
-	if (swapExtent.width == 0xFFFFFFFF) {
-		swapExtent.width = std::clamp((UINT)dwRenderWidth, sc.minImageExtent.width, sc.maxImageExtent.width);
-		swapExtent.height = std::clamp((UINT)dwRenderHeight, sc.minImageExtent.height, sc.maxImageExtent.height);
+	bFreeExtent = (swapExtent.width == 0xFFFFFFFF);
+	if (bFreeExtent) { // the window's size, as the surface would report it
+		qreal dpr = hWnd->devicePixelRatio();
+		swapExtent.width = std::clamp(UINT(hWnd->width() * dpr), sc.minImageExtent.width, sc.maxImageExtent.width);
+		swapExtent.height = std::clamp(UINT(hWnd->height() * dpr), sc.minImageExtent.height, sc.maxImageExtent.height);
 	}
 	if (swapExtent.width == 0 || swapExtent.height == 0) return 0; // minimized: keep the old swapchain
 
@@ -678,6 +700,11 @@ int CD3DFramework9::Present()
 			else std::this_thread::sleep_until(tPace); // not upstream: as above
 		}
 		return failed ? -1 : 0;
+	}
+
+	if (bFreeExtent) { // not upstream: no OUT_OF_DATE when such a window changes size (moved to another screen)
+		qreal dpr = hWnd->devicePixelRatio();
+		if (UINT(hWnd->width() * dpr) != swapExtent.width || UINT(hWnd->height() * dpr) != swapExtent.height) CreateSwapchain();
 	}
 
 	UINT idx = 0;

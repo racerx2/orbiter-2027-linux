@@ -83,6 +83,7 @@ private:
 	VkSwapchainKHR         swapchain;
 	VkFormat               swapFormat;
 	VkExtent2D             swapExtent;
+	bool                   bFreeExtent;        // not upstream: the surface takes the window's size from the client (Wayland)
 	std::vector<VkImage>   swapImages;
 	std::vector<VkSemaphore> presentSem;       // one per swapchain image
 	VkSemaphore            acquireSem[VkDev::NFRAMES];

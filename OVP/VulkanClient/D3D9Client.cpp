@@ -651,7 +651,7 @@ QWindow *D3D9Client::clbkCreateRenderWindow()
 
 	SplashScreen();  // Warning SurfNative is not yet fully initialized here
 
-	hRenderWnd->show(); // ShowWindow(SW_SHOW)
+	hRenderWnd->setVisible(true); // ShowWindow(SW_SHOW) keeps the window's state; show() is showNormal()
 
 	OutputLoadStatus("Building Shader Programs...",0);
 
