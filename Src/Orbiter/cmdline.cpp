@@ -38,8 +38,14 @@ void CommandLine::ParseCmdLine(const PSTR cmdLine)
 	while (*pc) {
 		Option option;
 		option.key = 0;
+		PSTR p0 = pc; // not upstream: start of the item, for the error line
 		if (ParseNextOption(pc, groupKey, option)) {
 			optionList.push_back(option);
+		}
+		else if (*pc) { // not upstream: a parse error leaves the pointer in place, so the loop would never end
+			while (*p0 == ' ' || *p0 == '\t') p0++;
+			std::cerr << "Orbiter: command line not understood: " << p0 << std::endl;
+			break;
 		}
 	}
 }
@@ -100,8 +106,7 @@ bool CommandLine::ParseNextOption(PSTR& cmdLine, bool& groupKey, Option& option)
 		else
 			return false; // '=' not allowed after short keys: parse error
 	}
-	else if (isLongKey)
-		return false;     // for long keys, '=' is mandatory before values
+	// not upstream: a long key also takes its value after a space, as a short key does
 	if (isQuotedVal = (*cmdLine == '\"'))
 		cmdLine++; // skip starting quotes
 	const char* termValChar = (isQuotedParam || isQuotedVal ? "\"" : " \t"); // for quoted values, only accept quotes as terminator
@@ -245,6 +250,7 @@ void orbiter::CommandLine::PrintHelpAndExit() const
 	std::cout << "  --help, -h: Print this help page and exit.\n";
 	std::cout << "  --scenario=<scn>, -S <scn>: Launch scenario <scn>\n";
 	std::cout << "  --scenariox=<scn>, -s <scn>: Launch scenario <scn>, exit on close\n";
+	std::cout << "  (a long option also takes its value after a space: --scenario <scn>)\n"; // not upstream
 	std::cout << "  --fastexit, -x: Exit Orbiter after simulation session\n";
 	std::cout << "  --openvideotab, -v: Open Launchpad on video tab\n";
 	std::cout << "  --keeplog, -l: Append log to previous session\n";
