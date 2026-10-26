@@ -654,6 +654,7 @@ QWindow *D3D9Client::clbkCreateRenderWindow()
 	hRenderWnd->setVisible(true); // ShowWindow(SW_SHOW) keeps the window's state; show() is showNormal()
 
 	OutputLoadStatus("Building Shader Programs...",0);
+	if (pFramework->WaitSpan()) OutputLoadStatus("Building Shader Programs...",0); // not upstream: the load screen at the span's size
 
 	D3D9Effect::D3D9TechInit(this, pDevice, fld);
 

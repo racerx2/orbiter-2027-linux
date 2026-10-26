@@ -58,6 +58,7 @@ private:
     BOOL                   bVertexTexture;
     BOOL                   bAAEnabled;
     BOOL                   bNoVSync;           // don't use vertical sync in fullscreen
+    int                    wSpan, hSpan;       // not upstream: the window size of a span over all monitors, before the window manager has given it
     BOOL                   Alpha;
     BOOL                   SWVert;
     BOOL                   Pure;
@@ -124,6 +125,7 @@ public:
 
     // Creates the Framework
     int Initialize(QWindow *hWnd, struct oapi::GraphicsClient::VIDEODATA *vData);
+    bool WaitSpan(); // not upstream: waits for KWin to give a Wayland span its size
 
     int DestroyObjects();
 

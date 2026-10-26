@@ -10,6 +10,7 @@
 #include <vector>
 
 class QTreeWidgetItem;
+class QScreen;
 class QTimer;
 class QObject;
 class EventHook;
@@ -50,6 +51,8 @@ namespace orbiter {
 
 		void Show(); // Show the launchpad window
 		void Hide(); // Hide the launchpad window
+
+		QScreen *Screen() const; // not upstream: the monitor the dialog is on, NULL before it was first shown
 
 		inline bool Visible() const { return m_bVisible; }
 

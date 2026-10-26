@@ -23,6 +23,18 @@
 #include <QGuiApplication>
 #include <QMessageBox>
 #include <QElapsedTimer>
+#include <QDBusInterface>
+#include <QDBusReply>
+#include <QFile>
+#include <QTimer>
+#if QT_CONFIG(xcb) && __has_include(<xcb/xinerama.h>)
+#include <xcb/xcb.h>
+#include <xcb/xinerama.h>
+#include <dlfcn.h>
+#include <cstdlib>
+#include <cstring>
+#define VKC_X11_SPAN 1
+#endif
 #include <chrono> // not upstream: Present's pacing while the window is hidden
 #include <thread>
 
@@ -77,6 +89,155 @@ static void WaitPlaced (QWindow *w)
 		QCoreApplication::processEvents (QEventLoop::ExcludeUserInputEvents, 20);
 }
 
+// not upstream: waits until the window manager gave the window its size
+static bool WaitSize (QWindow *w, const QSize &s, int ms)
+{
+	QElapsedTimer t;
+	t.start ();
+	while (w->size() != s && t.elapsed() < ms)
+		QCoreApplication::processEvents (QEventLoop::ExcludeUserInputEvents, 20);
+	return w->size() == s;
+}
+
+#ifdef VKC_X11_SPAN
+// not upstream: X11 spans a full screen window over the monitors with the EWMH hint _NET_WM_FULLSCREEN_MONITORS (Xinerama indices); libxcb-xinerama is opened at run time, so it isn't needed to load the client
+static bool X11FullscreenMonitors (QWindow *w)
+{
+	auto *x11 = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
+	void *lx = dlopen ("libxcb.so.1", RTLD_LAZY);
+	void *lxin = dlopen ("libxcb-xinerama.so.0", RTLD_LAZY);
+	bool ok = false;
+	if (x11 && lx && lxin) {
+		auto query = (decltype(&xcb_xinerama_query_screens))dlsym (lxin, "xcb_xinerama_query_screens");
+		auto reply = (decltype(&xcb_xinerama_query_screens_reply))dlsym (lxin, "xcb_xinerama_query_screens_reply");
+		auto info = (decltype(&xcb_xinerama_query_screens_screen_info))dlsym (lxin, "xcb_xinerama_query_screens_screen_info");
+		auto ninfo = (decltype(&xcb_xinerama_query_screens_screen_info_length))dlsym (lxin, "xcb_xinerama_query_screens_screen_info_length");
+		auto intern = (decltype(&xcb_intern_atom))dlsym (lx, "xcb_intern_atom");
+		auto ireply = (decltype(&xcb_intern_atom_reply))dlsym (lx, "xcb_intern_atom_reply");
+		auto setup = (decltype(&xcb_get_setup))dlsym (lx, "xcb_get_setup");
+		auto roots = (decltype(&xcb_setup_roots_iterator))dlsym (lx, "xcb_setup_roots_iterator");
+		auto send = (decltype(&xcb_send_event))dlsym (lx, "xcb_send_event");
+		auto flush = (decltype(&xcb_flush))dlsym (lx, "xcb_flush");
+		xcb_connection_t *c = x11->connection();
+		xcb_xinerama_query_screens_reply_t *r = (query && reply && info && ninfo && intern && ireply && setup && roots && send && flush) ? reply (c, query (c), NULL) : NULL;
+		if (r) {
+			const xcb_xinerama_screen_info_t *si = info (r);
+			int n = ninfo (r);
+			const char *name = "_NET_WM_FULLSCREEN_MONITORS";
+			xcb_intern_atom_reply_t *a = (n > 1) ? ireply (c, intern (c, 0, (uint16_t)strlen (name), name), NULL) : NULL;
+			if (a) {
+				uint32_t top = 0, bottom = 0, left = 0, right = 0;
+				for (int i = 1; i < n; i++) {
+					if (si[i].y_org < si[top].y_org) top = i;
+					if (si[i].y_org + si[i].height > si[bottom].y_org + si[bottom].height) bottom = i;
+					if (si[i].x_org < si[left].x_org) left = i;
+					if (si[i].x_org + si[i].width > si[right].x_org + si[right].width) right = i;
+				}
+				xcb_client_message_event_t ev;
+				memset (&ev, 0, sizeof (ev));
+				ev.response_type = XCB_CLIENT_MESSAGE;
+				ev.format = 32;
+				ev.window = (xcb_window_t)w->winId();
+				ev.type = a->atom;
+				ev.data.data32[0] = top;
+				ev.data.data32[1] = bottom;
+				ev.data.data32[2] = left;
+				ev.data.data32[3] = right;
+				ev.data.data32[4] = 1; // source: an application
+				send (c, 0, roots (setup (c)).data->root, XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY, (const char *)&ev);
+				flush (c);
+				free (a);
+				ok = true;
+			}
+			free (r);
+		}
+	}
+	if (lxin) dlclose (lxin);
+	if (lx) dlclose (lx);
+	return ok;
+}
+#endif
+
+// not upstream: the KWin script that places the spanning window, unloaded once the window is up or with the framework
+static QString g_kwinScript;
+
+static void KWinRelease ()
+{
+	if (g_kwinScript.isEmpty()) return;
+	QDBusInterface ("org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting").call ("unloadScript", g_kwinScript);
+	QFile::remove (qEnvironmentVariable ("XDG_RUNTIME_DIR") + "/" + g_kwinScript + ".js");
+	g_kwinScript.clear ();
+}
+
+// not upstream: a Wayland client can't place its window; KWin can, through its scripting interface. The script places the window when KWin maps it (a Vulkan window maps at its first frame)
+static bool KWinSpan (QWindow *w, const QRect &r)
+{
+	QDBusInterface kw ("org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting");
+	QString dir = qEnvironmentVariable ("XDG_RUNTIME_DIR");
+	if (!kw.isValid() || dir.isEmpty()) return false;
+	KWinRelease ();
+	QString name = QString ("orbiter-span-%1").arg (QCoreApplication::applicationPid());
+	QString title = w->title();
+	title.replace ("\\", "\\\\").replace ("\"", "\\\"");
+	QFile f (dir + "/" + name + ".js");
+	if (!f.open (QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+	f.write (QString ("function place (w) {\n"
+		"\tif (w.pid !== %1 || w.caption.indexOf (\"%2\") !== 0) return;\n"
+		"\tw.keepAbove = true;\n"
+		"\tw.frameGeometry = {x: %3, y: %4, width: %5, height: %6};\n"
+		"}\n"
+		"for (const w of workspace.windowList ()) place (w);\n"
+		"workspace.windowAdded.connect (place);\n")
+		.arg (QCoreApplication::applicationPid()).arg (title).arg (r.x()).arg (r.y()).arg (r.width()).arg (r.height()).toUtf8());
+	f.close ();
+	g_kwinScript = name;
+	kw.call ("unloadScript", name);
+	QDBusReply<int> id = kw.call ("loadScript", f.fileName(), name);
+	bool ok = id.isValid() && id.value() >= 0;
+	if (ok) {
+		QDBusInterface sc ("org.kde.KWin", QString ("/Scripting/Script%1").arg (id.value()), "org.kde.kwin.Script");
+		ok = sc.isValid() && sc.call ("run").type() != QDBusMessage::ErrorMessage;
+	}
+	if (!ok) {
+		KWinRelease ();
+		return false;
+	}
+	QTimer::singleShot (15000, [] { KWinRelease (); });
+	w->resize (r.size());
+	w->setVisible (true);
+	return true;
+}
+
+// not upstream: one window over every monitor (SM_CXVIRTUALSCREEN): X11 through the window manager's EWMH hint, Wayland through KWin, else full screen on one monitor
+static bool SpanMonitors (QWindow *w, const QRect &r)
+{
+	QString pf = QGuiApplication::platformName();
+	bool ok = false;
+	if (pf.startsWith ("wayland")) ok = KWinSpan (w, r);
+#ifdef VKC_X11_SPAN
+	else if (pf == "xcb") {
+		w->showFullScreen ();
+		WaitPlaced (w);
+		ok = X11FullscreenMonitors (w) && WaitSize (w, r.size(), 2000);
+	}
+#endif
+	if (ok) LogAlw("[SPAN] %d, %d  %d x %d", r.x(), r.y(), r.width(), r.height());
+	else {
+		LogWrn("Multiple displays: the window manager can't span the monitors, full screen on one");
+		w->showFullScreen ();
+	}
+	return ok;
+}
+
+// not upstream: KWin places the span when it maps the window, at its first frame; the load screen waits for it (the load doesn't run the event loop), else it is squeezed into the first size until the session runs
+bool CD3DFramework9::WaitSpan ()
+{
+	if (wSpan <= 0 || hWnd->size() == QSize(wSpan, hSpan)) return false;
+	bool ok = WaitSize (hWnd, QSize(wSpan, hSpan), 2000);
+	LogAlw("[SPAN] window %d x %d%s", hWnd->width(), hWnd->height(), ok ? "" : " (KWin didn't place it in 2 s)");
+	return ok;
+}
+
 //-----------------------------------------------------------------------------
 // Name: CD3DFramework9()
 // Desc: The constructor. Clears static variables
@@ -100,6 +261,7 @@ CD3DFramework9::CD3DFramework9()
 CD3DFramework9::~CD3DFramework9 ()
 {
 	LogAlw("Deleting Framework");
+	KWinRelease (); // not upstream
 }
 
 void CD3DFramework9::Clear()
@@ -109,6 +271,7 @@ void CD3DFramework9::Clear()
 	bVertexTexture    = false;
 	bAAEnabled		  = false;
 	bNoVSync		  = false;
+	wSpan = hSpan = 0; // not upstream
 	Alpha			  = false;
 	SWVert			  = false;
 	Pure			  = true;
@@ -222,6 +385,7 @@ int CD3DFramework9::Initialize(QWindow *_hWnd, GraphicsClient::VIDEODATA *vData)
 
 	QScreen *scr = hWnd->screen() ? hWnd->screen() : QGuiApplication::primaryScreen();
 	qreal dpr = hWnd->devicePixelRatio();
+	if (scr) LogAlw("Render window screen = %s (%d x %d)", qPrintable(scr->name()), scr->geometry().width(), scr->geometry().height()); // not upstream
 
 	// Get DisplayMode Resolution ---------------------------------------
 	//
@@ -248,11 +412,10 @@ int CD3DFramework9::Initialize(QWindow *_hWnd, GraphicsClient::VIDEODATA *vData)
 				QRect r = scr ? scr->geometry() : QRect(0, 0, 1024, 768); // SM_CXSCREEN, SM_CYSCREEN
 				if (vData->pageflip && scr) r = scr->virtualGeometry(); // SM_CXVIRTUALSCREEN
 				hWnd->setFlags(hWnd->flags() | Qt::FramelessWindowHint); // WS_CLIPCHILDREN | WS_VISIBLE, no frame
-				if (scr && r != scr->geometry() && !QGuiApplication::platformName().startsWith("wayland")) {
-					hWnd->setGeometry(r);
-					hWnd->setVisible(true); // SWP_SHOWWINDOW
+				if (scr && r != scr->geometry()) {
+					if (SpanMonitors(hWnd, r)) { wSpan = r.width(); hSpan = r.height(); } // SetWindowPos over the virtual screen, SWP_SHOWWINDOW
 				}
-				else hWnd->showFullScreen(); // not upstream: a frameless window over its whole screen is the full screen state, on the screen the window manager picks
+				else hWnd->showFullScreen(); // not upstream: a frameless window over its whole screen is the full screen state, on the monitor the core set
 				WaitPlaced(hWnd);
 				bIsFullscreen = false;
 			}
@@ -511,6 +674,7 @@ int CD3DFramework9::CreateWindowedMode()
 	// Get the dimensions of the viewport and screen bounds
 	qreal dpr = hWnd->devicePixelRatio();
 	rcScreenRect = { 0, 0, (LONG)(hWnd->width() * dpr), (LONG)(hWnd->height() * dpr) }; // GetClientRect, device pixels
+	if (wSpan > 0) rcScreenRect = { 0, 0, (LONG)(wSpan * dpr), (LONG)(hSpan * dpr) }; // not upstream: KWin gives the span its size when it maps the window, at its first frame
 
 	// What is this ?!!
 	//ClientToScreen(hWnd, (POINT*)&rcScreenRect.left);

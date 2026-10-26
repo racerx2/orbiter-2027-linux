@@ -291,6 +291,12 @@ QWindow *GraphicsClient::clbkCreateRenderWindow ()
 		hWnd->setFlags (Qt::Window | Qt::FramelessWindowHint); // WS_POPUP (WS_EX_TOPMOST in a style has no effect)
 		hWnd->resize (10, 10); // dummy window
 		// not upstream: WS_VISIBLE left out, the client shows it in its mode so its state is set before it is mapped
+		QScreen *home = g_pOrbiter->Launchpad()->Screen(); // not upstream: full screen on the Launchpad's monitor
+		hWnd->create (); // not upstream: Qt picks a new window's monitor again when it makes it, so the monitor is set after
+		if (home) {
+			hWnd->setScreen (home); // Wayland: the output sent with set_fullscreen
+			hWnd->setPosition (home->geometry().topLeft()); // X11: the window manager full-screens the monitor the window is on
+		}
 	} else {
 		qreal dpr = (hWnd->screen() ? hWnd->screen()->devicePixelRatio() : 1.0); // winw/winh are device pixels
 		QSize size ((int)(VideoData.winw/dpr), (int)(VideoData.winh/dpr));

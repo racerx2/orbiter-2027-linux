@@ -35,6 +35,7 @@
 #include <QScreen>
 #include <QTimer>
 #include <QTreeWidget>
+#include <QWindow>
 
 using namespace std;
 
@@ -177,6 +178,15 @@ void orbiter::LaunchpadDialog::Hide()
 	m_bVisible = false;
 	for (auto tab : TabList)
 		tab->LaunchpadShowing(false);
+}
+
+//-----------------------------------------------------------------------------
+
+// not upstream: the render window opens on this monitor
+QScreen *orbiter::LaunchpadDialog::Screen() const
+{
+	QWindow *w = hDlg ? hDlg->windowHandle() : NULL;
+	return w ? w->screen() : NULL;
 }
 
 //-----------------------------------------------------------------------------
