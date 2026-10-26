@@ -258,7 +258,7 @@ void ConfigFileParser::TrimString(char *pStr)
     }
 
     // final step: shift string left to delete trimmed whitespace
-    strcpy(pOrgStart, pStart);
+    memmove(pOrgStart, pStart, strlen(pStart) + 1); // not upstream: the two overlap, and glibc's strcpy garbles an overlapping copy
 }
 
 // log a message
