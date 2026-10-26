@@ -1,0 +1,8 @@
+// GltfExport: Launchpad description and category
+#include "resource.h"
+
+STRINGTABLE
+BEGIN
+    IDS_INFO                "GLTF EXPORT:\r\n\r\nSaves the focus vessel with its meshes, textures and animations as one .glb file for Blender and other 3D tools. In flight: Custom functions (Ctrl-F4), Export vessel to glTF. The file goes to the Exports folder; each animation becomes an action."
+    IDS_TYPE                "Developer"
+END
