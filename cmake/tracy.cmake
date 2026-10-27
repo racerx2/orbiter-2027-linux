@@ -25,7 +25,12 @@ FetchContent_Declare(tracy
 	GIT_SHALLOW TRUE
 	EXCLUDE_FROM_ALL # prevents installation of lib and include directories in ${ORBITER_INSTALL_ROOT_DIR}
 )
+set(CMAKE_POLICY_DEFAULT_CMP0077 NEW) # not upstream: Tracy's option() keeps the TRACY_* values set above
+set(tracy_log_level ${CMAKE_MESSAGE_LOG_LEVEL})
+set(CMAKE_MESSAGE_LOG_LEVEL WARNING) # not upstream: Tracy lists every option at each configure
 FetchContent_MakeAvailable(tracy)
+set(CMAKE_MESSAGE_LOG_LEVEL ${tracy_log_level})
+unset(CMAKE_POLICY_DEFAULT_CMP0077) # not upstream
 
 set(TRACY_CLIENT_INCLUDE ${tracy_SOURCE_DIR}/public/tracy CACHE PATH "Tracy public include path")
 

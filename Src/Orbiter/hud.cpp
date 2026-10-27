@@ -1083,7 +1083,7 @@ void HUD::DrawTopRibbon(oapi::Sketchpad *skp, double value)
 	const int xmax = x0 + spec.W / 5;
 	const int ticksep2 = 16;
 	int x, d, d2;
-	char cbuf[10];
+	char cbuf[16]; // not upstream: room for any int, only 3 chars are drawn
 	skp->MoveTo(x0 - 5, 5); skp->LineTo(x0, 10); skp->LineTo(x0 + 6, 4);
 	double val2 = floor(value *= 0.5); // work in units of 2deg
 	int dx0 = (int)((value - val2) * ticksep2 + 0.5);

@@ -58,7 +58,6 @@ add_custom_command(TARGET LuaInterpreter
 if(ORBITER_MAKE_DOC)
 file(GLOB lua_in *.h *.cpp *.ld *.md *.lua)
 add_custom_command(
-	POST_BUILD
 	DEPENDS ${lua_in} lfs CopyLDoc
 	OUTPUT ${BUILD_OUT_DIR}/index.html
 	COMMAND ${CMAKE_COMMAND} -E copy ${lua_in} ${CMAKE_CURRENT_BINARY_DIR}
@@ -68,7 +67,6 @@ add_custom_command(
 )
 
 add_custom_command(
-	POST_BUILD
 	OUTPUT ${ORBITER_BINARY_SDK_DIR}/doc/orbiter_lua.chm
 	DEPENDS ${BUILD_OUT_DIR}/index.html
 	WORKING_DIRECTORY ${BUILD_OUT_DIR}
