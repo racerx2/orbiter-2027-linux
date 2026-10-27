@@ -1,4 +1,4 @@
-// not upstream: Launchpad Earth streaming page logic (TabStream.cpp): base list, Clear/Download refusals, end texts
+// not upstream: Launchpad Planet streaming page logic (TabStream.cpp): base list, Clear/Download refusals, end texts
 
 #ifndef __STREAMBASES_H
 #define __STREAMBASES_H

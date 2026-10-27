@@ -121,7 +121,7 @@ void OptionsPageContainer::CreatePages()
 	AddPage(new OptionsPage_Labels(this), parent);
 	AddPage(new OptionsPage_Forces(this), parent);
 	AddPage(new OptionsPage_Axes(this), parent);
-	if (m_orig == LAUNCHPAD) AddPage(new OptionsPage_Stream(this)); // not upstream: Earth streaming (TabStream.cpp)
+	if (m_orig == LAUNCHPAD) AddPage(new OptionsPage_Stream(this)); // not upstream: Planet streaming (TabStream.cpp)
 	QTreeWidget *hTree = qobject_cast<QTreeWidget*>(m_hPageList);
 	hTree->setCurrentItem(hTree->topLevelItem(0));
 }

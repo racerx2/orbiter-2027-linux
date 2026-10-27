@@ -413,8 +413,8 @@ vPlanet::vPlanet (OBJHANDLE _hObj, const Scene *scene) :
 		surfmgr = NULL;
 		int patchlvl = 1 << (4 + Config->MeshRes);
 		surfmgr2 = new TileManager2<SurfTile> (this, max_patchres, patchlvl);
-		bldgmgr = oapiTileStreamEnabled (_hObj) ? new BldgMgr (this, _hObj, scn) : NULL; // not upstream
-		treemgr = (Config->Trees && oapiTileStreamEnabled (_hObj)) ? new TreeMgr (this, _hObj, scn) : NULL; // not upstream
+		bldgmgr = (oapiTileStreamLayers (_hObj) & TSLAYER_BLDG) ? new BldgMgr (this, _hObj, scn) : NULL; // not upstream; mars-stream: a body with building tiles
+		treemgr = (Config->Trees && (oapiTileStreamLayers (_hObj) & TSLAYER_CLASS)) ? new TreeMgr (this, _hObj, scn) : NULL; // not upstream; mars-stream: with land classes
 		prm.horizon_excess = *(double*)oapiGetObjectParam (_hObj, OBJPRM_PLANET_HORIZONEXCESS);
 		prm.tilebb_excess = *(double*)oapiGetObjectParam (_hObj, OBJPRM_PLANET_TILEBBEXCESS);
 	}

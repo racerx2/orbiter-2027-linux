@@ -220,7 +220,7 @@ void SurfTile::PreLoad()
 	
 	SAFE_DELETE(pSysSrf); // Release
 
-	if (smgr->bStream && tex) { // not upstream: the tile stream's land class weights go with the Surf tile, L >= 12
+	if (smgr->bStream && (smgr->streamLayers & TSLAYER_CLASS) && tex) { // not upstream: the tile stream's land class weights go with the Surf tile, L >= 12
 		if (owntex && lvl + 4 >= 12) {
 			snprintf(path, MAX_PATH, "%s\\Class\\%02d\\%06d\\%06d.dds", mgr->DataRootDir().c_str(), lvl + 4, ilat, ilng);
 			LoadTextureFile(path, &pSysSrf);
@@ -1597,7 +1597,7 @@ void TileManager2<SurfTile>::StreamRead ()
 	int n = oapiTileStreamDone(Cbody(), k, 16);
 	for (int i = 0; i < n; i++) StreamQueue(k[3 * i], k[3 * i + 1], k[3 * i + 2]);
 	SurfTile *t0 = tiletree[0].Entry(); // a root always exists; LoadTextureFile only reads its mipmap flag
-	bool mask = cprm.bSpecular || cprm.bLights;
+	bool mask = (cprm.bSpecular || cprm.bLights) && (streamLayers & TSLAYER_MASK); // mars-stream: a body without Mask tiles
 	char path[MAX_PATH];
 	int taken = 0;
 	for (StreamLoad &s : streamKeys) {
@@ -1623,7 +1623,7 @@ void TileManager2<SurfTile>::StreamRead ()
 				continue;
 			}
 		}
-		if (s.L >= 12) { // land class weights, when the stream made them
+		if (s.L >= 12 && (streamLayers & TSLAYER_CLASS)) { // land class weights, when the stream made them
 			snprintf(path, MAX_PATH, "%s\\Class\\%02d\\%06d\\%06d.dds", DataRootDir().c_str(), s.L, s.ilat, s.ilng);
 			t0->LoadTextureFile(path, &s.cls);
 		}

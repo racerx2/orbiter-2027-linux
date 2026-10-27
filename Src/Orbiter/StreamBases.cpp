@@ -1,4 +1,4 @@
-// not upstream: Launchpad Earth streaming page helpers (StreamBases.h)
+// not upstream: Launchpad Planet streaming page helpers (StreamBases.h)
 
 #include "StreamBases.h"
 #include <algorithm>
@@ -55,10 +55,10 @@ std::string StreamRefusal (StreamAct a, const StreamState &s)
 	} else {
 		if (s.clearing || s.pendingClear) return "The streamed tiles are being cleared. Try again once that has finished.";
 		if (s.fetching) return "A region download is running already.";
-		if (s.offline && s.streamOff) return "Offline is ticked, so no tiles are requested. Tick Stream Earth imagery and elevation, then untick Offline, to download a region.";
+		if (s.offline && s.streamOff) return "Offline is ticked, so no tiles are requested. Tick Stream planet imagery and elevation, then untick Offline, to download a region.";
 		if (s.offline) return "Offline is ticked, so no tiles are requested. Untick it to download a region.";
 	}
-	if (s.busy) return "Another Orbiter is using the Earth tile cache. Try again once it has ended.";
+	if (s.busy) return "Another Orbiter is using the tile cache. Try again once it has ended.";
 	return std::string();
 }
 
@@ -72,7 +72,7 @@ PendingClear StreamPendingClear (bool pending, bool counting, const std::functio
 std::string StreamClearText (long cleared, bool refused, const std::string &error)
 {
 	if (!error.empty()) return "Clearing stopped: " + error;
-	if (refused) return "Not cleared: another Orbiter is using the Earth tile cache.";
+	if (refused) return "Not cleared: another Orbiter is using the tile cache.";
 	return "Cleared " + std::to_string (cleared) + " streamed tiles.";
 }
 

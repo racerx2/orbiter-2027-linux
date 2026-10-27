@@ -285,8 +285,12 @@ TEST_CASE ("The tile stream config reads its body and rejects bad lines", "[Tile
 	std::vector<TsBodyCfg> b;
 	std::string err;
 	REQUIRE (TsReadCfg ("Config/TileStream.cfg", b, err));
-	REQUIRE (b.size() == 1);
+	REQUIRE (b.size() == 2); // mars-stream: Mars too (TileStreamMars.Test.cpp)
+	CHECK (b[1].name == "Mars");
 	CHECK (b[0].name == "Earth");
+	CHECK (b[0].Masks());
+	CHECK_FALSE (b[0].Cog());
+	CHECK (b[0].SurfMax() == 16);
 	CHECK (b[0].surf.kind == "eox");
 	CHECK (b[0].surf.lmin == 1);
 	CHECK (b[0].surf.lmax == 16);

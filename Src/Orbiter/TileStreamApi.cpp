@@ -38,6 +38,12 @@ DLLEXPORT int oapiTileStreamElev (OBJHANDLE hBody)
 	return hBody ? TsSessionElev (((Body*)hBody)->Name()) : 0;
 }
 
+DLLEXPORT int oapiTileStreamLayers (OBJHANDLE hBody) // not upstream (mars-stream)
+{
+	TileStream *ts = Stream();
+	return ts && hBody ? ts->Layers (((Body*)hBody)->Name()) : 0;
+}
+
 DLLEXPORT int oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax)
 {
 	TileStream *ts = Stream();

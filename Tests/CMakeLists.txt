@@ -195,6 +195,11 @@ target_link_libraries(TileStreamCore.Test Qt6::Network Qt6::Gui stb_dxt zlib)
 target_compile_options(TileStreamCore.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 target_link_options(TileStreamCore.Test PRIVATE -fsanitize=address)
 # not upstream: the Launchpad Earth streaming page: base list, when Clear and Download are refused, how they end
+add_unit_test(TileStreamMars.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream (mars-stream): COGs read in the job, a cog body's tiles, ASan
+target_link_libraries(TileStreamMars.Test Qt6::Network Qt6::Gui stb_dxt zlib)
+target_compile_options(TileStreamMars.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
+target_link_options(TileStreamMars.Test PRIVATE -fsanitize=address)
+set_tests_properties(TileStreamMars.Test PROPERTIES TIMEOUT 300) # the planet to L7 under ASan
 add_unit_test(TileStreamLaunchpad.Test ${ORBITER_SOURCE_DIR}/StreamBases.cpp)
 # not upstream: a base file's clear zones (BEGIN_CLEARZONES)
 add_unit_test(BaseClear.Test ${ORBITER_SOURCE_DIR}/BaseClear.cpp)

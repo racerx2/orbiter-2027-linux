@@ -16,7 +16,7 @@ int Size (int L)
 }
 
 // degrees: west edge, north edge, width, height; L1-L3 cover the globe
-static void Bounds (int L, int ilat, int ilng, double &w, double &n, double &dw, double &dh)
+void Bounds (int L, int ilat, int ilng, double &w, double &n, double &dw, double &dh)
 {
 	if (L < 4) { w = -180.0; n = 90.0; dw = 360.0; dh = 180.0; return; }
 	dh = 180.0 / (double)(1 << (L - 4));
@@ -374,6 +374,97 @@ double FloorAt (const std::vector<TsBodyCfg::Floor> &floor, double lng, double l
 }
 
 // Orbiter .elv: 259x259 int16, row 0 south, one node of padding, metres = value * scale; all nodes 0: flat (dtype 0)
+static std::string ElevFile (int L, int ilat, int ilng, const std::vector<int16_t> &z, double scale) // not upstream (mars-stream): split out of Elev
+{
+	const int N = 259;
+	double w, n, dw, dh;
+	Bounds (L, ilat, ilng, w, n, dw, dh);
+	double emin = 1e9, emax = -1e9, sum = 0.0;
+	for (int16_t e : z) {
+		double m = e * scale;
+		emin = std::min (emin, m);
+		emax = std::max (emax, m);
+		sum += m;
+	}
+	bool flat = emin == 0.0 && emax == 0.0; // sea level: a header-only flat tile, so it isn't fetched again
+	std::string out (100, '\0');
+	auto i32 = [&out] (size_t at, int32_t v) { memcpy (&out[at], &v, 4); };
+	auto f64 = [&out] (size_t at, double v) { memcpy (&out[at], &v, 8); };
+	out[0] = 'E'; out[1] = 'L'; out[2] = 'E'; out[3] = 1;
+	i32 (4, 100);
+	i32 (8, flat ? 0 : -16);
+	i32 (12, N); i32 (16, N);
+	i32 (20, 1); i32 (24, 1);
+	f64 (28, scale);
+	f64 (36, 0.0);
+	f64 (44, (n - dh) * M_PI / 180.0); f64 (52, n * M_PI / 180.0);
+	f64 (60, w * M_PI / 180.0); f64 (68, (w + dw) * M_PI / 180.0);
+	f64 (76, emin); f64 (84, emax); f64 (92, sum / ((double)N * N));
+	if (!flat) out.append ((const char*)z.data(), z.size() * sizeof (int16_t));
+	return out;
+}
+
+std::string ElevGrid (int L, int ilat, int ilng, const std::vector<float> &h, const std::vector<uint8_t> &valid, double scale)
+{
+	const size_t N = 259;
+	if (h.size() < N * N || valid.size() < N * N || scale <= 0.0) return std::string();
+	std::vector<float> v (h.begin(), h.begin() + N * N);
+	std::vector<uint8_t> ok (valid.begin(), valid.begin() + N * N);
+	for (size_t pass = 0; pass < N; pass++) { // a node without data takes its neighbours', so a gap is no pit
+		bool gap = false;
+		std::vector<uint8_t> was = ok;
+		for (size_t i = 0; i < N; i++)
+			for (size_t j = 0; j < N; j++) {
+				size_t k = i * N + j;
+				if (was[k]) continue;
+				double s = 0.0; int c = 0;
+				if (i > 0 && was[k - N]) { s += v[k - N]; c++; }
+				if (i + 1 < N && was[k + N]) { s += v[k + N]; c++; }
+				if (j > 0 && was[k - 1]) { s += v[k - 1]; c++; }
+				if (j + 1 < N && was[k + 1]) { s += v[k + 1]; c++; }
+				if (c) { v[k] = (float)(s / c); ok[k] = 1; } else gap = true;
+			}
+		if (!gap) break;
+	}
+	std::vector<int16_t> z (N * N);
+	for (size_t i = 0; i < N * N; i++) {
+		if (!ok[i]) return std::string(); // no data at all
+		z[i] = (int16_t)std::clamp (std::lround (v[i] / scale), -32767L, 32767L);
+	}
+	return ElevFile (L, ilat, ilng, z, scale);
+}
+
+void Paint (const std::vector<TsBodyCfg::Pal> &pal, double v, float rgb[3])
+{
+	if (pal.empty()) { rgb[0] = rgb[1] = rgb[2] = (float)v; return; }
+	size_t i = 0;
+	while (i + 1 < pal.size() && v > pal[i + 1].v) i++;
+	const TsBodyCfg::Pal &a = pal[i], &b = pal[std::min (i + 1, pal.size() - 1)];
+	double f = b.v > a.v ? std::clamp ((v - a.v) / (b.v - a.v), 0.0, 1.0) : 0.0;
+	rgb[0] = (float)(a.r + (b.r - a.r) * f);
+	rgb[1] = (float)(a.g + (b.g - a.g) * f);
+	rgb[2] = (float)(a.b + (b.b - a.b) * f);
+}
+
+QImage Detail (int n, const std::vector<float> &col, const std::vector<uint8_t> &cv, const std::vector<float> &hi, const std::vector<float> &lo, const std::vector<uint8_t> &dv)
+{
+	QImage out (n, n, QImage::Format_RGB888);
+	size_t N = (size_t)n * n;
+	bool det = hi.size() >= N && lo.size() >= N && dv.size() >= N;
+	for (int y = 0; y < n; y++) {
+		uchar *o = out.scanLine (y);
+		for (int x = 0; x < n; x++, o += 3) {
+			size_t i = (size_t)y * n + x;
+			double r = det && dv[i] && lo[i] > 0.0f ? std::clamp ((double)hi[i] / lo[i], 0.0, 4.0) : 1.0; // the detail lo misses, around the colour
+			for (int k = 0; k < 3; k++) {
+				double c = cv.size() > i && cv[i] && col.size() >= 3 * N ? col[3 * i + k] : 0.0;
+				o[k] = (uchar)std::clamp (std::lround (c * r), 0L, 255L);
+			}
+		}
+	}
+	return out;
+}
+
 std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QImage> &tiles, double scale, const std::vector<TsBodyCfg::Floor> &floor)
 {
 	const int N = 259;
@@ -395,7 +486,6 @@ std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QI
 		return p[0] * 256.0 + p[1] + p[2] / 256.0 - 32768.0;
 	};
 	std::vector<int16_t> z ((size_t)N * N);
-	double emin = 1e9, emax = -1e9, sum = 0.0;
 	for (int i = 0; i < N; i++) {
 		double lat = n - dh + (i - 1) * dh / 256.0;
 		double gy = std::clamp (MercY (lat, W) - 0.5, 0.0, W - 1.0);
@@ -408,30 +498,10 @@ std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QI
 			double fx = gx - x0;
 			double v = (h (x0, y0) * (1 - fx) + h (x1, y0) * fx) * (1 - fy) + (h (x0, y1) * (1 - fx) + h (x1, y1) * fx) * fy;
 			long q = std::lround (std::max (FloorAt (floor, lng, lat), v) / scale);
-			int16_t e = (int16_t)std::clamp (q, -32767L, 32767L);
-			z[(size_t)i * N + j] = e;
-			double m = e * scale;
-			emin = std::min (emin, m);
-			emax = std::max (emax, m);
-			sum += m;
+			z[(size_t)i * N + j] = (int16_t)std::clamp (q, -32767L, 32767L);
 		}
 	}
-	bool flat = emin == 0.0 && emax == 0.0; // sea level: a header-only flat tile, so it isn't fetched again
-	std::string out (100, '\0');
-	auto i32 = [&out] (size_t at, int32_t v) { memcpy (&out[at], &v, 4); };
-	auto f64 = [&out] (size_t at, double v) { memcpy (&out[at], &v, 8); };
-	out[0] = 'E'; out[1] = 'L'; out[2] = 'E'; out[3] = 1;
-	i32 (4, 100);
-	i32 (8, flat ? 0 : -16);
-	i32 (12, N); i32 (16, N);
-	i32 (20, 1); i32 (24, 1);
-	f64 (28, scale);
-	f64 (36, 0.0);
-	f64 (44, (n - dh) * M_PI / 180.0); f64 (52, n * M_PI / 180.0);
-	f64 (60, w * M_PI / 180.0); f64 (68, (w + dw) * M_PI / 180.0);
-	f64 (76, emin); f64 (84, emax); f64 (92, sum / ((double)N * N));
-	if (!flat) out.append ((const char*)z.data(), z.size() * sizeof (int16_t));
-	return out;
+	return ElevFile (L, ilat, ilng, z, scale);
 }
 
 } // namespace TsImg

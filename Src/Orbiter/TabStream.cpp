@@ -1,5 +1,5 @@
 
-// not upstream: Launchpad Options page "Earth streaming" (TabStream.h)
+// not upstream: Launchpad Options page "Planet streaming" (TabStream.h)
 
 #include "TabStream.h"
 #include "Orbiter.h"
@@ -97,11 +97,18 @@ void OptionsPage_Stream::Join()
 	if (m_sizeThread.joinable()) m_sizeThread.join();
 }
 
-std::string OptionsPage_Stream::BodyDir() const
+std::string OptionsPage_Stream::BodyDir(const std::string &body) const
 {
 	char p[512];
 	Config *cfg = const_cast<OptionsPage_Stream*>(this)->Cfg();
-	return cfg->PTexPath (p, sizeof p, "Earth") ? oapiResolvePath (p) : std::string();
+	return cfg->PTexPath (p, sizeof p, body.c_str()) ? oapiResolvePath (p) : std::string();
+}
+
+std::vector<std::string> OptionsPage_Stream::Dirs() const
+{
+	std::vector<std::string> d;
+	for (const std::string &b : m_bodies) d.push_back (BodyDir (b));
+	return d;
 }
 
 std::string OptionsPage_Stream::CfgFile() const
@@ -125,8 +132,8 @@ BOOL OptionsPage_Stream::OnInitDialog(QWidget *hPage)
 
 	auto *gs = new QGroupBox ("Streaming", hPage);
 	auto *ls = new QGridLayout (gs);
-	m_enable = new QCheckBox ("Stream Earth imagery and elevation", gs);
-	m_enable->setToolTip ("While the simulation runs, missing Earth tiles are fetched from the free servers listed in Config/TileStream.cfg");
+	m_enable = new QCheckBox ("Stream planet imagery and elevation", gs);
+	m_enable->setToolTip ("While the simulation runs, missing tiles of the planets in Config/TileStream.cfg are fetched from the free servers listed there");
 	m_offline = new QCheckBox ("Offline: only tiles already on disk", gs);
 	m_offline->setToolTip ("The simulation makes no tile requests, and a region download is refused");
 	m_cap = new QSpinBox (gs);
@@ -134,7 +141,7 @@ BOOL OptionsPage_Stream::OnInitDialog(QWidget *hPage)
 	m_cap->setSingleStep (256);
 	m_cap->setSuffix (" MB");
 	m_cap->setSpecialValueText ("No limit");
-	m_cap->setToolTip ("The oldest streamed tiles above this size are removed at the start of a session; levels 8 and below are kept");
+	m_cap->setToolTip ("For each planet, the oldest streamed tiles above this size are removed at the start of a session; levels 8 and below are kept");
 	ls->addWidget (m_enable, 0, 0, 1, 2);
 	ls->addWidget (m_offline, 1, 0, 1, 2);
 	ls->addWidget (new QLabel ("Cache limit:", gs), 2, 0);
@@ -157,7 +164,7 @@ BOOL OptionsPage_Stream::OnInitDialog(QWidget *hPage)
 	lc->setColumnStretch (0, 1);
 	top->addWidget (gc);
 
-	auto *gr = new QGroupBox ("Download a region", hPage);
+	auto *gr = new QGroupBox ("Download a region of Earth", hPage);
 	auto *lr = new QGridLayout (gr);
 	m_where = new QComboBox (gr);
 	m_lat = new QDoubleSpinBox (gr);
@@ -265,13 +272,18 @@ void OptionsPage_Stream::LoadBases()
 {
 	std::vector<TsBodyCfg> bodies;
 	std::string err;
+	QStringList credits;
+	m_bodies.clear();
 	if (TsReadCfg (CfgFile(), bodies, err))
-		for (const TsBodyCfg &b : bodies)
+		for (const TsBodyCfg &b : bodies) {
 			if (b.name == "Earth") {
 				m_lmax = b.surf.lmax;
 				m_elmax = b.elev.kind.empty() ? 0 : b.elev.lmax;
-				m_credits->setText (CreditHtml (b.credit));
 			}
+			m_bodies.push_back (b.name); // mars-stream: each body's credits
+			credits << "<b>" + QString::fromStdString (b.name).toHtmlEscaped() + "</b><br>" + CreditHtml (b.credit);
+		}
+	m_credits->setText (credits.join ("<br><br>"));
 	std::string dir = Cfg()->CfgDirPrm.ConfigDir;
 	std::replace (dir.begin(), dir.end(), '\\', '/');
 	if (!dir.empty() && dir.back() != '/') dir += '/';
@@ -321,7 +333,7 @@ void OptionsPage_Stream::UpdateConfig(QWidget *hPage)
 	if (m_capUser) Cfg()->TileStreamCacheMB = m_cap->value(); // a larger cfg value is never cut to the box
 }
 
-// off the UI thread: the size of the streamed tiles and of every loose Earth tile
+// off the UI thread: the size of the streamed tiles and of every loose tile, of each streamed body
 void OptionsPage_Stream::StartScan()
 {
 	m_scanWanted = false;
@@ -329,10 +341,17 @@ void OptionsPage_Stream::StartScan()
 	m_size->setText ("Counting...");
 	auto s = std::make_shared<Size>();
 	m_sz = s;
-	std::string dir = BodyDir();
-	m_sizeThread = std::thread ([s, dir] {
+	std::vector<std::string> dirs = Dirs();
+	m_sizeThread = std::thread ([s, dirs] {
 		try {
-			s->streamed = TileStream::CacheBytes (dir, &s->total, &s->tiles);
+			for (const std::string &dir : dirs) {
+				uint64_t total = 0;
+				size_t tiles = 0;
+				s->per.push_back (dir.empty() ? 0 : TileStream::CacheBytes (dir, &total, &tiles));
+				s->streamed += s->per.back();
+				s->total += total;
+				s->tiles += tiles;
+			}
 		} catch (const std::exception &e) {
 			s->error = e.what();
 		} catch (...) {
@@ -352,11 +371,22 @@ void OptionsPage_Stream::StartClear(bool keep)
 	auto s = std::make_shared<Size>();
 	s->clear = true;
 	m_sz = s;
-	std::string dir = BodyDir();
-	m_sizeThread = std::thread ([s, dir, keep] {
+	std::vector<std::string> dirs = Dirs();
+	m_sizeThread = std::thread ([s, dirs, keep] {
 		try {
-			s->cleared = (long)TileStream::Clear (dir, keep, &s->refused);
-			s->streamed = TileStream::CacheBytes (dir, &s->total, &s->tiles);
+			s->cleared = 0;
+			for (const std::string &dir : dirs) {
+				if (dir.empty()) { s->per.push_back (0); continue; }
+				bool refused = false;
+				s->cleared += (long)TileStream::Clear (dir, keep, &refused);
+				s->refused = s->refused || refused;
+				uint64_t total = 0;
+				size_t tiles = 0;
+				s->per.push_back (TileStream::CacheBytes (dir, &total, &tiles));
+				s->streamed += s->per.back();
+				s->total += total;
+				s->tiles += tiles;
+			}
 		} catch (const std::exception &e) {
 			s->error = e.what();
 		} catch (...) {
@@ -389,7 +419,11 @@ void OptionsPage_Stream::Tick()
 		if (m_sizeThread.joinable()) m_sizeThread.join();
 		m_sz->shown = true;
 		if (!m_sz->error.empty()) m_size->setText (QString ("Not counted: %1").arg (QString::fromStdString (m_sz->error)));
-		else m_size->setText (QString ("Streamed: %1 in %2 tiles\nAll loose Earth tiles: %3").arg (Bytes (m_sz->streamed)).arg (m_sz->tiles).arg (Bytes (m_sz->total)));
+		else {
+			QStringList per; // mars-stream: each body's share
+			for (size_t i = 0; i < m_sz->per.size() && i < m_bodies.size(); i++) per << QString::fromStdString (m_bodies[i]) + " " + Bytes (m_sz->per[i]);
+			m_size->setText (QString ("Streamed: %1 in %2 tiles (%3)\nAll loose tiles of these planets: %4").arg (Bytes (m_sz->streamed)).arg (m_sz->tiles).arg (per.join (", ")).arg (Bytes (m_sz->total)));
+		}
 		if (m_sz->clear) {
 			m_clearing = false;
 			QString s = QString::fromStdString (StreamClearText (m_sz->cleared, m_sz->refused, m_sz->error));
@@ -402,7 +436,7 @@ void OptionsPage_Stream::Tick()
 			Estimate ();
 		}
 	}
-	PendingClear pc = StreamPendingClear (m_pendingClear, m_sizeThread.joinable(), [this] { return TileStream::Busy (BodyDir()); });
+	PendingClear pc = StreamPendingClear (m_pendingClear, m_sizeThread.joinable(), [this] { for (const std::string &d : Dirs()) if (TileStream::Busy (d)) return true; return false; });
 	if (pc == PendingClear::Refuse) NotCleared ();
 	else if (pc == PendingClear::Start) StartClear (m_pendingKeep); // the count it waited for has ended
 	if (m_scanWanted && shows && !m_fetch && !m_clearing && !m_sizeThread.joinable() && std::chrono::steady_clock::now() >= m_nextScan) StartScan ();
@@ -438,7 +472,8 @@ bool OptionsPage_Stream::Refused(StreamAct a)
 	st.streamOff = !Cfg()->bTileStream;
 	std::string why = StreamRefusal (a, st);
 	if (why.empty()) {
-		st.busy = TileStream::Busy (BodyDir());
+		if (a == StreamAct::Clear) for (const std::string &d : Dirs()) st.busy = st.busy || TileStream::Busy (d); // mars-stream: every body's folder
+		else st.busy = TileStream::Busy (BodyDir());
 		why = StreamRefusal (a, st);
 	}
 	if (why.empty()) return false;
@@ -450,7 +485,9 @@ void OptionsPage_Stream::OnClear()
 {
 	if (Refused (StreamAct::Clear)) return;
 	bool keep = !m_base->isChecked();
-	QString msg = "Delete the Earth tiles the stream has downloaded?\n\n";
+	QStringList names;
+	for (const std::string &b : m_bodies) names << QString::fromStdString (b);
+	QString msg = "Delete the tiles the stream has downloaded (" + names.join (", ") + ")?\n\n";
 	msg += keep ? "Levels 8 and below are kept, so the globe still shows when you are offline. "
 		: "Base levels 8 and below are deleted too; they are fetched again when needed. ";
 	msg += "Tiles you installed yourself, texture packs and the Archive folder are not touched.";

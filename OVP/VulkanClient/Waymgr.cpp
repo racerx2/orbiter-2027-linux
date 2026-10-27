@@ -87,7 +87,7 @@ void SurfTile::WayParams ()
 	FlowControlPS *fc = vp->GetFlowControl();
 	fc->bWay = false;
 	fc->bWayN = false;
-	if (!smgr->bStream || !mgr->GetShader()->bWays || lvl + 4 < WayL0) return;
+	if (!smgr->bStream || !(smgr->streamLayers & TSLAYER_BLDG) || !mgr->GetShader()->bWays || lvl + 4 < WayL0) return;
 	const Scene *scene = mgr->GetScene();
 	if (scene->GetRenderPass() == RENDERPASS_MAINSCENE && vp == scene->GetCameraProxyVisual()) {
 		double d = GetCameraDistance();

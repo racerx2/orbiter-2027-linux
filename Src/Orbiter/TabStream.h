@@ -1,5 +1,5 @@
 
-// not upstream: Launchpad Options page "Earth streaming": tile stream settings, cache size and clearing, region prefetch
+// not upstream: Launchpad Options page "Planet streaming": tile stream settings, cache size and clearing, Earth region prefetch
 
 #ifndef __TABSTREAM_H
 #define __TABSTREAM_H
@@ -27,7 +27,7 @@ public:
 	OptionsPage_Stream(OptionsPageContainer* container);
 	~OptionsPage_Stream();
 	int ResourceId() const { return -1; }
-	const char* Name() const { return "Earth streaming"; }
+	const char* Name() const { return "Planet streaming"; } // mars-stream: was Earth streaming
 	void UpdateControls(QWidget *hPage);
 	void UpdateConfig(QWidget *hPage);
 	static void StopPrefetch(); // the Launchpad hides: a session is starting its own stream
@@ -36,9 +36,10 @@ protected:
 	BOOL OnInitDialog(QWidget *hPage);
 
 private:
-	struct Size { std::atomic<bool> ready {false}; bool clear = false, shown = false, refused = false; uint64_t streamed = 0, total = 0; size_t tiles = 0; long cleared = -1; std::string error; };
+	struct Size { std::atomic<bool> ready {false}; bool clear = false, shown = false, refused = false; uint64_t streamed = 0, total = 0; size_t tiles = 0; long cleared = -1; std::string error; std::vector<uint64_t> per; }; // per: each body's streamed bytes
 	struct Fetch { std::atomic<bool> cancel {false}, finished {false}; std::atomic<int> result {-1}; TileStream::Progress p; std::string error; };
-	std::string BodyDir() const;
+	std::string BodyDir(const std::string &body = "Earth") const;
+	std::vector<std::string> Dirs() const; // mars-stream: the folders of m_bodies
 	std::string CfgFile() const;
 	void LoadBases();
 	void Layout(QWidget *hPage);
@@ -66,6 +67,7 @@ private:
 	std::shared_ptr<Size> m_sz;
 	std::shared_ptr<Fetch> m_fetch;
 	int m_lmax = 16, m_elmax = 0; // last levels the cfg's SURF and ELEV sources serve
+	std::vector<std::string> m_bodies; // not upstream (mars-stream): the cfg's streamed bodies
 	bool m_clearing = false;      // a Clear runs; its result not shown yet
 	bool m_pendingClear = false, m_pendingKeep = true; // a confirmed Clear waits for the running size count
 	bool m_scanWanted = false;    // count the cache once the page shows

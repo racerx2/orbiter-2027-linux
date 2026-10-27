@@ -139,7 +139,7 @@ TEST_CASE ("The shipped package list names every layer once, in our release", "[
 	std::string err;
 	REQUIRE (TexPackRead ("Config/TexturePacks.cfg", list, err));
 	CHECK (list.url.find ("https://github.com/racerx2/Orbiter-linux-orbital-bodies-textures/releases/download/") == 0);
-	CHECK (list.pack.size() == 42);
+	CHECK (list.pack.size() == 40);
 	std::set<std::string> seen;
 	for (const TexPack &p : list.pack) {
 		CHECK (p.zip == p.body + "_" + p.layer + (p.parts.empty() ? ".zip" : ".tree"));
@@ -148,6 +148,7 @@ TEST_CASE ("The shipped package list names every layer once, in our release", "[
 		CHECK (p.rawsize > 0);
 		for (const TexPart &t : p.parts) CHECK (t.size <= 1073741824); // GitHub takes release files under 2 GiB
 		CHECK (p.body != "Earth"); // Earth streams in (TileStream.cpp)
+		CHECK (p.body != "Mars");  // mars-stream: so does Mars
 	}
 }
 

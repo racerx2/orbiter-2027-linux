@@ -6360,6 +6360,11 @@ OAPIFUNC int  oapiTileStreamWant (OBJHANDLE hBody, int lvl, int ilat, int ilng, 
 OAPIFUNC int  oapiTileStreamElev (OBJHANDLE hBody);
 // finished tiles as (lvl, ilat, ilng) triples, keys holds 3*nmax; returns the count
 OAPIFUNC int  oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax);
+// not upstream (mars-stream): the layers the stream makes for this body besides Surf and Elev (TSLAYER_ bits), 0 when it is not streamed
+#define TSLAYER_MASK  1 // a Mask with every Surf
+#define TSLAYER_CLASS 2 // land class tiles from L12
+#define TSLAYER_BLDG  4 // z14 building and way tiles
+OAPIFUNC int  oapiTileStreamLayers (OBJHANDLE hBody);
 
 // not upstream: a locked vessel (e.g. destroyed in a collision) takes no player commands: keys, joystick, cockpit panel and VC switches, MFDs (Shift keys and external MFD windows), nav modes; it has no cockpit view, so the camera leaves the cockpit when it is locked; the lock is not saved with the scenario
 #define OAPI_VESSEL_CONTROL_LOCK 1 // not upstream: feature test for add-ons

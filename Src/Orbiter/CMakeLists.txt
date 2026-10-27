@@ -56,7 +56,7 @@ set(common_src
 	TileStreamMvt.cpp # not upstream
 	TileStreamNet.cpp # not upstream
 	TileStreamSky.cpp # not upstream: clouds, base flattening, ground track
-	TabStream.cpp # not upstream: Launchpad Earth streaming page
+	TabStream.cpp # not upstream: Launchpad Planet streaming page
 	StreamBases.cpp # not upstream: its base list and refusal rules
 # Dialogs
 	CustomControls.cpp

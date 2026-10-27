@@ -29,6 +29,7 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <zlib.h>
 
 namespace fs = std::filesystem;
 
@@ -40,8 +41,8 @@ int (*TsFlock) (int, int) = flock;
 
 namespace {
 
-enum { EOX, GIBS, TERR, WC, BLDG, NHOST };
-const char *HostName[NHOST] = {"EOX", "GIBS", "Terrain Tiles", "WorldCover", "OpenFreeMap"};
+enum { EOX, GIBS, TERR, WC, BLDG, USGS, NHOST }; // USGS: not upstream (mars-stream), USGS Astrogeology's COGs
+const char *HostName[NHOST] = {"EOX", "GIBS", "Terrain Tiles", "WorldCover", "OpenFreeMap", "USGS Astrogeology"};
 enum { A_SURF, A_MASK, A_ELEV, A_CLOUD, NARCH };
 const int HoldSec = 600; // a tile given up on waits this long
 
@@ -340,6 +341,7 @@ struct TileStream::Impl {
 		int body = 0, stage = 0, tries = 0, waiting = 0; // stage 0 queued, 1 fetching, 2 building
 		bool required = false, low = false, fallback = false, elevOnly = false;
 		bool pre = false;            // earth-sky: ground-track prefetch
+		bool warm = false;           // not upstream (mars-stream): a cog body's low levels at startup, a prefetch never dropped
 		bool eoxWait = false;        // waits out a retry after an EOX failure: falls back at once when EOX pauses
 		uint64_t seq = 0;
 		std::vector<int> baseIdx;    // earth-sky: bases whose centre tiles follow the grid in elev
@@ -391,7 +393,7 @@ struct TileStream::Impl {
 	std::unordered_map<std::string, int> syncWait;
 	std::unordered_map<std::string, std::pair<int, std::shared_ptr<const QByteArray>>> syncRes;
 	int coverFails = 0;
-	void FetchAll (std::vector<TsCog::Req> &rq);
+	void FetchAll (std::vector<TsCog::Req> &rq, int h);
 	std::unordered_map<uint64_t, BJob> bjobs;               // building tiles, by Id (body, Key (14, x, y))
 	std::unordered_map<std::string, uint64_t> binflight;    // url -> bjob id
 	std::unordered_map<std::string, int> bjson;             // TileJSON url -> body
@@ -467,6 +469,10 @@ struct TileStream::Impl {
 	void CachePut (const std::string &url, const std::shared_ptr<const QByteArray> &d);
 	void CacheDrop (const std::string &url);
 	void Build (Job J);
+	bool CogSurf (const Body &B, int L, int la, int ln, QImage &img); // not upstream (mars-stream): false when a read failed
+	bool CogElev (Body &B, const Job &J, std::string &elv);
+	void ElevRetry (const Job &J);
+	void Retire (Body &B);
 	void Failed (const Job &J);
 	QImage Ancestor (int body, int L, int la, int ln);
 	void Remember (uint64_t id, const QImage &img);
@@ -498,6 +504,7 @@ struct TileStream::Impl {
 	void LoadBases (Body &B);
 	void BaseSrcs (Body &B, Job &J);
 	void BaseHeights (Body &B, const Job &J, const std::vector<QImage> &et);
+	void BaseFlat (Body &B, size_t i, double h);
 	bool Mods (Body &B, uint64_t k, const std::string &elv);
 	std::mutex modMx; // elev-consistency: Elev_mod work, one key at a time; taken before mx
 	bool ModsAt (Body &B, uint64_t k, const std::string &elv, bool *changed);
@@ -539,6 +546,7 @@ TileStream::Impl::Impl (const Options &o)
 	host[TERR].cap = 8;
 	host[WC].cap = 6;
 	host[BLDG].cap = 4;
+	host[USGS].cap = 8;
 	std::vector<TsBodyCfg> cfg;
 	std::string err;
 	if (!TsReadCfg (opt.cfgfile, cfg, err)) {
@@ -598,6 +606,7 @@ void TileStream::Impl::Init ()
 		Log ("TileStream: " + b->cfg.name + " tiles go to " + b->dir + (opt.offline || ro ? " (offline)" : ""));
 	}
 	if (!opt.offline && !ro) net = std::make_unique<TsNet> (opt.userAgent);
+	for (auto &b : bodies) Retire (*b); // mars-stream: before the planets look for their tiles
 	if (opt.sky && !ro) for (auto &b : bodies) { LoadBases (*b); Clouds (*b); } // earth-sky: before the planet visuals load their tiles
 	Clock::time_point now = opt.now();
 	nextHits = now + std::chrono::seconds (5);
@@ -612,6 +621,22 @@ void TileStream::Impl::Init ()
 			}
 			for (uint64_t k : B.refetch)
 				if (B.written.count (k)) B.refetchQueue.push_back (k);
+			if (B.cfg.Cog()) // not upstream (mars-stream): the whole body to L7 once, so it is never blank offline
+				for (int L = 4; L <= std::min (7, B.cfg.surf.lmax); L++)
+					for (int a = 0; a < 1 << (L - 4); a++)
+						for (int c = 0; c < 1 << (L - 3); c++) {
+							uint64_t k = Key (L, a, c);
+							std::error_code ec;
+							if (jobs.count (Id (b, k)) || B.Arch (A_SURF, k)) continue;
+							bool surf = fs::exists (Tile (B.dir, "Surf", k), ec);
+							const TsSource &es = B.cfg.elev;
+							bool elev = es.kind.empty() || L < es.lmin || L > es.lmax || B.Arch (A_ELEV, k) || fs::exists (Tile (B.dir, "Elev", k), ec);
+							if (surf && elev) continue;
+							Job &J = NewJob (b, k, now);
+							J.pre = J.warm = true;
+							J.seq = ++preSeq;
+							if (surf) { J.elevOnly = true; B.elevSeen.insert (k); }
+						}
 		}
 	}
 	workers.reserve (4);
@@ -649,8 +674,9 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 	if (b < 0) return -1;
 	if (flags & 4) return WantElev (b, L, ilat, ilng);
 	Body &B = *bodies[b];
-	if (L < 1 || L > B.cfg.surf.lmax || ilat < 0 || ilng < 0) return -1;
+	if (L < 1 || L > B.cfg.SurfMax() || ilat < 0 || ilng < 0) return -1;
 	if (L < 4 ? (ilat || ilng) : (ilat >= 1 << (L - 4) || ilng >= 1 << (L - 3))) return -1;
+	if (!B.cfg.Covers (L, ilat, ilng)) return -1; // not upstream (mars-stream): past the colour's levels, outside every DETAIL file
 	uint64_t k = Key (L, ilat, ilng), id = Id (b, k);
 	std::unique_lock<std::mutex> lk (mx);
 	if (stop) return -1;
@@ -707,7 +733,7 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 	auto j = jobs.find (id);
 	if (j != jobs.end() && !j->second.elevOnly) {
 		j->second.want = now;
-		j->second.low = j->second.pre = false; // earth-sky: a want takes over a prefetch
+		j->second.low = j->second.pre = j->second.warm = false; // earth-sky: a want takes over a prefetch
 		return 0;
 	}
 	if (!(flags & 1)) {
@@ -720,7 +746,7 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 		j = jobs.find (id);
 		if (j != jobs.end()) {
 			j->second.want = now;
-			j->second.low = j->second.pre = false;
+			j->second.low = j->second.pre = j->second.warm = false;
 			return 0; // an Elev job in the way: asked again when it is done
 		}
 	}
@@ -1005,6 +1031,7 @@ void TileStream::Impl::Fetched (Job &J, Clock::time_point now)
 int TileStream::Impl::Startable (const Job &J, Clock::time_point now) const
 {
 	const Body &B = *bodies[J.body];
+	if (B.cfg.Cog()) return Paused (USGS, now) ? 0 : 1; // not upstream (mars-stream)
 	if (J.elevOnly) return Paused (TERR, now) ? 0 : 1;
 	if (Paused (GIBS, now)) return 0; // the mask needs GIBS
 	if (J.fallback || HostOf (B.cfg.surf) != EOX || !Paused (EOX, now)) return 1;
@@ -1077,6 +1104,14 @@ void TileStream::Impl::Start (Job &J, Clock::time_point now)
 {
 	Body &B = *bodies[J.body];
 	int L = KL (J.key), la = KLat (J.key), ln = KLng (J.key);
+	if (B.cfg.Cog()) { // not upstream (mars-stream): the job reads its files itself
+		J.stage = 2;
+		J.waiting = 0;
+		J.eoxWait = false;
+		Job copy = J;
+		Queue ([this, copy] { Build (copy); }, GiveUp (J.id));
+		return;
+	}
 	if (!J.elevOnly) {
 		J.surf = Srcs (J.fallback ? B.cfg.fallback : B.cfg.surf, L, la, ln);
 		J.lights = Srcs (B.cfg.lights, L, la, ln);
@@ -1118,7 +1153,7 @@ void TileStream::Impl::Dispatch (Clock::time_point now)
 			};
 			size_t r = url.rfind ('#');
 			long long off = -1, len = 0;
-			if (h == WC && r != std::string::npos && sscanf (url.c_str() + r, "#%lld+%lld", &off, &len) == 2)
+			if ((h == WC || h == USGS) && r != std::string::npos && sscanf (url.c_str() + r, "#%lld+%lld", &off, &len) == 2)
 				net->Get (url.substr (0, r), back, off, len); // url#off+len: a byte range
 			else net->Get (url, back, -1, 0, 0, TsNet::TileStallMs); // not upstream (design-preload): a stalled tile request fails in 8 s
 		}
@@ -1131,7 +1166,7 @@ void TileStream::Impl::DropStale (Clock::time_point now)
 	for (auto it = jobs.begin(); it != jobs.end(); ) {
 		const Job &J = it->second;
 		bool old = now - J.want > (J.pre ? std::chrono::duration<double> (10.0) : stale); // earth-sky: a prefetch the track left behind
-		if (!J.stage && !J.required && !J.low && !J.elevOnly && old) it = jobs.erase (it);
+		if (!J.stage && !J.required && !J.low && !J.elevOnly && !J.warm && old) it = jobs.erase (it);
 		else ++it;
 	}
 	for (auto it = bjobs.begin(); it != bjobs.end(); ) {
@@ -1209,6 +1244,10 @@ void TileStream::Impl::Build (Job J)
 		if (decode (J.elev, et)) elv = TsImg::Elev (L, la, ln, TsImg::SrcGrid (C.elev, L, la, ln), et, C.elevScale, C.floor);
 		if (!elv.empty()) BaseHeights (B, J, et); // earth-sky
 	}
+	if (C.Cog() && J.elevOnly && !CogElev (B, J, elv)) { // not upstream (mars-stream): the heights read here
+		ElevRetry (J);
+		return;
+	}
 	if (J.elevOnly) {
 		bool mine;
 		{
@@ -1238,7 +1277,8 @@ void TileStream::Impl::Build (Job J)
 		return;
 	}
 	std::vector<QImage> st, lt, wt;
-	if (!decode (J.surf, st) || !decode (J.lights, lt) || !decode (J.water, wt)) {
+	QImage cog; // not upstream (mars-stream)
+	if (C.Cog() ? !CogSurf (B, L, la, ln, cog) : (!decode (J.surf, st) || !decode (J.lights, lt) || !decode (J.water, wt))) {
 		Failed (J);
 		return;
 	}
@@ -1281,7 +1321,11 @@ void TileStream::Impl::Build (Job J)
 			}
 		}
 	}
-	if (!ocean) {
+	if (!ocean && C.Cog()) { // not upstream (mars-stream): the Surf alone
+		std::string sdds = TsImg::Dds (cog, false);
+		ok = Write (B, Tile (B.dir, "Surf", J.key), sdds);
+		if (ok) made = sdds.size();
+	} else if (!ocean) {
 		QImage surf = TsImg::Build (sv, L, la, ln, TsImg::SrcGrid (sv, L, la, ln), st);
 		QImage lights = TsImg::Build (C.lights, L, la, ln, TsImg::SrcGrid (C.lights, L, la, ln), lt);
 		QImage water = TsImg::Build (C.water, L, la, ln, TsImg::SrcGrid (C.water, L, la, ln), wt);
@@ -1289,7 +1333,7 @@ void TileStream::Impl::Build (Job J)
 		if (!C.cover.kind.empty() && L >= C.cover.lmin && L <= C.cover.lmax && net) {
 			std::vector<uint8_t> cv;
 			int n = water.width();
-			if (TsCog::Classes (C.cover.url, L, la, ln, n, [this] (std::vector<TsCog::Req> &r) { FetchAll (r); }, cv)) {
+			if (TsCog::Classes (C.cover.url, L, la, ln, n, [this] (std::vector<TsCog::Req> &r) { FetchAll (r, WC); }, cv)) {
 				water = TsCog::Water (cv, n, water);
 				cls = TsCog::ClassImage (cv, n, 256);
 			} else {
@@ -1333,8 +1377,8 @@ void TileStream::Impl::Build (Job J)
 	cv.notify_all();
 }
 
-// a worker's range reads on the WorldCover host, through its cap and pause; waits for all of them
-void TileStream::Impl::FetchAll (std::vector<TsCog::Req> &rq)
+// a worker's range reads on host h (WorldCover, USGS), through its cap and pause; waits for all of them
+void TileStream::Impl::FetchAll (std::vector<TsCog::Req> &rq, int h)
 {
 	std::unique_lock<std::mutex> lk (mx);
 	std::vector<std::string> keys;
@@ -1342,12 +1386,12 @@ void TileStream::Impl::FetchAll (std::vector<TsCog::Req> &rq)
 		keys.push_back (r.url + "#" + std::to_string (r.off) + "+" + std::to_string (r.len));
 		const std::string &k = keys.back();
 		if ((r.data = CacheGet (k))) { r.status = 200; continue; }
-		if (!net || stop || Paused (WC, opt.now())) { r.status = 0; continue; }
+		if (!net || stop || Paused (h, opt.now())) { r.status = 0; continue; }
 		r.status = -1;
 		syncWait[k]++;
 		if (!inflight.count (k)) {
 			inflight[k];
-			host[WC].queue.push_back (k);
+			host[h].queue.push_back (k);
 		}
 	}
 	kick = true;
@@ -1369,6 +1413,104 @@ void TileStream::Impl::FetchAll (std::vector<TsCog::Req> &rq)
 			syncRes.erase (keys[i]);
 		}
 	}
+}
+
+// not upstream (mars-stream): a cog body's Surf: the colour file, times its DETAIL over the detail's low-pass past the colour's levels
+bool TileStream::Impl::CogSurf (const Body &B, int L, int la, int ln, QImage &img)
+{
+	const TsBodyCfg &C = B.cfg;
+	auto fetch = [this] (std::vector<TsCog::Req> &r) { FetchAll (r, USGS); };
+	int N = TsImg::Size (L);
+	double w, n, dw, dh;
+	TsImg::Bounds (L, la, ln, w, n, dw, dh);
+	TsCog::Pts p {n - 0.5 * dh / N, w + 0.5 * dw / N, -dh / N, dw / N, N, N, dh / N}; // pixel centres, rows from the north
+	std::vector<float> c, col, hi, lo;
+	std::vector<uint8_t> cv, dv;
+	int spp = 0;
+	if (!TsCog::Sample (C.surf.url, p, fetch, c, cv, &spp) || !spp) return false; // no colour file (404): never a black tile
+	size_t np = (size_t)N * N;
+	col.assign (3 * np, 0.0f);
+	if (spp > 0 && c.size() >= np * spp)
+		for (size_t i = 0; i < np; i++) {
+			const float *s = &c[i * spp];
+			float *o = &col[3 * i];
+			if (!C.palette.empty()) TsImg::Paint (C.palette, spp >= 3 ? 0.299 * s[0] + 0.587 * s[1] + 0.114 * s[2] : s[0], o); // design Rev 3: the file's brightness, the palette's colour
+			else for (int k = 0; k < 3; k++) o[k] = s[spp >= 3 ? k : 0]; // grey: the same in each channel
+		}
+	if (L > C.surf.lmax) {
+		TsCog::Pts q = p;
+		q.pix = TsCog::Pixel (C.surf.url, fetch); // the low-pass: the detail at the colour's own pixel
+		hi.assign (np, 0.0f);
+		lo.assign (np, 0.0f);
+		dv.assign (np, 0);
+		for (const TsSource &d : C.detail) {
+			if (!d.Over (L, la, ln)) continue;
+			std::vector<float> h1, l1;
+			std::vector<uint8_t> v1, v2;
+			if (!TsCog::Sample (d.url, p, fetch, h1, v1) || !TsCog::Sample (d.url, q, fetch, l1, v2)) return false;
+			if (h1.size() < np || l1.size() < np) continue; // no file there
+			for (size_t i = 0; i < np; i++)
+				if (!dv[i] && v1[i] && v2[i]) { hi[i] = h1[i]; lo[i] = l1[i]; dv[i] = 1; } // the first file with data
+		}
+	}
+	img = TsImg::Detail (N, col, cv, hi, lo, dv);
+	return true;
+}
+
+// not upstream (mars-stream): an Elev read that failed: again in 30 s, twice, then none this session (as a failed Terrain Tiles fetch)
+void TileStream::Impl::ElevRetry (const Job &J)
+{
+	std::lock_guard<std::mutex> lk (mx);
+	auto it = jobs.find (J.id);
+	if (it != jobs.end()) {
+		if (++it->second.tries >= 3) {
+			bodies[J.body]->noElev.insert (J.key);
+			jobs.erase (it);
+		} else Retry (it->second, opt.now(), 30);
+	}
+	kick = true;
+	cv.notify_all();
+}
+
+// not upstream (mars-stream): an old pack's files as installed (size and CRC-32 from its list) deleted once, so the stream makes them;
+// a changed or other file is the user's; online only, so the body is never left without its tiles
+void TileStream::Impl::Retire (Body &B)
+{
+	if (B.cfg.retire.empty() || ro || !net) return;
+	std::string mark = B.dir + "/TileStream/retired-" + B.cfg.retire;
+	std::error_code ec;
+	if (fs::exists (mark, ec)) return;
+	std::string list = (fs::path (opt.cfgfile).parent_path() / "TileStream" / B.cfg.retire).string();
+	std::ifstream f (list);
+	if (!f) {
+		Log ("TileStream: cannot read " + list);
+		return;
+	}
+	std::string line;
+	size_t gone = 0, kept = 0;
+	std::vector<char> buf ((size_t)1 << 20);
+	while (std::getline (f, line)) {
+		std::istringstream is (line);
+		std::string rel;
+		unsigned long long size;
+		std::string hex;
+		if (line.empty() || line[0] == ';' || !(is >> rel >> size >> hex)) continue;
+		if (rel.find ("..") != std::string::npos || rel[0] == '/' || rel.find ('\\') != std::string::npos) continue;
+		std::string p = B.dir + "/" + rel;
+		struct stat st;
+		if (stat (p.c_str(), &st) || !S_ISREG (st.st_mode) || (unsigned long long)st.st_size != size) continue;
+		std::ifstream in (p, std::ios::binary);
+		uLong crc = crc32 (0L, Z_NULL, 0);
+		while (in) {
+			in.read (buf.data(), (std::streamsize)buf.size());
+			if (in.gcount() > 0) crc = crc32 (crc, (const Bytef*)buf.data(), (uInt)in.gcount());
+		}
+		if (crc == std::strtoul (hex.c_str(), nullptr, 16)) {
+			if (fs::remove (p, ec)) gone++;
+		} else kept++;
+	}
+	WriteText (mark, std::to_string (gone) + " retired, " + std::to_string (kept) + " changed and kept\n");
+	Log ("TileStream: " + B.cfg.name + ": " + std::to_string (gone) + " files of the old pack retired (" + B.cfg.retire + ")" + (kept ? ", " + std::to_string (kept) + " changed ones kept" : ""));
 }
 
 // a source didn't decode: drop it from memory and fetch again, a few times
@@ -2136,6 +2278,14 @@ bool TileStream::Enabled (const std::string &body) const
 	return d->FindBody (body) >= 0;
 }
 
+int TileStream::Layers (const std::string &body) const // not upstream (mars-stream)
+{
+	int b = d->FindBody (body);
+	if (b < 0) return 0;
+	const TsBodyCfg &c = d->bodies[b]->cfg;
+	return (c.Masks() ? 1 : 0) | (c.cover.kind.empty() ? 0 : 2) | (c.bldgUrl.empty() ? 0 : 4);
+}
+
 int TileStream::Want (const std::string &body, int L, int ilat, int ilng, int flags)
 {
 	return d->Want (body, L, ilat, ilng, flags);
@@ -2229,7 +2379,7 @@ int TileStream::Impl::Prefetch (const std::string &name, int L, int ilat, int il
 	int b = FindBody (name);
 	if (b < 0) return -1;
 	Body &B = *bodies[b];
-	if (!net || L < 4 || L > B.cfg.surf.lmax || ilat < 0 || ilng < 0 || ilat >= 1 << (L - 4) || ilng >= 1 << (L - 3)) return -1;
+	if (!net || L < 4 || L > B.cfg.SurfMax() || ilat < 0 || ilng < 0 || ilat >= 1 << (L - 4) || ilng >= 1 << (L - 3) || !B.cfg.Covers (L, ilat, ilng)) return -1;
 	uint64_t k = Key (L, ilat, ilng), id = Id (b, k);
 	auto count = [this] { int n = 0; for (auto &p : jobs) n += p.second.pre; return n; };
 	if (B.Arch (A_SURF, k)) return 1; // the installed archive's
@@ -2527,14 +2677,48 @@ void TileStream::Impl::BaseHeights (Body &B, const Job &J, const std::vector<QIm
 		TsSky::TerrTile (lng, lat, z, row, col);
 		double h = TsSky::TerrAt (et[n0 + j], z, row, col, lng, lat);
 		if (std::isnan (h)) continue;
-		h = std::round (std::max (TsImg::FloorAt (B.cfg.floor, lng, lat), h) / B.cfg.elevScale) * B.cfg.elevScale;
-		std::lock_guard<std::mutex> lk (mx);
-		double &H = B.baseH[(size_t)J.baseIdx[j]];
-		if (!std::isnan (H)) continue;
-		H = h;
-		std::ofstream (Idx (B, "bases"), std::ios::app) << b.name << ' ' << H << '\n';
-		Log ("TileStream: base " + b.name + " flat at " + std::to_string (H) + " m");
+		BaseFlat (B, (size_t)J.baseIdx[j], std::round (std::max (TsImg::FloorAt (B.cfg.floor, lng, lat), h) / B.cfg.elevScale) * B.cfg.elevScale);
 	}
+}
+
+// a base's flat height, once, kept in bases.idx
+void TileStream::Impl::BaseFlat (Body &B, size_t i, double h)
+{
+	std::lock_guard<std::mutex> lk (mx);
+	double &H = B.baseH[i];
+	if (!std::isnan (H)) return;
+	H = h;
+	std::ofstream (Idx (B, "bases"), std::ios::app) << B.bases[i].name << ' ' << H << '\n';
+	Log ("TileStream: base " + B.bases[i].name + " flat at " + std::to_string (H) + " m");
+}
+
+// not upstream (mars-stream): a cog body's Elev from its file, and the flat heights of the bases on it from the file at their centres
+bool TileStream::Impl::CogElev (Body &B, const Job &J, std::string &elv)
+{
+	const TsBodyCfg &C = B.cfg;
+	auto fetch = [this] (std::vector<TsCog::Req> &r) { FetchAll (r, USGS); };
+	int L = KL (J.key), la = KLat (J.key), ln = KLng (J.key);
+	double w, n, dw, dh;
+	TsImg::Bounds (L, la, ln, w, n, dw, dh);
+	TsCog::Pts p {(n - dh) - dh / 256.0, w - dw / 256.0, dh / 256.0, dw / 256.0, 259, 259, dh / 256.0}; // the .elv nodes, rows from the south
+	std::vector<float> h;
+	std::vector<uint8_t> v;
+	if (!TsCog::Sample (C.elev.url, p, fetch, h, v)) return false;
+	elv = TsImg::ElevGrid (L, la, ln, h, v, C.elevScale);
+	if (elv.empty() || L < ModLevel) return true;
+	for (size_t i = 0; i < B.bases.size(); i++) {
+		{
+			std::lock_guard<std::mutex> lk (mx);
+			if (!std::isnan (B.baseH[i])) continue;
+		}
+		if (!TsSky::Hits (B.bases[i], B.radius, L, la, ln, Blend)) continue;
+		TsCog::Pts b {B.bases[i].lat * 180.0 / M_PI, B.bases[i].lng * 180.0 / M_PI, 0.0, 0.0, 1, 1, 0.0};
+		std::vector<float> bh;
+		std::vector<uint8_t> bv;
+		if (!TsCog::Sample (C.elev.url, b, fetch, bh, bv)) return false;
+		if (!bv.empty() && bv[0]) BaseFlat (B, i, std::round (bh[0] / C.elevScale) * C.elevScale);
+	}
+	return true;
 }
 
 // the Elev_mod of tile k over elv, written before elv; false while a base it touches has no height yet

@@ -1,4 +1,4 @@
-// not upstream: Earth streaming page logic: base list from the shipped cfgs, Clear/Download refusals, end texts
+// not upstream: Planet streaming page logic: base list from the shipped cfgs, Clear/Download refusals, end texts
 
 #include <catch2/catch_test_macros.hpp>
 #include "StreamBases.h"
@@ -88,8 +88,8 @@ TEST_CASE ("Clear and Download are refused while the other runs, in a session, o
 	CHECK (StreamRefusal (StreamAct::Download, with (&StreamState::offline)).find ("Offline") != std::string::npos);
 	CHECK (StreamRefusal (StreamAct::Clear, with (&StreamState::offline)).empty()); // clearing makes no requests
 	StreamState greyed; greyed.offline = greyed.streamOff = true;
-	CHECK (StreamRefusal (StreamAct::Download, greyed).find ("Tick Stream Earth") != std::string::npos);
-	CHECK (StreamRefusal (StreamAct::Download, with (&StreamState::offline)).find ("Tick Stream Earth") == std::string::npos);
+	CHECK (StreamRefusal (StreamAct::Download, greyed).find ("Tick Stream planet") != std::string::npos);
+	CHECK (StreamRefusal (StreamAct::Download, with (&StreamState::offline)).find ("Tick Stream planet") == std::string::npos);
 	StreamState s = with (&StreamState::session);
 	s.clearing = s.busy = true;
 	CHECK (StreamRefusal (StreamAct::Download, s).find ("session") != std::string::npos); // the session goes first
@@ -115,7 +115,7 @@ TEST_CASE ("A Clear's and a region download's last line: refused is not 'Cleared
 {
 	CHECK (StreamClearText (12, false, "") == "Cleared 12 streamed tiles.");
 	CHECK (StreamClearText (0, false, "") == "Cleared 0 streamed tiles.");
-	CHECK (StreamClearText (0, true, "") == "Not cleared: another Orbiter is using the Earth tile cache.");
+	CHECK (StreamClearText (0, true, "") == "Not cleared: another Orbiter is using the tile cache.");
 	CHECK (StreamClearText (3, false, "disk full") == "Clearing stopped: disk full");
 	CHECK (StreamFetchText (0, "", "1 of 1 tiles") == "Done. 1 of 1 tiles");
 	CHECK (StreamFetchText (1, "", "p") == "Cancelled. p");

@@ -414,6 +414,7 @@ public:
 
 	bool bStream; // not upstream: the tile stream fills this body's tile folders (TileStream.cpp in the core)
 	int streamElevMax = 0; // not upstream: the stream's last Elev level (oapiTileStreamElev): archive Elev under its files is not read
+	int streamLayers = 0;  // not upstream (mars-stream): oapiTileStreamLayers, the TSLAYER_ bits
 	void StreamQueue (int L, int ilat, int ilng); // not upstream: a streamed tile to swap in
 	DWORD streamFrame = 0;  // not upstream: counts Render calls, SurfTile::Render's walk stamp
 	double streamNow = 0.0; // not upstream: sys time of this Render call

@@ -21,6 +21,8 @@ struct TsSource {
 	int lmin = 1;     // file levels served
 	int lmax = 0;
 	int nmax = 0;     // gibs: top grid level
+	double box[4] = {-180.0, -90.0, 180.0, 90.0}; // not upstream (mars-stream): a DETAIL file's bounds, lng0 lat0 lng1 lat1 (degrees)
+	bool Over (int L, int ilat, int ilng) const;  // not upstream (mars-stream): its levels and bounds take in the tile
 };
 
 struct TsBodyCfg {
@@ -37,6 +39,14 @@ struct TsBodyCfg {
 	std::string bldgJson, bldgUrl; // TileJSON of the building tiles, last known {z}/{x}/{y} template
 	struct Floor { double lng0, lat0, lng1, lat1, m; }; // FLOOR: degrees, the lowest metres inside; elsewhere 0
 	std::vector<Floor> floor;
+	std::vector<TsSource> detail; // not upstream (mars-stream): DETAIL cog files past the colour's levels, each with its bounds
+	std::string retire;           // not upstream (mars-stream): RETIRE, an old pack's file list (size, CRC-32) next to the cfg
+	struct Pal { double v, r, g, b; }; // not upstream (mars-stream): PALETTE, brightness to colour, rising brightness
+	std::vector<Pal> palette;
+	bool Cog () const { return surf.kind == "cog"; } // not upstream (mars-stream): read from Cloud-Optimized GeoTIFFs in the job
+	int SurfMax () const;                            // the last Surf level of any source
+	bool Covers (int L, int ilat, int ilng) const;   // a Surf source makes this tile
+	bool Masks () const { return !water.kind.empty() || !lights.kind.empty(); } // Mask tiles written with the Surf
 };
 
 // not upstream (earth-sky): a surface base's footprint for Elev_mod flattening
@@ -143,15 +153,45 @@ namespace TsImg {
 	std::string Dds (const QImage &img, bool alpha);   // DXT1, full mip chain
 	QImage DdsImage (const QByteArray &dds);             // level 0 of a DXT1 DDS
 	std::string Elev (int L, int ilat, int ilng, const Grid &g, const std::vector<QImage> &tiles, double scale, const std::vector<TsBodyCfg::Floor> &floor = {}); // .elv, header only (dtype 0) at sea level
+	void Bounds (int L, int ilat, int ilng, double &w, double &n, double &dw, double &dh); // not upstream (mars-stream): west, north, width, height (degrees)
+	// not upstream (mars-stream): .elv from metres at the 259 x 259 nodes (rows from the south, the pad included); a node without data from its neighbours, none at all: empty
+	std::string ElevGrid (int L, int ilat, int ilng, const std::vector<float> &h, const std::vector<uint8_t> &valid, double scale);
+	// not upstream (mars-stream): n x n RGB colour, its detail where hi and lo are valid: colour x hi / lo
+	QImage Detail (int n, const std::vector<float> &col, const std::vector<uint8_t> &cv, const std::vector<float> &hi, const std::vector<float> &lo, const std::vector<uint8_t> &dv);
+	void Paint (const std::vector<TsBodyCfg::Pal> &pal, double v, float rgb[3]); // not upstream (mars-stream): the palette at brightness v, linear between its points, held at the ends
 }
 
 // Cloud-Optimized GeoTIFF reads: ESA WorldCover 3 degree cells (TileStreamCog.cpp)
 namespace TsCog {
-	struct Ifd { uint32_t w = 0, h = 0, tw = 0, th = 0, bps = 8, spp = 1, comp = 1, pred = 1, planar = 1; std::vector<uint64_t> off, cnt; };
+	struct Ifd {
+		uint32_t w = 0, h = 0, tw = 0, th = 0, bps = 8, spp = 1, comp = 1, pred = 1, planar = 1; std::vector<uint64_t> off, cnt;
+		uint32_t sfmt = 1;          // not upstream (mars-stream): 1 unsigned, 2 signed
+		uint64_t offAt = 0, cntAt = 0, offN = 0, cntN = 0; // not upstream (mars-stream): tables past the head (geo parse): place, entries, entry bytes; read when needed
+		uint32_t offSz = 0, cntSz = 0;
+		QByteArray jpegTables;      // not upstream (mars-stream): JPEG tiles' shared tables
+	};
+	struct Geo { // not upstream (mars-stream): a GeoTIFF's placement and values
+		bool deg = true, le = true;              // degrees, or equirectangular metres; byte order
+		double x0 = 0, y0 = 0, dx = 0, dy = 0;   // level 0: the west north corner and the pixel size
+		double cm = 0, R = 0, Rx = 0;            // metres: the central meridian (degrees), the sphere's radius, east-west at the standard parallel
+		double scale = 1, offset = 0, nodata = 0;
+		bool hasNodata = false;
+	};
 	struct Req { std::string url; uint64_t off = 0, len = 0; int status = 0; std::shared_ptr<const QByteArray> data; };
 	using Fetch = std::function<void (std::vector<Req> &)>;          // fills status (200, 404, else failed) and data
-	int64_t Parse (const QByteArray &head, std::vector<Ifd> &ifds);   // 0 parsed, > 0 bytes of the file start needed, -1 no tiled TIFF
+	int64_t Parse (const QByteArray &head, std::vector<Ifd> &ifds, Geo *geo = nullptr); // 0 parsed, > 0 bytes of the file start needed, -1 no tiled TIFF; geo: its tags, tables past the head left to read
 	bool Decode (const Ifd &f, const QByteArray &data, std::vector<uint8_t> &out); // one tile, tw*th*spp bytes
+	bool Lzw (const uint8_t *in, size_t n, uint8_t *out, size_t size); // not upstream (mars-stream): TIFF LZW into exactly size bytes
+	bool DecodeAny (const Ifd &f, bool le, const QByteArray &data, std::vector<float> &out); // not upstream (mars-stream): 8 or 16 bits, none, LZW, deflate or JPEG; tw*th*spp values
+	struct Pts { double lat0, lng0, dlat, dlng; int nx, ny; double pix; }; // not upstream (mars-stream): ny rows from lat0 by dlat, nx columns from lng0 by dlng, degrees; pix: the coarsest level at most this fine (degrees of latitude)
+	// not upstream (mars-stream): a COG's values at the points through its scale and offset, spp each, over a box of the points' spacing (bilinear when finer than a pixel);
+	// valid 0 outside the file or mostly on no data; a file that isn't there (404): none valid, spp 0; false when a read failed
+	bool Sample (const std::string &url, const Pts &p, const Fetch &fetch, std::vector<float> &out, std::vector<uint8_t> &valid, int *spp = nullptr);
+	double Pixel (const std::string &url, const Fetch &fetch); // not upstream (mars-stream): level 0's pixel in degrees of latitude, 0 when unread
+	// not upstream (mars-stream): level 0 pixel coordinates (pixel i spans i to i + 1), false outside the file; x unwrapped on a file around the planet
+	bool Global (const Geo &g, uint32_t w);
+	bool ColX (const Geo &g, uint32_t w, double lng, double &x);
+	bool RowY (const Geo &g, uint32_t h, double lat, double &y);
 	std::string CellName (int lat0, int lng0);                        // N27W081
 	// class per pixel over an Orbiter tile, n x n: 0 open sea, 255 outside WorldCover; false when a read failed
 	bool Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const Fetch &fetch, std::vector<uint8_t> &out);
@@ -195,6 +235,7 @@ public:
 	~TileStream ();
 
 	bool Enabled (const std::string &body) const;
+	int Layers (const std::string &body) const; // not upstream (mars-stream): 1 Mask with the Surf, 2 Class, 4 building and way tiles
 	// flags 1: the file failed to load, 2: the client loaded it from the cache
 	// 1: the Surf file is there, 0: wanted, -1: never (an installed archive's tile included)
 	// flags 4: only the tile's Elev (its imagery from elsewhere); 1 the Elev file is there, 0 wanted, -1 never
