@@ -4,6 +4,7 @@
 #include "TreeGeom.h"
 #include <cmath>
 #include <map>
+#include <set>
 #include <tuple>
 
 using namespace TreeGeom;
@@ -202,4 +203,172 @@ TEST_CASE("Trees: footprints block inside and within the margin, not past it", "
 	CHECK_FALSE(InRing(ell, 16, 16, 2.0)); // the notch
 	CHECK(InRing(ell, 11, 11, 2.0));
 	CHECK_FALSE(InRing({ { 0, 0 }, { 1, 1 } }, 0.5, 0.5, 1.0));
+}
+
+// not upstream (design-far-forest) ---------------------------------------------
+
+TEST_CASE("Far forest: a quarter of the candidates at level 1 or more, a sixteenth at 2", "[trees]")
+{
+	long long n[MaxLevel + 2] = {};
+	for (int64_t Y = 0; Y < 1024; Y++)
+		for (int64_t X = 0; X < 1024; X++) n[Level(X, Y)]++;
+	long long above = 0;
+	for (int l = MaxLevel; l >= 1; l--) {
+		above += n[l];
+		INFO("level " << l);
+		CHECK(above == (1024LL * 1024) >> (2 * l));
+	}
+	CHECK(Level(0, 0) == MaxLevel);
+	CHECK(Level(1 << 12, 3 << 12) == MaxLevel);
+	CHECK(Level(12, 8) == 2);
+}
+
+TEST_CASE("Far forest: the drawn density is 4^-lambda through the bands", "[trees]")
+{
+	for (double lam = 0.0; lam <= 6.0; lam += 0.05) {
+		double drawn = 0.0;
+		for (int l = 0; l <= MaxLevel; l++) {
+			double frac = l < MaxLevel ? std::pow(4.0, -l) - std::pow(4.0, -l - 1) : std::pow(4.0, -l);
+			drawn += frac * DrawShare(l, lam);
+		}
+		INFO("lambda " << lam);
+		CHECK(std::fabs(drawn / std::pow(4.0, -lam) - 1.0) < 1e-9);
+	}
+}
+
+TEST_CASE("Far forest: a level's trees are level 0's, same places, kinds and heights", "[trees]")
+{
+	Params p;
+	p.R = R;
+	double lat = 0.5, dlat = 2000.0 / R, dlng = 2000.0 / (R * std::cos(lat));
+	std::vector<Tree> all, l2;
+	Place(lat, lat + dlat, 0.3, 0.3 + dlng, p, AllTrees(), nullptr, nullptr, all, 0);
+	Place(lat, lat + dlat, 0.3, 0.3 + dlng, p, AllTrees(), nullptr, nullptr, l2, 2);
+	std::map<std::pair<double, double>, Tree> by;
+	size_t want = 0, ge1 = 0;
+	for (const Tree &t : all) {
+		if (t.lvl >= 2) { by[{ t.lat, t.lng }] = t; want++; }
+		if (t.lvl >= 1) ge1++;
+	}
+	REQUIRE(all.size() > 30000);
+	CHECK(std::fabs(double(ge1) / all.size() - 0.25) < 0.01);
+	CHECK(std::fabs(double(want) / all.size() - 0.0625) < 0.005);
+	CHECK(l2.size() == want);
+	for (const Tree &t : l2) {
+		auto it = by.find({ t.lat, t.lng });
+		REQUIRE(it != by.end());
+		CHECK(t.lvl >= 2);
+		CHECK(it->second.h == t.h);
+		CHECK(it->second.kind == t.kind);
+		CHECK(it->second.yaw == t.yaw);
+	}
+}
+
+TEST_CASE("Far forest: the shader's random number keeps the share", "[trees]")
+{
+	Params p;
+	p.R = R;
+	double lat = 0.5, dlat = 3000.0 / R, dlng = 3000.0 / (R * std::cos(lat));
+	std::vector<Tree> all;
+	Place(lat, lat + dlat, 0.3, 0.3 + dlng, p, AllTrees(), nullptr, nullptr, all, 0);
+	for (double lam : { 0.0, 0.5, 1.0, 1.5, 2.25 }) {
+		double kept = 0.0, expect = 0.0;
+		for (const Tree &t : all) {
+			double share = DrawShare(t.lvl, lam), rnd = uint8_t(t.yaw / (2.0 * PI) * 255.0) / 255.0; // TreeMgr's yaw byte, Tree.glsl's iCol.x
+			expect += share;
+			if (rnd < share) kept++;
+		}
+		INFO("lambda " << lam);
+		CHECK(std::fabs(kept / std::max(1.0, expect) - 1.0) < 0.03);
+		CHECK(std::fabs(expect / (all.size() * std::pow(4.0, -lam)) - 1.0) < 0.03);
+	}
+}
+
+TEST_CASE("Far forest: the cells to the far limit cover it once, coarser farther", "[trees]")
+{
+	const double lat = 28.6 * PI / 180.0, lng = -80.69 * PI / 180.0, D0 = 2500.0, far = 120e3;
+	std::vector<Quad::Want> w;
+	Quad::Select(lat, lng, 0.0, D0, far, R, w);
+	INFO("cells " << w.size());
+	CHECK(w.size() > 3000);
+	CHECK(w.size() < 6000);
+	int lv[MaxLevel + 1] = {};
+	for (size_t i = 0; i < w.size(); i++) {
+		int m = Quad::Lvl(w[i].key);
+		lv[m]++;
+		if (i) CHECK(w[i].d >= w[i - 1].d);
+		CHECK(w[i].d <= far);
+		if (m > 0) CHECK(w[i].d >= D0 * std::exp2(m));
+		CHECK(Quad::Near(w[i].key, lat, lng, R) == w[i].d);
+	}
+	CHECK(lv[0] > 800);
+	CHECK(lv[0] < 1500);
+	std::set<long long> keys;
+	for (auto &q : w) keys.insert(q.key);
+	CHECK(keys.size() == w.size());
+	for (auto &q : w) for (long long a = Quad::Parent(q.key); a >= 0; a = Quad::Parent(a)) CHECK(!keys.count(a));
+	uint32_t s = 777;
+	auto rnd = [&]() { s = s * 1664525u + 1013904223u; return (s >> 8) / double(1 << 24); };
+	for (int k = 0; k < 2000; k++) {
+		double r = far * 0.98 * std::sqrt(rnd()), az = 2.0 * PI * rnd();
+		double la = lat + r * std::cos(az) / R, lo = lng + r * std::sin(az) / (R * std::cos(lat));
+		int in = 0;
+		for (auto &q : w) {
+			double a0, a1, o0, o1;
+			Quad::Bounds(q.key, a0, a1, o0, o1);
+			if (la >= a0 && la < a1 && lo >= o0 && lo < o1) in++;
+		}
+		CHECK(in == 1);
+	}
+	std::vector<Quad::Want> hi;
+	Quad::Select(lat, lng, 5100.0, D0, far, R, hi); // half a 10.2 km height: every tree beyond 2 D0, no level 0 cells
+	for (auto &q : hi) CHECK(Quad::Lvl(q.key) >= 1);
+}
+
+TEST_CASE("Far forest: a parent's children tile it", "[trees]")
+{
+	long long k = Quad::Key(3, 1234, 5678), c[4];
+	Quad::Children(k, c);
+	double a0, a1, o0, o1;
+	Quad::Bounds(k, a0, a1, o0, o1);
+	double area = 0.0;
+	for (long long q : c) {
+		CHECK(Quad::Parent(q) == k);
+		double b0, b1, p0, p1;
+		Quad::Bounds(q, b0, b1, p0, p1);
+		CHECK(b0 >= a0 - 1e-12); CHECK(b1 <= a1 + 1e-12); CHECK(p0 >= o0 - 1e-12); CHECK(p1 <= o1 + 1e-12);
+		area += (b1 - b0) * (p1 - p0);
+	}
+	CHECK(std::fabs(area - (a1 - a0) * (o1 - o0)) < 1e-15);
+	CHECK(Quad::Parent(Quad::Key(MaxLevel, 1, 1)) == -1);
+	double l0, l1, g0, g1;
+	Quad::Bounds(Quad::Key(0, 5 * 16 + 3, 7 * 16 + 9), l0, l1, g0, g1); // level 0: an L16 tile's cell as before
+	CHECK(std::fabs(l1 - (0.5 * PI - (5.0 * 16 + 3) * PI / 65536.0)) < 1e-12);
+	CHECK(std::fabs(g0 - (-PI + (7.0 * 16 + 9) * PI / 65536.0)) < 1e-12);
+}
+
+TEST_CASE("Far forest: a parent drawn until its children are placed, children until their parent is", "[trees]")
+{
+	long long P = Quad::Key(2, 100, 200), c[4];
+	Quad::Children(P, c);
+	std::map<long long, int> st;
+	auto S = [&](long long k) { auto it = st.find(k); return it == st.end() ? 0 : it->second; };
+	std::vector<long long> want(c, c + 4), out;
+	st = { { P, 2 }, { c[0], 2 }, { c[1], 2 }, { c[2], 1 }, { c[3], 1 } };
+	Quad::DrawSet(want, S, out);
+	CHECK(out == std::vector<long long>{ P });
+	st = { { P, 2 }, { c[0], 2 }, { c[1], 2 }, { c[2], 2 }, { c[3], 2 } };
+	Quad::DrawSet(want, S, out);
+	CHECK(out.size() == 4);
+	for (long long k : out) CHECK(k != P);
+	st = { { P, 1 }, { c[0], 2 }, { c[1], 2 }, { c[2], 0 }, { c[3], 2 } };
+	Quad::DrawSet({ P }, S, out);
+	CHECK(out.size() == 3);
+	st = { { P, 2 } };
+	Quad::DrawSet({ P }, S, out);
+	CHECK(out == std::vector<long long>{ P });
+	long long G = Quad::Parent(P);
+	st = { { G, 2 }, { c[0], 2 } };
+	Quad::DrawSet(want, S, out);
+	CHECK(out == std::vector<long long>{ G });
 }

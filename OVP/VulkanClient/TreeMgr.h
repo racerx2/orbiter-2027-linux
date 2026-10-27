@@ -24,6 +24,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 class vPlanet;
@@ -39,9 +40,10 @@ public:
 	void RenderDepth (VkDev *dev, const D3DXMATRIX &mVP); // SceneFx distance pass
 	void RenderCasters (VkDev *dev, const class SceneShadows &s); // scene shadow casters in the cascade being drawn (design-scene-shadows)
 
-	struct Inst { float x, y, z, s; uint8_t yaw, kind, t0, t1; uint8_t h[8]; }; // 28 bytes, stream 1
+	struct Inst { float x, y, z, s; uint8_t yaw, kind, t0, t1; uint8_t h[8]; }; // 28 bytes, stream 1; kind: the level in the high 4 bits (design-far-forest)
 	struct Job {                // render thread to worker
 		long long key = 0;
+		double dist = 0.0;      // not upstream (design-far-forest): the nearest job first
 		double lat0 = 0, lat1 = 0, lng0 = 0, lng1 = 0;
 		BaseShapes::Keep keep;  // bases, fixed structures (design fixed-structures) and clear zones (design base-clear) within 25 km
 		std::shared_ptr<const Horizon::Map> hor;
@@ -58,6 +60,7 @@ public:
 		bool complete = true;  // all ground loaded
 		bool hasHor = false;
 		bool classMiss = false; // no L16 Class tile yet
+		double rad = 0.0;      // not upstream (design-far-forest): the instances' sphere about p0
 	};
 
 private:
@@ -73,13 +76,18 @@ private:
 		bool classWait = false; // not upstream (design-preload): placed without its L16 Class tile, the file looked for every 2 s
 		double tClass0 = 0.0;   // since when
 		std::vector<std::pair<int, int>> vecWait; // z14 building and road tiles it was placed without, still coming
+		bool placed = false;    // not upstream (design-far-forest): a result taken once
+		double rad = 0.0, tSeen = 0.0; // the instances' sphere; last wanted or drawn
+		D3D9Sun sun;            // the atmosphere at p0, kept (design-far-forest)
+		VECTOR3 sunAt = {0, 0, 0};
+		double sunD = 0.0, tSun = -1e9;
 	};
 	void Work ();
 	void MakeMeshes ();
-	void Cells (double lat, double lng, double range, std::vector<long long> &out) const;
-	void Bounds (long long key, double &lat0, double &lat1, double &lng0, double &lng1) const;
-	bool Ask (long long key);
-	bool ClassThere (long long key) const; // design-preload: its L16 Class file is on disk
+	bool Ask (long long key, double dist);
+	bool ClassThere (long long key) const; // design-preload: its Class file is on disk (design-far-forest: at its level's)
+	void WantClass (long long key);        // design-far-forest: the stream makes it
+	void MakeDrawList (double t);
 	void DrawCells (VkDev *dev, int mode, const D3DXMATRIX *mVPdepth);
 
 	vPlanet *vp;
@@ -87,7 +95,13 @@ private:
 	const Scene *scn;
 	double R;
 	std::string root;           // the body's texture folder, as PlanetTexturePath (backslashes, oapiResolvePath)
-	std::map<long long, Cell> cells;
+	std::unordered_map<long long, Cell> cells;
+	std::vector<long long> want;                     // not upstream (design-far-forest): the leaves, nearest first
+	std::vector<std::pair<long long, Cell *>> draw;  // and what is drawn for them
+	bool drawDirty = false;
+	size_t chk = 0;                                  // the re-ground check's place in want
+	double farLim = 0.0, aglKeep = 1.0;
+	std::unordered_map<long long, double> classAsked; // Class tiles wanted from the stream, when
 	BaseShapes::Set bases;      // the planet's bases, every triangle (BaseShapes.h)
 	FixedVes::Set fixed{true};  // the fixed structures on this planet, every triangle
 	std::vector<ClearZones::Zone> zones; // the base files' clear zones on this planet, read at the first job (design base-clear)
@@ -100,10 +114,10 @@ private:
 	VkVertexDecl *decl = nullptr;
 	ShaderClass *sh = nullptr;
 
-	std::thread worker;
+	std::vector<std::thread> workers; // not upstream (design-far-forest): 4
 	std::mutex mx;
 	std::condition_variable cv;
-	std::deque<Job> todo;       // under mx
+	std::vector<Job> todo;      // under mx
 	std::deque<Result> ready;   // under mx
 	bool quit = false;          // under mx
 };

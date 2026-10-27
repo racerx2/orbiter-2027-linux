@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <set>
 
 namespace TreeGeom {
 
@@ -98,15 +99,38 @@ static double MeanCanopy ()
 static inline uint64_t Mix (uint64_t x) { x ^= x >> 31; x *= 0xBF58476D1CE4E5B9ull; x ^= x >> 29; x *= 0x94D049BB133111EBull; return x ^ (x >> 32); }
 static inline double U (uint64_t h, int k) { return double(Mix(h + uint64_t(k + 1) * 0x9E3779B97F4A7C15ull) >> 11) * (1.0 / 9007199254740992.0); }
 
-void Place (double lat0, double lat1, double lng0, double lng1, const Params &p, const ClassFn &cls, const GroundFn &ground, const BlockFn &blocked, std::vector<Tree> &out)
+int Level (int64_t X, int64_t Y)
+{
+	uint64_t v = uint64_t(X) | uint64_t(Y);
+	int l = 0;
+	while (l < MaxLevel && !(v & 1)) { v >>= 1; l++; }
+	return l;
+}
+
+double DrawShare (int lvl, double lambda)
+{
+	if (lambda <= 0.0) return 1.0;
+	double lf = std::floor(lambda), f = lambda - lf;
+	if (lvl < lf) return 0.0;
+	if (lvl > lf || lvl >= MaxLevel) return 1.0;
+	return (std::pow(4.0, 1.0 - f) - 1.0) / 3.0;
+}
+
+void Place (double lat0, double lat1, double lng0, double lng1, const Params &p, const ClassFn &cls, const GroundFn &ground, const BlockFn &blocked, std::vector<Tree> &out, int level)
 {
 	static const double meanC = MeanCanopy();
 	double c = LatticeC(p.R);
 	int64_t ix0 = int64_t(std::floor((lng0 + PI) * c)), ix1 = int64_t(std::floor((lng1 + PI) * c));
 	int64_t iy0 = int64_t(std::floor((0.5 * PI - lat1) * c)), iy1 = int64_t(std::floor((0.5 * PI - lat0) * c));
-	for (int64_t iy = iy0; iy <= iy1; iy++)
-		for (int64_t ix = ix0; ix <= ix1; ix++)
-			for (int sub = 0; sub < 4; sub++) {
+	int64_t step = level > 0 ? int64_t(1) << (level - 1) : 1; // not upstream (design-far-forest): level m needs X and Y multiples of 2^m
+	int nsub = level > 0 ? 1 : 4;
+	ix0 = (ix0 + step - 1) / step * step;
+	iy0 = (iy0 + step - 1) / step * step;
+	for (int64_t iy = iy0; iy <= iy1; iy += step)
+		for (int64_t ix = ix0; ix <= ix1; ix += step)
+			for (int sub = 0; sub < nsub; sub++) {
+				int lvl = Level(2 * ix + (sub & 1), 2 * iy + (sub >> 1));
+				if (lvl < level) continue;
 				uint64_t h = Mix(uint64_t(ix) * 0x9E3779B97F4A7C15ull ^ uint64_t(iy) * 0xC2B2AE3D27D4EB4Full ^ uint64_t(sub + 1) * 0x165667B19E3779F9ull);
 				double fx = ix + 0.5 * (sub & 1) + 0.5 * U(h, 0), fy = iy + 0.5 * (sub >> 1) + 0.5 * U(h, 1);
 				double lng = fx / c - PI, lat = 0.5 * PI - fy / c;
@@ -136,9 +160,111 @@ void Place (double lat0, double lat1, double lng0, double lng1, const Params &p,
 				t.kind = uint8_t(kind);
 				t.tint0 = uint8_t(h >> 40);
 				t.tint1 = uint8_t(h >> 48);
+				t.lvl = uint8_t(lvl);
 				out.push_back(t);
 			}
 }
+
+// not upstream (design-far-forest): cells ------------------------------------
+
+namespace Quad {
+
+long long Key (int m, long long row, long long col) { return (long long)m << 56 | row << 28 | col; }
+int Lvl (long long k) { return int(k >> 56); }
+double Span (int m) { return PI / double(1 << (16 - m)); }
+
+void Bounds (long long k, double &lat0, double &lat1, double &lng0, double &lng1)
+{
+	double s = Span(Lvl(k));
+	long long row = (k >> 28) & 0xfffffff, col = k & 0xfffffff;
+	lat1 = 0.5 * PI - double(row) * s;
+	lat0 = lat1 - s;
+	lng0 = -PI + double(col) * s;
+	lng1 = lng0 + s;
+}
+
+long long Parent (long long k)
+{
+	int m = Lvl(k);
+	if (m >= MaxLevel) return -1;
+	return Key(m + 1, ((k >> 28) & 0xfffffff) >> 1, (k & 0xfffffff) >> 1);
+}
+
+void Children (long long k, long long c[4])
+{
+	int m = Lvl(k);
+	long long row = (k >> 28) & 0xfffffff, col = k & 0xfffffff;
+	for (int i = 0; i < 4; i++) c[i] = m > 0 ? Key(m - 1, 2 * row + (i >> 1), 2 * col + (i & 1)) : -1;
+}
+
+double Near (long long k, double lat, double lng, double R)
+{
+	double la0, la1, lo0, lo1;
+	Bounds(k, la0, la1, lo0, lo1);
+	double la = std::clamp(lat, la0, la1), mid = 0.5 * (lo0 + lo1), half = 0.5 * (lo1 - lo0);
+	double lo = mid + std::clamp(std::remainder(lng - mid, 2.0 * PI), -half, half);
+	double a = std::sin(0.5 * (la - lat)), b = std::sin(0.5 * (lo - lng));
+	return 2.0 * R * std::asin(std::min(1.0, std::sqrt(a * a + std::cos(lat) * std::cos(la) * b * b)));
+}
+
+void Select (double lat, double lng, double heff, double D0, double far, double R, std::vector<Want> &out)
+{
+	out.clear();
+	double sp = Span(MaxLevel);
+	long long rows = 1LL << (16 - MaxLevel), cols = 1LL << (17 - MaxLevel);
+	double dlat = far / R + sp, dlng = far / (R * std::max(0.05, std::cos(std::min(0.5 * PI, std::fabs(lat) + dlat)))) + sp;
+	long long r0 = std::max(0LL, (long long)std::floor((0.5 * PI - lat - dlat) / sp)), r1 = std::min(rows - 1, (long long)std::floor((0.5 * PI - lat + dlat) / sp));
+	long long c0 = (long long)std::floor((lng + PI - dlng) / sp), c1 = (long long)std::floor((lng + PI + dlng) / sp);
+	if (c1 - c0 + 1 > cols) { c0 = 0; c1 = cols - 1; }
+	std::function<void(long long)> Visit = [&](long long k) {
+		double g = Near(k, lat, lng, R);
+		if (g > far) return;
+		double d = std::hypot(g, heff);
+		int m = Lvl(k);
+		if (m > 0 && d < D0 * std::exp2(m) * 1.01) {
+			long long c[4];
+			Children(k, c);
+			for (long long q : c) Visit(q);
+		}
+		else out.push_back({ d, k });
+	};
+	for (long long r = r0; r <= r1; r++)
+		for (long long cc = c0; cc <= c1; cc++) Visit(Key(MaxLevel, r, ((cc % cols) + cols) % cols));
+	std::sort(out.begin(), out.end(), [](const Want &a, const Want &b) { return a.d < b.d || (a.d == b.d && a.key < b.key); });
+}
+
+void DrawSet (const std::vector<long long> &want, const std::function<int(long long)> &state, std::vector<long long> &out)
+{
+	out.clear();
+	std::set<long long> anc;
+	std::vector<long long> mine, desc;
+	std::function<void(long long, int)> Down = [&](long long k, int depth) {
+		long long c[4];
+		Children(k, c);
+		for (long long q : c) {
+			if (q < 0) continue;
+			int s = state(q);
+			if (s == 2) desc.push_back(q);
+			else if (s == 1 && depth < 3) Down(q, depth + 1);
+		}
+	};
+	for (long long w : want) {
+		if (state(w) == 2) { mine.push_back(w); continue; }
+		long long a = Parent(w);
+		while (a >= 0 && state(a) != 2) a = Parent(a);
+		if (a >= 0) anc.insert(a);
+		else Down(w, 1);
+	}
+	auto Under = [&](long long k) {
+		for (long long a = Parent(k); a >= 0; a = Parent(a)) if (anc.count(a)) return true;
+		return false;
+	};
+	for (long long a : anc) if (!Under(a)) out.push_back(a);
+	for (long long k : mine) if (!Under(k)) out.push_back(k);
+	for (long long k : desc) if (!Under(k)) out.push_back(k);
+}
+
+} // namespace Quad
 
 // meshes ----------------------------------------------------------------
 

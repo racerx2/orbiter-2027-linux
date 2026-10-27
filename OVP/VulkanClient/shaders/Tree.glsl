@@ -18,6 +18,8 @@ struct TreePrmS
 	vec4 vAmb;		// ambient (rgb), 1 for the distance pass (w)
 	vec4 vTrans;	// atmospheric transmission (rgb)
 	vec4 vInsc;		// inscatter (rgb), TAA frame % 8 (w)
+	vec4 vLod;		// not upstream (design-far-forest): D0 = TreeRange, far limit, its fade, px per unit tangent
+	vec4 vLod2;		// share drawn at this height, the distance the cell's haze is for
 };
 
 #include "SceneShadow.glsl" // not upstream: CsmPrm (_CSM)
@@ -53,6 +55,7 @@ layout(location = 0) out TreeVS oVS;
 #if defined(_CSM)
 layout(location = 6) out float oHgt; // not upstream: the tree's height, its own crown's shadow bias
 #endif
+layout(location = 7) out vec2 oLod; // not upstream (design-far-forest): widening, crown detail 0..1
 void main()
 {
 	vec3 ip = iInst.xyz;
@@ -62,8 +65,10 @@ void main()
 #endif
 	float d = length(ip - Prm.vCam.xyz);
 	bool imp = Prm.vSun.w > 0.5;
-	float kind = floor(iCol.y * 255.0 + 0.5);
+	float kb = floor(iCol.y * 255.0 + 0.5);
+	float kind = mod(kb, 16.0), lvl = floor(kb / 16.0); // not upstream (design-far-forest): the level in the high bits
 	oVS = TreeVS(vec3(0), vec3(0), vec3(0), vec2(0), vec4(0), vec3(0));
+	oLod = vec2(1.0);
 	if ((!imp && d > Prm.vBand.x + Prm.vBand.z) || (imp && (d < Prm.vBand.y || d > Prm.vBand.w))) {
 		gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // outside this draw's band
 		return;
@@ -77,14 +82,27 @@ void main()
 		n = vec3(iNrm.x * c - iNrm.z * sn, iNrm.y, iNrm.x * sn + iNrm.z * c);
 		oVS.obj = q;
 	}
-	else {
-		vec3 v = ip - Prm.vCam.xyz;
+	else { // not upstream (design-far-forest): beyond D0 a share of the levels, each widened for the trees not drawn, at least 1 px tall, facing the camera
+		float lam = max(0.0, log2(d / Prm.vLod.x)), lf = floor(lam), f = lam - lf;
+		float keep = lvl < lf - 0.5 ? 0.0 : ((lvl > lf + 0.5 || lvl > 7.5) ? 1.0 : (exp2(2.0 - 2.0 * f) - 1.0) / 3.0); // TreeGeom::DrawShare
+		keep *= (1.0 - smoothstep(Prm.vLod.y - Prm.vLod.z, Prm.vLod.y, d)) * Prm.vLod2.x;
+		vec3 c0 = ip + vec3(0.0, 0.6 * s, 0.0), v = c0 - Prm.vCam.xyz, vh = normalize(v);
+		float wid = exp2(lam), hs = s * mix(1.0, wid, abs(vh.y));
+		float px = hs * Prm.vLod.w / max(d, 1.0), grow = max(1.0, 1.0 / px);
+		keep /= grow;
+		if (iCol.x >= keep) {
+			gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // not drawn at this distance
+			return;
+		}
 		vec3 r = normalize(vec3(v.z, 0.0, -v.x) + vec3(1e-4, 0.0, 0.0)); // across the view, horizontal
+		float t = clamp(lam, 0.0, 1.0);
+		vec3 u = normalize(mix(vec3(0.0, 1.0, 0.0), cross(vh, r), t));
 		float w = kind < 1.5 ? 0.55 : (kind > 3.5 ? 1.1 : 0.85);	// conifers narrow, bushes wide
-		p = ip + r * (iPos.x * s * w) + vec3(0.0, iPos.y * s, 0.0);
-		n = -normalize(vec3(v.x, 0.0, v.z));
+		p = c0 + r * (iPos.x * s * w * wid) + u * ((iPos.y - 0.6) * hs + iPos.y * hs * (grow - 1.0));
+		n = -normalize(mix(normalize(vec3(v.x, 0.0, v.z) + vec3(1e-4, 0.0, 0.0)), vh, t));
 		oVS.uv = vec2(iPos.x + 0.5, iPos.y);
 		oVS.obj = vec3(iPos.x * s, iPos.y * s, 0.0);
+		oLod = vec2(wid, clamp((px * grow - 1.0) / 3.0, 0.0, 1.0));
 	}
 	oVS.posW = (vec4(p, 1.0) * Prm.mW).xyz;
 	oVS.nrm = n;
@@ -100,6 +118,7 @@ layout(location = 0) in TreeVS frg;
 #if defined(_CSM)
 layout(location = 6) in float iHgt; // not upstream
 #endif
+layout(location = 7) in vec2 iLod; // not upstream (design-far-forest)
 layout(location = 0) out vec4 oColor;
 #if defined(_SSGI)
 layout(location = 1) out vec4 oAlbG;	// not upstream: SSGI albedo / 4 (distance pass only)
@@ -120,9 +139,10 @@ void main()
 		if (kind < 1.5) { inside = abs(x) < 0.5 * (1.0 - y) * (0.9 + e) && y > 0.12; c = vec2(x * 2.0 / max(1.0 - y, 0.1), (y - 0.5) * 2.0); }
 		else if (kind > 3.5) { vec2 q = vec2(x / 0.5, (y - 0.45) / 0.45); inside = dot(q, q) < 1.0 + e; c = q; }
 		else { vec2 q = vec2(x / 0.45, (y - 0.62) / 0.38); inside = dot(q, q) < 1.0 + e; c = q; }
-		bool trunk = abs(x) < 0.04 && y < 0.4 && kind < 3.5;
+		bool trunk = abs(x) * iLod.x < 0.04 && y < 0.4 && kind < 3.5; // not upstream (design-far-forest): its own width
 		if (!inside && !trunk) discard;
 		part = inside ? 1.0 : 0.0;
+		c *= iLod.y; // not upstream (design-far-forest): the crown's mean below 4 px
 		float z = sqrt(max(0.0, 1.0 - dot(c, c) * 0.8));
 		vec3 v = normalize(vec3(-n.z, 0.0, n.x)); // across
 		n = normalize(v * c.x * 0.8 + vec3(0.0, 1.0, 0.0) * c.y * 0.6 + n * z);
@@ -138,8 +158,9 @@ void main()
 #if defined(_SSGI)
 	if (Prm.vAmb.w > 0.5) { // not upstream: the distance pass with the SSGI albedo and normal (design-ssgi 4.1)
 		vec3 lf = kind < 1.5 ? vec3(0.09, 0.17, 0.08) : (kind > 3.5 ? vec3(0.17, 0.22, 0.09) : vec3(0.13, 0.22, 0.08));
-		lf *= 0.8 + 0.4 * vec3(frg.tint.x, frg.tint.y, 0.5 * (frg.tint.x + frg.tint.y));
-		float gr = 0.85 + 0.3 * fract(sin(dot(floor(frg.obj * 3.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+		vec2 tn = mix(vec2(0.5), frg.tint.xy, iLod.y); // not upstream (design-far-forest): the mean tint and grain below 4 px
+		lf *= 0.8 + 0.4 * vec3(tn.x, tn.y, 0.5 * (tn.x + tn.y));
+		float gr = mix(1.0, 0.85 + 0.3 * fract(sin(dot(floor(frg.obj * 3.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453), iLod.y);
 		vec3 ab = part > 0.5 ? lf * gr : vec3(0.20, 0.15, 0.11);
 		vec3 nw = normalize((vec4(n, 0.0) * Prm.mW).xyz);
 		nw /= abs(nw.x) + abs(nw.y) + abs(nw.z);
@@ -154,8 +175,9 @@ void main()
 #endif
 
 	vec3 leaf = kind < 1.5 ? vec3(0.09, 0.17, 0.08) : (kind > 3.5 ? vec3(0.17, 0.22, 0.09) : vec3(0.13, 0.22, 0.08));
-	leaf *= 0.8 + 0.4 * vec3(frg.tint.x, frg.tint.y, 0.5 * (frg.tint.x + frg.tint.y));
-	float grain = 0.85 + 0.3 * fract(sin(dot(floor(frg.obj * 3.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+	vec2 tn = mix(vec2(0.5), frg.tint.xy, iLod.y); // not upstream (design-far-forest): the mean tint and grain below 4 px
+	leaf *= 0.8 + 0.4 * vec3(tn.x, tn.y, 0.5 * (tn.x + tn.y));
+	float grain = mix(1.0, 0.85 + 0.3 * fract(sin(dot(floor(frg.obj * 3.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453), iLod.y);
 	vec3 alb = part > 0.5 ? leaf * grain : vec3(0.20, 0.15, 0.11);
 	vec3 L = Prm.vSun.xyz;
 	float ndl = dot(n, L);
@@ -172,7 +194,14 @@ void main()
 #else
 	c = 1.0 - exp(-Prm.vSunCol.w * c); // the planet curve, as the ground
 #endif
-	c = c * Prm.vTrans.rgb + Prm.vInsc.rgb;
+	vec3 T = Prm.vTrans.rgb, I = Prm.vInsc.rgb;
+	if (Prm.vLod2.y > 1.0) { // not upstream (design-far-forest): the cell's haze carried to this tree's distance
+		float q = d / Prm.vLod2.y;
+		vec3 one = vec3(1.0) - T, Tq = pow(max(T, vec3(1e-4)), vec3(q));
+		I *= mix(vec3(q), (vec3(1.0) - Tq) / max(one, vec3(1e-4)), step(vec3(1e-4), one));
+		T = Tq;
+	}
+	c = c * T + I;
 	oColor = vec4(c, 1.0);
 }
 #endif

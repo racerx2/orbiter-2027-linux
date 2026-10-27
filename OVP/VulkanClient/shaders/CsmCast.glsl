@@ -45,7 +45,7 @@ void main()
 	float s = iInst.w;
 	float d = length(ip - Prm.vCam.xyz);
 	bool imp = Prm.vSun.w > 0.5;
-	float kind = floor(iCol.y * 255.0 + 0.5);
+	float kind = mod(floor(iCol.y * 255.0 + 0.5), 16.0); // not upstream (design-far-forest): the level in the high bits
 	float thr = Prm.vBand.x + Prm.vBand.y * fract(iCol.z * 157.0 + iCol.w * 311.0); // per tree: the two draws meet without a line
 	oImp = vec4(0.0, 0.0, kind, s);
 	if ((!imp && d >= thr) || (imp && (d < thr || d > Prm.vBand.z))) {
