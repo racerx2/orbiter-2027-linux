@@ -684,6 +684,13 @@ void Camera::SetCatchAngle (double cangle)
 	catchangle = cangle;
 }
 
+void Camera::ResetCockpitView()
+{
+	movehead = false;
+	ResetCockpitPos();
+	ResetCockpitDir(false);
+}
+
 void Camera::ResetCockpitPos ()
 {
 	if (!external_view) {

@@ -162,6 +162,9 @@ public:
 	void SetDistance(double rd);
 	// Set camera distance in 'unit' radius
 
+	void ResetCockpitView();
+	// Call ResetCockpitDir and ResetCockpitPos, and stop any transitional movement
+
 	void ResetCockpitPos ();
 	// Reset cockpit camera to default position
 
