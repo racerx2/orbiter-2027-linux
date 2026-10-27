@@ -392,6 +392,7 @@ public:
 	bool bTileStreamOffline;// not upstream: the tile stream makes no requests
 	int  TileStreamCacheMB; // not upstream: size cap of the streamed tiles, 0 = none
 	bool bTileStreamBuildings; // not upstream: stream 3D buildings where the cfg has them
+	bool bTileStreamWays; // not upstream (design-ways): roads, railways, airports and waterways from the building tiles
 
 	// directory information
 	char *Root;             // master config file

@@ -282,6 +282,8 @@ namespace eElevMode {
 
 struct HorizonState;
 void HorizonStateFree (HorizonState *h); // not upstream: Surfmgr2.cpp, NULL is fine
+struct WayState;
+void WayStateFree (WayState *w); // not upstream (design-ways): Waymgr.cpp, NULL is fine
 struct CloudAtlasState;
 void CloudAtlasFree (CloudAtlasState *a); // not upstream: Cloudmgr2.cpp, NULL is fine
 VkTex *CloudAtlasTex (const CloudAtlasState *a); // not upstream: NULL until built
@@ -416,6 +418,7 @@ public:
 	DWORD streamFrame = 0;  // not upstream: counts Render calls, SurfTile::Render's walk stamp
 	double streamNow = 0.0; // not upstream: sys time of this Render call
 	struct HorizonState *horizon = nullptr; // not upstream: horizon map jobs (Surfmgr2.cpp)
+	struct WayState *ways = nullptr;        // not upstream (design-ways): way texture jobs (Waymgr.cpp)
 	struct CloudAtlasState *atlas = nullptr; // not upstream: the cloud layer's seamless atlas (Cloudmgr2.cpp)
 	std::vector<std::pair<Tile*, D3DXMATRIX>> depthTiles; // not upstream: tiles the main pass drew, for the SceneFx distance pass
 	bool depthRec = false;                  // not upstream: record them this pass
@@ -535,6 +538,10 @@ public:
 	void HorizonRequest (TileType *owner, double dist);  // not upstream: under the loader mutex, main pass; the nearest is kept
 	void HorizonSubmit ();                               // not upstream: under the loader mutex, after the main pass drew; the job for the nearest
 	void HorizonUpload ();                               // not upstream: under the loader mutex
+	void WayRequest (TileType *t, double dist);          // not upstream (design-ways): under the loader mutex, main pass; the nearest two kept
+	void WayClaim ();                                    // not upstream: under the loader mutex, after the main pass drew: they are asked
+	void WaySubmit ();                                   // not upstream: after the loader mutex: their way tiles wanted and read, the jobs out
+	void WayUpload ();                                   // not upstream: under the loader mutex, main pass: results in, fixed structures checked
 	void RenderDepth (ShaderClass *sh, const D3DXMATRIX &mVP); // not upstream: the recorded tiles' camera distance
 	void RenderCasters (ShaderClass *sh, MATRIX4 &dwmat, const vPlanet::RenderPrm &rprm, const class SceneShadows &s, double minSpacing); // not upstream: scene shadow casters from the loaded tiles
 	int VolTiles (double lat, double lng, double half, std::vector<VolCloud::Src> &out); // not upstream: cloud tiles with density under a box (cloud frame), takes the loader mutex

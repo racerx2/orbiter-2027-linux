@@ -3,7 +3,7 @@
 // Dual licensed under GPL v3 and LGPL v3
 // Copyright (C) 2026 racerx2
 // ==============================================================
-// not upstream: background jobs for the ground graphics (horizon maps, cloud maps, noise)
+// not upstream: background jobs for the ground graphics (horizon maps, cloud maps, noise, way textures)
 
 #ifndef __GFXPOOL_H
 #define __GFXPOOL_H
@@ -16,7 +16,7 @@
 
 class GfxPool {
 public:
-	enum Kind { CLOUDATLAS = 0, CLOUDMAP = 1, NOISE = 2, HORIZON = 3, FOGMAP = 4, NKIND = 5 }; // run in this order; the atlas is one job per planet
+	enum Kind { CLOUDATLAS = 0, CLOUDMAP = 1, NOISE = 2, HORIZON = 3, FOGMAP = 4, WAYS = 5, NKIND = 6 }; // run in this order; the atlas is one job per planet; WAYS: design-ways
 	struct Job {
 		int owner = 0;                   // Register() id
 		int kind = HORIZON;

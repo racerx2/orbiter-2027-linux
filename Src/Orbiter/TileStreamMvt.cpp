@@ -572,3 +572,229 @@ bool TsBldg::Read (const std::string &s, Mesh &m)
 			if (m.idx[i] >= b.nv) return false;
 	return true;
 }
+
+// -----------------------------------------------------------------------
+// not upstream (design-ways): roads, railways, airports and waterways of the same tiles
+
+namespace {
+
+const size_t WayMaxPts = 400000;  // points per tile
+const size_t WayMaxParts = 4096;  // parts per feature
+const int WayMaxCoord = 16384;    // tile units either way, the buffer well inside
+
+double Num (const Val &v) { return v.kind == 2 ? atof (v.str.c_str()) : v.num; }
+
+uint8_t WayKind (const std::string &layer, const std::string &cls, const std::string &sub)
+{
+	using namespace TsWay;
+	if (layer == "aeroway") {
+		if (cls == "runway") return RUNWAY;
+		if (cls == "taxiway") return TAXIWAY;
+		if (cls == "apron") return APRON;
+		if (cls == "helipad") return HELIPAD;
+		return NONE;
+	}
+	if (layer == "waterway") {
+		if (cls == "river") return RIVER;
+		if (cls == "canal") return CANAL;
+		if (cls == "stream") return STREAM;
+		if (cls == "drain") return DRAIN;
+		if (cls == "ditch") return DITCH;
+		return NONE;
+	}
+	static const std::pair<const char *, uint8_t> road[] = {
+		{"motorway", MOTORWAY}, {"trunk", TRUNK}, {"primary", PRIMARY}, {"secondary", SECONDARY}, {"tertiary", TERTIARY},
+		{"minor", MINOR}, {"track", TRACK}, {"busway", BUSWAY}, {"raceway", RACEWAY}, {"pier", PIER}};
+	for (const auto &r : road) if (cls == r.first) return r.second;
+	if (cls == "service") return sub == "driveway" ? DRIVEWAY : sub == "parking_aisle" ? PARKING : SERVICE;
+	if (cls == "path") {
+		if (sub == "footway") return FOOTWAY;
+		if (sub == "cycleway") return CYCLEWAY;
+		if (sub == "steps") return STEPS;
+		if (sub == "pedestrian") return PEDESTRIAN;
+		if (sub == "platform") return PLATFORM;
+		if (sub == "corridor") return NONE;
+		return PATH;
+	}
+	if (cls == "rail" || cls == "transit") return sub == "tram" ? TRAM : RAIL;
+	return NONE;
+}
+
+// LineString commands to parts: MoveTo starts one
+bool Lines (const std::vector<uint32_t> &g, std::vector<std::vector<TsBldg::Pt>> &parts)
+{
+	int64_t x = 0, y = 0;
+	std::vector<TsBldg::Pt> cur;
+	for (size_t i = 0; i < g.size(); ) {
+		uint32_t id = g[i] & 7, n = g[i] >> 3;
+		i++;
+		if (id != 1 && id != 2) return false;
+		if (i + 2 * (size_t)n > g.size()) return false;
+		for (uint32_t k = 0; k < n; k++) {
+			x += Zz (g[i++]);
+			y += Zz (g[i++]);
+			if (id == 1) {
+				if (cur.size() >= 2) parts.push_back (cur);
+				cur.clear();
+			}
+			cur.push_back ({(double)x, (double)y});
+		}
+	}
+	if (cur.size() >= 2) parts.push_back (cur);
+	return true;
+}
+
+}
+
+bool TsWay::Decode (const std::string &pbf, Tile &t)
+{
+	t.f.clear();
+	size_t pts = 0;
+	Pb tile (pbf.data(), pbf.size());
+	int f, wt;
+	while (tile.More()) {
+		if (!tile.Key (f, wt)) return false;
+		if (f != 3 || wt != 2) { if (!tile.Skip (wt)) return false; continue; }
+		Pb layer (nullptr, 0);
+		if (!tile.Bytes (layer)) return false;
+		std::string name;
+		std::vector<std::string> keys;
+		std::vector<Val> vals;
+		std::vector<Pb> feats;
+		uint64_t ext = 4096;
+		while (layer.More()) {
+			if (!layer.Key (f, wt)) return false;
+			Pb s (nullptr, 0);
+			if (wt == 2 && (f == 1 || f == 2 || f == 3 || f == 4)) {
+				if (!layer.Bytes (s)) return false;
+				if (f == 1) name.assign ((const char*)s.p, s.e - s.p);
+				else if (f == 2) feats.push_back (s);
+				else if (f == 3) keys.emplace_back ((const char*)s.p, s.e - s.p);
+				else { Val v; if (!Value (s, v)) return false; vals.push_back (v); }
+			} else if (f == 5 && wt == 0) { if (!layer.Var (ext)) return false; }
+			else if (!layer.Skip (wt)) return false;
+		}
+		if (name != "transportation" && name != "aeroway" && name != "waterway") continue;
+		if (ext < 1 || ext > (1u << 20)) return false;
+		double to = (double)Extent / (double)ext;
+		for (Pb &fp : feats) {
+			std::vector<uint32_t> tags, geom;
+			uint64_t type = 0;
+			while (fp.More()) {
+				if (!fp.Key (f, wt)) return false;
+				if (f == 2) { if (!U32s (fp, wt, tags)) return false; }
+				else if (f == 4) { if (!U32s (fp, wt, geom)) return false; }
+				else if (f == 3 && wt == 0) { if (!fp.Var (type)) return false; }
+				else if (!fp.Skip (wt)) return false;
+			}
+			if (type != 2 && type != 3) continue;
+			std::string cls, sub;
+			Feature F;
+			bool drop = false;
+			for (size_t i = 0; i + 1 < tags.size(); i += 2) {
+				if (tags[i] >= keys.size() || tags[i + 1] >= vals.size()) continue;
+				const std::string &k = keys[tags[i]];
+				const Val &v = vals[tags[i + 1]];
+				if (k == "class") cls = v.str;
+				else if (k == "subclass") sub = v.str;
+				else if (k == "brunnel") { if (v.str == "tunnel") drop = true; else if (v.str == "bridge") F.flags |= BRIDGE; }
+				else if (k == "surface") { if (v.str == "unpaved") F.flags |= UNPAVED; }
+				else if (k == "oneway") { double n = Num (v); if (std::isfinite (n) && n != 0.0) F.flags |= ONEWAY; }
+				else if (k == "ramp") { double n = Num (v); if (std::isfinite (n) && n != 0.0) F.flags |= RAMP; }
+				else if (k == "indoor" || k == "intermittent") { double n = Num (v); if (std::isfinite (n) && n != 0.0) drop = true; }
+				else if (k == "layer") { double n = Num (v); if (std::isfinite (n)) F.layer = (int8_t)std::max (-8.0, std::min (8.0, std::round (n))); }
+				else if (k == "ref" && name == "aeroway") F.ref = v.str.substr (0, 15);
+			}
+			F.kind = WayKind (name, cls, sub);
+			if (drop || F.kind == NONE) continue;
+			bool area = type == 3;
+			if (area && (F.kind == RAIL || F.kind == TRAM || F.kind >= RIVER)) continue; // a line kind only
+			if (!area && (F.kind == APRON || F.kind == HELIPAD)) continue;
+			if (area) F.flags |= AREA;
+			std::vector<std::vector<TsBldg::Pt>> parts;
+			if (!(area ? Rings (geom, parts) : Lines (geom, parts))) return false;
+			if (parts.size() > WayMaxParts) parts.resize (WayMaxParts);
+			for (const auto &p : parts) {
+				if (pts + p.size() > WayMaxPts) break; // the tile's budget is spent
+				std::vector<int16_t> q;
+				q.reserve (2 * p.size());
+				for (const TsBldg::Pt &c : p)
+					for (double v : {c.x * to, c.y * to}) q.push_back ((int16_t)std::max ((double)-WayMaxCoord, std::min ((double)WayMaxCoord, std::round (v))));
+				pts += p.size();
+				F.parts.push_back (std::move (q));
+			}
+			if (!F.parts.empty()) t.f.push_back (std::move (F));
+		}
+	}
+	return true;
+}
+
+std::string TsWay::Encode (const Tile &t)
+{
+	std::string s ("OWAY");
+	uint32_t np = 0, n = 0;
+	for (const Feature &F : t.f) {
+		np += (uint32_t)F.parts.size();
+		for (const auto &p : F.parts) n += (uint32_t)(p.size() / 2);
+	}
+	Put (s, (uint32_t)1);
+	Put (s, (int32_t)t.z); Put (s, (int32_t)t.x); Put (s, (int32_t)t.y);
+	Put (s, (uint32_t)t.f.size()); Put (s, np); Put (s, n);
+	for (const Feature &F : t.f) {
+		Put (s, F.kind); Put (s, F.flags); Put (s, F.layer); Put (s, (uint8_t)F.ref.size()); Put (s, (uint16_t)F.parts.size());
+		s += F.ref;
+	}
+	for (const Feature &F : t.f)
+		for (const auto &p : F.parts) Put (s, (uint16_t)(p.size() / 2));
+	for (const Feature &F : t.f)
+		for (const auto &p : F.parts) s.append ((const char*)p.data(), p.size() * sizeof (int16_t));
+	return s;
+}
+
+bool TsWay::Read (const std::string &s, Tile &t)
+{
+	t = Tile();
+	size_t at = 4;
+	uint32_t ver, nf, np, n;
+	int32_t z, x, y;
+	if (s.size() < 4 || s.compare (0, 4, "OWAY") || !Get (s, at, ver) || ver != 1) return false;
+	if (!Get (s, at, z) || !Get (s, at, x) || !Get (s, at, y) || !Get (s, at, nf) || !Get (s, at, np) || !Get (s, at, n)) return false;
+	if (n > WayMaxPts || nf > n || np > n || (uint64_t)nf * 6 + (uint64_t)np * 2 + (uint64_t)n * 4 > s.size() - at) return false;
+	t.z = z; t.x = x; t.y = y;
+	t.f.resize (nf);
+	std::vector<uint16_t> cnt (nf);
+	uint64_t parts = 0;
+	for (uint32_t i = 0; i < nf; i++) {
+		Feature &F = t.f[i];
+		uint8_t nref = 0;
+		if (!Get (s, at, F.kind) || !Get (s, at, F.flags) || !Get (s, at, F.layer) || !Get (s, at, nref) || !Get (s, at, cnt[i])) return false;
+		if (F.kind == NONE || F.kind >= NKIND || (F.flags & ~(BRIDGE | UNPAVED | ONEWAY | RAMP | AREA)) || nref > 15 || !cnt[i] || cnt[i] > WayMaxParts) return false;
+		if (s.size() - at < nref) return false;
+		F.ref.assign (s, at, nref);
+		at += nref;
+		parts += cnt[i];
+	}
+	if (parts != np || (uint64_t)np * 2 + (uint64_t)n * 4 != s.size() - at) return false;
+	std::vector<uint16_t> len (np);
+	uint64_t pts = 0;
+	for (uint16_t &l : len) {
+		Get (s, at, l);
+		pts += l;
+	}
+	if (pts != n) return false;
+	size_t p = 0;
+	for (uint32_t i = 0; i < nf; i++) {
+		Feature &F = t.f[i];
+		size_t min = (F.flags & AREA) ? 3 : 2;
+		F.parts.resize (cnt[i]);
+		for (auto &q : F.parts) {
+			uint16_t l = len[p++];
+			if (l < min) return false;
+			q.resize ((size_t)l * 2);
+			memcpy (q.data(), s.data() + at, q.size() * sizeof (int16_t));
+			at += q.size() * sizeof (int16_t);
+			for (int16_t v : q) if (v < -WayMaxCoord || v > WayMaxCoord) return false;
+		}
+	}
+	return true;
+}

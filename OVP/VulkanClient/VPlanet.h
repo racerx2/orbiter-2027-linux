@@ -61,6 +61,7 @@ public:
 	bool bRipples;
 	bool bCloudShd;
 	bool bNightlights;
+	bool bWays;     // not upstream (design-ways): _WAYS, tWay and tWayN
 
 	VkConstHandle tCloud;
 	VkConstHandle tCloud2;
@@ -108,8 +109,9 @@ struct ShaderParams
 	float4   vCldAtlas;			// not upstream: cloud atlas uv offset (xy) and scale (zw)
 	float4   vCldAtlasW;		// not upstream: x 1 with the atlas, y max anisotropy, z 1 when the texture is at or below the atlas level
 	float4   vWaterFx;			// not upstream: water effects, x foam mask mip, yz foam ring radius in uv, w spare
+	float4   vWayOff;			// not upstream (design-ways): way and lamp texture uv offset (xy) and scale (zw)
 };
-static_assert(sizeof(ShaderParams) == 464, "ShaderParams must match NewPlanet.glsl PerObjectParams"); // not upstream
+static_assert(sizeof(ShaderParams) == 480, "ShaderParams must match NewPlanet.glsl PerObjectParams"); // not upstream
 static_assert(offsetof(ShaderParams, vCldAtlas) == 416 && offsetof(ShaderParams, vWaterFx) == 448, "ShaderParams must match NewPlanet.glsl PerObjectParams"); // not upstream
 
 // Bools for NewPlanet.hlsl
@@ -130,6 +132,8 @@ struct FlowControlPS
 	BOOL bTexture;				// Surface texture exists
 	BOOL bClass;				// not upstream: land class weights (tClass) for micro detail, repeat in vMSc[0]
 	BOOL bHorizon;				// not upstream: horizon map (tHorizon) for terrain shadows
+	BOOL bWay;					// not upstream (design-ways): way texture (tWay)
+	BOOL bWayN;					// not upstream: the lamps come from tWayN, not the night look's street lattice
 };
 
 struct FlowControlVS

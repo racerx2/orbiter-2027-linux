@@ -1117,6 +1117,7 @@ TileManager2Base::~TileManager2Base ()
 	if (loader) loader->Unqueue(this);
 	for (StreamLoad &s : streamKeys) { delete s.surf; delete s.mask; delete s.cls; } // not upstream
 	HorizonStateFree(horizon); // not upstream
+	WayStateFree(ways); // not upstream (design-ways)
 	CloudAtlasFree(atlas); // not upstream
 }
 

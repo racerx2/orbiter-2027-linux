@@ -78,10 +78,10 @@ bool InGrid (int L, int a, int b)
 	return L < 4 ? !a && !b : a < 1 << (L - 4) && b < 1 << (L - 3);
 }
 
-// bldg: z14 x/y; the rest: the Orbiter grid from lmin to lmax
+// bldg, way: z14 x/y; the rest: the Orbiter grid from lmin to lmax
 bool KeyOk (const std::string &idx, int L, int a, int b, int lmin = 1, int lmax = 21)
 {
-	if (idx == "bldg") return L == 14 && a >= 0 && b >= 0 && a < 1 << 14 && b < 1 << 14;
+	if (idx == "bldg" || idx == "way") return L == 14 && a >= 0 && b >= 0 && a < 1 << 14 && b < 1 << 14; // not upstream (design-ways): way
 	return L >= lmin && L <= lmax && InGrid (L, a, b);
 }
 
@@ -231,14 +231,23 @@ int64_t Today ()
 
 int HostOf (const TsSource &s) { return s.kind == "eox" ? EOX : s.kind == "terrarium" ? TERR : GIBS; }
 
-std::string BldgFile (const std::string &dir, uint64_t k)
+// not upstream (design-ways): the two files of a z14 vector tile, 0 buildings, 1 ways
+const char *const VecIdx[2] = {"bldg", "way"};
+
+std::string VecFile (const std::string &dir, int v, uint64_t k)
 {
-	return dir + "/Bldg/14/" + std::to_string (KLat (k)) + "/" + std::to_string (KLng (k)) + ".bld";
+	return dir + (v ? "/Way/14/" : "/Bldg/14/") + std::to_string (KLat (k)) + "/" + std::to_string (KLng (k)) + (v ? ".way" : ".bld");
 }
 
-// the file behind an entry of bldg.idx, mod.idx or cloud.idx
+std::string BldgFile (const std::string &dir, uint64_t k)
+{
+	return VecFile (dir, 0, k);
+}
+
+// the file behind an entry of bldg.idx, way.idx, mod.idx or cloud.idx
 std::string StreamFile (const std::string &dir, const std::string &idx, uint64_t k)
 {
+	if (idx == "way") return VecFile (dir, 1, k); // not upstream (design-ways)
 	return idx == "bldg" ? BldgFile (dir, k) : Tile (dir, idx == "mod" ? "Elev_mod" : "Cloud", k);
 }
 
@@ -291,6 +300,9 @@ struct TileStream::Impl {
 		std::vector<double> baseH;                      // flat height per base, NaN until known
 		double radius = 6.37101e6;
 		std::unordered_set<uint64_t> bldg; // building tiles written, Key (14, x, y)
+		std::unordered_set<uint64_t> way;  // not upstream (design-ways): way tiles written, Key (14, x, y)
+		std::unordered_set<uint64_t> &Vec (int v) { return v ? way : bldg; }
+		const std::unordered_set<uint64_t> &Vec (int v) const { return v ? way : bldg; }
 		std::string bldgUrl;               // from the TileJSON
 		int bldgState = 0;                 // 0 TileJSON not asked, 1 asking, 2 known
 		std::unordered_set<uint64_t> elev; // Elev files this stream wrote (elev.idx)
@@ -429,7 +441,8 @@ struct TileStream::Impl {
 	bool Held (int b, uint64_t k);
 	void LoadArchives (Body &B);
 	void Prune ();
-	void Drop (Body &B, const std::vector<uint64_t> &gone, const std::vector<uint64_t> &egone, const std::vector<uint64_t> &bgone);
+	using VecKeys = std::array<std::vector<uint64_t>, 2>; // not upstream (design-ways): per VecIdx
+	void Drop (Body &B, const std::vector<uint64_t> &gone, const std::vector<uint64_t> &egone, const VecKeys &vgone);
 	void Dirty (Body &B);
 	void OnResult (Result &r, Clock::time_point now);
 	void Deliver (const std::string &url, int status, const std::shared_ptr<const QByteArray> &data, Clock::time_point now);
@@ -492,10 +505,10 @@ struct TileStream::Impl {
 	void InhLine (Body &B, uint64_t k, const Body::Inh &n);
 	void AddonMods (Body &B);
 	void Settle (Body &B, uint64_t k);
-	int WantBldg (int b, int x, int y);       // TileStreamMvt.cpp's tiles, below imagery
+	int WantVec (int v, int b, int x, int y); // TileStreamMvt.cpp's tiles, below imagery; v: VecIdx
 	void StartBldg (Clock::time_point now);
 	void BldgDeliver (const std::string &url, int status, const std::shared_ptr<const QByteArray> &data, Clock::time_point now);
-	void BuildBldg (int b, uint64_t k, std::shared_ptr<const QByteArray> data);
+	void BuildVec (int b, uint64_t k, std::shared_ptr<const QByteArray> data);
 };
 
 static bool Better (const TileStream::Impl::Job &a, const TileStream::Impl::Job &b)
@@ -1469,6 +1482,7 @@ void TileStream::Impl::LoadIdx (Body &B)
 	load ("ocean", false, 4, 21, [&] (uint64_t k, int64_t) { return B.ocean.insert (k).second; });
 	load ("refetch", false, 1, 21, [&] (uint64_t k, int64_t) { return B.refetch.insert (k).second; });
 	load ("bldg", false, 14, 14, [&] (uint64_t k, int64_t) { return B.bldg.insert (k).second; });
+	load ("way", false, 14, 14, [&] (uint64_t k, int64_t) { return B.way.insert (k).second; }); // not upstream (design-ways)
 	std::error_code ec;
 	auto age = fs::file_time_type::clock::now() - fs::last_write_time (Idx (B, "none"), ec);
 	if (!ec && age > std::chrono::hours (24 * 30)) { // nothing marked for 30 days: every line is out of date
@@ -1565,27 +1579,29 @@ void TileStream::Impl::Evict ()
 	for (auto &bp : bodies) {
 		Body &B = *bp;
 		std::vector<std::pair<uint64_t, bool>> keys; // with: its Elev is ours
-		std::vector<uint64_t> bkeys, ekeys;
+		std::vector<uint64_t> ekeys;
+		VecKeys vkeys, vgone; // not upstream (design-ways): buildings and ways
 		{
 			std::lock_guard<std::mutex> lk (mx);
 			if (B.bytesKnown && B.bytes <= cap) continue; // the running total: no scan below the cap
 			for (uint64_t k : B.written) keys.push_back ({k, B.elev.count (k) > 0});
 			for (uint64_t k : B.elev) if (!B.written.count (k)) ekeys.push_back (k); // our Elev whose Surf went
-			bkeys.assign (B.bldg.begin(), B.bldg.end());
+			for (int vi = 0; vi < 2; vi++) vkeys[vi].assign (B.Vec (vi).begin(), B.Vec (vi).end());
 		}
-		struct E { fs::file_time_type t; uint64_t k, size; bool bldg, elev, alone; };
+		struct E { fs::file_time_type t; uint64_t k, size; int vec; bool elev, alone; }; // vec: VecIdx, -1 a tile
 		std::vector<E> v;
-		std::vector<uint64_t> gone, bgone, egone;
+		std::vector<uint64_t> gone, egone;
 		uint64_t total = 0;
-		for (uint64_t k : bkeys) {
-			if (quit) return;
-			std::error_code e1;
-			std::string s = BldgFile (B.dir, k);
-			uint64_t size = fs::file_size (s, e1);
-			if (e1) { bgone.push_back (k); continue; }
-			total += size;
-			v.push_back ({fs::last_write_time (s, e1), k, size, true, false, false});
-		}
+		for (int vi = 0; vi < 2; vi++)
+			for (uint64_t k : vkeys[vi]) {
+				if (quit) return;
+				std::error_code e1;
+				std::string s = VecFile (B.dir, vi, k);
+				uint64_t size = fs::file_size (s, e1);
+				if (e1) { vgone[vi].push_back (k); continue; }
+				total += size;
+				v.push_back ({fs::last_write_time (s, e1), k, size, vi, false, false});
+			}
 		for (uint64_t k : ekeys) {
 			if (quit) return;
 			std::error_code e1;
@@ -1593,7 +1609,7 @@ void TileStream::Impl::Evict ()
 			uint64_t size = fs::file_size (s, e1);
 			if (e1) { egone.push_back (k); continue; }
 			total += size;
-			if (KL (k) > 8) v.push_back ({fs::last_write_time (s, e1), k, size, false, true, true});
+			if (KL (k) > 8) v.push_back ({fs::last_write_time (s, e1), k, size, -1, true, true});
 		}
 		for (auto &p : keys) {
 			if (quit) return;
@@ -1608,7 +1624,7 @@ void TileStream::Impl::Evict ()
 				if (!e2) size += n;
 			}
 			total += size;
-			if (KL (k) > 8) v.push_back ({fs::last_write_time (s, e1), k, size, false, p.second, false});
+			if (KL (k) > 8) v.push_back ({fs::last_write_time (s, e1), k, size, -1, p.second, false});
 		}
 		if (total > cap) {
 			std::sort (v.begin(), v.end(), [] (const E &a, const E &b) { return a.t < b.t; });
@@ -1617,8 +1633,8 @@ void TileStream::Impl::Evict ()
 				std::error_code ec;
 				if (e.alone && fs::exists (Tile (B.dir, "Surf", e.k), ec)) continue; // its tile made again since the scan
 				std::string other; // design dropin-addons: an add-on's file over ours is left, its key leaves the index
-				const char *oidx = e.bldg ? "bldg" : "written";
-				if (e.bldg) { if (!Ours (B, BldgFile (B.dir, e.k))) other = BldgFile (B.dir, e.k); }
+				const char *oidx = e.vec >= 0 ? VecIdx[e.vec] : "written";
+				if (e.vec >= 0) { if (!Ours (B, VecFile (B.dir, e.vec, e.k))) other = VecFile (B.dir, e.vec, e.k); }
 				else for (const char *layer : {"Surf", "Mask", "Elev", "Class"}) {
 					if ((!e.elev && !strcmp (layer, "Elev")) || (e.alone && strcmp (layer, "Elev"))) continue;
 					if (other.empty() && !Ours (B, Tile (B.dir, layer, e.k))) {
@@ -1633,9 +1649,9 @@ void TileStream::Impl::Evict ()
 					continue;
 				}
 				total -= e.size;
-				if (e.bldg) {
-					fs::remove (BldgFile (B.dir, e.k), ec);
-					bgone.push_back (e.k);
+				if (e.vec >= 0) {
+					fs::remove (VecFile (B.dir, e.vec, e.k), ec);
+					vgone[e.vec].push_back (e.k);
 					continue;
 				}
 				for (const char *layer : {"Surf", "Mask", "Elev", "Class"}) {
@@ -1656,19 +1672,23 @@ void TileStream::Impl::Evict ()
 			std::lock_guard<std::mutex> lk (mx);
 			B.bytes = total;
 			B.bytesKnown = true;
-			Drop (B, gone, egone, bgone);
+			Drop (B, gone, egone, vgone);
 		}
 		for (uint64_t k : egone) Settle (B, k); // elev-consistency: the tiles under a removed Elev
 	}
 }
 
 // with mx held: index entries whose own file is gone (a tile written again since the scan stays)
-void TileStream::Impl::Drop (Body &B, const std::vector<uint64_t> &gone, const std::vector<uint64_t> &egone, const std::vector<uint64_t> &bgone)
+void TileStream::Impl::Drop (Body &B, const std::vector<uint64_t> &gone, const std::vector<uint64_t> &egone, const VecKeys &vgone)
 {
 	std::error_code ec;
-	bool w = false, r = false, e = false, b = false;
-	for (uint64_t k : bgone)
-		if (!fs::exists (BldgFile (B.dir, k), ec)) b |= B.bldg.erase (k) > 0;
+	bool w = false, r = false, e = false;
+	for (int vi = 0; vi < 2; vi++) { // not upstream (design-ways): buildings and ways
+		bool b = false;
+		for (uint64_t k : vgone[vi])
+			if (!fs::exists (VecFile (B.dir, vi, k), ec)) b |= B.Vec (vi).erase (k) > 0;
+		if (b) Rewrite (B, VecIdx[vi], B.Vec (vi));
+	}
 	for (uint64_t k : gone)
 		if (!fs::exists (Tile (B.dir, "Surf", k), ec) && B.written.erase (k)) {
 			w = true;
@@ -1676,7 +1696,6 @@ void TileStream::Impl::Drop (Body &B, const std::vector<uint64_t> &gone, const s
 		}
 	for (uint64_t k : egone)
 		if (!fs::exists (Tile (B.dir, "Elev", k), ec)) e |= B.elev.erase (k) > 0;
-	if (b) Rewrite (B, "bldg", B.bldg);
 	if (w) Rewrite (B, "written", B.written);
 	if (r) Rewrite (B, "refetch", B.refetch);
 	if (e) Rewrite (B, "elev", B.elev);
@@ -1696,6 +1715,8 @@ void TileStream::Impl::Disown (Body &B, const char *idx, uint64_t k, const std::
 		if ((had = B.mod.erase (k) > 0)) Rewrite (B, "mod", B.mod);
 	} else if (!strcmp (idx, "bldg")) {
 		if ((had = B.bldg.erase (k) > 0)) Rewrite (B, "bldg", B.bldg);
+	} else if (!strcmp (idx, "way")) { // not upstream (design-ways)
+		if ((had = B.way.erase (k) > 0)) Rewrite (B, "way", B.way);
 	} else return;
 	if (had) Log ("TileStream: " + file + " is not the stream's file now (an add-on's?): left alone");
 }
@@ -1716,12 +1737,13 @@ void TileStream::Impl::Prune ()
 			}
 		}
 		std::vector<std::pair<uint64_t, bool>> keys;
-		std::vector<uint64_t> ekeys, bkeys, gone, egone, bgone;
+		std::vector<uint64_t> ekeys, gone, egone;
+		VecKeys vkeys, vgone; // not upstream (design-ways): buildings and ways
 		{
 			std::lock_guard<std::mutex> lk (mx);
 			for (uint64_t k : B.written) keys.push_back ({k, B.elev.count (k) > 0});
 			for (uint64_t k : B.elev) if (!B.written.count (k)) ekeys.push_back (k);
-			bkeys.assign (B.bldg.begin(), B.bldg.end());
+			for (int vi = 0; vi < 2; vi++) vkeys[vi].assign (B.Vec (vi).begin(), B.Vec (vi).end());
 		}
 		uint64_t total = 0;
 		for (auto &p : keys) {
@@ -1748,13 +1770,14 @@ void TileStream::Impl::Prune ()
 			if (ec) egone.push_back (k);
 			else total += n;
 		}
-		for (uint64_t k : bkeys) {
-			if (quit) return;
-			std::error_code ec;
-			uint64_t n = fs::file_size (BldgFile (B.dir, k), ec);
-			if (ec) bgone.push_back (k);
-			else total += n;
-		}
+		for (int vi = 0; vi < 2; vi++)
+			for (uint64_t k : vkeys[vi]) {
+				if (quit) return;
+				std::error_code ec;
+				uint64_t n = fs::file_size (VecFile (B.dir, vi, k), ec);
+				if (ec) vgone[vi].push_back (k);
+				else total += n;
+			}
 		std::lock_guard<std::mutex> lk (mx);
 		for (uint64_t k : gone) { // the rest of a tile whose Surf is gone, unless it is being made again
 			std::error_code ec;
@@ -1765,11 +1788,12 @@ void TileStream::Impl::Prune ()
 					fs::remove (Tile (B.dir, layer, k) + ".part", ec);
 				}
 		}
-		size_t nw = B.written.size(), ne = B.elev.size(), nb = B.bldg.size();
-		Drop (B, gone, egone, bgone);
+		size_t nw = B.written.size(), ne = B.elev.size(), nv[2] = {B.bldg.size(), B.way.size()};
+		Drop (B, gone, egone, vgone);
 		if (B.unclean.count ("written") && nw == B.written.size()) Rewrite (B, "written", B.written);
 		if (B.unclean.count ("elev") && ne == B.elev.size()) Rewrite (B, "elev", B.elev);
-		if (B.unclean.count ("bldg") && nb == B.bldg.size()) Rewrite (B, "bldg", B.bldg);
+		for (int vi = 0; vi < 2; vi++)
+			if (B.unclean.count (VecIdx[vi]) && nv[vi] == B.Vec (vi).size()) Rewrite (B, VecIdx[vi], B.Vec (vi));
 		if (B.unclean.count ("ocean")) Rewrite (B, "ocean", B.ocean);
 		if (B.unclean.count ("refetch")) Rewrite (B, "refetch", B.refetch);
 		if (B.unclean.count ("none")) RewriteNone (B);
@@ -1826,15 +1850,15 @@ void TileStream::Impl::LoadArchives (Body &B)
 	Log ("TileStream: " + std::to_string (n) + " installed archives for " + B.cfg.name + ", " + std::to_string (dropped) + " streamed tiles they hold deleted");
 }
 
-// building tiles: their own jobs on the OpenFreeMap host, started when no imagery job waits
-int TileStream::Impl::WantBldg (int b, int x, int y)
+// building and way tiles: their own jobs on the OpenFreeMap host, started when no imagery job waits; one fetch makes both files
+int TileStream::Impl::WantVec (int v, int b, int x, int y)
 {
 	Body &B = *bodies[b];
-	if (!opt.buildings || B.cfg.bldgUrl.empty() || x < 0 || y < 0 || x >= 1 << 14 || y >= 1 << 14) return -1;
+	if (!(v ? opt.ways : opt.buildings) || B.cfg.bldgUrl.empty() || x < 0 || y < 0 || x >= 1 << 14 || y >= 1 << 14) return -1;
 	uint64_t k = Key (14, x, y), id = Id (b, k);
 	std::unique_lock<std::mutex> lk (mx);
 	if (stop) return -1;
-	if (B.bldg.count (k)) return 1;
+	if (B.Vec (v).count (k)) return 1;
 	Clock::time_point now = opt.now();
 	auto j = bjobs.find (id);
 	if (j != bjobs.end()) {
@@ -1843,7 +1867,7 @@ int TileStream::Impl::WantBldg (int b, int x, int y)
 	}
 	lk.unlock();
 	std::error_code ec;
-	bool have = fs::exists (BldgFile (B.dir, k), ec);
+	bool have = fs::exists (VecFile (B.dir, v, k), ec);
 	lk.lock();
 	if (stop) return -1;
 	if (have) return 1;
@@ -1935,7 +1959,7 @@ void TileStream::Impl::BldgDeliver (const std::string &url, int status, const st
 		int b = J.body;
 		uint64_t k = J.key;
 		std::shared_ptr<const QByteArray> d = status == 200 ? data : nullptr;
-		Queue ([this, b, k, d] { BuildBldg (b, k, d); }, [this, id] {
+		Queue ([this, b, k, d] { BuildVec (b, k, d); }, [this, id] {
 			bhold[id] = opt.now() + std::chrono::seconds (HoldSec);
 			bjobs.erase (id);
 		});
@@ -1950,31 +1974,56 @@ void TileStream::Impl::BldgDeliver (const std::string &url, int status, const st
 	}
 }
 
-void TileStream::Impl::BuildBldg (int b, uint64_t k, std::shared_ptr<const QByteArray> data)
+// the files of the tile still missing, buildings and (design-ways) ways, from one pbf
+void TileStream::Impl::BuildVec (int b, uint64_t k, std::shared_ptr<const QByteArray> data)
 {
 	Body &B = *bodies[b];
+	bool need[2];
+	{
+		std::lock_guard<std::mutex> lk (mx);
+		for (int vi = 0; vi < 2; vi++) need[vi] = (vi ? opt.ways : opt.buildings) && !B.Vec (vi).count (k);
+	}
+	std::error_code ec;
+	for (int vi = 0; vi < 2; vi++)
+		if (need[vi] && fs::exists (VecFile (B.dir, vi, k), ec)) need[vi] = false; // there now, or an add-on's
 	std::string raw = data ? data->toStdString() : std::string(), pbf;
 	bool ok = true;
 	if (raw.size() >= 2 && (uint8_t)raw[0] == 0x1f && (uint8_t)raw[1] == 0x8b) ok = TsBldg::Inflate (raw, pbf);
 	else pbf.swap (raw);
-	std::vector<TsBldg::Feature> f;
-	uint32_t ext = 4096;
-	ok = ok && TsBldg::Decode (pbf, f, ext);
-	size_t n = 0, bytes = 0;
-	if (ok) {
-		TsBldg::Mesh m = TsBldg::Build (14, KLat (k), KLng (k), f, ext);
-		n = m.b.size();
-		std::string enc = TsBldg::Encode (m);
-		bytes = enc.size();
-		ok = Write (B, BldgFile (B.dir, k), enc);
+	std::string enc[2];
+	size_t n[2] = {0, 0};
+	if (ok && need[0]) {
+		std::vector<TsBldg::Feature> f;
+		uint32_t ext = 4096;
+		ok = TsBldg::Decode (pbf, f, ext);
+		if (ok) {
+			TsBldg::Mesh m = TsBldg::Build (14, KLat (k), KLng (k), f, ext);
+			n[0] = m.b.size();
+			enc[0] = TsBldg::Encode (m);
+		}
 	}
+	if (ok && need[1]) {
+		TsWay::Tile t;
+		t.x = KLat (k);
+		t.y = KLng (k);
+		ok = TsWay::Decode (pbf, t);
+		if (ok) {
+			n[1] = t.f.size();
+			enc[1] = TsWay::Encode (t);
+		}
+	}
+	bool put[2] = {false, false};
+	for (int vi = 0; vi < 2 && ok; vi++)
+		if (need[vi]) ok = put[vi] = Write (B, VecFile (B.dir, vi, k), enc[vi]);
 	std::lock_guard<std::mutex> lk (mx);
-	if (ok) {
-		if (B.bldg.insert (k).second) Append (B, "bldg", k, -1);
-		B.bytes += bytes;
-		Log ("TileStream: buildings 14/" + std::to_string (KLat (k)) + "/" + std::to_string (KLng (k)) + ": " + std::to_string (n));
-	} else {
-		Log ("TileStream: cannot make buildings 14/" + std::to_string (KLat (k)) + "/" + std::to_string (KLng (k)));
+	for (int vi = 0; vi < 2; vi++)
+		if (put[vi]) {
+			if (B.Vec (vi).insert (k).second) Append (B, VecIdx[vi], k, -1);
+			B.bytes += enc[vi].size();
+			Log ("TileStream: " + std::string (vi ? "ways" : "buildings") + " 14/" + std::to_string (KLat (k)) + "/" + std::to_string (KLng (k)) + ": " + std::to_string (n[vi]));
+		}
+	if (!ok) {
+		Log ("TileStream: cannot make " + std::string (need[0] && !put[0] ? "buildings" : "ways") + " 14/" + std::to_string (KLat (k)) + "/" + std::to_string (KLng (k)));
 		bhold[Id (b, k)] = opt.now() + std::chrono::seconds (600);
 	}
 	bjobs.erase (Id (b, k));
@@ -2036,13 +2085,25 @@ int TileStream::Done (const std::string &body, int *keys, int nmax)
 int TileStream::WantBldg (const std::string &body, int x, int y)
 {
 	int b = d->FindBody (body);
-	return b < 0 ? -1 : d->WantBldg (b, x, y);
+	return b < 0 ? -1 : d->WantVec (0, b, x, y);
 }
 
 std::string TileStream::BldgPath (const std::string &body, int x, int y) const
 {
 	int b = d->FindBody (body);
 	return b < 0 || x < 0 || y < 0 ? std::string() : BldgFile (d->bodies[b]->dir, Key (14, x, y));
+}
+
+int TileStream::WantWay (const std::string &body, int x, int y) // not upstream (design-ways)
+{
+	int b = d->FindBody (body);
+	return b < 0 ? -1 : d->WantVec (1, b, x, y);
+}
+
+std::string TileStream::WayPath (const std::string &body, int x, int y) const
+{
+	int b = d->FindBody (body);
+	return b < 0 || x < 0 || y < 0 ? std::string() : VecFile (d->bodies[b]->dir, 1, Key (14, x, y));
 }
 
 size_t TileStream::Pending () const
@@ -2728,7 +2789,7 @@ int MarkAll (const std::string &dir)
 	for (uint64_t k : ReadIdx (dir, "written"))
 		for (const char *layer : {"Surf", "Mask", "Class"}) MarkFile (Tile (dir, layer, k));
 	for (uint64_t k : ElevIdx (dir)) MarkFile (Tile (dir, "Elev", k));
-	for (const char *idx : {"bldg", "mod", "cloud"})
+	for (const char *idx : {"bldg", "way", "mod", "cloud"}) // not upstream (design-ways): way
 		for (uint64_t k : ReadIdx (dir, idx)) MarkFile (StreamFile (dir, idx, k));
 	std::ofstream f (ts + "marked", std::ios::trunc);
 	f << "the stream's files carry its mark (design dropin-addons)\n";
@@ -2802,7 +2863,7 @@ uint64_t TileStream::CacheBytes (const std::string &bodyDir, uint64_t *total, si
 		uint64_t b = FileBytes (Tile (dir, "Elev", k));
 		if (b) { n += b; t++; }
 	}
-	for (const char *idx : {"bldg", "mod", "cloud"})
+	for (const char *idx : {"bldg", "way", "mod", "cloud"}) // not upstream (design-ways): way
 		for (uint64_t k : ReadIdx (dir, idx)) {
 			uint64_t s = FileBytes (StreamFile (dir, idx, k));
 			if (s) { n += s; t++; }
@@ -2810,7 +2871,7 @@ uint64_t TileStream::CacheBytes (const std::string &bodyDir, uint64_t *total, si
 	if (tiles) *tiles = t;
 	if (total) {
 		*total = 0;
-		for (const char *layer : {"/Surf", "/Mask", "/Elev", "/Class", "/Bldg", "/Cloud", "/Elev_mod"}) {
+		for (const char *layer : {"/Surf", "/Mask", "/Elev", "/Class", "/Bldg", "/Way", "/Cloud", "/Elev_mod"}) { // not upstream (design-ways): Way
 			std::error_code ec;
 			for (fs::recursive_directory_iterator it (dir + layer, ec), end; !ec && it != end; it.increment (ec)) {
 				std::error_code fe;
@@ -2857,11 +2918,11 @@ size_t TileStream::Clear (const std::string &bodyDir, bool keepBase, bool *refus
 		else if (!std::binary_search (w.begin(), w.end(), k) && rmOurs (Tile (dir, "Elev", k))) n++;
 	}
 	WriteIdx (ts + "elev.idx", elKept);
-	for (const char *idx : {"bldg", "mod", "cloud"}) { // buildings, Elev_mod and clouds this stream wrote
+	for (const char *idx : {"bldg", "way", "mod", "cloud"}) { // buildings, ways (not upstream, design-ways), Elev_mod and clouds this stream wrote
 		if (!fs::exists (ts + idx + ".idx", ec)) continue;
 		std::vector<uint64_t> keep;
 		for (uint64_t k : ReadIdx (dir, idx)) {
-			if (keepBase && KL (k) <= 8 && std::string (idx) != "bldg") { keep.push_back (k); continue; }
+			if (keepBase && KL (k) <= 8 && std::string (idx) != "bldg" && std::string (idx) != "way") { keep.push_back (k); continue; }
 			if (rmOurs (StreamFile (dir, idx, k))) n++;
 		}
 		WriteIdx (ts + idx + ".idx", keep);

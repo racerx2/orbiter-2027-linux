@@ -92,6 +92,27 @@ namespace TsBldg {
 	void LatLng (int z, double x, double y, double &lat, double &lng); // tile coordinates to radians
 }
 
+// not upstream (design-ways): roads, railways, airports and waterways from the same z14 tiles (TileStreamMvt.cpp)
+namespace TsWay {
+	enum Kind : uint8_t {
+		NONE, MOTORWAY, TRUNK, PRIMARY, SECONDARY, TERTIARY, MINOR, SERVICE, DRIVEWAY, PARKING, TRACK, BUSWAY, RACEWAY,
+		FOOTWAY, CYCLEWAY, PATH, STEPS, PEDESTRIAN, PLATFORM, PIER, RAIL, TRAM,
+		RUNWAY, TAXIWAY, APRON, HELIPAD, RIVER, CANAL, STREAM, DRAIN, DITCH, NKIND
+	};
+	enum Flag : uint8_t { BRIDGE = 1, UNPAVED = 2, ONEWAY = 4, RAMP = 8, AREA = 16 };
+	const int Extent = 4096;     // tile units a side; the tile's buffer lies outside 0..Extent
+	struct Feature {
+		uint8_t kind = NONE, flags = 0;
+		int8_t layer = 0;
+		std::string ref;                         // aeroway ref ("13L/31R"), at most 15 bytes
+		std::vector<std::vector<int16_t>> parts; // x, y pairs, y down; lines, or with AREA rings (positive area outer, then its holes)
+	};
+	struct Tile { int z = 14, x = 0, y = 0; std::vector<Feature> f; };
+	bool Decode (const std::string &pbf, Tile &t); // layers transportation, aeroway, waterway; z, x, y as set
+	std::string Encode (const Tile &t);           // "OWAY" version 1
+	bool Read (const std::string &bytes, Tile &t);
+}
+
 bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::string &err);
 int TsCfgElev (const std::string &file, const std::string &body); // the last level of the body's ELEV source, 0 for none
 int TsSessionElev (const std::string &body); // TileStreamApi.cpp: TsCfgElev when this session streams; Elev archive tiles under the stream's files are not read
@@ -155,6 +176,7 @@ public:
 		std::function<double (const std::string &)> radius;       // metres
 		int cloudWait = 15;                                        // seconds for the small cloud image at startup
 		bool buildings = true;                                     // BLDG lines are used
+		bool ways = true;                                          // not upstream (design-ways): the BLDG tiles' roads, rail, airports and waterways
 		bool sky = true;                                           // clouds and base flattening at startup
 		bool crossDisk = false;                                    // tests: the rename out of TileStream/tmp fails as across disks
 		std::function<void (int, int, int)> onBuild;              // tests: a tile's build starting on its worker (L, ilat, ilng)
@@ -175,6 +197,8 @@ public:
 	// z14 building tiles: 1 the file is there, 0 wanted, -1 never
 	int WantBldg (const std::string &body, int x, int y);
 	std::string BldgPath (const std::string &body, int x, int y) const;
+	int WantWay (const std::string &body, int x, int y); // not upstream (design-ways): as WantBldg, made from the same fetch
+	std::string WayPath (const std::string &body, int x, int y) const;
 
 	// not upstream (earth-sky): a ground-track tile, after camera wants, before refetches; 1 queued or there, 0 full, -1 never
 	int Prefetch (const std::string &body, int L, int ilat, int ilng);

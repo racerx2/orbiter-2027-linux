@@ -88,6 +88,8 @@ struct FlowControlPS
 	BOOL bTexture;				// Surface texture exists
 	BOOL bClass;				// not upstream: land class weights (tClass) for micro detail, repeat in vMSc[0]
 	BOOL bHorizon;				// not upstream: horizon map (tHorizon) for terrain shadows
+	BOOL bWay;					// not upstream (design-ways): way texture (tWay)
+	BOOL bWayN;					// not upstream: the lamps come from tWayN, not the night look's street lattice
 };
 
 struct FlowControlVS
@@ -120,6 +122,7 @@ struct PerObjectParams
 	vec4	 vCldAtlas;			// not upstream: cloud atlas uv offset (xy) and scale (zw)
 	vec4	 vCldAtlasW;		// not upstream: x 1 with the atlas, y max anisotropy, z 1 when the texture is at or below the atlas level
 	vec4	 vWaterFx;			// not upstream: water effects, x foam mask mip, yz foam ring radius in uv, w spare
+	vec4	 vWayOff;			// not upstream (design-ways): way and lamp texture uv offset (xy) and scale (zw)
 };
 
 #if defined(_SSR)
@@ -160,6 +163,10 @@ layout(binding = 28) uniform sampler2D	tElvOverlay;
 layout(binding = 29) uniform sampler2D	tEclipse;
 layout(binding = 30) uniform sampler2D	tClass;				// not upstream: R trees, G grass / crops, B bare / built-up
 layout(binding = 31) uniform sampler2D	tHorizon;			// not upstream: sin of the horizon, 8 azimuths in 2 halves; the last free binding
+#if defined(_WAYS) // not upstream (design-ways): on tCloudMicro/tCloudMicroNorm's bindings, which only CloudPS reads
+layout(binding = 17) uniform sampler2D	tWay;				// R paved share, G luminance x R, B yellow paint x R, A water share
+layout(binding = 18) uniform sampler2D	tWayN;				// sqrt (value / 4) of lamp pool, head, spill; A the imagery's share in the pavement colour
+#endif
 #include "SceneShadow.glsl" // not upstream: CsmVis (_CSM, pixel stage); tShadowMap carries the atlas
 
 #if defined(_SSR) // not upstream: screen-space reflections of the water (design-ssr); on tMicroA/tMicroB's bindings, which the Earth shader never reads (no _MICROTEX), so _DEVTOOLS keeps 26-28 (r3-ssr2)
@@ -614,6 +621,27 @@ vec4 TerrainPS(TileVS frg)
 	}
 #endif
 
+#if defined(_WAYS)
+	// not upstream (design-ways): streamed roads, rail, airports and rivers painted on the ground
+	float fWP = 0.0;
+	vec2 vUVWay = frg.texUV.xy * Prm.vWayOff.zw + Prm.vWayOff.xy;
+	vec4 cWN = vec4(0.0, 0.0, 0.0, 0.25);
+	if (Flow.bWayN) cWN = texture(tWayN, vUVWay);
+	if (Flow.bWay) {
+		vec4 cW = texture(tWay, vUVWay);
+		cTex.rgb = mix(cTex.rgb, vec3(0.07, 0.09, 0.08), 0.7 * cW.a); // rivers and canals: water, dark
+		cMsk.a *= 1.0 - cW.a;
+		fWP = cW.r;
+		if (fWP > 0.5 / 255.0) {
+			float fL = cW.g / fWP, fY = cW.b / fWP;
+			vec3 cAlb = fL * mix(vec3(1.0), vec3(1.25, 1.02, 0.30), clamp(fY, 0.0, 1.0)); // neutral grey and white, yellow paint
+			cAlb = mix(cAlb, cTex.rgb, cWN.a);
+			cTex.rgb = mix(cTex.rgb, cAlb, fWP);
+			cMsk.a = mix(cMsk.a, 1.0, fWP); // no water under pavement
+		}
+	}
+#endif
+
 #if defined(_CLOUDSHD)
 	if (Flow.bCloudShd) {
 		fChA = texture(tCloud, vUVCld).a;
@@ -839,16 +867,20 @@ vec4 TerrainPS(TileVS frg)
 	// not upstream: land class micro detail, 8 m and 2 m cells, fading in below 5 km
 	if (Flow.bClass)
 	{
-		float fade = 1.0 - smoothstep(800.0, 5000.0, dst);
+		float fade = 1.0 - smoothstep(800.0, 5000.0, dst), fadeP = 0.0;
+#if defined(_WAYS)
+		fadeP = fade * fWP; // not upstream (design-ways): wear and patches on pavement in place of the land detail
+		fade *= 1.0 - fWP;
+#endif
 		vec3 w = texture(tClass, vUVSrf).rgb;	// outside the per-pixel branch: defined mip level
-		if (fade > 0.0) {
+		if (fade + fadeP > 0.0) {
 			vec2 p = frg.texUV.xy * Prm.vMSc[0].xy + Prm.vMSc[0].zw;
 			float n1 = ClsNoise(p, 16384.0) * 0.6 + ClsNoise(p * 2.0, 32768.0) * 0.4;
 			float n2 = ClsNoise(p * 4.0, 65536.0);
 			float fT = (n1 - 0.5) * 0.9 + (n2 - 0.5) * 0.2;	// canopy clumps and gaps
 			float fG = (n2 - 0.5) * 0.3 + (n1 - 0.5) * 0.15;	// grass and crop texture
 			float fB = (n2 - 0.5) * 0.35 + (n1 - 0.5) * 0.1;	// grit
-			cTex.rgb *= 1.0 + (w.r * fT + w.g * fG + w.b * fB) * fade;
+			cTex.rgb *= 1.0 + (w.r * fT + w.g * fG + w.b * fB) * fade + ((n1 - 0.5) * 0.2 + (n2 - 0.5) * 0.08) * fadeP;
 		}
 	}
 
@@ -926,6 +958,12 @@ vec4 TerrainPS(TileVS frg)
 	float fNP = 8.0 * fNS * 0.85 * 3.14159265;
 	vec3 cNPl = NL_PALM * (fNP * 0.0049), cNHd = NL_PALM * (fNP * 0.000144), cNSp = NL_PALM * (0.24 * fNS); // the area means
 	float fNU = 1.0;
+#if defined(_WAYS)
+	if (Flow.bWayN) { // not upstream (design-ways): the lamps of the streamed roads; none where the tile has no road
+		vec3 q = cWN.rgb * cWN.rgb * 4.0;
+		cNPl = NL_PALM * (q.r * fNS); cNHd = NL_PALM * (q.g * fNS); cNSp = NL_PALM * (q.b * fNS);
+	} else
+#endif
 	if (Flow.bClass) { // the 8 m lattice is set
 		vec2 q = (frg.texUV.xy * Prm.vMSc[0].xy + Prm.vMSc[0].zw) * 0.0625; // 128 m blocks
 		vec2 fq = vec2(1.0), gNx = vec2(0.0), gNy = vec2(0.0);

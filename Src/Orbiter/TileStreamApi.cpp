@@ -74,3 +74,58 @@ DLLEXPORT void oapiTileStreamBldgFree (TSBLDGMESH *mesh)
 {
 	delete (BldgHold*)mesh; // m is the first member
 }
+
+// not upstream (design-ways)
+#define WAYKIND(n) static_assert ((int)TsWay::n == (int)TSWAY_##n, "TsWay::Kind and the SDK's TSWAY kinds must match");
+WAYKIND(NONE) WAYKIND(MOTORWAY) WAYKIND(TRUNK) WAYKIND(PRIMARY) WAYKIND(SECONDARY) WAYKIND(TERTIARY) WAYKIND(MINOR) WAYKIND(SERVICE)
+WAYKIND(DRIVEWAY) WAYKIND(PARKING) WAYKIND(TRACK) WAYKIND(BUSWAY) WAYKIND(RACEWAY) WAYKIND(FOOTWAY) WAYKIND(CYCLEWAY) WAYKIND(PATH)
+WAYKIND(STEPS) WAYKIND(PEDESTRIAN) WAYKIND(PLATFORM) WAYKIND(PIER) WAYKIND(RAIL) WAYKIND(TRAM) WAYKIND(RUNWAY) WAYKIND(TAXIWAY)
+WAYKIND(APRON) WAYKIND(HELIPAD) WAYKIND(RIVER) WAYKIND(CANAL) WAYKIND(STREAM) WAYKIND(DRAIN) WAYKIND(DITCH) WAYKIND(NKIND)
+#undef WAYKIND
+static_assert (TsWay::BRIDGE == TSWAY_BRIDGE && TsWay::UNPAVED == TSWAY_UNPAVED && TsWay::ONEWAY == TSWAY_ONEWAY && TsWay::RAMP == TSWAY_RAMP && TsWay::AREA == TSWAY_AREA, "TsWay::Flag and the SDK's TSWAY flags must match");
+
+DLLEXPORT int oapiTileStreamWayWant (OBJHANDLE hBody, int x, int y)
+{
+	TileStream *ts = Stream();
+	return ts && hBody ? ts->WantWay (((Body*)hBody)->Name(), x, y) : -1;
+}
+
+namespace {
+struct WayHold { TSWAYTILE t; std::vector<TSWAY> f; std::vector<DWORD> part; std::vector<short> pt; };
+}
+
+DLLEXPORT TSWAYTILE *oapiTileStreamWayLoad (OBJHANDLE hBody, int x, int y)
+{
+	TileStream *ts = Stream();
+	if (!ts || !hBody) return nullptr;
+	std::string path = ts->WayPath (((Body*)hBody)->Name(), x, y);
+	std::ifstream f (path, std::ios::binary);
+	if (path.empty() || !f) return nullptr;
+	std::string bytes ((std::istreambuf_iterator<char> (f)), std::istreambuf_iterator<char>());
+	TsWay::Tile t;
+	if (!TsWay::Read (bytes, t) || t.z != 14 || t.x != x || t.y != y) return nullptr;
+	auto h = new WayHold;
+	for (const TsWay::Feature &F : t.f) {
+		TSWAY w {};
+		w.kind = F.kind;
+		w.flags = F.flags;
+		w.layer = F.layer;
+		F.ref.copy (w.ref, sizeof w.ref - 1);
+		w.p0 = (DWORD)h->part.size();
+		w.np = (DWORD)F.parts.size();
+		for (const auto &p : F.parts) {
+			h->part.push_back ((DWORD)(h->pt.size() / 2));
+			h->pt.insert (h->pt.end(), p.begin(), p.end());
+		}
+		h->f.push_back (w);
+	}
+	DWORD np = (DWORD)h->part.size();
+	h->part.push_back ((DWORD)(h->pt.size() / 2));
+	h->t = {t.z, t.x, t.y, (DWORD)h->f.size(), np, (DWORD)(h->pt.size() / 2), h->f.data(), h->part.data(), h->pt.data()};
+	return &h->t;
+}
+
+DLLEXPORT void oapiTileStreamWayFree (TSWAYTILE *tile)
+{
+	delete (WayHold*)tile; // t is the first member
+}

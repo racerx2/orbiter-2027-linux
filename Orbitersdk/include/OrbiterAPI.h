@@ -6382,6 +6382,33 @@ OAPIFUNC int  oapiTileStreamBldgWant (OBJHANDLE hBody, int x, int y);
 OAPIFUNC TSBLDGMESH *oapiTileStreamBldgLoad (OBJHANDLE hBody, int x, int y);
 OAPIFUNC void oapiTileStreamBldgFree (TSBLDGMESH *mesh);
 
+// not upstream (design-ways): streamed roads, railways, airports and waterways of the same z14 tiles
+#define OAPI_TILESTREAM_WAY 1 // not upstream: TSWAY, TSWAYTILE and the oapiTileStreamWay* calls are there (feature test for add-ons)
+enum {
+	TSWAY_NONE, TSWAY_MOTORWAY, TSWAY_TRUNK, TSWAY_PRIMARY, TSWAY_SECONDARY, TSWAY_TERTIARY, TSWAY_MINOR, TSWAY_SERVICE, TSWAY_DRIVEWAY,
+	TSWAY_PARKING, TSWAY_TRACK, TSWAY_BUSWAY, TSWAY_RACEWAY, TSWAY_FOOTWAY, TSWAY_CYCLEWAY, TSWAY_PATH, TSWAY_STEPS, TSWAY_PEDESTRIAN,
+	TSWAY_PLATFORM, TSWAY_PIER, TSWAY_RAIL, TSWAY_TRAM, TSWAY_RUNWAY, TSWAY_TAXIWAY, TSWAY_APRON, TSWAY_HELIPAD, TSWAY_RIVER,
+	TSWAY_CANAL, TSWAY_STREAM, TSWAY_DRAIN, TSWAY_DITCH, TSWAY_NKIND
+};
+#define TSWAY_BRIDGE  1
+#define TSWAY_UNPAVED 2
+#define TSWAY_ONEWAY  4
+#define TSWAY_RAMP    8
+#define TSWAY_AREA    16 // its parts are rings: positive area (y down) an outer ring, then its holes
+typedef struct { BYTE kind, flags; signed char layer; char ref[16]; DWORD p0, np; } TSWAY; // ref: an aeroway's ("13L/31R"); parts p0 to p0 + np - 1
+typedef struct {
+	int z, x, y;
+	DWORD nf, np, npt;
+	const TSWAY *f;
+	const DWORD *part;  // np + 1 entries: part i is points part[i] to part[i + 1] - 1
+	const short *pt;    // x, y per point in 4096 units across the tile, y down; the tile's buffer lies outside 0 to 4096
+} TSWAYTILE;
+// returns 1 the tile file is there, 0 wanted, -1 never (no ways for this body, or off)
+OAPIFUNC int  oapiTileStreamWayWant (OBJHANDLE hBody, int x, int y);
+// the tile's ways, NULL if not there; free with oapiTileStreamWayFree
+OAPIFUNC TSWAYTILE *oapiTileStreamWayLoad (OBJHANDLE hBody, int x, int y);
+OAPIFUNC void oapiTileStreamWayFree (TSWAYTILE *tile);
+
 // not upstream: a base file's clear zones (BEGIN_CLEARZONES): no streamed building or tree within rad of the centre
 #define OAPI_BASE_CLEARZONES 1 // not upstream: feature test for add-ons
 typedef struct { double lng, lat, rad; } BASECLEARZONE; // centre [rad], radius [m]

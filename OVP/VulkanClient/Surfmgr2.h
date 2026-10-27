@@ -80,6 +80,12 @@ protected:
 	bool horRedone;					// not upstream: made again once with them
 	SurfTile *ElevOwner ();			// not upstream: the ancestor whose elev holds my ggelev
 	void HorizonParams ();			// not upstream: shader values for the owner's map
+	VkTex *wtex;					// not upstream (design-ways): its own way texture (Waymgr.cpp)
+	VkTex *wntex;					// not upstream: its own lamp texture
+	int wayState;					// not upstream: 0 none, 1 asked, 2 painted (NULL textures: nothing there), 3 no way data here
+	double wayAsk;					// not upstream: sys time it was last asked for
+	unsigned wayGen;				// not upstream: matches a way job to this tile
+	void WayParams ();				// not upstream: shader values for its or an ancestor's way textures
 
 	void FixCorner (const SurfTile *nbr);
 	// Match corner elevation to neighbour
@@ -117,6 +123,7 @@ private:
 };
 
 template<> std::shared_ptr<const Horizon::Map> TileManager2<SurfTile>::HorizonAt (double lat, double lng, double bnd[4]); // not upstream
+unsigned WayNewGen (); // not upstream (design-ways): Waymgr.cpp
 
 #endif // !__SURFMGR2_H
 

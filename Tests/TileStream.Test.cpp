@@ -1467,6 +1467,110 @@ TEST_CASE ("The size cap takes building tiles too", "[TileStream]")
 	CHECK (Read (tex / "TileStream" / "bldg.idx") == "14 10 2\n");
 }
 
+// not upstream (design-ways): roads, rail, airports and waterways from the same fetch
+TEST_CASE ("Ways come with the building tiles' fetch; a tile with only its buildings is fetched again for its ways", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	fs::path src = t.root / "bldg", tex = t.root / "Earth";
+	fs::create_directories (src / "14" / "4824");
+	std::string pbf = TestPbf(), l, g, f, tg, v;
+	PBytes (l, 1, "transportation");
+	PVar (g, 1 | 1 << 3); PVar (g, Zig (0)); PVar (g, Zig (500));
+	PVar (g, 2 | 1 << 3); PVar (g, Zig (4096)); PVar (g, Zig (0));
+	PVar (tg, 0); PVar (tg, 0);
+	PBytes (f, 2, tg); PKey (f, 3, 0); PVar (f, 2); PBytes (f, 4, g);
+	PBytes (l, 2, f);
+	PBytes (l, 3, "class");
+	PBytes (v, 1, "primary");
+	PBytes (l, 4, v);
+	PKey (l, 5, 0); PVar (l, 4096);
+	PBytes (pbf, 3, l);
+	std::ofstream (src / "14" / "4824" / "6157.pbf", std::ios::binary) << pbf;
+	std::ofstream (src / "14" / "4824" / "6159.pbf", std::ios::binary) << pbf;
+	std::ofstream (t.root / "tiles.json") << "{\"tiles\":[\"file://" << src.string() << "/{z}/{x}/{y}.pbf\"],\"maxzoom\":14}";
+	std::string cfg = (t.root / "ts.cfg").string();
+	std::ofstream (cfg) << "BODY Earth\nSURF eox file:///none/{z}/{row}/{col} 1 16\nLIGHTS gibs file:///none/{n}/{row}/{col} 7\nWATER gibs file:///none/{n}/{row}/{col} 8\n"
+		"BLDG file://" << (t.root / "tiles.json").string() << " file:///none/{z}/{x}/{y}.pbf\nEND\n";
+	fs::create_directories (tex / "Bldg" / "14" / "4824");
+	std::ofstream (tex / "Bldg" / "14" / "4824" / "6159.bld", std::ios::binary) << "old"; // its buildings from before
+	TileStream::Options o;
+	o.cfgfile = cfg;
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	o.staleSec = 30.0;
+	{
+		TileStream ts (o);
+		CHECK (ts.WantWay ("Earth", 4824, 6157) == 0);
+		CHECK (ts.WantBldg ("Earth", 4824, 6159) == 1);
+		CHECK (ts.WantWay ("Earth", 4824, 6159) == 0);
+		CHECK (ts.WantWay ("Earth", -1, 0) == -1);
+		CHECK (WaitFor ([&] { return ts.WantWay ("Earth", 4824, 6157) == 1 && ts.WantWay ("Earth", 4824, 6159) == 1; }, 20.0));
+		CHECK (ts.WantBldg ("Earth", 4824, 6157) == 1); // from the same fetch
+		TsWay::Tile w;
+		REQUIRE (TsWay::Read (Read (ts.WayPath ("Earth", 4824, 6157)), w));
+		CHECK (w.x == 4824);
+		CHECK (w.y == 6157);
+		REQUIRE (w.f.size() == 1);
+		CHECK (w.f[0].kind == TsWay::PRIMARY);
+		TsBldg::Mesh m;
+		REQUIRE (TsBldg::Read (Read (ts.BldgPath ("Earth", 4824, 6157)), m));
+		CHECK (m.b.size() == 1);
+		CHECK (Read (tex / "Bldg" / "14" / "4824" / "6159.bld") == "old"); // left as it was
+	}
+	CHECK (Read (tex / "TileStream" / "way.idx").find ("14 4824 6157") != std::string::npos);
+	CHECK (Read (tex / "TileStream" / "way.idx").find ("14 4824 6159") != std::string::npos);
+	CHECK (Read (tex / "TileStream" / "bldg.idx").find ("14 4824 6159") == std::string::npos);
+	o.ways = false;
+	TileStream off (o);
+	CHECK (off.WantWay ("Earth", 4824, 6157) == -1);
+	CHECK (off.WantBldg ("Earth", 4824, 6157) == 1);
+}
+
+TEST_CASE ("The size cap, the cache count and Clear take way tiles too", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	fs::path tex = t.root / "Earth";
+	std::string cfg = (t.root / "ts.cfg").string();
+	std::ofstream (cfg) << "BODY Earth\nSURF eox file:///none/{z}/{row}/{col} 1 16\nLIGHTS gibs file:///none/{n}/{row}/{col} 7\nWATER gibs file:///none/{n}/{row}/{col} 8\nBLDG file:///none.json file:///none/{z}/{x}/{y}.pbf\nEND\n";
+	std::string mb (1 << 20, 'x');
+	auto now = fs::file_time_type::clock::now();
+	for (int i = 0; i < 4; i++) {
+		fs::path p = tex / "Way" / "14" / "10" / (std::to_string (i) + ".way");
+		fs::create_directories (p.parent_path());
+		std::ofstream (p, std::ios::binary) << mb;
+		fs::last_write_time (p, now - std::chrono::hours (10 - i));
+	}
+	fs::create_directories (tex / "TileStream");
+	std::ofstream (tex / "TileStream" / "way.idx") << "14 10 0\n14 10 1\n14 10 2\n";
+	uint64_t total = 0;
+	size_t tiles = 0;
+	CHECK (TileStream::CacheBytes (tex.string(), &total, &tiles) == 3u << 20);
+	CHECK (total == 4u << 20);
+	CHECK (tiles == 3);
+	TileStream::Options o;
+	o.cfgfile = cfg;
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	o.capMB = 2;
+	o.offline = true;
+	{
+		TileStream ts (o);
+		ts.Evict();
+		std::this_thread::sleep_for (std::chrono::milliseconds (300));
+	}
+	CHECK_FALSE (fs::exists (tex / "Way" / "14" / "10" / "0.way"));
+	CHECK_FALSE (fs::exists (tex / "Way" / "14" / "10" / "1.way"));
+	CHECK (fs::exists (tex / "Way" / "14" / "10" / "2.way"));
+	CHECK (fs::exists (tex / "Way" / "14" / "10" / "3.way")); // not ours
+	CHECK (Read (tex / "TileStream" / "way.idx") == "14 10 2\n");
+	CHECK (TileStream::Clear (tex.string(), true) == 1); // ways are not base levels
+	CHECK_FALSE (fs::exists (tex / "Way" / "14" / "10" / "2.way"));
+	CHECK (fs::exists (tex / "Way" / "14" / "10" / "3.way"));
+	CHECK (Read (tex / "TileStream" / "way.idx").empty());
+}
+
 // not upstream: Launchpad cache controls and region prefetch
 
 static bool HasKey (const std::vector<TileStream::TileKey> &v, int L, int la, int ln)

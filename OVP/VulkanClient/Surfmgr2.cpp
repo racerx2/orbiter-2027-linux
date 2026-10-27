@@ -46,6 +46,10 @@ template<> void TileManager2<SurfTile>::HorizonUpload ();
 template<> void TileManager2<SurfTile>::RenderDepth (ShaderClass *sh, const D3DXMATRIX &mVP);
 template<> void TileManager2<SurfTile>::RenderCasters (ShaderClass *sh, MATRIX4 &dwmat, const vPlanet::RenderPrm &rprm, const SceneShadows &s, double minSpacing);
 template<> std::shared_ptr<const Horizon::Map> TileManager2<SurfTile>::HorizonAt (double lat, double lng, double bnd[4]);
+template<> void TileManager2<SurfTile>::WayRequest (SurfTile *t, double dist); // not upstream (design-ways): Waymgr.cpp
+template<> void TileManager2<SurfTile>::WayClaim ();
+template<> void TileManager2<SurfTile>::WaySubmit ();
+template<> void TileManager2<SurfTile>::WayUpload ();
 
 #pragma pack(push, 4)
 struct LightF
@@ -123,6 +127,11 @@ SurfTile::SurfTile (TileManager2Base *_mgr, int _lvl, int _ilat, int _ilng)
 	elev_file = NULL;
 	ltex = NULL;
 	ctex = NULL; // not upstream
+	wtex = NULL; // not upstream (design-ways)
+	wntex = NULL; // not upstream
+	wayState = 0; // not upstream
+	wayAsk = -1e9; // not upstream
+	wayGen = WayNewGen(); // not upstream
 	has_elevfile = false;
 	label = NULL;
 	imicrolvl = 14;	// Water resolution level
@@ -144,6 +153,8 @@ SurfTile::~SurfTile ()
 	if (ltex && owntex) g_pTexmgr_tt->Free(ltex);
 	if (ctex && owntex) g_pTexmgr_tt->Free(ctex); // not upstream
 	delete htex; // not upstream
+	delete wtex; // not upstream (design-ways)
+	delete wntex; // not upstream
 		
 	DeleteLabels();
 }
@@ -1161,6 +1172,7 @@ void SurfTile::Render ()
 	}
 
 	HorizonParams(); // not upstream: terrain shadows from the owner's horizon map
+	WayParams(); // not upstream (design-ways): streamed roads, rail, airports and rivers
 
 	if (tex == nullptr || !vPlanet->HasTextures())
 	{
@@ -1169,6 +1181,7 @@ void SurfTile::Render ()
 		fc->bCloudShd = false;
 		fc->bMicroTex = false;
 		fc->bClass = false; // not upstream
+		fc->bWay = fc->bWayN = false; // not upstream (design-ways)
 	}
 
 	sp->vTexOff = GetTexRangeDX(&texrange);
@@ -2049,6 +2062,7 @@ void TileManager2<SurfTile>::Render (MATRIX4 &dwmat, bool use_zbuf, const vPlane
 	if (bStreamPass) StreamApply(); // not upstream
 	if (scene->GetRenderPass() == RENDERPASS_MAINSCENE) { // not upstream: horizon maps in, tiles recorded for SceneFx
 		HorizonUpload();
+		WayUpload(); // not upstream (design-ways)
 		depthTiles.clear();
 		depthRec = SceneFx::DepthWanted() && vp == scene->GetCameraProxyVisual() && use_zbuf && !fcv->bSpherical; // not upstream: every reader of tDepth (TAA included)
 		depthFrame = scene->GetFrameId();
@@ -2066,9 +2080,11 @@ void TileManager2<SurfTile>::Render (MATRIX4 &dwmat, bool use_zbuf, const vPlane
 	for (i = 0; i < 2; i++)
 		RenderNode (tiletree+i);
 
-	if (scene->GetRenderPass() == RENDERPASS_MAINSCENE) HorizonSubmit(); // not upstream
+	if (scene->GetRenderPass() == RENDERPASS_MAINSCENE) { HorizonSubmit(); WayClaim(); } // not upstream; WayClaim: design-ways
 
 	loader->ReleaseMutex();
+
+	if (scene->GetRenderPass() == RENDERPASS_MAINSCENE) WaySubmit(); // not upstream (design-ways): the way tiles read without the loader mutex
 
 	if (Config->NoPlanetAA) pShader->GetDevice()->SetMultisampleAA(true);
 

@@ -778,10 +778,11 @@ bool Config::Load(const char *fname)
 	}
 	GetBool (ifs, "PlanetTexCheck", bPlanetTexCheck); // not upstream
 	GetBool (ifs, "KernelCheck", bKernelCheck); // not upstream
-	GetBool (ifs, "TileStream", bTileStream); // not upstream
+	GetItemBool (ifs, "TileStream", bTileStream); // not upstream: the whole key, GetBool would take TileStreamWays and the others
 	GetBool (ifs, "TileStreamOffline", bTileStreamOffline); // not upstream
 	if (GetInt (ifs, "TileStreamCacheMB", i)) TileStreamCacheMB = std::max (0, i); // not upstream
 	GetBool (ifs, "TileStreamBuildings", bTileStreamBuildings); // not upstream
+	GetBool (ifs, "TileStreamWays", bTileStreamWays); // not upstream (design-ways)
 
 	if (GetString (ifs, "DlgMapPos", cbuf))
 		sscanf (cbuf, "%d%d%d%d", &CfgWindowPos.DlgMap.left, &CfgWindowPos.DlgMap.top,
@@ -853,6 +854,7 @@ void Config::SetDefaults ()
 	bTileStreamOffline = false; // not upstream
 	TileStreamCacheMB = 2048; // not upstream
 	bTileStreamBuildings = true; // not upstream
+	bTileStreamWays = true; // not upstream (design-ways)
 
 	if (QScreen *scr = QGuiApplication::primaryScreen()) { // no screen before the QGuiApplication exists: keep 800x600
 		QRect r = scr->geometry();
@@ -995,6 +997,8 @@ BOOL Config::Write (const char *fname) const
 		ofs << "TileStreamCacheMB = " << TileStreamCacheMB << '\n';
 	if (!bTileStreamBuildings || bEchoAll) // not upstream
 		ofs << "TileStreamBuildings = " << BoolStr (bTileStreamBuildings) << '\n';
+	if (!bTileStreamWays || bEchoAll) // not upstream (design-ways)
+		ofs << "TileStreamWays = " << BoolStr (bTileStreamWays) << '\n';
 
 	if (strcmp (CfgDirPrm.ConfigDir, CfgDirPrm_default.ConfigDir) || 
 		strcmp (CfgDirPrm.MeshDir, CfgDirPrm_default.MeshDir) ||

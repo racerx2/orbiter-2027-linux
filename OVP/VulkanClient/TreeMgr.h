@@ -14,6 +14,8 @@
 #include "BldgGeom.h"
 #include "FixedVes.h"
 #include "ClearZones.h"
+#include "BaseShapes.h"
+#include "WayGeom.h"
 #include <condition_variable>
 #include <deque>
 #include <map>
@@ -38,20 +40,14 @@ public:
 	void RenderCasters (VkDev *dev, const class SceneShadows &s); // scene shadow casters in the cascade being drawn (design-scene-shadows)
 
 	struct Inst { float x, y, z, s; uint8_t yaw, kind, t0, t1; uint8_t h[8]; }; // 28 bytes, stream 1
-	struct Base {               // a base's structures, every triangle; planet-local to its frame through rp, then rb
-		MATRIX3 rp, rb;
-		VECTOR3 p;
-		BldgGeom::BaseIndex idx{true};
-	};
 	struct Job {                // render thread to worker
 		long long key = 0;
 		double lat0 = 0, lat1 = 0, lng0 = 0, lng1 = 0;
-		std::vector<std::shared_ptr<const Base>> bases;
-		std::vector<std::shared_ptr<const FixedVes::Rec>> fixed; // fixed structures within 25 km, every triangle (design fixed-structures)
-		std::vector<ClearZones::Zone> zones; // the base files' clear zones within 25 km (design base-clear)
+		BaseShapes::Keep keep;  // bases, fixed structures (design fixed-structures) and clear zones (design base-clear) within 25 km
 		std::shared_ptr<const Horizon::Map> hor;
 		double hb[4] = {0, 0, 0, 0}; // its owner's bounds
 		std::vector<std::pair<int, int>> bldg; // z14 tiles to read
+		std::vector<std::pair<int, int>> way;  // z14 way tiles to read: no tree on a road, rail, runway or river (design-ways)
 	};
 	struct Result {
 		long long key = 0;
@@ -78,7 +74,6 @@ private:
 	};
 	void Work ();
 	void MakeMeshes ();
-	const std::shared_ptr<const Base> &BaseOf (OBJHANDLE hBase);
 	void Cells (double lat, double lng, double range, std::vector<long long> &out) const;
 	void Bounds (long long key, double &lat0, double &lat1, double &lng0, double &lng1) const;
 	bool Ask (long long key);
@@ -90,7 +85,7 @@ private:
 	double R;
 	std::string root;           // the body's texture folder, as PlanetTexturePath (backslashes, oapiResolvePath)
 	std::map<long long, Cell> cells;
-	std::map<OBJHANDLE, std::shared_ptr<const Base>> bases;
+	BaseShapes::Set bases;      // the planet's bases, every triangle (BaseShapes.h)
 	FixedVes::Set fixed{true};  // the fixed structures on this planet, every triangle
 	std::vector<ClearZones::Zone> zones; // the base files' clear zones on this planet, read at the first job (design base-clear)
 	bool zonesRead = false;

@@ -713,12 +713,20 @@ The Linux edition adds these functions to OrbiterAPI.h (Orbitersdk/include). The
 	TSBLDGMESH *oapiTileStreamBldgLoad (OBJHANDLE hBody, int x, int y) & Reads the tile's buildings; NULL when the file is not there. The result belongs to the caller.\\
 	\hline\rule{0pt}{2ex}
 	void oapiTileStreamBldgFree (TSBLDGMESH *mesh) & Frees the result of oapiTileStreamBldgLoad.\\
+	\hline\rule{0pt}{2ex}
+	int oapiTileStreamWayWant (OBJHANDLE hBody, int x, int y) & Asks for the streamed roads, railways, airports and waterways of a zoom-14 Web Mercator tile, as oapiTileStreamBldgWant. They come with the buildings' fetch. Returns 1 when the tile's file is there, 0 when it has been requested, $-$1 when it never will be (none for this body, or ways off).\\
+	\hline\rule{0pt}{2ex}
+	TSWAYTILE *oapiTileStreamWayLoad (OBJHANDLE hBody, int x, int y) & Reads the tile's ways; NULL when the file is not there. The result belongs to the caller.\\
+	\hline\rule{0pt}{2ex}
+	void oapiTileStreamWayFree (TSWAYTILE *tile) & Frees the result of oapiTileStreamWayLoad.\\
 	\hline
 	\end{longtable}
 %\end{table}
 
 \noindent
 A TSBLDGMESH holds the tile (z, x, y), the numbers of buildings, vertices and indices (nb, nv, ni) and three arrays. b has a TSBLDG for each building: its anchor (lat, lng, in radians), its base and top height above the ground (hmin, hmax, in metres, from OpenStreetMap), and the ranges of its vertices (v0, nv) and indices (i0, ni). vtx has six floats per vertex: the position in metres from the building's anchor (x east, y up, z north) and the normal. idx holds triangles, clockwise seen from the front, with indices relative to the building's v0.\\
+\\
+A TSWAYTILE holds the tile (z, x, y), the numbers of features, parts and points (nf, np, npt) and three arrays. f has a TSWAY for each feature: its kind (TSWAY\_MOTORWAY to TSWAY\_DITCH: roads, paths, railways and trams, runways, taxiways, aprons and helipads, rivers, canals, streams, drains and ditches), its flags (TSWAY\_BRIDGE, TSWAY\_UNPAVED, TSWAY\_ONEWAY, TSWAY\_RAMP, and TSWAY\_AREA when its parts are rings: an outer ring with a positive area, y down, then its holes), its OpenStreetMap layer, an aeroway's ref (``13L/31R''), and its parts (p0, np). Part i is the points part[i] to part[i + 1] $-$ 1 of pt, which holds x and y per point in 4096 units across the tile, y down; the tile's buffer lies outside 0 to 4096, so a feature near an edge is in both tiles.\\
 \\
 The client's own interface for plugins, gcCoreAPI.h (custom cameras, render surfaces, Sketchpad extensions, custom windows), is described in the VulkanClient manual. What a plugin draws through its exterior render callback (GENERICPROC\_RENDER\_EXTERIOR) is drawn after the screen-space effects: it is not anti-aliased by TAA, not fogged and not seen in reflections.
 

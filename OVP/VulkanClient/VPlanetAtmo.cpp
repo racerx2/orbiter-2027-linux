@@ -39,6 +39,7 @@ PlanetShader::PlanetShader(VkDev *pDev, const char* file, const char* vs, const 
 	bRipples = false;
 	bCloudShd = false;
 	bNightlights = false;
+	bWays = false; // not upstream (design-ways)
 
 	if (string(options).find("_LOCALLIGHTS") != string::npos) bLocals = true;
 	if (string(options).find("_MICROTEX") != string::npos) bMicrotex = true;
@@ -49,6 +50,7 @@ PlanetShader::PlanetShader(VkDev *pDev, const char* file, const char* vs, const 
 	if (string(options).find("_RIPPLES") != string::npos) bRipples = true;
 	if (string(options).find("_CLOUDSHD") != string::npos) bCloudShd = true;
 	if (string(options).find("_NIGHTLIGHTS") != string::npos) bNightlights = true;
+	if (string(options).find("_WAYS") != string::npos) bWays = true; // not upstream (design-ways)
 
 	tCloud = GetPSHandle("tCloud");
 	tCloud2 = GetPSHandle("tCloud2");
@@ -170,6 +172,7 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	if (bNightLights) flags += "_NIGHTLIGHTS ";
 	if (bNightLights && Config->NightLook) flags += "_NIGHTLOOK "; // not upstream: night city look (design-night-look 5)
 	if (bLocals) flags += "_LOCALLIGHTS ";
+	flags += "_WAYS "; // not upstream (design-ways): streamed roads, rail, airports and waterways on tWay/tWayN
 
 	if (Config->ShadowMapMode) flags += "_SHDMAP ";
 	if (Config->EnableMeshDbg) flags += "_DEVTOOLS ";
