@@ -955,19 +955,15 @@ float Scene::ComputeNearClipPlane()
 	VOBJREC *pv = NULL;
 
 	OBJHANDLE hObj = Camera.hObj_proxy;
-	OBJHANDLE hTgt = Camera.hTarget;
-	VESSEL *hVes = oapiGetVesselInterface(hTgt);
 
-	if (hObj && hVes) {
+	if (hObj) { // not upstream: any target, the ground is the camera's
 		VECTOR3 pos;
 		oapiGetGlobalPos(hObj,&pos);
 		double g = atan(Camera.apsq);
 		double t = dotp(unit(Camera.pos-pos), unit(Camera.dir));
 		if (t<-1.0) t=1.0; if (t>1.0) t=1.0f;
 		double a = PI - acos(t);
-		double R = oapiGetSize(hObj) + hVes->GetSurfaceElevation();
-		double r = length(Camera.pos-pos);
-		double h = r - R;
+		double h = (Camera.vProxy && Camera.vProxy->Type() == OBJTP_PLANET) ? Camera.elev : Camera.alt_proxy; // not upstream: the camera's height over its own ground, not its target's
 		if (h<10e3) {
 			double d = a - g; if (d<0) d=0;
 			zsurf = float(h*cos(g)/cos(d));
@@ -1711,6 +1707,7 @@ void Scene::RenderMainScene()
 	// Do we use z-clear render mode or not ?
 	bool bClearZBuffer = false;
 	if ( (GetTargetGroundAltitude() > 2e3) && (oapiCameraInternal() == false)) bClearZBuffer = true;
+	if (Camera.vProxy && Camera.vProxy->Type() == OBJTP_PLANET && Camera.elev < 2e3) bClearZBuffer = false; // not upstream: a camera near the ground keeps the planet's near plane
 	if (IsProxyMesh()) bClearZBuffer = false;
 
 
