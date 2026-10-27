@@ -9,9 +9,11 @@
 #include "Orbiter.h"
 #include "OrbiterAPI.h"
 #include "Psys.h"
+#include "Vessel.h" // not upstream (input-bindings)
 
 extern Orbiter* g_pOrbiter;
 extern PlanetarySystem* g_psys;
+extern Vessel* g_focusobj; // not upstream (input-bindings)
 
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
@@ -161,70 +163,35 @@ void DlgOptions::DrawUI()
 	ImGui::RadioButton("Hybrid: Click required only for child windows", &g_pOrbiter->Cfg()->CfgUIPrm.MouseFocusMode, 1);
 	ImGui::RadioButton("Focus follows mouse", &g_pOrbiter->Cfg()->CfgUIPrm.MouseFocusMode, 2);
 }
-void DlgOptions::DrawJoystick()
+void DlgOptions::DrawControls() // not upstream (input-bindings): was DrawJoystick, the one joystick's settings
 {
-	ImGui::SeparatorText("Joystick device");
-	DWORD ndev;
-	JoyDeviceInstance* joylist;
-	g_pOrbiter->GetDInput()->GetJoysticks(&joylist, &ndev);
-	DWORD &jidx = g_pOrbiter->Cfg()->CfgJoystickPrm.Joy_idx;
-
-	const char *preview = "<Disabled>";
-	if(jidx > 0 && jidx <= ndev) {
-		preview = joylist[jidx - 1].tszProductName;
+	InputSystem *inp = g_pOrbiter->GetInput();
+	if (!inp) return;
+	ImGui::SeparatorText("Controllers");
+	bool any = false;
+	for (auto &d : inp->Devices().Devices()) {
+		any = true;
+		if (d->state == InputDevice::OPEN)
+			ImGui::BulletText("%s: %s, %d buttons, %d axes%s", inp->NameOf(d->id).c_str(), d->name.c_str(),
+				(int)d->buttons.size(), (int)d->axes.size(), d->hatPresent[0] ? ", hat" : "");
+		else {
+			ImGui::BulletText("%s: no access", d->name.c_str());
+			ImGui::Indent();
+			ImGui::TextWrapped("%s", InputAccessHint(*d).c_str());
+			ImGui::Unindent();
+		}
 	}
+	if (!any) ImGui::TextUnformatted("No controllers found");
+	ImGui::Checkbox("Controllers work while Orbiter is in the background", &g_pOrbiter->Cfg()->CfgJoystickPrm.bBackground);
 
-	if(ImGui::BeginAnimatedCombo("##joydev", preview)) {
-		bool selected = jidx == 0;
-		if(ImGui::Selectable("<Disabled>", &selected)) {
-			jidx = 0;
-		}
-		if (selected) {
-			ImGui::SetItemDefaultFocus();
-		}
-		for (int i = 0; i < ndev; i++) {
-			selected = jidx == (i+1);
-			if(ImGui::Selectable(joylist[i].tszProductName, &selected)) {
-				jidx = i + 1;
-				g_pOrbiter->OnOptionChanged(OPTCAT_JOYSTICK, OPTITEM_JOYSTICK_DEVICE);
-			}
-			if (selected) {
-				ImGui::SetItemDefaultFocus();
-			}
-		}
-		ImGui::EndAnimatedCombo();
-	}
-
-	ImGui::BeginDisabled(jidx == 0);
-		ImGui::SeparatorText("Main engine control");
-		DWORD &thaxis = g_pOrbiter->Cfg()->CfgJoystickPrm.ThrottleAxis;
-
-		const char* axis[] = { "<Keyboard only>", "Z-axis", "Slider 0", "Slider 1" };
-		preview = axis[thaxis];
-
-		if (ImGui::BeginAnimatedCombo("##joythaxis", preview)) {
-			for (int n = 0; n < IM_ARRAYSIZE(axis); n++) {
-				const bool is_selected = (thaxis == n);
-				if (ImGui::Selectable(axis[n], is_selected)) {
-					thaxis = n;
-					g_pOrbiter->OnOptionChanged(OPTCAT_JOYSTICK, OPTITEM_JOYSTICK_PARAM);
-				}
-
-				if (is_selected)
-					ImGui::SetItemDefaultFocus();
-			}
-			ImGui::EndAnimatedCombo();
-		}
-		ImGui::Checkbox("Ignore throttle setting on launch", &g_pOrbiter->Cfg()->CfgJoystickPrm.bThrottleIgnore);
-
-		ImGui::SeparatorText("Calibration");
-		if(ImGui::SliderInt("Saturation", &g_pOrbiter->Cfg()->CfgJoystickPrm.ThrottleSaturation, 0, 10000))
-			g_pOrbiter->OnOptionChanged(OPTCAT_JOYSTICK, OPTITEM_JOYSTICK_PARAM);
-		if(ImGui::SliderInt("Deadzone", &g_pOrbiter->Cfg()->CfgJoystickPrm.Deadzone, 0, 10000))
-			g_pOrbiter->OnOptionChanged(OPTCAT_JOYSTICK, OPTITEM_JOYSTICK_PARAM);
-
-	ImGui::EndDisabled();
+	ImGui::SeparatorText("Bindings");
+	ImGui::TextWrapped("%s/Global.cfg: for every vessel. %s/Vessels/%s.cfg: for this vessel's class. Devices.cfg names the controllers. "
+		"Files changed while Orbiter runs are read again within a second.", inp->Dir().c_str(), inp->Dir().c_str(),
+		g_focusobj ? g_focusobj->ClassName() : "<class>");
+	if (ImGui::Button("Read Config/Input again"))
+		g_pOrbiter->OnOptionChanged(OPTCAT_JOYSTICK, OPTITEM_JOYSTICK_DEVICE);
 }
+
 void DlgOptions::DrawCelSphere()
 {
 	bool &bUseStarDots = g_pOrbiter->Cfg()->CfgVisualPrm.bUseStarDots;

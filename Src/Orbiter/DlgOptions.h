@@ -31,7 +31,7 @@ public:
 	void DrawInstrument();
 	void DrawVessel();
 	void DrawUI();
-	 void DrawJoystick();
+	void DrawControls(); // not upstream (input-bindings): was DrawJoystick
 	void DrawCelSphere();
 	void DrawVisHelper();
 	 void DrawPlanetarium();
@@ -51,7 +51,7 @@ public:
 		{"Instruments & panels", "/tab_param.htm",      &DlgOptions::DrawInstrument},
 		{"Vessel settings",      "/tab_param.htm",      &DlgOptions::DrawVessel},
 		{"User interface",       "/tab_param.htm",      &DlgOptions::DrawUI},
-		{"      Joystick",       "/tab_joystick.htm",   &DlgOptions::DrawJoystick},
+		{"      Controllers",    "/tab_joystick.htm",   &DlgOptions::DrawControls},
 		{"Celestial sphere",     "/opt_celsphere.htm",  &DlgOptions::DrawCelSphere},
 		{"Visual helpers",       "/vishelper.htm",      &DlgOptions::DrawVisHelper},
 		{"      Planetarium",    "/vh_planetarium.htm", &DlgOptions::DrawPlanetarium},

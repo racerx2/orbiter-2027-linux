@@ -8,6 +8,7 @@
 #include "Input.h"
 #include "Select.h"
 #include "Keymap.h"
+#include "InputBindings.h" // not upstream (input-bindings)
 #include <stdio.h>
 // commctrl.h left out: the common controls are Qt widgets
 #include "Mesh.h"
@@ -31,6 +32,8 @@ class ScriptInterface; // g++: a friend declaration doesn't introduce the name
 class DDEServer;
 class ImageIO;
 class TileStream; // not upstream
+class QKeyEvent;  // not upstream (input-bindings)
+class QWheelEvent;
 struct StreamTrack; // not upstream
 namespace orbiter {
 	class ConsoleNG;
@@ -179,7 +182,8 @@ public:
 	// DirectInput components
 	inline CDIFramework7 *GetDInput() const { return pDI->GetDIFrame(); }
 	inline KeyboardDevice *GetKbdDevice() const { return pDI->GetKbdDevice(); }
-	inline JoystickDevice *GetJoyDevice() const { return pDI->GetJoyDevice(); }
+	// GetJoyDevice left out: controllers are InputDevices (input-bindings)
+	inline InputSystem *GetInput() const { return m_input; } // not upstream (input-bindings)
 
 	// memory monitor
 	MemStat *memstat;
@@ -326,8 +330,20 @@ protected:
 	void KbdInputImmediate_OnRunning (char *buffer);
 	void KbdInputBuffered_System     (char *kstate, KeyData *dod, DWORD n);
 	void KbdInputBuffered_OnRunning  (char *kstate, KeyData *dod, DWORD n);
-	void UserJoyInput_System (JoyState *js);
-	void UserJoyInput_OnRunning (JoyState *js);
+	void UserJoyInput_System (const InputFrame &inp);    // not upstream: the bindings' channels, not one joystick (input-bindings)
+	void UserJoyInput_OnRunning (const InputFrame &inp);
+	const InputFrame &InputStep (bool skipkbd);          // not upstream (input-bindings), to InputTakeWheel
+	void InputIdle ();
+	void InputEvents (const InputFrame &inp, const char *phys);
+	void InputRelease (InputFrame &rel, Vessel *v = nullptr);
+	void InputSetChannel (const InputChanSet &s);
+	void InputSessionEnd ();
+	void InputLog ();
+	uint16_t InputMods ();
+	bool InputKeyboardToSim ();
+	bool InputTakeKey (const QKeyEvent *ke, bool press);
+	bool InputTakeMouse (int button, bool press);
+	bool InputTakeWheel (const QWheelEvent *we);
 	bool MouseEvent (UINT event, DWORD state, DWORD x, DWORD y);
 	bool BroadcastMouseEvent (UINT event, DWORD state, DWORD x, DWORD y);
 	bool BroadcastImmediateKeyboardEvent (char *kstate);
@@ -377,8 +393,10 @@ private:
 	bool            bKeepFocus;    // disable focus switch on mouse move (during rotations)
 	bool            bStartVideoTab; // Open Launchpad dialog on video tab
 	bool            bWINEenv;      // we are running under Linux/WINE
-	bool            ignorefirst;   // flag for first joystick action
-	long            plZ4;          // previous joystick throttle setting
+	InputDevices   *m_inputDevs;   // not upstream (input-bindings): every controller
+	InputSystem    *m_input;       // not upstream: the bindings in Config/Input
+	Vessel         *m_inputFocus;  // not upstream: the vessel whose profile is bound
+	int             m_wheelAcc[2]; // not upstream: wheel steps short of a notch
 	int             video_skip_count; // count skipped frames for frame sequence capturing
 	oapi::ScreenAnnotation **snote;// onscreen annotations
 	DWORD           nsnote;        // number of annotations

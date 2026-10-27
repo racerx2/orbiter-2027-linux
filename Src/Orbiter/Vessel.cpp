@@ -3895,7 +3895,7 @@ int Vessel::ConsumeBufferedKey (DWORD key, bool down, char *kstate)
 	int res;
 	const Keymap &keymap = g_pOrbiter->keymap;
 	// first offer the key to the module
-	if (modIntf.v->Version() >= 1 && !bCtrlLock) // not upstream: a locked vessel's module sees no keys
+	if (modIntf.v->Version() >= 1 && !bCtrlLock && !(key & IKEYFUNC_TAG)) // not upstream: a locked vessel's module sees no keys, nor a binding's function press (input-bindings)
 		if (res = ((VESSEL2*)modIntf.v)->clbkConsumeBufferedKey (key, down, kstate)) return res;
 	// If module processes the key, we skip default handler
 

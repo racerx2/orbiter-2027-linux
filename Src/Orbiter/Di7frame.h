@@ -8,25 +8,11 @@
 
 #ifndef DI7FRAME_H
 #define DI7FRAME_H
-// DirectInput 8 counterpart: keyboard state fed from the render window's key events, joysticks read from evdev
+// DirectInput 8 counterpart: keyboard state fed from the render window's key events (controllers: InputDevices)
 #include "OrbiterPlatform.h"
 #include <vector>
 
-// DIDEVICEINSTANCE counterpart: one enumerated evdev joystick
-struct JoyDeviceInstance {
-	char tszInstanceName[260]; // evdev device name
-	char tszProductName[260];  // evdev device name
-	char path[64];             // /dev/input/eventN
-};
-
-// DIJOYSTATE2 counterpart (the fields Orbiter reads); axes are scaled to the range set with SetAxisRange
-struct JoyState {
-	LONG  lX, lY, lZ;          // x, y, z axis
-	LONG  lRx, lRy, lRz;       // x, y, z rotation
-	LONG  rglSlider[2];        // sliders: ABS_THROTTLE, ABS_RUDDER
-	DWORD rgdwPOV[4];          // hats in 1/100 deg clockwise from north, 0xFFFFFFFF when centred
-	BYTE  rgbButtons[128];     // 0x80 = pressed
-};
+// JoyDeviceInstance and JoyState left out: controllers are InputDevices (input-bindings)
 
 // DIDEVICEOBJECTDATA counterpart: one buffered key transition
 struct KeyData {
@@ -58,30 +44,7 @@ private:
 	DWORD bufsize, seq;
 };
 
-// DirectInput joystick device counterpart on an evdev node
-class JoystickDevice {
-public:
-	JoystickDevice (const char *path);
-	~JoystickDevice ();
-	bool Valid () const { return fd >= 0; }
-	int  Acquire ();
-	void Unacquire ();
-	int  Poll ();
-	int  GetDeviceState (DWORD size, JoyState *js);
-	enum Axis { AX_X, AX_Y, AX_Z, AX_RX, AX_RY, AX_RZ, AX_SLIDER0, AX_SLIDER1, NAXIS };
-	bool SetAxisRange (Axis a, LONG lMin, LONG lMax);  // DIPROP_RANGE
-	bool SetAxisDeadzone (Axis a, DWORD dz);           // DIPROP_DEADZONE (0-10000)
-	bool SetAxisSaturation (Axis a, DWORD sat);        // DIPROP_SATURATION (0-10000)
-private:
-	int  ReadAll ();                             // returns errno of a failed read (0 if the queue just ran dry)
-	LONG Scale (int a) const;
-	int fd;
-	bool acquired;
-	struct AxisPrm { bool present; int code, amin, amax, raw; LONG lMin, lMax; DWORD dz, sat; } axis[NAXIS];
-	int hat[4][2];
-	std::vector<int> btncode;                    // evdev button codes in HID order
-	BYTE btn[128];
-};
+// JoystickDevice left out: InputDevices reads every controller (input-bindings)
 
 //-----------------------------------------------------------------------------
 // Name: CDIFramework7
@@ -92,18 +55,8 @@ class CDIFramework7
 	// LPDIRECTINPUT8 m_pDI left out: evdev needs no input system object
 	KeyboardDevice*      m_pdidKbdDevice;   // keyboard device
 	// m_pdidMouseDevice left out: mouse input arrives as window events
-	JoystickDevice*      m_pdidJoyDevice;   // joystick device
-	// m_guidJoystick left out: devices are picked by index into jList
+	// m_pdidJoyDevice, jList and EnumJoysticksCallback left out: controllers are InputDevices (input-bindings)
 	BOOL                 m_bUseKbd;
-	BOOL                 m_bUseJoy;
-
-	struct JLIST {
-		JoyDeviceInstance*   descJoy;     // list of enumerated joystick devices
-		DWORD                nJoy;        // number of enumerated joysticks
-	} jList;
-
-	static bool EnumJoysticksCallback (const JoyDeviceInstance *pInst,
-		void* pvContext);
 
 public:
 	CDIFramework7();
@@ -115,24 +68,15 @@ public:
 	void Destroy ();
 	// Destroys devices and DI object
 
-	void GetJoysticks (JoyDeviceInstance **dev, DWORD *pdwCount);
-	// Returns the list of enumerated joysticks
-
-	DWORD NumJoysticks () const { return jList.nJoy; }
-	// number of enumerated joysticks
-
 	// generic CreateDevice left out: each device type is created by its own function
 
 	int CreateKbdDevice (QWindow *hWnd);
 	// CreateMouseDevice left out: unused upstream; the mouse arrives as window events
-	int CreateJoyDevice (QWindow *hWnd, DWORD idx = 0);
 
-	void DestroyJoyDevice();
 	void DestroyDevices();
 
 	// accessor functions
 	inline KeyboardDevice *GetKbdDevice() { return m_pdidKbdDevice; }
-	inline JoystickDevice *GetJoyDevice() { return m_pdidJoyDevice; }
 };
 
 #endif // !DI7FRAME_H

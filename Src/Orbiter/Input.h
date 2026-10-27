@@ -25,30 +25,16 @@ public:
 	void SetRenderWindow(QWindow *hWnd);
 
 	bool CreateKbdDevice();
-	bool CreateJoyDevice ();
+	// CreateJoyDevice left out: controllers are InputDevices, open all the time (input-bindings)
 	void DestroyDevices ();
 
 	inline CDIFramework7 *GetDIFrame() const { return diframe; }
 	inline KeyboardDevice *GetKbdDevice() const { return diframe->GetKbdDevice(); }
-	inline JoystickDevice *GetJoyDevice() const { return diframe->GetJoyDevice(); }
-
-	void OptionChanged(DWORD cat, DWORD item);
-
-	bool PollJoystick (JoyState *js);
-
-	struct JoyProp {
-		bool bThrottle;  // joystick has throttle control
-		bool bRudder;    // joystick has rudder control
-		int ThrottleOfs; // throttle data offset
-	};
-
-protected:
-	int SetJoystickProperties ();
+	// GetJoyDevice, OptionChanged, PollJoystick, JoyProp and SetJoystickProperties left out (input-bindings)
 
 private:
 	Orbiter *orbiter;
 	CDIFramework7 *diframe;
-	JoyProp joyprop;
 	QWindow *m_hWnd;
 };
 

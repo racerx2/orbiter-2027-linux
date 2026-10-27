@@ -3,31 +3,30 @@
 <HEAD>
 <META HTTP-EQUIV="Content-Type" Content="text-html; charset=Windows-1252">
 <LINK REL="stylesheet" HREF="Orbiter.css" TYPE="TEXT/CSS">
-<title>Joystick settings</title>
+<title>Controllers</title>
 </HEAD>
 <BODY>
+<!-- not upstream (input-bindings): the Controllers page in place of the Joystick page -->
 
-<p class="header"><a href="intro.htm">Orbiter</a> &gt; <a href="launchpad.htm">Launchpad</a> &gt; Joystick</p>
+<p class="header"><a href="intro.htm">Orbiter</a> &gt; <a href="launchpad.htm">Launchpad</a> &gt; Controllers</p>
 
-<h1>Joystick settings</h1>
+<h1>Controllers</h1>
 <p>
-If a joystick is connected to your computer, you can use it to control your spacecraft in orbiter. The Joystick page provides some configuration options. Other joystick-related tasks, such as calibrating the axes or programming joystick button functions, can usually be carried out with the desktop's game controller settings or the joystick software.</p> <!-- not upstream: Linux -->
+Joysticks, throttles, rudder pedals, button boxes and other game controllers work all at once, and can be plugged in and out while Orbiter runs. The Controllers page lists the controllers found, with the name each has in Config/Input/Devices.cfg and its buttons and axes.</p>
 
-<h2>Joystick device</h2>
+<h2>No access</h2>
 <p>
-Select a joystick from the list, or click "&lt;disabled&gt;" to force Orbiter to ignore your joystick.</p>
+A controller the desktop doesn't give to the user (some button boxes, and pedals without buttons) is listed with the udev rule that does, for /etc/udev/rules.d/71-orbiter-controllers.rules.</p>
 
-<h2>Main engine control</h2>
+<h2>Controllers work while Orbiter is in the background</h2>
 <p>
-Define the joystick axis which controls the main thrusters. Try different options if the throttle control on your joystick doesn't work in Orbiter.</p>
-<p>
-<b>Ignore throttle setting on launch</b>: If ticked, the joystick throttle will be ignored at the launch of a scenario until the user manipulates it. Otherwise, the throttle setting is used immediately.</p>
+If ticked, the controllers keep flying when another window has the focus, for example an external MFD or a map on another screen. The keyboard and the mouse stay with the Orbiter window.</p>
 
-<h2>Calibration</h2>
+<h2>Bindings</h2>
 <p>
-<b>Deadzone</b>: Use this to define how soon the joystick will respond when moved out of its centre position. Smaller values make it respond sooner. Increase if attitude thrusters do not cut out completely in neutral position.</p>
+Every button, hat, axis, dial, keyboard key and mouse button can be bound to an Orbiter function, a key or key combination, an analog control (attitude, throttles, trims, toe brakes, view), an MFD button or a shift layer. The bindings are in Config/Input: Global.cfg for every vessel, and Vessels/&lt;class&gt;.cfg for one vessel class. Files changed while Orbiter runs are read again within a second; <b>Read Config/Input again</b> reads them at once. The file format is in the User Manual, section Advanced Configuration, Controllers and bindings.</p>
 <p>
-<b>Throttle saturation</b>: Defines the tolerance zone at the minimum and maximum range of the throttle control at which the joystick reports zero and maximum throttle, respectively. Reduce if main engines do not cut out completely at minimum throttle setting.  (Applies only to joysticks with throttle control).</p>
+The first time this version runs, Global.cfg is made from the old joystick settings, so a joystick works as it did before.</p>
 
 </BODY>
 </HTML>

@@ -263,13 +263,15 @@ Normally, only entries whose values differ from their default setting are writte
 	\hline
 	\multicolumn{3}{|c|}{\rule{0pt}{2ex}\textbf{\textit{Joystick parameters}}}\\
 	\hline\rule{0pt}{2ex}
-	JoystickIndex & Int & Enumeration index for current joystick (0 = none). Default: 0\\
+	JoystickIndex & Int & Enumeration index for current joystick (0 = none). Read once: Config/Input/Global.cfg is made from the joystick settings (subsection \ref{ssec:input_bindings}). Default: 0\\
 	\hline\rule{0pt}{2ex}
 	JoystickThrottleAxis & Int & Axis index for joystick throttle (0 = Z, 1 = slider 0, 2 = slider 1). On Linux these are the evdev axes ABS\_Z, ABS\_THROTTLE and ABS\_RUDDER. Default: 1\\
 	\hline\rule{0pt}{2ex}
 	JoystickThrottleSaturation & Int & Saturation zone for joystick throttle control (0-10000). A setting of 9000 means that the throttle will saturate over the last 10\% of its range at either end. Default: 9500\\
 	\hline\rule{0pt}{2ex}
 	JoystickDeadzone & Int & Deadzone at joystick axis centres (0-10000). A setting of 2000 means that the joystick is considered neutral within 20\% from the central position. Default: 2500\\
+	\hline\rule{0pt}{2ex}
+	ControllersInBackground & Bool & Controllers work while the Orbiter window doesn't have the focus. Default: FALSE\\
 	\hline\rule{0pt}{2ex}
 	IgnoreThrottleOnStart & Bool & Ignore throttle at simulation start until moved. Default: TRUE\\
 	\hline
@@ -589,5 +591,85 @@ Missing entries in keymap.cfg are substituted by their default values. To revert
 	\end{longtable}
 %\end{table}
 
+\subsection{Controllers and bindings}
+\label{ssec:input_bindings}
+Joysticks, throttles, rudder pedals, button boxes and other game controllers work all at once, and they can be plugged in and out while Orbiter runs. Every button, hat, axis, dial, keyboard key and mouse button can be bound to an Orbiter function, a key or key combination, an analog control, an MFD button or a shift layer. The bindings are text files in Config/Input:
+\begin{itemize}
+\item \textbf{Devices.cfg}: the controllers, each with a name. A controller seen for the first time is added with a name made from its product name.
+\item \textbf{Global.cfg}: bindings for every vessel.
+\item \textbf{Vessels/\textit{class}.cfg}: bindings for one vessel class (for example Vessels/DG-S.cfg), on top of Global.cfg. The Controllers page of the Options dialog shows the class of the current vessel.
+\end{itemize}
+Files changed while Orbiter runs are read again within a second. When Orbiter first runs with Config/Input missing, it makes Global.cfg from the joystick settings in Orbiter.cfg, so the joystick works as it did before.\\
+\\
+\textbf{Devices.cfg}
+\begin{lstlisting}[language=OSFS]
+DEVICE Box = 1209:0001 "Panel Button Box" SERIAL "A1B2C3"
+DEVICE Box2 = 1209:0001 "Panel Button Box" IFACE "input0" PORT "usb-3"
+CAL Stick.X = 0 32768 65535
+\end{lstlisting}
+DEVICE gives a controller its name: vendor and product id, product name and, to tell identical controllers apart, its serial number, its interface and the USB port. A new name here is not changed in the profiles: change it there too. CAL sets an axis's raw minimum, centre and maximum.\\
+\\
+\textbf{Profiles}
+\begin{lstlisting}[language=OSFS]
+BIND <input> [options] = <output> [options]
+INHERIT Vessels/XR2Ravenstar
+\end{lstlisting}
+INHERIT uses another profile under this one (for vessel families).\\
+Inputs:
+\begin{itemize}
+\item \textit{Name}.B3: button 3 of a controller
+\item \textit{Name}.X, Y, Z, RX, RY, RZ, THROTTLE, RUDDER, WHEEL, GAS, BRAKE, MISC, A\textit{n}: an axis
+\item \textit{Name}.HAT0.UP, RIGHT, DOWN, LEFT: a hat direction
+\item \textit{Name}.REL\_DIAL+ and REL\_DIAL-: the steps of a dial or encoder
+\item Key.\textit{key}: a keyboard key (the key names of keymap.cfg, and F13 to F24, MACRO1 to MACRO30, K\textit{code})
+\item Mouse.LEFT, RIGHT, MIDDLE, BACK, FORWARD and B\textit{n}, and the wheel: Mouse.WHEELUP, WHEELDOWN, WHEELLEFT, WHEELRIGHT. LEFT and RIGHT work the panels, so they need a modifier or a layer.
+\end{itemize}
+Options before the =:
+\begin{itemize}
+\item @1 to @8: the binding is for that shift layer
+\item SHIFT, CTRL, ALT (LSHIFT, RSHIFT, LCTRL, RCTRL, LALT, RALT): modifiers held with a keyboard key or mouse button
+\item ZONE \textit{a} \textit{b}: an axis range (-1 to 1) works as a button, for detents and lever positions
+\item HOLD (the default), PRESS, RELEASE, BOTH (once on press and once on release, for a two-way toggle switch on a toggle key), TOGGLE (latching), REPEAT [\textit{n} per second]
+\item VIEW COCKPIT or VIEW OUTSIDE: only in that view
+\item PASS: a keyboard key or mouse button also keeps working as itself (a bound key is taken otherwise)
+\end{itemize}
+Outputs:
+\begin{itemize}
+\item FUNC \textit{function}: an Orbiter function, named as in keymap.cfg (table above). It works even if keymap.cfg gives it no key.
+\item KEY \textit{key} [\textit{modifiers}]: a key or key combination, as if typed: for the vessel, its MFDs and add-ons
+\item AXIS \textit{channel} [\textit{value} | STEP \textit{d} | SET \textit{v}]: an analog control (below); a button gives the value while held, or steps or sets an absolute channel
+\item MFD LEFT, RIGHT or 1 to 12, then B1 to B20, PWR, SEL or MNU: an MFD button
+\item LAYER 1 to 8 [LATCH]: a shift layer while held (or latched). Inputs without a binding in that layer keep their normal one.
+\item NONE: in a vessel profile, takes the input's Global.cfg binding away
+\end{itemize}
+Channels:
+\begin{itemize}
+\item Pitch, Yaw, Bank, TransX, TransY, TransZ: attitude, as the numeric keypad (RCS, and the control surfaces in atmospheric flight)
+\item Main (0 to 1), MainRetro (-1 to 1), Retro, Hover, and Main1 to Main8, Retro1 to Retro8, Hover1 to Hover8 for single engines (dual throttle levers): set when the lever moves, so the keys still work
+\item ElevTrim, RudderTrim, Flaps; BrakeL, BrakeR, Brakes (toe brakes)
+\item LookX, LookY (look around in the cockpit, orbit the camera outside), PanX, PanY (move the 2D panel, turn the outside camera), FOV, Distance
+\end{itemize}
+Axis options after the output: INVERT; FULL (the whole travel, the default) or HALF (centre to end) for the 0 to 1 channels; DZ (dead zone), SAT (saturation), CURVE (exponent), SCALE; PICKUP (a lever waits until it is moved after a start or a vessel switch).\\
+\\
+Example:
+\begin{lstlisting}[language=OSFS]
+BIND Throttle.Z = AXIS Main INVERT PICKUP
+BIND Pedals.RZ = AXIS Yaw
+BIND Pedals.X = AXIS BrakeL
+BIND Pedals.Y = AXIS BrakeR
+BIND Box.B1 BOTH = KEY G     ; gear switch on the DG's G key
+BIND Box.B2 = FUNC NMPrograde
+BIND Box.B3 = MFD LEFT SEL
+BIND Box.REL_DIAL+ = AXIS ElevTrim STEP 0.02
+BIND Stick.B2 = LAYER 1
+BIND Stick.HAT0.UP @1 = FUNC IncMainThrust
+\end{lstlisting}
+Controllers that the desktop doesn't give to the user (some button boxes, and pedals without buttons) are listed on the Controllers page and in Orbiter.log with the udev rule that does. It is one line in /etc/udev/rules.d/71-orbiter-controllers.rules (with the controller's vendor and product id; the Controllers page shows it ready to copy), read with the two commands after it:
+\begin{lstlisting}[language=OSFS,breaklines=true]
+SUBSYSTEM=="input", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", TAG+="uaccess"
+sudo udevadm control --reload
+sudo udevadm trigger
+\end{lstlisting}
+Controllers work only while the Orbiter window has the focus, unless \textit{Controllers work while Orbiter is in the background} is ticked on the Controllers page (ControllersInBackground in Orbiter.cfg), for cockpits with more windows.
 
 \end{document}

@@ -55,7 +55,6 @@
 #define IDD_OPTIONS_FRAMEAXES           216
 #define IDD_OPTIONS_INSTRUMENT          217
 #define IDD_OPTIONS_UI                  218
-#define IDD_OPTIONS_JOYSTICK            219
 #define IDD_OPTIONS_VESSEL              220
 #define IDD_OPTIONS_VISUAL              221
 #define IDD_OPTIONS_PHYSICS             222
@@ -266,15 +265,6 @@
 #define IDC_OPT_PHYS_RPRESSURE          1094
 #define IDC_OPT_PHYS_DISTMASS           1095
 #define IDC_OPT_PHYS_WIND               1096
-#define IDC_OPT_JOY_DEVICE              1097
-#define IDC_OPT_JOY_THROTTLE            1098
-#define IDC_OPT_JOY_INIT                1099
-#define IDC_OPT_JOY_SAT                 1100
-#define IDC_OPT_JOY_DEAD                1101
-#define IDC_OPT_JOY_STATIC1             1102
-#define IDC_OPT_JOY_STATIC2             1103
-#define IDC_OPT_JOY_STATIC3             1104
-#define IDC_OPT_JOY_STATIC4             1105
 #define IDC_OPT_VEC_SIDEFORCE			1106
 
 // Unsorted

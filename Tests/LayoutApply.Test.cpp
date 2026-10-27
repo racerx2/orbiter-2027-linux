@@ -235,7 +235,7 @@ TEST_CASE("Export: uic compiles every form", "[layout]")
 		}
 		n++;
 	}
-	CHECK(n == 32);
+	CHECK(n == 31); // input-bindings: the Joystick page went
 	if (!QFileInfo (uic).isExecutable ()) WARN("uic not found; forms not compiled");
 }
 

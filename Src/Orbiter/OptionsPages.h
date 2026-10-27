@@ -318,22 +318,7 @@ protected:
 	BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl);
 };
 
-/************************************************************************
-* \brief Page for joystick options
-*/
-class OptionsPage_Joystick : public OptionsPage {
-public:
-	OptionsPage_Joystick(OptionsPageContainer* container);
-	int ResourceId() const;
-	const char* Name() const;
-	const HELPCONTEXT* HelpContext() const;
-	void UpdateControls(QWidget *hPage);
-
-protected:
-	BOOL OnInitDialog(QWidget *hPage);
-	BOOL OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl);
-	BOOL OnHScroll(QWidget *hPage, int ctrlId, int request, int pos);
-};
+// OptionsPage_Joystick left out: OptionsPage_Controls (TabControls.h, input-bindings)
 
 /************************************************************************
 * \brief Page for celestial sphere rendering options.

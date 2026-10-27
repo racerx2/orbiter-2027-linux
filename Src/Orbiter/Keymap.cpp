@@ -256,6 +256,7 @@ bool Keymap::Read (const char *fname)
 
 bool Keymap::IsLogicalKey (char *kstate, int lfunc) const
 {
+	if (held && held[lfunc]) return true; // not upstream: held by a binding (input-bindings)
 	// check key
 	if (!KEYDOWN (kstate, func[lfunc] & 0x00FF)) return false;
 	// check modifiers, if any
@@ -264,6 +265,11 @@ bool Keymap::IsLogicalKey (char *kstate, int lfunc) const
 
 bool Keymap::IsLogicalKey (DWORD &key, char *kstate, int lfunc, bool clearkey) const
 {
+	if (key & IKEYFUNC_TAG) { // not upstream: a binding's press of this function only (input-bindings)
+		if (key != (IKEYFUNC_TAG | (DWORD)lfunc)) return false;
+		if (clearkey) key = 0;
+		return true;
+	}
 	// check key
 	if ((func[lfunc] & 0x00FFu) != key) return false;
 	// check modifiers, if any
@@ -273,6 +279,18 @@ bool Keymap::IsLogicalKey (DWORD &key, char *kstate, int lfunc, bool clearkey) c
 	} else {
 		return false;
 	}
+}
+
+int Keymap::FuncByName (const char *name)
+{
+	for (int i = 0; i < LKEY_COUNT; i++)
+		if (!strcasecmp (name, lkeyspec[i].itemstr)) return i;
+	return -1;
+}
+
+const char *Keymap::FuncName (int lfunc)
+{
+	return (lfunc >= 0 && lfunc < LKEY_COUNT ? lkeyspec[lfunc].itemstr : "");
 }
 
 bool Keymap::IsMatchingModifier (char *kstate, WORD key) const

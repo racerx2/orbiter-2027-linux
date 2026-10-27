@@ -57,6 +57,9 @@ set(common_src
 	TileStreamNet.cpp # not upstream
 	TileStreamSky.cpp # not upstream: clouds, base flattening, ground track
 	TabStream.cpp # not upstream: Launchpad Planet streaming page
+	TabControls.cpp # not upstream (input-bindings): Launchpad Controllers page
+	InputDevices.cpp # not upstream (input-bindings): every controller
+	InputBindings.cpp # not upstream (input-bindings): their bindings
 	StreamBases.cpp # not upstream: its base list and refusal rules
 # Dialogs
 	CustomControls.cpp

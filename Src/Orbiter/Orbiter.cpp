@@ -313,6 +313,10 @@ Orbiter::Orbiter ()
 	// timeBeginPeriod(1) left out: Linux timers need no resolution request
 
 	pDI             = new DInput(this); TRACENEW
+	m_inputDevs     = NULL; // not upstream (input-bindings)
+	m_input         = NULL;
+	m_inputFocus    = NULL;
+	m_wheelAcc[0]   = m_wheelAcc[1] = 0;
 	pConfig         = new Config; TRACENEW
 	pState          = NULL;
 	m_pLaunchpad    = NULL;
@@ -407,10 +411,26 @@ int Orbiter::Create (void *hInstance)
 	if ((hr = pDI->Create (hInstance)) != DI_OK) return hr;
 
 	// validate configuration
-	if (pConfig->CfgJoystickPrm.Joy_idx > GetDInput()->NumJoysticks()) pConfig->CfgJoystickPrm.Joy_idx = 0;
+	// not upstream (input-bindings): JoystickIndex is not reset when the stick is unplugged; it only picks the stick for Config/Input once
 
 	// Read key mapping from file (or write default keymap)
 	if (!keymap.Read ("keymap.cfg")) keymap.Write ("keymap.cfg");
+
+	// not upstream (input-bindings): every controller, and the bindings in Config/Input
+	{
+		std::string dir = oapiResolvePath (pConfig->CfgDirPrm.ConfigDir);
+		while (!dir.empty() && dir.back() == '/') dir.pop_back();
+		m_inputDevs = new InputDevices; TRACENEW
+		m_inputDevs->Scan ();
+		m_input = new InputSystem (dir + "/Input", m_inputDevs); TRACENEW
+		const CFG_JOYSTICKPRM &j = pConfig->CfgJoystickPrm;
+		m_input->Migrate ({j.Joy_idx, (unsigned)j.Deadzone, j.ThrottleAxis, (unsigned)j.ThrottleSaturation, j.bThrottleIgnore});
+		m_input->Load ();
+		m_input->SetProfile ("", nullptr);
+		m_input->Engine().SetMuted (true); // the Launchpad: nothing acts until a session runs
+		keymap.SetHeld (m_input->Engine().Frame().func);
+		InputLog ();
+	}
 
     pState = new State(); TRACENEW
 
@@ -492,6 +512,9 @@ VOID Orbiter::CloseApp (bool fast_shutdown)
 		DeactivateRoughType();
 
 	if (!fast_shutdown) {
+		keymap.SetHeld (nullptr); // not upstream (input-bindings)
+		delete m_input;
+		delete m_inputDevs;
 		delete pDI;
 		if (memstat) delete memstat;
 		if (pConfig)  delete pConfig;
@@ -757,8 +780,9 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 		}
 
 		// Create joystick device
-		if (pDI->CreateJoyDevice ())
-			plZ4 = 1; // invalidate
+		// not upstream (input-bindings): controllers stay open; the focus vessel's profile is bound in the first frame
+		m_inputFocus = NULL;
+		m_input->Poll (nullptr); // muted: what was pressed before the session waits for its release
 	}
 
 	if (gclient) {
@@ -889,11 +913,7 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 		m_pConsole->EchoIntro();
 
 	// suppress throttle update on launch
-	if (pDI->joyprop.bThrottle && pCfg->CfgJoystickPrm.bThrottleIgnore) {
-		JoyState js;
-		if (pDI->PollJoystick(&js))
-			plZ4 = *(LONG*)(((BYTE*)&js) + pDI->joyprop.ThrottleOfs) >> 3; // LONG: long is 64-bit on Linux
-	}
+	// not upstream (input-bindings): a throttle binding's PICKUP waits for the lever to move
 
 	return hRenderWnd;
 }
@@ -922,6 +942,7 @@ void Orbiter::CloseSession ()
 	bSession = false;
 	ExitRotationMode (); // not upstream: a session closed mid right-drag keeps the blank cursor and bKeepFocus otherwise
 	WlShortcutsDetach (); // before the render window's surface goes: KWin keeps an inhibitor of a destroyed surface
+	InputSessionEnd (); // not upstream (input-bindings): keys held by bindings go up for the focus vessel
 
 	if      (bRecord)   ToggleRecorder();
 	else if (bPlayback) EndPlayback();
@@ -1095,7 +1116,8 @@ INT Orbiter::Run ()
 			StreamPrefetch (); // not upstream
 			EndTimeStep (bRunning);
 			if (bVisible) {
-				if (bActive) UserInput ();
+				if (bActive || pConfig->CfgJoystickPrm.bBackground) UserInput (); // not upstream: controllers in the background (input-bindings)
+				else InputIdle ();
 				bRenderOnce = TRUE;
 			}
 			if (bRunning && bCapture) {
@@ -1137,7 +1159,8 @@ void Orbiter::SingleFrame ()
 			StreamPrefetch (); // not upstream
 			EndTimeStep (bRunning);
 			if (bVisible) {
-				if (bActive) UserInput ();
+				if (bActive || pConfig->CfgJoystickPrm.bBackground) UserInput (); // not upstream: controllers in the background (input-bindings)
+				else InputIdle ();
 				Render3DEnvironment();
 			}
 		}
@@ -1205,8 +1228,13 @@ void Orbiter::OnOptionChanged(DWORD cat, DWORD item)
 {
 	if (gclient)
 		gclient->clbkOptionChanged(cat, item);
-	if (pDI)
-		pDI->OptionChanged(cat, item);
+	if (m_input && cat == OPTCAT_JOYSTICK) { // not upstream (input-bindings): Config/Input changed on the Controls page
+		InputFrame rel;
+		m_input->Load ();
+		m_input->SetProfile (bSession && g_focusobj ? g_focusobj->ClassName() : "", &rel);
+		if (bSession) InputRelease (rel);
+		InputLog ();
+	}
 	if (g_psys)
 		g_psys->OptionChanged(cat, item);
 	if (g_pane)
@@ -1245,6 +1273,12 @@ void Orbiter::Freeze (bool bFreeze)
 Vessel *Orbiter::SetFocusObject (Vessel *vessel, bool setview)
 {
 	if (vessel == g_focusobj) return 0; // nothing to do
+
+	if (m_input && g_focusobj) { // not upstream (input-bindings): the old vessel gets its held keys back up
+		InputFrame rel;
+		m_input->Engine().ReleaseAll (rel);
+		InputRelease (rel, g_focusobj);
+	}
 
 	g_pfocusobj = g_focusobj;
 	g_focusobj = vessel;
@@ -2211,6 +2245,7 @@ const char *Orbiter::KeyState() const
 int Orbiter::UserInput ()
 {
 	static char buffer[256];
+	static char nokeys[256]; // not upstream (input-bindings): the keyboard while it doesn't go to the simulation
 	KeyData dod[10];
 	KeyboardDevice *didev;
 	DWORD i, dwItems = 10;
@@ -2223,6 +2258,8 @@ int Orbiter::UserInput ()
 	// skip keyboard if dialogs are open
 	if ((g_input && g_input->IsActive()) ||
 	    (g_select && g_select->IsActive())) skipkbd = true;
+
+	const InputFrame &inp = InputStep (skipkbd); // not upstream: controllers, and the keys and mouse buttons bound in Config/Input (input-bindings)
 
 	if ((didev = GetDInput()->GetKbdDevice())) {
 		ImGuiIO& io = ImGui::GetIO();
@@ -2243,6 +2280,8 @@ int Orbiter::UserInput ()
 		if (hr == DI_OK && !imguiWantsKeyboard)
 			for (i = 0; i < 256; i++)
 				simkstate[i] |= buffer[i];
+		const char *phys = (hr == DI_OK && !imguiWantsKeyboard ? buffer : nokeys); // not upstream (input-bindings)
+		for (i = 0; i < 256; i++) simkstate[i] |= inp.key[i];                     // not upstream: keys held by bindings
 		bool consume = BroadcastImmediateKeyboardEvent (simkstate);
 		if (!skipkbd && !consume) {
 			KbdInputImmediate_System (simkstate);
@@ -2254,26 +2293,27 @@ int Orbiter::UserInput ()
 		if ((hr == DIERR_NOTACQUIRED || hr == DIERR_INPUTLOST) && didev->Acquire() == DI_OK)
 			hr = didev->GetDeviceData (sizeof(KeyData), dod, &dwItems, 0);
 		if (hr == DI_OK && !imguiWantsKeyboard) {
-			BroadcastBufferedKeyboardEvent (buffer, dod, dwItems);
+			char evstate[256]; // not upstream (input-bindings): with the keys bindings hold, so a stick button's Shift works on the keyboard
+			for (i = 0; i < 256; i++) evstate[i] = buffer[i] | inp.key[i];
+			BroadcastBufferedKeyboardEvent (evstate, dod, dwItems);
 			if (!skipkbd) {
-				KbdInputBuffered_System (buffer, dod, dwItems);
-				if (bRunning) KbdInputBuffered_OnRunning (buffer, dod, dwItems);
+				KbdInputBuffered_System (evstate, dod, dwItems);
+				if (bRunning) KbdInputBuffered_OnRunning (evstate, dod, dwItems);
 			}
 		}
 		//if (hr == DI_BUFFEROVERFLOW) MessageBeep (-1);
+		if (!skipkbd) InputEvents (inp, phys); // not upstream: the bindings' keys, functions and MFD buttons (input-bindings)
 	}
 
 	for (i = 0; i < 15; i++) ctrlTotal[i] = ctrlKeyboard[i]; // update attitude requests
 
 	// joystick input
-	JoyState js;
-	if (pDI->PollJoystick (&js)) {
-		UserJoyInput_System (&js);                  // general joystick functions
-		if (bRunning) UserJoyInput_OnRunning (&js); // joystick vessel control functions
-		for (i = 0; i < 15; i++) ctrlTotal[i] += ctrlJoystick[i]; // update thrust requests
-	}
+	// not upstream (input-bindings): the bindings' channels, every frame
+	UserJoyInput_System (inp);                  // general joystick functions
+	if (bRunning) UserJoyInput_OnRunning (inp); // joystick vessel control functions
+	for (i = 0; i < 15; i++) ctrlTotal[i] += ctrlJoystick[i]; // update thrust requests
 
-	g_camera->UpdateMouse();
+	if (bActive) g_camera->UpdateMouse(); // not upstream: bActive, controllers may run in the background (input-bindings)
 
 	// apply manual attitude control
 	g_focusobj->ApplyUserAttitudeControls (ctrlTotal);
@@ -2315,6 +2355,185 @@ bool Orbiter::SendKbdImmediate(char kstate[256], bool onRunningOnly)
 		simkstate[i] |= kstate[i];
 	bAllowInput = true; // make sure the render window processes inputs
 	return true;
+}
+
+// ======================================================================
+// not upstream (input-bindings): controllers, and the keys and mouse buttons bound in Config/Input
+
+static uint16_t KstateMods (const char *ks)
+{
+	uint16_t m = 0;
+	if (ks[OAPI_KEY_LSHIFT] & 0x80)   m |= KMOD_LSHIFT;
+	if (ks[OAPI_KEY_RSHIFT] & 0x80)   m |= KMOD_RSHIFT;
+	if (ks[OAPI_KEY_LCONTROL] & 0x80) m |= KMOD_LCTRL;
+	if (ks[OAPI_KEY_RCONTROL] & 0x80) m |= KMOD_RCTRL;
+	if (ks[OAPI_KEY_LALT] & 0x80)     m |= KMOD_LALT;
+	if (ks[OAPI_KEY_RALT] & 0x80)     m |= KMOD_RALT;
+	return m;
+}
+
+const InputFrame &Orbiter::InputStep (bool skipkbd)
+{
+	InputEngine &e = m_input->Engine();
+	InputFrame rel;
+	e.SetMuted (false);
+	if (g_focusobj != m_inputFocus) { // a new focus vessel: its class's profile
+		m_inputFocus = g_focusobj;
+		m_input->SetProfile (g_focusobj->ClassName(), &rel);
+		InputRelease (rel);
+	}
+	e.SetView (g_camera->IsInternal());
+	e.SetSuspended (skipkbd, &rel); // a text box or selection menu: keys and functions wait
+	InputRelease (rel);
+	m_input->Poll (&rel);
+	InputRelease (rel);
+	InputLog ();
+	return e.Step (td.SysDT);
+}
+
+void Orbiter::InputIdle ()
+{
+	if (!m_input) return;
+	InputFrame rel;
+	m_input->Engine().SetMuted (true, &rel); // no focus: nothing acts, the controllers' state is kept current
+	InputRelease (rel);
+	m_input->Poll (&rel);
+	InputRelease (rel);
+	InputLog ();
+}
+
+void Orbiter::InputEvents (const InputFrame &inp, const char *phys)
+{
+	char ks[256];
+	for (const InputKeyEv &e : inp.ev) {
+		for (int i = 0; i < 256; i++) ks[i] = phys[i] | inp.key[i];
+		ks[OAPI_KEY_LSHIFT] = ks[OAPI_KEY_RSHIFT] = ks[OAPI_KEY_LCONTROL] = ks[OAPI_KEY_RCONTROL] = ks[OAPI_KEY_LALT] = ks[OAPI_KEY_RALT] = 0;
+		KeyData d = {e.key, e.down ? 0x80u : 0u, 0, 0};
+		if (e.key & IKEYFUNC_TAG) { // a function: the core's key chains take it (Keymap::IsLogicalKey)
+			KbdInputBuffered_System (ks, &d, 1);
+			if (bRunning) KbdInputBuffered_OnRunning (ks, &d, 1);
+			continue;
+		}
+		if (phys[e.key] & 0x80) continue; // the keyboard holds this key: it went down there and comes up there
+		if (e.mods & KMOD_SHIFT) ks[(e.mods & KMOD_SHIFT) == KMOD_RSHIFT ? OAPI_KEY_RSHIFT : OAPI_KEY_LSHIFT] = (char)0x80;
+		if (e.mods & KMOD_CTRL)  ks[(e.mods & KMOD_CTRL) == KMOD_RCTRL ? OAPI_KEY_RCONTROL : OAPI_KEY_LCONTROL] = (char)0x80;
+		if (e.mods & KMOD_ALT)   ks[(e.mods & KMOD_ALT) == KMOD_RALT ? OAPI_KEY_RALT : OAPI_KEY_LALT] = (char)0x80;
+		ks[e.key] = (e.down ? (char)0x80 : 0);
+		BroadcastBufferedKeyboardEvent (ks, &d, 1);
+		KbdInputBuffered_System (ks, &d, 1);
+		if (bRunning) KbdInputBuffered_OnRunning (ks, &d, 1);
+	}
+	if (bRunning && g_pane && !g_focusobj->CtrlLock()) // MFD buttons, as the panel's mouse clicks and Shift keys
+		for (const InputMfdEv &m : inp.mfd) {
+			if (m.btn >= 0) { if (g_pane->MFD (m.mfd)) g_pane->MFD (m.mfd)->ConsumeButton (m.btn, m.event); }
+			else if (m.btn == IMFD_PWR) g_pane->ToggleMFD_on (m.mfd);
+			else g_pane->MFDConsumeKeyBuffered (m.mfd, m.btn == IMFD_SEL ? OAPI_KEY_F1 : OAPI_KEY_GRAVE);
+		}
+}
+
+void Orbiter::InputRelease (InputFrame &rel, Vessel *v)
+{
+	if (!v) v = g_focusobj;
+	if (v && bSession) {
+		char ks[256];
+		memset (ks, 0, 256);
+		for (const InputKeyEv &e : rel.ev)
+			if (!e.down && !(e.key & IKEYFUNC_TAG)) v->ConsumeBufferedKey (e.key, false, ks);
+		if (v == g_focusobj && g_pane)
+			for (const InputMfdEv &m : rel.mfd)
+				if (m.btn >= 0 && m.event == PANEL_MOUSE_LBUP && g_pane->MFD (m.mfd)) g_pane->MFD (m.mfd)->ConsumeButton (m.btn, m.event);
+	}
+	rel.ev.clear();
+	rel.mfd.clear();
+}
+
+void Orbiter::InputSetChannel (const InputChanSet &s)
+{
+	Vessel *v = g_focusobj;
+	auto lvl = [&](double cur, double lo, double hi) { return std::max (lo, std::min (hi, s.mode == IAX_STEP ? cur + s.v : s.v)); };
+	if (s.chan == ICH_MAIN) { // as the throttle did: main set, retro off
+		v->SetThrusterGroupLevel (THGROUP_MAIN, lvl (v->GetThrusterGroupLevel (THGROUP_MAIN), 0.0, 1.0));
+		v->SetThrusterGroupLevel (THGROUP_RETRO, 0.0);
+	} else if (s.chan == ICH_MAINRETRO) {
+		double x = lvl (v->GetThrusterGroupLevel (THGROUP_MAIN) - v->GetThrusterGroupLevel (THGROUP_RETRO), -1.0, 1.0);
+		v->SetThrusterGroupLevel (THGROUP_MAIN, std::max (x, 0.0));
+		v->SetThrusterGroupLevel (THGROUP_RETRO, std::max (-x, 0.0));
+	} else if (s.chan == ICH_RETRO || s.chan == ICH_HOVER) {
+		THGROUP_TYPE g = (s.chan == ICH_RETRO ? THGROUP_RETRO : THGROUP_HOVER);
+		v->SetThrusterGroupLevel (g, lvl (v->GetThrusterGroupLevel (g), 0.0, 1.0));
+	} else if (s.chan >= ICH_MAIN1 && s.chan < ICH_ELEVTRIM) { // one engine of the group
+		THGROUP_TYPE g = (s.chan < ICH_RETRO1 ? THGROUP_MAIN : s.chan < ICH_HOVER1 ? THGROUP_RETRO : THGROUP_HOVER);
+		size_t n = (size_t)((s.chan - ICH_MAIN1) % 8);
+		const ThrustGroupSpec *tgs = v->GetThrusterGroup (g);
+		if (tgs && n < tgs->ts.size()) v->SetThrusterLevel (tgs->ts[n], lvl (tgs->ts[n]->level_permanent, 0.0, 1.0));
+	} else if (s.chan == ICH_ELEVTRIM || s.chan == ICH_RUDDERTRIM || s.chan == ICH_FLAPS) {
+		AIRCTRL_TYPE c = (s.chan == ICH_ELEVTRIM ? AIRCTRL_ELEVATORTRIM : s.chan == ICH_RUDDERTRIM ? AIRCTRL_RUDDERTRIM : AIRCTRL_FLAP);
+		v->SetControlSurfaceLevel (c, lvl (v->ctrlsurf_level[c].ptgt, s.chan == ICH_FLAPS ? 0.0 : -1.0, 1.0), false);
+	}
+}
+
+void Orbiter::InputSessionEnd ()
+{
+	if (!m_input) return;
+	InputFrame rel;
+	m_input->Engine().SetMuted (true, &rel); // until the next session
+	if (g_focusobj) InputRelease (rel);
+	m_inputFocus = NULL;
+}
+
+void Orbiter::InputLog ()
+{
+	if (m_input)
+		for (const std::string &m : m_input->Messages()) LOGOUT ("%s", m.c_str());
+}
+
+uint16_t Orbiter::InputMods ()
+{
+	char ks[256];
+	if (!GetKbdDevice() || GetKbdDevice()->GetDeviceState (256, ks) != DI_OK) return 0;
+	return KstateMods (ks);
+}
+
+bool Orbiter::InputKeyboardToSim ()
+{
+	ImGuiIO& io = ImGui::GetIO();
+	bool imgui = io.WantCaptureKeyboard && (pConfig->CfgUIPrm.MouseFocusMode == 0 || io.WantCaptureMouse); // as UserInput
+	return !imgui && !(g_input && g_input->IsActive()) && !(g_select && g_select->IsActive());
+}
+
+bool Orbiter::InputTakeKey (const QKeyEvent *ke, bool press)
+{
+	if (!m_input || !bSession) return false;
+	int ev = (int)ke->nativeScanCode() - 8;
+	InputEngine &e = m_input->Engine();
+	if (ke->isAutoRepeat()) return e.IsTakenKey (ev);
+	if (press && !InputKeyboardToSim()) return false;
+	return e.KeyEvent (ev, press, InputMods());
+}
+
+bool Orbiter::InputTakeMouse (int button, bool press)
+{
+	if (!m_input || !bSession) return false;
+	if (press && ImGui::GetIO().WantCaptureMouse) return false;
+	return m_input->Engine().MouseButton (button, press, InputMods());
+}
+
+bool Orbiter::InputTakeWheel (const QWheelEvent *we)
+{
+	if (!m_input || !bSession) return false;
+	uint16_t mods = InputMods();
+	InputEngine &e = m_input->Engine();
+	if (!e.IsBoundWheel (mods)) { m_wheelAcc[0] = m_wheelAcc[1] = 0; return false; }
+	int d[2] = { we->angleDelta().y(), we->angleDelta().x() };
+	for (int a = 0; a < 2; a++) {
+		m_wheelAcc[a] += d[a];
+		while (abs (m_wheelAcc[a]) >= 120) { // 120 per notch, high-resolution wheels in smaller steps
+			int sg = (m_wheelAcc[a] > 0 ? 1 : -1);
+			m_wheelAcc[a] -= 120*sg;
+			e.MouseWheel (a == 0 ? (sg > 0 ? 0 : 1) : (sg > 0 ? 2 : 3), mods);
+		}
+	}
+	return true; // a wheel bound with these modifiers is the bindings' only
 }
 
 //-----------------------------------------------------------------------------
@@ -2607,78 +2826,56 @@ void Orbiter::KbdInputBuffered_OnRunning (char *kstate, KeyData *dod, DWORD n)
 // Name: UserJoyInput_System ()
 // Desc: General user joystick input (also functional when paused)
 //-----------------------------------------------------------------------------
-void Orbiter::UserJoyInput_System (JoyState *js)
+void Orbiter::UserJoyInput_System (const InputFrame &inp)
 {
-	if (LOWORD (js->rgdwPOV[0]) != 0xFFFF) {
-		DWORD dir = js->rgdwPOV[0];
-		if (g_camera->IsExternal()) {  // use the joystick's coolie hat to rotate external camera
-			if (js->rgbButtons[2]) { // shift instrument panel
-				if      (dir <  5000 || dir > 31000) g_camera->Rotate (0,  td.SysDT);
-				else if (dir > 13000 && dir < 23000) g_camera->Rotate (0, -td.SysDT);
-				if      (dir >  4000 && dir < 14000) g_camera->Rotate (-td.SysDT, 0);
-				else if (dir > 22000 && dir < 32000) g_camera->Rotate ( td.SysDT, 0);
-			} else {
-				if      (dir <  5000 || dir > 31000) g_camera->AddTheta (-td.SysDT);
-				else if (dir > 13000 && dir < 23000) g_camera->AddTheta ( td.SysDT);
-				if      (dir >  4000 && dir < 14000) g_camera->AddPhi   ( td.SysDT);
-				else if (dir > 22000 && dir < 32000) g_camera->AddPhi   (-td.SysDT);
-			}
-		} else { // internal view
-			if (js->rgbButtons[2]) { // shift instrument panel
-				if      (dir <  5000 || dir > 31000) g_pane->ShiftPanel (0.0,  td.SysDT*pConfig->CfgLogicPrm.PanelScrollSpeed);
-				else if (dir > 13000 && dir < 23000) g_pane->ShiftPanel (0.0, -td.SysDT*pConfig->CfgLogicPrm.PanelScrollSpeed);
-				if      (dir >  4000 && dir < 14000) g_pane->ShiftPanel (-td.SysDT*pConfig->CfgLogicPrm.PanelScrollSpeed, 0.0);
-				else if (dir > 22000 && dir < 32000) g_pane->ShiftPanel ( td.SysDT*pConfig->CfgLogicPrm.PanelScrollSpeed, 0.0);
-			} else {                 // rotate camera
-				if      (dir <  5000 || dir > 31000) g_camera->Rotate (0,  td.SysDT, true);
-				else if (dir > 13000 && dir < 23000) g_camera->Rotate (0, -td.SysDT, true);
-				if      (dir >  4000 && dir < 14000) g_camera->Rotate (-td.SysDT, 0, true);
-				else if (dir > 22000 && dir < 32000) g_camera->Rotate ( td.SysDT, 0, true);
-			}
-		}
+	// not upstream (input-bindings): upstream's hat, as the Look and Pan channels (Pan: the hat with button 3)
+	double lx = inp.chan[ICH_LOOKX], ly = inp.chan[ICH_LOOKY], px = inp.chan[ICH_PANX], py = inp.chan[ICH_PANY];
+	if (g_camera->IsExternal()) {  // use the joystick's coolie hat to rotate external camera
+		if (py) g_camera->Rotate (0, py*td.SysDT);
+		if (px) g_camera->Rotate (-px*td.SysDT, 0);
+		if (ly) g_camera->AddTheta (-ly*td.SysDT);
+		if (lx) g_camera->AddPhi (lx*td.SysDT);
+	} else { // internal view
+		if (py) g_pane->ShiftPanel (0.0, py*td.SysDT*pConfig->CfgLogicPrm.PanelScrollSpeed);
+		if (px) g_pane->ShiftPanel (-px*td.SysDT*pConfig->CfgLogicPrm.PanelScrollSpeed, 0.0);
+		if (ly) g_camera->Rotate (0, ly*td.SysDT, true);
+		if (lx) g_camera->Rotate (-lx*td.SysDT, 0, true);
 	}
+	if (inp.chan[ICH_FOV]) IncFOV (inp.chan[ICH_FOV]*0.4*g_camera->Aperture()*td.SysDT); // as IncFOV/DecFOV
+	if (inp.chan[ICH_DIST] && g_camera->IsExternal()) g_camera->ShiftDist (inp.chan[ICH_DIST]*td.SysDT); // as TrackCamRetreat/Advance
 }
 
 //-----------------------------------------------------------------------------
 // Name: UserJoyInput_OnRunning ()
 // Desc: User joystick input query for running simulation (ship controls etc.)
 //-----------------------------------------------------------------------------
-void Orbiter::UserJoyInput_OnRunning (JoyState *js)
+void Orbiter::UserJoyInput_OnRunning (const InputFrame &inp)
 {
 	if (g_focusobj->CtrlLock()) return; // not upstream: a locked (destroyed) vessel takes no joystick input
 	if (bEnableAtt) {
-		if (js->lX) {
-			if (js->rgbButtons[2]) { // emulate rudder control
-				if (js->lX > 0) ctrlJoystick[THGROUP_ATT_YAWRIGHT] =   js->lX;
-				else            ctrlJoystick[THGROUP_ATT_YAWLEFT]  =  -js->lX;
-			} else {                 // rotation (bank)
-				if (js->lX > 0) ctrlJoystick[THGROUP_ATT_BANKRIGHT] =  js->lX;
-				else            ctrlJoystick[THGROUP_ATT_BANKLEFT]  = -js->lX;
-			}
-		}
-		if (js->lY) {                // rotation (pitch) or translation (vertical)
-			if (js->lY > 0) ctrlJoystick[THGROUP_ATT_PITCHUP]   = ctrlJoystick[THGROUP_ATT_UP]    =  js->lY;
-			else            ctrlJoystick[THGROUP_ATT_PITCHDOWN] = ctrlJoystick[THGROUP_ATT_DOWN]  = -js->lY;
-		}
-		if (js->lRz) {               // rotation (yaw) or translation (transversal)
-			if (js->lRz > 0) ctrlJoystick[THGROUP_ATT_YAWRIGHT] = ctrlJoystick[THGROUP_ATT_RIGHT] =  js->lRz;
-			else             ctrlJoystick[THGROUP_ATT_YAWLEFT]  = ctrlJoystick[THGROUP_ATT_LEFT]  = -js->lRz;
+		// not upstream (input-bindings): the channels, scaled to -1000..1000 and rounded as DirectInput did for the stick
+		static const struct { int ch, pos, neg; } att[] = {
+			{ICH_BANK,   THGROUP_ATT_BANKRIGHT, THGROUP_ATT_BANKLEFT},
+			{ICH_PITCH,  THGROUP_ATT_PITCHUP,   THGROUP_ATT_PITCHDOWN},
+			{ICH_YAW,    THGROUP_ATT_YAWRIGHT,  THGROUP_ATT_YAWLEFT},
+			{ICH_TRANSX, THGROUP_ATT_RIGHT,     THGROUP_ATT_LEFT},
+			{ICH_TRANSY, THGROUP_ATT_UP,        THGROUP_ATT_DOWN},
+			{ICH_TRANSZ, THGROUP_ATT_FORWARD,   THGROUP_ATT_BACK} };
+		for (auto &a : att) {
+			long v = (long)floor (-1000.0 + 0.5*(inp.chan[a.ch]+1.0)*2000.0 + 0.5); // DIPROP_RANGE -1000..1000, as the stick's LONG
+			if (v > 0) ctrlJoystick[a.pos] = (DWORD)v;
+			else if (v < 0) ctrlJoystick[a.neg] = (DWORD)-v;
 		}
 	}
 
-	if (pDI->joyprop.bThrottle) { // main thrusters via throttle control
-		long lZ4 = *(LONG*)(((BYTE*)js)+pDI->joyprop.ThrottleOfs) >> 3; // LONG: long is 64-bit on Linux
-		if (lZ4 != plZ4) {
-			if (ignorefirst) {
-				if (abs(lZ4-plZ4) > 10) ignorefirst = false;
-				else return;
-			}
-			double th = -0.008 * (plZ4 = lZ4);
-			if (th > 1.0) th = 1.0;
-			g_focusobj->SetThrusterGroupLevel (THGROUP_MAIN, th);
-			g_focusobj->SetThrusterGroupLevel (THGROUP_RETRO, 0.0);
-		}
-	}
+	// main thrusters via throttle control
+	// not upstream (input-bindings): every absolute channel, set when its input moves
+	for (const InputChanSet &s : inp.set) InputSetChannel (s);
+
+	// not upstream (input-bindings): toe brakes, unless a wheel brake key brakes fully
+	double bl = std::max (inp.chan[ICH_BRAKEL], inp.chan[ICH_BRAKES]), br = std::max (inp.chan[ICH_BRAKER], inp.chan[ICH_BRAKES]);
+	if (bl > 0 && !keymap.IsLogicalKey (simkstate, OAPI_LKEY_WheelbrakeLeft))  g_focusobj->SetWBrakeLevel (bl, 1, false);
+	if (br > 0 && !keymap.IsLogicalKey (simkstate, OAPI_LKEY_WheelbrakeRight)) g_focusobj->SetWBrakeLevel (br, 2, false);
 }
 
 bool Orbiter::MouseEvent (UINT event, DWORD state, DWORD x, DWORD y)
@@ -2755,22 +2952,31 @@ static DWORD MouseKeyState (const QSinglePointEvent *e)
 }
 
 // a logical key of the keymap: the desktop's shortcut for it is not passed on (WlShortcuts)
-static bool IsKeymapKey (const Keymap &keymap, KeyboardDevice *kbd, const QKeyEvent *e)
+static bool IsKeymapKey (const Keymap &keymap, KeyboardDevice *kbd, const QKeyEvent *e, const InputSystem *inp)
 {
 	char kstate[256];
 	DWORD dik = KeyboardDevice::DIKCode ((int)e->nativeScanCode() - 8);
-	if (!dik) return false;
 	if (kbd->GetDeviceState (256, kstate) != DI_OK) { // not acquired yet: any side of a held modifier
 		memset (kstate, 0, 256);
 		if (e->modifiers() & Qt::ShiftModifier)   kstate[OAPI_KEY_LSHIFT]   = kstate[OAPI_KEY_RSHIFT]   = (char)0x80;
 		if (e->modifiers() & Qt::ControlModifier) kstate[OAPI_KEY_LCONTROL] = kstate[OAPI_KEY_RCONTROL] = (char)0x80;
 		if (e->modifiers() & Qt::AltModifier)     kstate[OAPI_KEY_LALT]     = kstate[OAPI_KEY_RALT]     = (char)0x80;
 	}
+	if (inp && inp->Engine().IsBoundKey ((int)e->nativeScanCode() - 8, KstateMods (kstate))) return true; // not upstream: bound in Config/Input, F13 too (input-bindings)
+	if (!dik) return false;
 	for (int i = 0; i < LKEY_COUNT; i++) {
 		DWORD key = dik;
 		if (keymap.IsLogicalKey (key, kstate, i, false)) return true;
 	}
 	return false;
+}
+
+// not upstream (input-bindings): a Qt mouse button as Config/Input's number (1 left, 2 right, 3 middle, 4 back, 5 forward, ...)
+static int MouseButtonNumber (Qt::MouseButton b)
+{
+	int n = 1;
+	for (unsigned v = (unsigned)b; v > 1; v >>= 1) n++;
+	return n;
 }
 
 bool Orbiter::MsgProc (QWindow *hWnd, QEvent *event)
@@ -2781,12 +2987,13 @@ bool Orbiter::MsgProc (QWindow *hWnd, QEvent *event)
 	if ((event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) && GetKbdDevice()) {
 		QKeyEvent *ke = static_cast<QKeyEvent*>(event);
 		bool press = (event->type() == QEvent::KeyPress);
-		if (WlShortcutsKey (ke, press && IsKeymapKey (keymap, GetKbdDevice(), ke))) { // the desktop's shortcut (KDE Plasma): passed on
+		if (WlShortcutsKey (ke, press && IsKeymapKey (keymap, GetKbdDevice(), ke, m_input))) { // the desktop's shortcut (KDE Plasma): passed on
 			if (!ke->isAutoRepeat() && (ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)))
 				GetKbdDevice()->Unacquire(); // not upstream: the desktop takes the keyboard and its releases, as a deactivation did
 			return true;
 		}
-		GetKbdDevice()->KeyEvent ((int)ke->nativeScanCode() - 8, press); // xkb keycode -> evdev
+		if (!InputTakeKey (ke, press)) // not upstream: a key bound in Config/Input acts there (input-bindings)
+			GetKbdDevice()->KeyEvent ((int)ke->nativeScanCode() - 8, press); // xkb keycode -> evdev
 	}
 	if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut)
 		WlShortcutsReset ();
@@ -2802,6 +3009,11 @@ bool Orbiter::MsgProc (QWindow *hWnd, QEvent *event)
 	case QEvent::FocusOut:
 		bActive = (event->type() == QEvent::FocusIn);
 		if (!bActive && GetKbdDevice()) GetKbdDevice()->Unacquire(); // DISCL_FOREGROUND: the device lets go with the focus
+		if (!bActive && m_input && bSession) { // not upstream (input-bindings): keys and mouse buttons bound in Config/Input let go too
+			InputFrame rel;
+			m_input->Engine().ReleaseKeysMouse (rel);
+			InputRelease (rel);
+		}
 		return false;
 
 	// *** User Keyboard Input ***
@@ -2818,6 +3030,7 @@ bool Orbiter::MsgProc (QWindow *hWnd, QEvent *event)
 	case QEvent::MouseButtonPress:
 	case QEvent::MouseButtonRelease: {
 		QMouseEvent *me = static_cast<QMouseEvent*>(event);
+		if (InputTakeMouse (MouseButtonNumber (me->button()), event->type() == QEvent::MouseButtonPress)) return true; // not upstream (input-bindings)
 		UINT uMsg;
 		if      (me->button() == Qt::LeftButton)  uMsg = (event->type() == QEvent::MouseButtonPress ? WM_LBUTTONDOWN : WM_LBUTTONUP);
 		else if (me->button() == Qt::RightButton) uMsg = (event->type() == QEvent::MouseButtonPress ? WM_RBUTTONDOWN : WM_RBUTTONUP);
@@ -2836,6 +3049,7 @@ bool Orbiter::MsgProc (QWindow *hWnd, QEvent *event)
 		}
 
 		QWheelEvent *we = static_cast<QWheelEvent*>(event);
+		if (InputTakeWheel (we)) return true; // not upstream (input-bindings)
 		int x = (int)(we->position().x()*dpr); // Qt passes client coordinates, the Win32 message passed screen coordinates
 		int y = (int)(we->position().y()*dpr);
 		DWORD state = MAKEWPARAM (MouseKeyState(we), (WORD)(short)we->angleDelta().y()); // HIWORD: wheel delta, 120 per notch

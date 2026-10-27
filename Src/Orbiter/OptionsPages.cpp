@@ -18,6 +18,7 @@
 #include "ResDialog.h"
 #include "Util.h"
 #include "TabStream.h" // not upstream
+#include "TabControls.h" // not upstream (input-bindings)
 #include <QAbstractButton>
 #include <QComboBox>
 #include <QListWidget>
@@ -114,7 +115,7 @@ void OptionsPageContainer::CreatePages()
 	AddPage(new OptionsPage_Instrument(this));
 	AddPage(new OptionsPage_Vessel(this));
 	parent = AddPage(new OptionsPage_UI(this));
-	AddPage(new OptionsPage_Joystick(this), parent);
+	AddPage(new OptionsPage_Controls(this), parent); // not upstream (input-bindings): was OptionsPage_Joystick
 	AddPage(new OptionsPage_CelSphere(this));
 	parent = AddPage(new OptionsPage_VisHelper(this));
 	AddPage(new OptionsPage_Planetarium(this), parent);
@@ -1100,157 +1101,7 @@ BOOL OptionsPage_UI::OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, Q
 
 // ======================================================================
 
-OptionsPage_Joystick::OptionsPage_Joystick(OptionsPageContainer* container)
-	: OptionsPage(container)
-{
-}
-
-// ----------------------------------------------------------------------
-
-int OptionsPage_Joystick::ResourceId() const
-{
-	return IDD_OPTIONS_JOYSTICK;
-}
-
-// ----------------------------------------------------------------------
-
-const char* OptionsPage_Joystick::Name() const
-{
-	const char* name = "Joystick";
-	return name;
-}
-
-// ----------------------------------------------------------------------
-
-const HELPCONTEXT* OptionsPage_Joystick::HelpContext() const
-{
-	static HELPCONTEXT hcontext = g_pOrbiter->DefaultHelpPage("/tab_joystick.htm");
-	return &hcontext;
-}
-
-// ----------------------------------------------------------------------
-
-void OptionsPage_Joystick::UpdateControls(QWidget *hPage)
-{
-	char cbuf[256];
-
-	DlgItem<QComboBox>(hPage, IDC_OPT_JOY_DEVICE)->setCurrentIndex((int)Cfg()->CfgJoystickPrm.Joy_idx);
-	DlgItem<QComboBox>(hPage, IDC_OPT_JOY_THROTTLE)->setCurrentIndex((int)Cfg()->CfgJoystickPrm.ThrottleAxis);
-	SetCheck(hPage, IDC_OPT_JOY_INIT, Cfg()->CfgJoystickPrm.bThrottleIgnore);
-
-	int sat = Cfg()->CfgJoystickPrm.ThrottleSaturation / 10;
-	oapiSetGaugePos(oapiResDlgItem(hPage, IDC_OPT_JOY_SAT), sat);
-	sprintf(cbuf, "%d", sat);
-	oapiSetDlgItemText(hPage, IDC_OPT_JOY_STATIC1, cbuf);
-
-	int dz = Cfg()->CfgJoystickPrm.Deadzone / 10;
-	oapiSetGaugePos(oapiResDlgItem(hPage, IDC_OPT_JOY_DEAD), dz);
-	sprintf(cbuf, "%d", dz);
-	oapiSetDlgItemText(hPage, IDC_OPT_JOY_STATIC2, cbuf);
-
-	int residJoystick[] = {
-		IDC_OPT_JOY_THROTTLE, IDC_OPT_JOY_INIT, IDC_OPT_JOY_SAT, IDC_OPT_JOY_DEAD,
-		IDC_OPT_JOY_STATIC1, IDC_OPT_JOY_STATIC2, IDC_OPT_JOY_STATIC3, IDC_OPT_JOY_STATIC4
-	};
-	bool enable = Cfg()->CfgJoystickPrm.Joy_idx > 0;
-	for (int i = 0; i < std::size(residJoystick); i++) {
-		EnableItem(hPage, residJoystick[i], enable);
-	}
-}
-
-// ----------------------------------------------------------------------
-
-BOOL OptionsPage_Joystick::OnInitDialog(QWidget *hPage)
-{
-	OptionsPage::OnInitDialog(hPage);
-
-	DWORD ndev;
-	JoyDeviceInstance* joylist;
-	g_pOrbiter->GetDInput()->GetJoysticks(&joylist, &ndev);
-
-	DlgItem<QComboBox>(hPage, IDC_OPT_JOY_DEVICE)->clear();
-	oapiComboAddString(DlgItem<QComboBox>(hPage, IDC_OPT_JOY_DEVICE), "<Disabled>");
-	for (DWORD i = 0; i < ndev; i++)
-		oapiComboAddString(DlgItem<QComboBox>(hPage, IDC_OPT_JOY_DEVICE), (joylist[i].tszProductName));
-
-	const char* thmode[4] = { "<Keyboard only>", "Z-axis", "Slider 0", "Slider 1" };
-	DlgItem<QComboBox>(hPage, IDC_OPT_JOY_THROTTLE)->clear();
-	for (int i = 0; i < std::size(thmode); i++)
-		oapiComboAddString(DlgItem<QComboBox>(hPage, IDC_OPT_JOY_THROTTLE), thmode[i]);
-
-	GAUGEPARAM gp = { 0, 1000, GAUGEPARAM::LEFT, GAUGEPARAM::BLACK };
-	oapiSetGaugeParams(oapiResDlgItem(hPage, IDC_OPT_JOY_SAT), &gp);
-	oapiSetGaugeParams(oapiResDlgItem(hPage, IDC_OPT_JOY_DEAD), &gp);
-
-	return TRUE;
-}
-
-// ----------------------------------------------------------------------
-
-BOOL OptionsPage_Joystick::OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, QWidget *hCtrl)
-{
-	switch (ctrlId) {
-	case IDC_OPT_JOY_DEVICE:
-		if (notification == RESN_SELCHANGE) {
-			DWORD idx = DlgItem<QComboBox>(hPage, IDC_OPT_JOY_DEVICE)->currentIndex();
-			Cfg()->CfgJoystickPrm.Joy_idx = idx;
-			g_pOrbiter->OnOptionChanged(OPTCAT_JOYSTICK, OPTITEM_JOYSTICK_DEVICE);
-			UpdateControls(hPage);
-			return FALSE;
-		}
-		break;
-	case IDC_OPT_JOY_THROTTLE:
-		if (notification == RESN_SELCHANGE) {
-			DWORD axis = DlgItem<QComboBox>(hPage, IDC_OPT_JOY_THROTTLE)->currentIndex();
-			Cfg()->CfgJoystickPrm.ThrottleAxis = axis;
-			g_pOrbiter->OnOptionChanged(OPTCAT_JOYSTICK, OPTITEM_JOYSTICK_PARAM);
-			return FALSE;
-		}
-		break;
-	case IDC_OPT_JOY_INIT:
-		if (notification == RESN_CLICKED) {
-			bool check = (IsChecked(hPage, IDC_OPT_JOY_INIT));
-			Cfg()->CfgJoystickPrm.bThrottleIgnore = check;
-			break;
-		}
-		break;
-	}
-	return TRUE;
-}
-
-// ----------------------------------------------------------------------
-
-BOOL OptionsPage_Joystick::OnHScroll(QWidget *hPage, int ctrlId, int request, int pos)
-{
-	int val;
-	switch (ctrlId) {
-	case IDC_OPT_JOY_SAT:
-		switch (request) {
-		case GAUGE_THUMBTRACK:
-		case GAUGE_LINEDEC:
-		case GAUGE_LINEINC:
-			val = pos;
-			Cfg()->CfgJoystickPrm.ThrottleSaturation = val * 10;
-			UpdateControls(hPage);
-			g_pOrbiter->OnOptionChanged(OPTCAT_JOYSTICK, OPTITEM_JOYSTICK_PARAM);
-			return 0;
-		}
-		break;
-	case IDC_OPT_JOY_DEAD:
-		switch (request) {
-		case GAUGE_THUMBTRACK:
-		case GAUGE_LINEDEC:
-		case GAUGE_LINEINC:
-			val = pos;
-			Cfg()->CfgJoystickPrm.Deadzone = val * 10;
-			UpdateControls(hPage);
-			g_pOrbiter->OnOptionChanged(OPTCAT_JOYSTICK, OPTITEM_JOYSTICK_PARAM);
-			return 0;
-		}
-		break;
-	}
-	return FALSE;
-}
+// OptionsPage_Joystick left out: OptionsPage_Controls (TabControls.cpp, input-bindings)
 
 // ======================================================================
 

@@ -297,8 +297,8 @@ TEST_CASE("DlgCtrl gauge in a dialog template", "[resdialog][dlgctrl]")
 {
 	App();
 	oapiRegisterCustomControls (nullptr);
-	QWidget *dlg = oapiCreateResDialog (nullptr, IDD_OPTIONS_JOYSTICK, nullptr);
-	GaugeCtrl *g = DlgItem<GaugeCtrl> (dlg, IDC_OPT_JOY_SAT);
+	QWidget *dlg = oapiCreateResDialog (nullptr, IDD_OPTIONS_CELSPHERE, nullptr);
+	GaugeCtrl *g = DlgItem<GaugeCtrl> (dlg, IDC_OPT_CSP_BGBRIGHTNESS);
 	REQUIRE(g);
 	GAUGEPARAM gp = {0, 10, GAUGEPARAM::LEFT, GAUGEPARAM::BLACK};
 	oapiSetGaugeParams (g, &gp);

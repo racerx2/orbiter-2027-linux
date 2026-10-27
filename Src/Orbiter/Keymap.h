@@ -22,6 +22,8 @@
 #define KMOD_RALT   0x2000
 #define KMOD_ALT    (KMOD_LALT|KMOD_RALT)
 
+#define IKEYFUNC_TAG 0x10000u // not upstream: a binding's function press in the buffered key stream, IKEYFUNC_TAG | OAPI_LKEY_* (input-bindings)
+
 class Keymap {
 public:
 	Keymap ();
@@ -43,6 +45,11 @@ public:
 	// (kstate only used for modifier keys)
 	// if clearkey == true then key is set to 0 on return, if a match is found
 
+	// not upstream (input-bindings): the functions' names, and the functions bindings hold
+	static int FuncByName (const char *name);
+	static const char *FuncName (int lfunc);
+	void SetHeld (const unsigned char *h) { held = h; }
+
 private:
 	bool IsMatchingModifier (char *kstate, WORD key) const;
 
@@ -52,6 +59,8 @@ private:
 	WORD func[LKEY_COUNT];
 	// list of logical function keys
 	// LOBYTE: key id; HIBYTE: modifier (see modifier list)
+
+	const unsigned char *held = nullptr; // not upstream: functions held by bindings this frame
 };
 
 #endif // !__KEYMAP_H
