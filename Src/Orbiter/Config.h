@@ -362,6 +362,7 @@ public:
 	// Return full path for config file name (adds ".cfg" to name)
 	char *ConfigPathNoext (const char *name);
 	// Return full path for config file name (no file extension added)
+	char *ConfigPathShared (const char *name) const; // not upstream: ConfigPath without the Config/Legacy/ choice (drop-in parts)
 	char *MeshPath   (const char *name);
 	// Return full path for mesh file name
 	char *TexPath    (const char *name, const char *ext = 0);
@@ -385,6 +386,8 @@ public:
 	bool bEchoAll;          // echo all configuration parameters (or only non-default ones)?
 	RECT rLaunchpad;        // launchpad dialog position
 	bool bPlanetTexCheck;   // not upstream: offer missing planet textures at launch (TexInstall.cpp)
+	bool bKernelCheck;      // not upstream: offer the SPICE kernels at launch (KernelInstall.cpp)
+	bool bSpice;            // not upstream: the SPICE kernels are installed, so the body cfgs in Config/ are used, else those in Config/Legacy/
 	bool bTileStream;       // not upstream: stream planet tiles into their tile folders (TileStream.cpp)
 	bool bTileStreamOffline;// not upstream: the tile stream makes no requests
 	int  TileStreamCacheMB; // not upstream: size cap of the streamed tiles, 0 = none
@@ -463,6 +466,7 @@ private:
 	bool GetVector (std::istream &is, const char *category, Vector &val);
 
 	mutable char cfgpath[256];  // buffer for creating full path names
+	bool LegacyPath (const char *name, const char *ext) const; // not upstream: Config/Legacy/<name> into cfgpath while the SPICE kernels are missing
 	char mshpath[256];
 	char texpath[256];
 	char htxpath[256];

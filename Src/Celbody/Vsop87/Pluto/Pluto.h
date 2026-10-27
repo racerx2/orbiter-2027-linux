@@ -6,7 +6,7 @@
 #define __VSOP87_PLUTO
 
 #include "../../common/psrmodule.h"
-#include "../../common/layeratm.h"
+#include "PlutoAtm.h"
 
 // ======================================================================
 // class Pluto: interface

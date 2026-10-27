@@ -22,3 +22,7 @@ add_subdirectory(Styx) # not upstream: the Pluto system
 add_subdirectory(Nix) # not upstream: the Pluto system
 add_subdirectory(Kerberos) # not upstream: the Pluto system
 add_subdirectory(Hydra) # not upstream: the Pluto system
+
+if(SPICE_BUILD)
+    add_subdirectory(SPICE) # not upstream: the legacy modules above are built too, they run until the SPICE kernels are installed
+endif()

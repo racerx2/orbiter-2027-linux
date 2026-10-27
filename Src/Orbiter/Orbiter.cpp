@@ -61,6 +61,7 @@
 #include "WlShortcuts.h"
 #include "SleepWatch.h"
 #include "TileStream.h" // not upstream
+#include "KernelInstall.h" // not upstream
 #include <filesystem>
 
 static std::function<std::string (const std::string &)> StreamBodyDir (class Config *cfg); // not upstream: TileStream.cpp tile folders
@@ -400,6 +401,7 @@ int Orbiter::Create (void *hInstance)
 	// parameter manager - parses from master config file
 	hInst = hInstance;
 	pConfig->Load(MasterConfigFile);
+	pConfig->bSpice = KernelsInstalled (pConfig); // not upstream: SPICE or the built-in series for the celestial bodies
 	strcpy (cfgpath, pConfig->CfgDirPrm.ConfigDir);   cfglen = strlen (cfgpath);
 
 	if ((hr = pDI->Create (hInstance)) != DI_OK) return hr;
@@ -795,6 +797,7 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 
 	if (gclient && pConfig->bTileStream) // not upstream: the planets look for their tile folders when they are made
 		TileStream::PrepareDirs (oapiResolvePath (ConfigPath ("TileStream")), StreamBodyDir (pConfig));
+	LOGOUT (pConfig->bSpice ? "Celestial bodies: SPICE kernels" : "Celestial bodies: built-in series (SPICE kernels not installed)"); // not upstream
 	if (!InitializeWorld (pState->Solsys())) {
 		LOGOUT_ERR_FILENOTFOUND_MSG(g_pOrbiter->ConfigPath (pState->Solsys()), "while initialising solar system %s", pState->Solsys());
 		TerminateOnError();

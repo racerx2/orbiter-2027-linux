@@ -116,6 +116,7 @@ add_custom_target(CopyData ALL
 	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_SOURCE_DIR}/Script/ ${CMAKE_BINARY_DIR}/Script # not upstream: copynewer.cmake keeps files changed in the build tree
 	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_SOURCE_DIR}/Config/ ${CMAKE_BINARY_DIR}/Config # not upstream: copynewer.cmake keeps files changed in the build tree
 	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_SOURCE_DIR}/GravityModels/ ${CMAKE_BINARY_DIR}/GravityModels # not upstream: copynewer.cmake keeps files changed in the build tree
+	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_SOURCE_DIR}/Kernels/ ${CMAKE_BINARY_DIR}/Kernels # not upstream: copynewer.cmake keeps files changed in the build tree
 	COMMAND ${ORBITER_COPY_NEWER} ${CMAKE_SOURCE_DIR}/Flights/ ${CMAKE_BINARY_DIR}/Flights # not upstream: copynewer.cmake keeps files changed in the build tree
 	COMMAND ${CMAKE_COMMAND} -E make_directory ${ORBITER_BINARY_SDK_DIR}/lib/Lua
 )
@@ -137,6 +138,10 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/pdftex_fix.sh.in ${PDFTEX_CMD} 
 
 set(OrbiterTgt Orbiter)
 set(ORBITER_LIB "") # no import library on ELF: modules bind the exe's exported oapi* symbols at dlopen
+
+# =====================================================================================
+# Build Spice module for celbodies. If false, build legacy (VSOP87/ELP82,etc)
+set(SPICE_BUILD TRUE)
 
 # =====================================================================================
 # Configure Orbiter.cfg for externally installed planet textures
@@ -263,7 +268,7 @@ endfunction()
 
 # Installation
 # BinAssets left out: it only holds msvcr71/msvcp71.dll, the Windows runtime for old add-ons
-install(DIRECTORY Scenarios Textures Meshes Config GravityModels Script Flights
+install(DIRECTORY Scenarios Textures Meshes Config GravityModels Kernels Script Flights
 	DESTINATION ${ORBITER_INSTALL_ROOT_DIR}
 	REGEX "/Textures/[^/]+/Archive$" EXCLUDE # not upstream: a local planet texture archive is never installed or packed
 )

@@ -12,16 +12,7 @@ static const PsrPart PARTS[] = {
 	{"Config/Pluto/Data/PlutoOff.psr", 1.255364767398755},
 };
 
-// the N2 atmosphere from New Horizons (Gladstone et al. 2016, Hinson et al. 2017): geometric altitude [m], temperature [K]
-static const AtmNode ATM[] = {
-	{  0.0,  38.0}, // boundary layer
-	{  4e3,  38.0}, // inversion
-	{ 14e3, 100.0},
-	{ 30e3, 108.0}, // stratopause
-	{200e3,  74.0},
-};
-static const double ATM_RAD = 1.1883e6; // Size in Pluto.cfg [m]
-static const LayerAtm atm (ATM, 5, 1.15, 296.8, ATM_RAD, 869.3261e9/(ATM_RAD*ATM_RAD)); // surface pressure [Pa], N2 [J/(kg K)], GM [m^3/s^2]
+static const LayerAtm atm (PLUTO_ATM, PLUTO_ATM_N, PLUTO_ATM_P0, PLUTO_ATM_R, PLUTO_ATM_RAD, PLUTO_ATM_G0); // PlutoAtm.h, shared with PlutoAtm2017
 
 // ======================================================================
 // class Pluto: implementation

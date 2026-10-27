@@ -40,6 +40,10 @@ add_dependencies(Sol
 	${CELBODY}Config
 )
 
+add_subdirectory( # not upstream: the atmosphere model, also for the spice module
+	Atmosphere
+)
+
 set_target_properties(${CELBODY} ${CELBODY}Config
 	PROPERTIES
 	FOLDER Celbody

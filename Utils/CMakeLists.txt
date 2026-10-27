@@ -9,6 +9,7 @@ add_subdirectory(Pltex)
 add_subdirectory(Shipedit)
 add_subdirectory(texpack)
 add_subdirectory(bldgtex) # not upstream: the streamed buildings' textures
+add_subdirectory(SpiceSubset) # not upstream: makes the Kerberos and Styx kernel
 #add_subdirectory(tileedit/qt)
 
 # We do this as an external project to invoke x64 toolchain

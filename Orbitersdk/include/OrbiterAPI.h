@@ -6511,6 +6511,7 @@ OAPIFUNC bool oapiReadScenario_nextline (FILEHANDLE scn, char *&line);
 	* \note String values can contain internal whitespace.
 	*/
 OAPIFUNC bool oapiReadItem_string (FILEHANDLE f, char *item, char *string);
+inline bool oapiReadItem_string (FILEHANDLE f, const char *item, char *string) { return oapiReadItem_string (f, (char*)item, string); } // not upstream: a string literal tag, item is only read
 
 	/**
 	* \brief Read the value of a tag from a configuration file.

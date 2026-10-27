@@ -444,3 +444,110 @@ TEST_CASE ("Partial archives of packs no longer listed and the work folder are r
 	CHECK (fs::exists (t.tex / "Moon" / "Archive" / ".Elev.tree.01234567.partial")); // still listed: it resumes
 	CHECK_FALSE (fs::exists (t.tex / ".texinstall"));
 }
+
+TEST_CASE ("The kernel list groups the parts of each kernel", "[TexPack]")
+{
+	Tmp t;
+	std::string cfg = (t.root / "kernels.cfg").string(), m (32, 'a');
+	KernelPackList list;
+	std::string err;
+
+	Write (cfg, "; comment\nURL = file:///k/\na.bsp.01 a.bsp 4 6 2 " + m + "\na.bsp.02 a.bsp 2 6 2 " + m + " ; note\nb.bsp.01 b.bsp 3 3 1 " + m + "\n");
+	REQUIRE (KernelPackRead (cfg, list, err));
+	CHECK (list.url == "file:///k");
+	REQUIRE (list.file.size() == 2);
+	CHECK (list.file[0].zip == "a.bsp");
+	CHECK (list.file[0].rawsize == 6);
+	REQUIRE (list.file[0].parts.size() == 2);
+	CHECK (list.file[0].parts[1].name == "a.bsp.02");
+	CHECK (list.file[0].parts[1].size == 2);
+	CHECK (list.file[1].zip == "b.bsp");
+
+	Write (cfg, "URL = u\na.bsp.01 a.bsp 4 6 2 " + m + "\n");
+	CHECK_FALSE (KernelPackRead (cfg, list, err));
+	CHECK (err == "a.bsp: parts missing");
+	Write (cfg, "URL = u\na.bsp.01 a.bsp 4 6 2 " + m + "\na.bsp.03 a.bsp 2 6 2 " + m + "\n");
+	CHECK_FALSE (KernelPackRead (cfg, list, err));
+	CHECK (err == "line 3: bad part");
+	Write (cfg, "URL = u\nx.01 a.bsp 6 6 1 " + m + "\n");
+	CHECK_FALSE (KernelPackRead (cfg, list, err));
+	Write (cfg, "URL = u\n.a.bsp.01 .a.bsp 6 6 1 " + m + "\n");
+	CHECK_FALSE (KernelPackRead (cfg, list, err));
+	Write (cfg, "URL = u\na.bsp.01 ../a.bsp 6 6 1 " + m + "\n");
+	CHECK_FALSE (KernelPackRead (cfg, list, err));
+	Write (cfg, "a.bsp.01 a.bsp 6 6 1 " + m + "\n");
+	CHECK_FALSE (KernelPackRead (cfg, list, err));
+	CHECK (err.find ("no URL") == 0);
+}
+
+TEST_CASE ("The shipped kernel list has orbiter.bsp and kerberos_styx.bsp in our release", "[TexPack]")
+{
+	KernelPackList list;
+	std::string err;
+	REQUIRE (KernelPackRead ("Config/KernelPacks.cfg", list, err));
+	CHECK (list.url.find ("https://github.com/racerx2/Orbiter-linux-orbital-bodies-textures/releases/download/") == 0);
+	REQUIRE (list.file.size() == 2);
+	CHECK (list.file[0].zip == "orbiter.bsp");
+	CHECK (list.file[0].rawsize == 1637029888);
+	CHECK (list.file[1].zip == "kerberos_styx.bsp");
+	for (const TexPack &k : list.file)
+		for (const TexPart &p : k.parts) CHECK (p.size <= 1073741824); // GitHub takes release files under 2 GiB
+}
+
+TEST_CASE ("A kernel downloads in parts into the kernel folder and resumes", "[TexPack]")
+{
+	int argc = 1;
+	char arg0[] = "TexPack.Test", *argv[] = {arg0, nullptr};
+	QCoreApplication app (argc, argv);
+
+	Tmp t;
+	fs::path srv = t.root / "srv", kdir = t.root / "Kernels", file = kdir / "a.bsp";
+	std::string data = Pattern (700000), err, kd = kdir.string();
+	TexPack k;
+	k.zip = "a.bsp";
+	k.rawsize = k.zipsize = data.size();
+	size_t ofs = 0;
+	for (size_t n : {300000, 300000, 100000}) {
+		TexPart p;
+		p.name = "a.bsp.0" + std::to_string (k.parts.size() + 1);
+		p.size = n;
+		Write (srv / p.name, data.substr (ofs, n));
+		REQUIRE (TexPackMd5 ((srv / p.name).string(), p.md5));
+		k.parts.push_back (p);
+		ofs += n;
+	}
+	k.files = k.parts.size();
+	KernelPackList list;
+	list.url = QUrl::fromLocalFile (QString::fromStdString (srv.string())).toString().toStdString();
+	list.file = {k};
+	CHECK_FALSE (KernelPackPresent (kd, k));
+
+	TexPack bad = k;
+	bad.parts[1].md5 = std::string (32, '0');
+	CHECK_FALSE (KernelPackInstall (list, bad, kd, nullptr, err));
+	CHECK (err == "a.bsp.02: md5 mismatch");
+	CHECK_FALSE (fs::exists (file));
+	CHECK (KernelPackResume (kd, k) == 300000);
+	CHECK_FALSE (fs::exists (kdir / ".kernelinstall"));
+
+	CHECK_FALSE (KernelPackInstall (list, k, kd, [](uint64_t d) { return d < 450000; }, err));
+	CHECK (err == "cancelled");
+	CHECK (KernelPackResume (kd, k) == 300000);
+
+	Write (kdir / ".a.bsp.0123abcd.partial", "older release");
+	Write (kdir / ".b.bsp.0123abcd.partial", "another kernel");
+	fs::remove (srv / "a.bsp.01"); // a resumed install doesn't fetch it again
+	uint64_t first = 0, last = 0;
+	REQUIRE (KernelPackInstall (list, k, kd, [&](uint64_t d) { if (!first) first = d; last = d; return true; }, err));
+	CHECK (Read (file) == data);
+	CHECK (first > 300000);
+	CHECK (last == data.size());
+	CHECK (KernelPackPresent (kd, k));
+	CHECK (KernelPackResume (kd, k) == 0);
+	CHECK_FALSE (fs::exists (kdir / ".kernelinstall"));
+	CHECK_FALSE (fs::exists (kdir / ".a.bsp.0123abcd.partial"));
+	CHECK (fs::exists (kdir / ".b.bsp.0123abcd.partial"));
+
+	CHECK_FALSE (KernelPackInstall (list, k, kd, nullptr, err)); // an installed kernel is never replaced
+	CHECK (err.find ("is in the way") != std::string::npos);
+}

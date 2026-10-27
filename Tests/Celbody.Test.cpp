@@ -79,6 +79,33 @@ bool oapiReadItem_float (FILEHANDLE f, const char *item, double &d) // not upstr
 	return false;
 }
 
+// the spice module reads names (Body = PLUTO BARYCENTER): the value after '=', comment and outer blanks cut
+bool oapiReadItem_string (FILEHANDLE f, char *item, char *string)
+{
+	if (!f) return false;
+	std::ifstream ifs (oapiResolvePath (((std::string*)f)->c_str()));
+	std::string line;
+	size_t n = strlen (item);
+	while (std::getline (ifs, line)) {
+		line = line.substr (0, line.find (';'));
+		size_t p = line.find_first_not_of (" \t");
+		if (p == std::string::npos || strncasecmp (line.c_str()+p, item, n)) continue;
+		size_t q = line.find_first_not_of (" \t", p+n);
+		if (q == std::string::npos || line[q] != '=') continue;
+		std::string v = line.substr (q+1);
+		size_t a = v.find_first_not_of (" \t\r"), b = v.find_last_not_of (" \t\r");
+		if (a == std::string::npos) return false;
+		strcpy (string, v.substr (a, b-a+1).c_str());
+		return true;
+	}
+	return false;
+}
+
+void oapiWriteLog (const char *line)
+{
+	printf ("%s\n", line);
+}
+
 void oapiGetGlobalPos (OBJHANDLE hObj, VECTOR3 *pos)
 {
 	*pos = _V(AU, 0, 0);
@@ -126,6 +153,7 @@ CELBODY2::CELBODY2 (OBJHANDLE hCBody): CELBODY ()
 
 CELBODY2::~CELBODY2 () {}
 void CELBODY2::clbkInit (FILEHANDLE cfg) { CELBODY::clbkInit (cfg); } // atmosphere modules are loaded by the test itself
+bool CELBODY2::LoadAtmosphereModule (const char *fname) { return false; }
 double CELBODY2::SidRotPeriod () const { return 86164.1; }
 
 ATMOSPHERE::ATMOSPHERE (CELBODY2 *body) { cbody = body; }
@@ -147,7 +175,7 @@ struct CelbodyModule {
 
 	CelbodyModule (const char *name, const char *dir = "Modules/Celbody/")
 	{
-		cfg = std::string ("Config/") + name + ".cfg";
+		cfg = std::string ("Config/Legacy/") + name + ".cfg"; // the built-in series' cfgs (the SPICE set is in Config/)
 		std::string path = std::string (dir) + name + ".so";
 		hDLL = dlopen (path.c_str(), RTLD_NOW);
 		if (!hDLL) { printf ("%s\n", dlerror()); return; }
@@ -684,6 +712,8 @@ TEST_CASE("Layered atmosphere modules fall smoothly to their limit", "[celbody]"
 		{"Uranus",  "UranusAtm1986",  2600e3, 53.0, 800.0},
 		{"Neptune", "NeptuneAtm1989", 1800e3, 52.0, 750.0},
 		{"Io",      "IoAtm2007",      120e3,  115.0, 115.0},
+		{"Pluto",   "PlutoAtm2017",   600e3,  38.0, 108.0},
+		{"Triton",  "TritonAtm2022",  600e3,  37.2, 100.0},
 	};
 	for (const LayerCase &c : cases) {
 		INFO(c.module);
@@ -718,5 +748,106 @@ TEST_CASE("Layered atmosphere modules fall smoothly to their limit", "[celbody]"
 		}
 		destroy (atm);
 		dlclose (hAtm);
+	}
+}
+
+TEST_CASE("The Pluto and Triton atmosphere modules equal the ephemeris modules' own", "[celbody]")
+{
+	static const LayerCase cases[] = {{"Pluto", "PlutoAtm2017"}, {"Triton", "TritonAtm2022"}};
+	for (const LayerCase &c : cases) {
+		INFO(c.module);
+		CelbodyModule m (c.body);
+		REQUIRE(m.body);
+		void *hAtm = dlopen ((std::string ("Modules/Celbody/") + c.body + "/Atmosphere/" + c.module + ".so").c_str(), RTLD_NOW);
+		REQUIRE(hAtm);
+		ATMOSPHERE *(*create)(CELBODY2*) = (ATMOSPHERE*(*)(CELBODY2*))OwnProc (hAtm, "CreateAtmosphere");
+		void (*destroy)(ATMOSPHERE*) = (void(*)(ATMOSPHERE*))OwnProc (hAtm, "DeleteAtmosphere");
+		REQUIRE(create);
+		REQUIRE(destroy);
+		ATMOSPHERE *atm = create ((CELBODY2*)m.body);
+		ATMOSPHERE::PRM_IN in;
+		memset (&in, 0, sizeof(in));
+		in.flag = ATMOSPHERE::PRM_ALT;
+		ATMOSPHERE::PRM_OUT out;
+		for (double alt = 0.0; alt <= 600e3; alt += 5e3) {
+			ATMPARAM a;
+			in.alt = alt;
+			REQUIRE(atm->clbkParams (&in, &out));
+			REQUIRE(m.body->clbkAtmParam (alt, &a));
+			CHECK(out.p == a.p);
+			CHECK(out.T == a.T);
+			CHECK(out.rho == a.rho);
+		}
+		destroy (atm);
+		dlclose (hAtm);
+	}
+}
+
+// the spice module for one body with its SPICE cfg (Config/<Body>.cfg); the bodies share the module's kernel pool
+struct SpiceBodyModule {
+	void *hDLL;
+	CELBODY *body = 0;
+	std::string cfg;
+
+	SpiceBodyModule (void *h, const char *name): hDLL (h), cfg (std::string ("Config/") + name + ".cfg")
+	{
+		CELBODY *(*init)(OBJHANDLE) = (CELBODY*(*)(OBJHANDLE))OwnProc (hDLL, "InitInstance");
+		if (!init) return;
+		body = init ((OBJHANDLE)this);
+		body->clbkInit ((FILEHANDLE)&cfg);
+	}
+
+	~SpiceBodyModule ()
+	{
+		void (*exit)(CELBODY*) = (void(*)(CELBODY*))OwnProc (hDLL, "ExitInstance");
+		if (body && exit) exit (body);
+	}
+
+	int Ephem (double mjd, double *s)
+	{
+		double ret[12];
+		int flg = body->clbkEphemeris (mjd, EPHEM_TRUEPOS | EPHEM_TRUEVEL, ret);
+		int ofs = (flg & EPHEM_TRUEPOS ? 0 : 6);
+		for (int i = 0; i < 6; i++) s[i] = ret[ofs+i];
+		return flg;
+	}
+};
+
+struct SpiceCase { const char *name; double tol; }; // largest position difference to the built-in series [m]
+
+TEST_CASE("SPICE bodies agree with the built-in series", "[celbody][spice]")
+{
+	if (!std::ifstream ("Kernels/orbiter.bsp") || !std::ifstream ("Kernels/kerberos_styx.bsp")) {
+		WARN("SPICE kernels not installed in Kernels/: skipped");
+		return;
+	}
+	void *h = dlopen ("Modules/Celbody/spice.so", RTLD_NOW);
+	REQUIRE(h);
+	SpiceBodyModule sun (h, "Sun"); // loads the kernels
+	REQUIRE(sun.body);
+	REQUIRE(sun.body->bEphemeris());
+	// a check of frames and units: VSOP87 and ELP82 at 1e-8 (80 km, 260 km, 35 km measured), TASS 1.7 for Titan (1,030 km), our plu060 fits (16-34 m)
+	static const SpiceCase cases[] = {
+		{"Earth", 200e3}, {"Mars", 500e3}, {"Moon", 50e3}, {"Titan", 2000e3}, {"Charon", 100.0}, {"Kerberos", 100.0}, {"Styx", 100.0},
+	};
+	static const double mjds[] = {15100.0, 25000.0, 33282.0, 51544.5, 61000.0, 88000.0, 124500.0}; // orbiter.bsp: 1900-01-01 to 2199-12-31
+	for (const SpiceCase &c : cases) {
+		INFO(c.name);
+		SpiceBodyModule s (h, c.name);
+		CelbodyModule l (c.name);
+		REQUIRE(s.body);
+		REQUIRE(s.body->bEphemeris());
+		REQUIRE(l.body);
+		double dmax = 0.0;
+		for (double mjd : mjds) {
+			double ps[6], pl[6];
+			int fs = s.Ephem (mjd, ps), fl = l.Ephem (mjd, pl);
+			REQUIRE(fs & EPHEM_TRUEPOS);
+			if (fl & EPHEM_POLAR) { double c[3]; PolarPos (pl, c); memcpy (pl, c, sizeof c); }
+			double d = sqrt ((ps[0]-pl[0])*(ps[0]-pl[0]) + (ps[1]-pl[1])*(ps[1]-pl[1]) + (ps[2]-pl[2])*(ps[2]-pl[2]));
+			dmax = std::max (dmax, d);
+		}
+		INFO("largest difference " << dmax << " m");
+		CHECK(dmax < c.tol);
 	}
 }

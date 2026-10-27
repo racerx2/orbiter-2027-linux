@@ -145,17 +145,22 @@ std::vector<TexPack> TexPackMissing (const TexPackList &list, const std::string 
 	return v;
 }
 
-uint64_t TexPackResume (const std::string &texdir, const TexPack &p)
+uint64_t TexPackPartsKept (const std::string &partial, const std::vector<TexPart> &parts)
 {
-	if (p.parts.empty()) return 0;
 	std::error_code ec;
-	uint64_t have = fs::file_size (PartialFile (texdir, p), ec), ofs = 0;
+	uint64_t have = fs::file_size (partial, ec), ofs = 0;
 	if (ec) return 0;
-	for (const TexPart &t : p.parts) {
+	for (const TexPart &t : parts) {
 		if (ofs + t.size > have) break;
 		ofs += t.size;
 	}
 	return ofs;
+}
+
+uint64_t TexPackResume (const std::string &texdir, const TexPack &p)
+{
+	if (p.parts.empty()) return 0;
+	return TexPackPartsKept (PartialFile (texdir, p), p.parts);
 }
 
 uint64_t TexPackSpare (const TexPack &p)
@@ -448,7 +453,42 @@ static bool Append (const std::string &from, const std::string &to, std::string 
 	return ok;
 }
 
-// parts download one at a time, md5-checked, onto the partial file, renamed to <Layer>.tree after the last; a failed try keeps the whole parts
+// parts download one at a time, md5-checked, onto the partial file, renamed to target after the last; a failed try keeps the whole parts
+bool TexPackInstallParts (const std::string &url, const std::vector<TexPart> &parts, const std::string &target, const std::string &partial,
+	const std::string &work, const TexPackProgress &download, std::string &err)
+{
+	std::error_code ec;
+	if (fs::exists (fs::symlink_status (target, ec))) { err = target + " is in the way"; return false; }
+	uint64_t ofs = TexPackPartsKept (partial, parts);
+	size_t k = 0;
+	for (uint64_t s = 0; k < parts.size() && s < ofs; k++) s += parts[k].size;
+	if (fs::exists (partial, ec)) fs::resize_file (partial, ofs, ec); // a part cut off midway is dropped
+	else std::ofstream (partial, std::ios::binary);
+	if (ec || !fs::exists (partial, ec)) { err = "cannot write " + partial; return false; }
+	fs::create_directories (work, ec);
+	if (ec) { err = "cannot create " + work + ": " + ec.message(); return false; }
+	bool ok = true;
+	for (; ok && k < parts.size(); k++) {
+		const TexPart &t = parts[k];
+		std::string part = Join (work, t.name + ".part"), md5;
+		uint64_t base = ofs;
+		ok = TexPackDownload (url + "/" + t.name, part, [&](uint64_t d) { return !download || download (base + d); }, err);
+		if (ok && fs::file_size (part, ec) != t.size) { err = t.name + ": wrong size"; ok = false; }
+		if (ok && (!TexPackMd5 (part, md5) || md5 != t.md5)) { err = t.name + ": md5 mismatch"; ok = false; }
+		if (ok) ok = Append (part, partial, err);
+		fs::remove (part, ec);
+		if (ok) ofs += t.size;
+	}
+	fs::remove (work, ec); // only when empty
+	if (!ok) {
+		fs::resize_file (partial, ofs, ec); // whole parts only
+		return false;
+	}
+	fs::rename (partial, target, ec);
+	if (ec) { err = "cannot move into " + target + ": " + ec.message(); return false; }
+	return true;
+}
+
 static bool InstallTree (const TexPackList &list, const TexPack &p, const std::string &texdir, const TexPackProgress &download, std::string &err)
 {
 	std::error_code ec;
@@ -465,36 +505,7 @@ static bool InstallTree (const TexPackList &list, const TexPack &p, const std::s
 			fs::remove (it->path(), rc);
 		}
 	}
-	ec.clear();
-	uint64_t ofs = TexPackResume (texdir, p);
-	size_t k = 0;
-	for (uint64_t s = 0; k < p.parts.size() && s < ofs; k++) s += p.parts[k].size;
-	if (fs::exists (partial, ec)) fs::resize_file (partial, ofs, ec); // a part cut off midway is dropped
-	else std::ofstream (partial, std::ios::binary);
-	if (ec || !fs::exists (partial, ec)) { err = "cannot write " + partial; return false; }
-	std::string work = TexPackWorkDir (texdir);
-	fs::create_directories (work, ec);
-	if (ec) { err = "cannot create " + work + ": " + ec.message(); return false; }
-	bool ok = true;
-	for (; ok && k < p.parts.size(); k++) {
-		const TexPart &t = p.parts[k];
-		std::string part = Join (work, t.name + ".part"), md5;
-		uint64_t base = ofs;
-		ok = TexPackDownload (list.url + "/" + t.name, part, [&](uint64_t d) { return !download || download (base + d); }, err);
-		if (ok && fs::file_size (part, ec) != t.size) { err = t.name + ": wrong size"; ok = false; }
-		if (ok && (!TexPackMd5 (part, md5) || md5 != t.md5)) { err = t.name + ": md5 mismatch"; ok = false; }
-		if (ok) ok = Append (part, partial, err);
-		fs::remove (part, ec);
-		if (ok) ofs += t.size;
-	}
-	fs::remove (work, ec); // only when empty
-	if (!ok) {
-		fs::resize_file (partial, ofs, ec); // whole parts only
-		return false;
-	}
-	fs::rename (partial, target, ec);
-	if (ec) { err = "cannot move into " + target + ": " + ec.message(); return false; }
-	return true;
+	return TexPackInstallParts (list.url, p.parts, target, partial, TexPackWorkDir (texdir), download, err);
 }
 
 bool TexPackInstall (const TexPackList &list, const TexPack &p, const std::string &texdir,
@@ -514,4 +525,93 @@ bool TexPackInstall (const TexPackList &list, const TexPack &p, const std::strin
 	fs::remove (zip, ec);
 	fs::remove (work, ec); // only when empty
 	return ok;
+}
+
+// URL = <release>, then lines "<file>.NN <file> <part bytes> <file bytes> <parts> <md5>"
+bool KernelPackRead (const std::string &cfgfile, KernelPackList &list, std::string &err)
+{
+	list = KernelPackList();
+	std::ifstream ifs (Resolve (cfgfile));
+	if (!ifs) { err = "cannot read " + cfgfile; return false; }
+	std::string line;
+	for (int ln = 1; std::getline (ifs, line); ln++) {
+		size_t c = line.find (';');
+		if (c != std::string::npos) line.erase (c);
+		std::istringstream is (line);
+		std::string w, extra;
+		if (!(is >> w)) continue;
+		if (w == "URL") {
+			std::string eq;
+			if (!(is >> eq >> list.url) || eq != "=") { err = "line " + std::to_string (ln) + ": bad URL"; return false; }
+			while (!list.url.empty() && list.url.back() == '/') list.url.pop_back();
+			continue;
+		}
+		TexPart t;
+		std::string name;
+		uint64_t fsize = 0, nparts = 0;
+		t.name = w;
+		if (!(is >> name >> t.size >> fsize >> nparts >> t.md5) || (is >> extra) || !Plain (t.name) || !Plain (name) || name[0] == '.' ||
+			t.md5.size() != 32 || !t.size || t.name.compare (0, name.size() + 1, name + ".")) {
+			err = "line " + std::to_string (ln) + ": bad part";
+			return false;
+		}
+		TexPack *k = (!list.file.empty() && list.file.back().zip == name ? &list.file.back() : nullptr);
+		if (!k) {
+			list.file.push_back (TexPack());
+			k = &list.file.back();
+			k->zip = name;
+			k->rawsize = fsize;
+			k->files = nparts;
+		}
+		if (k->rawsize != fsize || k->files != nparts || atoi (t.name.c_str() + name.size() + 1) != (int)k->parts.size() + 1) {
+			err = "line " + std::to_string (ln) + ": bad part";
+			return false;
+		}
+		k->parts.push_back (t);
+		k->zipsize += t.size;
+	}
+	for (const TexPack &k : list.file)
+		if (k.parts.size() != k.files || k.zipsize != k.rawsize) { err = k.zip + ": parts missing"; return false; }
+	if (list.url.empty()) { err = "no URL in " + cfgfile; return false; }
+	return true;
+}
+
+std::string KernelPackFile (const std::string &kerneldir, const std::string &name)
+{
+	return Resolve (Join (kerneldir, name));
+}
+
+// hidden, named by the first part's md5 so a different release starts over
+static std::string KernelPartial (const std::string &kerneldir, const TexPack &k)
+{
+	return KernelPackFile (kerneldir, "." + k.zip + "." + k.parts[0].md5.substr (0, 8) + ".partial");
+}
+
+uint64_t KernelPackResume (const std::string &kerneldir, const TexPack &k)
+{
+	return TexPackPartsKept (KernelPartial (kerneldir, k), k.parts);
+}
+
+bool KernelPackPresent (const std::string &kerneldir, const TexPack &k)
+{
+	std::error_code ec;
+	uint64_t n = fs::file_size (KernelPackFile (kerneldir, k.zip), ec);
+	return !ec && n == k.rawsize;
+}
+
+bool KernelPackInstall (const KernelPackList &list, const TexPack &k, const std::string &kerneldir, const TexPackProgress &download, std::string &err)
+{
+	std::error_code ec;
+	std::string dir = Resolve (kerneldir), partial = KernelPartial (kerneldir, k);
+	fs::create_directories (dir, ec);
+	if (ec) { err = "cannot create " + dir + ": " + ec.message(); return false; }
+	std::string pre = "." + k.zip + ".", mine = fs::path (partial).filename().string();
+	for (fs::directory_iterator it (dir, ec), end; !ec && it != end; it.increment (ec)) { // partials of another release
+		std::string n = it->path().filename().string();
+		if (n != mine && !n.compare (0, pre.size(), pre) && n.size() > 8 && !n.compare (n.size() - 8, 8, ".partial")) {
+			std::error_code rc;
+			fs::remove (it->path(), rc);
+		}
+	}
+	return TexPackInstallParts (list.url, k.parts, KernelPackFile (kerneldir, k.zip), partial, KernelPackFile (kerneldir, ".kernelinstall"), download, err);
 }

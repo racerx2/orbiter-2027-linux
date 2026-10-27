@@ -341,7 +341,7 @@ Planet::Planet (char *fname)
 	navlist.Read (ifs, this);
 
 	// read surface bases from list
-	std::vector<std::string> frag = ConfigFragments (g_pOrbiter->ConfigPath (fname)); // not upstream: drop-in parts first, so an add-on's base replaces a stock one of its name
+	std::vector<std::string> frag = ConfigFragments (g_pOrbiter->Cfg()->ConfigPathShared (fname)); // not upstream: drop-in parts first (in Config/<Body>.d/ for both cfg sets), so an add-on's base replaces a stock one of its name
 	std::set<std::string> scanned; // not upstream: as above, a DIR is scanned once
 	for (const std::string &f : frag) { // not upstream: as above
 		std::ifstream pf (f);

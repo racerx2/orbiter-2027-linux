@@ -46,6 +46,7 @@ set(common_src
 	TabScenario.cpp
 	TabVideo.cpp
 	TexInstall.cpp # not upstream: missing planet texture download
+	KernelInstall.cpp # not upstream: SPICE kernel download
 	TexPack.cpp # not upstream
 	TileStream.cpp # not upstream: planet tile stream
 	TileStreamApi.cpp # not upstream

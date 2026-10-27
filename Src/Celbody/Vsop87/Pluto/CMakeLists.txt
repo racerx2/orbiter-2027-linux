@@ -30,6 +30,10 @@ add_custom_command(
 
 orbiter_link_depends_dirs(${CELBODY} ${CMAKE_CURRENT_SOURCE_DIR}/Config) # not upstream: a changed data file relinks the module, so its PRE_BUILD copy runs
 
+add_subdirectory( # not upstream: the atmosphere model, also for the spice module
+	Atmosphere
+)
+
 set_target_properties(${CELBODY}
 	PROPERTIES
 	FOLDER Celbody/Vsop87

@@ -43,5 +43,20 @@ bool TexPackUnzip (const std::string &zipfile, const TexPack &p, const std::stri
 bool TexPackDownload (const std::string &url, const std::string &file, const TexPackProgress &progress, std::string &err);
 bool TexPackInstall (const TexPackList &list, const TexPack &p, const std::string &texdir,
 	const TexPackProgress &download, const TexPackProgress &unpack, std::string &err);
+// parts joined into target through partial (resumable, whole parts only); work holds the part being downloaded (also the SPICE kernels)
+uint64_t TexPackPartsKept (const std::string &partial, const std::vector<TexPart> &parts);
+bool TexPackInstallParts (const std::string &url, const std::vector<TexPart> &parts, const std::string &target, const std::string &partial,
+	const std::string &work, const TexPackProgress &download, std::string &err);
+
+// the SPICE kernels (Config/KernelPacks.cfg): zip is the kernel's file name in the kernel folder, rawsize its size, parts what is downloaded
+struct KernelPackList {
+	std::string url;
+	std::vector<TexPack> file;
+};
+bool KernelPackRead (const std::string &cfgfile, KernelPackList &list, std::string &err);
+std::string KernelPackFile (const std::string &kerneldir, const std::string &name);
+uint64_t KernelPackResume (const std::string &kerneldir, const TexPack &k);
+bool KernelPackPresent (const std::string &kerneldir, const TexPack &k);
+bool KernelPackInstall (const KernelPackList &list, const TexPack &k, const std::string &kerneldir, const TexPackProgress &download, std::string &err);
 
 #endif // !__TEXPACK_H

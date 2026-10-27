@@ -14,6 +14,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "Config.h"
+#include <filesystem> // not upstream: Config/Legacy/ lookup
 #include "Astro.h"
 #include "Log.h"
 #include "VectorMap.h"
@@ -776,6 +777,7 @@ bool Config::Load(const char *fname)
 			&rLaunchpad.right, &rLaunchpad.bottom);
 	}
 	GetBool (ifs, "PlanetTexCheck", bPlanetTexCheck); // not upstream
+	GetBool (ifs, "KernelCheck", bKernelCheck); // not upstream
 	GetBool (ifs, "TileStream", bTileStream); // not upstream
 	GetBool (ifs, "TileStreamOffline", bTileStreamOffline); // not upstream
 	if (GetInt (ifs, "TileStreamCacheMB", i)) TileStreamCacheMB = std::max (0, i); // not upstream
@@ -845,6 +847,8 @@ void Config::SetDefaults ()
 	bEchoAll = bEchoAll_default;
 	memset (&rLaunchpad, 0, sizeof(RECT));
 	bPlanetTexCheck = true; // not upstream
+	bKernelCheck = true; // not upstream
+	bSpice = false; // not upstream: set by KernelsInstalled after the load
 	bTileStream = true; // not upstream
 	bTileStreamOffline = false; // not upstream
 	TileStreamCacheMB = 2048; // not upstream
@@ -981,6 +985,8 @@ BOOL Config::Write (const char *fname) const
 			<< ' ' << rLaunchpad.right << ' ' << rLaunchpad.bottom << '\n';
 	if (!bPlanetTexCheck || bEchoAll) // not upstream
 		ofs << "PlanetTexCheck = " << BoolStr (bPlanetTexCheck) << '\n';
+	if (!bKernelCheck || bEchoAll) // not upstream
+		ofs << "KernelCheck = " << BoolStr (bKernelCheck) << '\n';
 	if (!bTileStream || bEchoAll) // not upstream
 		ofs << "TileStream = " << BoolStr (bTileStream) << '\n';
 	if (bTileStreamOffline || bEchoAll) // not upstream
@@ -1422,14 +1428,31 @@ static char *MemberPath (char *buf, size_t size, int len, const char *name, cons
 	return buf;
 }
 
+// not upstream: the built-in series' body cfgs (Config/Legacy/) are used while the SPICE kernels are not installed
+bool Config::LegacyPath (const char *name, const char *ext) const
+{
+	if (bSpice) return false;
+	int n = snprintf (cfgpath+cfglen, sizeof cfgpath-cfglen, "Legacy\\%s%s", name, ext);
+	if (n < 0 || (size_t)n >= sizeof cfgpath-cfglen) return false;
+	std::error_code ec;
+	return std::filesystem::is_regular_file (oapiResolvePath (cfgpath), ec);
+}
+
 char *Config::ConfigPath (const char *name) const
 {
+	if (LegacyPath (name, ".cfg")) return cfgpath; // not upstream: Config/Legacy/ without the SPICE kernels
 	return MemberPath (cfgpath, sizeof cfgpath, cfglen, name, ".cfg"); // not upstream: bounded
 }
 
 char *Config::ConfigPathNoext (const char *name)
 {
+	if (LegacyPath (name, "")) return cfgpath; // not upstream: Config/Legacy/ without the SPICE kernels
 	return MemberPath (cfgpath, sizeof cfgpath, cfglen, name, ""); // not upstream: bounded
+}
+
+char *Config::ConfigPathShared (const char *name) const // not upstream
+{
+	return MemberPath (cfgpath, sizeof cfgpath, cfglen, name, ".cfg");
 }
 
 char *Config::MeshPath (const char *name)
