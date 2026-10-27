@@ -441,4 +441,47 @@ int Level (double alt, int lmin, int lmax)
 	return std::clamp (L, lmin, lmax);
 }
 
+// not upstream (design-preload)
+std::vector<Pt> Path (double lat, double lng, double brg, double len, double R, double step)
+{
+	std::vector<Pt> out;
+	if (!(R > 0.0) || !(step > 0.0) || !std::isfinite (lat) || !std::isfinite (lng) || !std::isfinite (brg)) return out;
+	for (int i = 0; i * step <= len && i < 100000; i++) {
+		double a = i * step / R, la = std::asin (std::sin (lat) * std::cos (a) + std::cos (lat) * std::sin (a) * std::cos (brg));
+		double lo = std::remainder (lng + std::atan2 (std::sin (brg) * std::sin (a) * std::cos (lat), std::cos (a) - std::sin (lat) * std::sin (la)), 2.0 * M_PI);
+		out.push_back ({lo, la, i * step});
+	}
+	return out;
+}
+
+std::vector<std::array<int, 3>> PathKeys (const std::vector<Pt> &pts, int lmin, int lmax)
+{
+	std::vector<std::array<int, 3>> out;
+	std::unordered_set<uint64_t> seen;
+	for (const Pt &p : pts)
+		for (int L = std::max (lmin, 4); L <= lmax; L++)
+			for (const auto &k : Keys ({p}, L, 1))
+				if (seen.insert ((uint64_t)k[0] << 56 | (uint64_t)k[1] << 28 | (uint64_t)k[2]).second) out.push_back (k);
+	return out;
+}
+
+std::vector<std::pair<int, int>> PathVec (const std::vector<Pt> &pts, int every, int half)
+{
+	std::vector<std::pair<int, int>> out;
+	std::unordered_set<uint64_t> seen;
+	const int n = 1 << 14;
+	for (size_t i = 0; i < pts.size(); i += std::max (1, every)) {
+		if (!std::isfinite (pts[i].lat) || !std::isfinite (pts[i].lng)) continue;
+		int x, y;
+		TsBldg::TileOf (pts[i].lat, pts[i].lng, 14, x, y);
+		for (int dy = -half; dy <= half; dy++)
+			for (int dx = -half; dx <= half; dx++) {
+				int tx = ((x + dx) % n + n) % n, ty = y + dy;
+				if (ty < 0 || ty >= n || !seen.insert ((uint64_t)tx << 32 | (uint32_t)ty).second) continue;
+				out.push_back ({tx, ty});
+			}
+	}
+	return out;
+}
+
 } // namespace TsTrack

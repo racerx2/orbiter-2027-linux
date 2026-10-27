@@ -48,11 +48,12 @@ TsNet::~TsNet ()
 	delete thread;
 }
 
-void TsNet::Get (const std::string &url, Reply done, int64_t off, int64_t len, int ownMs)
+void TsNet::Get (const std::string &url, Reply done, int64_t off, int64_t len, int ownMs, int stallMs)
 {
 	int64_t most = off >= 0 ? rangeCap : cap;
 	int maxMs = ownMs > 0 ? ownMs : totalMs;
-	QMetaObject::invokeMethod (ctx, [this, url, done, off, len, most, maxMs] {
+	int stall = stallMs > 0 ? stallMs : StallMs;
+	QMetaObject::invokeMethod (ctx, [this, url, done, off, len, most, maxMs, stall] {
 		bool called = false;
 		auto reply = [&] (int st, QByteArray body) { called = true; done (st, std::move (body), 0); };
 		try {
@@ -72,7 +73,7 @@ void TsNet::Get (const std::string &url, Reply done, int64_t off, int64_t len, i
 			rq.setAttribute (QNetworkRequest::CookieLoadControlAttribute, QNetworkRequest::Manual); // no cookies sent or kept
 			rq.setAttribute (QNetworkRequest::CookieSaveControlAttribute, QNetworkRequest::Manual);
 			if (off >= 0) rq.setRawHeader ("Range", QByteArray ("bytes=") + QByteArray::number ((qlonglong)off) + "-" + QByteArray::number ((qlonglong)(off + len - 1)));
-			rq.setTransferTimeout (StallMs); // reset by every byte: a stall, not a total time
+			rq.setTransferTimeout (stall); // reset by every byte: a stall, not a total time
 			QNetworkReply *r = nam->get (rq);
 			struct S { bool over = false, fired = false; };
 			auto s = std::make_shared<S>();

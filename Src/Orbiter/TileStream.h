@@ -67,6 +67,12 @@ namespace TsTrack {
 	std::vector<Pt> Propagate (const double r0[3], const double v0[3], double mu, double omega, double horizon, int n);
 	std::vector<std::array<int, 3>> Keys (const std::vector<Pt> &pts, int L, int half);
 	int Level (double alt, int lmin, int lmax);
+	// not upstream (design-preload): the great circle from (lat, lng) on bearing brg (rad) for len m on radius R, a point every step
+	std::vector<Pt> Path (double lat, double lng, double brg, double len, double R, double step);
+	// each point's tiles of lmin..lmax with their 8 neighbours, once, nearest point first and coarse to fine at each
+	std::vector<std::array<int, 3>> PathKeys (const std::vector<Pt> &pts, int lmin, int lmax);
+	// the z14 tiles within half tiles of every every-th point, once, nearest first: (x, y)
+	std::vector<std::pair<int, int>> PathVec (const std::vector<Pt> &pts, int every, int half);
 }
 
 // 3D buildings from z14 Mapbox vector tiles (TileStreamMvt.cpp)
@@ -202,6 +208,10 @@ public:
 
 	// not upstream (earth-sky): a ground-track tile, after camera wants, before refetches; 1 queued or there, 0 full, -1 never
 	int Prefetch (const std::string &body, int L, int ilat, int ilng);
+	// not upstream (design-preload): a z14 building and road tile on the path ahead, after camera wants; as Prefetch
+	int PrefetchVec (const std::string &body, int x, int y);
+	// not upstream (design-preload): the camera's ground point (radians): wanted jobs of a level nearest first
+	void SetCamera (const std::string &body, double lat, double lng);
 	size_t Prefetching () const; // tests
 
 	size_t Pending () const; // tests

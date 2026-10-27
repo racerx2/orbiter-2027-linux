@@ -70,13 +70,16 @@ private:
 		bool hasHor = false, complete = true;
 		bool pending = true;   // given to the worker, result not taken yet
 		bool stale = false;    // a fixed structure near it changed after it was asked
-		int miss = 0;          // results in a row without the L16 Class tile
+		bool classWait = false; // not upstream (design-preload): placed without its L16 Class tile, the file looked for every 2 s
+		double tClass0 = 0.0;   // since when
+		std::vector<std::pair<int, int>> vecWait; // z14 building and road tiles it was placed without, still coming
 	};
 	void Work ();
 	void MakeMeshes ();
 	void Cells (double lat, double lng, double range, std::vector<long long> &out) const;
 	void Bounds (long long key, double &lat0, double &lat1, double &lng0, double &lng1) const;
 	bool Ask (long long key);
+	bool ClassThere (long long key) const; // design-preload: its L16 Class file is on disk
 	void DrawCells (VkDev *dev, int mode, const D3DXMATRIX *mVPdepth);
 
 	vPlanet *vp;

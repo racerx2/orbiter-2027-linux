@@ -328,7 +328,7 @@ struct TileStream::Impl {
 		std::atomic<bool> marked {false};  // design dropin-addons: its files carry the mark, so a file without it is someone else's
 		bool Arch (int layer, uint64_t k) const { return arch[layer].Has (KL (k), KLat (k), KLng (k)); }
 	};
-	struct BJob { int body = 0, stage = 0, tries = 0; uint64_t key = 0; Clock::time_point want, retry; };
+	struct BJob { int body = 0, stage = 0, tries = 0; uint64_t key = 0; Clock::time_point want, retry; bool pre = false; uint64_t seq = 0; }; // pre, seq: design-preload
 	struct Src {
 		std::string url;
 		int host = EOX;
@@ -486,6 +486,10 @@ struct TileStream::Impl {
 	bool markLogged = false;
 	// earth-sky: prefetch, clouds, base flattening (end of this file)
 	uint64_t preSeq = 0;
+	int camBody = -1;                  // not upstream (design-preload): SetCamera's ground point
+	double camLat = 0.0, camLng = 0.0;
+	double CamDist (const Job &J) const; // its tile centre from that point (rad), 0 without one
+	int PrefetchVec (int b, int x, int y);
 	int Prefetch (const std::string &name, int L, int ilat, int ilng);
 	QByteArray Fetch (const std::string &url, int sec);
 	QByteArray Source (Body &B, const std::string &url, const char *file, const char *fmt, int sec);
@@ -511,7 +515,7 @@ struct TileStream::Impl {
 	void BuildVec (int b, uint64_t k, std::shared_ptr<const QByteArray> data);
 };
 
-static bool Better (const TileStream::Impl::Job &a, const TileStream::Impl::Job &b)
+static bool Better (const TileStream::Impl &d, const TileStream::Impl::Job &a, const TileStream::Impl::Job &b)
 {
 	if (a.low != b.low) return !a.low;
 	if (a.pre != b.pre) return !a.pre; // earth-sky: prefetch below wants, above refetches
@@ -519,6 +523,10 @@ static bool Better (const TileStream::Impl::Job &a, const TileStream::Impl::Job 
 	if (a.required != b.required) return a.required;
 	if (a.elevOnly != b.elevOnly) return !a.elevOnly;
 	if (KL (a.key) != KL (b.key)) return KL (a.key) < KL (b.key);
+	if (d.camBody == a.body && d.camBody == b.body) { // not upstream (design-preload): nearest the camera first
+		double da = d.CamDist (a), db = d.CamDist (b);
+		if (da != db) return da < db;
+	}
 	return a.want > b.want;
 }
 
@@ -1038,7 +1046,7 @@ void TileStream::Impl::StartJobs (Clock::time_point now)
 			Job &J = p.second;
 			if (J.stage || J.retry > now || (J.pre && preActive >= preCap)) continue;
 			int s = Startable (J, now);
-			if (s && (!best || Better (J, *best))) { best = &J; how = s; }
+			if (s && (!best || Better (*this, J, *best))) { best = &J; how = s; }
 		}
 		if (!best) {
 			if (!Paused (EOX, now) && !Paused (GIBS, now) && AddLow (now)) continue;
@@ -1112,7 +1120,7 @@ void TileStream::Impl::Dispatch (Clock::time_point now)
 			long long off = -1, len = 0;
 			if (h == WC && r != std::string::npos && sscanf (url.c_str() + r, "#%lld+%lld", &off, &len) == 2)
 				net->Get (url.substr (0, r), back, off, len); // url#off+len: a byte range
-			else net->Get (url, back);
+			else net->Get (url, back, -1, 0, 0, TsNet::TileStallMs); // not upstream (design-preload): a stalled tile request fails in 8 s
 		}
 	}
 }
@@ -1127,7 +1135,7 @@ void TileStream::Impl::DropStale (Clock::time_point now)
 		else ++it;
 	}
 	for (auto it = bjobs.begin(); it != bjobs.end(); ) {
-		if (!it->second.stage && now - it->second.want > 3 * stale) it = bjobs.erase (it);
+		if (!it->second.stage && now - it->second.want > (it->second.pre ? std::chrono::duration<double> (10.0) : 3 * stale)) it = bjobs.erase (it); // design-preload: a path tile the path left
 		else ++it;
 	}
 }
@@ -1863,6 +1871,7 @@ int TileStream::Impl::WantVec (int v, int b, int x, int y)
 	auto j = bjobs.find (id);
 	if (j != bjobs.end()) {
 		j->second.want = now;
+		j->second.pre = false; // design-preload: the camera wants it now
 		return 0;
 	}
 	lk.unlock();
@@ -1889,8 +1898,13 @@ int TileStream::Impl::WantVec (int v, int b, int x, int y)
 	J.want = now;
 	while (bjobs.size() > 64) {
 		auto worst = bjobs.end();
-		for (auto it = bjobs.begin(); it != bjobs.end(); ++it)
-			if (!it->second.stage && (worst == bjobs.end() || it->second.want < worst->second.want)) worst = it;
+		for (auto it = bjobs.begin(); it != bjobs.end(); ++it) {
+			if (it->second.stage) continue;
+			const BJob &a = it->second;
+			if (worst == bjobs.end()) { worst = it; continue; }
+			const BJob &w = worst->second; // design-preload: path jobs first, the furthest along the path
+			if (a.pre != w.pre ? a.pre : a.pre ? a.seq > w.seq : a.want < w.want) worst = it;
+		}
 		if (worst == bjobs.end()) break;
 		bjobs.erase (worst);
 	}
@@ -1899,12 +1913,70 @@ int TileStream::Impl::WantVec (int v, int b, int x, int y)
 	return 0;
 }
 
+// not upstream (design-preload): a z14 tile on the path ahead; a path job, after the camera's
+int TileStream::Impl::PrefetchVec (int b, int x, int y)
+{
+	Body &B = *bodies[b];
+	if (!(opt.buildings || opt.ways) || B.cfg.bldgUrl.empty() || !net || x < 0 || y < 0 || x >= 1 << 14 || y >= 1 << 14) return -1;
+	uint64_t k = Key (14, x, y), id = Id (b, k);
+	std::unique_lock<std::mutex> lk (mx);
+	if (stop) return -1;
+	bool need[2] = {opt.buildings && !B.Vec (0).count (k), opt.ways && !B.Vec (1).count (k)};
+	if (!need[0] && !need[1]) return 1;
+	Clock::time_point now = opt.now();
+	auto j = bjobs.find (id);
+	if (j != bjobs.end()) {
+		if (j->second.pre) { j->second.want = now; j->second.seq = ++preSeq; }
+		return 1;
+	}
+	auto h = bhold.find (id);
+	if (h != bhold.end() && now < h->second) return -1;
+	int pre = 0;
+	for (auto &p : bjobs) pre += p.second.pre;
+	if (pre >= 24 || bjobs.size() >= 64) return 0; // room left for the camera's wants
+	lk.unlock();
+	std::error_code ec;
+	for (int v = 0; v < 2; v++) if (need[v]) need[v] = !fs::exists (VecFile (B.dir, v, k), ec);
+	lk.lock();
+	if (stop) return -1;
+	if (!need[0] && !need[1]) return 1;
+	if (bjobs.count (id)) return 1;
+	if (!B.bldgState) {
+		B.bldgState = 1;
+		bjson[B.cfg.bldgJson] = b;
+		host[BLDG].queue.push_front (B.cfg.bldgJson);
+	}
+	BJob &J = bjobs[id];
+	J.body = b;
+	J.key = k;
+	J.want = now;
+	J.pre = true;
+	J.seq = ++preSeq;
+	kick = true;
+	cv.notify_all();
+	return 1;
+}
+
+// not upstream (design-preload): a job's tile centre from the camera's ground point
+double TileStream::Impl::CamDist (const Job &J) const
+{
+	int L = KL (J.key);
+	if (L < 4) return 0.0;
+	double span = M_PI / (1 << (L - 4)), lat = M_PI / 2 - (KLat (J.key) + 0.5) * span, lng = (KLng (J.key) + 0.5) * span - M_PI;
+	double c = sin (lat) * sin (camLat) + cos (lat) * cos (camLat) * cos (lng - camLng);
+	return acos (std::clamp (c, -1.0, 1.0));
+}
+
 void TileStream::Impl::StartBldg (Clock::time_point now)
 {
 	if (bjobs.empty() || Paused (BLDG, now)) return;
-	int cap = host[BLDG].cap;
-	for (auto &p : jobs)
-		if (!p.second.stage && !p.second.low && p.second.retry <= now && Startable (p.second, now)) { cap = 1; break; } // imagery waits: one building tile at a time
+	int cap = host[BLDG].cap; // not upstream (design-preload): its 4 requests while imagery waits, another server
+	auto BldgCamDist = [this] (const BJob &J) { // design-preload: a z14 tile centre from the camera's ground point
+		if (camBody != J.body) return 0.0;
+		double lat, lng;
+		TsBldg::LatLng (14, KLat (J.key) + 0.5, KLng (J.key) + 0.5, lat, lng);
+		return acos (std::clamp (sin (lat) * sin (camLat) + cos (lat) * cos (camLat) * cos (lng - camLng), -1.0, 1.0));
+	};
 	int active = 0;
 	for (auto &p : bjobs) if (p.second.stage) active++;
 	while (active < cap) {
@@ -1912,7 +1984,11 @@ void TileStream::Impl::StartBldg (Clock::time_point now)
 		for (auto &p : bjobs) {
 			BJob &J = p.second;
 			if (J.stage || J.retry > now || bodies[J.body]->bldgState != 2) continue;
-			if (!best || J.want > best->want) best = &J;
+			if (!best) { best = &J; continue; }
+			if (J.pre != best->pre) { if (!J.pre) best = &J; continue; } // design-preload: the camera's first
+			if (J.pre) { if (J.seq < best->seq) best = &J; continue; } // along the path
+			double dj = BldgCamDist (J), db = BldgCamDist (*best);
+			if (dj != db ? dj < db : J.want > best->want) best = &J; // nearest the camera, else the latest want
 		}
 		if (!best) return;
 		Body &B = *bodies[best->body];
@@ -2092,6 +2168,21 @@ std::string TileStream::BldgPath (const std::string &body, int x, int y) const
 {
 	int b = d->FindBody (body);
 	return b < 0 || x < 0 || y < 0 ? std::string() : BldgFile (d->bodies[b]->dir, Key (14, x, y));
+}
+
+int TileStream::PrefetchVec (const std::string &body, int x, int y) // not upstream (design-preload)
+{
+	int b = d->FindBody (body);
+	return b < 0 ? -1 : d->PrefetchVec (b, x, y);
+}
+
+void TileStream::SetCamera (const std::string &body, double lat, double lng) // not upstream (design-preload)
+{
+	int b = d->FindBody (body);
+	std::lock_guard<std::mutex> lk (d->mx);
+	d->camBody = b;
+	d->camLat = lat;
+	d->camLng = lng;
 }
 
 int TileStream::WantWay (const std::string &body, int x, int y) // not upstream (design-ways)
@@ -3086,8 +3177,66 @@ int TileStream::PrefetchKeys (Options opt, const std::string &body, const std::v
 		if (pn < pending && next == keys.size() && open.empty()) last = Clock::now(); // the Elev jobs moving
 		pending = pn;
 		bool stalled = std::chrono::duration<double> (Clock::now() - last).count() > stallSec;
-		if (next == keys.size() && open.empty() && (!pn || stalled)) return 0; // an Elev that never comes doesn't fail the tiles
+		if (next == keys.size() && open.empty() && (!pn || stalled)) break; // an Elev that never comes doesn't fail the tiles
 		if (stalled) return 2;
+		std::this_thread::sleep_for (std::chrono::milliseconds (100));
+	}
+	// not upstream (design-preload): then the z14 building and road tiles under the finest tiles
+	if ((!opt.buildings && !opt.ways) || B.cfg.bldgUrl.empty()) return 0;
+	int lf = 0;
+	for (const TileKey &k : keys) lf = std::max (lf, k.L);
+	if (lf < 12) return 0; // a coarse region: no buildings or roads to show
+	std::vector<std::pair<int, int>> vk;
+	std::unordered_set<uint64_t> vseen;
+	for (const TileKey &k : keys) {
+		if (k.L != lf || k.L < 4) continue;
+		double span = M_PI / (1 << (k.L - 4)), la1 = M_PI / 2 - k.ilat * span, la0 = la1 - span, lo0 = k.ilng * span - M_PI, lo1 = lo0 + span;
+		int x0, y0, x1, y1;
+		TsBldg::TileOf (la1, lo0, 14, x0, y0);
+		TsBldg::TileOf (la0, lo1, 14, x1, y1);
+		for (int y = y0; y <= y1; y++)
+			for (int x = x0; x <= x1; x++)
+				if (vseen.insert ((uint64_t)x << 32 | (uint32_t)y).second) vk.push_back ({x, y});
+		if (vk.size() > 20000) { // over ~100,000 km2: left to the flight
+			if (opt.log) opt.log ("TileStream: the region is too large for its building and road tiles, they come in flight");
+			return 0;
+		}
+	}
+	p.total += (int)vk.size();
+	auto vwant = [&] (const std::pair<int, int> &t) { // 1 there, -1 none, -2 given up on, 0 coming
+		int a = opt.buildings ? ts.WantBldg (body, t.first, t.second) : -1, w = opt.ways ? ts.WantWay (body, t.first, t.second) : -1;
+		if (a && w) return a > 0 || w > 0 ? 1 : -1;
+		std::lock_guard<std::mutex> lk (ts.d->mx);
+		return ts.d->bhold.count (Id (b, Key (14, t.first, t.second))) ? -2 : 0;
+	};
+	auto vanswer = [&] (int r) {
+		if (r > 0) p.have++;
+		else if (r == -2) p.failed++;
+		else p.none++;
+		p.done++;
+		last = Clock::now();
+	};
+	std::vector<size_t> vo;
+	size_t vn = 0;
+	last = Clock::now();
+	for (;;) {
+		if (cancel) return 1;
+		for (size_t j = 0; j < vo.size(); ) {
+			int r = vwant (vk[vo[j]]);
+			if (r) {
+				vanswer (r);
+				vo[j] = vo.back();
+				vo.pop_back();
+			} else j++;
+		}
+		while (vn < vk.size() && vo.size() < 16) {
+			int r = vwant (vk[vn]);
+			if (r) vanswer (r);
+			else vo.push_back (vn);
+			vn++;
+		}
+		if (vn == vk.size() && vo.empty()) return 0;
+		if (std::chrono::duration<double> (Clock::now() - last).count() > stallSec) return 2;
 		std::this_thread::sleep_for (std::chrono::milliseconds (100));
 	}
 }

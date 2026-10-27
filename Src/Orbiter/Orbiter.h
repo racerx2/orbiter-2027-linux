@@ -388,6 +388,7 @@ private:
 	void StopTileStream ();                // not upstream
 	void StreamPrefetch ();                // not upstream: ground-track tiles at high time acceleration
 	void StreamTrackStep ();               // not upstream
+	void StreamPathStep ();                // not upstream (design-preload): the path ahead below 10x
 	StreamTrack *m_pStreamTrack;           // not upstream: StreamPrefetch's state, one per session
 	ScriptInterface *script;
 	INTERPRETERHANDLE hScnInterp;

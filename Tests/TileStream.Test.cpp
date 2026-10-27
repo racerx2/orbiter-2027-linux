@@ -7,7 +7,10 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QImage>
+#include <array> // not upstream (design-preload)
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -1803,4 +1806,141 @@ TEST_CASE ("Clear and CacheBytes cover Class, buildings, Elev_mod and clouds", "
 	CHECK (Read (tex / "TileStream" / "bldg.idx").empty());
 	CHECK (TileStream::Clear (tex.string(), false) == 1);
 	CHECK_FALSE (fs::exists (tex / "Cloud" / "05" / "000000" / "000001.dds"));
+}
+
+// not upstream (design-preload)
+TEST_CASE ("The path ahead: its points on the great circle, its tiles nearest first and once, the building tiles round every other point", "[TileStream]")
+{
+	const double R = 6371010.0, lat = 0.5, lng = -1.6;
+	std::vector<TsTrack::Pt> pts = TsTrack::Path (lat, lng, 0.0, 10000.0, R, 500.0); // 10 km north
+	REQUIRE (pts.size() == 21);
+	CHECK (std::fabs (pts[20].lat - (lat + 10000.0 / R)) < 1e-9);
+	CHECK (std::fabs (pts[20].lng - lng) < 1e-9);
+	CHECK (TsTrack::Path (lat, lng, 0.0, 1000.0, 0.0, 500.0).empty());
+	std::vector<std::array<int, 3>> k = TsTrack::PathKeys (pts, 14, 16);
+	REQUIRE (k.size() >= 27);
+	for (int i = 0; i < 27; i++) CHECK (k[i][0] == 14 + i / 9); // the first point's 3 x 3 at each level, coarse first
+	std::set<std::array<int, 3>> once (k.begin(), k.end());
+	CHECK (once.size() == k.size());
+	double span = M_PI / (1 << 12);
+	int ia = (int)((M_PI / 2 - pts[20].lat) / span), ib = (int)((pts[20].lng + M_PI) / span);
+	CHECK (once.count ({16, ia, ib}));
+	std::vector<std::pair<int, int>> v = TsTrack::PathVec (pts, 2, 2);
+	int x, y;
+	TsBldg::TileOf (lat, lng, 14, x, y);
+	REQUIRE (v.size() >= 25);
+	CHECK (v[12] == std::make_pair (x, y)); // the first point's 5 x 5, its own tile in the middle
+	std::set<std::pair<int, int>> vo (v.begin(), v.end());
+	CHECK (vo.size() == v.size());
+	TsBldg::TileOf (pts[20].lat, pts[20].lng, 14, x, y);
+	CHECK (vo.count ({x, y + 2}));
+}
+
+TEST_CASE ("Wanted tiles of a level start nearest the camera first", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	s.Required (true);
+	for (int c : {300, 301, 304, 306}) {
+		s.EoxTile (12, 150, c, QColor (10, 200, 10));
+		s.Masks (12, 150, c);
+	}
+	fs::path tex = t.root / "Earth";
+	std::mutex m;
+	std::condition_variable cv;
+	bool go = false;
+	std::vector<int> order;
+	TileStream::Options o;
+	o.cfgfile = s.Cfg (t.root / "ts.cfg", s.url + "/eox");
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	o.maxActive = 1;
+	o.staleSec = 1e9;
+	o.onBuild = [&] (int L, int, int ln) {
+		if (L != 12) return;
+		std::unique_lock<std::mutex> lk (m);
+		order.push_back (ln);
+		if (ln == 300) cv.wait (lk, [&] { return go; }); // holds the one slot while the rest are wanted
+	};
+	TileStream ts (o);
+	CHECK (ts.Want ("Earth", 12, 150, 300, 0) == 0);
+	REQUIRE (WaitFor ([&] { std::lock_guard<std::mutex> lk (m); return !order.empty(); }, 20.0));
+	double span = M_PI / (1 << 8);
+	ts.SetCamera ("Earth", M_PI / 2 - 150.5 * span, 304.5 * span - M_PI); // over 304
+	for (int c : {304, 306, 301}) CHECK (ts.Want ("Earth", 12, 150, c, 0) == 0); // the latest want first would be 301, 306, 304
+	{
+		std::lock_guard<std::mutex> lk (m);
+		go = true;
+	}
+	cv.notify_all();
+	REQUIRE (WaitFor ([&] { std::lock_guard<std::mutex> lk (m); return order.size() == 4; }, 20.0));
+	CHECK (order == std::vector<int> {300, 304, 306, 301});
+}
+
+TEST_CASE ("Path building tiles wait behind the camera's: 24 at most, a want takes one over, dropped 10 s after the path left them", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	std::string cfg = (t.root / "ts.cfg").string();
+	std::ofstream (cfg) << "BODY Earth\nSURF eox bogus://eox/{z}/{row}/{col} 1 16\nLIGHTS gibs bogus://gibs/{n}/{row}/{col} 7\nWATER gibs bogus://gibs/{n}/{row}/{col} 8\n"
+		"BLDG bogus://json bogus://bldg/{z}/{x}/{y}.pbf\nEND\n"; // nothing answers: the jobs stay
+	fs::create_directories (t.root / "Earth");
+	std::atomic<long long> ms {0};
+	TileStream::Options o;
+	o.cfgfile = cfg;
+	o.bodyDir = [&] (const std::string &) { return (t.root / "Earth").string(); };
+	o.bodies = {"Earth"};
+	o.maxActive = 0;
+	o.staleSec = 1e9;
+	auto t0 = TileStream::Clock::now();
+	o.now = [&] { return t0 + std::chrono::milliseconds (ms.load()); };
+	TileStream ts (o);
+	int q = 0;
+	for (int i = 0; i < 24; i++) q += ts.PrefetchVec ("Earth", 4000 + i, 6000);
+	CHECK (q == 24);
+	CHECK (ts.PrefetchVec ("Earth", 4100, 6000) == 0); // full
+	CHECK (ts.PrefetchVec ("Earth", 4000, 6000) == 1); // still on the path
+	CHECK (ts.WantBldg ("Earth", 4000, 6000) == 0);    // the camera's now
+	CHECK (ts.PrefetchVec ("Earth", 4100, 6000) == 1); // room for one more
+	CHECK (ts.PrefetchVec ("Earth", 4101, 6000) == 0);
+	CHECK (ts.PrefetchVec ("Earth", -1, 0) == -1);
+	ms = 11000;
+	REQUIRE (WaitFor ([&] { return ts.PrefetchVec ("Earth", 5000, 6000) == 1; }, 5.0)); // the path's dropped
+	q = 0;
+	for (int i = 1; i < 23; i++) q += ts.PrefetchVec ("Earth", 5000 + i, 6000);
+	CHECK (q == 22);
+	CHECK (ts.WantBldg ("Earth", 4000, 6000) == 0); // the camera's kept (wants go stale only after staleSec)
+}
+
+TEST_CASE ("A region download takes the building and road tiles under its finest tiles", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	s.Required (true);
+	s.EoxTile (14, 600, 1200, QColor (10, 200, 10));
+	s.Masks (14, 600, 1200);
+	fs::path src = t.root / "bldg", tex = t.root / "Earth";
+	fs::create_directories (src);
+	std::ofstream (t.root / "tiles.json") << "{\"tiles\":[\"file://" << src.string() << "/{z}/{x}/{y}.pbf\"],\"maxzoom\":14}"; // no pbf: every tile empty
+	std::string cfg = s.Cfg (t.root / "ts.cfg", s.url + "/eox");
+	std::string text = Read (cfg);
+	text.insert (text.rfind ("END"), "BLDG file://" + (t.root / "tiles.json").string() + " file:///none/{z}/{x}/{y}.pbf\n");
+	std::ofstream (cfg) << text;
+	TileStream::Options o;
+	o.cfgfile = cfg;
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	TileStream::Progress p;
+	std::atomic<bool> cancel {false};
+	CHECK (TileStream::Prefetch (o, "Earth", {{14, 600, 1200}}, p, cancel, 30.0) == 0);
+	double span = M_PI / (1 << 10), lat = M_PI / 2 - 600.5 * span, lng = 1200.5 * span - M_PI;
+	int x, y;
+	TsBldg::TileOf (lat, lng, 14, x, y);
+	CHECK (fs::exists (tex / "Bldg" / "14" / std::to_string (x) / (std::to_string (y) + ".bld")));
+	CHECK (fs::exists (tex / "Way" / "14" / std::to_string (x) / (std::to_string (y) + ".way")));
+	CHECK (p.total > 50); // the imagery tile and the z14 tiles under it (~20 km a side over ~2.4 km tiles)
+	CHECK (p.done == p.total);
+	CHECK (p.failed == 0);
 }

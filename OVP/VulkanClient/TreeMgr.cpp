@@ -142,7 +142,7 @@ void TreeMgr::Cells (double lat, double lng, double range, std::vector<long long
 		}
 }
 
-// a job for the worker: false while a building tile it needs is still coming
+// a job for the worker; building and road tiles still coming are left out and listed in the cell (design-preload)
 bool TreeMgr::Ask (long long key)
 {
 	Job j;
@@ -152,14 +152,13 @@ bool TreeMgr::Ask (long long key)
 	int x0, y0, x1, y1;
 	TileOf (j.lat1, j.lng0, x0, y0);
 	TileOf (j.lat0, j.lng1, x1, y1);
+	std::vector<std::pair<int, int>> wait;
 	for (int y = y0; y <= y1; y++)
 		for (int x = x0; x <= x1; x++) {
-			int w = oapiTileStreamBldgWant (hObj, x, y);
-			if (w == 0) return false; // wanted, not there yet
+			int w = oapiTileStreamBldgWant (hObj, x, y), ww = oapiTileStreamWayWant (hObj, x, y); // ways: design-ways
 			if (w > 0) j.bldg.push_back ({x, y});
-			w = oapiTileStreamWayWant (hObj, x, y); // not upstream (design-ways)
-			if (w == 0) return false;
-			if (w > 0) j.way.push_back ({x, y});
+			if (ww > 0) j.way.push_back ({x, y});
+			if (w == 0 || ww == 0) wait.push_back ({x, y}); // design-preload: placed without it for now
 		}
 	VECTOR3 u = Up (latc, lngc);
 	bases.Near (vp, hObj, R, u, 25e3, j.keep.bases);
@@ -175,7 +174,22 @@ bool TreeMgr::Ask (long long key)
 	cv.notify_one();
 	cells[key].pending = true;
 	cells[key].stale = false; // this job has the fixed structures as they are now
+	cells[key].vecWait.swap (wait);
 	return true;
+}
+
+// not upstream (design-preload): the cell's L16 Class file is there
+bool TreeMgr::ClassThere (long long key) const
+{
+	double la0, la1, lo0, lo1;
+	Bounds (key, la0, la1, lo0, lo1);
+	double lat = 0.5 * (la0 + la1), lng = 0.5 * (lo0 + lo1), span = PI / double(1 << (LC - 4));
+	int ilat = std::min ((1 << (LC - 4)) - 1, std::max (0, (int)std::floor ((0.5 * PI - lat) / span)));
+	int ilng = std::min ((2 << (LC - 4)) - 1, std::max (0, (int)std::floor ((lng + PI) / span)));
+	char path[MAX_PATH];
+	snprintf (path, MAX_PATH, "%s\\Class\\%02d\\%06d\\%06d.dds", root.c_str(), LC, ilat, ilng);
+	std::error_code ec;
+	return std::filesystem::exists (oapiResolvePath (path), ec);
 }
 
 void TreeMgr::Update ()
@@ -225,10 +239,12 @@ void TreeMgr::Update ()
 		c.p0 = res.p0; c.e0 = res.e0; c.u0 = res.u0; c.n0 = res.n0;
 		memcpy (c.gc, res.gc, sizeof c.gc);
 		c.hasHor = res.hasHor;
-		c.miss = res.classMiss ? c.miss + 1 : 0;
-		c.complete = res.complete && !(res.classMiss && c.miss < 6); // a Class tile still coming: a few tries, 10 s apart
+		if (!res.classMiss) c.tClass0 = 0.0;
+		else if (c.tClass0 == 0.0) c.tClass0 = t;
+		c.classWait = res.classMiss && t - c.tClass0 < 60.0; // design-preload: a Class tile still coming, looked for every 2 s for a minute
+		c.complete = res.complete;
 		c.pending = false;
-		c.tCheck = t + (res.classMiss ? 10.0 : 2.0);
+		c.tCheck = t + 2.0;
 	}
 
 	if (t >= tWant) {
@@ -280,6 +296,12 @@ void TreeMgr::Update ()
 		int rc[5];
 		vp->SurfMgr2()->GetLoadedElevations (5, lng, lat, g, rc);
 		bool redo = !c.complete || c.stale;
+		for (size_t i = 0; i < c.vecWait.size() && !redo; i++) // design-preload: a building or road tile it was placed without has answered
+			redo = oapiTileStreamBldgWant (hObj, c.vecWait[i].first, c.vecWait[i].second) != 0 && oapiTileStreamWayWant (hObj, c.vecWait[i].first, c.vecWait[i].second) != 0;
+		if (!redo && c.classWait) {
+			if (t - c.tClass0 >= 60.0) c.classWait = false;
+			else redo = ClassThere (kv.first);
+		}
 		for (int i = 0; i < 5 && !redo; i++) if (rc[i] == 1 && std::fabs (g[i] - c.gc[i]) > 0.3) redo = true;
 		if (!redo && !c.hasHor && Config->HorizonShadows) {
 			double hb[4];
@@ -298,7 +320,7 @@ void TreeMgr::Work ()
 	auto Tile = [&](const std::string &layer, int L, int ilat, int ilng) -> std::shared_ptr<Pix> {
 		for (auto it = cache.begin(); it != cache.end(); ++it)
 			if (it->layer == layer && it->L == L && it->ilat == ilat && it->ilng == ilng) {
-				if (!it->p && Now() - it->t > 8.0) { cache.erase (it); break; } // a miss is looked for again: the stream may have written it
+				if (!it->p && Now() - it->t > 1.0) { cache.erase (it); break; } // a miss is looked for again: the stream may have written it (design-preload: 1 s, was 8)
 				cache.splice (cache.begin(), cache, it);
 				return cache.front().p;
 			}

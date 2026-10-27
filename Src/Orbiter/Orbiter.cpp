@@ -1816,6 +1816,10 @@ struct StreamTrack {
 	double prevT = 0.0;
 	int calls = 0;
 	bool failed = false; // an exception: no prefetch for the rest of the session
+	std::chrono::steady_clock::time_point pathNext, pathT, pathLog; // design-preload: StreamPathStep
+	std::string pathBody;
+	double pathLat = 0.0, pathLng = 0.0;
+	bool pathHave = false;
 };
 
 void Orbiter::StartTileStream ()
@@ -1858,6 +1862,7 @@ void Orbiter::StreamPrefetch ()
 {
 	if (!m_pStreamTrack || m_pStreamTrack->failed) return;
 	try {
+		StreamPathStep (); // not upstream (design-preload)
 		StreamTrackStep ();
 	} catch (const std::exception &e) {
 		LOGOUT ("TileStream: ground-track prefetch stopped: %s", e.what());
@@ -1865,6 +1870,48 @@ void Orbiter::StreamPrefetch ()
 	} catch (...) {
 		LOGOUT ("TileStream: ground-track prefetch stopped");
 		m_pStreamTrack->failed = true;
+	}
+}
+
+// not upstream (design-preload): below 10x, the tiles under the camera's ground path for the next minute, nearest first
+void Orbiter::StreamPathStep ()
+{
+	StreamTrack &s = *m_pStreamTrack;
+	if (!m_pTileStream || !g_camera) { s.pathHave = false; return; }
+	auto now = std::chrono::steady_clock::now();
+	if (now < s.pathNext) return;
+	s.pathNext = now + std::chrono::seconds (1);
+	const Planet *pl = g_camera->ProxyPlanet();
+	if (!pl) { s.pathHave = false; return; }
+	std::string body = pl->Name();
+	Vector p = tmul (pl->GRot(), g_camera->GPos() - pl->GPos());
+	double r = p.length(), lat = asin (p.y / r), lng = atan2 (p.z, p.x), R = pl->Size(), alt = r - R;
+	bool on = m_pTileStream->Enabled (body);
+	if (on) m_pTileStream->SetCamera (body, lat, lng); // at any time acceleration: the order of the wanted tiles
+	if (td.Warp() >= 10.0) { s.pathHave = false; return; } // the orbit's ground track takes over
+	bool had = s.pathHave && s.pathBody == body;
+	double plat = s.pathLat, plng = s.pathLng, dt = std::chrono::duration<double> (now - s.pathT).count();
+	s.pathHave = true; s.pathBody = body; s.pathLat = lat; s.pathLng = lng; s.pathT = now;
+	if (!on || !had || dt <= 0.0 || alt > 50e3) return;
+	double v = R * acos (std::clamp (sin (lat) * sin (plat) + cos (lat) * cos (plat) * cos (lng - plng), -1.0, 1.0)) / dt;
+	if (v < 20.0) return; // standing or slow: the camera's own wants are enough
+	double brg = atan2 (sin (plng - lng) * cos (plat), cos (lat) * sin (plat) - sin (lat) * cos (plat) * cos (plng - lng)) + PI; // onward from the last point
+	double len = std::min (v * 60.0, 120e3);
+	std::vector<TsTrack::Pt> pts = TsTrack::Path (lat, lng, brg, len, R, 500.0);
+	int tiles = 0, vec = 0;
+	for (const auto &k : TsTrack::PathKeys (pts, 14, alt > 3e3 ? 15 : 16)) { // nearest first, until the prefetch is full
+		int q = m_pTileStream->Prefetch (body, k[0], k[1], k[2]);
+		if (!q) break;
+		tiles += q > 0;
+	}
+	for (const auto &t : TsTrack::PathVec (pts, 2, 2)) { // the z14 building and road tiles within ~5 km, every km
+		int q = m_pTileStream->PrefetchVec (body, t.first, t.second);
+		if (!q) break;
+		vec += q > 0;
+	}
+	if (now >= s.pathLog) {
+		s.pathLog = now + std::chrono::seconds (60);
+		LOGOUT ("TileStream: path ahead %.0f km at %.0f m/s, %d tiles and %d building tiles queued or there", len * 1e-3, v, tiles, vec);
 	}
 }
 

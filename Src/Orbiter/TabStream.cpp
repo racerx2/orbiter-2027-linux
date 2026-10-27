@@ -477,7 +477,7 @@ void OptionsPage_Stream::OnDownload()
 	uint64_t bytes = 0;
 	for (const TileStream::TileKey &k : keys) bytes += 2 * 174904 + (k.L >= 4 && k.L <= m_elmax ? 134262 : 0);
 	QString where = m_where->currentIndex() > 0 ? m_where->currentText() : QString ("%1°, %2°").arg (m_lat->value(), 0, 'f', 4).arg (m_lng->value(), 0, 'f', 4);
-	QString msg = QString ("Download %1 Earth tiles within %2 km of %3, down to level %4?\n\nUp to %5 (open ocean and tiles already on disk take nothing). "
+	QString msg = QString ("Download %1 Earth tiles within %2 km of %3, down to level %4, and the building and road tiles under them?\n\nUp to %5 for the imagery (open ocean and tiles already on disk take nothing). "
 		"The requests go to the free servers listed in Config/TileStream.cfg.").arg (keys.size()).arg (radius).arg (where).arg (L).arg (Bytes (bytes));
 	uint64_t cap = (uint64_t)m_cap->value() << 20, now = m_sz && m_sz->ready ? m_sz->streamed : 0;
 	if (cap && now + bytes > cap)
@@ -490,6 +490,8 @@ void OptionsPage_Stream::OnDownload()
 	o.bodyDir = [dir] (const std::string &) { return dir; };
 	o.bodies = {"Earth"};
 	o.capMB = 0; // the session's cap takes over later
+	o.buildings = Cfg()->bTileStreamBuildings; // not upstream (design-preload): the region's building and road tiles too
+	o.ways = Cfg()->bTileStreamWays;
 	o.userAgent = "OrbiterLinux/" + std::to_string (oapiGetOrbiterVersion()) + " (+https://github.com/racerx2/orbiter-2027-linux)";
 	o.log = [] (const std::string &s) { LOGOUT ("%s", s.c_str()); };
 	auto f = std::make_shared<Fetch>();

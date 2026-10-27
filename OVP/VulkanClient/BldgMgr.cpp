@@ -398,7 +398,7 @@ void BldgMgr::Want (double t)
 		else if (w == 0) asked.push_back ({x, y});
 		else dispatch.push_back ({k.key, c});
 	}
-	for (auto a = asked.rbegin(); a != asked.rend(); ++a) oapiTileStreamBldgWant (hObj, a->first, a->second); // far to near: the core starts the latest want first
+	for (auto a = asked.rbegin(); a != asked.rend(); ++a) oapiTileStreamBldgWant (hObj, a->first, a->second); // far to near; the core starts the nearest to the camera first (design-preload)
 }
 
 // a base's structures in its frame, built once: the meshes the base draws, add-on bases and their own meshes included
