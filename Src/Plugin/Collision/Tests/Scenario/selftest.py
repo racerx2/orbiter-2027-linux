@@ -70,6 +70,9 @@ class OneRun:
         return self.run
 
 
+LEVEL = (0, 1, 0, -1, 0, 0, 0, 0, 1)  # body y up (+x, away from the Moon at the origin), z along +z: both level, one heading
+
+
 def placebase_case(elev, ignore=False, td=1.4865):  # Moon at the origin, pad 2 on +x; PB landed by the core, PL placed 3 m above the terrain
     R, rb = 1737400.0, 1737400.0 + elev
     rpl = (R if ignore else rb) + 3.0
@@ -77,8 +80,8 @@ def placebase_case(elev, ignore=False, td=1.4865):  # Moon at the origin, pad 2 
     for k in (1, 2, 3):
         d.append('F %d %s 51982.5 1' % (k, g((k - 1) * 0.02)))
         d.append('B Moon p=0,0,0')
-        d.append(vline('PB', (rb + td, 0.0, 0.0), (0.0, 0.0, 4.6)))
-        d.append(vline('PL', (rpl, 0.03, 0.0), (0.0, 0.0, 4.6)))
+        d.append(vline('PB', (rb + td, 0.0, 0.0), (0.0, 0.0, 4.6), R=LEVEL))
+        d.append(vline('PL', (rpl, 0.03, 0.0), (0.0, 0.0, 4.6), R=LEVEL))
     d.append('END 3')
     placed = "CollTestVessel placed 'PL' at 'Brighton Beach' lng=0 lat=0 rad=%s base=%s elev=%s" % (g(rpl), g(R), g(elev))
     return OneRun(FakeRun('\n'.join(d) + '\n', [A1, placed]))
