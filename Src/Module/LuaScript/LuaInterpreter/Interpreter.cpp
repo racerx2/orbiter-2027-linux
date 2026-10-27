@@ -852,7 +852,13 @@ int Interpreter::RunChunk (const char *chunk, int n)
 	if (chunk[0]) {
 		is_busy = true;
 		// run command
-		luaL_loadbuffer (L, chunk, n, "line");
+		if (luaL_loadbuffer (L, chunk, n, "line")) { // not upstream: a line that doesn't compile shows Lua's message, not "attempt to call a string value"
+			const char *error = lua_tostring (L, -1);
+			if (error && is_term) term_strout (error, true);
+			lua_pop (L, 1);
+			is_busy = false;
+			return 1;
+		}
 		res = LuaCall (L, 0, 0);
 		if (res) {
 			auto error = lua_tostring(L, -1);
