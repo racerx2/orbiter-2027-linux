@@ -872,3 +872,20 @@ TEST_CASE ("A cog body streams from file:// COGs: Surf with its detail, Elev, no
 		CHECK (fs::exists (o1));
 	}
 }
+
+TEST_CASE ("A cog body whose colour file is not there writes no tile", "[TileStreamMars]")
+{
+	App app;
+	Tmp t;
+	fs::path tex = t.root / "Textures" / "Mars";
+	std::string cfg = (t.root / "ts.cfg").string();
+	std::ofstream (cfg) << "BODY Mars\nSURF cog file://" << (t.root / "none.tif").string() << " 1 11\nEND\n";
+	TileStream::Options opt;
+	opt.cfgfile = cfg;
+	opt.bodyDir = [&] (const std::string &) { return tex.string(); };
+	opt.bodies = {"Mars"};
+	opt.sky = false;
+	TileStream ts (opt);
+	REQUIRE (ts.Enabled ("Mars"));
+	CHECK_FALSE (WaitFor ([&] { return fs::exists (tex / "Surf" / "01" / "000000" / "000000.dds"); }, 3.0)); // failed and held, never black
+}
