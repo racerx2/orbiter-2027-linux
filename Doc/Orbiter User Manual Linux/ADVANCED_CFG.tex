@@ -649,7 +649,7 @@ Channels:
 \item ElevTrim, RudderTrim, Flaps; BrakeL, BrakeR, Brakes (toe brakes)
 \item LookX, LookY (look around in the cockpit, orbit the camera outside), PanX, PanY (move the 2D panel, turn the outside camera), FOV, Distance
 \end{itemize}
-Axis options after the output: INVERT; FULL (the whole travel, the default) or HALF (centre to end) for the 0 to 1 channels; DZ (dead zone), SAT (saturation), CURVE (exponent), SCALE; PICKUP (a lever waits until it is moved after a start or a vessel switch).\\
+Axis options after the output: INVERT; FULL (the whole travel, the default) or HALF (centre to end) for the 0 to 1 channels; DZ (dead zone), SAT (saturation), CURVE (exponent), SCALE; PICKUP (a lever waits until it is moved after a start or a vessel switch). An axis does nothing until it has moved once since its controller was found, so axes a controller reports for parts that aren't fitted stay out.\\
 \\
 Example:
 \begin{lstlisting}[language=OSFS]

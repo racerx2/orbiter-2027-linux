@@ -406,8 +406,11 @@ TEST_CASE("axis zones and absolute channels", "[bindings]")
 	e.AttachDevice (d, "Thr");
 	const InputFrame *f = &e.Step (0.02);
 	REQUIRE(Downs (*f, OAPI_KEY_B) == 0);
-	REQUIRE(f->set.size() == 1); // Hover at once, Main waits for a move
-	REQUIRE((f->set[0].chan == ICH_HOVER && fabs (f->set[0].v - 0.5) < 1e-12));
+	REQUIRE(f->set.empty()); // nothing has moved yet
+	Axis (e, 5, ABS_RY, 2); // Hover at its first change, Main waits for a move
+	f = &e.Step (0.02);
+	REQUIRE(f->set.size() == 1);
+	REQUIRE((f->set[0].chan == ICH_HOVER && fabs (f->set[0].v - 0.501) < 1e-12));
 	REQUIRE(e.Step (0.02).set.empty());
 
 	Axis (e, 5, ABS_RX, 800);
@@ -429,6 +432,48 @@ TEST_CASE("axis zones and absolute channels", "[bindings]")
 	Axis (e, 5, ABS_Z, 1000);
 	f = &e.Step (0.02);
 	REQUIRE((f->set.size() == 1 && f->set[0].v == 1.0));
+}
+
+TEST_CASE("an axis acts once it has moved since its device was found", "[bindings]")
+{
+	const std::vector<Binding> binds = Binds ({ "Pedals.RZ = AXIS Yaw", "Stick.RZ = AXIS Yaw", "Stick.RZ = AXIS TransX",
+		"Stick.THROTTLE = AXIS Main", "Thr.Z = AXIS Main PICKUP" });
+	InputEngine e;
+	e.SetBindings (binds);
+	InputDevice ped = Dev (20, 0, {ABS_RZ}, 0, 511), stick = Dev (21, 4, {ABS_RZ, ABS_THROTTLE}, 0, 4095), thr = Dev (22, 0, {ABS_Z}, 0, 1023);
+	ped.axes[0].value = 0;   // the kernel's value before the first report
+	stick.axes[0].value = 0; // not fitted: never changes
+	stick.axes[1].value = 0;
+	thr.axes[0].value = 0;
+	e.AttachDevice (ped, "Pedals");
+	e.AttachDevice (stick, "Stick");
+	e.AttachDevice (thr, "Thr");
+	for (int i = 0; i < 50; i++) {
+		const InputFrame &f = e.Step (0.02);
+		REQUIRE(f.chan[ICH_YAW] == 0.0);
+		REQUIRE(f.chan[ICH_TRANSX] == 0.0);
+		REQUIRE(f.set.empty());
+	}
+	Axis (e, 21, ABS_RZ, 0); // a resync with the same value
+	e.SetBindings (binds); // a vessel switch
+	REQUIRE(e.Step (0.02).chan[ICH_YAW] == 0.0);
+
+	Axis (e, 20, ABS_RZ, 256); // the pedals' first report: centred
+	const InputFrame *f = &e.Step (0.02);
+	REQUIRE(fabs (f->chan[ICH_YAW] - 0.5/255.5) < 1e-12);
+	Axis (e, 20, ABS_RZ, 511);
+	REQUIRE(e.Step (0.02).chan[ICH_YAW] == 1.0);
+
+	Axis (e, 22, ABS_Z, 700); // the lever's first report: live, PICKUP still waits for a real move
+	REQUIRE(e.Step (0.02).set.empty());
+	Axis (e, 22, ABS_Z, 712);
+	f = &e.Step (0.02);
+	REQUIRE((f->set.size() == 1 && f->set[0].chan == ICH_MAIN && fabs (f->set[0].v - 0.5*(1.0 + 200.5/511.5)) < 1e-12));
+
+	e.DetachDevice (20); // plugged in again: starts over
+	ped.axes[0].value = 511;
+	e.AttachDevice (ped, "Pedals");
+	REQUIRE(e.Step (0.02).chan[ICH_YAW] == 0.0);
 }
 
 TEST_CASE("profiles: global, vessel and inherited", "[bindings]")
@@ -532,9 +577,24 @@ TEST_CASE("Devices.cfg and the identity of a device", "[bindings]")
 	REQUIRE(m[10] == 1);
 	REQUIRE(m[12] == 2); // the old list's first stick
 	DeviceDef n = InputDefFor (w, rd.defs);
-	REQUIRE(n.name == "OrionJoystickBase2JgripF16");
+	REQUIRE(n.name == "Stick2"); // Stick is taken
 	REQUIRE(n.serial == "26CE");
 	REQUIRE(n.iface == "input0");
+	auto named = [&](const char *product, const std::vector<DeviceDef> &defs) {
+		InputDevice x = Dev (13, 4, {});
+		x.name = product;
+		return InputDefFor (x, defs).name;
+	};
+	REQUIRE(named ("Winwing WINWING Orion Throttle Base II + F15EX HANDLE L + F15EX HANDLE R", rd.defs) == "Throttle");
+	REQUIRE(named ("Saitek Saitek Pro Flight Rudder Pedals", rd.defs) == "Pedals");
+	REQUIRE(named ("Saitek Pro Flight Switch Panel", rd.defs) == "Panel");
+	REQUIRE(named ("Xbox Wireless Controller", rd.defs) == "Gamepad");
+	DeviceDef thr;
+	thr.name = "Throttle";
+	REQUIRE(named ("Thrustmaster TWCS Throttle", {thr}) == "Throttle2");
+	REQUIRE(named ("Saitek X52 Flight Control System", rd.defs) == "X52FlightControlSystem");
+	REQUIRE(named ("VKB-Sim Gladiator EVO R", rd.defs) == "SimGladiatorEVOR");
+	REQUIRE(named ("Acme Super Long Name Device With Many Words In It", rd.defs) == "SuperLongNameDeviceWithMany"); // whole words, 28 at most
 	std::string cmd = "rm -rf '" + dir + "'";
 	(void)!system (cmd.c_str());
 }

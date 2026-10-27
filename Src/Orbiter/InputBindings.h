@@ -185,7 +185,7 @@ private:
 		bool haveLast = false, haveV0 = false;
 	};
 	struct Zone { int dev, code; double lo, hi; bool in; };
-	struct AxisState { double x; bool valid; int raw, min, max; };
+	struct AxisState { double x; bool valid; int raw, min, max; int raw0; bool live; }; // live: moved since its device was found
 
 	int DevIndex (const std::string &name);
 	IKey KeyOf (const InputRef &r);

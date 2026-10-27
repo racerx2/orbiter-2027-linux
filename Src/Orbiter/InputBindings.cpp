@@ -756,19 +756,30 @@ DeviceDef InputDefFor (const InputDevice &x, const std::vector<DeviceDef> &defs)
 			cur.clear();
 		}
 	}
-	if (w.size() > 1) w.erase (w.begin()); // the vendor
+	static const struct { const char *word, *name; } role[] = { // what it is, by the first role in this order
+		{"RUDDER", "Pedals"}, {"PEDAL", "Pedals"}, {"PEDALS", "Pedals"}, {"THROTTLE", "Throttle"}, {"YOKE", "Yoke"},
+		{"JOYSTICK", "Stick"}, {"STICK", "Stick"}, {"WHEEL", "Wheel"}, {"PANEL", "Panel"}, {"BOX", "Box"},
+		{"GAMEPAD", "Gamepad"}, {"CONTROLLER", "Gamepad"} };
 	std::string base;
-	for (auto &s : w) {
-		std::string t = s;
-		bool caps = true;
-		for (char c : t) if (islower ((unsigned char)c)) caps = false;
-		if (caps && t.size() > 3) for (size_t i = 1; i < t.size(); i++) t[i] = tolower ((unsigned char)t[i]);
-		t[0] = toupper ((unsigned char)t[0]);
-		base += t;
+	for (auto &r : role) {
+		for (auto &s : w) if (!strcasecmp (s.c_str(), r.word)) base = r.name;
+		if (!base.empty()) break;
 	}
-	if (base.empty()) base = "Device";
-	if (isdigit ((unsigned char)base[0])) base = "D" + base;
-	if (base.size() > 28) base.resize (28);
+	if (base.empty()) {
+		if (w.size() > 1) w.erase (w.begin()); // the vendor
+		for (auto &s : w) {
+			std::string t = s;
+			bool caps = true;
+			for (char c : t) if (islower ((unsigned char)c)) caps = false;
+			if (caps && t.size() > 3) for (size_t i = 1; i < t.size(); i++) t[i] = tolower ((unsigned char)t[i]);
+			t[0] = toupper ((unsigned char)t[0]);
+			if (!base.empty() && base.size() + t.size() > 28) break; // whole words
+			base += t;
+		}
+		if (base.empty()) base = "Device";
+		if (isdigit ((unsigned char)base[0])) base = "D" + base;
+		if (base.size() > 28) base.resize (28);
+	}
 	d.name = base;
 	for (int n = 2; ; n++) {
 		bool clash = false;
@@ -890,6 +901,8 @@ void InputEngine::AttachDevice (const InputDevice &d, const std::string &name)
 	attached_[d.id] = di;
 	for (auto &a : d.axes) {
 		SetAxis (di, a.code, a.value, a.min, a.max);
+		AxisState &s = axes_[{di, a.code}];
+		s.raw0 = a.value, s.live = false; // unfitted axes and values from before the first report stay out
 		for (auto &z : zones_) // already inside a zone: no press until it leaves and comes back
 			if (z.dev == di && z.code == a.code) z.in = (axes_[{di, a.code}].x >= z.lo && axes_[{di, a.code}].x <= z.hi);
 	}
@@ -1273,6 +1286,8 @@ void InputEngine::DeviceEvent (const InputDevEvent &e)
 		auto a = axes_.find ({di, e.index});
 		if (a == axes_.end()) break;
 		SetAxis (di, e.index, e.value, a->second.min, a->second.max);
+		AxisState &s = a->second;
+		if (!s.live && fabs ((double)e.value - s.raw0) >= std::max (1.0, 0.001*(s.max - s.min))) s.live = true;
 		Zones (di, e.index);
 		break;
 	}
@@ -1470,7 +1485,7 @@ const InputFrame &InputEngine::Step (double dt)
 		const IKey &k = e.first;
 		if (k.kind != INK_AXIS || k.dir != 0) continue;
 		auto a = axes_.find ({k.dev, k.code});
-		if (a == axes_.end() || !a->second.valid) continue;
+		if (a == axes_.end() || !a->second.valid || !a->second.live) continue;
 		for (int bi : Resolve (k, 0, nullptr)) {
 			const Binding &b = binds_[bi];
 			if (b.out != IOUT_AXIS) continue;
