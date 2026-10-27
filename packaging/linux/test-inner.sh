@@ -43,6 +43,13 @@ rm -f Orbiter.cfg # headless: a fresh package has no Orbiter.cfg, so no graphics
 export QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/tmp/xdg; mkdir -p -m 700 /tmp/xdg
 timeout 120 ./Orbiter "--scenariox=Delta-glider/Smack!" --fixedstep=0.02 --maxframes=200 >/tmp/h.out 2>&1; rc=$?
 [ $rc = 0 ] && ok "headless scenario (200 frames)" || bad "headless scenario rc=$rc: $(tail -3 /tmp/h.out)"
+if [ -d /kernels ]; then # the SPICE kernels (test.sh KERNELS=<folder>): the same flight with the SPICE bodies
+	ln -sf /kernels/orbiter.bsp /kernels/kerberos_styx.bsp Kernels/
+	timeout 180 ./Orbiter "--scenariox=Delta-glider/Smack!" --fixedstep=0.02 --maxframes=200 >/tmp/s.out 2>&1; rc=$?
+	n=$(grep -c 'spice.dll: .*(MJD .*) - OK' Orbiter.log)
+	[ $rc = 0 ] && grep -q 'Celestial bodies: SPICE kernels' Orbiter.log && [ "$n" -ge 43 ] && ok "headless scenario with the SPICE kernels ($n bodies)" || bad "SPICE rc=$rc, $n bodies: $(grep -iE 'spice|Celestial' Orbiter.log /tmp/s.out | tail -3)"
+	rm -f Kernels/orbiter.bsp Kernels/kerberos_styx.bsp
+fi
 mkdir -p Skins/QmlProbe/qml
 printf 'Name = QML probe\nApi = 1\nQml = qml/Main.qml\n' > Skins/QmlProbe/skin.cfg
 cat > Skins/QmlProbe/qml/Main.qml <<'QML'

@@ -8,6 +8,7 @@ Pre-release @VER@ of Orbiter 2027 for Linux, built from the Custom branch.
 - **Graphics effects** in the Vulkan client: shadows, reflections, bounce light, volumetric plumes, re-entry plasma and hull heating, fog, night look.
 - **Collisions and damage** add-on (Modules tab, Collision): dents, live NVIDIA Blast fracture, debris, crashes into buildings and the ground.
 - **glTF models and PBR materials**: ships straight from Blender as `.glb`/`.gltf`. Try **Delta-glider > DG and DG-S and DGTest** and **Graphics > PBR material bench**.
+- **JPL SPICE ephemerides** for the planets and moons (1900 to 2199), with Ceres, Amalthea, Himalia and Phoebe.
 - **Launchpad skins** (Extra > Launchpad skin), **the Pluto system** and measured atmospheres.
 - Manuals for what is new since the Windows version.
 
@@ -15,7 +16,7 @@ Pre-release @VER@ of Orbiter 2027 for Linux, built from the Custom branch.
 1. Download `@NAME@.tar.xz`. Its SHA256 is in the `.sha256` file.
 2. Unpack it into a folder you own, for example your home folder (not `/opt`): `tar -xf @NAME@.tar.xz`
 3. Start `OpenOrbiter` in that folder. The first start checks the few system libraries Orbiter takes from your distribution, offers to install any that are missing, and adds Orbiter to the app menu.
-4. The Launchpad offers to download the planet and moon textures.
+4. The Launchpad offers to download the planet and moon textures, and JPL's SPICE ephemeris kernels (1.6 GB). Without the kernels Orbiter uses its built-in series.
 
 ## Runs on
 x86-64 PCs with glibc 2.34 or newer, on an X11 or Wayland desktop:
