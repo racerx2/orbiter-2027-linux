@@ -1,8 +1,10 @@
 # not upstream: Scn.PlaceBase, TESTPLACEBASE at pad 2's base-local position matches a ShuttlePB landed on pad 2 (design-C-T T0.7)
-from scnlib import Skip, dot, fail, norm3, rot, scale, sub
+import math
+
+from scnlib import Skip, axis, dot, fail, norm3, scale, sub
 
 K = 3  # placed in pre-step 3: the dump of frame 3 holds the placed state
-PB_TD = 1.5  # ShuttlePB CG over its touchdown plane (ShuttlePB.cpp tdvtx y = -1.5); on the Moon about 1.4 cm less from the compression
+PB_TD = 1.5  # ShuttlePB CG over its touchdown plane (ShuttlePB.cpp tdvtx y = -1.5), its skids on the ground at rest (design terrain-contact 1)
 Y = 3.0  # TESTPLACEBASE y: metres above the local terrain
 
 
@@ -37,9 +39,18 @@ def check(ctx):
     dv = norm3(sub(d.vec(K, 'PL', 'v'), d.vec(K, 'PB', 'v')))
     if dv > 1e-3:
         fail('PL moves at %.4g m/s against the landed PB: not the ground velocity' % dv)
-    a, b = rot(d, K, 'PL'), rot(d, K, 'PB')
-    err = max(abs(a[i][j] - b[i][j]) for i in range(3) for j in range(3))
+    def flat(v):  # a body axis in the horizontal plane at the pad
+        h = sub(v, scale(up, dot(v, up)))
+        return scale(h, 1 / norm3(h))
+    fpl, fpb = flat(axis(d, K, 'PL', 2)), flat(axis(d, K, 'PB', 2))
+    err = math.acos(max(-1.0, min(1.0, dot(fpl, fpb))))
     if err > 2e-3:
-        fail('PL at heading 90 differs in attitude from PB at heading 90 by %.3g' % err)
+        fail('PL at heading 90 differs in heading from PB at heading 90 by %.3g rad' % err)
+    tpl = math.acos(max(-1.0, min(1.0, dot(axis(d, K, 'PL', 1), up))))
+    if tpl > 2e-3:
+        fail('PL is tilted %.3g rad: TESTPLACEBASE places level' % tpl)
+    tpb = math.acos(max(-1.0, min(1.0, dot(axis(d, K, 'PB', 1), up))))
+    if tpb > 0.05:  # the PB stands on the terrain under its skids (design terrain-contact 2): tilted by that ground's slope only
+        fail('PB is tilted %.3g rad on pad 2' % tpb)
     if abs(elev) < 1.0:  # without elevation tiles a placement that ignores the terrain looks the same
         raise Skip('Moon terrain elevation at Brighton Beach is %.3f m: the elevation term is untested (install the Moon elevation tiles)' % elev)

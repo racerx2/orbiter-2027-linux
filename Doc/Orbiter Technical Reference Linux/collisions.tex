@@ -122,7 +122,7 @@ Broken bonds, crushed cells and weakened bonds are saved with the scenario, and 
 
 
 \subsection{Ground impacts}
-With \textit{CollisionGround}, the collider's vertices are tested against Orbiter's terrain (including elevation data). A vertex that reaches the terrain with an approach speed of at least \textit{CollisionGroundMinSpeed} (5 m/s) makes an impact event with the local terrain normal, which dents and breaks the vessel as an impact with another body would, and its impulse is applied to the vessel. Slower touchdowns, landing and rolling are left to Orbiter's touchdown-point model.
+With \textit{CollisionGround}, the collider's vertices are tested against Orbiter's terrain (including elevation data). A vertex that reaches the terrain with an approach speed of at least \textit{CollisionGroundMinSpeed} (5 m/s) makes an impact event with the local terrain normal, which dents and breaks the vessel as an impact with another body would, and its impulse is applied to the vessel. Slower touchdowns, landing and rolling are left to Orbiter's touchdown-point model and its hull points, which keep every vessel's hull out of the terrain (Dynamic vessel-surface interaction).
 
 
 \subsection{Persistence}

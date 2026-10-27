@@ -442,7 +442,7 @@ void Vessel::ApplyPackedState (const char *data)
 		InitOrbiting (sd->rpos, sd->rvel, sd->arot, &sd->vrot);
 		break;
 	case 1: // landed
-		InitLanded ((Planet*)cbody, sd->lng, sd->lat, sd->hdg);
+		InitLandedOnGround ((Planet*)cbody, sd->lng, sd->lat, sd->hdg); // not upstream (terrain-contact): on the terrain under its primary points
 		if (proxybase) proxybase->ReportTouchdown (this, sd->lng, sd->lat);
 		break;
 	}
@@ -503,7 +503,7 @@ void Vessel::SetState (const VESSELSTATUS &status)
 			//landtgt->Pad_EquPos (nport, lng, lat);
 			proxybase = landtgt;
 		}
-		InitLanded ((Planet*)cbody, lng, lat, dir);
+		InitLandedOnGround ((Planet*)cbody, lng, lat, dir); // not upstream (terrain-contact): on the terrain under its primary points
 		break;
 	default:
 		break;
@@ -592,9 +592,10 @@ void Vessel::SetState2 (const void *status)
 			Matrix lrot;
 			lrot.Set (MakeVector(vs->arot));
 			double alt = vs->vrot.x;
+			alt = SavedSeat ((Planet*)cbody, vs->surf_lng, vs->surf_lat, lrot, alt); // not upstream (terrain-contact): no primary point under the terrain
 			InitLanded ((Planet*)cbody, vs->surf_lng, vs->surf_lat, vs->surf_hdg, &lrot, alt);
 		} else {
-			InitLanded ((Planet*)cbody, vs->surf_lng, vs->surf_lat, vs->surf_hdg);
+			InitLandedOnGround ((Planet*)cbody, vs->surf_lng, vs->surf_lat, vs->surf_hdg); // not upstream (terrain-contact): on the terrain under its primary points
 		}
 		if (proxybase = landtgt)
 			proxybase->ReportTouchdown (this, vs->surf_lng, vs->surf_lat);

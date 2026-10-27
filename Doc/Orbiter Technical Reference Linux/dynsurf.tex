@@ -56,6 +56,13 @@ If the plane described by the touchdown point positions is not parallel to the $
 \end{equation}
 where $R$ is the required rotation, and $C$ denotes the operation of applying Equations \ref{eq:linsys} and \ref{eq:prm} on the rotated points.
 
+\subsection{Linux version: nothing goes into the terrain}\label{ssec:terrain_contact}
+\begin{itemize}
+\item \textbf{Wheels at rest on the ground:} the mesh shows the gear as it stands, so the first three touchdown points are where the wheels meet the ground at rest. Each of their springs has a free length that holds its equilibrium compression from Section~\ref{ssec:equi_comp} ($\alpha_i m g$, at most 0.5\,m, with $g$ the gravity at the vessel). A vessel at rest stands with these points on the surface; under extra load (a landing, braking) the springs still compress below it.
+\item \textbf{Landed on a slope:} a vessel set landed without an attitude (a scenario's position and heading, a base pad, the scenario editor) is turned at its heading until its first three touchdown points stand on the terrain under them, then raised if any other of its own touchdown points would be under the terrain. A saved attitude and height are kept, except that a primary point up to 1\,m under the terrain raises the vessel by that depth; a vessel saved standing on a structure, such as a launch platform, stays where it was saved.
+\item \textbf{The hull:} each vessel also gets up to 128 hull points from its external meshes: for 642 directions, the vertex farthest along it, from the groups no animation moves and that are not hidden. Points less than 0.3\,m above the plane of the first three touchdown points are left to the gear. A hull point under the terrain pushes with a stiffness of 196\,N/m per kg of the vessel's mass (one point holds the weight at 5\,cm on Earth), a damping ratio of 0.3 and friction 0.8. Hull points higher than $\max(3\,\mathrm{m}, 0.25 \times$ size) over the terrain plane at the vessel are not tested. They are not touchdown points: modules see the touchdown points they set.
+\end{itemize}
+
 \subsection{Acknowlegements}
 I want to thank RisingFury and RAF92\_Moser, and in particular Miner1 of orbiter-forum.com for their input to the equilibrium landing gear compression problem. The solution in Section~\ref{ssec:equi_comp} follows Miner1's 2D solution. Any mistakes in the 3D extension are mine.
 

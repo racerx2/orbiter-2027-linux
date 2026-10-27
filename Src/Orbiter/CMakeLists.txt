@@ -92,6 +92,7 @@ set(common_src
 	Vessel.cpp
 	Vesselbase.cpp
 	Vesselstatus.cpp
+	HullPoints.cpp # not upstream (terrain-contact): hull contact points and the landed pose
 # Surface base classes
 	Base.cpp
 	BaseClear.cpp # not upstream: a base file's clear zones

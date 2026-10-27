@@ -22,6 +22,7 @@
 #define __VESSEL_H
 
 #include <array>
+#include <vector> // not upstream (terrain-contact)
 #include <fstream>
 
 #include "Vesselbase.h"
@@ -1472,6 +1473,10 @@ private:
 	// init vessel position on ground
 	// Note: InitLanded must be called after the update phase (after EndStateUpdate)
 
+	void LandedPose (Planet *planet, double lng, double lat, double dir, Matrix &hrot, double &cgelev) const; // not upstream (terrain-contact): standing on its primary points on the terrain at heading dir
+	void InitLandedOnGround (Planet *planet, double lng, double lat, double dir); // not upstream (terrain-contact): InitLanded at LandedPose's attitude and height
+	double SavedSeat (Planet *planet, double lng, double lat, const Matrix &hrot, double alt) const; // not upstream (terrain-contact): a saved height raised by a primary point up to 1 m under the terrain
+
 	void InitDocked (const Vessel *vessel, int port);
 	// init vessel docked in orbit to another vessel
 
@@ -1654,6 +1659,10 @@ private:
 	TOUCHDOWN_VTX *touchdown_vtx;
 	DWORD ntouchdown_vtx;    // number of touchdown vertices
 	DWORD next_hullvtx;      // used by hull vertex iterator
+	mutable std::vector<Vector> hullpt; // not upstream (terrain-contact): the hull's contact points (vessel frame) from the external meshes
+	mutable bool hull_dirty = true;     // not upstream (terrain-contact): made again at the next contact test near the ground
+	void BuildHull () const;            // not upstream (terrain-contact)
+	double TdRest (DWORD i, double g) const; // not upstream (terrain-contact): primary point i's static compression under gravity g [m]
 
 	Vector campos;             // internal camera position (cockpit mode);
 	Vector camdir0;            // internal default camera direction (cockpit mode)

@@ -23,6 +23,7 @@
 #include "Log.h"
 #include "OrbiterAPI.h"
 #include "Vobject.h"
+#include "HullPoints.h" // not upstream (terrain-contact)
 // zmouse.h left out: WM_MOUSEWHEEL is in OrbiterPlatform.h
 #include <QCursor>
 #include <QWindow>
@@ -1123,6 +1124,23 @@ void Camera::Update ()
 					rpos *= ((tref_r0-tref_r1)*scale+tref_r1)/rpos.length();
 					rdist = rpos.length()/target->Size();
 				}
+			}
+		}
+		if (extmode != CAMERA_GROUNDOBSERVER && planet_proxy && alt_proxy < 3e4) { // not upstream (terrain-contact): the outside camera stays over the terrain
+			const double clear = 1.5;
+			double lng, lat, rad;
+			planet_proxy->GlobalToEquatorial (gpos, lng, lat, rad);
+			ElevationManager *emgr = planet_proxy->ElevMgr();
+			double h = rad - planet_proxy->Size() - (emgr ? emgr->Elevation (lat, lng, 25, &etile) : 0.0);
+			if (h < clear) {
+				Vector tg (target->GPos());
+				Vector d0 (tg - gpos);
+				gpos += (gpos - planet_proxy->GPos()).unit() * (clear - h);
+				gspos.Set (gpos - tg);
+				GPOS = MakeVECTOR3 (gpos);
+				Vector d1 (tg - gpos);
+				if (d0.length() > 1e-3 && d1.length() > 1e-3)
+					grot.premul (HullPoints::Turn (d0.unit(), d1.unit())); // the target stays where it was on screen
 			}
 		}
 	} else { // cockpit mode

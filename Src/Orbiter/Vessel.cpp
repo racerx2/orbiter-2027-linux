@@ -38,6 +38,7 @@
 #include "State.h"
 #include "Util.h"
 #include "elevmgr.h"
+#include "HullPoints.h" // not upstream (terrain-contact)
 #include <fstream>
 #include <iomanip>
 #include <stdio.h>
@@ -1148,6 +1149,7 @@ bool Vessel::isOrbitStabilised () const
 
 bool Vessel::SetTouchdownPoints (const TOUCHDOWNVTX *tdvtx, DWORD ntp)
 {
+	hull_dirty = true; // not upstream (terrain-contact)
 	dCHECK(ntp >= 3, "Vessel::SetTouchdownPoints: at least 3 points must be provided");
 
 	static const double eps = 1e-12;
@@ -3315,6 +3317,7 @@ UINT Vessel::AddMesh (const char *mname, const VECTOR3 *ofs)
 
 UINT Vessel::InsertMesh (const char *mname, UINT idx, const VECTOR3 *ofs)
 {
+	hull_dirty = true; // not upstream (terrain-contact)
 	UINT i;
 	idx = MakeFreeMeshEntry (idx);
 
@@ -3347,6 +3350,7 @@ UINT Vessel::AddMesh (MESHHANDLE hMesh, const VECTOR3 *ofs)
 
 UINT Vessel::InsertMesh (MESHHANDLE hMesh, UINT idx, const VECTOR3 *ofs)
 {
+	hull_dirty = true; // not upstream (terrain-contact)
 	UINT i;
 	idx = MakeFreeMeshEntry (idx);
 
@@ -3369,6 +3373,7 @@ UINT Vessel::InsertMesh (MESHHANDLE hMesh, UINT idx, const VECTOR3 *ofs)
 
 bool Vessel::DelMesh (UINT idx, bool retain_anim)
 {
+	hull_dirty = true; // not upstream (terrain-contact)
 	if (idx >= nmesh) return false; // mesh index out of range
 	if (!meshlist[idx]) return false; // mesh already deleted
 	GltfVesselAnim::DeletingMesh (this, idx, retain_anim); // not upstream
@@ -3399,6 +3404,7 @@ bool Vessel::DelMesh (UINT idx, bool retain_anim)
 
 void Vessel::ClearMeshes (bool retain_anim)
 {
+	hull_dirty = true; // not upstream (terrain-contact)
 	if (!nmesh) return;
 	GltfVesselAnim::DeletingMesh (this, (UINT)-1, retain_anim); // not upstream
 
@@ -3416,6 +3422,7 @@ void Vessel::ClearMeshes (bool retain_anim)
 
 bool Vessel::ShiftMesh (UINT idx, const VECTOR3 &ofs)
 {
+	hull_dirty = true; // not upstream (terrain-contact)
 	if (idx >= nmesh || !meshlist[idx]) return false;
 	meshlist[idx]->meshofs += ofs;
 	BroadcastVisMsg (EVENT_VESSEL_MESHOFS, idx);
@@ -3453,6 +3460,7 @@ Mesh *Vessel::CopyMeshFromTemplate (UINT idx)
 
 void Vessel::SetMeshVisibilityMode (UINT meshidx, WORD mode)
 {
+	hull_dirty = true; // not upstream (terrain-contact)
 	if (meshidx < nmesh) {
 		meshlist[meshidx]->vismode = mode;
 		if (mode & MESHVIS_EXTPASS) extpassmesh = true;
@@ -3477,21 +3485,11 @@ void Vessel::InitLanded (Planet *planet, double lng, double lat, double dir, con
 	dCHECK(!g_bStateUpdate, "Vessel::InitLanded must not be called during state update") // not valid during update phase
 
 	Vector nml;
-	int i;
 
 	if (!hrot) {
-		// Calculate compressed touchdown points at equilibrium
-		double prad = planet->Size();
-		double mg = Ggrav * planet->Mass() * mass / (prad*prad); // approximate vessel weight
-		Vector tp_comp[3];
-		for (i = 0; i < 3; i++)
-			tp_comp[i] = touchdown_vtx[i].pos + touchdown_nm*(touchdown_vtx[i].compression*mg);
-
-		// equilibrium touchdown plane normal
-		nml = crossp (tp_comp[0]-(tp_comp[1]+tp_comp[2])*0.5, tp_comp[2]-tp_comp[1]).unit();
-
-		// Distance of origin from compressed touchdown plane
-		cgelev = dotp (nml, -tp_comp[0]);
+		// not upstream (terrain-contact): the touchdown points at rest stand on the ground, their springs' free length holds the static compression (TdRest)
+		nml = touchdown_nm;
+		cgelev = dotp (nml, -touchdown_vtx[0].pos);
 	} else {
 		double slng = sin(lng), clng = cos(lng);
 		double slat = sin(lat), clat = cos(lat);
@@ -3559,6 +3557,126 @@ void Vessel::InitLanded (Planet *planet, double lng, double lat, double dir, con
 	bForceActive = false;
 	el_valid = false;
 	FRecorder_SaveEvent ("LANDED", proxybody->Name());
+}
+
+// not upstream (terrain-contact): the terrain over the ground point at lng, lat in its horizon frame (x east, y up, z north)
+struct VesselGround {
+	Planet *planet; double R, e0; Vector up, east, north; Matrix L2H;
+	VesselGround (Planet *p, double lng, double lat) : planet (p)
+	{
+		double slng = sin(lng), clng = cos(lng), slat = sin(lat), clat = cos(lat);
+		R = p->Size (); e0 = p->Elevation (lng, lat);
+		up.Set (clat*clng, slat, clat*slng); east.Set (-slng, 0, clng); north.Set (-slat*clng, clat, -slat*slng);
+		L2H.Set (east.x, east.y, east.z, up.x, up.y, up.z, north.x, north.y, north.z);
+	}
+	double operator() (double x, double z) const
+	{
+		Vector q = up*(R + e0) + east*x + north*z;
+		double r = q.length (), la = asin (q.y/r), lo = atan2 (q.z, q.x);
+		return dotp (q, up)*(R + planet->Elevation (lo, la))/r - (R + e0);
+	}
+};
+
+// not upstream (terrain-contact): primary point i's static compression under gravity g, held in the spring's free length so the point stands on the ground at rest
+double Vessel::TdRest (DWORD i, double g) const
+{
+	if (i >= 3 || i >= ntouchdown_vtx) return 0.0;
+	double c = touchdown_vtx[i].compression * mass * g;
+	return c > 0.0 ? min (c, HullPoints::REST_MAX) : 0.0;
+}
+
+// not upstream (terrain-contact): the hull's contact points from the external meshes' resting groups (design terrain-contact 3)
+void Vessel::BuildHull () const
+{
+	hull_dirty = false;
+	hullpt.clear ();
+	std::vector<Vector> all, fixed;
+	for (UINT m = 0; m < nmesh; m++) {
+		const MeshList *ml = meshlist[m];
+		if (!ml || !(ml->vismode & MESHVIS_EXTERNAL)) continue;
+		Mesh *mesh = (Mesh*)ml->hMesh;
+		if (!mesh && ml->meshname[0]) mesh = (Mesh*)g_pOrbiter->meshmanager.LoadMesh (ml->meshname);
+		if (!mesh) continue;
+		std::vector<char> moved (mesh->nGroup (), 0);
+		for (UINT a = 0; a < nanim; a++)
+			for (UINT c = 0; c < anim[a].ncomp; c++) {
+				const MGROUP_TRANSFORM *t = (anim[a].comp[c] ? anim[a].comp[c]->trans : 0);
+				if (!t || t->mesh != m) continue;
+				if (!t->grp || !t->ngrp) std::fill (moved.begin (), moved.end (), 1);
+				else for (UINT k = 0; k < t->ngrp; k++) if (t->grp[k] < moved.size ()) moved[t->grp[k]] = 1;
+			}
+		for (DWORD g = 0; g < mesh->nGroup (); g++) {
+			GroupSpec *gs = mesh->GetGroup (g);
+			if (!gs || !gs->Vtx || (gs->UsrFlag & 0x2)) continue; // hidden groups are not drawn
+			for (DWORD v = 0; v < gs->nVtx; v++) {
+				Vector p (gs->Vtx[v].x + ml->meshofs.x, gs->Vtx[v].y + ml->meshofs.y, gs->Vtx[v].z + ml->meshofs.z);
+				all.push_back (p);
+				if (!moved[g]) fixed.push_back (p);
+			}
+		}
+	}
+	double cell = max (size/64.0, 0.05);
+	std::vector<Vector> pt = HullPoints::Support (HullPoints::Thin (fixed, cell));
+	if (pt.size () < 8) pt = HullPoints::Support (HullPoints::Thin (all, cell)); // nearly all of it moves: its rest pose
+	if (ntouchdown_vtx >= 3) HullPoints::GearZone (pt, touchdown_vtx[0].pos, touchdown_nm, HullPoints::GEAR_ZONE);
+	HullPoints::Cap (pt, HullPoints::MAX_POINTS);
+	hullpt.swap (pt);
+}
+
+// not upstream (terrain-contact): standing on the primary points on the terrain at heading dir (design terrain-contact 2)
+void Vessel::LandedPose (Planet *planet, double lng, double lat, double dir, Matrix &hrot, double &cgelev) const
+{
+	double slng = sin(lng), clng = cos(lng), slat = sin(lat), clat = cos(lat);
+	double sdir = sin(dir), cdir = cos(dir);
+	// level at heading dir with the touchdown plane horizontal: InitLanded's land_rot and tilt
+	Matrix lr ( clng*slat*sdir-slng*cdir, clng*clat, -clng*slat*cdir-slng*sdir,
+	           -clat*sdir,                slat,       clat*cdir,
+	            slng*slat*sdir+clng*cdir, clat*slng, -slng*slat*cdir+clng*sdir);
+	double tilt = acos (max (-1.0, min (1.0, touchdown_nm.y)));
+	if (tilt > 1e-8) {
+		double phi = atan2 (touchdown_nm.x, -touchdown_nm.z);
+		double sinp = sin(phi), cosp = cos(phi);
+		Matrix R (cosp, 0, sinp,   0, 1, 0,   -sinp, 0, cosp);
+		double sina = sin(tilt), cosa = cos(tilt);
+		R.premul (Matrix (1, 0, 0,   0, cosa, -sina,   0, sina, cosa));
+		R.premul (Matrix (cosp, 0, -sinp,   0, 1, 0,   sinp, 0, cosp));
+		lr.postmul (R);
+	}
+	VesselGround ground (planet, lng, lat);
+	Matrix Rh (ground.L2H * lr); // vessel to horizon
+	if (ntouchdown_vtx >= 3) {
+		Vector tp[3] = { touchdown_vtx[0].pos, touchdown_vtx[1].pos, touchdown_vtx[2].pos };
+		std::vector<Vector> own;
+		for (DWORD i = 0; i < ntouchdown_vtx; i++) own.push_back (touchdown_vtx[i].pos);
+		HullPoints::Pose (tp, touchdown_nm, own, [&] (double x, double z) { return ground (x, z); }, Rh, cgelev);
+	} else {
+		cgelev = cog_elev;
+	}
+	hrot = Rh;
+	hrot.tpremul (ground.L2H); // vessel to planet-local
+}
+
+// not upstream (terrain-contact): InitLanded at LandedPose's attitude and height
+void Vessel::InitLandedOnGround (Planet *planet, double lng, double lat, double dir)
+{
+	Matrix hrot;
+	double cgelev;
+	LandedPose (planet, lng, lat, dir, hrot, cgelev);
+	InitLanded (planet, lng, lat, dir, &hrot, cgelev);
+}
+
+// not upstream (terrain-contact): a saved landed height raised by the deepest primary point under the terrain, up to 1 m (a save before TdRest, a terrain refined since); deeper or above: as saved (a vessel on a structure)
+double Vessel::SavedSeat (Planet *planet, double lng, double lat, const Matrix &hrot, double alt) const
+{
+	if (ntouchdown_vtx < 3) return alt;
+	VesselGround ground (planet, lng, lat);
+	Matrix Rh (ground.L2H * hrot);
+	double deep = -1e30;
+	for (DWORD i = 0; i < 3; i++) {
+		Vector a (mul (Rh, touchdown_vtx[i].pos));
+		deep = max (deep, ground (a.x, a.z) - (alt + a.y));
+	}
+	return (deep > 0.0 && deep <= 1.0 ? alt + deep : alt);
 }
 
 void Vessel::InitDocked (const Vessel *vessel, int port)
@@ -4367,8 +4485,10 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 	Matrix T (s->R); // transformation vessel local -> planet local
 	T.tpremul (ps.R);
 
-	if (ntdy < ntouchdown_vtx) {
-		ntdy = ntouchdown_vtx;
+	if (hull_dirty) BuildHull (); // not upstream (terrain-contact): the hull's points, made when first needed near the ground
+	DWORD nall = ntouchdown_vtx + (DWORD)hullpt.size (); // not upstream (terrain-contact): the touchdown points, then the hull's
+	if (ntdy < nall) {
+		ntdy = nall;
 		delete []tidx;
 		tidx = new int[ntdy];
 		delete []tdy;
@@ -4385,14 +4505,21 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 	int reslvl = 1;
 	if (emgr) reslvl = (int)(32.0-log(max(alt,100.0))*LOG2);
 
+	Vector hn (tmul (T, tmul (surfp.L2H, surfp.surfnml))); // horizon normal in vessel frame; not upstream (terrain-contact): before the points, for the hull's test
+	double rdist = s->pos.dist (ps.pos), grav = Ggrav * proxybody->Mass() / (rdist*rdist); // not upstream (terrain-contact): gravity here, for the primary points' rest
+	double hullreach = max (3.0, 0.25*size); // not upstream (terrain-contact): hull points higher over the ground plane are not tested
 	Vector shift = tmul(ps.R, s->pos - ps.pos);
-	for (i = 0; i < ntouchdown_vtx; i++) {
-		Vector p (mul (T, touchdown_vtx[i].pos) + shift);
+	for (i = 0; i < (int)nall; i++) {
+		bool hull = i >= (int)ntouchdown_vtx; // not upstream (terrain-contact)
+		const Vector &tv = (hull ? hullpt[i-ntouchdown_vtx] : touchdown_vtx[i].pos);
+		if (hull && alt + dotp (tv, hn) > hullreach) { tdy[i] = hullreach; continue; } // not upstream (terrain-contact): far over the ground plane, no elevation asked
+		Vector p (mul (T, tv) + shift);
 		double lng, lat, rad, elev = 0.0;
 		proxybody->LocalToEquatorial (p, lng, lat, rad);
 		if (emgr)
 			elev = emgr->Elevation (lat, lng, reslvl, &etile);
 		tdy[i] = rad - elev - proxybody->Size();
+		if (i < 3) tdy[i] -= TdRest (i, grav); // not upstream (terrain-contact): the spring's free length holds the static compression
 		if (!i || tdy[i] < tdymin) {
 			tdymin = tdy[i];
 		}
@@ -4421,7 +4548,7 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 	Vector d1 ((touchdown_vtx[0].pos-(touchdown_vtx[1].pos+touchdown_vtx[2].pos)*0.5));
 	// horizon normal in vessel frame
 	//Vector hn (tmul (s->R, s->pos - ps.pos).unit());
-	Vector hn (tmul (T, tmul (surfp.L2H, surfp.surfnml)));
+	// not upstream (terrain-contact): hn is set before the points
 	// project d1 (longitudinal touchdown direction) into horizon plane
 	Vector d1h ((d1 - hn * dotp (d1, hn)).unit());
 	// lateral touchdown direction
@@ -4502,24 +4629,28 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 #else
 
 		DWORD ntouch = 0;
-		for (i = 0; i < ntouchdown_vtx; i++) {
+		double hullk = HullPoints::HULL_K*mass, hulld = 2.0*HullPoints::HULL_ZETA*sqrt (hullk*mass); // not upstream (terrain-contact): a hull point's spring and damper
+		for (i = 0; i < (int)nall; i++) {
 			if (tdy[i] < 0.0) { // ground contact on point i!
+				bool hull = i >= (int)ntouchdown_vtx; // not upstream (terrain-contact): a hull point
+				const Vector &tv = (hull ? hullpt[i-ntouchdown_vtx] : touchdown_vtx[i].pos);
+				double kst = (hull ? hullk : touchdown_vtx[i].stiffness), kdm = (hull ? hulld : touchdown_vtx[i].damping), kmu = (hull ? HullPoints::HULL_MU : touchdown_vtx[i].mu);
 				tdy[i] = max(tdy[i], -1.0); // DEBUG
 				tidx[ntouch++] = i;
-				Vector gv (surfp.groundvel_ship + crossp(touchdown_vtx[i].pos,s->omega)); // ground velocity of touchdown point in vessel frame
+				Vector gv (surfp.groundvel_ship + crossp(tv,s->omega)); // ground velocity of touchdown point in vessel frame
 				gv_n   = dotp (gv, hn);                                             // gv projected on horizon normal in vessel frame
 				gv_lon = dotp (gv, d1h);											// longitudinal speed component for touchdown point i
 				gv_lat = dotp (gv, d2h);											// lateral speed component
 
-				fn[i] = -tdy[i]*touchdown_vtx[i].stiffness; 						// horizon-normal force component: gear compression forces
-				double maxpress = min (-tdy[i], 0.1)*touchdown_vtx[i].stiffness;
+				fn[i] = -tdy[i]*kst; 						// horizon-normal force component: gear compression forces
+				double maxpress = min (-tdy[i], 0.1)*kst;
 
 				if (i < 3) {
 					mu = touchdown_vtx[i].mu_lng;
 					if (i && wbrake_level[i-1])
 						mu += (touchdown_vtx[i].mu - touchdown_vtx[i].mu_lng)*wbrake_level[i-1];
 				} else {
-					mu = touchdown_vtx[i].mu;
+					mu = kmu;
 				}
 				flng[i] = mu * maxpress;												// horizon-longitudinal force component: surface friction
 				if (fabs(gv_lon) < 10.0) flng[i] *= sqrt(fabs(0.1*gv_lon));             // cancel horizontal forces at low speeds
@@ -4527,7 +4658,7 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 				if (gv_lon > 0.0) flng[i] = -flng[i];
 				flng_tot += flng[i];
 
-				mu = touchdown_vtx[i].mu;
+				mu = kmu;
 				flat[i] = mu * maxpress;									// horizon-lateral force component: surface friction
 				if (fabs(gv_lat) < 10.0) flat[i] *= sqrt(fabs(0.1*gv_lat));
 				//flat[i] = min (flat[i], fabs(gv_lat) * fn[i] * mu/dt);
@@ -4536,13 +4667,13 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 
 				E_comp -= fn[i]*tdy[i]*0.5; // compression energy
 				fn_tot_undamped += fn[i];
-				fn[i] -= gv_n*touchdown_vtx[i].damping;
+				fn[i] -= gv_n*kdm;
 				fn_tot += fn[i];
 
 				// debug
 				if (nforcevec < forcevecbuf) {
 					forcevec[nforcevec] = d1h*flng[i] + d2h*flat[i];
-					forcepos[nforcevec] = touchdown_vtx[i].pos;
+					forcepos[nforcevec] = tv;
 					nforcevec++;
 				}
 
@@ -4603,7 +4734,7 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 		Vector M_surf, F_surf = hn*fn_tot + d1h*flng_tot + d2h*flat_tot;
 		for (i = 0; i < ntouch; i++) {
 			j = tidx[i];
-			M_surf += crossp (hn*fn[j]+d1h*flng[j]+d2h*flat[j], touchdown_vtx[j].pos);
+			M_surf += crossp (hn*fn[j]+d1h*flng[j]+d2h*flat[j], j < (int)ntouchdown_vtx ? touchdown_vtx[j].pos : hullpt[j-ntouchdown_vtx]); // not upstream (terrain-contact): the hull's points
 		}
 
 		// limit the change in angle over the current time step induced by impact forces
@@ -5111,10 +5242,13 @@ bool Vessel::CheckSurfaceContact () const
 	Matrix T (sp.L2H);
 	T.tpostmul (proxybody->s0->R);
 	T.postmul (s0->R);
+	double rdist = s0->pos.dist (proxybody->s0->pos), grav = Ggrav * proxybody->Mass() / (rdist*rdist); // not upstream (terrain-contact)
 	for (DWORD i = 0; i < ntouchdown_vtx; i++) {
 		Vector p (mul (T, touchdown_vtx[i].pos));
-		if (p.y + alt < 0.0) return true;
+		if (p.y + alt - TdRest (i, grav) < 0.0) return true; // not upstream (terrain-contact): TdRest
 	}
+	for (const Vector &h : hullpt) // not upstream (terrain-contact): the hull's points
+		if (mul (T, h).y + alt < 0.0) return true;
 	return false;
 }
 
@@ -5803,6 +5937,7 @@ void Vessel::ClearAnimSeqs (void)
 
 UINT Vessel::CreateAnimation (double initial_state)
 {
+	hull_dirty = true; // not upstream (terrain-contact)
 	ANIMATION *tmp = new ANIMATION[nanim+1]; TRACENEW
 	if (nanim) {
 		memcpy (tmp, anim, nanim*sizeof(ANIMATION));
@@ -5821,6 +5956,7 @@ UINT Vessel::CreateAnimation (double initial_state)
 ANIMATIONCOMP *Vessel::AddAnimationComponent (UINT an, double state0, double state1,
 	MGROUP_TRANSFORM *trans, ANIMATIONCOMP *parent)
 {
+	hull_dirty = true; // not upstream (terrain-contact)
 	if (an >= nanim) return 0;
 	ANIMATION *A = anim+an;
 	UINT ncomp = A->ncomp;
@@ -5855,6 +5991,7 @@ ANIMATIONCOMP *Vessel::AddAnimationComponent (UINT an, double state0, double sta
 
 bool Vessel::DelAnimationComponent (UINT an, ANIMATIONCOMP *comp)
 {
+	hull_dirty = true; // not upstream (terrain-contact)
 	if (an >= nanim) return false;
 	ANIMATION *A = anim+an;
 	UINT i, j, k, ncomp = A->ncomp;
@@ -5930,6 +6067,7 @@ double Vessel::GetAnimation (UINT an)
 
 bool Vessel::DelAnimation (UINT an)
 {
+	hull_dirty = true; // not upstream (terrain-contact)
 	// This clears the animation, but doesn't actually deallocate it
 	// to avoid corrupting other animation ids.
 	if (an >= nanim) return false;
@@ -5959,6 +6097,7 @@ bool Vessel::DelAnimation (UINT an)
 
 void Vessel::ClearAnimations (bool reset)
 {
+	hull_dirty = true; // not upstream (terrain-contact)
 	GltfVesselAnim::ClearingAnimations (this); // not upstream
 	BroadcastVisMsg (EVENT_VESSEL_CLEARANIM, (UINT)reset); // clear animations on visuals
 

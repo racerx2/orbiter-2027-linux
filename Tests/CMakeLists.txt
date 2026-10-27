@@ -77,6 +77,7 @@ target_link_options(Lua.Interpreter PRIVATE -Wl,--unresolved-symbols=ignore-in-s
 add_unit_test(Port.Harness)
 # not upstream: core utilities
 add_unit_test(Vecmat.Test ${ORBITER_SOURCE_DIR}/Vecmat.cpp)
+add_unit_test(HullPoints.Test ${ORBITER_SOURCE_DIR}/HullPoints.cpp ${ORBITER_SOURCE_DIR}/Vecmat.cpp) # not upstream (terrain-contact)
 add_unit_test(Astro.Test ${ORBITER_SOURCE_DIR}/Astro.cpp ${ORBITER_SOURCE_DIR}/TimeData.cpp)
 # not upstream: independent validation of Pines gravity
 add_unit_test(PinesGrav.Test ${ORBITER_SOURCE_DIR}/PinesGrav.cpp ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
