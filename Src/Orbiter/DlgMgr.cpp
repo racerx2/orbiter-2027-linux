@@ -468,6 +468,7 @@ void DialogManager::InitImGui()
 	// Viewports don't play nice when in full screen mode
 	if(!pOrbiter->IsFullscreen())
 		io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+	io.ConfigViewportsNoDefaultParent = false; // not upstream (detach-windows): windows dragged out stay above the render window
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
 	//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 	//io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;

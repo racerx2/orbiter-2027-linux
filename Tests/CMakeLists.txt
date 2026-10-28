@@ -106,7 +106,7 @@ add_unit_test(ChmHelp.Test ${ORBITER_SOURCE_DIR}/ChmHelp.cpp ${ORBITER_SOURCE_DI
 target_link_libraries(ChmHelp.Test Qt6::Widgets Qt6::Test zlib)
 set_tests_properties(ChmHelp.Test PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
 add_unit_test(ImGuiQt.Test ${ORBITER_SOURCE_DIR}/imgui_impl_qt.cpp)
-target_link_libraries(ImGuiQt.Test Orbitersdk Qt6::Gui)
+target_link_libraries(ImGuiQt.Test Orbitersdk Qt6::Gui Qt6::GuiPrivate) # not upstream (detach-windows): the Wayland window's surface
 set_tests_properties(ImGuiQt.Test PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
 # not upstream: rc2cpp's #if evaluator (C semantics, errors instead of tracebacks)
 add_test(NAME RcCond.Test COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/RcCond.Test.py ${ORBITER_SOURCE_ROOT_DIR}/cmake)

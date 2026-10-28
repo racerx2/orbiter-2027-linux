@@ -143,6 +143,7 @@ set(common_src
 	SleepWatch.cpp
 	WlPointer.cpp
 	WlShortcuts.cpp
+	WlWindowDrag.cpp # not upstream (detach-windows)
 	ZTreeMgr.cpp
 # ImGui platform backend
 	imgui_impl_qt.cpp
@@ -204,7 +205,19 @@ foreach(proto pointer-constraints relative-pointer keyboard-shortcuts-inhibit)
 	)
 	target_sources(Orbiter PRIVATE ${base}-client-protocol.h ${base}-protocol.c)
 endforeach()
-target_link_libraries(Orbiter PkgConfig::WAYLAND_CLIENT)
+# not upstream (detach-windows): WlWindowDrag.cpp, xdg-shell from the system and xdg-toplevel-drag from protocols/ (staging,
+# newer than some build hosts' wayland-protocols)
+foreach(xml ${WAYLAND_PROTOCOLS_DIR}/stable/xdg-shell/xdg-shell.xml ${CMAKE_CURRENT_SOURCE_DIR}/protocols/xdg-toplevel-drag-v1.xml)
+	get_filename_component(name ${xml} NAME_WE)
+	set(base ${CMAKE_CURRENT_BINARY_DIR}/${name})
+	add_custom_command(OUTPUT ${base}-client-protocol.h ${base}-protocol.c
+		COMMAND ${WAYLAND_SCANNER} client-header ${xml} ${base}-client-protocol.h
+		COMMAND ${WAYLAND_SCANNER} private-code ${xml} ${base}-protocol.c
+		DEPENDS ${xml}
+	)
+	target_sources(Orbiter PRIVATE ${base}-client-protocol.h ${base}-protocol.c)
+endforeach()
+target_link_libraries(Orbiter PkgConfig::WAYLAND_CLIENT Qt6::GuiPrivate) # not upstream (detach-windows): GuiPrivate for the Wayland window's surface
 
 set_target_properties(Orbiter
 	PROPERTIES

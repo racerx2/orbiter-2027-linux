@@ -180,6 +180,7 @@ public:
 	bool EndFrame (VkSemaphore wait, VkSemaphore signal); // submits (wait/signal: swapchain semaphores or null); false: not submitted, signal stays unsignalled
 	VkCommandBuffer Cmd () const { return frame[iFrame].cmd; }
 	void Flush ();                                   // submit the recorded commands and wait (uploads outside a frame)
+	void SubmitPart ();                              // not upstream (detach-windows): submit the frame's commands so far, no wait
 	void WaitIdle ();
 	VkResult QueuePresent (const VkPresentInfoKHR *pi); // vkQueuePresentKHR under the queue lock
 	std::mutex &QueueLock () { return queueLock; }  // for code that submits to the queue itself (ImGui backend)
@@ -315,6 +316,8 @@ private:
 	struct Frame {
 		VkCommandPool pool;
 		VkCommandBuffer cmd;
+		VkCommandBuffer cmd2;                        // not upstream (detach-windows): SubmitPart goes on in it
+		bool split = false;                          // SubmitPart was called in this frame
 		uint64_t done;                               // timeline value signalled when this frame's work is complete
 		VkBuf *transient;
 		VkDeviceSize transientUsed;

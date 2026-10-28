@@ -2827,7 +2827,12 @@ void D3D9Client::clbkImGuiRenderDrawData()
 	ImGuiIO& io = ImGui::GetIO();
 	if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
 	{
-		ImGui::UpdatePlatformWindows();
+		{
+			std::lock_guard<std::mutex> lock(pDevice->QueueLock()); // not upstream (detach-windows): new swapchains wait for the device idle
+			ImGui::UpdatePlatformWindows();
+		}
+		if (ImGui::GetPlatformIO().Viewports.Size > 1) pDevice->SubmitPart(); // not upstream (detach-windows): the frame's commands first, as D3D9 ran them in order
+		std::lock_guard<std::mutex> lock(pDevice->QueueLock()); // not upstream (detach-windows): they submit and present on the device queue
 		ImGui::RenderPlatformWindowsDefault();
 	}
 
@@ -2869,6 +2874,7 @@ void D3D9Client::clbkImGuiShutdown()
 	ImTextures.clear();
 	ImGuiGeneration++; // not upstream: the textures' descriptor sets are freed with the backend's pool
 	pDevice->Flush(); // not upstream: the recorded ImGui draws run before the backend frees its pipeline and buffers
+	std::lock_guard<std::mutex> lock(pDevice->QueueLock()); // not upstream (detach-windows): the detached windows' swapchains wait for the device idle
 	ImGui_ImplVulkan_Shutdown(); // ImGui_ImplDX9_Shutdown
 }
 uint64_t D3D9Client::clbkImGuiSurfaceTexture(SURFHANDLE surf)

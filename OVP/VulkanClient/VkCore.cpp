@@ -758,6 +758,7 @@ void VkDev::CreateDevice ()
 		ci.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
 		ci.commandBufferCount = 1;
 		VKCHECK(vkAllocateCommandBuffers (dev, &ci, &frame[i].cmd));
+		VKCHECK(vkAllocateCommandBuffers (dev, &ci, &frame[i].cmd2)); // not upstream (detach-windows): SubmitPart's
 		frame[i].transient = new VkBuf (this, 16 << 20, TransientUsage, true);
 		if (!frame[i].transient->Map ()) { LogErr("VkDev: no host memory for the per-frame transient buffer"); ok = false; }
 		frame[i].transientUsed = 0;
@@ -879,6 +880,7 @@ VkCommandBuffer VkDev::BeginFrame ()
 	f.rbStamp = 0;
 	ReleaseDone (failed);
 	f.transientUsed = 0;
+	f.split = false;
 	VKCHECK(vkResetCommandPool (dev, f.pool, 0));
 	VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 	bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -931,6 +933,34 @@ bool VkDev::EndFrame (VkSemaphore wait, VkSemaphore signal)
 		idle = false;
 	}
 	return false; // the caller's BeginFrame or WaitIdle waits idle
+}
+
+// not upstream (detach-windows): the commands recorded so far go to the queue now, without a wait; the frame goes on in
+// its second command buffer, and EndFrame's timeline signal covers both (earlier submissions are in its scope)
+void VkDev::SubmitPart ()
+{
+	Frame &f = frame[iFrame];
+	if (!recording || f.split) return;
+	EndRendering ();
+	VKCHECK(vkEndCommandBuffer (f.cmd));
+	VkCommandBufferSubmitInfo ci = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
+	ci.commandBuffer = f.cmd;
+	VkSubmitInfo2 si = { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
+	si.commandBufferInfoCount = 1;
+	si.pCommandBufferInfos = &ci;
+	{
+		std::lock_guard<std::mutex> lock (queueLock);
+		if (ok) {
+			VkResult r = vkQueueSubmit2 (queue, 1, &si, VK_NULL_HANDLE);
+			if (r < 0) { LogErr("VkDev: vkQueueSubmit2 failed (%d), the device is unusable", (int)r); ok = false; }
+		}
+	}
+	std::swap (f.cmd, f.cmd2);
+	f.split = true;
+	VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+	bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	VKCHECK(vkBeginCommandBuffer (f.cmd, &bi));
+	ReplayState ();
 }
 
 void VkDev::Flush ()

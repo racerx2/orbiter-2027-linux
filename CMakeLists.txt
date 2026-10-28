@@ -96,6 +96,8 @@ find_package(LATEX)
 
 # Qt6 replaces the Qt5_x64 lookup and also carries the Launchpad and dialogs
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets DBus Network) # not upstream: 6.5 for QNativeInterface::QWaylandApplication; Network for the texture download
+set(QT_NO_PRIVATE_MODULE_WARNING ON) # not upstream (detach-windows): GuiPrivate is used knowingly (the Wayland window's surface)
+find_package(Qt6 QUIET COMPONENTS GuiPrivate) # not upstream (detach-windows): Qt 6.10 keeps Qt6::GuiPrivate apart; 6.8 has it with Gui
 
 # /we4311 left out: g++ already rejects pointer-to-smaller-int casts; NOMINMAX has no counterpart
 add_compile_options(-Wformat) # not upstream: printf format checks (GCC turns them on by default only on some distributions)
