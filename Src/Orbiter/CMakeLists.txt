@@ -60,6 +60,7 @@ set(common_src
 	TabControls.cpp # not upstream (input-bindings): Launchpad Controllers page
 	InputDevices.cpp # not upstream (input-bindings): every controller
 	InputBindings.cpp # not upstream (input-bindings): their bindings
+	InputEditor.cpp # not upstream (controls-editor): editing them on the Controls pages
 	StreamBases.cpp # not upstream: its base list and refusal rules
 # Dialogs
 	CustomControls.cpp
@@ -74,6 +75,7 @@ set(common_src
 	DlgMenuCfg.cpp
 	DlgMgr.cpp
 	DlgOptions.cpp
+	DlgControls.cpp # not upstream (controls-editor): its Controllers page
 	DlgRecorder.cpp
 	DlgTacc.cpp
 	htmlctrl.cpp

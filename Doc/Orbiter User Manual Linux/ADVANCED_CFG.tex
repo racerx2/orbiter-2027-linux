@@ -601,13 +601,15 @@ Joysticks, throttles, rudder pedals, button boxes and other game controllers wor
 \end{itemize}
 Files changed while Orbiter runs are read again within a second. When Orbiter first runs with Config/Input missing, it makes Global.cfg from the joystick settings in Orbiter.cfg, so the joystick works as it did before.\\
 \\
+The Controllers page edits these files, on the Launchpad (Options tab) and in flight (Options dialog). It lists the controllers with their live axes and buttons, renames them (their bindings change with them) and calibrates them: move every axis through its whole travel, let go and press Done moving; a centring axis keeps its rest point as centre, a lever the middle of its travel. For the bindings, pick a profile (all vessels, or a vessel class), then Add: press the control or move the axis, and pick what it does. Every change is saved at once and acts at once, and comments in the files are kept. Reset puts back Orbiter's defaults: Global.cfg as first made from the old joystick settings, a vessel class's file or all of them removed, or the keyboard keys in keymap.cfg; each old file is kept as .bak. The file format follows, for editing by hand.\\
+\\
 \textbf{Devices.cfg}
 \begin{lstlisting}[language=OSFS]
 DEVICE Box = 1209:0001 "Panel Button Box" SERIAL "A1B2C3"
 DEVICE Box2 = 1209:0001 "Panel Button Box" IFACE "input0" PORT "usb-3"
 CAL Stick.X = 0 32768 65535
 \end{lstlisting}
-DEVICE gives a controller its name: vendor and product id, product name and, to tell identical controllers apart, its serial number, its interface and the USB port. A new name here is not changed in the profiles: change it there too. CAL sets an axis's raw minimum, centre and maximum.\\
+DEVICE gives a controller its name: vendor and product id, product name and, to tell identical controllers apart, its serial number, its interface and the USB port. A new name typed here is not changed in the profiles: change it there too (Rename on the Controllers page changes both). CAL sets an axis's raw minimum, centre and maximum.\\
 \\
 \textbf{Profiles}
 \begin{lstlisting}[language=OSFS]

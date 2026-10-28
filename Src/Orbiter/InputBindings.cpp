@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <dirent.h>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -276,12 +277,13 @@ static bool Upper (const std::string &a, const char *b)
 	return !strcasecmp (a.c_str(), b);
 }
 
-static bool ValidName (const std::string &s)
+bool InputValidName (const std::string &s)
 {
 	if (s.empty() || s.size() > 32) return false;
 	for (char c : s) if (!isalnum ((unsigned char)c) && c != '_' && c != '-') return false;
 	return !Upper (s, "Key") && !Upper (s, "Mouse");
 }
+static bool ValidName (const std::string &s) { return InputValidName (s); }
 
 static const char *hatdir[] = { "UP", "RIGHT", "DOWN", "LEFT" };
 
@@ -572,37 +574,63 @@ bool InputWriteFile (const std::string &path, const std::string &text)
 	return true;
 }
 
+static size_t CommentAt (const std::string &s) // the ';' that starts a line's comment, outside quotes
+{
+	bool q = false;
+	for (size_t i = 0; i < s.size(); i++) {
+		if (s[i] == '"') q = !q;
+		else if (s[i] == ';' && !q) return i;
+	}
+	return std::string::npos;
+}
+
 bool InputReadProfile (const std::string &path, InputProfile &p)
 {
 	std::ifstream f (path);
 	if (!f) return false;
-	p.binds.clear(), p.errors.clear(), p.inherit.clear();
-	std::string line;
+	p.binds.clear(), p.errors.clear(), p.inherit.clear(), p.head.clear(), p.trail.clear();
+	p.read = true;
+	std::string line, pend; // lines kept as they are, for the next binding
+	bool started = false;
 	for (int n = 1; std::getline (f, line); n++) {
+		if (!line.empty() && line.back() == '\r') line.pop_back();
 		std::string s = Trim (line);
-		if (s.empty() || s[0] == ';') continue;
 		std::vector<std::string> t = Tokens (s);
-		if (t.empty()) continue;
 		std::string where = path + ":" + std::to_string (n) + ": ";
-		if (Upper (t[0], "BIND")) {
+		if (!t.empty() && Upper (t[0], "BIND")) {
 			Binding b;
 			std::string err;
 			if (InputParseBinding (s.substr (4), b, err)) {
 				b.line = n;
+				size_t c = CommentAt (s);
+				if (c != std::string::npos) b.tail = s.substr (c);
+				if (started) b.note = pend;
+				else p.head = pend;
+				pend.clear();
+				started = true;
 				p.binds.push_back (b);
-			} else p.errors.push_back (where + err);
-		} else if (Upper (t[0], "INHERIT") && t.size() == 2) {
+				continue;
+			}
+			p.errors.push_back (where + err);
+		} else if (!t.empty() && Upper (t[0], "INHERIT") && t.size() == 2) {
 			p.inherit = t[1];
-		} else p.errors.push_back (where + "BIND or INHERIT expected");
+			if (!started) p.head = pend, pend.clear();
+			started = true;
+			continue;
+		} else if (!t.empty()) p.errors.push_back (where + "BIND or INHERIT expected");
+		pend += line + "\n";
 	}
+	if (started) p.trail = pend;
+	else p.head = pend;
 	return true;
 }
 
 bool InputWriteProfile (const std::string &path, const InputProfile &p, const std::string &header)
 {
-	std::string s = header;
+	std::string s = (p.read ? p.head : header);
 	if (!p.inherit.empty()) s += "INHERIT " + p.inherit + "\n";
-	for (auto &b : p.binds) s += "BIND " + InputFormatBinding (b) + "\n";
+	for (auto &b : p.binds) s += b.note + "BIND " + InputFormatBinding (b) + (b.tail.empty() ? "" : " " + b.tail) + "\n";
+	s += p.trail;
 	return InputWriteFile (path, s);
 }
 
@@ -1532,14 +1560,70 @@ InputSystem::InputSystem (const std::string &_dir, InputDevices *devices)
 {
 }
 
+std::string InputClassPath (const std::string &vesselClass)
+{
+	std::string c = vesselClass;
+	std::replace (c.begin(), c.end(), '\\', '/');
+	return c;
+}
+
+std::string InputResolveCase (const std::string &path)
+{
+	struct stat st;
+	if (path.empty() || !stat (path.c_str(), &st)) return path;
+	std::string done = (path[0] == '/' ? "/" : "");
+	size_t i = (path[0] == '/' ? 1 : 0);
+	while (i <= path.size()) {
+		size_t e = path.find ('/', i);
+		if (e == std::string::npos) e = path.size();
+		std::string part = path.substr (i, e - i), here = done + part;
+		if (!part.empty() && stat (here.c_str(), &st))
+			if (DIR *d = opendir (done.empty() ? "." : done.c_str())) {
+				while (dirent *de = readdir (d))
+					if (!strcasecmp (de->d_name, part.c_str())) { here = done + de->d_name; break; }
+				closedir (d);
+			}
+		done = here + (e < path.size() ? "/" : "");
+		i = e + 1;
+	}
+	return done;
+}
+
 long InputSystem::Mtime (const std::string &path) const
 {
 	struct stat s;
-	return (stat (path.c_str(), &s) ? 0 : (long)s.st_mtim.tv_sec * 1000 + s.st_mtim.tv_nsec / 1000000);
+	return (stat (InputResolveCase (path).c_str(), &s) ? 0 : (long)s.st_mtim.tv_sec * 1000 + s.st_mtim.tv_nsec / 1000000);
 }
+
+std::vector<std::string> InputLegacyLines (const InputLegacyCfg &cfg, const std::string &S)
+{
+	std::string dz = " DZ " + Fmt (cfg.deadzone * 1e-4);
+	std::vector<std::string> lines = {
+		S + ".X = AXIS Bank" + dz, S + ".X @1 = AXIS Yaw" + dz,
+		S + ".Y = AXIS Pitch" + dz, S + ".Y = AXIS TransY" + dz,
+		S + ".RZ = AXIS Yaw" + dz, S + ".RZ = AXIS TransX" + dz,
+		S + ".B3 = LAYER 1",
+		S + ".HAT0.UP = AXIS LookY +1", S + ".HAT0.DOWN = AXIS LookY -1",
+		S + ".HAT0.RIGHT = AXIS LookX +1", S + ".HAT0.LEFT = AXIS LookX -1",
+		S + ".HAT0.UP @1 = AXIS PanY +1", S + ".HAT0.DOWN @1 = AXIS PanY -1",
+		S + ".HAT0.RIGHT @1 = AXIS PanX +1", S + ".HAT0.LEFT @1 = AXIS PanX -1" };
+	static const char *thax[] = { "", "Z", "THROTTLE", "RUDDER" };
+	if (cfg.throttleAxis >= 1 && cfg.throttleAxis <= 3) {
+		double s = cfg.throttleSat * 1e-4;
+		lines.push_back (S + "." + thax[cfg.throttleAxis] + " = AXIS Main INVERT DZ " + Fmt (0.5*(1.0-s)) +
+			" SAT " + Fmt (0.5*(1.0+s)) + (cfg.throttleIgnore ? " PICKUP" : ""));
+	}
+	return lines;
+}
+
+static const char *legacyHeader =
+	"; Orbiter global input profile: bindings for every vessel (Vessels/<class>.cfg on top)\n"
+	"; Made from Orbiter.cfg's joystick settings (JoystickIndex, deadzone, throttle axis), as the old joystick worked.\n"
+	"; BIND <input> [@layer] [mods] [ZONE a b] [mode] = <output> [options]; see the User Manual, Controllers.\n\n";
 
 void InputSystem::Migrate (const InputLegacyCfg &cfg)
 {
+	legacy = cfg; // for Global's reset (controls-editor)
 	std::string gpath = dir + "/Global.cfg", dpath = dir + "/Devices.cfg";
 	if (Mtime (gpath)) return;
 	DevicesFile df;
@@ -1547,9 +1631,9 @@ void InputSystem::Migrate (const InputLegacyCfg &cfg)
 	InputProfile g;
 	g.name = "Global";
 	if (cfg.joyIndex > 0) {
-		std::vector<const InputDevice*> legacy = devs->LegacyJoysticks();
+		std::vector<const InputDevice*> lj = devs->LegacyJoysticks();
 		DeviceDef d;
-		if (cfg.joyIndex <= legacy.size()) d = InputDefFor (*legacy[cfg.joyIndex-1], df.defs);
+		if (cfg.joyIndex <= lj.size()) d = InputDefFor (*lj[cfg.joyIndex-1], df.defs);
 		else d.legacyIndex = (int)cfg.joyIndex;
 		d.name = "Stick";
 		for (int n = 2; ; n++) {
@@ -1559,23 +1643,7 @@ void InputSystem::Migrate (const InputLegacyCfg &cfg)
 			d.name = "Stick" + std::to_string (n);
 		}
 		df.defs.push_back (d);
-		std::string dz = " DZ " + Fmt (cfg.deadzone * 1e-4), S = d.name;
-		std::vector<std::string> lines = {
-			S + ".X = AXIS Bank" + dz, S + ".X @1 = AXIS Yaw" + dz,
-			S + ".Y = AXIS Pitch" + dz, S + ".Y = AXIS TransY" + dz,
-			S + ".RZ = AXIS Yaw" + dz, S + ".RZ = AXIS TransX" + dz,
-			S + ".B3 = LAYER 1",
-			S + ".HAT0.UP = AXIS LookY +1", S + ".HAT0.DOWN = AXIS LookY -1",
-			S + ".HAT0.RIGHT = AXIS LookX +1", S + ".HAT0.LEFT = AXIS LookX -1",
-			S + ".HAT0.UP @1 = AXIS PanY +1", S + ".HAT0.DOWN @1 = AXIS PanY -1",
-			S + ".HAT0.RIGHT @1 = AXIS PanX +1", S + ".HAT0.LEFT @1 = AXIS PanX -1" };
-		static const char *thax[] = { "", "Z", "THROTTLE", "RUDDER" };
-		if (cfg.throttleAxis >= 1 && cfg.throttleAxis <= 3) {
-			double s = cfg.throttleSat * 1e-4;
-			lines.push_back (S + "." + thax[cfg.throttleAxis] + " = AXIS Main INVERT DZ " + Fmt (0.5*(1.0-s)) +
-				" SAT " + Fmt (0.5*(1.0+s)) + (cfg.throttleIgnore ? " PICKUP" : ""));
-		}
-		for (auto &l : lines) {
+		for (auto &l : InputLegacyLines (cfg, d.name)) {
 			Binding b;
 			std::string err;
 			if (InputParseBinding (l, b, err)) g.binds.push_back (b);
@@ -1583,11 +1651,29 @@ void InputSystem::Migrate (const InputLegacyCfg &cfg)
 		}
 	}
 	InputWriteDevices (dpath, df);
-	InputWriteProfile (gpath, g,
-		"; Orbiter global input profile: bindings for every vessel (Vessels/<class>.cfg on top)\n"
-		"; Made from Orbiter.cfg's joystick settings (JoystickIndex, deadzone, throttle axis), as the old joystick worked.\n"
-		"; BIND <input> [@layer] [mods] [ZONE a b] [mode] = <output> [options]; see the User Manual, Controllers.\n\n");
+	InputWriteProfile (gpath, g, legacyHeader);
 	msgs.push_back ("Input: Config/Input made from Orbiter.cfg's joystick settings");
+}
+
+std::string InputSystem::DefaultGlobal (InputProfile &g) const
+{
+	g = InputProfile();
+	g.name = "Global";
+	g.head = legacyHeader, g.read = true;
+	if (!legacy.joyIndex) return "";
+	std::string dev;
+	std::vector<const InputDevice*> lj = devs->LegacyJoysticks();
+	if (legacy.joyIndex <= lj.size()) dev = NameOf (lj[legacy.joyIndex-1]->id);
+	for (auto &d : devfile.defs) if (dev.empty() && d.legacyIndex == (int)legacy.joyIndex) dev = d.name;
+	if (dev.empty())
+		return "Orbiter.cfg's joystick (JoystickIndex = " + std::to_string (legacy.joyIndex) +
+			") isn't connected and has no name in Devices.cfg: no controller bindings for all vessels.";
+	for (auto &l : InputLegacyLines (legacy, dev)) {
+		Binding b;
+		std::string err;
+		if (InputParseBinding (l, b, err)) g.binds.push_back (b);
+	}
+	return "";
 }
 
 void InputSystem::Load ()
@@ -1616,7 +1702,7 @@ const InputProfile *InputSystem::Profile (const std::string &name)
 	profMtime[name] = mt;
 	InputProfile p;
 	p.name = name;
-	if (mt && InputReadProfile (path, p)) for (auto &e : p.errors) msgs.push_back ("Input: " + e);
+	if (mt && InputReadProfile (InputResolveCase (path), p)) for (auto &e : p.errors) msgs.push_back ("Input: " + e);
 	profiles[name] = p;
 	return (mt ? &profiles[name] : nullptr);
 }
@@ -1646,7 +1732,7 @@ void InputSystem::Rebind (InputFrame *released)
 
 void InputSystem::SetProfile (const std::string &vesselClass, InputFrame *released)
 {
-	vclass = vesselClass;
+	vclass = InputClassPath (vesselClass);
 	Rebind (released);
 }
 
@@ -1707,7 +1793,10 @@ void InputSystem::Poll (InputFrame *released)
 			msgs.push_back ("Input: " + NameOf (e.dev) + " disconnected");
 			engine.DetachDevice (e.dev);
 			claimed.erase (e.dev);
-		} else engine.DeviceEvent (e);
+		} else {
+			if (capture && !captured) CaptureEvent (e);
+			engine.DeviceEvent (e);
+		}
 	}
 	double t = std::chrono::duration<double> (std::chrono::steady_clock::now().time_since_epoch()).count();
 	std::map<std::string, double> na;
@@ -1743,4 +1832,103 @@ std::vector<std::string> InputSystem::Messages ()
 	std::vector<std::string> m;
 	m.swap (msgs);
 	return m;
+}
+
+static double Now ()
+{
+	return std::chrono::duration<double> (std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void InputSystem::Touch ()
+{
+	touchT = Now();
+}
+
+bool InputSystem::Shown () const
+{
+	return Now() - touchT < 0.5;
+}
+
+void InputSystem::Capture (bool on)
+{
+	if (on) Touch();
+	capture = on, captured = false, got = InputRef();
+	capStart.clear();
+	if (on)
+		for (auto &d : devs->Devices())
+			if (d->state == InputDevice::OPEN)
+				for (auto &a : d->axes) capStart[{d->id, a.code}] = a.value;
+}
+
+bool InputSystem::Captured (InputRef &r) const
+{
+	if (!captured) return false;
+	r = got;
+	return true;
+}
+
+bool InputCaptureOf (const InputDevEvent &e, const InputDevice &d, const std::string &name, int start, InputRef &r)
+{
+	r = InputRef();
+	r.src = INSRC_DEV, r.dev = name;
+	switch (e.kind) {
+	case InputDevEvent::BUTTON:
+		r.kind = INK_BUTTON, r.code = e.index;
+		return e.value != 0;
+	case InputDevEvent::HAT: { // the engine's directions (DeviceEvent)
+		int x = e.value, y = e.value2;
+		r.kind = INK_HAT, r.code = e.index;
+		if (y < 0) r.dir = 0;
+		else if (x > 0) r.dir = 1;
+		else if (y > 0) r.dir = 2;
+		else if (x < 0) r.dir = 3;
+		else return false;
+		return true;
+	}
+	case InputDevEvent::REL:
+		r.kind = INK_REL, r.code = e.index, r.dir = (e.value > 0 ? 1 : -1);
+		return e.value != 0;
+	case InputDevEvent::AXIS: { // 40 % of its range from where it was: a stick pushed from its centre to an end, a lever from an end
+		const InputAxis *a = d.Axis (e.index);
+		r.kind = INK_AXIS, r.code = e.index;
+		return a && a->max > a->min && fabs ((double)e.value - start) >= 0.4 * (double)(a->max - a->min);
+	}
+	default:
+		return false;
+	}
+}
+
+void InputSystem::CaptureEvent (const InputDevEvent &e)
+{
+	std::string name = NameOf (e.dev);
+	InputDevice *d = devs->Get (e.dev);
+	if (name.empty() || !d) return;
+	auto s = capStart.find ({e.dev, e.index});
+	if (e.kind == InputDevEvent::AXIS && s == capStart.end()) return; // plugged in since the capture started
+	InputRef r;
+	if (InputCaptureOf (e, *d, name, s == capStart.end() ? 0 : s->second, r)) got = r, captured = true;
+}
+
+void InputSystem::CaptureKey (int evcode, uint16_t mods)
+{
+	if (!capture || captured) return;
+	got = InputRef();
+	got.src = INSRC_KEY, got.kind = INK_KEY, got.code = evcode, got.mods = mods;
+	captured = true;
+}
+
+void InputSystem::CaptureMouse (int button, uint16_t mods)
+{
+	if (!capture || captured) return;
+	got = InputRef();
+	got.src = INSRC_MOUSE, got.kind = INK_MBUTTON, got.code = button, got.mods = mods;
+	captured = true;
+}
+
+void InputSystem::CaptureWheel (int dir, uint16_t mods)
+{
+	if (!capture || captured) return;
+	got = InputRef();
+	got.src = INSRC_MOUSE, got.kind = INK_WHEEL, got.code = dir, got.mods = mods;
+	captured = true;
 }

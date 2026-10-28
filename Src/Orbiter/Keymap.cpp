@@ -232,12 +232,21 @@ void Keymap::SetDefault ()
 		func[i] = lkeyspec[i].defkey;
 }
 
-void Keymap::Write (const char *fname)
+bool Keymap::Write (const char *fname)
 {
 	char cbuf[256];
 	ofstream ofs (oapiResolvePath (fname));
 	for (int i = 0; i < LKEY_COUNT; i++)
 		ofs << lkeyspec[i].itemstr << " = " << PrintStr (cbuf, func[i]) << endl;
+	ofs.close ();
+	return !ofs.fail(); // not upstream (controls-editor)
+}
+
+void Keymap::KeyText (int lfunc, char *cbuf) const // not upstream (controls-editor)
+{
+	WORD k = func[lfunc];
+	if (k) PrintStr (cbuf, k);
+	else cbuf[0] = '\0';
 }
 
 bool Keymap::Read (const char *fname)

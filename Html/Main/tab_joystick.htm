@@ -12,7 +12,15 @@
 
 <h1>Controllers</h1>
 <p>
-Joysticks, throttles, rudder pedals, button boxes and other game controllers work all at once, and can be plugged in and out while Orbiter runs. The Controllers page lists the controllers found, with the name each has in Config/Input/Devices.cfg and its buttons and axes.</p>
+Joysticks, throttles, rudder pedals, button boxes and other game controllers work all at once, and can be plugged in and out while Orbiter runs. This page shows them and what they do. The same page is in the in-sim Options dialog (main menu, options, Controllers), so bindings can be changed in flight too.</p>
+
+<h2>Controllers</h2>
+<p>
+The table lists the controllers found, with the name the bindings use for each. Select one to see its axes and the buttons pressed now.</p>
+<ul>
+<li><b>Rename...</b> gives the controller another name. Its bindings in every profile change with it.</li>
+<li><b>Calibrate...</b>: move every axis through its whole travel, let go of everything and press <b>Done moving</b>. Check the kind of each axis, then <b>Save</b>. A centring axis (stick, rudder) keeps where it rests as its centre; a lever or toe brake takes the middle of its travel. <b>Reset to the raw range</b> removes the calibration. Nothing acts in flight while this window is open.</li>
+</ul>
 
 <h2>No access</h2>
 <p>
@@ -24,7 +32,17 @@ If ticked, the controllers keep flying when another window has the focus, for ex
 
 <h2>Bindings</h2>
 <p>
-Every button, hat, axis, dial, keyboard key and mouse button can be bound to an Orbiter function, a key or key combination, an analog control (attitude, throttles, trims, toe brakes, view), an MFD button or a shift layer. The bindings are in Config/Input: Global.cfg for every vessel, and Vessels/&lt;class&gt;.cfg for one vessel class. Files changed while Orbiter runs are read again within a second; <b>Read Config/Input again</b> reads them at once. The file format is in the User Manual, section Advanced Configuration, Controllers and bindings.</p>
+<b>For</b> picks the profile: all vessels (Global), or one vessel class (type to search). A vessel class's bindings come on top of the ones for all vessels, which are shown in grey under it.</p>
+<ul>
+<li><b>Add...</b>: press the control (a button, the hat, a dial, a key, or a mouse button; left and right with Shift, Ctrl or Alt), or move an axis through at least 40 % of its range (a centred stick to one end). Then pick what it does: an Orbiter function, a key or key combination, an analog control (attitude, throttles, trims, flaps, toe brakes, views), an MFD button or a shift layer.</li>
+<li>For a button: the shift layer it belongs to, how it acts (held, once on press, once on release, both for a toggle switch, toggle, repeat), and the view it works in.</li>
+<li>For an axis on an analog control: invert, dead zone, saturation, curve and scale, with the value it gives now. Part of an axis can work as a button (a detent or lever position).</li>
+<li><b>Change...</b> (or a double click) edits the selected binding. Changing a grey binding gives this vessel class its own. <b>Remove</b> deletes it.</li>
+<li>A binding with a warning sign takes a key keymap.cfg uses for an Orbiter function. Its tooltip also lists what else the control does in this profile (all of them act).</li>
+<li><b>Reset...</b> puts things back to Orbiter's defaults: the bindings for all vessels (as Orbiter first made them from the old joystick settings), the selected vessel class's own bindings (removed, so those for all vessels apply), every vessel class's own bindings, or the keyboard keys in keymap.cfg. Each old file is kept next to it as .bak. Controller names and calibration stay.</li>
+</ul>
+<p>
+Every change is saved at once to Config/Input (Global.cfg, Vessels/&lt;class&gt;.cfg; the controllers' names and calibration in Devices.cfg) and acts at once. The files can still be edited by hand, and their comments are kept; the format is in the User Manual, section Advanced Configuration, Controllers and bindings.</p>
 <p>
 The first time this version runs, Global.cfg is made from the old joystick settings, so a joystick works as it did before.</p>
 

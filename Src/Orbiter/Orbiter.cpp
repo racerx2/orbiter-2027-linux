@@ -2376,7 +2376,8 @@ const InputFrame &Orbiter::InputStep (bool skipkbd)
 {
 	InputEngine &e = m_input->Engine();
 	InputFrame rel;
-	e.SetMuted (false);
+	e.SetMuted (m_input->HeldBack(), &rel); // the Controls page captures or calibrates: nothing acts (controls-editor)
+	InputRelease (rel);
 	if (g_focusobj != m_inputFocus) { // a new focus vessel: its class's profile
 		m_inputFocus = g_focusobj;
 		m_input->SetProfile (g_focusobj->ClassName(), &rel);

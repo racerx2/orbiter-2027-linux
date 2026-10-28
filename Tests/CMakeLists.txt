@@ -85,6 +85,8 @@ add_unit_test(PathResolve.Test ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
 add_unit_test(Input.Test ${ORBITER_SOURCE_DIR}/Di7frame.cpp ${ORBITER_SOURCE_DIR}/Memstat.cpp)
 add_unit_test(InputDevices.Test ${ORBITER_SOURCE_DIR}/InputDevices.cpp) # not upstream (input-bindings)
 add_unit_test(InputBindings.Test ${ORBITER_SOURCE_DIR}/InputBindings.cpp ${ORBITER_SOURCE_DIR}/InputDevices.cpp ${ORBITER_SOURCE_DIR}/Keymap.cpp ${ORBITER_SOURCE_DIR}/Di7frame.cpp)
+add_unit_test(InputEditor.Test ${ORBITER_SOURCE_DIR}/InputEditor.cpp ${ORBITER_SOURCE_DIR}/InputBindings.cpp ${ORBITER_SOURCE_DIR}/InputDevices.cpp ${ORBITER_SOURCE_DIR}/Keymap.cpp ${ORBITER_SOURCE_DIR}/Di7frame.cpp) # not upstream (controls-editor)
+target_link_libraries(InputEditor.Test Qt6::Gui)
 # not upstream: Celbody modules, loaded like Orbiter loads them; the test exports the exe-side API they bind to
 add_unit_test(Celbody.Test ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
 set_target_properties(Celbody.Test PROPERTIES ENABLE_EXPORTS ON)

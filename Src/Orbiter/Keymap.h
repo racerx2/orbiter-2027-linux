@@ -34,8 +34,8 @@ public:
 	bool Read (const char *fname);
 	// parse keymap table from file
 
-	void Write (const char *fname);
-	// write keymap table to file
+	bool Write (const char *fname);
+	// write keymap table to file (not upstream: false if it wasn't written, controls-editor)
 
 	bool IsLogicalKey (char *kstate, int lfunc) const;
 	// return true if logical function lfunc is selected by key state kstate
@@ -49,6 +49,8 @@ public:
 	static int FuncByName (const char *name);
 	static const char *FuncName (int lfunc);
 	void SetHeld (const unsigned char *h) { held = h; }
+	WORD Key (int lfunc) const { return func[lfunc]; }  // not upstream (controls-editor): the function's key and modifiers
+	void KeyText (int lfunc, char *cbuf) const;          // as keymap.cfg writes it, "" if none
 
 private:
 	bool IsMatchingModifier (char *kstate, WORD key) const;

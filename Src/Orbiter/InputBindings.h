@@ -88,6 +88,8 @@ struct Binding {
 	bool invert = false, half = false, pickup = false;
 	double dz = 0.0, sat = 1.0, curve = 1.0, scale = 1.0;
 	int line = 0;
+	std::string note;         // the file's lines just above it (comments, blank, unreadable), written back as they were
+	std::string tail;         // its line's "; comment"
 };
 
 bool InputParseBinding (const std::string &text, Binding &b, std::string &err); // the part after "BIND"
@@ -99,9 +101,14 @@ struct InputProfile {
 	std::string inherit;
 	std::vector<Binding> binds;
 	std::vector<std::string> errors;
+	std::string head, trail;  // the file's lines before the first BIND or INHERIT, and after the last BIND
+	bool read = false;        // from a file: its head is written back, not a new header
 };
 bool InputReadProfile (const std::string &path, InputProfile &p);
-bool InputWriteProfile (const std::string &path, const InputProfile &p, const std::string &header);
+bool InputWriteProfile (const std::string &path, const InputProfile &p, const std::string &header); // header: for a new file
+bool InputValidName (const std::string &s);           // a device name: letters, digits, _ and -, not Key or Mouse
+std::string InputClassPath (const std::string &vesselClass); // a class name as its profile's path below Vessels/ ('\' as '/')
+std::string InputResolveCase (const std::string &path); // the file as it is on disk, letter case aside (as Orbiter finds Config/Vessels)
 std::vector<Binding> InputMerge (const std::vector<const InputProfile*> &chain); // base first; later ones replace per input and layer
 
 struct DeviceCal { int code; int min, center, max; };
@@ -229,6 +236,10 @@ private:
 	bool cockpit_, suspended_, muted_;
 };
 
+// press to bind (controls-editor): the input an event shows, if it counts: a button press, a hat direction, a REL step,
+// or an axis moved by 40 % of its range from start (a centred stick pushed to an end moves half its range)
+bool InputCaptureOf (const InputDevEvent &e, const InputDevice &d, const std::string &name, int start, InputRef &r);
+
 // ====================================================================================
 // the files under Config/Input, the devices and the engine together
 
@@ -237,10 +248,14 @@ struct InputLegacyCfg {        // Orbiter.cfg's joystick lines (CFG_JOYSTICKPRM)
 	bool throttleIgnore;
 };
 
+// the old joystick's BIND lines for the controller named dev: Global.cfg's first bindings, and its reset
+std::vector<std::string> InputLegacyLines (const InputLegacyCfg &cfg, const std::string &dev);
+
 class InputSystem {
 public:
 	InputSystem (const std::string &dir, InputDevices *devices); // dir: Config/Input
 	void Migrate (const InputLegacyCfg &cfg);  // once: Global.cfg from the old joystick settings
+	std::string DefaultGlobal (InputProfile &g) const; // Global as Migrate makes it, for the controller's name now; a note if it can't
 	void Load ();                              // Devices.cfg and the profiles again
 	void SetProfile (const std::string &vesselClass, InputFrame *released);
 	void Poll (InputFrame *released);          // devices, hot-plug, files changed on disk
@@ -252,7 +267,21 @@ public:
 	std::vector<std::string> Messages ();      // file errors and device news since the last call
 	const std::string &Dir () const { return dir; }
 
+	// the Controls page (controls-editor): while it captures or calibrates nothing acts (InputStep mutes the engine).
+	// It touches the system every frame it shows; the hold and the capture end half a second after it stopped showing.
+	void Touch ();
+	bool Shown () const;
+	void HoldBack (bool on) { holdBack = on; }
+	bool HeldBack () const { return (holdBack || capture) && Shown(); }
+	void Capture (bool on);                    // press to bind: the first control used from now on
+	bool Capturing () const { return capture; }
+	bool Captured (InputRef &r) const;
+	void CaptureKey (int evcode, uint16_t mods);
+	void CaptureMouse (int button, uint16_t mods);
+	void CaptureWheel (int dir, uint16_t mods);
+
 private:
+	void CaptureEvent (const InputDevEvent &e);
 	void Claim ();                             // match devices to Devices.cfg, new entries for new devices
 	const InputProfile *Profile (const std::string &name);
 	void Rebind (InputFrame *released);
@@ -270,6 +299,11 @@ private:
 	std::vector<std::string> msgs;
 	std::map<std::string, double> noAccess;   // node -> first seen without access (s), -1 once told
 	double checkT;
+	bool holdBack = false, capture = false, captured = false;
+	double touchT = -1e9;
+	InputRef got;
+	std::map<std::pair<int,int>, int> capStart; // (device id, ABS code) -> raw when the capture started
+	InputLegacyCfg legacy = {};
 };
 
 #endif // !__INPUTBINDINGS_H
