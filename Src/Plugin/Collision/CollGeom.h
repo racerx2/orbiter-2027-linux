@@ -117,6 +117,7 @@ double CollTriTriDistance (const Vector a[3], const Vector b[3], Vector &pa, Vec
 bool   CollRayCast (const CollGeom &G, const CollAffine &X, const Vector &o, const Vector &d, double tmin, double tmax,
 	CollRayHit &hit, const uint8_t *mask = nullptr);  // o, d in the frame X maps into; first hit
 double CollClosestPoint (const CollGeom &G, const Vector &p, double cap, uint32_t &tri, Vector &q); // local frame; min(distance, cap)
+double CollPointDistance (const CollGeom &G, const CollAffine &X, const Vector &p, double cap, const uint8_t *mask = nullptr); // p in the frame X maps into, any affine X; min(distance, cap); 0 if p is not finite
 
 // convex hull of at most maxV points (farthest-point reduction above that); tri: outward triangles into v; false: fewer than 4 points or flat (design coll-bounded 6.1)
 bool CollConvexHull (const std::vector<Vector> &pts, size_t maxV, std::vector<Vector> &v, std::vector<uint32_t> &tri, double *volume = nullptr);

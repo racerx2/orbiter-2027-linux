@@ -89,7 +89,7 @@ def main():
         sanitizer |= {name for _, name in nm('--defined-only', path)}
 
     colla = colla_exports(a.api)
-    if len(colla) != 5:
+    if len(colla) != 8:
         errors.append('COLLA_EXPORTS not found in %s' % a.api)
     exports = set()
     for kind, name in nm('--defined-only', a.so):

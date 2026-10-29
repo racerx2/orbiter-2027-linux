@@ -1,8 +1,8 @@
 # not upstream: Phase D unit tests (E3-U1 to E3-U15)
 coll_unit_test(CollStore.Test 30 UNITS CollStore DentMath Vecmat)
 if (TARGET Coll_CollDamageA)
-	coll_unit_test(CollDamageA.Test 120 UNITS CollDamageA CollBreakA CollFxA CollVisualA CollStore CollApiA CollSdk CollShape CollAnim CollGeom DentMath CollCfg Vecmat)
-	coll_unit_test(CollBreakA.Test 60 UNITS CollBreakA CollDamageA CollFxA CollVisualA CollStore CollApiA CollSdk CollShape CollAnim CollGeom DentMath CollCfg Vecmat)
+	coll_unit_test(CollDamageA.Test 120 UNITS CollDamageA CollBreakA CollFxA CollVisualA CollStore CollClearA CollApiA CollSdk CollShape CollAnim CollGeom DentMath CollCfg Vecmat)
+	coll_unit_test(CollBreakA.Test 60 UNITS CollBreakA CollDamageA CollFxA CollVisualA CollStore CollClearA CollApiA CollSdk CollShape CollAnim CollGeom DentMath CollCfg Vecmat)
 	if (TARGET CollDamageA.Test AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../../Orbiter/BaseDent.cpp) # coll-bounded 5.7: the core's dent adapter against the collider
 		target_sources(CollDamageA.Test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../Orbiter/BaseDent.cpp)
 		target_compile_definitions(CollDamageA.Test PRIVATE COLL_HAVE_BASEDENT=1)

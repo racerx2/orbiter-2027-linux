@@ -219,7 +219,7 @@ The Collision module exports functions that any module can call while a simulati
 	\hline\rule{0pt}{2ex}
 	\textbf{Function} & \textbf{Description}\\
 	\hline\rule{0pt}{2ex}
-	int collaVersion () & 1\\
+	int collaVersion () & 2 (1 before the clearance queries)\\
 	\hline\rule{0pt}{2ex}
 	int collaGetVesselDamage (OBJHANDLE hVessel, COLLA\_DAMAGEINFO *info) & Fills info (set info->hdr.size to the size of your structure first). Returns 1, or 0 if hVessel is not a vessel.\\
 	\hline\rule{0pt}{2ex}
@@ -241,6 +241,35 @@ if (get) {
     if (get (GetHandle (), &d) && (d.flags & COLLA_DMG_DESTROYED))
         ShowWarning ("Hull breached");
 }
+\end{lstlisting}
+
+
+\subsection{Clearance queries}
+An autopilot can ask whether a move is clear of another vessel before it flies it. The queries use both vessels' solid geometry as it is now, with doors and other animations where they are and hidden groups left out. All positions and directions are in the target vessel's frame. Each returns 1 if the whole move keeps the clearance, 0 if not, and -1 if there is no answer (no simulation, not a vessel, a vessel without a collider, or bad arguments):
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.5\textwidth}|p{0.42\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Function} & \textbf{Description}\\
+	\hline\rule{0pt}{2ex}
+	int collaSweepVessel (OBJHANDLE hTarget, OBJHANDLE hMover, const VECTOR3 *pos, const MATRIX3 *rot, const VECTOR3 *dir, double len, double clearance, double *dist) & hMover placed with its origin at pos and its axes rot (mover frame to target frame, a rotation), moved along dir up to len [m]. dist: how far it moves keeping at least clearance [m] to hTarget.\\
+	\hline\rule{0pt}{2ex}
+	int collaSweepSphere (OBJHANDLE hTarget, const VECTOR3 *centre, double radius, const VECTOR3 *dir, double len, double clearance, double *dist) & The same for a sphere, for a ship that may turn on the way.\\
+	\hline\rule{0pt}{2ex}
+	int collaVesselRadius (OBJHANDLE hVessel, double *radius) & Radius of a sphere about the vessel's origin that holds its solid geometry [m].\\
+	\hline
+	\end{longtable}
+%\end{table}
+
+With len 0 the start alone is tested (dir is not used). A sweep measures the gap as it goes and advances by the gap less the clearance, so the whole path is covered; where the gap comes within COLLA\_SWEEP\_STEP (0.25 m) of the clearance it counts as blocked.
+
+\begin{lstlisting}
+COLLA_PFN_SWEEPVESSEL sweep =
+    (COLLA_PFN_SWEEPVESSEL)collaFind ("collaSweepVessel");
+double dist;
+if (sweep && sweep (hTarget, GetHandle (), &pos, &rot, &dir, 40.0, 1.0, &dist) == 1)
+    StartApproach ();   // 40 m along dir with 1 m to spare
 \end{lstlisting}
 
 

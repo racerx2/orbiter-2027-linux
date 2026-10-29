@@ -1,4 +1,4 @@
-// not upstream: public API of the collision addon: notices to vessel modules, damage query, repair
+// not upstream: public API of the collision addon: notices to vessel modules, damage query, repair, clearance
 #ifndef __COLLISIONAPI_H
 #define __COLLISIONAPI_H
 #include <stddef.h>
@@ -70,8 +70,16 @@ typedef int (*COLLA_PFN_REPAIRVESSEL) (OBJHANDLE hVessel);
 typedef int (*COLLA_PFN_REPAIRBUILDING) (const char *planetBase, int obj);
 typedef int (*COLLA_PFN_GETVESSELDAMAGE) (OBJHANDLE hVessel, COLLA_DAMAGEINFO *info);
 typedef int (*COLLA_PFN_GETBUILDINGDAMAGE) (const char *planetBase, int obj, double *eabs, uint32_t *flags);
+
+// clearance (collaVersion 2): current solid geometry, doors as they are; 1 clear, 0 blocked, -1 no answer
+#define COLLA_SWEEP_STEP 0.25      // a path whose gap comes within this of the clearance counts as blocked [m]
+typedef int (*COLLA_PFN_SWEEPVESSEL) (OBJHANDLE hTarget, OBJHANDLE hMover, const VECTOR3 *pos, const MATRIX3 *rot,
+	const VECTOR3 *dir, double len, double clearance, double *dist);   // mover at pos, axes rot (mover -> target frame), moved along dir
+typedef int (*COLLA_PFN_SWEEPSPHERE) (OBJHANDLE hTarget, const VECTOR3 *centre, double radius,
+	const VECTOR3 *dir, double len, double clearance, double *dist);   // target frame
+typedef int (*COLLA_PFN_VESSELRADIUS) (OBJHANDLE hVessel, double *radius); // sphere about the vessel's origin holding its geometry
 static const char *const COLLA_EXPORTS[] = { "collaVersion", "collaRepairVessel", "collaRepairBuilding",
-	"collaGetVesselDamage", "collaGetBuildingDamage" };
+	"collaGetVesselDamage", "collaGetBuildingDamage", "collaSweepVessel", "collaSweepSphere", "collaVesselRadius" };
 
 inline void *collaFind (const char *name)   // exported function of the loaded addon, NULL if not loaded
 {

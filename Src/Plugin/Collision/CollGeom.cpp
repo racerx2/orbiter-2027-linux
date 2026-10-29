@@ -998,6 +998,51 @@ double CollClosestPoint (const CollGeom &G, const Vector &p, double cap, uint32_
 	return d;
 }
 
+double CollPointDistance (const CollGeom &G, const CollAffine &X, const Vector &p, double cap, const uint8_t *mask)
+{
+	for (int k = 0; k < 3; k++) if (!std::isfinite (p.data[k])) return 0.0;
+	if (G.node.empty() || !(cap > 0.0)) return cap;
+	bool ident = IsIdentity (X), found = false;
+	double best2 = cap*cap;
+	auto bdist2 = [&](const CollNode &n) {
+		Box b;
+		XBox (n, X, ident, b);
+		double s = 0.0;
+		for (int k = 0; k < 3; k++) {
+			double d = std::max (b.mn[k] - p.data[k], p.data[k] - b.mx[k]);
+			if (d > 0.0) s += d*d;
+		}
+		return s;
+	};
+	uint32_t stack[2*COLL_BVH_DEPTH + 8];
+	int sp = 0;
+	stack[sp++] = 0;
+	while (sp) {
+		const CollNode &n = G.node[stack[--sp]];
+		if (bdist2 (n) >= best2) continue;
+		if (n.count) {
+			for (uint32_t i = n.first; i < n.first + n.count; i++) {
+				const CollTri &T = G.tri[G.perm[i]];
+				if (mask && mask[T.src]) continue;
+				Vector v[3];
+				for (int j = 0; j < 3; j++) v[j] = ident ? G.vtx[T.v[j]] : CollApply (X, G.vtx[T.v[j]]);
+				double d2 = (TriClosest (p, v, HasFace (v)) - p).length2();
+				if (d2 < best2) best2 = d2, found = true;
+			}
+			continue;
+		}
+		double d0 = bdist2 (G.node[n.first]), d1 = bdist2 (G.node[n.first+1]);
+		if (d0 <= d1) {
+			if (d1 < best2) stack[sp++] = n.first + 1;
+			if (d0 < best2) stack[sp++] = n.first;
+		} else {
+			if (d0 < best2) stack[sp++] = n.first;
+			if (d1 < best2) stack[sp++] = n.first + 1;
+		}
+	}
+	return found ? std::min (std::sqrt (best2), cap) : cap;
+}
+
 bool CollIsRigid (const CollAffine &P)
 {
 	return OrthoDev (P.A) < COLL_RIGID_TOL && Det (P.A) > 0.0;

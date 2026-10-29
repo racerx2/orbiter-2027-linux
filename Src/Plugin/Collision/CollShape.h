@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -79,6 +80,11 @@ struct CollPart {
 };
 enum : uint32_t { COLLSH_NONE = 1, COLLSH_BUILT = 2, COLLSH_REBUILT = 4, COLLSH_PARTITION = 8, COLLSH_JUMP = 16, COLLSH_MOVED = 32, COLLSH_OFFSET = 64 };
 
+// straight-path clearance by conservative advancement (design autodock-clearance 1): gap (u, cap) = min(distance at u, cap);
+// dist = length known to keep at least clearance; true if dist = len; stops where gap - clearance < step
+constexpr double COLL_SWEEP_REACH = 50.0;          // longest advance per query [m]
+bool CollSweep (const std::function<double (double u, double cap)> &gap, double len, double clearance, double step, double &dist);
+
 // displacement field callback; D4 passes DentMath's field with the record as ctx (7.3)
 typedef Vector (*CollDisplaceFn) (const void *ctx, const Vector &rest);
 typedef Vector (*CollMapFn) (const void *ctx, const Vector &rest, const Vector &cur); // dmg3 tear: new position from rest and current
@@ -107,6 +113,9 @@ public:
 	uint16_t Material (uint32_t mesh, uint32_t grp) const;                         // sidecar MAT id, 0 = vessel default
 	bool     RayRest (uint32_t mesh, uint32_t grp, const Vector &o, const Vector &d,
 		double tmin, double tmax, CollRayHit &hit) const;                          // first hit over all parts at pose[1]; o, d in grp's part frame
+	// clearance (design autodock-clearance 1): this shape at pose[1], vessel frame; min(distance, cap)
+	double   Gap (const CollShape &m, const CollAffine &X, double cap, CollScratch &s) const; // m at its pose[1] placed by X (rigid) into this frame
+	double   PointGap (const Vector &p, double cap) const;
 	size_t   ApplyDent (uint32_t mesh, const uint32_t *grp, size_t ngrp,
 		CollDisplaceFn fn, const void *ctx);                                       // vtx += fn(rest), then Refit; returns vertices moved; non-finite displacements skipped (log once)
 	size_t   ApplyMap (uint32_t mesh, const uint32_t *grp, size_t ngrp,

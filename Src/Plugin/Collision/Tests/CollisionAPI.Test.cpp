@@ -6,6 +6,7 @@ TEST_CASE ("CollisionAPI.h without the addon (P4)")
 {
 	CHECK (COLLA_VMSG == 0x4F434F4C);
 	CHECK (COLLA_MAGIC == 0x31414C43u);
-	CHECK (sizeof (COLLA_EXPORTS) / sizeof (COLLA_EXPORTS[0]) == 5);
+	CHECK (sizeof (COLLA_EXPORTS) / sizeof (COLLA_EXPORTS[0]) == 8);
+	CHECK (COLLA_SWEEP_STEP == 0.25);
 	CHECK (collaFind ("collaVersion") == nullptr); // the addon is not loaded in this process
 }

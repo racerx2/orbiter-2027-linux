@@ -1,10 +1,12 @@
 // not upstream: E3-U7 to E3-U15 on a local fake SDK: events to dents, collider re-apply, thrust cut, notices, visual sync, block, recorder, lifecycle (Design CA E3 12.1)
 #include <catch2/catch_test_macros.hpp>
+#include <cmath>
 #include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -2247,3 +2249,66 @@ TEST_CASE ("coll-bounded 5.7: the core's dent adapter makes the collider's verti
 	CHECK (turned);                                                    // the core's normals follow the dent
 }
 #endif
+
+extern "C" int collaSweepVessel (OBJHANDLE, OBJHANDLE, const VECTOR3 *, const MATRIX3 *, const VECTOR3 *, double, double, double *);
+extern "C" int collaSweepSphere (OBJHANDLE, const VECTOR3 *, double, const VECTOR3 *, double, double, double *);
+extern "C" int collaVesselRadius (OBJHANDLE, double *);
+extern "C" int collaVersion ();
+
+TEST_CASE ("clearance queries: the session and the exports (design autodock-clearance 1)")
+{
+	Rig r;
+	uint32_t a = r.Add ("PB-A"), b = r.Add ("PB-B");
+	DFake::V *bare = r.sdk.Add ("Bare", "ShuttlePB"); // a vessel without a collider
+	r.Begin ();
+	r.Frame ();
+	CollH ha = r.B (a).v, hb = r.B (b).v;
+	const Matrix I = IMatrix ();
+	double d = -1;
+	// plates in z = 0, half size 5: B above A by 3, moved down with 1 m kept
+	CHECK (r.s.SweepVessel (ha, hb, Vector (0, 0, 3), I, Vector (0, 0, -2), 10, 1.0, d) == 0);
+	CHECK (std::fabs (d - 2.0) < 1e-6);
+	CHECK (r.s.SweepVessel (ha, hb, Vector (0, 0, 3), I, Vector (1, 0, 0), 30, 1.0, d) == 1);
+	CHECK (d == 30);
+	CHECK (r.s.SweepVessel (ha, hb, Vector (0, 0, 3), I, Vector (), 0, 1.0, d) == 1);
+	CHECK (r.s.SweepVessel (ha, hb, Vector (0, 0, 3), I, Vector (), 1, 1.0, d) == -1);
+	CHECK (r.s.SweepVessel (ha, hb, Vector (0, 0, 3), Matrix (2, 0, 0, 0, 2, 0, 0, 0, 2), Vector (0, 0, -1), 10, 1.0, d) == -1);
+	CHECK (r.s.SweepVessel (ha, hb, Vector (0, 0, 3), Matrix (1, 0, 0, 0, 1, 0, 0, 0, -1), Vector (0, 0, -1), 10, 1.0, d) == -1);
+	CHECK (r.s.SweepVessel (ha, hb, Vector (0, 0, std::numeric_limits<double>::quiet_NaN ()), I, Vector (0, 0, -1), 10, 1.0, d) == -1);
+	CHECK (r.s.SweepVessel (ha, hb, Vector (0, 0, 3), I, Vector (0, 0, -1), -1, 1.0, d) == -1);
+	CHECK (r.s.SweepVessel (ha, ha, Vector (0, 0, 3), I, Vector (0, 0, -1), 10, 1.0, d) == -1);
+	CHECK (r.s.SweepVessel (ha, bare, Vector (0, 0, 3), I, Vector (0, 0, -1), 10, 1.0, d) == -1);
+	CHECK (r.s.SweepVessel ((CollH)&d, hb, Vector (0, 0, 3), I, Vector (0, 0, -1), 10, 1.0, d) == -1);
+	// a sphere of radius 1 at 4 above A
+	CHECK (r.s.SweepSphere (ha, Vector (0, 0, 4), 1.0, Vector (0, 0, -1), 10, 1.0, d) == 0);
+	CHECK (std::fabs (d - 2.0) < 1e-6);
+	CHECK (r.s.SweepSphere (ha, Vector (0, 0, 4), 1.0, Vector (), 0, 3.0, d) == 1);
+	CHECK (r.s.SweepSphere (ha, Vector (0, 0, 4), 1.0, Vector (), 0, 3.5, d) == 0);
+	CHECK (r.s.SweepSphere (ha, Vector (0, 0, 4), -1.0, Vector (0, 0, -1), 10, 1.0, d) == -1);
+	CHECK (r.s.SweepSphere (bare, Vector (0, 0, 4), 1.0, Vector (0, 0, -1), 10, 1.0, d) == -1);
+	double rad = 0;
+	CHECK (r.s.VesselRadius (ha, rad) == 1);
+	CHECK (std::fabs (rad - std::sqrt (50.0)) < 1e-6);
+	CHECK (r.s.VesselRadius (bare, rad) == -1);
+	CHECK (rad == 0);
+
+	// exports: -1 without a session, the same answers with one
+	VECTOR3 pos = _V(0, 0, 3), dn = _V(0, 0, -1), cen = _V(0, 0, 4);
+	MATRIX3 R = _M(1, 0, 0, 0, 1, 0, 0, 0, 1);
+	CHECK (collaVersion () == 2);
+	CHECK (collaSweepVessel ((OBJHANDLE)ha, (OBJHANDLE)hb, &pos, &R, &dn, 10, 1.0, &d) == -1);
+	static CollDmgSession *cur = nullptr;
+	cur = &r.s;
+	CollApiA::SetSession ([] () { return cur; });
+	d = -1;
+	CHECK (collaSweepVessel ((OBJHANDLE)ha, (OBJHANDLE)hb, &pos, &R, &dn, 10, 1.0, &d) == 0);
+	CHECK (std::fabs (d - 2.0) < 1e-6);
+	CHECK (collaSweepVessel ((OBJHANDLE)ha, (OBJHANDLE)hb, &pos, nullptr, &dn, 10, 1.0, &d) == -1);
+	CHECK (collaSweepVessel ((OBJHANDLE)ha, (OBJHANDLE)hb, &pos, &R, &dn, 10, 1.0, nullptr) == -1);
+	CHECK (collaSweepSphere ((OBJHANDLE)ha, &cen, 1.0, &dn, 10, 1.0, &d) == 0);
+	CHECK (std::fabs (d - 2.0) < 1e-6);
+	CHECK (collaVesselRadius ((OBJHANDLE)ha, &rad) == 1);
+	CHECK (std::fabs (rad - std::sqrt (50.0)) < 1e-6);
+	CHECK (collaVesselRadius ((OBJHANDLE)ha, nullptr) == -1);
+	CollApiA::SetSession (nullptr);
+}

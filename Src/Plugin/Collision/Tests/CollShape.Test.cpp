@@ -1331,3 +1331,125 @@ TEST_CASE("ApplyDent: part spheres and the vessel bound follow the dent (fix1)",
 		CHECK (P.sr[k] == G.bsRadius);
 	}
 }
+
+// clearance (design autodock-clearance 1): distance of two axis-aligned boxes, independent of CollGeom
+static double BoxBox (const Vector &ca, const Vector &ha, const Vector &cb, const Vector &hb)
+{
+	double s = 0;
+	for (int k = 0; k < 3; k++) {
+		double d = std::fabs (ca.data[k] - cb.data[k]) - ha.data[k] - hb.data[k];
+		if (d > 0) s += d*d;
+	}
+	return std::sqrt (s);
+}
+
+TEST_CASE("Clearance: Gap, PointGap and CollSweep through a bay with a sliding door", "[collshape][clear]")
+{
+	// target: walls x 4..6 and -6..-4, ceiling y 6..8, door y -1..0 between the walls (group 3, slides +x by 12 when open)
+	const Vector wc[4] = { Vector (5, 3, 0), Vector (-5, 3, 0), Vector (0, 7, 0), Vector (0, -0.5, 0) };
+	const Vector wh[4] = { Vector (1, 3, 10), Vector (1, 3, 10), Vector (6, 1, 10), Vector (4, 0.5, 10) };
+	auto bay = std::make_shared<CollRestMesh> ();
+	for (int i = 0; i < 4; i++) bay->grp.push_back (Box (wc[i], wh[i]));
+	TestVessel v; TestModule mod; CollAnim ca; CollShape T; CollTemplateCache cache;
+	v.coll = &ca;
+	v.meshGrp = { 4 };
+	UINT door = v.CreateAnimation (0);
+	v.AddAnimationComponent (door, 0, 1, mod.Lin (0, mod.Grp ({3}), 1, _V(12,0,0)));
+	CollMeshInfo mt;
+	mt.present = mt.collide = true; mt.serial = 1; mt.rest = bay;
+	auto upd = [&] () { v.Step (); T.Update (&mt, 1, ca, v.anim, v.nanim, cache); };
+	upd ();
+	REQUIRE (T.nPart () == 2);
+
+	// mover: one box, half size (1, 0.5, 2)
+	const Vector mh (1, 0.5, 2);
+	auto ship = std::make_shared<CollRestMesh> ();
+	ship->grp.push_back (Box (Vector (0, 0, 0), mh));
+	CollShape M; CollAnim cm; CollMeshInfo mm;
+	mm.present = mm.collide = true; mm.serial = 1; mm.rest = ship;
+	M.Update (&mm, 1, cm, nullptr, 0, cache);
+	REQUIRE (M.nPart () == 1);
+
+	CollScratch s;
+	auto brute = [&] (const Vector &c, const Vector &h, bool doorShut) {
+		double b = 1e300;
+		for (int i = 0; i < (doorShut ? 4 : 3); i++) b = std::min (b, BoxBox (c, h, wc[i], wh[i]));
+		return b;
+	};
+	CollAffine X;
+	for (Vector p : { Vector (0, 3, 0), Vector (1.5, 2, 3), Vector (-2, 4.2, -9), Vector (0, -4, 0), Vector (0, 3, 14) }) {
+		INFO (p.x << " " << p.y << " " << p.z);
+		X.A = IMatrix (); X.t = p;
+		CHECK (std::fabs (T.Gap (M, X, 1e9, s) - brute (p, mh, true)) < 1e-5);
+		CHECK (std::fabs (M.Gap (T, CollInverse (X), 1e9, s) - brute (p, mh, true)) < 1e-5);
+		X.A = Matrix (0, 0, 1, 0, 1, 0, -1, 0, 0); // mover z along target x
+		CHECK (std::fabs (T.Gap (M, X, 1e9, s) - brute (p, Vector (2, 0.5, 1), true)) < 1e-5);
+		double cap = brute (p, mh, true) * 0.5;
+		X.A = IMatrix ();
+		CHECK (T.Gap (M, X, cap, s) == cap);
+		CHECK (std::fabs (T.PointGap (p, 1e9) - brute (p, Vector (0, 0, 0), true)) < 1e-5);
+	}
+
+	// sweeps: down onto the shut door, out through it once open, and along the bay
+	auto sweep = [&] (const Vector &p0, const Vector &d, double len, double clr, double &dist) {
+		CollAffine Y;
+		return CollSweep ([&] (double u, double cap) { Y.t = p0 + d * u; return T.Gap (M, Y, cap, s); }, len, clr, 0.25, dist);
+	};
+	double dist;
+	CHECK_FALSE (sweep (Vector (0, 3, 0), Vector (0, -1, 0), 20, 1.0, dist));
+	CHECK (std::fabs (dist - 1.5) < 1e-5);
+	CHECK (sweep (Vector (0, 3, 0), Vector (0, 0, 1), 30, 1.0, dist));
+	CHECK (dist == 30);
+	CHECK_FALSE (sweep (Vector (0, 3, 0), Vector (1, 0, 0), 20, 1.0, dist));
+	CHECK (std::fabs (dist - 2.0) < 1e-5);
+	for (int k = 1; k <= 10; k++) { v.SetAnimation (door, k / 10.0); upd (); }
+	CHECK (std::fabs (T.Gap (M, CollTranslate (Vector (0, 3, 0)), 1e9, s) - 2.5) < 1e-5);
+	CHECK (sweep (Vector (0, 3, 0), Vector (0, -1, 0), 20, 1.0, dist));
+	CHECK (dist == 20);
+
+	// hidden group: the +x wall left out
+	T.SetGroupHidden (0, 0, true);
+	CHECK (sweep (Vector (0, 3, 0), Vector (1, 0, 0), 20, 1.0, dist));
+	T.SetGroupHidden (0, 0, false);
+
+	// sphere: the point gap less the radius
+	auto sphere = [&] (const Vector &c, double r, const Vector &d, double len, double clr, double &dist) {
+		return CollSweep ([&] (double u, double cap) { return std::max (T.PointGap (c + d * u, cap + r) - r, 0.0); }, len, clr, 0.25, dist);
+	};
+	CHECK_FALSE (sphere (Vector (0, 20, 0), 2.0, Vector (0, -1, 0), 30, 1.0, dist));
+	CHECK (std::fabs (dist - 9.0) < 1e-5);
+	CHECK (sphere (Vector (0, 20, 0), 2.0, Vector (0, 0, 1), 30, 1.0, dist));
+}
+
+TEST_CASE("Clearance: CollSweep steps, stops, length 0 and bad input", "[collshape][clear]")
+{
+	int calls = 0;
+	std::vector<double> caps;
+	auto wall = [&] (double u, double cap) { calls++; caps.push_back (cap); return std::min (10.0 - u, cap); };
+	double dist;
+	CHECK_FALSE (CollSweep (wall, 20, 1.0, 0.25, dist));
+	CHECK (dist == 9.0);
+	CHECK (calls == 2);
+	CHECK (caps[0] == 21.0);
+	auto par = [&] (double, double cap) { return std::min (1.2, cap); };
+	CHECK_FALSE (CollSweep (par, 20, 1.0, 0.25, dist));
+	CHECK (dist == 0.0);
+	calls = 0;
+	auto open = [&] (double, double cap) { calls++; return std::min (3.0, cap); };
+	CHECK (CollSweep (open, 100, 1.0, 0.25, dist));
+	CHECK (dist == 100.0);
+	CHECK (calls == 50);
+	calls = 0;
+	auto far = [&] (double, double cap) { calls++; return std::min (1e6, cap); };
+	CHECK (CollSweep (far, 1000, 1.0, 0.25, dist));
+	CHECK (calls == 20);
+	CHECK (CollSweep (open, 0, 1.0, 0.25, dist));
+	CHECK (dist == 0.0);
+	CHECK_FALSE (CollSweep (open, 0, 5.0, 0.25, dist));
+	auto nan = [&] (double, double) { return std::numeric_limits<double>::quiet_NaN (); };
+	CHECK_FALSE (CollSweep (nan, 10, 1.0, 0.25, dist));
+	CHECK_FALSE (CollSweep (open, -1, 1.0, 0.25, dist));
+	CHECK_FALSE (CollSweep (open, 10, -1.0, 0.25, dist));
+	CHECK_FALSE (CollSweep (open, 10, 1.0, 0.0, dist));
+	CHECK_FALSE (CollSweep (open, std::numeric_limits<double>::infinity (), 1.0, 0.25, dist));
+}

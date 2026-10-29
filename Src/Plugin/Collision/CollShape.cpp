@@ -950,6 +950,52 @@ bool CollShape::RayRest (uint32_t mesh, uint32_t grp, const Vector &o, const Vec
 	return any;
 }
 
+double CollShape::Gap (const CollShape &m, const CollAffine &X, double cap, CollScratch &s) const
+{
+	double best = cap;
+	for (uint32_t j = 0; j < m.parts.size() && best > 0.0; j++) {
+		const CollPart &pm = m.parts[j];
+		CollAffine XM = CollCompose (X, pm.pose[1]);
+		Vector cm = CollApply (X, pm.sc[1]);
+		for (uint32_t i = 0; i < parts.size() && best > 0.0; i++) {
+			const CollPart &pt = parts[i];
+			if ((pt.sc[1] - cm).length () - pt.sr[1] - pm.sr[1] >= best) continue;
+			double d = CollDistance (pm.Geom (), XM, pt.Geom (), pt.pose[1], best, nullptr, s, m.GroupMask (j), GroupMask (i));
+			if (d < best) best = d;
+		}
+	}
+	return best > 0.0 ? best : 0.0;
+}
+
+double CollShape::PointGap (const Vector &p, double cap) const
+{
+	double best = cap;
+	for (uint32_t i = 0; i < parts.size() && best > 0.0; i++) {
+		const CollPart &pt = parts[i];
+		if ((pt.sc[1] - p).length () - pt.sr[1] >= best) continue;
+		double d = CollPointDistance (pt.Geom (), pt.pose[1], p, best, GroupMask (i));
+		if (d < best) best = d;
+	}
+	return best > 0.0 ? best : 0.0;
+}
+
+bool CollSweep (const std::function<double (double u, double cap)> &gap, double len, double clearance, double step, double &dist)
+{
+	dist = 0.0;
+	if (!(len >= 0.0) || !(clearance >= 0.0) || !(step > 0.0) || !std::isfinite (len) || !std::isfinite (clearance)) return false;
+	double u = 0.0;
+	for (;;) {
+		double rest = len - u;
+		double g = gap (u, clearance + std::min (rest, COLL_SWEEP_REACH));
+		double adv = g - clearance;
+		if (!(adv == adv)) return false;
+		if (adv >= rest) { dist = len; return true; }
+		if (adv < step) return false;
+		u += adv;
+		dist = u;
+	}
+}
+
 size_t CollShape::ApplyDent (uint32_t mesh, const uint32_t *grp, size_t ngrp, CollDisplaceFn fn, const void *ctx)
 {
 	if (!fn) return 0;

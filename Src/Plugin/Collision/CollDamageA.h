@@ -90,6 +90,10 @@ public:
 	int RepairBuilding (const char *planetBase, int obj);
 	int GetVesselDamage (CollH h, void *info);                               // COLLA_DAMAGEINFO *
 	int GetBuildingDamage (const char *planetBase, int obj, double *eabs, uint32_t *flags);
+	// clearance queries (design autodock-clearance 1, CollClearA.cpp): 1 clear, 0 blocked, -1 no answer
+	int SweepVessel (CollH hTarget, CollH hMover, const Vector &pos, const Matrix &rot, const Vector &dir, double len, double clearance, double &dist);
+	int SweepSphere (CollH hTarget, const Vector &centre, double radius, const Vector &dir, double len, double clearance, double &dist);
+	int VesselRadius (CollH h, double &radius);
 	// dialog content and the 2024 report
 	void Report (std::vector<std::string> &lines) const;
 	const VesselDamageA *Damage (uint32_t id) const { auto it = vessel.find (id); return it == vessel.end () ? nullptr : &it->second; }
@@ -194,6 +198,8 @@ private:
 	std::vector<RepairReq> repairs;
 	CollRecLink rec;
 	CollPlayLink play;
+	CollScratch clearScratch;                                                // clearance queries
+	const CollShape *ClearShape (CollH h);                                   // a vessel's shape with parts, else null
 	double frameT = 0;                                                       // pre-step time of Commit's frame
 	double lastPostT = -1;                                                   // dmg3: sim time of the last PostStep (simdt for the units)
 	double lastPostDt = 0;                                                  // blast: last post-step frame step [s]

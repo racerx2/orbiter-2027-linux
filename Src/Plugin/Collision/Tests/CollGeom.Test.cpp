@@ -876,6 +876,47 @@ TEST_CASE("Ray cast and closest point vs brute force", "[collgeom][ray]")
 	}
 }
 
+TEST_CASE("Point distance under a pose and a mask vs brute force (design autodock-clearance 1)", "[collgeom][clear]")
+{
+	Rng r (47);
+	for (int c = 0; c < 8; c++) {
+		std::vector<CollGroupData> g = { GridGroup (r, 9, 9, 2.0, 0.6, Vector (0, 0, 0)), SoupGroup (r, 120, 2.0, 0.5, Vector (0, 0, 0)) };
+		CollGeom G;
+		REQUIRE (BuildGroups (g, G));
+		CollAffine X = (c % 2) ? RandAffine (r, 3.0) : RandRigid (r, 3.0);
+		if (c == 0) X = CollAffine ();
+		uint8_t mask[2] = { (uint8_t)(c % 3 == 1), 0 };
+		for (int k = 0; k < 60; k++) {
+			Vector p = CollApply (X, r.V (4.0));
+			double bd = 1e300;
+			for (uint32_t t = 0; t < G.tri.size(); t++) {
+				if (mask[G.tri[t].src]) continue;
+				Vector v[3];
+				TriOf (G, X, t, v);
+				bd = std::min (bd, PtTri (p, v));
+			}
+			REQUIRE (std::fabs (CollPointDistance (G, X, p, 1e9, mask) - bd) < 1e-12);
+			double cap = bd * 0.9;
+			REQUIRE (CollPointDistance (G, X, p, cap, mask) == cap);
+			if (c == 0) {
+				uint32_t t;
+				Vector q;
+				REQUIRE (std::fabs (CollPointDistance (G, X, p, 1e9) - CollClosestPoint (G, p, 1e9, t, q)) < 1e-12);
+			}
+		}
+	}
+	CollGeom E;
+	CHECK (CollPointDistance (E, CollAffine (), Vector (0, 0, 0), 3.0) == 3.0);
+	Rng r1 (1);
+	std::vector<CollGroupData> g1 = { GridGroup (r1, 3, 3, 1.0, 0.0, Vector (0, 0, 0)) };
+	CollGeom G1;
+	REQUIRE (BuildGroups (g1, G1));
+	CHECK (CollPointDistance (G1, CollAffine (), Vector (0, std::numeric_limits<double>::quiet_NaN (), 0), 3.0) == 0.0);
+	uint8_t all[1] = { 1 };
+	CHECK (CollPointDistance (G1, CollAffine (), Vector (0, 1, 0), 3.0, all) == 3.0);
+	CHECK (std::fabs (CollPointDistance (G1, CollAffine (), Vector (0, 1, 0), 3.0) - 1.0) < 1e-12);
+}
+
 // leaf node ids and their triangle ranges: what D2 keys GRACE scopes and front caches on
 bool SameLeaves (const CollGeom &G, const std::vector<CollNode> &node0, const std::vector<uint32_t> &perm0)
 {
