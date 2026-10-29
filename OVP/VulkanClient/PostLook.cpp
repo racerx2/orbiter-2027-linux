@@ -113,6 +113,7 @@ int PostLook::Exhausts (D3DXVECTOR4 *seg, int rect[4])
 			if (lvl <= 0.02) continue;
 			EXHAUSTSPEC es;
 			if (!v->GetExhaustSpec(i, &es) || !es.lpos || !es.ldir) continue;
+			if (PostPlume::Legacy(v, i, es)) continue; // Orbiter's flame, as the vessel made it: no haze (design-exhaust-style)
 			double hwA = 1.2 * es.wsize, hwB = 2.0 * es.wsize, hl = es.lsize * lvl; // the plume's half-width at the nozzle and the end, its length, m
 			PostPlume::HazeShape(vv, i, &hwA, &hwB, &hl); // the volumetric plume's when it draws this exhaust (design-volumetric-plumes 10)
 			VECTOR3 ref = *es.lpos - *es.ldir * es.lofs, end = ref - *es.ldir * hl;

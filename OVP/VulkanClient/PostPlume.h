@@ -34,6 +34,7 @@ public:
 	static float LegacyReentry (const vVessel *vv);            // the legacy re-entry billboard's factor
 	static const D3DXMATRIX *FlowVP ();                        // RENDERPASS_FLOWMAP's view projection while a flow map renders
 	static void HazeShape (const vVessel *vv, DWORD idx, double *r0, double *r1, double *len); // PostLook's haze: the volume plume's radii and length
+	static bool Legacy (VESSEL *v, DWORD idx, const EXHAUSTSPEC &es); // Orbiter's flame by the vessel's ExhaustStyle or its class: no haze (design-exhaust-style)
 	void AddLights (OBJHANDLE hV, const vObject *vo); // the plumes' own light of this vessel into the scene's local lights (design-plume-light 2)
 
 private:

@@ -470,11 +470,29 @@ By day the windows give no light. Without NightLook, the buildings' windows come
 
 \subsection{Exhausts, particle streams and re-entry}
 \label{ssec:vk_plumes}
-With VolPlumes on, the client draws engine exhausts, smoke and the plasma of re-entry as lit volumes, and hulls heated by re-entry glow. It builds them from what vessels already define: the exhausts of AddExhaust (section \textit{Defining exhaust flames} of the spacecraft chapter), the particle streams of AddExhaustStream, AddParticleStream and AddReentryStream, and the vessel's meshes. A vessel needs no change for them; the optional file of section \ref{sssec:vk_plumecfg} tunes them per vessel class.
+With VolPlumes on, the client draws engine exhausts, smoke and the plasma of re-entry as lit volumes, and hulls heated by re-entry glow. It builds them from what vessels already define: the exhausts of AddExhaust (section \textit{Defining exhaust flames} of the spacecraft chapter), the particle streams of AddExhaustStream, AddParticleStream and AddReentryStream, and the vessel's meshes. A vessel needs no change for them: engines burning a propellant the client knows become volumes, and add-on flames stay Orbiter's flames unless the vessel asks for the volume (section \ref{sssec:vk_exhauststyle}). The optional file of section \ref{sssec:vk_plumecfg} tunes them per vessel class.
+
+
+\subsubsection{Orbiter's flame or the volume}
+\label{sssec:vk_exhauststyle}
+Each vessel class chooses in its own configuration file, Config/Vessels/<class>.cfg:
+
+\begin{lstlisting}[language=OSFS]
+ExhaustStyle = volumetric     ; or legacy
+\end{lstlisting}
+
+\begin{itemize}
+\item legacy: Orbiter's flames as the vessel defines them (their texture, length and width), with no plume light and no heat haze. Its particle streams are Orbiter's too.
+\item volumetric: every exhaust of the vessel is a volume.
+\item No line: the exhausts of the propellant classes (hydrolox to solid, below) are volumes. The texture class stays Orbiter's flame, with no plume light and no heat haze: exhausts without a thruster, and engines with a specific impulse no real propellant has (most fictional engines, and effects such as a comet's tail).
+\end{itemize}
+
+\noindent
+The Delta-glider's files (DeltaGlider, DG-S) have ExhaustStyle = volumetric. Any other value is reported in the client's log and counts as no line. The line is read when the class is first seen in a session.
 
 
 \subsubsection{Volumetric exhaust plumes}
-Every exhaust with a level above 0 becomes a volume, from the exhaust's position, direction, length (lscale), width (wscale), level and modulation (the flicker of EXHAUSTSPEC::modulate), and from its thruster:
+Every exhaust the volume draws (section \ref{sssec:vk_exhauststyle}) is built from the exhaust's position, direction, length (lscale), width (wscale), level and modulation (the flicker of EXHAUSTSPEC::modulate), and from its thruster:
 
 \begin{itemize}
 \item The nozzle's exit radius comes from the thruster's maximum vacuum thrust and the pressure dependency of its specific impulse (the isp\_ref and p\_ref of CreateThruster), which together give the exit area in Orbiter's thrust model. It is kept between 0.3 and 1.5 times the exhaust's width. A thruster whose specific impulse does not depend on pressure gets 0.6 times the width; the texture class (below) 0.8 times the width.
@@ -522,7 +540,7 @@ Exhausts smaller than one pixel on screen (by their exit radius) stay legacy fla
 \\
 \textbf{Ground clouds.} When a plume reaches the ground in air, a cloud of steam or dust rises where it hits: while the vessel is less than 300 m above the ground, the ambient pressure is above 10 kPa, the plume points within about 78$^{\circ}$ of straight down and the ground lies within 2.5 plume lengths of the nozzle. More thrust gives more cloud, up to 384 puffs per vessel; each lasts about 30 s, rises and drifts with the wind. Steam is white, dust tan.\\
 \\
-\textbf{Heat haze.} With HeatHaze on, the air behind the 32 nearest exhausts above 2\,\% level shimmers while the camera is in an atmosphere. The shimmer follows the plume's shape, or the exhaust's length and width when there is no plume.
+\textbf{Heat haze.} With HeatHaze on, the air behind the 32 nearest exhausts above 2\,\% level shimmers while the camera is in an atmosphere. The shimmer follows the plume's shape, or the exhaust's length and width when there is no plume. With VolPlumes on, exhausts left to Orbiter's flame (section \ref{sssec:vk_exhauststyle}) have none.
 
 
 \subsubsection{Plume files}

@@ -710,7 +710,17 @@
       their flame, best seen at night (with <i>Local light sources</i> on).
     </p>
     <p>
-      Their hulls heat up and glow on their own: the nose and the leading
+      Add-on flames keep the look their author gave them: an exhaust without a
+      thruster, or an engine with a specific impulse no real propellant has
+      (most fictional engines, a comet's tail), stays Orbiter's own flame. A
+      line in the vessel's own file, <code>Config/Vessels/&lt;class&gt;.cfg</code>,
+      switches any vessel: <code>ExhaustStyle = volumetric</code> draws all its
+      exhausts as volumes, <code>ExhaustStyle = legacy</code> keeps Orbiter's
+      flames and particle streams with no plume light or heat haze. The
+      Delta-glider comes with <code>ExhaustStyle = volumetric</code>.
+    </p>
+    <p>
+      The hulls of vessels entering an atmosphere heat up and glow on their own: the nose and the leading
       edges yellow-white, the windward belly dull red to orange, best seen at
       night. The glow builds up with the heating and fades slowly after it,
       so a hull still glows after the plasma has gone.

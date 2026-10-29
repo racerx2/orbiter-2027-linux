@@ -506,3 +506,22 @@ TEST_CASE("PlumeMath: a point light's mean over a mesh's bounding sphere (design
 	CHECK(SphereMeanAtt(0.92, 1.0, 0.05, 0.0005, 33.0, 7.0) < 1.0 / (1e-3 + 0.0005 * 3600.0));
 	CHECK_THAT(SphereMeanAtt(1.0, 1.0, 0.0, 0.01, 10.0, 0.0), WithinRel(1.0 / 2.0, 1e-12)); // at the centre
 }
+
+TEST_CASE("PlumeMath: a vessel's ExhaustStyle (design-exhaust-style)", "[plumemath]")
+{
+	CHECK(StyleFromName("legacy") == STYLE_LEGACY);
+	CHECK(StyleFromName("Volumetric") == STYLE_VOLUMETRIC);
+	CHECK(StyleFromName("  LEGACY ; Orbiter's flame") == STYLE_LEGACY); // GetItemString gives the rest of the line
+	CHECK(StyleFromName("volumetric\r") == STYLE_VOLUMETRIC);
+	CHECK(StyleFromName("legacyx") == STYLE_NONE);
+	CHECK(StyleFromName("volume") == STYLE_NONE);
+	CHECK(StyleFromName("") == STYLE_NONE);
+	CHECK(StyleFromName(nullptr) == STYLE_NONE);
+	for (int c = 0; c < NCLASS; c++) {
+		CHECK(Volumetric(STYLE_NONE, c) == (c != TEXTURE)); // without the line: propellants the volume, add-on flames Orbiter's
+		CHECK(!Volumetric(STYLE_LEGACY, c));
+		CHECK(Volumetric(STYLE_VOLUMETRIC, c));
+	}
+	CHECK(!Volumetric(STYLE_NONE, Classify(true, 1.0, 5e11))); // a comet add-on's tail (Isp 5e11 m/s) stays Orbiter's flame
+	CHECK(Volumetric(STYLE_NONE, Classify(true, 2.17e6, 453 * G0))); // SSME
+}

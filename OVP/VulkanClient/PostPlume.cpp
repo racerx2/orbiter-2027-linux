@@ -46,12 +46,14 @@ struct PostPlume::ClassCfg {
 	int ground = -1; // -1 by class, 0 none, 1 steam, 2 dust
 	int puffs = -1;  // -1 streams with the default texture, 0 none, 1 every diffuse stream (design review S5)
 	double light = 1.0; // the plumes' own light on meshes and the ground, 0 none (design-plume-light 2)
+	int style = STYLE_NONE; // the vessel cfg's ExhaustStyle (design-exhaust-style)
 };
 
 struct PostPlume::Nozzle {
 	THRUSTER_HANDLE th = nullptr;
 	double F0 = -1.0, isp0 = -1.0, wsize = -1.0;
 	int cls = TEXTURE;
+	bool vol = false; // the volume draws it; otherwise Orbiter's flame, as the vessel made it (design-exhaust-style)
 	double re = 1.0, pe = 8e3;
 };
 
@@ -251,7 +253,7 @@ bool PostPlume::NoiseReady ()
 	return tNoise != nullptr;
 }
 
-// Config/GC/Plume/<class>.cfg: EXHAUST <i|i-j|*|main|retro|hover|att> <class> [pe=<kPa>], SMOKE <0..2>, GROUND <steam|dust|none>, PUFFS <0|1>, LIGHT <0..4>; later lines win
+// the vessel cfg's ExhaustStyle <legacy|volumetric>; Config/GC/Plume/<class>.cfg: EXHAUST <i|i-j|*|main|retro|hover|att> <class> [pe=<kPa>], SMOKE <0..2>, GROUND <steam|dust|none>, PUFFS <0|1>, LIGHT <0..4>; later lines win
 const PostPlume::ClassCfg &PostPlume::CfgOf (VESSEL *v)
 {
 	char cn[256];
@@ -260,6 +262,18 @@ const PostPlume::ClassCfg &PostPlume::CfgOf (VESSEL *v)
 	auto it = classes->find(cn);
 	if (it != classes->end()) return it->second;
 	ClassCfg &c = (*classes)[cn];
+	if (const char *vc = v->GetClassName()) { // the vessel's own cfg, where the core finds it: ExhaustStyle (design-exhaust-style)
+		std::string s = vc;
+		FILEHANDLE f = oapiOpenFile(("Vessels\\" + s + ".cfg").c_str(), FILE_IN_ZEROONFAIL, CONFIG);
+		if (!f) f = oapiOpenFile((s + ".cfg").c_str(), FILE_IN_ZEROONFAIL, CONFIG);
+		char val[512];
+		if (f && oapiReadItem_string(f, "ExhaustStyle", val)) {
+			c.style = StyleFromName(val);
+			if (c.style == STYLE_NONE) LogErr("PostPlume: vessel class %s: ExhaustStyle %s is neither legacy nor volumetric", vc, val);
+			else LogAlw("PostPlume: vessel class %s: ExhaustStyle %s", vc, c.style == STYLE_LEGACY ? "legacy" : "volumetric");
+		}
+		if (f) oapiCloseFile(f, FILE_IN_ZEROONFAIL);
+	}
 	std::string dir = OapiExtension::GetConfigDir();
 	for (char &ch : dir) if (ch == '\\') ch = '/';
 	if (!dir.empty() && dir.back() != '/') dir += '/';
@@ -338,6 +352,7 @@ PostPlume::Nozzle &PostPlume::NozzleOf (VESSEL *v, DWORD idx, const EXHAUSTSPEC 
 	}
 	if (n.cls == TEXTURE) n.re = 0.8 * es.wsize; // [V] the legacy flame's half-width
 	n.re = std::max(n.re, 0.02);
+	n.vol = Volumetric(cfg.style, n.cls);
 	return n;
 }
 
@@ -430,6 +445,7 @@ void PostPlume::GatherLights ()
 			EXHAUSTSPEC es;
 			if (!v->GetExhaustSpec(i, &es) || !es.lpos || !es.ldir || es.lsize <= 0.0) continue;
 			Nozzle &nz = NozzleOf(v, i, es, cfg);
+			if (!nz.vol) continue; // Orbiter's flame gives no light
 			uint32_t seed = Hash(uint32_t(uintptr_t(v->GetHandle()) >> 4) * 31u + i); // the plume's own flicker (GatherPlumes)
 			double I = lvl * (1.0 - std::clamp(es.modulate, 0.0, 1.0) * VNoise(time * 12.0, seed));
 			const D3DXVECTOR4 &p0 = pal[nz.cls * 4], &p1 = pal[nz.cls * 4 + 1];
@@ -494,8 +510,9 @@ void PostPlume::GatherPlumes ()
 			if (lvl <= 0.0) continue;
 			EXHAUSTSPEC es;
 			if (!v->GetExhaustSpec(i, &es) || !es.lpos || !es.ldir || es.lsize <= 0.0) continue;
-			nLit++;
 			Nozzle &nz = NozzleOf(v, i, es, cfg);
+			if (!nz.vol) continue; // Orbiter's flame (design-exhaust-style)
+			nLit++;
 			VECTOR3 r = *es.lpos - *es.ldir * es.lofs;
 			D3DXVECTOR3 lr = V3(r), ld = V3(-*es.ldir), wr, wd;
 			D3DXVec3TransformCoord(&wr, &lr, M); // camera-relative
@@ -966,6 +983,7 @@ void PostPlume::GatherPuffs ()
 		VESSEL *v = (h && oapiIsVessel(h)) ? oapiGetVesselInterface(h) : nullptr;
 		int rule = v ? CfgOf(v).puffs : -1;
 		if (!(rule == 1 || (rule < 0 && s->DefaultTexture()))) continue; // add-on textures keep their look unless PUFFS 1 (design review S5)
+		if (v && CfgOf(v).style == STYLE_LEGACY) continue; // the vessel keeps Orbiter's look (design-exhaust-style)
 		float slot = s->DefaultTexture() ? -1.0f : float(SlotOf(s->Texture()));
 		vObject *vo = v ? scn->GetVisObject(h) : nullptr;
 		float terrain = (vo && oapiGetObjectType(h) == OBJTP_VESSEL) ? ((vVessel *)vo)->terrainSun : 1.0f;
@@ -1211,6 +1229,13 @@ void PostPlume::HazeShape (const vVessel *vv, DWORD idx, double *r0, double *r1,
 	if (it == p->plumeOf.end() || idx >= it->second.size() || it->second[idx] < 0) return;
 	const Plume &P = p->plumes[it->second[idx]];
 	*r0 = P.R0; *r1 = P.R1; *len = P.L;
+}
+
+bool PostPlume::Legacy (VESSEL *v, DWORD idx, const EXHAUSTSPEC &es)
+{
+	PostPlume *p = inst;
+	if (!p || !v) return false; // VolPlumes off: no style, the haze as before
+	return !p->NozzleOf(v, idx, es, p->CfgOf(v)).vol;
 }
 
 void PostPlume::Render (VkSurf *target)

@@ -52,6 +52,11 @@ Class Classify (bool hasThruster, double F0, double isp0);
 const char *ClassName (int c);
 int ClassFromName (const char *s);                // -1 unknown
 
+// a vessel cfg's ExhaustStyle (design-exhaust-style): Orbiter's flame or the volume
+enum Style { STYLE_NONE = -1, STYLE_LEGACY = 0, STYLE_VOLUMETRIC = 1 };
+int StyleFromName (const char *s);                // the value's first word: legacy, volumetric (any case); else STYLE_NONE
+bool Volumetric (int style, int cls);             // without a style: the propellant classes, not TEXTURE
+
 void BlackbodyXY (double T, double &x, double &y); // CIE 1931 chromaticity of a Planckian radiator (Wyman 2013 fit)
 void Blackbody (double T, double rgb[3]);          // linear sRGB, max channel 1
 void PlasmaColour (double Vkms, double rgb[3]);    // [U] CEA-based table, clamped

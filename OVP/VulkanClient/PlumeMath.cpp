@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstring>
 #include <numeric>
+#include <strings.h>
 
 namespace PlumeMath {
 
@@ -133,6 +134,23 @@ int ClassFromName (const char *s)
 {
 	for (int i = 0; i < NCLASS; i++) if (s && std::strcmp(s, names[i]) == 0) return i;
 	return -1;
+}
+
+int StyleFromName (const char *s)
+{
+	if (!s) return STYLE_NONE;
+	while (*s == ' ' || *s == '\t') s++;
+	size_t n = std::strcspn(s, " \t;\r\n");
+	if (n == 6 && strncasecmp(s, "legacy", 6) == 0) return STYLE_LEGACY;
+	if (n == 10 && strncasecmp(s, "volumetric", 10) == 0) return STYLE_VOLUMETRIC;
+	return STYLE_NONE;
+}
+
+bool Volumetric (int style, int cls)
+{
+	if (style == STYLE_LEGACY) return false;
+	if (style == STYLE_VOLUMETRIC) return true;
+	return cls != TEXTURE;
 }
 
 // Wyman, Sloan and Shirley 2013, piecewise Gaussian fit of the CIE 1931 2-degree observer
