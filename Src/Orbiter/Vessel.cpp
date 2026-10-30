@@ -3916,7 +3916,7 @@ int Vessel::ConsumeBufferedKey (DWORD key, bool down, char *kstate)
 	}
 
 	// HUD control (internal view only)
-	if (g_camera->IsInternal()) {
+	if (g_camera->IsInternal() && g_pane) { // not upstream: no pane without a graphics client
 		if (keymap.IsLogicalKey (key, kstate, OAPI_LKEY_HUD))          g_pane->ToggleHUD();
 		if (keymap.IsLogicalKey (key, kstate, OAPI_LKEY_HUDMode))      g_pane->SwitchHUDMode();
 		if (keymap.IsLogicalKey (key, kstate, OAPI_LKEY_HUDReference))

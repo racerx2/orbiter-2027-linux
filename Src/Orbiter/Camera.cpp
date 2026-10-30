@@ -252,6 +252,7 @@ void Camera::SetCMode (const CameraMode *cm)
 
 	switch (cm->GetMode()) {
 	case CameraMode::CM_COCKPIT: {
+		if (!g_pane) break; // not upstream: no pane without a graphics client
 		const CameraMode_Cockpit *cmc = (const CameraMode_Cockpit*)cm;
 		int pos = cmc->GetPosition();
 		switch (cmc->GetCockpitMode()) {

@@ -84,7 +84,7 @@ DLLEXPORT double oapiGetPanelScale ()
 
 DLLEXPORT double oapiGetPanel2DScale ()
 {
-	Panel2D *p = g_pane->GetPanel2D();
+	Panel2D *p = g_pane ? g_pane->GetPanel2D() : NULL; // not upstream: no pane without a graphics client
 	if (p) return p->GetActiveScale();
 	else   return 1.0;
 }
@@ -1161,7 +1161,7 @@ DLLEXPORT int oapiCameraMode ()
 
 DLLEXPORT int oapiCockpitMode ()
 {
-	return g_pane->GetPanelMode();
+	return g_pane ? g_pane->GetPanelMode() : 0; // not upstream: no pane without a graphics client
 }
 
 // Functions for planetary bodies
@@ -1770,21 +1770,25 @@ DLLEXPORT bool oapiUnregisterMFDMode (int mode)
 
 DLLEXPORT int oapiGetMFDMode (int mfd)
 {
+	if (!g_pane) return MFD_NONE; // not upstream: no pane without a graphics client
 	return (g_pane->MFD(mfd) ? g_pane->MFD(mfd)->Type() : MFD_NONE);
 }
 
 DLLEXPORT double oapiSetMFDRefreshIntervalMultiplier (int mfd, double multiplier)
 {
+	if (!g_pane) return multiplier; // not upstream: no pane without a graphics client
 	return g_pane->SetMFDRefreshIntervalMultiplier (mfd, multiplier);
 }
 
 DLLEXPORT int oapiBroadcastMFDMessage (int mfdmode, int msg, void *data)
 {
+	if (!g_pane) return 0; // not upstream: no pane without a graphics client
 	return g_pane->BroadcastMFDMessage (mfdmode, msg, data);
 }
 
 DLLEXPORT int oapiSendMFDKey (int mfd, DWORD key)
 {
+	if (!g_pane) return false; // not upstream: no pane without a graphics client
 	return g_pane->MFDConsumeKeyBuffered (mfd, key);
 }
 
@@ -1796,24 +1800,25 @@ DLLEXPORT void oapiRefreshMFDButtons (int mfd, OBJHANDLE hVessel)
 
 DLLEXPORT bool oapiProcessMFDButton (int mfd, int bt, int event)
 {
-	Instrument *MFD = g_pane->MFD(mfd);
+	Instrument *MFD = g_pane ? g_pane->MFD(mfd) : NULL; // not upstream: no pane without a graphics client
 	if (MFD) return MFD->ConsumeButton (bt, event);
 	else     return false;
 }
 
 DLLEXPORT const char *oapiMFDButtonLabel (int mfd, int bt)
 {
+	if (!g_pane) return 0; // not upstream: no pane without a graphics client
 	return (g_pane->MFD(mfd) ? g_pane->MFD(mfd)->ButtonLabel(bt) : 0);
 }
 
 DLLEXPORT void oapiRegisterMFD (int mfd, const MFDSPEC &spec)
 {
-	g_pane->RegisterMFD (mfd, spec);
+	if (g_pane) g_pane->RegisterMFD (mfd, spec); // not upstream: no pane without a graphics client
 }
 
 DLLEXPORT void oapiRegisterMFD (int mfd, const EXTMFDSPEC *spec)
 {
-	g_pane->RegisterMFD (mfd, spec);
+	if (g_pane) g_pane->RegisterMFD (mfd, spec); // not upstream: no pane without a graphics client
 }
 
 DLLEXPORT void oapiRegisterExternMFD (ExternMFD *emfd, const MFDSPEC &spec)
@@ -1846,7 +1851,7 @@ DLLEXPORT int oapiGetMFDModeSpec (char *name, MFDMODESPEC **spec)
 
 DLLEXPORT void oapiVCRegisterMFD (int mfd, const VCMFDSPEC *spec)
 {
-	g_pane->RegisterVCMFD (mfd, spec);
+	if (g_pane) g_pane->RegisterVCMFD (mfd, spec); // not upstream: no pane without a graphics client
 }
 
 DLLEXPORT void oapiVCRegisterHUD (const VCHUDSPEC *spec)
@@ -1857,22 +1862,22 @@ DLLEXPORT void oapiVCRegisterHUD (const VCHUDSPEC *spec)
 
 DLLEXPORT void oapiRegisterPanelBackground (QImage *hBmp, DWORD flag, DWORD ck)
 {
-	g_pane->RegisterPanelBackground (hBmp, flag, ck);
+	if (g_pane) g_pane->RegisterPanelBackground (hBmp, flag, ck); // not upstream: no pane without a graphics client
 }
 
 DLLEXPORT void oapiRegisterPanelArea (int id, const RECT &pos, int draw_event, int mouse_event, int bkmode)
 {
-	g_pane->RegisterPanelArea (id, pos, draw_event, mouse_event, bkmode);
+	if (g_pane) g_pane->RegisterPanelArea (id, pos, draw_event, mouse_event, bkmode); // not upstream: no pane without a graphics client
 }
 
 DLLEXPORT void oapiSetPanelNeighbours (int left, int right, int top, int bottom)
 {
-	g_pane->SetPanelNeighbours (left, right, top, bottom);
+	if (g_pane) g_pane->SetPanelNeighbours (left, right, top, bottom); // not upstream: no pane without a graphics client
 }
 
 DLLEXPORT void oapiVCSetNeighbours (int left, int right, int top, int bottom)
 {
-	g_pane->SetVCNeighbours (left, right, top, bottom);
+	if (g_pane) g_pane->SetVCNeighbours (left, right, top, bottom); // not upstream: no pane without a graphics client
 }
 
 DLLEXPORT void oapiTriggerRedrawArea (int panel_id, int vc_id, int area_id)
@@ -1907,54 +1912,56 @@ DLLEXPORT bool oapiBltPanelAreaBackground (int area_id, SURFHANDLE surf)
 
 DLLEXPORT void oapiSetDefNavDisplay (int mode)
 {
-	DefaultPanel *defpanel = g_pane->GetDefaultPanel();
+	DefaultPanel *defpanel = g_pane ? g_pane->GetDefaultPanel() : NULL; // not upstream: no pane without a graphics client
 	if (defpanel) defpanel->SetNavDisplayMode (mode);
 }
 
 DLLEXPORT void oapiSetDefRCSDisplay (int mode)
 {
-	DefaultPanel *defpanel = g_pane->GetDefaultPanel();
+	DefaultPanel *defpanel = g_pane ? g_pane->GetDefaultPanel() : NULL; // not upstream: no pane without a graphics client
 	if (defpanel) defpanel->SetRCSDisplayMode (mode);
 }
 
 DLLEXPORT int oapiSwitchPanel (int direction)
 {
+	if (!g_pane) return -1; // not upstream: no pane without a graphics client
 	return g_pane->SwitchPanel (direction);
 }
 
 DLLEXPORT int oapiSetPanel (int panel_id)
 {
+	if (!g_pane) return -1; // not upstream: no pane without a graphics client
 	return g_pane->SelectPanel (panel_id);
 }
 
 DLLEXPORT void oapiSetPanelBlink (VECTOR3 v[4])
 {
-	g_pane->SetPanel2DBlink (v);
+	if (g_pane) g_pane->SetPanel2DBlink (v); // not upstream: no pane without a graphics client
 }
 
 DLLEXPORT void oapiVCTriggerRedrawArea (int vc_id, int area_id)
 {
-	g_pane->TriggerVCRedrawArea (vc_id, area_id);
+	if (g_pane) g_pane->TriggerVCRedrawArea (vc_id, area_id); // not upstream: no pane without a graphics client
 }
 
 DLLEXPORT void oapiVCRegisterArea (int id, const RECT &tgtrect, int draw_event, int mouse_event, int bkmode, SURFHANDLE tgt)
 {
-	g_pane->RegisterVCArea (id, tgtrect, draw_event, mouse_event, bkmode, tgt);
+	if (g_pane) g_pane->RegisterVCArea (id, tgtrect, draw_event, mouse_event, bkmode, tgt); // not upstream: no pane without a graphics client
 }
 
 DLLEXPORT void oapiVCRegisterArea (int id, int draw_event, int mouse_event)
 {
-	g_pane->RegisterVCArea (id, _R(0,0,0,0), draw_event, mouse_event, PANEL_MAP_NONE, NULL);
+	if (g_pane) g_pane->RegisterVCArea (id, _R(0,0,0,0), draw_event, mouse_event, PANEL_MAP_NONE, NULL); // not upstream: no pane without a graphics client
 }
 
 DLLEXPORT void oapiVCSetAreaClickmode_Spherical (int id, const VECTOR3 &cnt, double rad)
 {
-	g_pane->SetVCAreaClickmode_Spherical (id, Vector(cnt.x, cnt.y, cnt.z), rad);
+	if (g_pane) g_pane->SetVCAreaClickmode_Spherical (id, Vector(cnt.x, cnt.y, cnt.z), rad); // not upstream: no pane without a graphics client
 }
 
 DLLEXPORT void oapiVCSetAreaClickmode_Quadrilateral (int id, const VECTOR3 &p1, const VECTOR3 &p2, const VECTOR3 &p3, const VECTOR3 &p4)
 {
-	g_pane->SetVCAreaClickmode_Quadrilateral (id, Vector(p1.x, p1.y, p1.z), Vector(p2.x,p2.y,p2.z), Vector(p3.x,p3.y,p3.z), Vector(p4.x,p4.y,p4.z));
+	if (g_pane) g_pane->SetVCAreaClickmode_Quadrilateral (id, Vector(p1.x, p1.y, p1.z), Vector(p2.x,p2.y,p2.z), Vector(p3.x,p3.y,p3.z), Vector(p4.x,p4.y,p4.z)); // not upstream: no pane without a graphics client
 }
 
 DLLEXPORT oapi::Sketchpad *oapiGetSketchpad (SURFHANDLE surf)
