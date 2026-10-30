@@ -52,6 +52,7 @@ extern PlanetarySystem *g_psys;
 static VESSEL *(*g_vintf) (void *, VESSEL *);
 static void (*g_vnew) (void *, VESSEL *);
 static void (*g_vgone) (void *);
+static void (*g_eccgone) (ExternalCameraControl *); // not upstream (dll-modules)
 
 // the bridge's entry points, looked up once; why says what is missing
 static const WbApi *Bridge (std::string &why)
@@ -74,6 +75,7 @@ static const WbApi *Bridge (std::string &why)
 			g_vnew = (void (*) (void *, VESSEL *))dlsym (h, "wbVesselNew");
 			g_vgone = (void (*) (void *))dlsym (h, "wbVesselGone");
 			g_vintf = (VESSEL *(*) (void *, VESSEL *))dlsym (h, "wbVesselIntf");
+			g_eccgone = (void (*) (ExternalCameraControl *))dlsym (h, "wbCameraControlGone");
 			if (g_vnew && g_psys)
 				for (size_t i = 0; i < g_psys->nVessel (); i++) g_vnew (g_psys->GetVessel ((DWORD)i), g_psys->GetVessel ((DWORD)i)->GetModuleInterface ());
 		}
@@ -138,4 +140,10 @@ void WinModuleVesselNew (void *hVessel, VESSEL *own)
 void WinModuleVesselGone (void *hVessel)
 {
 	if (g_vgone) g_vgone (hVessel);
+}
+
+// not upstream (dll-modules)
+void WinModuleCameraControlGone (ExternalCameraControl *ecc)
+{
+	if (g_eccgone) g_eccgone (ecc);
 }

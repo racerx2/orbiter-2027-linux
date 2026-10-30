@@ -23,3 +23,7 @@ class VESSEL;
 VESSEL *WinModuleVesselIntf (void *hVessel, VESSEL *own); // the object Orbiter calls the callbacks on: own when the bridge has none
 void WinModuleVesselNew (void *hVessel, VESSEL *own); // the vessel's module object is made
 void WinModuleVesselGone (void *hVessel); // the vessel is being destroyed
+
+// not upstream (dll-modules): the camera that held this external camera control is destroyed; the bridge drops its proxy
+class ExternalCameraControl;
+void WinModuleCameraControlGone (ExternalCameraControl *ecc);

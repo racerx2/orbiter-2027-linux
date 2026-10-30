@@ -24,6 +24,7 @@
 #include "OrbiterAPI.h"
 #include "Vobject.h"
 #include "HullPoints.h" // not upstream (terrain-contact)
+#include "WinModule.h" // not upstream (dll-modules)
 // zmouse.h left out: WM_MOUSEWHEEL is in OrbiterPlatform.h
 #include <QCursor>
 #include <QWindow>
@@ -92,6 +93,7 @@ Camera::Camera (double _nearplane, double _farplane)
 
 Camera::~Camera ()
 {
+	if (ECC) WinModuleCameraControlGone (ECC); // not upstream (dll-modules): a Windows module's control goes with the camera
 	ClearPresets();
 }
 
