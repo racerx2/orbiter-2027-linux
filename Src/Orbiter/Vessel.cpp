@@ -7841,7 +7841,12 @@ void VESSEL::GetTouchdownPoints (VECTOR3 &pt1, VECTOR3 &pt2, VECTOR3 &pt3) const
 bool VESSEL::GetTouchdownPoint (TOUCHDOWNVTX &tdvtx, DWORD idx) const
 {
 	if (idx < vessel->ntouchdown_vtx) {
-		memcpy(&tdvtx, vessel->touchdown_vtx+idx, sizeof(TOUCHDOWNVTX));
+		const TOUCHDOWN_VTX &t = vessel->touchdown_vtx[idx]; // not upstream (touchdown-get): field by field; upstream's memcpy gave the internal compression as mu and mu as mu_lng
+		tdvtx.pos = _V(t.pos.x, t.pos.y, t.pos.z);
+		tdvtx.stiffness = t.stiffness;
+		tdvtx.damping = t.damping;
+		tdvtx.mu = t.mu;
+		tdvtx.mu_lng = t.mu_lng;
 		return true;
 	} else return false;
 }
