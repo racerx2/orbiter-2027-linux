@@ -22,7 +22,7 @@ inline double Radius (double *data)
 VSOPOBJ::VSOPOBJ (OBJHANDLE hCBody): CELBODY2 (hCBody)
 {
 	a0 = 1.0;               // should be overwritten by derived class
-	double interval = 10.0; // default sampling interval
+	interval = 10.0;        // default sampling interval; not upstream: was a local, which left the member unset
 	prec = 1e-6;            // default precision
 	termidx = 0;
 	termlen = 0;
