@@ -95,6 +95,7 @@ public:
 
 	void Transition (VkCommandBuffer cmd, VkImageLayout layout); // records a barrier to the new layout
 	void Upload (UINT level, UINT layer, const void *data, VkDeviceSize size, UINT rowPitch = 0); // whole mip level
+	void UploadRect (UINT level, UINT layer, int x, int y, UINT rw, UINT rh, const void *data, UINT rowPitch); // not upstream: a rectangle of an uncompressed level
 	void GenerateMips (VkCommandBuffer cmd); // D3DUSAGE_AUTOGENMIPMAP counterpart
 	void Written (UINT level);                // level 0 changed: sublevels out of date; in the open frame: touched
 	VkImageAspectFlags Aspect () const;
@@ -109,6 +110,7 @@ public:
 	VkSampleCountFlagBits samples;
 	VkImageUsageFlags usage;
 	VkImageLayout layout;  // after the last recorded barrier: the render thread records its transitions into the frame in order; one-time submits only touch images no frame uses (new, pool, loader), or end in the layout they found (readback)
+	uint64_t writes = 0;   // not upstream: counts Written; a CPU copy made at n equals the image while it is still n (gdi-cpu-copy)
 	uint64_t touched = 0;  // FrameValue of the open frame when it last recorded a barrier or write on this image (VkReadPixels flushes only then)
 	VkComponentMapping swizzle; // identity unless SetSwizzle
 	bool external;         // swapchain image: not owned

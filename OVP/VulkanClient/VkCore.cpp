@@ -395,6 +395,7 @@ void VkTex::Transition (VkCommandBuffer cmd, VkImageLayout to)
 
 void VkTex::Written (UINT level)
 {
+	writes++;
 	if (!level && autoGenMips && levels > 1) mipsDirty = true;
 	if (dev->InFrame ()) touched = dev->FrameValue ();
 }
@@ -429,6 +430,29 @@ void VkTex::Upload (UINT level, UINT layer, const void *data, VkDeviceSize size,
 	region.imageExtent = { lw, lh, depth };
 	vkCmdCopyBufferToImage (cmd, staging.buf, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 	if (keep == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) TransferDone (cmd); // no layout change follows: the barrier for the next writer or reader
+	Transition (cmd, keep);
+	Written (level);
+	dev->EndUpload (cmd);
+}
+
+// not upstream: as Upload, for a rectangle of an uncompressed level (gdi-cpu-copy); recorded in the open frame, in order with its draws
+void VkTex::UploadRect (UINT level, UINT layer, int x, int y, UINT rw, UINT rh, const void *data, UINT rowPitch)
+{
+	UINT bw;
+	UINT bs = VkFormatBlockSize (fmt, &bw);
+	if (!img || bw != 1 || samples != VK_SAMPLE_COUNT_1_BIT || Aspect () != VK_IMAGE_ASPECT_COLOR_BIT || !rw || !rh) return;
+	VkBuf staging (dev, (VkDeviceSize)rw * rh * bs, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);
+	if (!staging.Map ()) return;
+	for (UINT r = 0; r < rh; r++) memcpy ((BYTE *)staging.Map () + (size_t)r * rw * bs, (const BYTE *)data + (size_t)r * rowPitch, (size_t)rw * bs);
+	VkCommandBuffer cmd = dev->BeginUpload ();
+	VkImageLayout keep = layout != VK_IMAGE_LAYOUT_UNDEFINED ? layout : ((usage & VK_IMAGE_USAGE_SAMPLED_BIT) ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	Transition (cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	VkBufferImageCopy region = {};
+	region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, layer, 1 };
+	region.imageOffset = { x, y, 0 };
+	region.imageExtent = { rw, rh, 1 };
+	vkCmdCopyBufferToImage (cmd, staging.buf, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+	if (keep == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) TransferDone (cmd);
 	Transition (cmd, keep);
 	Written (level);
 	dev->EndUpload (cmd);

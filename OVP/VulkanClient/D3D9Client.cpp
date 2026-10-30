@@ -2576,6 +2576,14 @@ bool D3D9Client::clbkScaleBlt (SURFHANDLE tgt, DWORD tgtx, DWORD tgty, DWORD tgt
 
 	bool bSF = (sd->Format == td->Format) && (sd->Swizzle == td->Swizzle); // not upstream: a D3DFORMAT is the Vulkan format and the view swizzle
 
+	// not upstream: an unscaled copy the GPU paths below would make, between the surfaces' CPU copies (gdi-cpu-copy)
+	if (bSF && !bCL && !bSC)
+	{
+		bool bCopy = !bCK && ((td->RenderTarget && !sd->SysMem) || sd->SysMem);
+		bool bKey = bCK && td->RenderTarget && (SURFACE(src)->GetType() == NATTYPE_TEXTURE) && !sd->SysMem && src != tgt;
+		if ((bCopy || bKey) && SURFACE(tgt)->CpuBlt(SURFACE(src), rs, tgtx, tgty, bCK)) return true;
+	}
+
 	if (bSF && !bCK && !bSC)
 	{
 

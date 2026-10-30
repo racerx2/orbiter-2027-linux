@@ -266,6 +266,8 @@ add_unit_test(PlumeMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/PlumeMath.cpp)
 target_include_directories(PlumeMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 add_unit_test(HeatMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/HeatMath.cpp) # not upstream: re-entry hull heating maths
 target_include_directories(HeatMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+add_unit_test(GdiCopy.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/GdiCopy.cpp) # not upstream: 2D surface copies on the CPU
+target_include_directories(GdiCopy.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 
 if (BUILD_ORBITER_SERVER)
 

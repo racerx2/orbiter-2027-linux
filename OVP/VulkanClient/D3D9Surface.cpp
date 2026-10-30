@@ -15,6 +15,8 @@
 #include "D3D9Frame.h"
 #include "AABBUtil.h"
 #include "Log.h"
+#include "GdiCopy.h"
+#include <algorithm>
 #include <QImage>
 #include <QPainter>
 #include <thread>
@@ -570,7 +572,8 @@ SurfNative::~SurfNative()
 
 	SAFE_DELETE(pTemp);
 	if (DC.hDC) { DC.hDC->end(); delete DC.hDC; }
-	SAFE_DELETE(DC.pSrf);
+	if (DC.pSrf != DC.cpu) SAFE_DELETE(DC.pSrf);
+	SAFE_DELETE(DC.cpu);
 	SAFE_DELETE(pSkp);
 }
 
@@ -772,6 +775,17 @@ bool SurfNative::Fill(LPRECT rect, DWORD c)
 		if (desc.RenderTarget)
 		{
 			VkSurf *pSrf = GetSurface();
+			if (CpuCurrent() && (pSrf->tex->usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) // not upstream: as ColorFill's clear, on the copy
+			{
+				int x0 = std::max(0, (int)r->left), y0 = std::max(0, (int)r->top);
+				int x1 = std::min((int)desc.Width, (int)r->right), y1 = std::min((int)desc.Height, (int)r->bottom);
+				if (x1 > x0 && y1 > y0)
+				{
+					GdiCopy::Fill(DC.cpu->bits(), DC.cpu->bytesPerLine(), x0, y0, x1 - x0, y1 - y0, c);
+					CpuUploaded(x0, y0, x1 - x0, y1 - y0);
+				}
+				return true;
+			}
 			pDevice->ColorFill(pSrf, r, c);
 			return true;
 		}
@@ -798,6 +812,12 @@ bool SurfNative::Fill(LPRECT rect, DWORD c)
 //
 QPainter *SurfNative::GetDC()
 {
+	if (!DC.hDC && CpuCurrent()) // not upstream: the kept copy equals the image, no read back
+	{
+		DC.pSrf = DC.cpu;
+		DC.hDC = new QPainter(DC.pSrf);
+		return DC.hDC;
+	}
 	if (!DC.hDC)
 	{
 		// OAPISURFACE_CAPTURE: D3D9 returned NULL while the captured copy was still in flight; the readback below waits for it
@@ -815,6 +835,11 @@ QPainter *SurfNative::GetDC()
 				DC.pSrf = new QImage(lv.w, lv.h, f);
 				for (UINT y = 0; y < lv.h; y++) memcpy(DC.pSrf->scanLine(y), &cv.Level(0)[(size_t)y * lv.w * 4], (size_t)lv.w * 4);
 				if (f == QImage::Format_RGB32) for (UINT y = 0; y < lv.h; y++) { QRgb *p = (QRgb *)DC.pSrf->scanLine(y); for (UINT x = 0; x < lv.w; x++) p[x] |= 0xFF000000; }
+				if (CpuFormat()) { // not upstream: kept; an X8 view's alpha bytes are 255 here, which that view never shows
+					delete DC.cpu;
+					DC.cpu = DC.pSrf;
+					DC.cpuWrites = pSrf->tex->writes;
+				}
 				DC.hDC = new QPainter(DC.pSrf);
 				return DC.hDC;
 			}
@@ -854,11 +879,62 @@ void SurfNative::ReleaseDC(QPainter *_hDC)
 	for (UINT y = 0; y < px.h; y++) memcpy(&px.data[0][(size_t)y * px.w * 4], DC.pSrf->constScanLine(y), (size_t)px.w * 4);
 	if (pSrf) VkLoadTextureLevel(pSrf->tex, pSrf->level, pSrf->layer, px);
 
-	delete DC.pSrf;
+	if (DC.pSrf == DC.cpu) { if (pSrf) DC.cpuWrites = pSrf->tex->writes; } // not upstream: the copy stays, equal to the image
+	else delete DC.pSrf;
 	DC.pSrf = NULL;
 	DC.hDC = NULL;	
 }
 
+
+
+// -----------------------------------------------------------------------------------------------
+// not upstream: the CPU copy of a 2D surface (gdi-cpu-copy). Every write of the image counts in VkTex::writes, so the
+// copy equals the image while the count is the one it was made or uploaded at.
+//
+bool SurfNative::CpuFormat()
+{
+	VkSurf *s = GetSurface();
+	return s && s->tex && s->level == 0 && s->layer == 0 && s->tex->depth == 1 && s->tex->samples == VK_SAMPLE_COUNT_1_BIT
+		&& desc.Format == VK_FORMAT_B8G8R8A8_UNORM && s->tex->fmt == VK_FORMAT_B8G8R8A8_UNORM
+		&& (desc.Swizzle == SWZ_NONE || desc.Swizzle == SWZ_NOALPHA) && s->w == desc.Width && s->h == desc.Height
+		&& !(Flags & OAPISURFACE_BACKBUFFER);
+}
+
+bool SurfNative::CpuCurrent()
+{
+	return DC.cpu && CpuFormat() && GetSurface()->tex->writes == DC.cpuWrites;
+}
+
+// the copy's rectangle to the image, recorded in the open frame; the copy is current again
+void SurfNative::CpuUploaded(int x, int y, int w, int h)
+{
+	VkTex *t = GetSurface()->tex;
+	t->UploadRect(0, 0, x, y, w, h, DC.cpu->constBits() + (size_t)y * DC.cpu->bytesPerLine() + (size_t)x * 4, DC.cpu->bytesPerLine());
+	DC.cpuWrites = t->writes;
+}
+
+// an unscaled blit of the source's current copy into this one (clbkScaleBlt decides when); false: the GPU paths do it.
+// With a colour key only from an opaque source, where the sketchpad's blend is a copy.
+bool SurfNative::CpuBlt(SurfNative *src, const RECT &rs, int tx, int ty, bool bCK)
+{
+	if (DC.hDC || src->DC.hDC || !CpuFormat() || !src->CpuCurrent()) return false;
+	int w = rs.right - rs.left, h = rs.bottom - rs.top;
+	const QImage &S = *src->DC.cpu;
+	if (bCK && src->desc.Swizzle != SWZ_NOALPHA && !GdiCopy::Opaque(S.constBits(), S.bytesPerLine(), rs.left, rs.top, w, h)) return false;
+	if (!CpuCurrent()) { // made from the source when the blit covers all of it
+		if (bCK || tx || ty || w != (int)desc.Width || h != (int)desc.Height) return false;
+		delete DC.cpu;
+		DC.cpu = new QImage(w, h, S.format());
+	}
+	QImage tmp;
+	const uint8_t *sb = S.constBits();
+	int sp = S.bytesPerLine(), sx = rs.left, sy = rs.top;
+	if (src == this) { tmp = S.copy(rs.left, rs.top, w, h); sb = tmp.constBits(); sp = tmp.bytesPerLine(); sx = sy = 0; }
+	if (bCK) GdiCopy::CopyKeyed(DC.cpu->bits(), DC.cpu->bytesPerLine(), tx, ty, sb, sp, sx, sy, w, h, src->ColorKey);
+	else GdiCopy::Copy(DC.cpu->bits(), DC.cpu->bytesPerLine(), tx, ty, sb, sp, sx, sy, w, h);
+	CpuUploaded(tx, ty, w, h);
+	return true;
+}
 
 
 // -----------------------------------------------------------------------------------------------

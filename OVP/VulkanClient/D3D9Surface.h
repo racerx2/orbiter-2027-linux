@@ -81,6 +81,8 @@ class SurfNative
 	struct _HDC_LOCAL {
 		QPainter *hDC;
 		QImage *pSrf;         // CPU copy the painter draws into, uploaded by ReleaseDC
+		QImage *cpu;          // not upstream: the copy kept for a CpuFormat surface (pSrf while a DC is open)
+		uint64_t cpuWrites;   // not upstream: the image's write count the copy equals
 	};
 
 public:
@@ -139,6 +141,12 @@ public:
 	DWORD					GetColorKey() const { return ColorKey; }
 
 	bool					Fill(LPRECT r, DWORD color);
+
+	// not upstream: the CPU copy of a 2D surface, so GDI and unscaled blits need no read back (gdi-cpu-copy)
+	bool					CpuFormat();
+	bool					CpuCurrent();
+	bool					CpuBlt(SurfNative *src, const RECT &rs, int tx, int ty, bool bCK);
+	void					CpuUploaded(int x, int y, int w, int h);
 
 	DWORD					GetTextureSizeInBytes(VkTex *pT);
 	DWORD					GetFormatSizeInBytes(VkFormat Format, DWORD pixels);
