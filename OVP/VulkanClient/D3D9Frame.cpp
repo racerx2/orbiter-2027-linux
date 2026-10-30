@@ -160,9 +160,11 @@ static bool X11FullscreenMonitors (QWindow *w)
 
 // not upstream: the KWin script that places the spanning window, unloaded once the window is up or with the framework
 static QString g_kwinScript;
+static QTimer *g_kwinTimer; // not upstream (client-unload): the framework's, so no timer of the client outlives it
 
 static void KWinRelease ()
 {
+	if (g_kwinTimer) g_kwinTimer->stop ();
 	if (g_kwinScript.isEmpty()) return;
 	QDBusInterface ("org.kde.KWin", "/Scripting", "org.kde.kwin.Scripting").call ("unloadScript", g_kwinScript);
 	QFile::remove (qEnvironmentVariable ("XDG_RUNTIME_DIR") + "/" + g_kwinScript + ".js");
@@ -202,7 +204,12 @@ static bool KWinSpan (QWindow *w, const QRect &r)
 		KWinRelease ();
 		return false;
 	}
-	QTimer::singleShot (15000, [] { KWinRelease (); });
+	if (!g_kwinTimer) {
+		g_kwinTimer = new QTimer;
+		g_kwinTimer->setSingleShot (true);
+		QObject::connect (g_kwinTimer, &QTimer::timeout, &KWinRelease);
+	}
+	g_kwinTimer->start (15000);
 	w->resize (r.size());
 	w->setVisible (true);
 	return true;
@@ -262,6 +269,8 @@ CD3DFramework9::~CD3DFramework9 ()
 {
 	LogAlw("Deleting Framework");
 	KWinRelease (); // not upstream
+	delete g_kwinTimer; // not upstream (client-unload)
+	g_kwinTimer = nullptr;
 }
 
 void CD3DFramework9::Clear()

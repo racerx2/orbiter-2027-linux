@@ -84,7 +84,7 @@ GraphicsClient::GraphicsClient (void *hInstance): Module (hInstance)
 
 GraphicsClient::~GraphicsClient ()
 {
-	// hVid userdata reset left out: the video tab disconnects the client's controls itself
+	if (hVid) orbiter::DefVideoTab::DropClient (hVid); // SetWindowLongPtr (hVid, GWLP_USERDATA, 0); not upstream (client-unload): its slots are the client's code
 	for (RenderWndHook *hook : RenderWndHook::live) // not hRenderWnd: the session end deletes that window, the pointer is kept
 		if (hook->gc == this) hook->gc = NULL;
 	if (splashFont) clbkReleaseFont (splashFont);

@@ -199,6 +199,21 @@ void orbiter::DefVideoTab::ScanDir(QWidget *hTab, const fs::path& dir)
 
 //-----------------------------------------------------------------------------
 
+// not upstream (client-unload): the client's slots on the video controls (context the tab or none), not Qt's own
+void orbiter::DefVideoTab::DropClient(QWidget *hTab)
+{
+	static const int item[] = {
+		IDC_VID_DEVICE, IDC_VID_ENUM, IDC_VID_STENCIL, IDC_VID_FULL, IDC_VID_WINDOW, IDC_VID_MODE, IDC_VID_BPP,
+		IDC_VID_VSYNC, IDC_VID_PAGEFLIP, IDC_VID_WIDTH, IDC_VID_HEIGHT, IDC_VID_ASPECT, IDC_VID_4X3, IDC_VID_16X10,
+		IDC_VID_16X9, IDC_VID_INFO
+	};
+	for (int id : item)
+		if (QWidget *w = oapiResDlgItem(hTab, id)) {
+			QObject::disconnect(w, nullptr, hTab, nullptr);
+			QObject::disconnect(w, nullptr, w, nullptr);
+		}
+}
+
 void orbiter::DefVideoTab::SelectClientIndex(UINT idx)
 {
 	ShowInterface(hTab, idx > 0);
@@ -207,14 +222,7 @@ void orbiter::DefVideoTab::SelectClientIndex(UINT idx)
 	QComboBox *cb = DlgItem<QComboBox>(hTab, IDC_VID_COMBO_MODULE);
 	if (idxClient) { // unload the current client
 		snprintf(name, 256, "%s", cb->itemText(idxClient).toUtf8().constData());
-		// drop the client's connections to the video controls with the client
-		static int item[] = {
-			IDC_VID_DEVICE, IDC_VID_ENUM, IDC_VID_STENCIL, IDC_VID_FULL, IDC_VID_WINDOW, IDC_VID_MODE, IDC_VID_BPP,
-			IDC_VID_VSYNC, IDC_VID_PAGEFLIP, IDC_VID_WIDTH, IDC_VID_HEIGHT, IDC_VID_ASPECT, IDC_VID_4X3, IDC_VID_16X10,
-			IDC_VID_16X9, IDC_VID_INFO
-		};
-		for (int id : item)
-			QObject::disconnect(oapiResDlgItem(hTab, id), nullptr, nullptr, nullptr);
+		DropClient(hTab); // drop the client's connections to the video controls with the client
 		pCfg->DelActiveModule(name);
 		pLp->App()->UnloadModule(name);
 		pCfg->CfgDevPrm.Device_idx = -1;

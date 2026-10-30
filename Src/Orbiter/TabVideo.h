@@ -26,6 +26,8 @@ namespace orbiter {
 
 		void OnGraphicsClientLoaded(oapi::GraphicsClient* gc, const char *moduleName);
 
+		static void DropClient(QWidget *hTab); // not upstream (client-unload): the client's connections to the video controls go
+
 		void SetConfig(Config* cfg);
 
 		bool OpenHelp();
