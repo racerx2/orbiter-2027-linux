@@ -93,17 +93,18 @@ struct FltFormat
 DWORD GetCSSColor(const char *col);
 
 // not upstream: GetProcAddress counterpart; dlsym also searches a module's dependencies, only the module's own symbol counts
-void *ModuleProc (void *hModule, const char *name);
+// not upstream (dll-modules): ModuleProc, ModuleLoad and ModuleFree exported for the plugins that open modules (AtmConfig)
+DLLEXPORT void *ModuleProc (void *hModule, const char *name);
 
 // not upstream: LoadLibrary counterpart; counts the opens per handle, a module reopened after its last free gets InitModule again (ModuleAttach)
 // not upstream (dll-modules): with windows, a Windows module (a .dll path, or the .dll beside a .so that isn't there) opens through the Wine bridge
-void *ModuleLoad (const char *path, bool windows = true);
+DLLEXPORT void *ModuleLoad (const char *path, bool windows = true);
 
 // not upstream: GetLastError counterpart for ModuleLoad: dlerror, or why a Windows module failed (null: none known)
 const char *ModuleError ();
 
 // not upstream: FreeLibrary counterpart; the last free detaches, as dlclose may keep a module (unique symbols) to exit
-void ModuleFree (void *hModule);
+DLLEXPORT void ModuleFree (void *hModule);
 
 // not upstream: GetModuleFileName counterpart; the path the module was loaded from
 const char *ModuleFileName (void *hModule);

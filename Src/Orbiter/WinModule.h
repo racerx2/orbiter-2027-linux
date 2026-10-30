@@ -1,5 +1,6 @@
 // not upstream (dll-modules): Windows modules (.dll) opened through the Wine bridge (Modules/WineBridge.so)
 #pragma once
+#include "OrbiterAPI.h"
 #include <filesystem>
 #include <string>
 
@@ -14,8 +15,8 @@ void *WinModuleProc (void *hModule, const char *name);
 void WinModuleFree (void *hModule);
 const char *WinModuleFileName (void *hModule);
 
-// a folder entry that is a Windows module no .so beside it has the name of
-bool WinModuleEntry (const std::filesystem::path &file);
+// a folder entry that is a Windows module no .so beside it has the name of; exported for the plugins that list modules (AtmConfig)
+DLLEXPORT bool WinModuleEntry (const std::filesystem::path &file);
 
 // not upstream (vessel-hooks): the bridge takes a vessel's callbacks where a Windows module hooked them in its object
 class VESSEL;

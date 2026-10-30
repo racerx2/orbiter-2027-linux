@@ -11,11 +11,17 @@
 #include <QDialog>
 #include <cstring>
 #include <strings.h>
-#include <dlfcn.h>
 #include <filesystem>
 #include <algorithm> // not upstream: SortedEntries
 #include <vector>    // not upstream: SortedEntries
 namespace fs = std::filesystem;
+
+// not upstream (dll-modules): Orbiter's LoadLibrary counterparts (Util.h, WinModule.h), which open a Windows module through the
+// Wine bridge where no .so has its name
+void *ModuleLoad (const char *path, bool windows = true);
+void *ModuleProc (void *hModule, const char *name);
+void ModuleFree (void *hModule);
+bool WinModuleEntry (const std::filesystem::path &file);
 
 using namespace std;
 
@@ -275,7 +281,7 @@ void AtmConfig::ScanModules (const char *celbody)
 	MODULESPEC* module_last = 0;
 	for (auto& entry : SortedEntries (fs::directory_iterator(path))) { // not upstream: NTFS order (IDC_COMBO1 has no CBS_SORT)
 		auto module = entry.path();
-		if (module.extension().string() == ".so") {
+		if (module.extension().string() == ".so" || WinModuleEntry (module)) { // not upstream (dll-modules): or a Windows module no .so has the name of
 			const auto name = module.stem().string();
 
 			MODULESPEC* ms = new MODULESPEC;
@@ -288,13 +294,13 @@ void AtmConfig::ScanModules (const char *celbody)
 			ms->next = 0;
 
 			// get info from the module
-			void *hModule = dlopen(module.string().c_str(), RTLD_NOW);
+			void *hModule = ModuleLoad((path / (name + ".so")).string().c_str()); // not upstream (dll-modules): the .dll where no .so is
 			if (hModule) {
-				char* (*name_func)() = (char* (*)())dlsym(hModule, "ModelName");
+				char* (*name_func)() = (char* (*)())ModuleProc(hModule, "ModelName");
 				if (name_func) snprintf(ms->model_name, sizeof ms->model_name, "%s", name_func()); // not upstream: strncpy left 255+ characters unterminated
-				char* (*desc_func)() = (char* (*)())dlsym(hModule, "ModelDesc");
+				char* (*desc_func)() = (char* (*)())ModuleProc(hModule, "ModelDesc");
 				if (desc_func) snprintf(ms->model_desc, sizeof ms->model_desc, "%s", desc_func()); // not upstream: strncpy left 511+ characters unterminated
-				dlclose(hModule);
+				ModuleFree(hModule);
 			}
 		}
 	}
