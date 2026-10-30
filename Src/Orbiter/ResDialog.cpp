@@ -176,6 +176,81 @@ int oapiLoadResString (void *hModule, int id, char *buf, int buflen)
 	return 0;
 }
 
+// not upstream (dll-modules): a Windows module's string resource, as LoadString reads it (the first language), in UTF-8
+static int PeString (std::ifstream &f, uint64_t fsize, int id, char *buf, int buflen)
+{
+	auto rd = [&f, fsize](uint64_t off, void *d, uint64_t n) {
+		if (off > fsize || n > fsize - off) return false;
+		f.clear ();
+		f.seekg ((std::streamoff)off);
+		return (bool)f.read ((char*)d, (std::streamsize)n);
+	};
+	uint32_t lfanew = 0, rva = 0;
+	uint16_t nsec = 0, optsize = 0, magic = 0;
+	char sig[4];
+	if (id < 0 || !rd (0x3c, &lfanew, 4) || !rd (lfanew, sig, 4) || memcmp (sig, "PE\0\0", 4) || !rd (lfanew + 6, &nsec, 2) ||
+		!rd (lfanew + 20, &optsize, 2) || !rd (lfanew + 24, &magic, 2) || (magic != 0x10b && magic != 0x20b)) return 0;
+	const uint64_t opt = (uint64_t)lfanew + 24, dir = opt + (magic == 0x20b ? 112 : 96) + 2 * 8; // the resource directory entry
+	if (dir + 8 > opt + optsize || !rd (dir, &rva, 4) || !rva) return 0;
+	struct Sec { uint32_t vsize, va, rawsize, raw; };
+	std::vector<Sec> sec (std::min<uint16_t> (nsec, 96));
+	for (size_t i = 0; i < sec.size(); i++)
+		if (!rd (opt + optsize + 40 * i + 8, &sec[i], 16)) return 0;
+	auto at = [&sec](uint32_t r, uint64_t &off) { // a virtual address in the file
+		for (const Sec &s : sec)
+			if (r >= s.va && r - s.va < std::max (s.vsize, s.rawsize)) {
+				if (r - s.va >= s.rawsize) return false;
+				off = (uint64_t)s.raw + (r - s.va);
+				return true;
+			}
+		return false;
+	};
+	uint64_t base;
+	if (!at (rva, base)) return 0;
+	auto entry = [&](uint32_t d, uint32_t want, bool first, uint32_t &out) { // an entry of a resource directory, by number or the first
+		uint16_t n[2];
+		if (!rd (base + d + 12, n, 4)) return false;
+		for (uint32_t i = 0; i < (uint32_t)n[0] + n[1] && i < 4096; i++) {
+			uint32_t e[2];
+			if (!rd (base + d + 16 + 8 * i, e, 8)) return false;
+			if (e[0] & 0x80000000u) continue; // a named entry
+			if (first || e[0] == want) { out = e[1]; return true; }
+		}
+		return false;
+	};
+	uint32_t type, block, lang, data[2];
+	uint64_t p;
+	if (!entry (0, 6, false, type) || !(type & 0x80000000u) || // RT_STRING
+		!entry (type & 0x7fffffffu, (uint32_t)(id >> 4) + 1, false, block) || !(block & 0x80000000u) ||
+		!entry (block & 0x7fffffffu, 0, true, lang) || (lang & 0x80000000u) ||
+		!rd (base + lang, data, 8) || !at (data[0], p)) return 0;
+	const uint64_t end = p + data[1];
+	for (int i = 0; i < 16; i++) { // 16 strings: a length, then that many UTF-16 units
+		uint16_t len;
+		if (p + 2 > end || !rd (p, &len, 2)) return 0;
+		p += 2;
+		if (i != (id & 15)) { p += 2ull * len; continue; }
+		if (p + 2ull * len > end) return 0;
+		std::vector<uint16_t> u (len);
+		if (len && !rd (p, u.data(), 2ull * len)) return 0;
+		std::string s;
+		for (size_t k = 0; k < u.size(); k++) {
+			uint32_t c = u[k];
+			if (c >= 0xd800 && c < 0xdc00 && k + 1 < u.size() && u[k+1] >= 0xdc00 && u[k+1] < 0xe000) c = 0x10000 + ((c - 0xd800) << 10) + (u[++k] - 0xdc00);
+			if (c < 0x80) s += (char)c;
+			else if (c < 0x800) { s += (char)(0xc0 | c >> 6); s += (char)(0x80 | (c & 0x3f)); }
+			else if (c < 0x10000) { s += (char)(0xe0 | c >> 12); s += (char)(0x80 | (c >> 6 & 0x3f)); s += (char)(0x80 | (c & 0x3f)); }
+			else { s += (char)(0xf0 | c >> 18); s += (char)(0x80 | (c >> 12 & 0x3f)); s += (char)(0x80 | (c >> 6 & 0x3f)); s += (char)(0x80 | (c & 0x3f)); }
+		}
+		size_t n = std::min (s.size(), (size_t)buflen - 1);
+		while (n && n < s.size() && ((unsigned char)s[n] & 0xc0) == 0x80) n--; // not inside a character
+		memcpy (buf, s.data(), n);
+		buf[n] = '\0';
+		return (int)n;
+	}
+	return 0;
+}
+
 int LoadModuleString (const char *modulefile, int id, char *buf, int buflen)
 {
 	if (!buf || buflen < 1) return 0;
@@ -184,6 +259,10 @@ int LoadModuleString (const char *modulefile, int id, char *buf, int buflen)
 	if (!f) return 0;
 	f.seekg (0, std::ios::end);
 	const uint64_t fsize = (uint64_t)std::max<std::streamoff> (0, f.tellg());
+	f.seekg (0);
+	char mz[2]; // not upstream (dll-modules): a Windows module's strings are resources
+	if (f.read (mz, 2) && mz[0] == 'M' && mz[1] == 'Z') return PeString (f, fsize, id, buf, buflen);
+	f.clear ();
 	f.seekg (0);
 	auto fits = [fsize](const Elf64_Shdr &s) { return s.sh_offset <= fsize && s.sh_size <= fsize - s.sh_offset; }; // sizes from a corrupt file
 	Elf64_Ehdr eh;

@@ -11,6 +11,7 @@
 #include "resource.h"
 #include "ResDialog.h"
 #include "Util.h"
+#include "WinModule.h" // not upstream (dll-modules)
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -185,7 +186,7 @@ void orbiter::ModuleTab::RefreshLists ()
 
 	std::error_code ec;
 	for (const auto& file : fs::directory_iterator(moddir, ec)) {
-		if (file.path().extension().string() == ".so") {
+		if (file.path().extension().string() == ".so" || WinModuleEntry (file.path())) { // not upstream (dll-modules): or a Windows module no .so has the name of
 			auto name = file.path().filename().string();
 			// add module record
 			MODULEREC** tmp = new MODULEREC * [nmodulerec + 1];
@@ -196,7 +197,7 @@ void orbiter::ModuleTab::RefreshLists ()
 			modulerec = tmp;
 
 			MODULEREC* rec = modulerec[nmodulerec++] = new MODULEREC;
-			len = name.length() - 3;
+			len = name.length() - file.path().extension().string().size(); // not upstream (dll-modules): ".so" or ".dll"
 			rec->name = new char[len + 1];
 			strncpy(rec->name, name.c_str(), len);
 			rec->name[len] = '\0';

@@ -141,6 +141,7 @@ set(common_src
 	Log.cpp
 	Memstat.cpp
 	Util.cpp
+	WinModule.cpp # not upstream (dll-modules): Windows modules through the Wine bridge
 	PathResolve.cpp
 	SleepWatch.cpp
 	WlPointer.cpp

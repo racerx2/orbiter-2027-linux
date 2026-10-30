@@ -36,6 +36,7 @@
 #include "CustomControls.h"
 #include "Help.h"
 #include "Util.h"
+#include "WinModule.h" // not upstream (dll-modules)
 #include "DlgHelp.h" // temporary
 #include "htmlctrl.h"
 #include "DlgCtrl.h"
@@ -566,24 +567,32 @@ static bool ResolveInPlace (char *buf, size_t size, int len) // not upstream: bu
 	return true;
 }
 
+static bool WindowsInPlace (char *buf, size_t size) // not upstream (dll-modules): buf, a .so path that isn't there, becomes its Windows module's path
+{
+	std::string dll = WinModulePath (buf);
+	if (dll.empty () || dll.size () >= size) return false;
+	memcpy (buf, dll.c_str (), dll.size () + 1);
+	return true;
+}
+
 //! Finds legacy module consisting of a single DLL
 //! @return true on success
 //! @param cbufOut returns path to the plugin DLL
-static bool FindStandaloneDll(const char *path, const char *name, char* cbufOut, size_t n) // not upstream: sized
+static bool FindStandaloneDll(const char *path, const char *name, char* cbufOut, size_t n, bool windows) // not upstream: sized
 {
 	int len = snprintf (cbufOut, n, "%s/%s.so", path, name); // not upstream: bounded
 	if (!ResolveInPlace (cbufOut, n, len)) return false; // not upstream: N, a path that doesn't fit is "" and isn't loaded
-	return fs::exists(cbufOut);
+	return windows ? WindowsInPlace (cbufOut, n) : fs::exists(cbufOut); // not upstream (dll-modules): windows: the .dll for the .so
 }
 
 //! Finds module consisting of a plugin DLL inside a plugin-specific folder
 //! @return true on success
 //! @param cbufOut returns path to the plugin DLL
-static bool FindDllInPluginFolder(const char *path, const char *name, char* cbufOut, size_t n) // not upstream: sized
+static bool FindDllInPluginFolder(const char *path, const char *name, char* cbufOut, size_t n, bool windows) // not upstream: sized
 {
 	int len = snprintf(cbufOut, n, "%s/%s/%s.so", path, name, name); // not upstream: bounded
 	if (!ResolveInPlace (cbufOut, n, len)) return false; // not upstream: N, a path that doesn't fit is "" and isn't loaded
-	return fs::exists(cbufOut);
+	return windows ? WindowsInPlace (cbufOut, n) : fs::exists(cbufOut); // not upstream (dll-modules): as above
 }
 
 void Orbiter::LoadModules(const std::string& path, const std::list<std::string>& names)
@@ -596,7 +605,7 @@ void Orbiter::LoadModules(const std::string& path)
 {
 	for (const auto& entry : SortedEntries (fs::directory_iterator(oapiResolvePath(path.c_str())))) { // not upstream: NTFS order
 		auto fpath = entry.path();
-		if (fpath.extension().string() == ".so") {
+		if (fpath.extension().string() == ".so" || WinModuleEntry (fpath)) { // not upstream (dll-modules): or a Windows module no .so has the name of
 			LoadModule(path.c_str(), fpath.stem().string().c_str());
 		}
 	}
@@ -622,14 +631,15 @@ void *Orbiter::LoadModule (const char *path, const char *name)
 	// Load the module DLL
 	void *hDLL = NULL;
 	char cbuf[PATH_MAX+512]; // not upstream: 256; holds the working directory and the module path
-	if (FindStandaloneDll(path, name, cbuf, sizeof cbuf)) // not upstream: sized; try to find standalone plugin file
+	char cbuf2[512];
+	bool win = !FindStandaloneDll (path, name, cbuf, sizeof cbuf, false) && !FindDllInPluginFolder (path, name, cbuf2, sizeof cbuf2, false); // not upstream (dll-modules): no native module of the name: a Windows one
+	if (FindStandaloneDll(path, name, cbuf, sizeof cbuf, win)) // not upstream: sized; try to find standalone plugin file
 	{
 		hDLL = ModuleLoad (cbuf); // LoadLibrary; not upstream: counted, ModuleFree detaches on the last free
 	}
 	else // try to find plugin in a plugin folder
 	{
-		char cbuf2[512];
-		if (FindDllInPluginFolder(path, name, cbuf2, sizeof cbuf2)) // not upstream: sized
+		if (FindDllInPluginFolder(path, name, cbuf2, sizeof cbuf2, win)) // not upstream: sized
 		{
 			// absolute path; the module finds the libraries in its folder through its RUNPATH ($ORIGIN), as LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR did
 			sprintf(cbuf, "%s/%s", cwd, cbuf2);
@@ -663,7 +673,7 @@ void *Orbiter::LoadModule (const char *path, const char *name)
 		LOGOUT(register_module ? "Loading module %s" : "Loading module %s (legacy interface)", name);
 		m_Plugin.push_back(module);
 	} else {
-		const char *err = dlerror(); // GetLastError
+		const char *err = ModuleError(); // GetLastError; not upstream (dll-modules): or a Windows module's
 		LOGOUT_ERR ("Failed loading module %s (%s)", cbuf, err ? err : "unknown error");
 	}
 	return hDLL;

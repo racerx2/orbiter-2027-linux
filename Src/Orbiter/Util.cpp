@@ -2,6 +2,7 @@
 // Licensed under the MIT License
 
 #include "Util.h"
+#include "WinModule.h" // not upstream (dll-modules)
 // shlobj.h left out: directories are made with mkdir
 #include <sys/stat.h>
 #include <errno.h>
@@ -308,8 +309,17 @@ DWORD GetCSSColor(const char *col)
 	return 0xFF00FF;
 }
 
+// not upstream (dll-modules): what WinModule.cpp does in Orbiter; a program without it opens no Windows modules
+__attribute__((weak)) std::string WinModulePath (const char *) { return ""; }
+__attribute__((weak)) void *WinModuleLoad (const char *) { return nullptr; }
+__attribute__((weak)) bool WinModuleHandle (void *) { return false; }
+__attribute__((weak)) void *WinModuleProc (void *, const char *) { return nullptr; }
+__attribute__((weak)) void WinModuleFree (void *) {}
+__attribute__((weak)) const char *WinModuleFileName (void *) { return ""; }
+
 void *ModuleProc (void *hModule, const char *name)
 {
+	if (WinModuleHandle (hModule)) return WinModuleProc (hModule, name); // not upstream (dll-modules)
 	void *proc = dlsym (hModule, name);
 	struct link_map *lm;
 	Dl_info info;
@@ -318,9 +328,26 @@ void *ModuleProc (void *hModule, const char *name)
 }
 
 static std::map<void*, int> &g_moduleRefs = *new std::map<void*, int>; // not upstream: ModuleLoad opens per handle, 0 once freed; never destroyed
+static const char *g_winFailed; // not upstream (dll-modules): the last ModuleLoad was a Windows module that failed
 
-void *ModuleLoad (const char *path) // not upstream: LoadLibrary counterpart
+const char *ModuleError () // not upstream
 {
+	const char *e = dlerror ();
+	return e ? e : g_winFailed;
+}
+
+void *ModuleLoad (const char *path, bool windows) // not upstream: LoadLibrary counterpart
+{
+	g_winFailed = nullptr;
+	std::string dll = windows ? WinModulePath (path) : ""; // not upstream (dll-modules): a Windows module where no .so is
+	if (!dll.empty ()) {
+		void *h = WinModuleLoad (dll.c_str ());
+		if (!h) {
+			dlerror (); // another library's error is not this module's
+			g_winFailed = "a Windows module, not loaded through the Wine bridge: see its line above";
+		}
+		return h;
+	}
 	void *mapped = dlopen (path, RTLD_NOW | RTLD_NOLOAD);
 	void *hModule = dlopen (path, RTLD_NOW);
 	if (mapped) dlclose (mapped);
@@ -336,6 +363,7 @@ void *ModuleLoad (const char *path) // not upstream: LoadLibrary counterpart
 
 void ModuleFree (void *hModule)
 {
+	if (WinModuleHandle (hModule)) { WinModuleFree (hModule); return; } // not upstream (dll-modules)
 	auto it = g_moduleRefs.find (hModule); // not upstream: only the last free of a ModuleLoad handle detaches
 	if (it != g_moduleRefs.end () && !it->second) return; // not upstream: freed already; another dlclose would underflow the loader's count
 	if (it != g_moduleRefs.end () && it->second > 1) it->second--; // not upstream: as above
@@ -349,6 +377,7 @@ void ModuleFree (void *hModule)
 
 const char *ModuleFileName (void *hModule)
 {
+	if (WinModuleHandle (hModule)) return WinModuleFileName (hModule); // not upstream (dll-modules)
 	struct link_map *lm;
 	return (hModule && !dlinfo (hModule, RTLD_DI_LINKMAP, &lm) && lm->l_name ? lm->l_name : "");
 }

@@ -756,8 +756,9 @@ void CelestialBody::RegisterModule (char *dllname)
 	module = 0;                              // reset new interface
 	memset (&modIntf, 0, sizeof (modIntf));  // reset old interface
 	hMod = 0; // not upstream: stays 0 when a module path doesn't fit
+	bool legacy = snprintf (cbuf, sizeof cbuf, "Modules/%s.so", dllname) < (int)sizeof cbuf && !access (oapiResolvePath (cbuf).c_str(), F_OK); // not upstream (dll-modules): a native module there comes before a Windows one in the new location
 	if (snprintf (cbuf, sizeof cbuf, "Modules/Celbody/%s.so", dllname) < (int)sizeof cbuf) // try new module location; not upstream: bounded, a path that doesn't fit is not tried
-		hMod = ModuleLoad (oapiResolvePath (cbuf).c_str()); // not upstream: only when the path fit; counted, ModuleFree detaches on the last free
+		hMod = ModuleLoad (oapiResolvePath (cbuf).c_str(), !legacy); // not upstream: only when the path fit; counted, ModuleFree detaches on the last free
 	if (!hMod) {
 		if (snprintf (cbuf, sizeof cbuf, "Modules/%s.so", dllname) >= (int)sizeof cbuf) {  // try legacy module location; not upstream: bounded, a name that doesn't fit: no dlopen
 			LOGOUT_WARN ("Path too long: Modules/%s.so", dllname);
@@ -770,7 +771,7 @@ void CelestialBody::RegisterModule (char *dllname)
 		// dynamic integration from a zero relative state; both are wrong silently, so the failure is logged
 		// with the meaning of the two usual causes: a DLL built for the other architecture, and a DLL whose
 		// runtime library (for example an older Visual C++ redistributable) is not installed.
-		const char *err = dlerror(); // GetLastError + hint: dlerror names the missing file or library, a wrong ELF class or an unresolved symbol
+		const char *err = ModuleError(); // not upstream (dll-modules): or a Windows module's; GetLastError + hint: dlerror names the missing file or library, a wrong ELF class or an unresolved symbol
 		LOGOUT_WARN("Celestial body %s: ephemeris module %s.so could not be loaded (%s); the body falls back to the orbital elements in its config file, if it has any", name.c_str(), dllname, err ? err : "unknown error");
 		return;
 	}

@@ -393,6 +393,52 @@ TEST_CASE("module strings are read from the file without loading it", "[resdialo
 	REQUIRE(LoadModuleString ("/nonexistent.so", IDS_TABVISUAL, buf, 64) == 0);
 }
 
+TEST_CASE("a Windows module's strings come from its string table", "[resdialog]") // not upstream (dll-modules)
+{
+	// a PE32 with one section, .rsrc at RVA 0x1000 (file 0x200): RT_STRING, block 63 (ids 992 to 1007), language 0x409
+	std::vector<uint8_t> pe (0x400, 0);
+	auto u16 = [&pe](size_t at, uint16_t v) { memcpy (pe.data () + at, &v, 2); };
+	auto u32 = [&pe](size_t at, uint32_t v) { memcpy (pe.data () + at, &v, 4); };
+	pe[0] = 'M'; pe[1] = 'Z'; u32 (0x3c, 0x40);
+	memcpy (pe.data () + 0x40, "PE\0\0", 4);
+	u16 (0x44, 0x14c); u16 (0x46, 1); u16 (0x54, 0xe0);
+	const size_t opt = 0x58;
+	u16 (opt, 0x10b); u32 (opt + 92, 16); u32 (opt + 96 + 16, 0x1000); u32 (opt + 96 + 20, 0x100);
+	const size_t sec = opt + 0xe0;
+	memcpy (pe.data () + sec, ".rsrc", 5); u32 (sec + 8, 0x100); u32 (sec + 12, 0x1000); u32 (sec + 16, 0x200); u32 (sec + 20, 0x200);
+	const size_t r = 0x200;
+	u16 (r + 14, 1); u32 (r + 16, 6); u32 (r + 20, 0x80000018u);
+	u16 (r + 0x18 + 14, 1); u32 (r + 0x18 + 16, 63); u32 (r + 0x18 + 20, 0x80000030u);
+	u16 (r + 0x30 + 14, 1); u32 (r + 0x30 + 16, 0x409); u32 (r + 0x30 + 20, 0x48);
+	u32 (r + 0x48, 0x1058); u32 (r + 0x4c, 0x80);
+	const char16_t *text[16] = {};
+	text[8] = u"Frame rate \u00fc \U0001F680"; // id 1000: Latin-1, and a character beyond the BMP (a surrogate pair)
+	text[9] = u"Instruments";                  // id 1001
+	size_t p = r + 0x58;
+	for (const char16_t *t : text) {
+		size_t n = t ? std::char_traits<char16_t>::length (t) : 0;
+		u16 (p, (uint16_t)n);
+		memcpy (pe.data () + p + 2, t, 2 * n);
+		p += 2 + 2 * n;
+	}
+	char path[] = "/tmp/WinStrings.Test.XXXXXX";
+	int fd = mkstemp (path);
+	REQUIRE(fd >= 0);
+	REQUIRE(write (fd, pe.data (), pe.size ()) == (ssize_t)pe.size ());
+	close (fd);
+	char buf[64];
+	REQUIRE(LoadModuleString (path, 1000, buf, 64) == 18);
+	REQUIRE(std::string (buf) == "Frame rate \xc3\xbc \xf0\x9f\x9a\x80");
+	REQUIRE(LoadModuleString (path, 1001, buf, 64) == 11);
+	REQUIRE(std::string (buf) == "Instruments");
+	REQUIRE(LoadModuleString (path, 1002, buf, 64) == 0); // empty
+	REQUIRE(LoadModuleString (path, 2000, buf, 64) == 0); // no such block
+	REQUIRE(LoadModuleString (path, 1000, buf, 16) == 14); // cut before a character, not inside it
+	REQUIRE(std::string (buf) == "Frame rate \xc3\xbc ");
+	REQUIRE(LoadModuleString (path, 1000, buf, 13) == 11);
+	unlink (path);
+}
+
 TEST_CASE("menu templates build menu bars", "[resdialog]")
 {
 	App();
