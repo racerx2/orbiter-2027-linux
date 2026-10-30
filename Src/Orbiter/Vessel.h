@@ -1119,6 +1119,8 @@ public:
 	// Return module interface for vessel. Guaranteed to exist even if the
 	// vessle class isn't managed by a module
 
+	VESSEL *ClbkIntf () const; // not upstream (vessel-hooks): the object the module's callbacks are called on (the Wine bridge's where a Windows module hooked them)
+
 	int ConsumeDirectKey (char *buffer);
 	// Keyboard handler for immediate keys
 

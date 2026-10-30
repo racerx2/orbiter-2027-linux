@@ -39,6 +39,7 @@
 #include "Util.h"
 #include "elevmgr.h"
 #include "HullPoints.h" // not upstream (terrain-contact)
+#include "WinModule.h" // not upstream (vessel-hooks)
 #include <fstream>
 #include <iomanip>
 #include <stdio.h>
@@ -143,7 +144,7 @@ Vessel::Vessel (const PlanetarySystem *psys, const char *_name, const char *_cla
 	StateVectors *upd = s1; // not upstream (poststep-state): made during the update, set as in a pre-step, then MadeInUpdate
 	s1 = s0;
 	if (modIntf.v->Version() >= 1)
-		((VESSEL2*)modIntf.v)->clbkSetStateEx (status);
+		((VESSEL2*)ClbkIntf ())->clbkSetStateEx (status); // not upstream (vessel-hooks)
 	else
 		SetStateEx (status);
 	MadeInUpdate (upd);
@@ -199,6 +200,7 @@ Vessel::~Vessel ()
 {
 	FRecorder_Clear();
 	ClearDockDefinitions ();
+	WinModuleVesselGone (this); // not upstream (vessel-hooks): before the module's object goes
 	if (modIntf.ovcExit) modIntf.ovcExit(modIntf.v);
 	if (modIntf.coreCreated) delete modIntf.v;
 	if (classname) {
@@ -273,7 +275,7 @@ void Vessel::SetClassCaps (ifstream &classf)
 {
 	// Query module for caps
 	if (modIntf.v->Version() >= 1)      // VESSEL2 interface
-		((VESSEL2*)modIntf.v)->clbkSetClassCaps ((FILEHANDLE)&classf);
+		((VESSEL2*)ClbkIntf ())->clbkSetClassCaps ((FILEHANDLE)&classf); // not upstream (vessel-hooks)
 
 	// Read specs from class or vessel cfg file
 	ReadGenericCaps (classf);
@@ -795,7 +797,7 @@ void Vessel::ModulePostCreation ()
 {
 	// now let the module do its post-creation stuff
 	if (modIntf.v->Version() >= 1)
-		((VESSEL2*)modIntf.v)->clbkPostCreation ();
+		((VESSEL2*)ClbkIntf ())->clbkPostCreation (); // not upstream (vessel-hooks)
 	GltfVesselAnim::Check (this); // not upstream
 }
 
@@ -995,7 +997,7 @@ void Vessel::SetAngVel_individual (const Vector &omega)
 void Vessel::FocusChanged (bool getfocus, Vessel *newvessel, Vessel *oldvessel)
 {
 	if (modIntf.v->Version() >= 1)
-		((VESSEL2*)modIntf.v)->clbkFocusChanged (getfocus, (OBJHANDLE)newvessel, (OBJHANDLE)oldvessel);
+		((VESSEL2*)ClbkIntf ())->clbkFocusChanged (getfocus, (OBJHANDLE)newvessel, (OBJHANDLE)oldvessel); // not upstream (vessel-hooks)
 }
 
 // ==============================================================
@@ -2695,7 +2697,7 @@ void Vessel::RegisterDocking (DWORD did, Vessel *mate, DWORD matedid)
 		dock[did]->pending = 0;
 		dock[did]->status = 0;
 		if (modIntf.v->Version() >= 1)
-			((VESSEL2*)modIntf.v)->clbkDockEvent (did, (OBJHANDLE)mate);
+			((VESSEL2*)ClbkIntf ())->clbkDockEvent (did, (OBJHANDLE)mate); // not upstream (vessel-hooks)
 	}
 }
 
@@ -2706,7 +2708,7 @@ void Vessel::UnregisterDocking (DWORD did)
 	if (dock[did]->mate) {
 		dock[did]->mate = 0;
 		if (modIntf.v->Version() >= 1)
-			((VESSEL2*)modIntf.v)->clbkDockEvent (did, 0);
+			((VESSEL2*)ClbkIntf ())->clbkDockEvent (did, 0); // not upstream (vessel-hooks)
 		undock_t = td.SimT0;
 	}
 }
@@ -3908,7 +3910,7 @@ int Vessel::ConsumeDirectKey (char *buffer)
 {
 	if (bCtrlLock) return 0; // not upstream: the module sees no keys; the caller skips the controls
 	if (modIntf.v->Version() >= 1) {
-		return ((VESSEL2*)modIntf.v)->clbkConsumeDirectKey (buffer);
+		return ((VESSEL2*)ClbkIntf ())->clbkConsumeDirectKey (buffer); // not upstream (vessel-hooks)
 	} else {
 		return 0;
 	}
@@ -3920,7 +3922,7 @@ int Vessel::ConsumeBufferedKey (DWORD key, bool down, char *kstate)
 	const Keymap &keymap = g_pOrbiter->keymap;
 	// first offer the key to the module
 	if (modIntf.v->Version() >= 1 && !bCtrlLock && !(key & IKEYFUNC_TAG)) // not upstream: a locked vessel's module sees no keys, nor a binding's function press (input-bindings)
-		if (res = ((VESSEL2*)modIntf.v)->clbkConsumeBufferedKey (key, down, kstate)) return res;
+		if (res = ((VESSEL2*)ClbkIntf ())->clbkConsumeBufferedKey (key, down, kstate)) return res; // not upstream (vessel-hooks)
 	// If module processes the key, we skip default handler
 
 	if (!down) return 0; // at the moment, only process keydown events
@@ -4048,7 +4050,7 @@ void Vessel::UpdateThrustForces ()
 	// Navigation computer sequences
 	if (navmode) {
 
-		int navmode_core = (modIntf.v->Version() >= 3 ? ((VESSEL4*)modIntf.v)->clbkNavProcess(navmode) : navmode);
+		int navmode_core = (modIntf.v->Version() >= 3 ? ((VESSEL4*)ClbkIntf ())->clbkNavProcess(navmode) : navmode); // not upstream (vessel-hooks)
 		// allow module to process the navigation modes itself
 			
 		Vector fpmi, *fullpmi;
@@ -4256,7 +4258,7 @@ void Vessel::UpdateRadiationForces ()
 		// retrieve customised force calculation
 		VECTOR3 Mflux, p, pos;
 		Mflux.x = mflux.x, Mflux.y = mflux.y, Mflux.z = mflux.z;
-		((VESSEL3*)modIntf.v)->clbkGetRadiationForce (Mflux, p, pos);
+		((VESSEL3*)ClbkIntf ())->clbkGetRadiationForce (Mflux, p, pos); // not upstream (vessel-hooks)
 		F.x = p.x, F.y = p.y, F.z = p.z;
 		r.x = pos.x, r.y = pos.y, r.z = pos.z;
 	} else {
@@ -5115,7 +5117,7 @@ void Vessel::Update (bool force)
 	// module interface calls
 	if (hVis && animcount) {
 		if (modIntf.v->Version() >= 1)
-			((VESSEL2*)modIntf.v)->clbkAnimate (td.SimT1);
+			((VESSEL2*)ClbkIntf ())->clbkAnimate (td.SimT1); // not upstream (vessel-hooks)
 	}
 
 	Flin.Set (Flin_add);    // store current linear force
@@ -5379,31 +5381,31 @@ void Vessel::Timejump (double dt, int mode)
 void Vessel::ModulePreStep (double t, double dt, double mjd)
 {
 	if (modIntf.v->Version() >= 1)
-		((VESSEL2*)modIntf.v)->clbkPreStep (t, dt, mjd);
+		((VESSEL2*)ClbkIntf ())->clbkPreStep (t, dt, mjd); // not upstream (vessel-hooks)
 }
 
 void Vessel::ModulePostStep (double t, double dt, double mjd)
 {
 	if (modIntf.v->Version() >= 1)
-		((VESSEL2*)modIntf.v)->clbkPostStep (t, dt, mjd);
+		((VESSEL2*)ClbkIntf ())->clbkPostStep (t, dt, mjd); // not upstream (vessel-hooks)
 }
 
 void Vessel::ModuleSignalRCSmode (int mode)
 {
 	if (modIntf.v->Version() >= 1)
-		((VESSEL2*)modIntf.v)->clbkRCSMode (mode);
+		((VESSEL2*)ClbkIntf ())->clbkRCSMode (mode); // not upstream (vessel-hooks)
 }
 
 void Vessel::ModuleSignalADCtrlmode (DWORD mode)
 {
 	if (modIntf.v->Version() >= 1)
-		((VESSEL2*)modIntf.v)->clbkADCtrlMode (mode);
+		((VESSEL2*)ClbkIntf ())->clbkADCtrlMode (mode); // not upstream (vessel-hooks)
 }
 
 void Vessel::ModuleSignalNavmode (int mode, bool active)
 {
 	if (modIntf.v->Version() >= 1)
-		((VESSEL2*)modIntf.v)->clbkNavMode (mode, active);
+		((VESSEL2*)ClbkIntf ())->clbkNavMode (mode, active); // not upstream (vessel-hooks)
 }
 
 void Vessel::DrawHUD (HUD *hud, oapi::Sketchpad *skp)
@@ -5411,7 +5413,7 @@ void Vessel::DrawHUD (HUD *hud, oapi::Sketchpad *skp)
 	if (modIntf.v->Version() >= 1) {
 		bool drawn = false;
 		if (modIntf.v->Version() >= 2) {
-			drawn = ((VESSEL3*)modIntf.v)->clbkDrawHUD (hud->Mode(), hud->PaintSpec(), skp);
+			drawn = ((VESSEL3*)ClbkIntf ())->clbkDrawHUD (hud->Mode(), hud->PaintSpec(), skp); // not upstream (vessel-hooks)
 		}
 	} else
 		hud->DrawDefault (skp);
@@ -5420,7 +5422,7 @@ void Vessel::DrawHUD (HUD *hud, oapi::Sketchpad *skp)
 void Vessel::RenderHUD (HUD *hud, int mode, HUDPAINTSPEC *spec, SURFHANDLE hTex)
 {
 	if (modIntf.v->Version() >= 2)
-		((VESSEL3*)modIntf.v)->clbkRenderHUD (mode, spec, hTex);
+		((VESSEL3*)ClbkIntf ())->clbkRenderHUD (mode, spec, hTex); // not upstream (vessel-hooks)
 	else
 		hud->RenderDefault ();
 }
@@ -5428,13 +5430,13 @@ void Vessel::RenderHUD (HUD *hud, int mode, HUDPAINTSPEC *spec, SURFHANDLE hTex)
 void Vessel::HUDchanged (int mode)
 {
 	if (modIntf.v->Version() >= 1)
-		((VESSEL2*)modIntf.v)->clbkHUDMode (mode);
+		((VESSEL2*)ClbkIntf ())->clbkHUDMode (mode); // not upstream (vessel-hooks)
 }
 
 void Vessel::MFDchanged (int mfd, int mode) const
 {
 	if (modIntf.v->Version() >= 1)
-		((VESSEL2*)modIntf.v)->clbkMFDMode (mfd, mode);
+		((VESSEL2*)ClbkIntf ())->clbkMFDMode (mfd, mode); // not upstream (vessel-hooks)
 }
 
 void Vessel::UpdateProxies ()
@@ -5832,7 +5834,7 @@ void Vessel::RegisterVisual (VISHANDLE vis)
 	RigidBody::RegisterVisual (vis);
 
 	if (modIntf.v && modIntf.v->Version() >= 1)
-		((VESSEL2*)modIntf.v)->clbkVisualCreated (vis, 1);
+		((VESSEL2*)ClbkIntf ())->clbkVisualCreated (vis, 1); // not upstream (vessel-hooks)
 	if (this == g_focusobj) g_pane->RedrawCockpitAreas (PANEL_REDRAW_INIT); // not upstream: the cockpit areas live on the focus vessel's visual only (design coll-bounded 6.5)
 }
 
@@ -5841,7 +5843,7 @@ void Vessel::UnregisterVisual ()
 	if (!hVis) return; // nothing to do
 
 	if (modIntf.v && modIntf.v->Version() >= 1)
-		((VESSEL2*)modIntf.v)->clbkVisualDestroyed (hVis, 1);
+		((VESSEL2*)ClbkIntf ())->clbkVisualDestroyed (hVis, 1); // not upstream (vessel-hooks)
 
 	RigidBody::UnregisterVisual();
 }
@@ -5849,7 +5851,7 @@ void Vessel::UnregisterVisual ()
 bool Vessel::SetGenericCockpit () const
 {
 	if (modIntf.v && modIntf.v->Version() >= 1)
-		return ((VESSEL2*)modIntf.v)->clbkLoadGenericCockpit();
+		return ((VESSEL2*)ClbkIntf ())->clbkLoadGenericCockpit(); // not upstream (vessel-hooks)
 	else
 		return true;
 }
@@ -5857,7 +5859,7 @@ bool Vessel::SetGenericCockpit () const
 bool Vessel::LoadPanel (int which) const
 {
 	if (modIntf.v && modIntf.v->Version() >= 1)
-		return ((VESSEL2*)modIntf.v)->clbkLoadPanel (which);
+		return ((VESSEL2*)ClbkIntf ())->clbkLoadPanel (which); // not upstream (vessel-hooks)
 	else
 		return false;
 }
@@ -5869,7 +5871,7 @@ bool Vessel::LoadPanel2D (int which, Panel2D *panel) const
 		if (gc) {
 			DWORD viewW, viewH;
 			gc->clbkGetViewportSize (&viewW, &viewH);
-			return ((VESSEL3*)modIntf.v)->clbkLoadPanel2D (which, (PANELHANDLE)panel, viewW, viewH);
+			return ((VESSEL3*)ClbkIntf ())->clbkLoadPanel2D (which, (PANELHANDLE)panel, viewW, viewH); // not upstream (vessel-hooks)
 		}
 	}
 	return false;
@@ -5877,10 +5879,10 @@ bool Vessel::LoadPanel2D (int which, Panel2D *panel) const
 
 bool Vessel::PanelRedrawEvent (int id, int event, SURFHANDLE surf, void *context) const
 {
-	if (modIntf.v && modIntf.v->Version() >= 2 && ((VESSEL3*)modIntf.v)->clbkPanelRedrawEvent (id, event, surf, context))
+	if (modIntf.v && modIntf.v->Version() >= 2 && ((VESSEL3*)ClbkIntf ())->clbkPanelRedrawEvent (id, event, surf, context)) // not upstream (vessel-hooks)
 		return true;
 	else if (modIntf.v && modIntf.v->Version() >= 1)
-		return ((VESSEL2*)modIntf.v)->clbkPanelRedrawEvent (id, event, surf);
+		return ((VESSEL2*)ClbkIntf ())->clbkPanelRedrawEvent (id, event, surf); // not upstream (vessel-hooks)
 	else
 		return false;
 }
@@ -5888,10 +5890,10 @@ bool Vessel::PanelRedrawEvent (int id, int event, SURFHANDLE surf, void *context
 bool Vessel::PanelMouseEvent (int id, int event, int mx, int my, void *context) const
 {
 	if (bCtrlLock) return false; // not upstream: the cockpit's switches are dead
-	if (modIntf.v && modIntf.v->Version() >= 2 && ((VESSEL3*)modIntf.v)->clbkPanelMouseEvent (id, event, mx, my, context))
+	if (modIntf.v && modIntf.v->Version() >= 2 && ((VESSEL3*)ClbkIntf ())->clbkPanelMouseEvent (id, event, mx, my, context)) // not upstream (vessel-hooks)
 		return true;
 	else if (modIntf.v && modIntf.v->Version() >= 1)
-		return ((VESSEL2*)modIntf.v)->clbkPanelMouseEvent (id, event, mx, my);
+		return ((VESSEL2*)ClbkIntf ())->clbkPanelMouseEvent (id, event, mx, my); // not upstream (vessel-hooks)
 	else
 		return false;
 }
@@ -5899,7 +5901,7 @@ bool Vessel::PanelMouseEvent (int id, int event, int mx, int my, void *context) 
 bool Vessel::LoadVC (int id) const
 {
 	if (modIntf.v && modIntf.v->Version() >= 1)
-		return ((VESSEL2*)modIntf.v)->clbkLoadVC (id);
+		return ((VESSEL2*)ClbkIntf ())->clbkLoadVC (id); // not upstream (vessel-hooks)
 	else
 		return false;
 }
@@ -5907,7 +5909,7 @@ bool Vessel::LoadVC (int id) const
 bool Vessel::VCRedrawEvent (int id, int event, SURFHANDLE surf) const
 {
 	if (modIntf.v && modIntf.v->Version() >= 1)
-		return ((VESSEL2*)modIntf.v)->clbkVCRedrawEvent (id, event, surf);
+		return ((VESSEL2*)ClbkIntf ())->clbkVCRedrawEvent (id, event, surf); // not upstream (vessel-hooks)
 	else
 		return false;
 }
@@ -5917,7 +5919,7 @@ bool Vessel::VCMouseEvent (int id, int event, Vector &p) const
 	if (bCtrlLock) return false; // not upstream: the cockpit's switches are dead
 	if (modIntf.v && modIntf.v->Version() >= 1) {
 		VECTOR3 v = _V(p.x,p.y,p.z);
-		return ((VESSEL2*)modIntf.v)->clbkVCMouseEvent (id, event, v);
+		return ((VESSEL2*)ClbkIntf ())->clbkVCMouseEvent (id, event, v); // not upstream (vessel-hooks)
 	}
 	else
 		return false;
@@ -6213,7 +6215,13 @@ bool Vessel::LoadModule (ifstream &classf)
 		modIntf.v = new VESSEL ((OBJHANDLE)this, flightmodel); TRACENEW
 		modIntf.coreCreated = true;
 	}
+	WinModuleVesselNew (this, modIntf.v); // not upstream (vessel-hooks)
 	return found;
+}
+
+VESSEL *Vessel::ClbkIntf () const // not upstream (vessel-hooks)
+{
+	return WinModuleVesselIntf ((void *)this, modIntf.v);
 }
 
 bool Vessel::RegisterModule (const char *dllname)
@@ -6298,7 +6306,7 @@ bool Vessel::Read (ifstream &scn)
 
 	void *vsptr = (void*)&vs;
 	if (modIntf.v->Version() >= 1) {
-		((VESSEL2*)modIntf.v)->clbkLoadStateEx ((FILEHANDLE)&scn, vsptr);
+		((VESSEL2*)ClbkIntf ())->clbkLoadStateEx ((FILEHANDLE)&scn, vsptr); // not upstream (vessel-hooks)
 		res = true;
 	} else {
 		res = ParseScenarioEx (scn, vsptr);
@@ -6372,7 +6380,7 @@ void Vessel::Write (ostream &scn) const
 	scn << endl;
 
 	if (modIntf.v->Version() >= 1)
-		((VESSEL2*)modIntf.v)->clbkSaveState ((FILEHANDLE)&scn);
+		((VESSEL2*)ClbkIntf ())->clbkSaveState ((FILEHANDLE)&scn); // not upstream (vessel-hooks)
 	else
 		WriteDefault (scn);
 

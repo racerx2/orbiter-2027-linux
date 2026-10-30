@@ -2,6 +2,8 @@
 #include "WinModule.h"
 #include "Log.h"
 #include "OrbiterAPI.h"
+#include "Psys.h" // not upstream (vessel-hooks)
+#include "Vessel.h"
 #include <dlfcn.h>
 #include <fstream>
 #include <map>
@@ -44,6 +46,13 @@ struct WbApi {
 	int (*free) (void *); // the opens left
 };
 
+extern PlanetarySystem *g_psys;
+
+// not upstream (vessel-hooks): null until the bridge is open, or for a bridge without them
+static VESSEL *(*g_vintf) (void *, VESSEL *);
+static void (*g_vnew) (void *, VESSEL *);
+static void (*g_vgone) (void *);
+
 // the bridge's entry points, looked up once; why says what is missing
 static const WbApi *Bridge (std::string &why)
 {
@@ -61,6 +70,13 @@ static const WbApi *Bridge (std::string &why)
 		}
 		state = api.load && api.proc && api.free ? 1 : -1;
 		if (state < 0) err = h ? "the Wine bridge in Modules/WineBridge.so is too old to load modules" : std::string ("the Wine bridge is not installed (") + (e ? e : so.c_str ()) + ")";
+		if (state > 0) { // not upstream (vessel-hooks): the vessels already there first
+			g_vnew = (void (*) (void *, VESSEL *))dlsym (h, "wbVesselNew");
+			g_vgone = (void (*) (void *))dlsym (h, "wbVesselGone");
+			g_vintf = (VESSEL *(*) (void *, VESSEL *))dlsym (h, "wbVesselIntf");
+			if (g_vnew && g_psys)
+				for (size_t i = 0; i < g_psys->nVessel (); i++) g_vnew (g_psys->GetVessel ((DWORD)i), g_psys->GetVessel ((DWORD)i)->GetModuleInterface ());
+		}
 		dlerror ();
 	}
 	why = err;
@@ -106,4 +122,20 @@ const char *WinModuleFileName (void *hModule)
 {
 	auto it = g_handles.find (hModule);
 	return it == g_handles.end () ? "" : it->second.c_str ();
+}
+
+// not upstream (vessel-hooks)
+VESSEL *WinModuleVesselIntf (void *hVessel, VESSEL *own)
+{
+	return g_vintf ? g_vintf (hVessel, own) : own;
+}
+
+void WinModuleVesselNew (void *hVessel, VESSEL *own)
+{
+	if (g_vnew) g_vnew (hVessel, own);
+}
+
+void WinModuleVesselGone (void *hVessel)
+{
+	if (g_vgone) g_vgone (hVessel);
 }

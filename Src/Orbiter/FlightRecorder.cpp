@@ -767,7 +767,7 @@ void Vessel::FRecorder_PlayEvent ()
 				e = strtok (NULL, ""); // not upstream: the rest of the line; s+strlen(s)+1 was past the line when the tag ended it
 				if (!e) e = (char*)""; // not upstream: an add-on event with an empty payload is still delivered
 				//e = strtok (NULL, " \t");
-				((VESSEL2*)modIntf.v)->clbkPlaybackEvent (td.SimT1, frec_eng_simt, s, e);
+				((VESSEL2*)ClbkIntf ())->clbkPlaybackEvent (td.SimT1, frec_eng_simt, s, e); // not upstream (vessel-hooks)
 			}
 		}
 		*FRatc_stream >> frec_eng_simt;

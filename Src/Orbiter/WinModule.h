@@ -16,3 +16,9 @@ const char *WinModuleFileName (void *hModule);
 
 // a folder entry that is a Windows module no .so beside it has the name of
 bool WinModuleEntry (const std::filesystem::path &file);
+
+// not upstream (vessel-hooks): the bridge takes a vessel's callbacks where a Windows module hooked them in its object
+class VESSEL;
+VESSEL *WinModuleVesselIntf (void *hVessel, VESSEL *own); // the object Orbiter calls the callbacks on: own when the bridge has none
+void WinModuleVesselNew (void *hVessel, VESSEL *own); // the vessel's module object is made
+void WinModuleVesselGone (void *hVessel); // the vessel is being destroyed
