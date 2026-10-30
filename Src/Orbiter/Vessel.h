@@ -1313,6 +1313,7 @@ protected:
 	double GroundClearance () const;            // not upstream (contact-stiffness)
 	bool SettleOnGear (double lng, double lat, double dir); // not upstream (contact-stiffness)
 	bool InPlayback () const { return bFRplayback; }        // not upstream (contact-stiffness)
+	void MadeInUpdate (StateVectors *upd);                  // not upstream (poststep-state)
 
 	bool ThrustEngaged () const { return m_bThrustEngaged; }
 

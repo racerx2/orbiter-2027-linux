@@ -103,7 +103,10 @@ Vessel::Vessel (const PlanetarySystem *psys, const char *_name, const char *_cla
 	el = new Elements; TRACENEW
 
 	// Set status from parameters
+	StateVectors *upd = s1; // not upstream (poststep-state): made during the update, set as in a pre-step, then MadeInUpdate
+	s1 = s0;
 	SetState (status);
+	MadeInUpdate (upd);
 	Setup ();
 	PostCreation ();
 	InitSupervessel (false); // bind vessel into superstructure if applicable
@@ -137,10 +140,13 @@ Vessel::Vessel (const PlanetarySystem *psys, const char *_name, const char *_cla
 	el = new Elements; TRACENEW
 
 	// Set status from parameters
+	StateVectors *upd = s1; // not upstream (poststep-state): made during the update, set as in a pre-step, then MadeInUpdate
+	s1 = s0;
 	if (modIntf.v->Version() >= 1)
 		((VESSEL2*)modIntf.v)->clbkSetStateEx (status);
 	else
 		SetStateEx (status);
+	MadeInUpdate (upd);
 	Setup ();
 	PostCreation ();
 	InitSupervessel (false); // bind vessel into superstructure if applicable
@@ -3761,7 +3767,25 @@ void Vessel::InitOrbiting (const Vector &relr, const Vector &relv, const Vector 
 
 	if (_vrot) s0->omega.Set (*_vrot);
 
+	if (s1 != s0) { // not upstream (poststep-state): set during the update, it takes effect with s1, against the body's s1
+		s1->R.Set (s0->R), s1->Q.Set (s0->Q), s1->omega.Set (s0->omega);
+		RPlace (cpos + cbody->s1->pos, cvel + cbody->s1->vel);
+	} else
 	RPlace(cpos + cbody->GPos(), cvel + cbody->GVel());
+}
+
+// not upstream (poststep-state): made during the update, its state went in s0 against the bodies at the step's start;
+// upd (s1) gets it against them at the step's end, where it takes effect
+void Vessel::MadeInUpdate (StateVectors *upd)
+{
+	if (upd == s0) return;
+	s1 = upd;
+	s1->Set (*s0);
+	if (fstatus != FLIGHTSTATUS_FREEFLIGHT || !cbody || cbody->s1 == cbody->s0) return; // landed: placed from its planet
+	Vector dp (cbody->s1->pos - cbody->s0->pos), dv (cbody->s1->vel - cbody->s0->vel);
+	s1->pos += dp, s1->vel += dv;
+	rpos_base += dp, rvel_base += dv;
+	UpdateSurfParams ();
 }
 
 void Vessel::SetProxyplanet (Planet *pp)
