@@ -1309,6 +1309,11 @@ protected:
 	// Returns true if any part of the vessel is in contact with a planet surface
 	// Should be called only after update phase, and assumes that sp is up to date.
 
+	double LowestContact (DWORD &lowest) const; // not upstream (contact-stiffness)
+	double GroundClearance () const;            // not upstream (contact-stiffness)
+	bool SettleOnGear (double lng, double lat, double dir); // not upstream (contact-stiffness)
+	bool InPlayback () const { return bFRplayback; }        // not upstream (contact-stiffness)
+
 	bool ThrustEngaged () const { return m_bThrustEngaged; }
 
 	bool IsComponent () const { return supervessel != 0 || attach; }

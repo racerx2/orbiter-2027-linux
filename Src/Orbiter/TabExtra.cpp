@@ -391,6 +391,8 @@ void ExtraDynamics::SetDialog (QWidget *hWnd, const CFG_PHYSICSPRM &prm)
 	}
 	sprintf (cbuf, "%d", prm.PropSubMax);
 	oapiSetDlgItemText(hWnd, IDC_PROP_MAXSAMPLE, cbuf);
+	sprintf (cbuf, "%d", prm.ContactSubMax); // not upstream (contact-stiffness)
+	oapiSetDlgItemText(hWnd, IDC_PROP_CONTACTSAMPLE, cbuf);
 }
 
 void ExtraDynamics::Activate (QWidget *hWnd, int which)
@@ -485,6 +487,13 @@ bool ExtraDynamics::StoreParams (QWidget *hWnd)
 		return false;
 	} else {
 		cfg->CfgPhysicsPrm.PropSubMax = i;
+	}
+	oapiGetDlgItemText(hWnd, IDC_PROP_CONTACTSAMPLE, cbuf, 256); // not upstream (contact-stiffness)
+	if ((sscanf (cbuf, "%d", &i) != 1) || i < 1) {
+		Error ("Invalid value for contact subsamples (integer value >= 1 required).");
+		return false;
+	} else {
+		cfg->CfgPhysicsPrm.ContactSubMax = i;
 	}
 
 	return true;

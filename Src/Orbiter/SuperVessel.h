@@ -164,6 +164,9 @@ protected:
 	// Returns true if any part of the vessel is in contact with a planet surface
 	// Should be called only after update phase, and assumes that sp is up to date.
 
+	double GroundClearance () const; // not upstream (contact-stiffness): the components' lowest
+	bool InPlayback () const;        // not upstream (contact-stiffness): the lead vessel's
+
 	bool ThrustEngaged () const;
 
 	TOUCHDOWN_VTX *HullvtxFirst ();

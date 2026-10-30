@@ -5,12 +5,24 @@
 #include "Vesselbase.h"
 #include "Psys.h"
 #include "TileStream.h" // not upstream: TsElevGen
+#include <cmath> // not upstream (contact-stiffness)
 
 using std::max;
 
+extern Orbiter *g_pOrbiter;
 extern PlanetarySystem *g_psys;
 extern TimeData td;
 extern char DBG_MSG[256];
+
+// not upstream (contact-stiffness): omega x dt under this for the ground's springs (the integrator's stable range)
+static const double GroundOmegaDt = 2.0;
+
+// not upstream (contact-stiffness): Orbiter.cfg's ContactSubsampling, no fewer than PropSubsampling (upstream's count)
+static double ContactSubMax ()
+{
+	const CFG_PHYSICSPRM &p = g_pOrbiter->Cfg()->CfgPhysicsPrm;
+	return (double)max (p.ContactSubMax, p.PropSubMax);
+}
 
 
 // =======================================================================
@@ -309,6 +321,55 @@ void VesselBase::CheckLanded ()
 
 // =======================================================================
 
+// not upstream (contact-stiffness): landed now when the step can't hold the ground contact (stiff springs, time warp)
+void VesselBase::ContactPreStep ()
+{
+	contact_acc0 = acc;
+	contact_nstep = contact_reruns = 0;
+	contact_at_start = bSurfaceContact;
+	if (fstatus != FLIGHTSTATUS_FREEFLIGHT || InPlayback ()) ground_omega_last = 0.0; // only a dynamic step measures it
+	if (!contact_at_start || fstatus != FLIGHTSTATUS_FREEFLIGHT || IsComponent () || !proxyplanet || InPlayback () ||
+		ThrustEngaged ()) return;
+	if (ContactSubsteps () <= ContactSubMax ()) return; // the step's substeps hold the contact
+	Vector rel (s0->pos - proxybody->s0->pos);
+	double lng, lat, rad;
+	proxybody->LocalToEquatorial (tmul (proxybody->s0->R, rel), lng, lat, rad);
+	double dir = LandedHeading (lng, lat);
+	if (!SettleOnGear (lng, lat, dir)) { // at its attitude, its lowest point on the ground
+		double c = GroundClearance ();
+		if (!(c < HUGE_VAL)) return;
+		Matrix lrot (s0->R);
+		lrot.tpremul (proxyplanet->s0->R);
+		InitLanded (proxyplanet, lng, lat, dir, &lrot, sp.alt - c);
+	}
+	s0->omega.Set (0, 0, 0); // settled, as InitLanded's Amom (the landed update keeps it)
+	LandingTest.testing = false;
+}
+
+// =======================================================================
+
+// not upstream (contact-stiffness): the step ends at rest on the planet where s was (at tfrac of the step)
+void VesselBase::StopAt (const StateVectors &s, double tfrac)
+{
+	StateVectors ps = proxybody->InterpolateState (tfrac);
+	Vector lpos (tmul (ps.R, s.pos - ps.pos));
+	Matrix lrot (s.R);
+	lrot.tpremul (ps.R); // vessel to planet frame
+	double om = proxyplanet ? Pi2 / proxyplanet->RotT() : 0.0;
+	s1->pos.Set (mul (proxybody->s1->R, lpos) + proxybody->s1->pos);
+	s1->vel.Set (mul (proxybody->s1->R, crossp (lpos, Vector (0, om, 0))) + proxybody->s1->vel); // with the surface
+	s1->Q.Set (lrot);
+	s1->Q.premul (proxybody->s1->Q);
+	s1->R.Set (s1->Q);
+	s1->omega.Set (0, 0, 0);
+	rpos_base = s1->pos, rpos_add.Set (0, 0, 0);
+	rvel_base = s1->vel, rvel_add.Set (0, 0, 0);
+	acc = proxybody->Acceleration() - mul (proxybody->s1->R, lpos) * (om*om); // the surface's, as the landed update
+	arot.Set (0, 0, 0);
+}
+
+// =======================================================================
+
 double VesselBase::LandedHeading (double lng, double lat) const
 {
 	static const double eps = 1e-4;
@@ -401,10 +462,16 @@ bool VesselBase::SurfaceProximity () const
 void VesselBase::SetPropagator (int &plevel, int &nstep) const
 {
 	RigidBody::SetPropagator (plevel, nstep);
+	contact_stop = false; // not upstream (contact-stiffness)
+	ground_omega = 0.0;
 	if (bSurfaceContact) {
 		plevel = NumPropLevel()-1;
 		nstep = MaxSubStep(); // should be set according to (vertical?) speed
 		update_with_collision = true;
+		// not upstream (contact-stiffness): substeps for the contact's stiffest motion; past the most the step stops
+		double n = max (ContactSubsteps (), (double)contact_nstep);
+		if (n > ContactSubMax ()) contact_stop = true;
+		else nstep = max (nstep, (int)n);
 	} else {
 		update_with_collision = false;
 	}
@@ -415,6 +482,27 @@ void VesselBase::SetPropagator (int &plevel, int &nstep) const
 
 bool VesselBase::ValidateStateUpdate (StateVectors *s)
 {
+	// not upstream (contact-stiffness): the step stops where it started; ContactPreStep lands it before the next
+	if (contact_stop) {
+		StopAt (*s0, 0.0);
+		ground_omega_last = ground_omega;
+		return true;
+	}
+	if (ground_omega * td.SimDT / CurPropagatorSubsamples () > GroundOmegaDt) {
+		// not upstream (contact-stiffness): stiffer than the pass's substeps: again with more, or past the most stop at the contact
+		double n = std::ceil (td.SimDT * ground_omega / GroundOmegaDt);
+		if (n <= ContactSubMax () && contact_reruns < 2) {
+			contact_nstep = (int)n;
+			contact_reruns++;
+			bSurfaceContact = true; // the contact's propagator (SetPropagator), as the collision's rerun
+			return false;
+		}
+		if (contact_at_start) StopAt (*s0, 0.0);
+		else StopAtContact (GroundClearance (), *s0, 0.0);
+		bSurfaceContact = true;
+		ground_omega_last = ground_omega;
+		return true;
+	}
 	if (collision_during_update) {
 		if (!update_with_collision) {
 			update_with_collision = true;
@@ -435,7 +523,49 @@ bool VesselBase::ValidateStateUpdate (StateVectors *s)
 			}
 		}
 	}
+	ground_omega_last = ground_omega; // not upstream (contact-stiffness)
 	return true;
+}
+
+// =======================================================================
+
+// not upstream (contact-stiffness): stop where the start's path first takes the lowest point (c over the ground) 5 cm in
+bool VesselBase::StopAtContact (double c, const StateVectors &s, double tfrac)
+{
+	if (!(c < HUGE_VAL)) {
+		StopAt (s, tfrac);
+		return false;
+	}
+	Vector rel (s0->pos - proxybody->s0->pos), vrel (s0->vel - proxybody->s0->vel);
+	Vector arel (contact_acc0 - proxybody->Acceleration());
+	double r0 = rel.length(), t = -1.0;
+	c += 0.05;
+	auto h = [&] (double tt) { return (rel + vrel * tt + arel * (0.5 * tt * tt)).length() - r0 + c; };
+	if (c <= 0.05) t = 0.0;
+	else
+		for (int i = 1, n = 64; i <= n && t < 0.0; i++) {
+			double ta = td.SimDT * (i - 1) / n, tb = td.SimDT * i / n;
+			if (h (tb) >= 0.0) continue;
+			for (int k = 0; k < 50; k++) (h (0.5 * (ta + tb)) < 0.0 ? tb : ta) = 0.5 * (ta + tb);
+			t = tb;
+		}
+	if (t < 0.0) {
+		StopAt (s, tfrac);
+		return false;
+	}
+	StateVectors sc (*s0);
+	sc.pos = s0->pos + s0->vel * t + contact_acc0 * (0.5 * t * t);
+	if (!t) sc.pos -= rel * (c / r0); // touching at the start: 5 cm in
+	StopAt (sc, t / td.SimDT);
+	return true;
+}
+
+// =======================================================================
+
+// not upstream (contact-stiffness): the substeps the ground contact needs, from the last step's stiffest motion
+double VesselBase::ContactSubsteps () const
+{
+	return bSurfaceContact ? std::ceil (td.SimDT * ground_omega_last / GroundOmegaDt) : 0.0;
 }
 
 // =======================================================================

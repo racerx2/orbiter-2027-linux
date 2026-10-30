@@ -4630,11 +4630,15 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 
 		DWORD ntouch = 0;
 		double hullk = HullPoints::HULL_K*mass, hulld = 2.0*HullPoints::HULL_ZETA*sqrt (hullk*mass); // not upstream (terrain-contact): a hull point's spring and damper
+		double sk = 0.0, sc = 0.0; // not upstream (contact-stiffness): the touching points' k and c over their effective mass
 		for (i = 0; i < (int)nall; i++) {
 			if (tdy[i] < 0.0) { // ground contact on point i!
 				bool hull = i >= (int)ntouchdown_vtx; // not upstream (terrain-contact): a hull point
 				const Vector &tv = (hull ? hullpt[i-ntouchdown_vtx] : touchdown_vtx[i].pos);
 				double kst = (hull ? hullk : touchdown_vtx[i].stiffness), kdm = (hull ? hulld : touchdown_vtx[i].damping), kmu = (hull ? HullPoints::HULL_MU : touchdown_vtx[i].mu);
+				Vector nr (crossp (hn, tv)); // not upstream (contact-stiffness): 1/m_eff = 1/m + sum (n x r)_a^2 / (m pmi_a)
+				double me = (1.0 + (pmi.x > 0.0 ? nr.x*nr.x/pmi.x : 0.0) + (pmi.y > 0.0 ? nr.y*nr.y/pmi.y : 0.0) + (pmi.z > 0.0 ? nr.z*nr.z/pmi.z : 0.0))/mass;
+				sk += kst*me, sc += kdm*me;
 				tdy[i] = max(tdy[i], -1.0); // DEBUG
 				tidx[ntouch++] = i;
 				Vector gv (surfp.groundvel_ship + crossp(tv,s->omega)); // ground velocity of touchdown point in vessel frame
@@ -4681,6 +4685,7 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 				fn[i] = flng[i] = flat[i] = 0.0;
 			}
 		}
+		ground_omega = max (ground_omega, sqrt (sk) + sc); // not upstream (contact-stiffness): the stiffest it can move
 
 		// limit forces to avoid velocity reversal
 		gv_lon = dotp (surfp.groundvel_ship, d1h);
@@ -5250,6 +5255,45 @@ bool Vessel::CheckSurfaceContact () const
 	for (const Vector &h : hullpt) // not upstream (terrain-contact): the hull's points
 		if (mul (T, h).y + alt < 0.0) return true;
 	return false;
+}
+
+// not upstream (contact-stiffness): the lowest contact point over CheckSurfaceContact's ground plane; lowest: its index,
+// the hull's after the touchdown points
+double Vessel::LowestContact (DWORD &lowest) const
+{
+	double c = HUGE_VAL;
+	lowest = (DWORD)-1;
+	if (!proxybody) return c;
+	Matrix T (sp.L2H);
+	T.tpostmul (proxybody->s0->R);
+	T.postmul (s0->R);
+	double alt = Altitude();
+	double rdist = s0->pos.dist (proxybody->s0->pos), grav = Ggrav * proxybody->Mass() / (rdist*rdist);
+	for (DWORD i = 0; i < ntouchdown_vtx; i++) {
+		double y = mul (T, touchdown_vtx[i].pos).y + alt - TdRest (i, grav);
+		if (y < c) c = y, lowest = i;
+	}
+	for (DWORD k = 0; k < hullpt.size (); k++) {
+		double y = mul (T, hullpt[k]).y + alt;
+		if (y < c) c = y, lowest = ntouchdown_vtx + k;
+	}
+	return c;
+}
+
+// not upstream (contact-stiffness)
+double Vessel::GroundClearance () const
+{
+	DWORD lowest;
+	return LowestContact (lowest);
+}
+
+// not upstream (contact-stiffness): on its primary points at rest (terrain-contact's pose) when one of them is the lowest
+bool Vessel::SettleOnGear (double lng, double lat, double dir)
+{
+	DWORD lowest;
+	if (!proxyplanet || ntouchdown_vtx < 3 || !(LowestContact (lowest) < HUGE_VAL) || lowest >= 3) return false;
+	InitLandedOnGround (proxyplanet, lng, lat, dir);
+	return true;
 }
 
 void Vessel::Timejump (double dt, int mode)

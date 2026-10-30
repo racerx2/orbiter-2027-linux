@@ -822,6 +822,13 @@ void PlanetarySystem::Update (bool force)
 	for (i = 0; i < vessels     .size(); i++) vessels     [i]->Update (force);
 }
 
+// not upstream (contact-stiffness)
+void PlanetarySystem::ContactPreStep ()
+{
+	for (size_t i = 0; i < supervessels.size(); i++) supervessels[i]->ContactPreStep ();
+	for (size_t i = 0; i < vessels.size(); i++) vessels[i]->ContactPreStep ();
+}
+
 void PlanetarySystem::FinaliseUpdate ()
 {
 	DWORD i;

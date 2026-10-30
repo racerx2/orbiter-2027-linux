@@ -200,6 +200,8 @@ Normally, only entries whose values differ from their default setting are writte
 	PropStage<i> & List & Integrator parameters for propagator stage <i> (0-4). Values: integrator index / time step limit. Default: i = 0: [0 0.1 0.00349066 0.5 0.0174533], i = 1: [1 2 0.0349066 10 0.0698132], i = 2: [3 20 0.0872665 100 0.174533], i = 3: [5 200 0.349066], i = 4: [5 500 0.872665]\\
 	\hline\rule{0pt}{2ex}
 	PropSubsampling & Int & Max. subsampling steps. Default: 10\\
+	\hline\rule{0pt}{2ex}
+	ContactSubsampling & Int & Max. subsampling steps for a vessel in ground contact, chosen from the stiffness of its touchdown points (never fewer than PropSubsampling). A contact that needs more is put on rails: the vessel is landed where it touches. Default: 100\\
 	\hline
 	\multicolumn{3}{|c|}{\rule{0pt}{2ex}\textbf{\textit{Planet rendering parameters}}}\\
 	\hline\rule{0pt}{2ex}

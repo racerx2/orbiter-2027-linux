@@ -56,6 +56,7 @@ SuperVessel::SuperVessel (Vessel *vessel)
 	updcount = irand (100);
 	acc = g_psys->Gacc (s0->pos, 0, &gfielddata);
 
+	SetDefaultState(); // not upstream (contact-stiffness): before UpdateProxies, as it clears the proxies
 	UpdateProxies();
 	cpos = s0->pos - cbody->GPos();
 	cvel = s0->vel - cbody->GVel();
@@ -67,8 +68,6 @@ SuperVessel::SuperVessel (Vessel *vessel)
 	//	vessel->FlushRPos();
 	//	vessel->FlushRVel();
 	//}
-
-	SetDefaultState();
 }
 
 SuperVessel::SuperVessel (Vessel *vessel1, Vessel *vessel2, int port1, int port2, bool mixmoments)
@@ -146,6 +145,7 @@ SuperVessel::SuperVessel (Vessel *vessel1, Vessel *vessel2, int port1, int port2
 	acc = g_psys->Gacc (s0->pos, 0, &gfielddata);
 	// init acc and gfielddata
 
+	SetDefaultState(); // not upstream (contact-stiffness): before UpdateProxies, as it clears the proxies
 	UpdateProxies();
 	if (cbody) cpos = s0->pos - cbody->s0->pos; else cpos = { 0, 0, 0 };
 	if (cbody) cvel = s0->vel - cbody->s0->vel; else cvel = { 0, 0, 0 };
@@ -162,7 +162,6 @@ SuperVessel::SuperVessel (Vessel *vessel1, Vessel *vessel2, int port1, int port2
 		v->UpdateSurfParams();
 	}
 
-	SetDefaultState();
 	ResetSize();
 	Activate (true);
 }
@@ -743,10 +742,13 @@ bool SuperVessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s,
 	for (comp = 0; comp < nv; comp++) {
 		Vector Fcomp, Mcomp;
 		ComponentStateVectors (s, &scomp, comp);
-		if (vlist[comp].vessel->AddSurfaceForces (&Fcomp, &Mcomp, &scomp, tfrac, dt)) {
+		Vessel *v = vlist[comp].vessel;
+		v->ground_omega = 0.0; // not upstream (contact-stiffness)
+		if (v->AddSurfaceForces (&Fcomp, &Mcomp, &scomp, tfrac, dt)) {
 			AddComponentForceAndMoment (F, M, &Fcomp, &Mcomp, comp);
 			impact = true;
 		}
+		ground_omega = std::max (ground_omega, v->ground_omega); // not upstream (contact-stiffness): the stiffest component's, by its own mass
 	}
 	return impact;
 }
@@ -871,6 +873,20 @@ bool SuperVessel::CheckSurfaceContact () const
 		if (vlist[comp].vessel->CheckSurfaceContact ())
 			return true;
 	return false;
+}
+
+// not upstream (contact-stiffness): the components' lowest contact point over the ground
+double SuperVessel::GroundClearance () const
+{
+	double c = HUGE_VAL;
+	for (DWORD comp = 0; comp < nv; comp++) c = std::min (c, vlist[comp].vessel->GroundClearance ());
+	return c;
+}
+
+// not upstream (contact-stiffness): the lead vessel's recording moves the stack
+bool SuperVessel::InPlayback () const
+{
+	return nv && vlist[0].vessel->bFRplayback;
 }
 
 // =======================================================================

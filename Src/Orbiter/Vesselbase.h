@@ -131,6 +131,9 @@ public:
 	inline bool GroundContact() const
 	{ return bSurfaceContact; }
 
+	// not upstream (contact-stiffness): before the step, landed when the step can't hold its ground contact
+	void ContactPreStep ();
+
 protected:
 	virtual void SetDefaultState ();
 	// Reset all state parameters to default values
@@ -189,12 +192,31 @@ protected:
 	virtual TOUCHDOWN_VTX *HullvtxNext () = 0;
 	// Hull vertex iterator
 
+	// not upstream (contact-stiffness): the lowest contact point over the ground plane now [m]
+	virtual double GroundClearance () const { return HUGE_VAL; }
+	// not upstream (contact-stiffness): landed on its primary points at rest when one of them is the lowest point
+	virtual bool SettleOnGear (double lng, double lat, double dir) { return false; }
+	// not upstream (contact-stiffness): its state comes from a flight recording
+	virtual bool InPlayback () const { return false; }
+
 	// Behaviour flags
 	bool bDynamicGroundContact;  // use dynamic model for ground contact forces
 
 	mutable bool update_with_collision;   // include surface contact forces in dynamic update
 	mutable bool collision_during_update; // surface contact during current step update?
 	mutable bool collision_speed_checked; // checked for valid speed during impact?
+
+	// not upstream (contact-stiffness)
+	mutable bool contact_stop = false;       // the step can't hold the contact: it ends at it
+	bool contact_at_start = false;           // in ground contact at the step's start
+	mutable int contact_nstep = 0;           // the substeps a pass asked of its rerun
+	int contact_reruns = 0;                  // this step's reruns for the contact's stiffness
+	mutable double ground_omega = 0.0;       // the contact's stiffest motion in this pass [rad/s]
+	double ground_omega_last = 0.0;          // the same in the last dynamic step [rad/s]
+	Vector contact_acc0;                     // the acceleration at the step's start
+	double ContactSubsteps () const;         // the substeps the contact needs in this step
+	void StopAt (const StateVectors &s, double tfrac); // the step ends at rest on the planet where s was
+	bool StopAtContact (double c, const StateVectors &s, double tfrac); // the first contact on the start's path
 
 	// Status flags
 	FlightStatus fstatus;

@@ -79,6 +79,7 @@ struct CFG_PHYSICSPRM {
 	int    PropSubMax;			// max number of subsampling steps
 	double APropCouplingLimit;	// angle step limit for cross term suppresion
 	double APropTorqueLimit;	// angle step limit for torque suppression
+	int    ContactSubMax;		// not upstream (contact-stiffness): a ground contact's most substeps, then rails
 };
 
 struct CFG_LOGICPRM {

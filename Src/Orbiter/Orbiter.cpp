@@ -2212,6 +2212,7 @@ VOID Orbiter::UpdateWorld ()
 {
 	// module pre-timestep callbacks
 	if (bRunning) ModulePreStep ();
+	if (bRunning && td.SimDT) g_psys->ContactPreStep (); // not upstream (contact-stiffness)
 
 	// update world
 	g_bStateUpdate = true;

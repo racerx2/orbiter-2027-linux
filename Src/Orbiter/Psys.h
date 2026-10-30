@@ -121,6 +121,8 @@ public:
 	// Add moons recursively to the child list of "cbody",
 	// using descriptions in "is" for description string "id"
 
+	void ContactPreStep (); // not upstream (contact-stiffness): the vessels' and stacks', before the state update
+
 	void Update (bool force = false);
 	// Perform time step for the planetary system
 

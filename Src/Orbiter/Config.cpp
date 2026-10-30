@@ -63,7 +63,8 @@ CFG_PHYSICSPRM CfgPhysicsPrm_default = {
 	20.0*RAD,	// APropSubLimit (angle step limit for angular subsampling)
 	10, 		// PropSubMax (max number of subsampling steps)
 	30.0*RAD,	// APropCouplingLimit (angle step limit for cross term suppresion)
-	3600.0*RAD	// APropTorqueLimit (angle step limit for torque suppression)
+	3600.0*RAD,	// APropTorqueLimit (angle step limit for torque suppression)
+	100			// ContactSubMax (not upstream, contact-stiffness: a ground contact's substeps at most)
 };
 
 CFG_LOGICPRM CfgLogicPrm_default = {
@@ -621,6 +622,7 @@ bool Config::Load(const char *fname)
 	CfgPhysicsPrm.PropTLim[CfgPhysicsPrm.nLPropLevel-1] = 1e10;
 	CfgPhysicsPrm.PropALim[CfgPhysicsPrm.nLPropLevel-1] = 1e10;
 	GetInt (ifs, "PropSubsampling", CfgPhysicsPrm.PropSubMax);
+	if (GetInt (ifs, "ContactSubsampling", i) && i >= 1) CfgPhysicsPrm.ContactSubMax = i; // not upstream (contact-stiffness)
 
 #ifdef UNDEF
 	// BEGIN OBSOLETE
@@ -1219,6 +1221,8 @@ BOOL Config::Write (const char *fname) const
 #endif
 		if (CfgPhysicsPrm.PropSubMax != CfgPhysicsPrm_default.PropSubMax || bEchoAll)
 			ofs << "PropSubsampling = " << CfgPhysicsPrm.PropSubMax << '\n';
+		if (CfgPhysicsPrm.ContactSubMax != CfgPhysicsPrm_default.ContactSubMax || bEchoAll) // not upstream (contact-stiffness)
+			ofs << "ContactSubsampling = " << CfgPhysicsPrm.ContactSubMax << '\n';
 	}
 
 	if (memcmp (&CfgPRenderPrm, &CfgPRenderPrm_default, sizeof(CFG_PLANETRENDERPRM)) || bEchoAll) {

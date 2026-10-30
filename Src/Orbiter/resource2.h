@@ -32,6 +32,7 @@
 #define IDC_PROP_ALIMIT23  (IDC_PROP_ALIMIT01+2)
 #define IDC_PROP_ALIMIT34  (IDC_PROP_ALIMIT01+3)
 #define IDC_PROP_MAXSAMPLE 1130
+#define IDC_PROP_CONTACTSAMPLE 1131 // not upstream (contact-stiffness)
 
 
 // Resource IDs for dialogs IDD_CAMERA and IDD_CAM_PG_*
