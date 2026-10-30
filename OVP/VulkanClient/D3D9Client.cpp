@@ -3314,8 +3314,9 @@ void D3D9Client::clbkReleaseSketchpad_const(oapi::Sketchpad* sp) const
 	}
 	else {
 		GDIPad* pGDI = (GDIPad*)sp;
-		SURFACE(hSrf)->ReleaseDC(pGDI->GetDC());
-		delete pGDI;
+		QPainter *hDC = pGDI->GetDC();
+		delete pGDI; // not upstream: first, the pad puts its font, pen and brush back on the painter that ReleaseDC deletes
+		SURFACE(hSrf)->ReleaseDC(hDC);
 	}
 }
 
