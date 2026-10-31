@@ -286,7 +286,7 @@ void orbiter::ScenarioTab::ScanDirectory (const fs::path& path, QTreeWidgetItem 
 	// subdirectories (cChildren = 1, folder image; TVI_SORT)
 	for (auto& entry : fs::directory_iterator(path, ec)) {
 		if (entry.is_directory()) {
-			QString name = QString::fromStdString(entry.path().stem().string());
+			QString name = QString::fromStdString(entry.path().filename().string()); // not upstream (scenario-folders): the whole name, "_UMmu 3.0 Demo" not "_UMmu 3"
 			ht = new QTreeWidgetItem();
 			ht->setText(0, name);
 			ht->setIcon(0, *treeicon[0]);
