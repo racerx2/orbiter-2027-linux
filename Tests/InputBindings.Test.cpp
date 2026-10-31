@@ -642,17 +642,17 @@ TEST_CASE("Global.cfg made from Orbiter.cfg's joystick settings", "[bindings]")
 	(void)!system (cmd.c_str());
 }
 
-// a generic stick (X Y Z RZ, a hat, 12 buttons) in a fake sysfs, its node an empty file
-static void StickNode (const std::string &sys, const std::string &dev, int n)
+// a joystick-class controller (X Y Z RZ, a hat, 12 buttons) in a fake sysfs, its node an empty file
+static void StickNode (const std::string &sys, const std::string &dev, int n, const char *name = "Generic USB Joystick", const char *vid = "0079", const char *pid = "0006")
 {
 	std::string d = sys + "/event" + std::to_string (n) + "/device/";
 	for (std::string p : {sys + "/event" + std::to_string (n), d, d + "id", d + "capabilities"}) mkdir (p.c_str(), 0755);
 	auto put = [](const std::string &path, const std::string &text) { std::ofstream (path) << text << "\n"; };
-	put (d + "name", "Generic USB Joystick");
+	put (d + "name", name);
 	put (d + "uniq", "");
-	put (d + "phys", "usb-0000:00:14.0-2/input0");
-	put (d + "id/vendor", "0079");
-	put (d + "id/product", "0006");
+	put (d + "phys", "usb-0000:00:14.0-" + std::to_string (n) + "/input0");
+	put (d + "id/vendor", vid);
+	put (d + "id/product", pid);
 	put (d + "id/version", "0110");
 	put (d + "capabilities/ev", "1b");
 	put (d + "capabilities/key", "fff00000000 0 0 0 0");
@@ -680,7 +680,17 @@ TEST_CASE("Global.cfg binds the first joystick when Orbiter.cfg names none", "[b
 		REQUIRE(read ("Global.cfg") == empty);
 		REQUIRE(again.Messages().empty());
 	}
-	StickNode (sys, dev, 7);
+	StickNode (sys, dev, 5, "Winwing WINWING Orion Throttle Base II + F15EX HANDLE L + F15EX HANDLE R", "4098", "bd64");
+	{
+		InputDevices devs (sys, dev); // a throttle alone: no stick to bind
+		devs.Scan ();
+		InputSystem is (dir + "/Input", &devs);
+		std::string empty = read ("Global.cfg");
+		is.Migrate ({0, 1000, 0, 0, false});
+		REQUIRE(read ("Global.cfg") == empty);
+		REQUIRE(is.Messages().empty());
+	}
+	StickNode (sys, dev, 7); // the stick after the throttle: the stick is taken
 	InputDevices devs (sys, dev);
 	devs.Scan ();
 	InputSystem is (dir + "/Input", &devs);

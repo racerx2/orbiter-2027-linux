@@ -1621,10 +1621,18 @@ static const char *legacyHeader =
 	"; Made from Orbiter.cfg's joystick settings (JoystickIndex, deadzone, throttle axis), as the old joystick worked.\n"
 	"; BIND <input> [@layer] [mods] [ZONE a b] [mode] = <output> [options]; see the User Manual, Controllers.\n\n";
 
-// not upstream (input-bindings): JoystickIndex, or the first joystick connected when it is 0 (no Joystick page sets it)
+// not upstream (input-bindings): JoystickIndex, or for 0 the first stick or yoke connected, else the first that isn't a throttle, pedals, panel or box
 static unsigned JoyIndex (unsigned joyIndex, const InputDevices *devs)
 {
-	return (joyIndex || devs->LegacyJoysticks().empty() ? joyIndex : 1);
+	if (joyIndex) return joyIndex;
+	std::vector<const InputDevice*> lj = devs->LegacyJoysticks();
+	for (int pass = 0; pass < 2; pass++)
+		for (size_t i = 0; i < lj.size(); i++) {
+			std::string r = InputDefFor (*lj[i], {}).name;
+			bool stick = (r == "Stick" || r == "Yoke"), other = (r != "Throttle" && r != "Pedals" && r != "Panel" && r != "Box");
+			if (pass ? other : stick) return (unsigned)i + 1;
+		}
+	return 0;
 }
 
 void InputSystem::Migrate (const InputLegacyCfg &cfg)
@@ -1664,7 +1672,7 @@ void InputSystem::Migrate (const InputLegacyCfg &cfg)
 	}
 	InputWriteDevices (dpath, df);
 	InputWriteProfile (gpath, g, legacyHeader);
-	if (idx && !cfg.joyIndex) msgs.push_back ("Input: Config/Input binds the first joystick connected, " + devs->LegacyJoysticks()[0]->name + ", as " + df.defs.back().name);
+	if (idx && !cfg.joyIndex) msgs.push_back ("Input: Config/Input binds the first joystick connected, " + devs->LegacyJoysticks()[idx-1]->name + ", as " + df.defs.back().name);
 	else msgs.push_back ("Input: Config/Input made from Orbiter.cfg's joystick settings");
 }
 
@@ -1680,7 +1688,7 @@ std::string InputSystem::DefaultGlobal (InputProfile &g) const
 	if (idx <= lj.size()) dev = NameOf (lj[idx-1]->id);
 	for (auto &d : devfile.defs) if (dev.empty() && d.legacyIndex == (int)idx) dev = d.name;
 	if (dev.empty() && !legacy.joyIndex)
-		return "The first joystick connected (" + lj[0]->name + ") has no name in Devices.cfg: no controller bindings for all vessels.";
+		return "The first joystick connected (" + lj[idx-1]->name + ") has no name in Devices.cfg: no controller bindings for all vessels.";
 	if (dev.empty())
 		return "Orbiter.cfg's joystick (JoystickIndex = " + std::to_string (legacy.joyIndex) +
 			") isn't connected and has no name in Devices.cfg: no controller bindings for all vessels.";
