@@ -22,7 +22,8 @@
 using std::min;
 using std::max;
 
-// not upstream: Win32 mutex semantics (owner thread, recursive, timed wait, only the owner releases)
+// not upstream: Win32 mutex semantics (owner thread, recursive, timed wait, only the owner releases; the release gives the mutex to a
+// waiting thread, so the releaser can't take it back before it: the interpreter's hand-over runs one script cycle per frame)
 class ExecMutex {
 public:
 	ExecMutex (bool initialOwner): count(0) {
@@ -32,22 +33,31 @@ public:
 		std::unique_lock<std::mutex> lock(m);
 		std::thread::id self = std::this_thread::get_id();
 		if (count && owner == self) { count++; return true; }
-		auto isfree = [this] { return count == 0; };
-		if (timeout == INFINITE) cv.wait (lock, isfree);
-		else if (!cv.wait_for (lock, std::chrono::milliseconds(timeout), isfree)) return false;
-		owner = self; count = 1;
+		if (!count) { owner = self; count = 1; return true; }
+		waiting.push_back (self);
+		auto given = [this, self] { return count && owner == self; };
+		if (timeout == INFINITE) cv.wait (lock, given);
+		else if (!cv.wait_for (lock, std::chrono::milliseconds(timeout), given)) {
+			waiting.erase (std::find (waiting.begin(), waiting.end(), self));
+			return false;
+		}
 		return true;
 	}
 	bool Release () { // ReleaseMutex
 		std::lock_guard<std::mutex> lock(m);
 		if (!count || owner != std::this_thread::get_id()) return false;
-		if (!--count) { owner = std::thread::id(); cv.notify_all(); }
+		if (--count) return true;
+		if (waiting.empty()) { owner = std::thread::id(); return true; }
+		owner = waiting.front(); count = 1; // the longest waiter owns it now
+		waiting.pop_front();
+		cv.notify_all();
 		return true;
 	}
 private:
 	std::mutex m;
 	std::condition_variable cv;
 	std::thread::id owner;
+	std::list<std::thread::id> waiting;
 	int count;
 };
 
