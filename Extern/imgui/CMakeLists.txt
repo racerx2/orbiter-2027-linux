@@ -42,4 +42,6 @@ install(FILES ${implot_SOURCE_DIR}/implot.h
 )
 set(IMPLOT_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include)
 file(COPY ${implot_SOURCE_DIR}/implot.h DESTINATION ${IMPLOT_INCLUDE_DIR})
+# not upstream: the build tree's SDK has them as an installed Orbiter's does, for add-ons built against it
+file(COPY ${imgui_SOURCE_DIR}/imgui.h ${imgui_SOURCE_DIR}/imconfig.h ${implot_SOURCE_DIR}/implot.h DESTINATION ${ORBITER_BINARY_SDK_DIR}/include)
 target_include_directories(implot INTERFACE ${IMPLOT_INCLUDE_DIR})
