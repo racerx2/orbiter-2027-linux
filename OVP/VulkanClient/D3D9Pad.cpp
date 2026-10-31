@@ -61,20 +61,22 @@ static std::string UTF8ToCP1252(const char *utf8, int ulen)
 	// Use MB_ERR_INVALID_CHARS to have the call fail if the string
 	// contains invalid characters. In that case we assume it's
 	// a legacy plugin providing a Windows-1252 string instead of UTF-8
-	QStringDecoder dec(QStringDecoder::Utf8); // MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS): -1 = null-terminated, 0 fails
-	QString utf16 = ulen ? dec.decode(QByteArrayView(utf8, ulen < 0 ? qsizetype(strlen(utf8)) + 1 : ulen)) : QString();
+	if (ulen == 0) ulen = -1; // not upstream: 0 is the whole string, as the font takes it (upstream converted none of it)
+	QStringDecoder dec(QStringDecoder::Utf8); // MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS): -1 = null-terminated
+	QString utf16 = dec.decode(QByteArrayView(utf8, ulen < 0 ? qsizetype(strlen(utf8)) + 1 : ulen));
 	int wlen = dec.hasError() ? 0 : int(utf16.length());
+	std::string given = ulen < 0 ? std::string(utf8) : std::string(utf8, strnlen(utf8, size_t(ulen))); // not upstream: upstream returned all of utf8
 
 	// Return the original string and hope it was already using Windows-1252
 	if (wlen == 0) {
-		return std::string(utf8);
+		return given;
 	}
 
 	QByteArray lat = utf16.toLatin1(); // WideCharToMultiByte(28591): ISO-8859-1, unmapped characters become '?'
 	int len = int(lat.size());
 
 	if (len == 0) {
-		return std::string(utf8);
+		return given;
 	}
 
 	std::string str(lat.constData(), len);
