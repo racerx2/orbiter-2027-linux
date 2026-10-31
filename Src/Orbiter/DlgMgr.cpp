@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include "OrbiterAPI.h"
 #include "DlgMgr.h"
+#include "WinModule.h" // not upstream (dll-modules)
 #include "resource.h"
 #include "Orbiter.h"
 #include "Log.h"
@@ -50,12 +51,14 @@ DialogManager::DialogManager (Orbiter *orbiter, QWindow *hAppWnd)
 	firstEntry = NULL;
 	lastEntry = NULL;
 	InitImGui();
+	WinModuleDialogs (WMD_MADE); // not upstream (dll-modules)
 }
 
 DialogManager::~DialogManager ()
 {
 	Clear();
 	ShutdownImGui();
+	WinModuleDialogs (WMD_DELETED); // not upstream (dll-modules)
 }
 
 
@@ -68,6 +71,7 @@ void DialogManager::Init (QWindow *hAppWnd)
 
 void DialogManager::Clear ()
 {
+	WinModuleDialogs (WMD_CLEARED); // not upstream (dll-modules): the Windows modules' dialogs too
 	DIALOGENTRY *tmp;
 	while (firstEntry) {
 		tmp = firstEntry;
@@ -288,6 +292,7 @@ void DialogManager::BroadcastMessage (DWORD msg, void *data)
 {
 	for (DIALOGENTRY *tmp = firstEntry; tmp; tmp = tmp->next)
 		tmp->dlg->Message (msg, data);
+	WinModuleDialogs (WMD_MESSAGE, msg, data); // not upstream (dll-modules)
 }
 
 //-----------------------------------------------------------------------------

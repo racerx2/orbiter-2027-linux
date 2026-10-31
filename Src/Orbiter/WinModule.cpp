@@ -53,6 +53,8 @@ static VESSEL *(*g_vintf) (void *, VESSEL *);
 static void (*g_vnew) (void *, VESSEL *);
 static void (*g_vgone) (void *);
 static void (*g_eccgone) (ExternalCameraControl *); // not upstream (dll-modules)
+static void (*g_dialogs) (int, unsigned, void *); // not upstream (dll-modules)
+static bool g_dlgMade;
 
 // the bridge's entry points, looked up once; why says what is missing
 static const WbApi *Bridge (std::string &why)
@@ -76,6 +78,8 @@ static const WbApi *Bridge (std::string &why)
 			g_vgone = (void (*) (void *))dlsym (h, "wbVesselGone");
 			g_vintf = (VESSEL *(*) (void *, VESSEL *))dlsym (h, "wbVesselIntf");
 			g_eccgone = (void (*) (ExternalCameraControl *))dlsym (h, "wbCameraControlGone");
+			g_dialogs = (void (*) (int, unsigned, void *))dlsym (h, "wbDialogs");
+			if (g_dialogs && g_dlgMade) g_dialogs (WMD_MADE, 0, nullptr); // the simulation's dialog manager is there already
 			if (g_vnew && g_psys)
 				for (size_t i = 0; i < g_psys->nVessel (); i++) g_vnew (g_psys->GetVessel ((DWORD)i), g_psys->GetVessel ((DWORD)i)->GetModuleInterface ());
 		}
@@ -146,4 +150,12 @@ void WinModuleVesselGone (void *hVessel)
 void WinModuleCameraControlGone (ExternalCameraControl *ecc)
 {
 	if (g_eccgone) g_eccgone (ecc);
+}
+
+// not upstream (dll-modules)
+void WinModuleDialogs (int what, DWORD msg, void *data)
+{
+	if (what == WMD_MADE) g_dlgMade = true;
+	if (what == WMD_DELETED) g_dlgMade = false;
+	if (g_dialogs) g_dialogs (what, msg, data);
 }

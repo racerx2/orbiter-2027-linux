@@ -27,3 +27,7 @@ void WinModuleVesselGone (void *hVessel); // the vessel is being destroyed
 // not upstream (dll-modules): the camera that held this external camera control is destroyed; the bridge drops its proxy
 class ExternalCameraControl;
 void WinModuleCameraControlGone (ExternalCameraControl *ecc);
+
+// not upstream (dll-modules): Orbiter's dialog manager, for the Windows modules' dialogs: made, cleared, deleted, or a message it broadcasts
+enum { WMD_DELETED, WMD_MADE, WMD_CLEARED, WMD_MESSAGE };
+void WinModuleDialogs (int what, DWORD msg = 0, void *data = 0);
