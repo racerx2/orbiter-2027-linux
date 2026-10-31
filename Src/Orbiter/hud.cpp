@@ -45,7 +45,7 @@ DLLEXPORT void oapiSetHUDBearingTarget (OBJHANDLE hVessel, OBJHANDLE hBody, doub
 	g_hudBearing.vessel = hBody ? hVessel : nullptr, g_hudBearing.body = hBody, g_hudBearing.lng = lng, g_hudBearing.lat = lat;
 }
 
-static const DWORD GPSCOL = 0xFF46FF; // magenta, the same whichever way the channels go
+static const DWORD GPSCOL = 0xFF46FF; // GPSNav's magenta (255, 70, 255), the same whichever way the channels go
 
 // the add-on's point from here, as a heading change [rad, -Pi..Pi], when it is on the surface reference
 bool HUD::GpsBearing (const Vessel *self, const SurfParam *sp, double &ddir) const
@@ -59,23 +59,23 @@ bool HUD::GpsBearing (const Vessel *self, const SurfParam *sp, double &ddir) con
 	return true;
 }
 
-// a filled magenta caret on the compass ribbon, or an arrow at its end: as the base's, larger, drawn under it
+// a filled magenta caret on the compass ribbon, or an arrow at its end: the base's shape and size, drawn under it
 void HUD::DrawGpsCaret (oapi::Sketchpad *skp, double ddir)
 {
 	if (!gc) return;
-	if (!gpsPen) gpsPen = gc->clbkCreatePen (1, 2, GPSCOL);
+	if (!gpsPen) gpsPen = gc->clbkCreatePen (1, 1, GPSCOL);
 	if (!gpsBrush) gpsBrush = gc->clbkCreateBrush (GPSCOL);
 	double scalerange = Rad (spec.W/40.0);
 	oapi::IVECTOR2 pt[3];
 	if (ddir > scalerange) {
 		int x = HRES05 + spec.W/5 + 5;
-		pt[0] = {x, 8}, pt[1] = {x+15, 16}, pt[2] = {x, 24};
+		pt[0] = {x, 10}, pt[1] = {x+12, 16}, pt[2] = {x, 22};
 	} else if (ddir < -scalerange) {
 		int x = HRES05 - spec.W/5 - 5;
-		pt[0] = {x, 8}, pt[1] = {x, 24}, pt[2] = {x-15, 16};
+		pt[0] = {x, 10}, pt[1] = {x, 22}, pt[2] = {x-12, 16};
 	} else {
 		int x = HRES05 + (int)(Deg(ddir)*8.0+0.5);
-		pt[0] = {x, 8}, pt[1] = {x+8, 24}, pt[2] = {x-8, 24};
+		pt[0] = {x, 10}, pt[1] = {x+6, 22}, pt[2] = {x-6, 22};
 	}
 	oapi::Pen *pen0 = skp->SetPen (gpsPen);
 	oapi::Brush *brush0 = skp->SetBrush (gpsBrush);
@@ -89,11 +89,11 @@ void HUD::AddMesh_GpsCaret (double ddir)
 {
 	const double range05 = 30.0, scal = renderprm.scal, d = Deg (ddir);
 	double x[3], y[3];
-	if (d > range05) x[0] = x[2] = HRES05+scal*262, x[1] = HRES05+scal*280, y[0] = scal*38, y[1] = scal*51, y[2] = scal*64;
-	else if (d < -range05) x[0] = x[1] = HRES05-scal*262, x[2] = HRES05-scal*280, y[0] = scal*38, y[1] = scal*64, y[2] = scal*51;
+	if (d > range05) x[0] = x[2] = HRES05+scal*260, x[1] = HRES05+scal*272, y[0] = scal*40, y[1] = scal*51, y[2] = scal*62; // the base caret's places and sizes
+	else if (d < -range05) x[0] = x[1] = HRES05-scal*260, x[2] = HRES05-scal*272, y[0] = scal*40, y[1] = scal*62, y[2] = scal*51;
 	else {
 		double ofs = HRES05 + d*scal*250.0/range05;
-		x[0] = ofs, x[1] = ofs+scal*12, x[2] = ofs-scal*12, y[0] = scal*42, y[1] = y[2] = scal*66;
+		x[0] = ofs, x[1] = ofs+scal*7, x[2] = ofs-scal*7, y[0] = scal*49, y[1] = y[2] = scal*62;
 	}
 	GroupSpec *gs = gpsMesh.GetGroup (0);
 	if (!gs) {
