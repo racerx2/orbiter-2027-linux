@@ -679,6 +679,13 @@ void *Orbiter::LoadModule (const char *path, const char *name)
 	return hDLL;
 }
 
+// not upstream (dll-modules): the Wine bridge has Orbiter load a plugin of its own (the helper's LuaInline, as Orbiter.exe's
+// ScriptInterface loads LuaInline): in Orbiter's plugin list, its callbacks run as any plugin's
+extern "C" DLLEXPORT void *wbPluginLoad (const char *path, const char *name)
+{
+	return g_pOrbiter ? g_pOrbiter->LoadModule (path, name) : nullptr;
+}
+
 //-----------------------------------------------------------------------------
 // Name: UnloadModule()
 // Desc: Unload a named plugin DLL
