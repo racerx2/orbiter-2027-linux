@@ -4657,13 +4657,18 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 		DWORD ntouch = 0;
 		double hullk = HullPoints::HULL_K*mass, hulld = 2.0*HullPoints::HULL_ZETA*sqrt (hullk*mass); // not upstream (terrain-contact): a hull point's spring and damper
 		double sk = 0.0, sc = 0.0; // not upstream (contact-stiffness): the touching points' k and c over their effective mass
+		auto invmass = [&](const Vector &d, const Vector &r) { // not upstream (contact-stiffness): 1/m_eff = 1/m + sum (d x r)_a^2 / (m pmi_a)
+			Vector dr (crossp (d, r));
+			return (1.0 + (pmi.x > 0.0 ? dr.x*dr.x/pmi.x : 0.0) + (pmi.y > 0.0 ? dr.y*dr.y/pmi.y : 0.0) + (pmi.z > 0.0 ? dr.z*dr.z/pmi.z : 0.0))/mass;
+		};
+		int ncontact = 0; // not upstream (ground-friction): the points sharing a step's stop
+		for (i = 0; i < (int)nall; i++) if (tdy[i] < 0.0) ncontact++;
 		for (i = 0; i < (int)nall; i++) {
 			if (tdy[i] < 0.0) { // ground contact on point i!
 				bool hull = i >= (int)ntouchdown_vtx; // not upstream (terrain-contact): a hull point
 				const Vector &tv = (hull ? hullpt[i-ntouchdown_vtx] : touchdown_vtx[i].pos);
 				double kst = (hull ? hullk : touchdown_vtx[i].stiffness), kdm = (hull ? hulld : touchdown_vtx[i].damping), kmu = (hull ? HullPoints::HULL_MU : touchdown_vtx[i].mu);
-				Vector nr (crossp (hn, tv)); // not upstream (contact-stiffness): 1/m_eff = 1/m + sum (n x r)_a^2 / (m pmi_a)
-				double me = (1.0 + (pmi.x > 0.0 ? nr.x*nr.x/pmi.x : 0.0) + (pmi.y > 0.0 ? nr.y*nr.y/pmi.y : 0.0) + (pmi.z > 0.0 ? nr.z*nr.z/pmi.z : 0.0))/mass;
+				double me = invmass (hn, tv); // not upstream (contact-stiffness)
 				sk += kst*me, sc += kdm*me;
 				tdy[i] = max(tdy[i], -1.0); // DEBUG
 				tidx[ntouch++] = i;
@@ -4683,15 +4688,13 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 					mu = kmu;
 				}
 				flng[i] = mu * maxpress;												// horizon-longitudinal force component: surface friction
-				if (fabs(gv_lon) < 10.0) flng[i] *= sqrt(fabs(0.1*gv_lon));             // cancel horizontal forces at low speeds
-				//flng[i] = min (flng[i], fabs(gv_lon) * fn[i] * mu/dt);
+				if (dt > 0.0) flng[i] = min (flng[i], fabs(gv_lon) / (invmass (d1h, tv) * dt * ncontact)); // not upstream (ground-friction): at most this point's stop, not faded at low speeds
 				if (gv_lon > 0.0) flng[i] = -flng[i];
 				flng_tot += flng[i];
 
 				mu = kmu;
 				flat[i] = mu * maxpress;									// horizon-lateral force component: surface friction
-				if (fabs(gv_lat) < 10.0) flat[i] *= sqrt(fabs(0.1*gv_lat));
-				//flat[i] = min (flat[i], fabs(gv_lat) * fn[i] * mu/dt);
+				if (dt > 0.0) flat[i] = min (flat[i], fabs(gv_lat) / (invmass (d2h, tv) * dt * ncontact)); // not upstream (ground-friction)
 				if (gv_lat > 0.0) flat[i] = -flat[i];
 				flat_tot += flat[i];
 
@@ -4713,24 +4716,8 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 		}
 		ground_omega = max (ground_omega, sqrt (sk) + sc); // not upstream (contact-stiffness): the stiffest it can move
 
-		// limit forces to avoid velocity reversal
-		gv_lon = dotp (surfp.groundvel_ship, d1h);
-		gv_lat = dotp (surfp.groundvel_ship, d2h);
+		// not upstream (ground-friction): no limit on the step's total friction; each point's stops at most its own motion
 		gv_n   = dotp (surfp.groundvel_ship, hn);
-		double fmax_lon = -gv_lon * massdt;
-		if ((fmax_lon >= 0.0 && flng_tot > fmax_lon) || (fmax_lon <= 0.0 && flng_tot < fmax_lon)) {
-			double scale = fmax_lon/flng_tot;
-			flng_tot = fmax_lon;
-			for (i = 0; i < ntouch; i++)
-				flng[tidx[i]] *= scale;
-		}
-		double fmax_lat = -gv_lat * massdt;
-		if ((fmax_lat >= 0.0 && flat_tot > fmax_lat) || (fmax_lat <= 0.0 && flat_tot < fmax_lat)) {
-			double scale = fmax_lat/flat_tot;
-			flat_tot = fmax_lat;
-			for (i = 0; i < ntouch; i++)
-				flat[tidx[i]] *= scale;
-		}
 #ifdef UNDEF
 		// limit total energy for vertical compression
 		double d_eff = -E/fn_tot_undamped*2.0/ntouch; // effective compression depth

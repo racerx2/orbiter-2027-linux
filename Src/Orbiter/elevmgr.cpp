@@ -446,6 +446,20 @@ INT16 *ElevationManager::SharedTile (int lvl, int ilat, int ilng) const // not u
 	return d;
 }
 
+// not upstream (ground-slope): the cubic interpolation's derivative along t
+static double CubicSlope (double p0, double p1, double p2, double p3, double t)
+{
+	return 0.5 * ((-p0+p2) + 2.0*t*(2.0*p0-5.0*p1+4.0*p2-p3) + 3.0*t*t*(-p0+3.0*p1-3.0*p2+p3));
+}
+
+// not upstream (ground-slope): the horizon-frame normal (x east, y up, z north) of a height changing by de_lng, de_lat a cell; no east slope at a pole
+static Vector GroundNormal (const ElevationTile *t, double lat, double de_lng, double de_lat, double res, double R)
+{
+	double dz = (t->latmax-t->latmin)/elev_grid * R;
+	double dx = (t->lngmax-t->lngmin)/elev_grid * R * cos(lat);
+	return Vector (dx > 0.0 ? -de_lng*res/dx : 0.0, 1.0, -de_lat*res/dz).unit();
+}
+
 double ElevationManager::Elevation (double lat, double lng, int reqlvl, std::vector<ElevationTile> *tilecache, Vector *normal, int *reslvl) const
 {
 	double e = 0.0;
@@ -556,19 +570,13 @@ double ElevationManager::Elevation (double lat, double lng, int reqlvl, std::vec
 				e = e01*(1.0-w_lat) + e02*w_lat;
 
 				if (normal) {
-					double dlat = (t->latmax-t->latmin)/elev_grid;
-					double dlng = (t->lngmax-t->lngmin)/elev_grid;
-					double dz = dlat * cbody->Size();
-					double dx = dlng * cbody->Size() * cos(lat);
 					double nx01 = eptr[1]-eptr[0];
 					double nx02 = eptr[elev_stride+1]-eptr[elev_stride];
 					double nx = w_lat*nx02 + (1.0-w_lat)*nx01;
-					Vector vnx(dx,nx,0);
 					double nz01 = eptr[elev_stride]-eptr[0];
 					double nz02 = eptr[elev_stride+1]-eptr[1];
 					double nz = w_lng*nz02 + (1.0-w_lng)*nz01;
-					Vector vnz(0,nz,dz);
-					*normal = crossp(vnz,vnx).unit();
+					*normal = GroundNormal (t, lat, nx, nz, elev_res, cbody->Size()); // not upstream (ground-slope): in metres
 				}
 			} else { // cubic spline interpolation
 				double a_m1, a_0, a_p1, a_p2, b_m1, b_0, b_p1, b_p2;
@@ -605,29 +613,16 @@ double ElevationManager::Elevation (double lat, double lng, int reqlvl, std::vec
 				e =	0.5 * (2.0*b_0 + tlat*(-b_m1+b_p1) +
 					tlat*tlat*(2.0*b_m1-5.0*b_0+4.0*b_p1-b_p2) +
 					tlat*tlat*tlat*(-b_m1+3.0*b_0-3.0*b_p1+b_p2));
-				if (normal) {
-					double dlat = (t->latmax-t->latmin)/elev_grid;
-					double dlng = (t->lngmax-t->lngmin)/elev_grid;
-					double dz = dlat * cbody->Size();
-					double dx = dlng * cbody->Size() * cos(lat);
-					double dex00 = 0.5*(eptr[1]-eptr[-1]);
-					double dex01 = 0.5*(eptr[2]-eptr[0]);
-					double dex10 = 0.5*(eptr[elev_stride+1]-eptr[elev_stride-1]);
-					double dex11 = 0.5*(eptr[elev_stride+2]-eptr[elev_stride]);
-					double dez00 = 0.5*(eptr[elev_stride]-eptr[-elev_stride]);
-					double dez01 = 0.5*(eptr[elev_stride*2]-eptr[0]);
-					double dez10 = 0.5*(eptr[elev_stride+1]-eptr[-elev_stride+1]);
-					double dez11 = 0.5*(eptr[elev_stride*2+1]-eptr[1]);
-					double w1_lat = latidx - lat0;
-					double w0_lat = 1.0-w1_lat;
-					double w1_lng = lngidx - lng0;
-					double w0_lng = 1.0-w1_lng;
-					double dex = (dex00+dex10)*0.5*w0_lng + (dex01+dex11)*0.5*w1_lng;
-					double dez = (dez00+dez10)*0.5*w0_lat + (dez01+dez11)*0.5*w1_lat;
-					normal->x = -dex;
-					normal->z = -dez;
-					normal->y = 0.5*(dx+dz);
-					normal->unify();
+				if (normal) { // not upstream (ground-slope): the derivatives of the height above, in metres
+					double d[4];
+					for (int r = 0; r < 4; r++) {
+						const INT16 *row = eptr + (r-1)*elev_stride;
+						d[r] = CubicSlope (row[-1], row[0], row[1], row[2], tlng);
+					}
+					double de_lng = 0.5 * (2.0*d[1] + tlat*(-d[0]+d[2]) +
+						tlat*tlat*(2.0*d[0]-5.0*d[1]+4.0*d[2]-d[3]) +
+						tlat*tlat*tlat*(-d[0]+3.0*d[1]-3.0*d[2]+d[3]));
+					*normal = GroundNormal (t, lat, de_lng, CubicSlope (b_m1, b_0, b_p1, b_p2, tlat), elev_res, cbody->Size());
 				}
 			}
 			t->last_access = td.SysT0;
