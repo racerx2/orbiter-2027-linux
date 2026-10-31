@@ -36,6 +36,26 @@ static WORD rectidx[6] = {0,2,1, 2,3,1};
 
 Mesh HUD::hudMesh;
 
+// not upstream (gpsnav-hud): an add-on's point (a GPS waypoint) for the focus vessel's heading-tape caret
+static struct { const void *vessel = nullptr, *body = nullptr; double lng = 0.0, lat = 0.0; } g_hudBearing;
+
+DLLEXPORT void oapiSetHUDBearingTarget (OBJHANDLE hVessel, OBJHANDLE hBody, double lng, double lat)
+{
+	g_hudBearing.vessel = hBody ? hVessel : nullptr, g_hudBearing.body = hBody, g_hudBearing.lng = lng, g_hudBearing.lat = lat;
+}
+
+// the caret's point: the add-on's on the surface reference, else the Map MFD's base
+static bool CaretTarget (const Vessel *self, const SurfParam *sp, double &lng, double &lat)
+{
+	if (g_hudBearing.vessel && g_hudBearing.vessel == (const void*)self && g_hudBearing.body == (const void*)sp->ref) {
+		lng = g_hudBearing.lng, lat = g_hudBearing.lat;
+		return true;
+	}
+	const Base *base = self->LandingTarget();
+	if (base) base->EquPos (lng, lat);
+	return base != 0;
+}
+
 HUD::HUD (const Pane *_pane): pane(_pane)
 {
 	colidx = pane->colidx;
@@ -1653,12 +1673,11 @@ void HUD_Surface::Display (oapi::Sketchpad *skp)
 	DrawTopRibbon (skp, Deg(sp->dir));
 
 	// draw target direction index
-	const Base *base = self->LandingTarget();
-	if (base) {
+	double blng, blat;
+	if (CaretTarget (self, sp, blng, blat)) { // not upstream (gpsnav-hud): or an add-on's point
 		static const double scalerange = Rad(spec.W/40.0);
-		double blng, blat, adist, bdir, ddir;
+		double adist, bdir, ddir;
 		int x;
-		base->EquPos (blng, blat);
 		Orthodome (sp->lng, sp->lat, blng, blat, adist, bdir);
 		ddir = bdir - sp->dir;
 		if      (ddir <= -Pi) ddir += Pi2;
@@ -1735,15 +1754,13 @@ void HUD_Surface::UpdateMesh (int &ivtx, int &iidx)
 		}
 
 		// Heading tape
-		const Base *base = self->LandingTarget();
-		double bdir = 0.0;
-		if (base) {
-			static const double scalerange = Rad(spec.W/40.0);
-			double blng, blat, adist;
-			base->EquPos (blng, blat);
+		double bdir = 0.0, blng, blat;
+		bool caret = CaretTarget (self, sp, blng, blat); // not upstream (gpsnav-hud): or an add-on's point
+		if (caret) {
+			double adist;
 			Orthodome (sp->lng, sp->lat, blng, blat, adist, bdir);
 		}
-		AddMesh_HeadingTape (ivtx, iidx, sp->dir*DEG, base != 0, bdir*DEG);
+		AddMesh_HeadingTape (ivtx, iidx, sp->dir*DEG, caret, bdir*DEG);
 
 		// Pitch ladder
 		double sina, cosa, phi0, d, d0, d1;
