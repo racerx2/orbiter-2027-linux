@@ -1621,20 +1621,32 @@ static const char *legacyHeader =
 	"; Made from Orbiter.cfg's joystick settings (JoystickIndex, deadzone, throttle axis), as the old joystick worked.\n"
 	"; BIND <input> [@layer] [mods] [ZONE a b] [mode] = <output> [options]; see the User Manual, Controllers.\n\n";
 
+// not upstream (input-bindings): JoystickIndex, or the first joystick connected when it is 0 (no Joystick page sets it)
+static unsigned JoyIndex (unsigned joyIndex, const InputDevices *devs)
+{
+	return (joyIndex || devs->LegacyJoysticks().empty() ? joyIndex : 1);
+}
+
 void InputSystem::Migrate (const InputLegacyCfg &cfg)
 {
 	legacy = cfg; // for Global's reset (controls-editor)
 	std::string gpath = dir + "/Global.cfg", dpath = dir + "/Devices.cfg";
-	if (Mtime (gpath)) return;
+	unsigned idx = JoyIndex (cfg.joyIndex, devs);
+	if (Mtime (gpath)) { // not upstream (input-bindings): one made empty is made again once a joystick is there
+		std::ifstream f (InputResolveCase (gpath), std::ios::binary);
+		std::stringstream ss;
+		ss << f.rdbuf();
+		if (!idx || ss.str() != legacyHeader) return;
+	}
 	DevicesFile df;
 	InputReadDevices (dpath, df);
 	InputProfile g;
 	g.name = "Global";
-	if (cfg.joyIndex > 0) {
+	if (idx > 0) {
 		std::vector<const InputDevice*> lj = devs->LegacyJoysticks();
 		DeviceDef d;
-		if (cfg.joyIndex <= lj.size()) d = InputDefFor (*lj[cfg.joyIndex-1], df.defs);
-		else d.legacyIndex = (int)cfg.joyIndex;
+		if (idx <= lj.size()) d = InputDefFor (*lj[idx-1], df.defs);
+		else d.legacyIndex = (int)idx;
 		d.name = "Stick";
 		for (int n = 2; ; n++) {
 			bool clash = false;
@@ -1652,7 +1664,8 @@ void InputSystem::Migrate (const InputLegacyCfg &cfg)
 	}
 	InputWriteDevices (dpath, df);
 	InputWriteProfile (gpath, g, legacyHeader);
-	msgs.push_back ("Input: Config/Input made from Orbiter.cfg's joystick settings");
+	if (idx && !cfg.joyIndex) msgs.push_back ("Input: Config/Input binds the first joystick connected, " + devs->LegacyJoysticks()[0]->name + ", as " + df.defs.back().name);
+	else msgs.push_back ("Input: Config/Input made from Orbiter.cfg's joystick settings");
 }
 
 std::string InputSystem::DefaultGlobal (InputProfile &g) const
@@ -1660,11 +1673,14 @@ std::string InputSystem::DefaultGlobal (InputProfile &g) const
 	g = InputProfile();
 	g.name = "Global";
 	g.head = legacyHeader, g.read = true;
-	if (!legacy.joyIndex) return "";
+	unsigned idx = JoyIndex (legacy.joyIndex, devs); // not upstream (input-bindings): the controller Migrate takes
+	if (!idx) return "";
 	std::string dev;
 	std::vector<const InputDevice*> lj = devs->LegacyJoysticks();
-	if (legacy.joyIndex <= lj.size()) dev = NameOf (lj[legacy.joyIndex-1]->id);
-	for (auto &d : devfile.defs) if (dev.empty() && d.legacyIndex == (int)legacy.joyIndex) dev = d.name;
+	if (idx <= lj.size()) dev = NameOf (lj[idx-1]->id);
+	for (auto &d : devfile.defs) if (dev.empty() && d.legacyIndex == (int)idx) dev = d.name;
+	if (dev.empty() && !legacy.joyIndex)
+		return "The first joystick connected (" + lj[0]->name + ") has no name in Devices.cfg: no controller bindings for all vessels.";
 	if (dev.empty())
 		return "Orbiter.cfg's joystick (JoystickIndex = " + std::to_string (legacy.joyIndex) +
 			") isn't connected and has no name in Devices.cfg: no controller bindings for all vessels.";

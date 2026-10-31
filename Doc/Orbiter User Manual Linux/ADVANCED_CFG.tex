@@ -265,7 +265,7 @@ Normally, only entries whose values differ from their default setting are writte
 	\hline
 	\multicolumn{3}{|c|}{\rule{0pt}{2ex}\textbf{\textit{Joystick parameters}}}\\
 	\hline\rule{0pt}{2ex}
-	JoystickIndex & Int & Enumeration index for current joystick (0 = none). Read once: Config/Input/Global.cfg is made from the joystick settings (subsection \ref{ssec:input_bindings}). Default: 0\\
+	JoystickIndex & Int & Enumeration index for current joystick (0 = the first joystick connected). Read once: Config/Input/Global.cfg is made from the joystick settings (subsection \ref{ssec:input_bindings}). Default: 0\\
 	\hline\rule{0pt}{2ex}
 	JoystickThrottleAxis & Int & Axis index for joystick throttle (0 = Z, 1 = slider 0, 2 = slider 1). On Linux these are the evdev axes ABS\_Z, ABS\_THROTTLE and ABS\_RUDDER. Default: 1\\
 	\hline\rule{0pt}{2ex}
@@ -601,7 +601,7 @@ Joysticks, throttles, rudder pedals, button boxes and other game controllers wor
 \item \textbf{Global.cfg}: bindings for every vessel.
 \item \textbf{Vessels/\textit{class}.cfg}: bindings for one vessel class (for example Vessels/DG-S.cfg), on top of Global.cfg. The Controllers page of the Options dialog shows the class of the current vessel.
 \end{itemize}
-Files changed while Orbiter runs are read again within a second. When Orbiter first runs with Config/Input missing, it makes Global.cfg from the joystick settings in Orbiter.cfg, so the joystick works as it did before.\\
+Files changed while Orbiter runs are read again within a second. When Orbiter first runs with Config/Input missing, it makes Global.cfg from the joystick settings in Orbiter.cfg, so the joystick works as it did before. With JoystickIndex 0 the first joystick connected is bound; if none is connected, it is bound at the first start with one (as long as Global.cfg is still as Orbiter made it).\\
 \\
 The Controllers page edits these files, on the Launchpad (Options tab) and in flight (Options dialog). It lists the controllers with their live axes and buttons, renames them (their bindings change with them) and calibrates them: move every axis through its whole travel, let go and press Done moving; a centring axis keeps its rest point as centre, a lever the middle of its travel. For the bindings, pick a profile (all vessels, or a vessel class), then Add: press the control or move the axis, and pick what it does. Every change is saved at once and acts at once, and comments in the files are kept. Reset puts back Orbiter's defaults: Global.cfg as first made from the old joystick settings, a vessel class's file or all of them removed, or the keyboard keys in keymap.cfg; each old file is kept as .bak. The file format follows, for editing by hand.\\
 \\

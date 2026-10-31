@@ -641,3 +641,67 @@ TEST_CASE("Global.cfg made from Orbiter.cfg's joystick settings", "[bindings]")
 	std::string cmd = "rm -rf '" + dir + "'";
 	(void)!system (cmd.c_str());
 }
+
+// a generic stick (X Y Z RZ, a hat, 12 buttons) in a fake sysfs, its node an empty file
+static void StickNode (const std::string &sys, const std::string &dev, int n)
+{
+	std::string d = sys + "/event" + std::to_string (n) + "/device/";
+	for (std::string p : {sys + "/event" + std::to_string (n), d, d + "id", d + "capabilities"}) mkdir (p.c_str(), 0755);
+	auto put = [](const std::string &path, const std::string &text) { std::ofstream (path) << text << "\n"; };
+	put (d + "name", "Generic USB Joystick");
+	put (d + "uniq", "");
+	put (d + "phys", "usb-0000:00:14.0-2/input0");
+	put (d + "id/vendor", "0079");
+	put (d + "id/product", "0006");
+	put (d + "id/version", "0110");
+	put (d + "capabilities/ev", "1b");
+	put (d + "capabilities/key", "fff00000000 0 0 0 0");
+	put (d + "capabilities/abs", "30027");
+	put (d + "capabilities/rel", "0");
+	put (d + "properties", "0");
+	std::ofstream (dev + "/event" + std::to_string (n));
+}
+
+TEST_CASE("Global.cfg binds the first joystick when Orbiter.cfg names none", "[bindings]")
+{
+	char tmpl[] = "/tmp/inputbind-XXXXXX";
+	std::string dir = mkdtemp (tmpl), sys = dir + "/sys", dev = dir + "/dev";
+	mkdir (sys.c_str(), 0755);
+	mkdir (dev.c_str(), 0755);
+	auto read = [&](const char *f) { std::ifstream in (dir + "/Input/" + f); std::stringstream s; s << in.rdbuf(); return s.str(); };
+	{
+		InputDevices devs (sys, dev); // nothing connected: Global.cfg made empty
+		InputSystem is (dir + "/Input", &devs);
+		is.Migrate ({0, 1000, 0, 0, false});
+		std::string empty = read ("Global.cfg");
+		REQUIRE((!empty.empty() && empty.find ("\nBIND ") == std::string::npos));
+		InputSystem again (dir + "/Input", &devs);
+		again.Migrate ({0, 1000, 0, 0, false}); // still none: left as it is, no note
+		REQUIRE(read ("Global.cfg") == empty);
+		REQUIRE(again.Messages().empty());
+	}
+	StickNode (sys, dev, 7);
+	InputDevices devs (sys, dev);
+	devs.Scan ();
+	InputSystem is (dir + "/Input", &devs);
+	is.Migrate ({0, 1000, 0, 0, false}); // the stick is there: made again with it
+	std::string g = read ("Global.cfg");
+	REQUIRE(g.find ("BIND Stick.X = AXIS Bank DZ 0.1\n") != std::string::npos);
+	REQUIRE(g.find ("BIND Stick.HAT0.LEFT @1 = AXIS PanX -1\n") != std::string::npos);
+	DevicesFile df;
+	REQUIRE(InputReadDevices (dir + "/Input/Devices.cfg", df));
+	REQUIRE((df.defs.size() == 1 && df.defs[0].name == "Stick" && df.defs[0].vid == 0x0079 && df.defs[0].pid == 0x0006));
+	std::vector<std::string> msg = is.Messages();
+	REQUIRE((msg.size() == 1 && msg[0].find ("the first joystick connected, Generic USB Joystick, as Stick") != std::string::npos));
+	is.Load ();
+	InputProfile reset;
+	REQUIRE(is.DefaultGlobal (reset).empty()); // the editor's reset takes it too
+	REQUIRE(reset.binds.size() == 15);
+	is.Migrate ({0, 1000, 0, 0, false}); // bound now: kept
+	REQUIRE(read ("Global.cfg") == g);
+	std::ofstream (dir + "/Input/Global.cfg") << "; mine, nothing bound\n";
+	is.Migrate ({0, 1000, 0, 0, false}); // edited: kept
+	REQUIRE(read ("Global.cfg") == "; mine, nothing bound\n");
+	std::string cmd = "rm -rf '" + dir + "'";
+	(void)!system (cmd.c_str());
+}
