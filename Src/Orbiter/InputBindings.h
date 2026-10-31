@@ -259,6 +259,7 @@ public:
 	void Load ();                              // Devices.cfg and the profiles again
 	void SetProfile (const std::string &vesselClass, InputFrame *released);
 	void Poll (InputFrame *released);          // devices, hot-plug, files changed on disk
+	void SetDevicesOff (bool off);             // controllers ignored (let go, detached) or attached again
 	InputEngine &Engine () { return engine; }
 	const InputEngine &Engine () const { return engine; }
 	InputDevices &Devices () { return *devs; }
@@ -300,6 +301,7 @@ private:
 	std::map<std::string, double> noAccess;   // node -> first seen without access (s), -1 once told
 	double checkT;
 	bool holdBack = false, capture = false, captured = false;
+	bool devOff = false;                       // controllers off: claimed, not attached
 	double touchT = -1e9;
 	InputRef got;
 	std::map<std::pair<int,int>, int> capStart; // (device id, ABS code) -> raw when the capture started

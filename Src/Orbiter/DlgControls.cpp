@@ -471,6 +471,8 @@ void DlgOptions::DrawControls() // not upstream (input-bindings, controls-editor
 		ImGui::Text ("Pressed now:%s", down.empty() ? " nothing" : down.c_str());
 	}
 	ImGui::Checkbox ("Controllers work while Orbiter is in the background", &g_pOrbiter->Cfg()->CfgJoystickPrm.bBackground);
+	int joy = g_pOrbiter->Cfg()->CfgJoystickPrm.bOff ? 0 : 1; // not upstream: the old Joystick tab's device list (input-bindings)
+	if (ImGui::Combo ("Joystick device", &joy, "<Disabled>\0<All controllers>\0")) g_pOrbiter->Cfg()->CfgJoystickPrm.bOff = (joy == 0);
 
 	// the bindings
 	ImGui::SeparatorText ("Bindings");

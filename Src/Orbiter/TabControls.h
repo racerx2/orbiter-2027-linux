@@ -14,6 +14,7 @@ class QComboBox;
 class QGridLayout;
 class QLabel;
 class QPushButton;
+class QSlider;
 class QTableWidget;
 class QTimer;
 class QWidget;
@@ -43,6 +44,8 @@ private:
 	void Edit(bool add);
 	void Remove();
 	void ResetDefaults();
+	void ApplyZones();
+	void ShowZones();
 	std::string SelectedDevice() const;
 
 	QWidget *m_page = nullptr;
@@ -52,6 +55,10 @@ private:
 	QLabel *m_liveButtons = nullptr, *m_status = nullptr;
 	QComboBox *m_prof = nullptr;
 	QCheckBox *m_background = nullptr;
+	QComboBox *m_joy = nullptr;            // the old Joystick tab's device list: <Disabled> or every controller
+	QSlider *m_dz = nullptr, *m_sat = nullptr; // ... its Calibration: every controller axis's dead zone, the throttles' saturation
+	QLabel *m_dzVal = nullptr, *m_satVal = nullptr;
+	QPointer<QTimer> m_zoneTimer;
 	QPushButton *m_rename = nullptr, *m_calib = nullptr, *m_change = nullptr, *m_remove = nullptr;
 	QPointer<QTimer> m_timer;
 	std::unique_ptr<InputEditor> m_ed;

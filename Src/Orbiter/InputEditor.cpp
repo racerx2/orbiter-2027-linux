@@ -228,6 +228,28 @@ bool InputEditor::Rename (const std::string &from, const std::string &to, std::s
 	return true;
 }
 
+// not upstream (input-bindings): the old Joystick tab's Calibration. A centring channel's axis gets the dead zone dz, a throttle's
+// (0..1) the saturation sat at each end, as Global.cfg is first made from them
+bool InputEditor::SetZones (double dz, double sat, int &changed, std::string &err)
+{
+	changed = 0;
+	for (auto &pn : ProfileFiles()) {
+		InputProfile p;
+		if (!InputReadProfile (Path (pn), p)) continue;
+		int n = 0;
+		for (auto &b : p.binds) {
+			if (b.in.src != INSRC_DEV || b.in.kind != INK_AXIS || b.in.zone || b.out != IOUT_AXIS || b.chan < 0) continue;
+			double d = dz, s = b.sat;
+			if (InputChannel (b.chan).unipolar) d = 0.5*(1.0-sat), s = 0.5*(1.0+sat);
+			if (fabs (b.dz - d) > 1e-6 || fabs (b.sat - s) > 1e-6) b.dz = d, b.sat = s, n++; // as the file has them: rounded
+		}
+		if (n && !InputWriteProfile (Path (pn), p, "")) { err = "could not write " + Path (pn); return false; }
+		changed += n;
+	}
+	Open (name);
+	return true;
+}
+
 bool InputEditor::WriteCalibration (const std::string &dev, const std::vector<DeviceCal> &cal, std::string &err)
 {
 	std::string dpath = sys->Dir() + "/Devices.cfg";

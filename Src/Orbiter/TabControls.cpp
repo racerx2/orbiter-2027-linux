@@ -23,6 +23,8 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSignalBlocker>
+#include <QSlider>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QTableWidget>
@@ -611,6 +613,22 @@ BOOL OptionsPage_Controls::OnInitDialog(QWidget *hPage)
 	// the controllers
 	auto *gd = new QGroupBox ("Controllers", body);
 	auto *ld = new QVBoxLayout (gd);
+	auto *jrow = new QHBoxLayout;
+	m_joy = new QComboBox (gd);
+	m_joy->addItems ({"<Disabled>", "<All controllers>"});
+	m_joy->setToolTip ("<Disabled>: Orbiter ignores every joystick, gamepad and panel in flight, as the old Joystick tab. The keyboard and the mouse keep working");
+	jrow->addWidget (new QLabel ("Joystick device", gd)), jrow->addWidget (m_joy, 1);
+	ld->addLayout (jrow);
+	auto *cal = new QGridLayout;
+	m_dz = new QSlider (Qt::Horizontal, gd), m_sat = new QSlider (Qt::Horizontal, gd);
+	m_dz->setRange (0, 1000), m_sat->setRange (0, 1000);
+	m_dz->setToolTip ("Every controller axis's dead zone at its centre, in every profile (each axis binding has its own: Change...)");
+	m_sat->setToolTip ("The throttle axes' travel at each end that counts as full or none, in every profile");
+	m_dzVal = new QLabel (gd), m_satVal = new QLabel (gd);
+	cal->addWidget (new QLabel ("Deadzone", gd), 0, 0), cal->addWidget (m_dz, 0, 1), cal->addWidget (m_dzVal, 0, 2);
+	cal->addWidget (new QLabel ("Throttle saturation", gd), 1, 0), cal->addWidget (m_sat, 1, 1), cal->addWidget (m_satVal, 1, 2);
+	cal->setColumnStretch (1, 1);
+	ld->addLayout (cal);
 	m_devs = new QTableWidget (0, 3, gd);
 	m_devs->setHorizontalHeaderLabels ({"Name", "Controller", "State"});
 	m_devs->horizontalHeader()->setSectionResizeMode (0, QHeaderView::ResizeToContents);
@@ -683,6 +701,12 @@ BOOL OptionsPage_Controls::OnInitDialog(QWidget *hPage)
 	if (inp) m_ed.reset (new InputEditor (inp, InputEditor::VesselDir (inp)));
 
 	QObject::connect (m_background, &QCheckBox::toggled, &m_life, [this](bool on) { Cfg()->CfgJoystickPrm.bBackground = on; });
+	QObject::connect (m_joy, &QComboBox::currentIndexChanged, &m_life, [this](int i) { Cfg()->CfgJoystickPrm.bOff = (i == 0); });
+	m_zoneTimer = new QTimer (hPage);
+	m_zoneTimer->setSingleShot (true);
+	QObject::connect (m_zoneTimer, &QTimer::timeout, &m_life, [this]() { ApplyZones (); });
+	for (QSlider *s : {m_dz, m_sat})
+		QObject::connect (s, &QSlider::valueChanged, &m_life, [this](int) { ShowZones (); m_zoneTimer->start (600); }); // written once it rests
 	QObject::connect (m_rename, &QPushButton::clicked, &m_life, [this]() { Rename (); });
 	QObject::connect (m_calib, &QPushButton::clicked, &m_life, [this]() { Calibrate (); });
 	QObject::connect (add, &QPushButton::clicked, &m_life, [this]() { Edit (true); });
@@ -713,6 +737,13 @@ BOOL OptionsPage_Controls::OnInitDialog(QWidget *hPage)
 void OptionsPage_Controls::UpdateControls(QWidget *hPage)
 {
 	if (m_background) m_background->setChecked (Cfg()->CfgJoystickPrm.bBackground);
+	if (m_joy) { QSignalBlocker b (m_joy); m_joy->setCurrentIndex (Cfg()->CfgJoystickPrm.bOff ? 0 : 1); }
+	if (m_dz && !m_zoneTimer->isActive()) {
+		QSignalBlocker b1 (m_dz), b2 (m_sat);
+		m_dz->setValue (Cfg()->CfgJoystickPrm.Deadzone / 10);
+		m_sat->setValue (Cfg()->CfgJoystickPrm.ThrottleSaturation / 10);
+		ShowZones ();
+	}
 	hPage->resize (HParent()->size());
 	Tick ();
 }
@@ -723,6 +754,7 @@ void OptionsPage_Controls::Tick()
 	if (m_page && HParent() && m_page->size() != HParent()->size()) m_page->resize (HParent()->size()); // fills the pane, as Planet streaming
 	if (!inp || !m_devs || !m_devs->isVisible()) return;
 	inp->Engine().SetMuted (true); // nothing acts on the Launchpad
+	inp->SetDevicesOff (false);    // ... so the live values show while controllers are off for flight
 	inp->Touch ();
 	inp->Poll (nullptr);
 	FillDevices ();
@@ -851,6 +883,25 @@ void OptionsPage_Controls::FillBindings()
 	if (keep >= 0 && keep < m_binds->rowCount()) m_binds->selectRow (keep);
 	int r = m_binds->currentRow();
 	m_change->setEnabled (r >= 0), m_remove->setEnabled (r >= 0 && r < (int)p.binds.size());
+}
+
+void OptionsPage_Controls::ShowZones()
+{
+	m_dzVal->setText (QString::number (m_dz->value()));
+	m_satVal->setText (QString::number (m_sat->value()));
+}
+
+// not upstream (input-bindings): the old Joystick tab's Calibration, kept in Orbiter.cfg and put on the bindings
+void OptionsPage_Controls::ApplyZones()
+{
+	Cfg()->CfgJoystickPrm.Deadzone = m_dz->value() * 10;
+	Cfg()->CfgJoystickPrm.ThrottleSaturation = m_sat->value() * 10;
+	if (!m_ed) return;
+	std::string err;
+	int n = 0;
+	if (!m_ed->SetZones (m_dz->value() * 1e-3, m_sat->value() * 1e-3, n, err)) { m_status->setText (QString::fromStdString ("Not changed: " + err)); return; }
+	Reload ();
+	m_status->setText (QString ("Dead zone %1, throttle saturation %2: %3 axis bindings changed").arg (m_dz->value()).arg (m_sat->value()).arg (n));
 }
 
 void OptionsPage_Controls::Reload()

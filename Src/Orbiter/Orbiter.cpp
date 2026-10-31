@@ -2404,6 +2404,7 @@ const InputFrame &Orbiter::InputStep (bool skipkbd)
 	e.SetView (g_camera->IsInternal());
 	e.SetSuspended (skipkbd, &rel); // a text box or selection menu: keys and functions wait
 	InputRelease (rel);
+	m_input->SetDevicesOff (pConfig->CfgJoystickPrm.bOff); // not upstream (input-bindings): controllers off, as the old Joystick tab's Disabled
 	m_input->Poll (&rel);
 	InputRelease (rel);
 	InputLog ();

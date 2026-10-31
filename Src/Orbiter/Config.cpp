@@ -201,7 +201,8 @@ CFG_JOYSTICKPRM CfgJoystickPrm_default = {
 	1,			// ThrottleAxis (z-axis by default)
 	9500,		// ThrottleSaturation (saturate throttle at the last 5% each end)
 	true,		// bThrottleIgnore (ignore throttle setting on simulation start)
-	false		// bBackground (not upstream: controllers only with the window's focus, as upstream's foreground joystick)
+	false,		// bBackground (not upstream: controllers only with the window's focus, as upstream's foreground joystick)
+	false		// bOff (not upstream: controllers on)
 };
 
 CFG_UIPRM CfgUIPrm_default = {
@@ -554,6 +555,7 @@ bool Config::Load(const char *fname)
 		CfgJoystickPrm.Deadzone = max (0, min (10000, i));
 	GetBool (ifs, "IgnoreThrottleOnStart", CfgJoystickPrm.bThrottleIgnore);
 	GetBool (ifs, "ControllersInBackground", CfgJoystickPrm.bBackground); // not upstream (input-bindings)
+	GetBool (ifs, "ControllersOff", CfgJoystickPrm.bOff); // not upstream (input-bindings)
 
 	// planet render parameters
 	if (GetInt (ifs, "PlanetPreloadMode", i))
@@ -1304,6 +1306,8 @@ BOOL Config::Write (const char *fname) const
 			ofs << "IgnoreThrottleOnStart = " << BoolStr (CfgJoystickPrm.bThrottleIgnore) << '\n';
 		if (CfgJoystickPrm.bBackground != CfgJoystickPrm_default.bBackground || bEchoAll) // not upstream (input-bindings)
 			ofs << "ControllersInBackground = " << BoolStr (CfgJoystickPrm.bBackground) << '\n';
+		if (CfgJoystickPrm.bOff != CfgJoystickPrm_default.bOff || bEchoAll) // not upstream (input-bindings)
+			ofs << "ControllersOff = " << BoolStr (CfgJoystickPrm.bOff) << '\n';
 	}
 
 	if (memcmp (&CfgUIPrm, &CfgUIPrm_default, sizeof(CFG_UIPRM)) || bEchoAll) {

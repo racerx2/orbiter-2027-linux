@@ -26,6 +26,7 @@ public:
 	std::string AlsoDoes (const Binding &b, int index) const; // the control's other bindings in this profile; "" if none
 	bool Rename (const std::string &from, const std::string &to, std::string &err); // the profiles, then Devices.cfg
 	bool WriteCalibration (const std::string &dev, const std::vector<DeviceCal> &cal, std::string &err); // the device's CAL lines
+	bool SetZones (double dz, double sat, int &changed, std::string &err); // every controller axis bound to a channel, every profile
 
 	// back to the defaults; each old file is kept next to it as .bak
 	bool Reset (std::string &note, std::string &err); // this profile: Global as Orbiter first makes it, a vessel class's own bindings gone

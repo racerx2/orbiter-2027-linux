@@ -275,6 +275,8 @@ Normally, only entries whose values differ from their default setting are writte
 	\hline\rule{0pt}{2ex}
 	ControllersInBackground & Bool & Controllers work while the Orbiter window doesn't have the focus. Default: FALSE\\
 	\hline\rule{0pt}{2ex}
+	ControllersOff & Bool & Orbiter ignores every controller in flight (Joystick device \textit{\textless{}Disabled\textgreater{}} on the Controllers page, as the old Joystick tab's). Default: FALSE\\
+	\hline\rule{0pt}{2ex}
 	IgnoreThrottleOnStart & Bool & Ignore throttle at simulation start until moved. Default: TRUE\\
 	\hline
 	\multicolumn{3}{|c|}{\rule{0pt}{2ex}\textbf{\textit{User interface parameters}}}\\
@@ -674,6 +676,8 @@ SUBSYSTEM=="input", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", TAG+="uac
 sudo udevadm control --reload
 sudo udevadm trigger
 \end{lstlisting}
+Joystick device \textit{\textless{}Disabled\textgreater{}} on the Controllers page (ControllersOff in Orbiter.cfg) turns every controller off in flight; what one holds is let go, as if it was unplugged. Its \textit{Deadzone} and \textit{Throttle saturation} set the dead zone of every controller axis bound to an analog control and the saturation of every throttle axis, in every profile, as Global.cfg is first made from JoystickDeadzone and JoystickThrottleSaturation.
+
 Controllers work only while the Orbiter window has the focus, unless \textit{Controllers work while Orbiter is in the background} is ticked on the Controllers page (ControllersInBackground in Orbiter.cfg), for cockpits with more windows.
 
 \end{document}

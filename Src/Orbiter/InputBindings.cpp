@@ -1788,13 +1788,25 @@ void InputSystem::Claim ()
 		auto c = claimed.find (d->id);
 		if (c == claimed.end() || c->second != di) {
 			if (c != claimed.end()) engine.DetachDevice (d->id);
-			engine.AttachDevice (*d, devfile.defs[di].name);
+			if (!devOff) engine.AttachDevice (*d, devfile.defs[di].name);
 			claimed[d->id] = di;
 		}
 	}
 	if (dirty) {
 		if (InputWriteDevices (dir + "/Devices.cfg", devfile)) devMtime = Mtime (dir + "/Devices.cfg");
 		else msgs.push_back ("Input: could not write " + dir + "/Devices.cfg");
+	}
+}
+
+// not upstream (input-bindings): the old Joystick tab's Disabled, for every controller
+void InputSystem::SetDevicesOff (bool off)
+{
+	if (off == devOff) return;
+	devOff = off;
+	for (auto &c : claimed) {
+		if (off) { engine.DetachDevice (c.first); continue; }
+		const InputDevice *d = devs->Get (c.first);
+		if (d && d->state == InputDevice::OPEN && c.second < (int)devfile.defs.size()) engine.AttachDevice (*d, devfile.defs[c.second].name);
 	}
 }
 

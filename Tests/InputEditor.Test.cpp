@@ -232,6 +232,30 @@ TEST_CASE("renaming a controller renames its bindings", "[editor]")
 	REQUIRE(df.defs[1].cal.empty());
 }
 
+TEST_CASE("the old Joystick tab's dead zone and throttle saturation on every axis binding", "[editor]")
+{
+	TempDir td;
+	REQUIRE(!td.path.empty());
+	std::string dir = td.path;
+	Put (dir + "/Input/Devices.cfg", "DEVICE Stick = 0079:0006 \"Stick\"\n");
+	Put (dir + "/Input/Global.cfg", "BIND Stick.X = AXIS Bank DZ 0.25 SAT 0.9\nBIND Stick.Z = AXIS Main INVERT DZ 0.025 SAT 0.975 PICKUP\n"
+		"BIND Stick.Y ZONE 0.8 1 = FUNC Pause\nBIND Stick.HAT0.UP = AXIS LookY +1\n");
+	Put (dir + "/Input/Vessels/DeltaGlider.cfg", "BIND Stick.RZ = AXIS Yaw\n");
+	InputDevices devs (dir + "/nosys", dir + "/nodev");
+	InputSystem sys (dir + "/Input", &devs);
+	InputEditor ed (&sys, InputEditor::VesselDir (&sys));
+	ed.Open ("Global");
+	std::string err;
+	int n = 0;
+	REQUIRE(ed.SetZones (0.1, 0.9, n, err));
+	REQUIRE(n == 3);
+	REQUIRE(Get (dir + "/Input/Global.cfg") == "BIND Stick.X = AXIS Bank DZ 0.1 SAT 0.9\nBIND Stick.Z = AXIS Main INVERT DZ 0.05 SAT 0.95 PICKUP\n"
+		"BIND Stick.Y ZONE 0.8 1 = FUNC Pause\nBIND Stick.HAT0.UP = AXIS LookY +1\n");
+	REQUIRE(Get (dir + "/Input/Vessels/DeltaGlider.cfg") == "BIND Stick.RZ = AXIS Yaw DZ 0.1\n");
+	REQUIRE(ed.SetZones (0.1, 0.9, n, err)); // the same again: nothing written
+	REQUIRE(n == 0);
+}
+
 TEST_CASE("calibration: a stick, a lever and an axis not moved", "[editor]")
 {
 	InputDevice d = Dev ({ABS_X, ABS_Z, ABS_RZ}, 0, 65535);

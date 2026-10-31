@@ -715,3 +715,35 @@ TEST_CASE("Global.cfg binds the first joystick when Orbiter.cfg names none", "[b
 	std::string cmd = "rm -rf '" + dir + "'";
 	(void)!system (cmd.c_str());
 }
+
+TEST_CASE("controllers off: let go and ignored, then on again", "[bindings]")
+{
+	char tmpl[] = "/tmp/inputbind-XXXXXX";
+	std::string dir = mkdtemp (tmpl), sys = dir + "/sys", dev = dir + "/dev";
+	mkdir (sys.c_str(), 0755);
+	mkdir (dev.c_str(), 0755);
+	StickNode (sys, dev, 7);
+	InputDevices devs (sys, dev);
+	devs.Scan ();
+	InputSystem is (dir + "/Input", &devs);
+	is.Migrate ({0, 1000, 0, 0, false});
+	is.Load ();
+	is.SetProfile ("DeltaGlider", nullptr);
+	REQUIRE(devs.Devices().size() == 1);
+	int id = devs.Devices()[0]->id;
+	InputEngine &e = is.Engine ();
+	Axis (e, id, ABS_X, 32767);
+	REQUIRE(e.Step (0.02).chan[ICH_BANK] == 1.0);
+	is.SetDevicesOff (true); // held: let go
+	REQUIRE(e.Step (0.02).chan[ICH_BANK] == 0.0);
+	Axis (e, id, ABS_X, -32767);
+	REQUIRE(e.Step (0.02).chan[ICH_BANK] == 0.0);
+	is.Load (); // read again while off: still off
+	Axis (e, id, ABS_X, 32767);
+	REQUIRE(e.Step (0.02).chan[ICH_BANK] == 0.0);
+	is.SetDevicesOff (false);
+	Axis (e, id, ABS_X, -32767);
+	REQUIRE(e.Step (0.02).chan[ICH_BANK] == -1.0);
+	std::string cmd = "rm -rf '" + dir + "'";
+	(void)!system (cmd.c_str());
+}

@@ -225,6 +225,7 @@ struct CFG_JOYSTICKPRM {
 	int    ThrottleSaturation;	// saturation level for joystick throttle control (0-10000)
 	bool   bThrottleIgnore;		// ignore joystick throttle setting on start
 	bool   bBackground;         // not upstream (input-bindings): controllers act while the window is in the background
+	bool   bOff;                // not upstream (input-bindings): controllers ignored, as the old Joystick tab's Disabled
 };
 
 struct CFG_UIPRM {              // user interface options
