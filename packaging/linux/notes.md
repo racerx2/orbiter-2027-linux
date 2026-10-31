@@ -9,7 +9,8 @@ Pre-release @VER@ of Orbiter 2027 for Linux, built from the Custom branch.
 - **Collisions and damage** add-on (Modules tab, Collision): dents, live NVIDIA Blast fracture, debris, crashes into buildings and the ground.
 - **glTF models and PBR materials**: ships straight from Blender as `.glb`/`.gltf`. Try **Delta-glider > DG and DG-S and DGTest** and **Graphics > PBR material bench**.
 - **JPL SPICE ephemerides** for the planets and moons (1900 to 2199), with Ceres, Amalthea, Himalia and Phoebe.
-- **Launchpad skins** (Extra > Launchpad skin), **the Pluto system** and measured atmospheres.
+- **Launchpad skins**: change how the Launchpad looks (Extra > Launchpad skin).
+- **The Pluto system**, and measured atmospheres for the giant planets, Titan, Io, Triton and Pluto.
 - Manuals for what is new since the Windows version.
 
 ## Download and start
