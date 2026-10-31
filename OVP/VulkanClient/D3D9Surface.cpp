@@ -47,11 +47,7 @@ void NatCheckFlags(DWORD &flags)
 	if (flags & OAPISURFACE_SKETCHPAD) flags |= OAPISURFACE_RENDERTARGET;
 
 	if (flags & OAPISURFACE_RENDERTARGET) {
-		if (flags & OAPISURFACE_GDI)
-		{
-			oapiWriteLog((char*)"OAPISURFACE_GDI is incomaptible with OAPISURFACE_RENDERTARGET and OAPISURFACE_SKETCHPAD");
-			HALT();
-		}
+		if (flags & OAPISURFACE_GDI) flags &= ~OAPISURFACE_GDI; // not upstream: GetDC works on render targets here (upstream halted; VESSEL3 texture panel areas ask for both)
 		if (flags & OAPISURFACE_SYSMEM)
 		{
 			oapiWriteLog((char*)"OAPISURFACE_SYSMEM is incomaptible with OAPISURFACE_RENDERTARGET and OAPISURFACE_SKETCHPAD");
