@@ -31,7 +31,23 @@ install(TARGETS lua-exe DESTINATION ${ORBITER_INSTALL_SDK_DIR}/lib/Lua)
 install(TARGETS lua-exe DESTINATION ${ORBITER_INSTALL_SDK_DIR}/Utils/)
 
 # Library - liblua.so
-add_library(lua SHARED ${LUA_SRC_FILES})
+# not upstream (dll-modules): its API is lua_remote.c's (a bridge's remote states, Orbitersdk/include/Lua/lua_remote.h); Lua's core is
+# built with its API renamed (lua_rename.h), the libraries as they are. The lua executable is Lua's own.
+set(LUA_LIB_FILES lauxlib.c lbaselib.c ldblib.c liolib.c lmathlib.c loslib.c lstrlib.c ltablib.c loadlib.c linit.c)
+set(LUA_SO_SRC ${CMAKE_CURRENT_SOURCE_DIR}/lua_remote.c)
+foreach(path ${LUA_SRC_FILES})
+	get_filename_component(name ${path} NAME)
+	if(name IN_LIST LUA_LIB_FILES)
+		list(APPEND LUA_SO_SRC ${path})
+	else()
+		set(renamed ${CMAKE_CURRENT_BINARY_DIR}/renamed/${name})
+		file(WRITE ${renamed}.in "#include \"lua_rename.h\"\n#include \"${path}\"\n")
+		configure_file(${renamed}.in ${renamed} COPYONLY)
+		list(APPEND LUA_SO_SRC ${renamed})
+	endif()
+endforeach()
+add_library(lua SHARED ${LUA_SO_SRC})
+target_include_directories(lua PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${lua_SOURCE_DIR} ${ORBITER_SOURCE_SDK_INCLUDE_DIR}/Lua)
 
 # LUA_BUILD_AS_DLL is the MSVC side; POSIX + dlopen give require() the C-module loader it gets from LoadLibrary
 target_compile_definitions(lua-exe PRIVATE LUA_USE_POSIX LUA_USE_DLOPEN)
