@@ -1,0 +1,2 @@
+// WineBridge: the 2010 SDK includes <fstream> but uses nothing from it
+#pragma once

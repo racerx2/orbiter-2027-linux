@@ -23,6 +23,11 @@ Start:
      takes it out). ./OpenOrbiter --verbose keeps Orbiter's output in the terminal.
   3. Planet textures: the Launchpad offers to download the missing planet and moon textures.
 
+Windows add-ons:
+  Windows add-ons (.dll modules) run through the Wine bridge that comes with Orbiter. It needs Wine
+  that runs 32-bit programs: on Linux Mint the Software Manager's "Wine" (sudo apt install
+  wine-installer). Doc/WineBridge/README.txt has the other distributions.
+
 Included: Qt 6.8 and the other libraries Orbiter needs that differ between distributions (lib/).
 Taken from the system: the C library, graphics drivers (Vulkan, OpenGL), X11/Wayland, fonts,
 D-Bus, GLib, OpenSSL, PipeWire (sound).

@@ -1,0 +1,40 @@
+; WineBridge: LuaInterpreter.dll's 2010 and 2016 names the 2024 class doesn't have (api/luainterp.txt), as the functions that do
+; their work: wb_interp.cpp's, and the 2024 Lua functions that took the old ones' Lua names (vesselGetPitch is vessel's get_pitch)
+EXPORTS
+	?term_out@Interpreter@@UAEXPAUlua_State@@@Z=?wb_term_out2010@Interpreter@@QAEXPAUlua_State@@@Z
+	?term_strout@Interpreter@@UAEXPBD@Z=?wb_term_strout2010@Interpreter@@QAEXPBD@Z
+	?term_strout@Interpreter@@KAXPAUlua_State@@PBD@Z=?TermStrout2010@WbInterp@@SAXPAUlua_State@@PBD@Z
+	?lua_tovector@Interpreter@@KA?ATVECTOR3@@PAUlua_State@@H@Z=?lua_tovector@@YA?ATVECTOR3@@PAUlua_State@@H@Z
+	?hnote@Interpreter@@0PAXA=wb_hnote2010 DATA
+	?vGetHandle@Interpreter@@KAHPAUlua_State@@@Z=?v_get_handle@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselClearPropellantResources@Interpreter@@KAHPAUlua_State@@@Z=?v_clear_propellantresources@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselCreatePropellantResource@Interpreter@@KAHPAUlua_State@@@Z=?v_create_propellantresource@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselDelPropellantResource@Interpreter@@KAHPAUlua_State@@@Z=?v_del_propellantresource@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetADCLevel@Interpreter@@KAHPAUlua_State@@@Z=?v_get_adclevel@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetADCmode@Interpreter@@KAHPAUlua_State@@@Z=?v_get_adcmode@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetAltitude@Interpreter@@KAHPAUlua_State@@@Z=?v_get_altitude@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetAngularVel@Interpreter@@KAHPAUlua_State@@@Z=?v_get_angvel@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetBank@Interpreter@@KAHPAUlua_State@@@Z=?v_get_bank@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetElements@Interpreter@@KAHPAUlua_State@@@Z=?v_get_elements@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetElementsEx@Interpreter@@KAHPAUlua_State@@@Z=?v_get_elementsex@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetGravityRef@Interpreter@@KAHPAUlua_State@@@Z=?v_get_gravityref@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetLiftVector@Interpreter@@KAHPAUlua_State@@@Z=?v_get_liftvector@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetPitch@Interpreter@@KAHPAUlua_State@@@Z=?v_get_pitch@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetProgradeDir@Interpreter@@KAHPAUlua_State@@@Z=?v_get_progradedir@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetPropellantCount@Interpreter@@KAHPAUlua_State@@@Z=?v_get_propellantcount@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetPropellantHandle@Interpreter@@KAHPAUlua_State@@@Z=?v_get_propellanthandle@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetPropellantMass@Interpreter@@KAHPAUlua_State@@@Z=?v_get_propellantmass@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetPropellantMaxMass@Interpreter@@KAHPAUlua_State@@@Z=?v_get_propellantmaxmass@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetRCSmode@Interpreter@@KAHPAUlua_State@@@Z=?v_get_rcsmode@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetSurfaceRef@Interpreter@@KAHPAUlua_State@@@Z=?v_get_surfaceref@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetThrustVector@Interpreter@@KAHPAUlua_State@@@Z=?v_get_thrustvector@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetWeightVector@Interpreter@@KAHPAUlua_State@@@Z=?v_get_weightvector@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselGetYaw@Interpreter@@KAHPAUlua_State@@@Z=?v_get_yaw@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselSendBufferedKey@Interpreter@@KAHPAUlua_State@@@Z=?v_send_bufferedkey@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselSetADCLevel@Interpreter@@KAHPAUlua_State@@@Z=?v_set_adclevel@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselSetADCmode@Interpreter@@KAHPAUlua_State@@@Z=?v_set_adcmode@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselSetAngularVel@Interpreter@@KAHPAUlua_State@@@Z=?v_set_angvel@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselSetElements@Interpreter@@KAHPAUlua_State@@@Z=?v_set_elements@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselSetNavmode@Interpreter@@KAHPAUlua_State@@@Z=?v_set_navmode@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselSetPropellantMaxMass@Interpreter@@KAHPAUlua_State@@@Z=?v_set_propellantmaxmass@Interpreter@@KAHPAUlua_State@@@Z
+	?vesselSetRCSmode@Interpreter@@KAHPAUlua_State@@@Z=?v_set_rcsmode@Interpreter@@KAHPAUlua_State@@@Z

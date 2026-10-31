@@ -1,0 +1,37 @@
+# the SDKs' char * parameters the generator handles: <mangled name> <parameter number> in | out <size: pN or chars> | text (a
+# module's text: UTF-8 for Orbiter, helper/text.cpp; const ones too)
+?oapiAnnotationSetText@@YAXPAXPAD@Z 1 text
+?oapiGetBaseByName@@YAPAXPAXPAD@Z 1 in
+?oapiGetGbodyByName@@YAPAXPAD@Z 0 in
+?oapiGetNavDescr@@YAHPAXPADH@Z 1 out p2
+?oapiGetObjectByName@@YAPAXPAD@Z 0 in
+?oapiGetObjectName@@YAXPAXPADH@Z 1 out p2
+?oapiReadItem_float@@YA_NPAXPADAAN@Z 1 in
+?oapiReadItem_int@@YA_NPAXPADAAH@Z 1 in
+?oapiReadItem_string@@YA_NPAXPAD1@Z 1 in
+?oapiReadItem_string@@YA_NPAXPAD1@Z 2 out 512 # Orbiter copies at most 510 characters (OrbiterAPI.cpp)
+?oapiReadItem_vec@@YA_NPAXPADAATVECTOR3@@@Z 1 in
+?oapiRegisterExhaustTexture@@YAPAXPAD@Z 0 in
+?oapiRegisterReentryTexture@@YAPAXPAD@Z 0 in
+?oapiWriteScenario_string@@YAXPAXPAD1@Z 1 in
+?oapiWriteScenario_string@@YAXPAXPAD1@Z 2 in
+?oapiGetStationByName@@YAPAXPAD@Z 0 in
+?oapiGetVesselByName@@YAPAXPAD@Z 0 in
+?oapiReadItem_bool@@YA_NPAXPADAA_N@Z 1 in
+?oapiRegisterParticleTexture@@YAPAXPAD@Z 0 in
+?oapiWriteItem_bool@@YAXPAXPAD_N@Z 1 in
+?oapiWriteItem_float@@YAXPAXPADN@Z 1 in
+?oapiWriteItem_int@@YAXPAXPADH@Z 1 in
+?oapiWriteItem_string@@YAXPAXPAD1@Z 1 in
+?oapiWriteItem_string@@YAXPAXPAD1@Z 2 in
+?oapiWriteItem_vec@@YAXPAXPADABTVECTOR3@@@Z 1 in
+?oapiWriteLine@@YAXPAXPAD@Z 1 in
+?oapiWriteLog@@YAXPAD@Z 0 text
+?oapiWriteScenario_float@@YAXPAXPADN@Z 1 in
+?oapiWriteScenario_int@@YAXPAXPADH@Z 1 in
+?oapiWriteScenario_vec@@YAXPAXPADABTVECTOR3@@@Z 1 in
+?oapiCreateFontEx@@YAPAVFont@oapi@@HPADHHW4FontStyle@@M@Z 1 in
+?FormatValue@@YAXPADHNH@Z 0 out p1
+?sscan_state@@YAXPADAAVAnimState@@@Z 0 in
+?WriteScenario_state@@YAXPAXPADABVAnimState@@@Z 1 in
+?GetEditorModule@VESSEL@@QBE_NPAD@Z 0 out 256 # Orbiter copies the cfg item (GetItemString, its 256-byte lines)

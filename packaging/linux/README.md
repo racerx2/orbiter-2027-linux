@@ -26,4 +26,5 @@ With Docker:
 - The notes come from `notes.md`. The changes go in `out/portable/changes-rcN.md`; without that file, the notes list the commit subjects since the previous tag.
 - `release` pushes only a fast-forward. On a fork whose Custom holds our commits under other hashes, it pushes a merge with this commit's files.
 - It stops if a Custom branch has changes that are not here.
+- The Wine bridge (Src/WineBridge): its Windows files and generated calls are built on this PC (Wine's headers and libraries, clang, lld, python3 with clang) against the root's build tree (out/portable/wbhost), between two builds in the root; the second builds its Linux module from them (ORBITER_WB_HELPER_FROM), and collect.py checks it with the rest.
 - A second run re-uploads the files of an existing release.

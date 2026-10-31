@@ -1,0 +1,10 @@
+; WineBridge: lua.dll exports its API (wb_luaapi.c, the libraries: LUA_BUILD_AS_DLL), lua_ident (Lua's core is built without it) and,
+; as the 2010 lua5.1.dll did (api/lua51.txt), these for luac
+EXPORTS
+	lua_ident DATA
+	luaD_growstack
+	luaF_newproto
+	luaM_realloc_
+	luaM_toobig
+	luaS_newlstr
+	luaU_dump

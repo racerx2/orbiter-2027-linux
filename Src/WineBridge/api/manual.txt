@@ -1,0 +1,548 @@
+# written by hand (helper/*.cpp, linux/*.cpp): the generator stops on any import neither generated nor listed here
+??0VESSEL2@@QAE@PAXH@Z # VESSEL2::VESSEL2(void *, int)
+??0VESSEL3@@QAE@PAXH@Z # VESSEL3::VESSEL3(void *, int)
+??1ExternMFD@@UAE@XZ # virtual ExternMFD::~ExternMFD(void)
+??1GraphMFD@@UAE@XZ # virtual GraphMFD::~GraphMFD(void)
+??1LaunchpadItem@@UAE@XZ # virtual LaunchpadItem::~LaunchpadItem(void)
+??1MFD@@UAE@XZ # virtual MFD::~MFD(void)
+?Activate@LightEmitter@@QAEX_N@Z # void LightEmitter::Activate(bool)
+?AddAnimationComponent@VESSEL@@QBEPAXINNPAVMGROUP_TRANSFORM@@PAX@Z # void * VESSEL::AddAnimationComponent(unsigned int, double, double, MGROUP_TRANSFORM *, void *) const
+?AddBeacon@VESSEL@@QAEXPAUBEACONLIGHTSPEC@@@Z # void VESSEL::AddBeacon(BEACONLIGHTSPEC *)
+?AddExhaust@VESSEL@@QAEIPAUEXHAUSTSPEC@@@Z # unsigned int VESSEL::AddExhaust(EXHAUSTSPEC *)
+?AddExhaustStream@VESSEL@@QBEPAXPAXABTVECTOR3@@PAUPARTICLESTREAMSPEC@@@Z # void * VESSEL::AddExhaustStream(void *, VECTOR3 const &, PARTICLESTREAMSPEC *) const
+?AddExhaustStream@VESSEL@@QBEPAXPAXPAUPARTICLESTREAMSPEC@@@Z # void * VESSEL::AddExhaustStream(void *, PARTICLESTREAMSPEC *) const
+?AddParticleStream@VESSEL@@QBEPAXPAUPARTICLESTREAMSPEC@@ABTVECTOR3@@1PAN@Z # void * VESSEL::AddParticleStream(PARTICLESTREAMSPEC *, VECTOR3 const &, VECTOR3 const &, double *) const
+?AddPointLight@VESSEL@@QBEPAVLightEmitter@@ABTVECTOR3@@NNNNUCOLOUR4@@11@Z # LightEmitter * VESSEL::AddPointLight(VECTOR3 const &, double, double, double, double, COLOUR4, COLOUR4, COLOUR
+?AddReentryStream@VESSEL@@QBEPAXPAUPARTICLESTREAMSPEC@@@Z # void * VESSEL::AddReentryStream(PARTICLESTREAMSPEC *) const
+?AddSpotLight@VESSEL@@QBEPAVLightEmitter@@ABTVECTOR3@@0NNNNNNUCOLOUR4@@11@Z # LightEmitter * VESSEL::AddSpotLight(VECTOR3 const &, VECTOR3 const &, double, double, double, double, double, 
+?CreateAirfoil3@VESSEL@@QBEPAXW4AIRFOIL_ORIENTATION@@ABTVECTOR3@@P6AXPAV1@NNNPAXPAN44@Z3NNN@Z # void * VESSEL::CreateAirfoil3(AIRFOIL_ORIENTATION, VECTOR3 const &, void (*)(VESSEL *, double, double, double,
+?CreateAirfoil@VESSEL@@QBEXW4AIRFOIL_ORIENTATION@@ABTVECTOR3@@P6AXNNNPAN22@ZNNN@Z # void VESSEL::CreateAirfoil(AIRFOIL_ORIENTATION, VECTOR3 const &, void (*)(double, double, double, double *, do
+?CreateThrusterGroup@VESSEL@@QBEPAXPAPAXHW4THGROUP_TYPE@@@Z # void * VESSEL::CreateThrusterGroup(void **, int, THGROUP_TYPE) const
+?CreateVariableDragElement@VESSEL@@QBEXPANNABTVECTOR3@@@Z # void VESSEL::CreateVariableDragElement(double *, double, VECTOR3 const &) const
+?Date2Int@@YAHPAD@Z # int Date2Int(char *)
+?DefSetState@VESSEL@@QBEXPBUVESSELSTATUS@@@Z # void VESSEL::DefSetState(VESSELSTATUS const *) const
+?DefSetStateEx@VESSEL@@QBEXPBX@Z # void VESSEL::DefSetStateEx(void const *) const
+?DelExhaust@VESSEL@@QBE_NI@Z # bool VESSEL::DelExhaust(unsigned int) const
+?DelExhaustStream@VESSEL@@QBE_NPAX@Z # bool VESSEL::DelExhaustStream(void *) const
+?Description@LaunchpadItem@@UAEPADXZ # virtual char * LaunchpadItem::Description(void)
+?GetAttachmentId@VESSEL@@QBEPBDPAX@Z # char const * VESSEL::GetAttachmentId(void *) const
+?GetClassNameA@VESSEL@@QBEPADXZ # char * VESSEL::GetClassNameA(void) const
+?GetDescr@CameraMode_Cockpit@@UAEXPADH@Z # virtual void CameraMode_Cockpit::GetDescr(char *, int)
+?GetDescr@CameraMode_Ground@@UAEXPADH@Z # virtual void CameraMode_Ground::GetDescr(char *, int)
+?GetDescr@CameraMode_Track@@UAEXPADH@Z # virtual void CameraMode_Track::GetDescr(char *, int)
+?GetName@VESSEL@@QBEPADXZ # char * VESSEL::GetName(void) const
+?GetStatus@VESSEL@@QBEXAAUVESSELSTATUS@@@Z # void VESSEL::GetStatus(VESSELSTATUS &) const
+?GetStatusEx@VESSEL@@QBEXPAX@Z # void VESSEL::GetStatusEx(void *) const
+?Init@CameraMode_Ground@@UAEXPAD@Z # virtual void CameraMode_Ground::Init(char *)
+?Init@CameraMode_Track@@UAEXPAD@Z # virtual void CameraMode_Track::Init(char *)
+?InitLib@@YAXPAUHINSTANCE__@@@Z # void InitLib(HINSTANCE__*)
+?Name@LaunchpadItem@@UAEPADXZ # virtual char * LaunchpadItem::Name(void)
+?OpenDialog@LaunchpadItem@@UAE_NPAUHINSTANCE__@@PAUHWND__@@HP6GH1IIJ@Z@Z # virtual bool LaunchpadItem::OpenDialog(HINSTANCE__*, HWND__*, int, int (__stdcall *)(HWND__*, unsigned int, un
+?ParseScenarioLineEx@VESSEL@@QBEXPADPAX@Z # void VESSEL::ParseScenarioLineEx(char *, void *) const
+?SetIntensity@LightEmitter@@QAEXN@Z # void LightEmitter::SetIntensity(double)
+?SetLiftCoeffFunc@VESSEL@@QBEXP6ANN@Z@Z # void VESSEL::SetLiftCoeffFunc(double (*)(double)) const
+?SetPosition@LightEmitter@@QAEXABTVECTOR3@@@Z # void LightEmitter::SetPosition(VECTOR3 const &)
+?SetVessel@ExternMFD@@UAEXPAX@Z # virtual void ExternMFD::SetVessel(void *)
+?Store@CameraMode_Cockpit@@UAEXPAD@Z # virtual void CameraMode_Cockpit::Store(char *)
+?Store@CameraMode_Ground@@UAEXPAD@Z # virtual void CameraMode_Ground::Store(char *)
+?Store@CameraMode_Track@@UAEXPAD@Z # virtual void CameraMode_Track::Store(char *)
+?bEphemeris@CELBODY@@UBE_NXZ # virtual bool CELBODY::bEphemeris(void) const
+?clbkADCtrlMode@VESSEL2@@UAEXK@Z # virtual void VESSEL2::clbkADCtrlMode(unsigned long)
+?clbkAnimate@VESSEL2@@UAEXN@Z # virtual void VESSEL2::clbkAnimate(double)
+?clbkAtmParam@CELBODY@@UAE_NNPAUATMPARAM@@@Z # virtual bool CELBODY::clbkAtmParam(double, ATMPARAM *)
+?clbkConsumeBufferedKey@VESSEL2@@UAEHK_NPAD@Z # virtual int VESSEL2::clbkConsumeBufferedKey(unsigned long, bool, char *)
+?clbkConsumeDirectKey@VESSEL2@@UAEHPAD@Z # virtual int VESSEL2::clbkConsumeDirectKey(char *)
+?clbkDockEvent@VESSEL2@@UAEXHPAX@Z # virtual void VESSEL2::clbkDockEvent(int, void *)
+?clbkDrawHUD@VESSEL2@@UAEXHPBUHUDPAINTSPEC@@PAUHDC__@@@Z # virtual void VESSEL2::clbkDrawHUD(int, HUDPAINTSPEC const *, HDC__*)
+?clbkDrawHUD@VESSEL3@@UAE_NHPBUHUDPAINTSPEC@@PAVSketchpad@oapi@@@Z # virtual bool VESSEL3::clbkDrawHUD(int, HUDPAINTSPEC const *, oapi::Sketchpad *)
+?clbkEphemeris@CELBODY@@UAEHNHPAN@Z # virtual int CELBODY::clbkEphemeris(double, int, double *)
+?clbkFastEphemeris@CELBODY@@UAEHNHPAN@Z # virtual int CELBODY::clbkFastEphemeris(double, int, double *)
+?clbkFocusChanged@ExternMFD@@UAEXPAX@Z # virtual void ExternMFD::clbkFocusChanged(void *)
+?clbkFocusChanged@VESSEL2@@UAEX_NPAX1@Z # virtual void VESSEL2::clbkFocusChanged(bool, void *, void *)
+?clbkGeneric@VESSEL3@@UAEHHHPAX@Z # virtual int VESSEL3::clbkGeneric(int, int, void *)
+?clbkGetRadiationForce@VESSEL3@@UAEXABTVECTOR3@@AAT2@1@Z # virtual void VESSEL3::clbkGetRadiationForce(VECTOR3 const &, VECTOR3 &, VECTOR3 &)
+?clbkHUDMode@VESSEL2@@UAEXH@Z # virtual void VESSEL2::clbkHUDMode(int)
+?clbkInit@CELBODY@@UAEXPAX@Z # virtual void CELBODY::clbkInit(void *)
+?clbkLoadGenericCockpit@VESSEL2@@UAE_NXZ # virtual bool VESSEL2::clbkLoadGenericCockpit(void)
+?clbkLoadPanel2D@VESSEL3@@UAE_NHPAXKK@Z # virtual bool VESSEL3::clbkLoadPanel2D(int, void *, unsigned long, unsigned long)
+?clbkLoadPanel@VESSEL2@@UAE_NH@Z # virtual bool VESSEL2::clbkLoadPanel(int)
+?clbkLoadStateEx@VESSEL2@@UAEXPAX0@Z # virtual void VESSEL2::clbkLoadStateEx(void *, void *)
+?clbkLoadVC@VESSEL2@@UAE_NH@Z # virtual bool VESSEL2::clbkLoadVC(int)
+?clbkMFDMode@VESSEL2@@UAEXHH@Z # virtual void VESSEL2::clbkMFDMode(int, int)
+?clbkNavMode@VESSEL2@@UAEXH_N@Z # virtual void VESSEL2::clbkNavMode(int, bool)
+?clbkOpen@LaunchpadItem@@UAE_NPAUHWND__@@@Z # virtual bool LaunchpadItem::clbkOpen(HWND__*)
+?clbkPanelMouseEvent@VESSEL2@@UAE_NHHHH@Z # virtual bool VESSEL2::clbkPanelMouseEvent(int, int, int, int)
+?clbkPanelMouseEvent@VESSEL3@@UAE_NHHHHPAX@Z # virtual bool VESSEL3::clbkPanelMouseEvent(int, int, int, int, void *)
+?clbkPanelRedrawEvent@VESSEL2@@UAE_NHHPAX@Z # virtual bool VESSEL2::clbkPanelRedrawEvent(int, int, void *)
+?clbkPanelRedrawEvent@VESSEL3@@UAE_NHHPAX0@Z # virtual bool VESSEL3::clbkPanelRedrawEvent(int, int, void *, void *)
+?clbkPlaybackEvent@VESSEL2@@UAE_NNNPBD0@Z # virtual bool VESSEL2::clbkPlaybackEvent(double, double, char const *, char const *)
+?clbkPostCreation@VESSEL2@@UAEXXZ # virtual void VESSEL2::clbkPostCreation(void)
+?clbkPostStep@VESSEL2@@UAEXNNN@Z # virtual void VESSEL2::clbkPostStep(double, double, double)
+?clbkPreStep@VESSEL2@@UAEXNNN@Z # virtual void VESSEL2::clbkPreStep(double, double, double)
+?clbkRCSMode@VESSEL2@@UAEXH@Z # virtual void VESSEL2::clbkRCSMode(int)
+?clbkRefreshButtons@ExternMFD@@UAEXXZ # virtual void ExternMFD::clbkRefreshButtons(void)
+?clbkRefreshDisplay@ExternMFD@@UAEXPAX@Z # virtual void ExternMFD::clbkRefreshDisplay(void *)
+?clbkRenderHUD@VESSEL3@@UAEXHPBUHUDPAINTSPEC@@PAX@Z # virtual void VESSEL3::clbkRenderHUD(int, HUDPAINTSPEC const *, void *)
+?clbkSaveState@VESSEL2@@UAEXPAX@Z # virtual void VESSEL2::clbkSaveState(void *)
+?clbkSetClassCaps@VESSEL2@@UAEXPAX@Z # virtual void VESSEL2::clbkSetClassCaps(void *)
+?clbkSetStateEx@VESSEL2@@UAEXPBX@Z # virtual void VESSEL2::clbkSetStateEx(void const *)
+?clbkUpdate@ExternMFD@@UAEXXZ # virtual void ExternMFD::clbkUpdate(void)
+?clbkVCMouseEvent@VESSEL2@@UAE_NHHAATVECTOR3@@@Z # virtual bool VESSEL2::clbkVCMouseEvent(int, int, VECTOR3 &)
+?clbkVCRedrawEvent@VESSEL2@@UAE_NHHPAX@Z # virtual bool VESSEL2::clbkVCRedrawEvent(int, int, void *)
+?clbkVisualCreated@VESSEL2@@UAEXPAXH@Z # virtual void VESSEL2::clbkVisualCreated(void *, int)
+?clbkVisualDestroyed@VESSEL2@@UAEXPAXH@Z # virtual void VESSEL2::clbkVisualDestroyed(void *, int)
+?clbkWriteConfig@LaunchpadItem@@UAEHXZ # virtual int LaunchpadItem::clbkWriteConfig(void)
+?oapiCreateBrush@@YAPAVBrush@oapi@@K@Z # oapi::Brush * oapiCreateBrush(unsigned long)
+?oapiCreateFont@@YAPAVFont@oapi@@H_NPADW4FontStyle@@@Z # oapi::Font * oapiCreateFont(int, bool, char *, FontStyle)
+?oapiCreateFont@@YAPAVFont@oapi@@H_NPBDW4FontStyle@@H@Z # oapi::Font * oapiCreateFont(int, bool, char const *, FontStyle, int)
+?oapiCreatePen@@YAPAVPen@oapi@@HHK@Z # oapi::Pen * oapiCreatePen(int, int, unsigned long)
+?oapiCreateSurface@@YAPAXPAUHBITMAP__@@_N@Z # void * oapiCreateSurface(HBITMAP__*, bool)
+?oapiCreateVessel@@YAPAXPBD0ABUVESSELSTATUS@@@Z # void * oapiCreateVessel(char const *, char const *, VESSELSTATUS const &)
+?oapiCreateVesselEx@@YAPAXPBD0PBX@Z # void * oapiCreateVesselEx(char const *, char const *, void const *)
+?oapiDebugString@@YAPADXZ # char * oapiDebugString(void)
+?oapiEditMeshGroup@@YAHPAHKPAUGROUPEDITSPEC@@@Z # int oapiEditMeshGroup(int *, unsigned long, GROUPEDITSPEC *)
+?oapiGetDC@@YAPAUHDC__@@PAX@Z # HDC__* oapiGetDC(void *)
+?oapiGetSketchpad@@YAPAVSketchpad@oapi@@PAX@Z # oapi::Sketchpad * oapiGetSketchpad(void *)
+?oapiGetVesselInterface@@YAPAVVESSEL@@PAX@Z # VESSEL * oapiGetVesselInterface(void *)
+?oapiLoadMesh@@YAPAXPBD@Z # void * oapiLoadMesh(char const *)
+?oapiLoadMeshGlobal@@YAQAXPBD@Z # void * const oapiLoadMeshGlobal(char const *)
+?oapiMFDButtonLabel@@YAPBDHH@Z # char const * oapiMFDButtonLabel(int, int)
+?oapiMeshGroup@@YAPAUMESHGROUP@@PAXK@Z # MESHGROUP * oapiMeshGroup(void *, unsigned long)
+?oapiMeshGroupEx@@YAPAUMESHGROUPEX@@PAXK@Z # MESHGROUPEX * oapiMeshGroupEx(void *, unsigned long)
+?oapiMeshMaterial@@YAPAUMATERIAL@@PAXK@Z # MATERIAL * oapiMeshMaterial(void *, unsigned long)
+?oapiOpenInputBox@@YAXPADP6A_NPAX01@Z0H1@Z # void oapiOpenInputBox(char *, bool (*)(void *, char *, void *), char *, int, void *)
+?oapiReadScenario_nextline@@YA_NPAXAAPAD@Z # bool oapiReadScenario_nextline(void *, char *&)
+?oapiRegisterPanelBackground@@YAXPAUHBITMAP__@@KK@Z # void oapiRegisterPanelBackground(HBITMAP__*, unsigned long, unsigned long)
+?oapiReleaseBrush@@YAXPAVBrush@oapi@@@Z # void oapiReleaseBrush(oapi::Brush *)
+?oapiReleaseDC@@YAXPAXPAUHDC__@@@Z # void oapiReleaseDC(void *, HDC__*)
+?oapiReleaseFont@@YAXPAVFont@oapi@@@Z # void oapiReleaseFont(oapi::Font *)
+?oapiReleasePen@@YAXPAVPen@oapi@@@Z # void oapiReleasePen(oapi::Pen *)
+?oapiReleaseSketchpad@@YAXPAVSketchpad@oapi@@@Z # void oapiReleaseSketchpad(oapi::Sketchpad *)
+?__writeLogError@@YAXPBD0H0ZZ # void __writeLogError(const char *, const char *, int, const char *, ...)
+?oapiWriteLogV@@YAXPBDZZ # void oapiWriteLogV(const char *, ...)
+??0LightEmitter@@QAE@UCOLOUR4@@00@Z # defined by the helper
+??0LightEmitter@@QAE@XZ # defined by the helper
+??0PointLight@@QAE@PAXABTVECTOR3@@NNNNUCOLOUR4@@22@Z # defined by the helper
+??0Sketchpad@oapi@@QAE@PAX@Z # defined by the helper
+??0SpotLight@@QAE@PAXABTVECTOR3@@1NNNNNNUCOLOUR4@@22@Z # defined by the helper
+??0VESSEL4@@QAE@PAXH@Z # defined by the helper
+??0VESSEL@@QAE@PAXH@Z # defined by the helper
+??1Sketchpad@oapi@@UAE@XZ # defined by the helper
+??_7Brush@oapi@@6B@ # defined by the helper
+??_7DrawingTool@oapi@@6B@ # defined by the helper
+??_7Font@oapi@@6B@ # defined by the helper
+??_7GraphMFD@@6B@ # defined by the helper
+??_7Pen@oapi@@6B@ # defined by the helper
+??_7Sketchpad@oapi@@6B@ # defined by the helper
+??_7VESSEL2@@6B@ # defined by the helper
+??_7VESSEL3@@6B@ # defined by the helper
+??_7VESSEL4@@6B@ # defined by the helper
+?Attach@LightEmitter@@IAEPAXPAX@Z # defined by the helper
+?PolyPolygon@Sketchpad@oapi@@UAEXPBTIVECTOR2@2@PBHH@Z # defined by the helper
+?PolyPolyline@Sketchpad@oapi@@UAEXPBTIVECTOR2@2@PBHH@Z # defined by the helper
+?Rectangle@Sketchpad@oapi@@UAEXHHHH@Z # defined by the helper
+?SetDirection@LightEmitter@@QAEXABTVECTOR3@@@Z # defined by the helper
+?TextBox@Sketchpad@oapi@@UAE_NHHHHPBDH@Z # defined by the helper
+?clbkNavProcess@VESSEL4@@UAEHH@Z # defined by the helper
+?oapiGetFocusInterface@@YAPAVVESSEL@@XZ # VESSEL *oapiGetFocusInterface(void)
+?oapiGetPlanetAtmConstants@@YAPBUATMCONST@@PAX@Z # const ATMCONST *oapiGetPlanetAtmConstants(void *)
+?oapiUnregisterMFDMode@@YA_NH@Z # bool oapiUnregisterMFDMode(int): with the bridge's mode record (helper/mfd.cpp)
+??0ModuleNV@oapi@@QAE@PAUHINSTANCE__@@@Z # oapi::ModuleNV::ModuleNV(HINSTANCE) (helper/module.cpp)
+??4ModuleNV@oapi@@QAEAAV01@ABV01@@Z # made by the compiler (helper/module.cpp)
+?GetModule@ModuleNV@oapi@@QBEPAUHINSTANCE__@@XZ # inline in the header, made by helper/module.cpp (api/inline.def)
+?GetSimMJD@ModuleNV@oapi@@QBENXZ # oapi::ModuleNV::GetSimMJD (helper/module.cpp)
+?GetSimStep@ModuleNV@oapi@@QBENXZ # oapi::ModuleNV::GetSimStep (helper/module.cpp)
+?GetSimTime@ModuleNV@oapi@@QBENXZ # oapi::ModuleNV::GetSimTime (helper/module.cpp)
+?Version@ModuleNV@oapi@@QBEHXZ # inline in the header, made by helper/module.cpp (api/inline.def)
+??0ExternMFD@@QAE@ABUMFDSPEC@@@Z # defined by the helper
+??0GraphMFD@@QAE@KKPAVVESSEL@@@Z # defined by the helper
+??0MFD@@QAE@KKPAVVESSEL@@@Z # defined by the helper
+??0Module@oapi@@QAE@PAUHINSTANCE__@@@Z # defined by the helper
+??1Module@oapi@@UAE@XZ # defined by the helper
+??_7ExternMFD@@6B@ # defined by the helper
+??_7MFD2@@6B@ # defined by the helper
+??_7MFD@@6B@ # defined by the helper
+??_7Module@oapi@@6B@ # defined by the helper
+?Active@ExternMFD@@QBE_NXZ # defined by the helper
+?AddGraph@GraphMFD@@QAEHXZ # defined by the helper
+?AddPlot@GraphMFD@@QAEXHPAM0HHPAH@Z # defined by the helper
+?ButtonLabel@MFD@@UAEPADH@Z # defined by the helper
+?ButtonMenu@MFD@@UBEHPAPBUMFDBUTTONMENU@@@Z # defined by the helper
+?ConsumeButton@MFD@@UAE_NHH@Z # defined by the helper
+?ConsumeKeyBuffered@MFD@@UAE_NK@Z # defined by the helper
+?ConsumeKeyImmediate@MFD@@UAE_NPAD@Z # defined by the helper
+?FindRange@GraphMFD@@QBEXPAMHAAM1@Z # defined by the helper
+?GetButtonLabel@ExternMFD@@QBEPBDH@Z # defined by the helper
+?GetDefaultColour@MFD2@@QBEKKK@Z # defined by the helper
+?GetDefaultFont@MFD2@@QBEPAVFont@oapi@@K@Z # defined by the helper
+?GetDefaultPen@MFD2@@QBEPAVPen@oapi@@KKK@Z # defined by the helper
+?GetDisplaySurface@ExternMFD@@QBEPAXXZ # defined by the helper
+?GetHeight@MFD2@@QBEKXZ # defined by the helper
+?GetVessel@ExternMFD@@QBEPAXXZ # defined by the helper
+?GetWidth@MFD2@@QBEKXZ # defined by the helper
+?Id@ExternMFD@@QBEIXZ # defined by the helper
+?InvalidateButtons@MFD@@QAEXXZ # defined by the helper
+?InvalidateDisplay@MFD@@QAEXXZ # defined by the helper
+?OpenModeHelp@ExternMFD@@QBE_NXZ # defined by the helper
+?Plot@GraphMFD@@QAEXPAUHDC__@@HHHPBD@Z # defined by the helper
+?ProcessButton@ExternMFD@@QAE_NHH@Z # defined by the helper
+?ReadStatus@MFD@@UAEXPAX@Z # defined by the helper
+?RecallStatus@MFD@@UAEXXZ # defined by the helper
+?RegisterMFDMode@VESSEL4@@QAEHABUMFDMODESPECEX@@@Z # defined by the helper
+?RegisterPanelMFDGeometry@VESSEL3@@QAEHPAXHHH@Z # defined by the helper
+?Resize@ExternMFD@@QAE_NABUMFDSPEC@@@Z # defined by the helper
+?SelectDefaultFont@MFD@@QBEPAUHFONT__@@PAUHDC__@@K@Z # defined by the helper
+?SelectDefaultPen@MFD@@QBEPAUHPEN__@@PAUHDC__@@K@Z # defined by the helper
+?SendKey@ExternMFD@@QAE_NK@Z # defined by the helper
+?SetAutoRange@GraphMFD@@QAEXHHH@Z # defined by the helper
+?SetAutoTicks@GraphMFD@@QAEXHH@Z # defined by the helper
+?SetAxisTitle@GraphMFD@@QAEXHHPAD@Z # defined by the helper
+?SetMode@ExternMFD@@QAE_NH@Z # defined by the helper
+?SetRange@GraphMFD@@QAEXHHMM@Z # defined by the helper
+?StoreStatus@MFD@@UBEXXZ # defined by the helper
+?Title@MFD2@@QBEXPAVSketchpad@oapi@@PBD@Z # defined by the helper
+?Title@MFD@@QBEXPAUHDC__@@PBD@Z # defined by the helper
+?UnregisterMFDMode@VESSEL4@@QAE_NH@Z # defined by the helper
+?Update@MFD2@@UAEXPAUHDC__@@@Z # defined by the helper
+?Update@MFD2@@UAE_NPAVSketchpad@oapi@@@Z # defined by the helper
+?WriteStatus@MFD@@UBEXPAX@Z # defined by the helper
+?clbkDeleteVessel@Module@oapi@@UAEXPAX@Z # defined by the helper
+?clbkFocusChanged@Module@oapi@@UAEXPAX0@Z # defined by the helper
+?clbkNewVessel@Module@oapi@@UAEXPAX@Z # defined by the helper
+?clbkPause@Module@oapi@@UAEX_N@Z # defined by the helper
+?clbkPostStep@Module@oapi@@UAEXNNN@Z # defined by the helper
+?clbkPreStep@Module@oapi@@UAEXNNN@Z # defined by the helper
+?clbkProcessKeyboardBuffered@Module@oapi@@UAE_NKQAD_N@Z # defined by the helper
+?clbkProcessKeyboardImmediate@Module@oapi@@UAE_NQAD_N@Z # defined by the helper
+?clbkProcessMouse@Module@oapi@@UAE_NIKKK@Z # defined by the helper
+?clbkSimulationEnd@Module@oapi@@UAEXXZ # defined by the helper
+?clbkSimulationStart@Module@oapi@@UAEXW4RenderMode@12@@Z # defined by the helper
+?clbkTimeAccChanged@Module@oapi@@UAEXNN@Z # defined by the helper
+?clbkTimeJump@Module@oapi@@UAEXNNN@Z # defined by the helper
+?clbkVesselJump@Module@oapi@@UAEXPAX@Z # defined by the helper
+?oapiBroadcastMFDMessage@@YAHHHPAX@Z # defined by the helper
+?oapiGetMFDModeSpec@@YAHPADPAPAUMFDMODESPEC@@@Z # defined by the helper
+?oapiGetMFDModeSpecEx@@YAHPADPAPAUMFDMODESPECEX@@@Z # defined by the helper
+?oapiRegisterExternMFD@@YAXPAVExternMFD@@ABUMFDSPEC@@@Z # defined by the helper
+?oapiRegisterMFDMode@@YAHAAUMFDMODESPEC@@@Z # defined by the helper
+?oapiRegisterMFDMode@@YAHAAUMFDMODESPECEX@@@Z # defined by the helper
+?oapiRegisterModule@@YAXPAVModule@oapi@@@Z # defined by the helper
+?oapiUnregisterExternMFD@@YA_NPAVExternMFD@@@Z # defined by the helper
+??0ExternMFD@@QAE@ABV0@@Z # defined by the helper
+??0GraphMFD@@QAE@ABV0@@Z # defined by the helper
+??0MFD2@@QAE@ABV0@@Z # defined by the helper
+??0MFD2@@QAE@KKPAVVESSEL@@@Z # defined by the helper
+??0MFD@@QAE@ABV0@@Z # defined by the helper
+??0Module@oapi@@QAE@ABV01@@Z # defined by the helper
+??1MFD2@@UAE@XZ # defined by the helper
+??4ExternMFD@@QAEAAV0@ABV0@@Z # defined by the helper
+??4GraphMFD@@QAEAAV0@ABV0@@Z # defined by the helper
+??4MFD2@@QAEAAV0@ABV0@@Z # defined by the helper
+??4MFD@@QAEAAV0@ABV0@@Z # defined by the helper
+??4Module@oapi@@QAEAAV01@ABV01@@Z # defined by the helper
+??_DExternMFD@@QAEXXZ # defined by the helper
+??_DGraphMFD@@QAEXXZ # defined by the helper
+??_DMFD2@@QAEXXZ # defined by the helper
+??_DMFD@@QAEXXZ # defined by the helper
+??_DModule@oapi@@QAEXXZ # defined by the helper
+??0ATMOSPHERE@@QAE@ABV0@@Z # made by the compiler (helper/celbody.cpp, api/inline.def)
+??0ATMOSPHERE@@QAE@PAVCELBODY2@@@Z # defined by the helper (helper/celbody.cpp)
+??0CELBODY2@@QAE@ABV0@@Z # made by the compiler (helper/celbody.cpp, api/inline.def)
+??0CELBODY2@@QAE@PAX@Z # defined by the helper (helper/celbody.cpp)
+??0CELBODY@@QAE@ABV0@@Z # made by the compiler (helper/celbody.cpp, api/inline.def)
+??0CELBODY@@QAE@XZ # defined by the helper (helper/celbody.cpp)
+??1CELBODY2@@UAE@XZ # defined by the helper (helper/celbody.cpp)
+??4ATMOSPHERE@@QAEAAV0@ABV0@@Z # made by the compiler (helper/celbody.cpp, api/inline.def)
+??4CELBODY2@@QAEAAV0@ABV0@@Z # made by the compiler (helper/celbody.cpp, api/inline.def)
+??4CELBODY@@QAEAAV0@ABV0@@Z # made by the compiler (helper/celbody.cpp, api/inline.def)
+??_7ATMOSPHERE@@6B@ # defined by the helper (helper/celbody.cpp)
+??_7CELBODY2@@6B@ # defined by the helper (helper/celbody.cpp)
+??_7CELBODY@@6B@ # defined by the helper (helper/celbody.cpp)
+??_DCELBODY2@@QAEXXZ # the destructor: no virtual bases (api/inline.def)
+?FreeAtmosphere@CELBODY2@@IAE_NXZ # defined by the helper (helper/celbody.cpp)
+?FreeAtmosphereModule@CELBODY2@@IAE_NXZ # defined by the helper (helper/celbody.cpp)
+?GetAtmosphere@CELBODY2@@QBEPAVATMOSPHERE@@XZ # inline in the header, made by helper/celbody.cpp (api/inline.def)
+?GetChild@CELBODY2@@QBEPAXK@Z # defined by the helper (helper/celbody.cpp)
+?GetHandle@CELBODY2@@QBEPAXXZ # inline in the header, made by helper/celbody.cpp (api/inline.def)
+?GetParent@CELBODY2@@QBEPAXXZ # defined by the helper (helper/celbody.cpp)
+?LegacyAtmosphereInterface@CELBODY2@@UBE_NXZ # inline in the header, made by helper/celbody.cpp (api/inline.def)
+?LoadAtmosphereModule@CELBODY2@@IAE_NPBD@Z # defined by the helper (helper/celbody.cpp)
+?Pol2Crt@CELBODY@@IAEXPAN0@Z # defined by the helper (helper/celbody.cpp)
+?SetAtmosphere@CELBODY2@@IAEXPAVATMOSPHERE@@@Z # defined by the helper (helper/celbody.cpp)
+?SidRotPeriod@CELBODY2@@QBENXZ # defined by the helper (helper/celbody.cpp)
+?Version@CELBODY@@QBEHXZ # inline in the header, made by helper/celbody.cpp (api/inline.def)
+?clbkConstants@ATMOSPHERE@@UBE_NPAUATMCONST@@@Z # defined by the helper (helper/celbody.cpp)
+?clbkInit@CELBODY2@@UAEXPAX@Z # defined by the helper (helper/celbody.cpp)
+?clbkParams@ATMOSPHERE@@UAE_NPBUPRM_IN@1@PAUPRM_OUT@1@@Z # defined by the helper (helper/celbody.cpp)
+?oapiGetCelbodyInterface@@YAPAVCELBODY@@PAX@Z # CELBODY *oapiGetCelbodyInterface(void *): the module object, or the helper's for a native body (helper/celbody.cpp)
+??0CameraMode@@QAE@ABV0@@Z # made by the compiler (helper/camera.cpp, api/inline.def)
+??0CameraMode@@QAE@XZ # defined by the helper (helper/camera.cpp)
+??0CameraMode_Cockpit@@QAE@ABV0@@Z # as the calling module lays the object out (helper/camera.cpp, api/inline.def)
+??0CameraMode_Cockpit@@QAE@XZ # defined by the helper (helper/camera.cpp)
+??0CameraMode_Ground@@QAE@ABV0@@Z # as the calling module lays the object out (helper/camera.cpp, api/inline.def)
+??0CameraMode_Ground@@QAE@XZ # defined by the helper (helper/camera.cpp)
+??0CameraMode_Track@@QAE@ABV0@@Z # made by the compiler (helper/camera.cpp, api/inline.def)
+??0CameraMode_Track@@QAE@XZ # defined by the helper (helper/camera.cpp)
+??0ExternalCameraControl@@QAE@ABV0@@Z # made by the compiler (helper/camera.cpp, api/inline.def)
+??0ExternalCameraControl@@QAE@KK@Z # defined by the helper (helper/camera.cpp)
+??0LaunchpadItem@@QAE@ABV0@@Z # made by the compiler (helper/lpad.cpp, api/inline.def)
+??0LaunchpadItem@@QAE@XZ # defined by the helper (helper/lpad.cpp)
+??4CameraMode@@QAEAAV0@ABV0@@Z # made by the compiler (helper/camera.cpp, api/inline.def)
+??4CameraMode_Cockpit@@QAEAAV0@ABV0@@Z # as the calling module lays the object out (helper/camera.cpp, api/inline.def)
+??4CameraMode_Ground@@QAEAAV0@ABV0@@Z # as the calling module lays the object out (helper/camera.cpp, api/inline.def)
+??4CameraMode_Track@@QAEAAV0@ABV0@@Z # made by the compiler (helper/camera.cpp, api/inline.def)
+??4ExternalCameraControl@@QAEAAV0@ABV0@@Z # made by the compiler (helper/camera.cpp, api/inline.def)
+??4LaunchpadItem@@QAEAAV0@ABV0@@Z # made by the compiler (helper/lpad.cpp, api/inline.def)
+??_7CameraMode@@6B@ # defined by the helper (helper/camera.cpp)
+??_7CameraMode_Cockpit@@6B@ # defined by the helper (helper/camera.cpp)
+??_7CameraMode_Ground@@6B@ # defined by the helper (helper/camera.cpp)
+??_7CameraMode_Track@@6B@ # defined by the helper (helper/camera.cpp)
+??_7ExternalCameraControl@@6B@ # defined by the helper (helper/camera.cpp)
+??_7LaunchpadItem@@6B@ # defined by the helper (helper/lpad.cpp)
+??_DLaunchpadItem@@QAEXXZ # the destructor: no virtual bases (api/inline.def)
+?Create@CameraMode@@SAPAV1@PAD@Z # defined by the helper (helper/camera.cpp)
+?GetAltMode@CameraMode_Ground@@QBE_NXZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetCameraMode@ExternalCameraControl@@QBEKXZ # defined by the helper (helper/camera.cpp)
+?GetCockpitMode@CameraMode_Cockpit@@QBE?AW4CockpitMode@1@XZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetDataMode@ExternalCameraControl@@QBEKXZ # defined by the helper (helper/camera.cpp)
+?GetFOV@CameraMode@@QBENXZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetLeaning@CameraMode_Cockpit@@QBEHXZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetLeaningSmooth@CameraMode_Cockpit@@QBE_NXZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetMode@CameraMode_Cockpit@@UBE?AW4Mode@CameraMode@@XZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetMode@CameraMode_Ground@@UBE?AW4Mode@CameraMode@@XZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetMode@CameraMode_Track@@UBE?AW4Mode@CameraMode@@XZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetOrientation@CameraMode_Ground@@QBEXPAN0@Z # defined by the helper (helper/camera.cpp)
+?GetPosition@CameraMode_Cockpit@@QBEHXZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetPosition@CameraMode_Ground@@QBEXPAN00PAPAX@Z # defined by the helper (helper/camera.cpp)
+?GetPosition@CameraMode_Track@@QBEXPAN00@Z # defined by the helper (helper/camera.cpp)
+?GetRef@CameraMode_Ground@@QBEPAXXZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetRef@CameraMode_Track@@QBEPAXXZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetTarget@CameraMode@@QBEPAXXZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetTgtLock@CameraMode_Ground@@QBE_NXZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetTrackMode@CameraMode_Track@@QBE?AW4TrackMode@1@XZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetTrackMode@ExternalCameraControl@@QBEPBUTrackMode@1@XZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?GetVCMode@ExternalCameraControl@@QBEPBUVCMode@1@XZ # inline in the header, made by helper/camera.cpp (api/inline.def)
+?Init@CameraMode_Cockpit@@UAEXPAD@Z # defined by the helper (helper/camera.cpp)
+?SetCameraMode@ExternalCameraControl@@QAEXK@Z # defined by the helper (helper/camera.cpp)
+?SetDataMode@ExternalCameraControl@@QAEXK@Z # defined by the helper (helper/camera.cpp)
+?SetFOV@CameraMode@@QAEXN@Z # defined by the helper (helper/camera.cpp)
+?SetOrientation@CameraMode_Ground@@QAEXNN@Z # defined by the helper (helper/camera.cpp)
+?SetPosition@CameraMode_Ground@@QAEXNNNPAX@Z # defined by the helper (helper/camera.cpp)
+?SetPosition@CameraMode_Track@@QAEXNNN@Z # defined by the helper (helper/camera.cpp)
+?SetTarget@CameraMode@@QAEXPAX@Z # defined by the helper (helper/camera.cpp)
+?SetTrackMode@CameraMode_Track@@QAEXW4TrackMode@1@PAX@Z # defined by the helper (helper/camera.cpp)
+?oapiOpenHelp@@YA_NPAUHELPCONTEXT@@@Z # defined by the helper (helper/lpad.cpp)
+?oapiOpenLaunchpadHelp@@YA_NPAUHELPCONTEXT@@@Z # defined by the helper (helper/lpad.cpp)
+?oapiRegisterCustomCmd@@YAKPAD0P6AXPAX@Z1@Z # defined by the helper (helper/lpad.cpp)
+?oapiRegisterExternalCameraControl@@YA_NPAVExternalCameraControl@@@Z # defined by the helper (helper/camera.cpp)
+?oapiRegisterLaunchpadItem@@YAPAXPAVLaunchpadItem@@PAX@Z # defined by the helper (helper/lpad.cpp)
+?oapiSetCameraMode@@YA_NABVCameraMode@@@Z # defined by the helper (helper/camera.cpp)
+?oapiUnregisterCustomCmd@@YA_NH@Z # defined by the helper (helper/lpad.cpp)
+?oapiUnregisterExternalCameraControl@@YA_NXZ # defined by the helper (helper/camera.cpp)
+?oapiUnregisterLaunchpadItem@@YA_NPAVLaunchpadItem@@@Z # defined by the helper (helper/lpad.cpp)
+?oapiDeleteMesh@@YAXPAX@Z # void oapiDeleteMesh(void *): the helper drops its copies of the mesh
+?CreateAirfoil2@VESSEL@@QBEPAXW4AIRFOIL_ORIENTATION@@ABTVECTOR3@@P6AXNNNPAN22@ZNNN@Z # defined by the helper
+?CreateAirfoil4@VESSEL@@QBEPAXABTVECTOR3@@P6AXPAV1@T2@NNNNNPAXPAN44444@Z3NNN@Z # defined by the helper
+?CreateVariableDragElement@VESSEL@@QBEXPBNNABTVECTOR3@@@Z # defined by the helper
+?EditAirfoil@VESSEL@@QBEXPAXKABTVECTOR3@@P6AXNNNPAN22@ZNNN@Z # defined by the helper
+?GetAirfoilParam@VESSEL@@QBE_NPAXPATVECTOR3@@PAP6AXNNNPAN22@ZPAPAX222@Z # defined by the helper
+?RegisterPanelArea@VESSEL3@@QAEHPAXHABUtagRECT@@1HHH@Z # defined by the helper
+?RegisterPanelArea@VESSEL3@@QAEHPAXHABUtagRECT@@HH00@Z # defined by the helper
+?RegisterPanelArea@VESSEL4@@QAEHPAXHABUtagRECT@@H1HHH@Z # defined by the helper
+?SetPanelBackground@VESSEL3@@QAEHPAXPAPAXK0KKKK@Z # defined by the helper
+?SetPanelScaling@VESSEL3@@QAEHPAXNN@Z # defined by the helper
+?oapiAddMeshGroup@@YAKPAXPAUMESHGROUP@@@Z # defined by the helper
+?oapiAddMeshGroupBlock@@YA_NPAXKPBUNTVERTEX@@KPBGK@Z # defined by the helper
+?oapiCreateMesh@@YAPAXKPAUMESHGROUP@@@Z # defined by the helper
+?oapiGetNavData@@YAHPAXPAUNAVDATA@@@Z # defined by the helper
+?oapiRenderHUD@@YAXPAXPAPAX@Z # defined by the helper
+?ClearLightEmitters@VESSEL@@QBEXXZ # defined by the helper (helper/light.cpp)
+?DelLightEmitter@VESSEL@@QBE_NPAVLightEmitter@@@Z # defined by the helper (helper/light.cpp)
+?GetLightEmitter@VESSEL@@QBEPBVLightEmitter@@K@Z # defined by the helper (helper/light.cpp)
+??0Brush@oapi@@IAE@K@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??0Brush@oapi@@QAE@ABV01@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??0DrawingTool@oapi@@QAE@ABV01@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??0DrawingTool@oapi@@QAE@XZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??0Font@oapi@@IAE@HPBDHHW4FontStyle@@M@Z # defined by the helper (helper/made.cpp)
+??0Font@oapi@@IAE@H_NPBDW4FontStyle@@H@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??0Font@oapi@@IAE@H_NPBDW4Style@01@H@Z # made by the compiler, the function it stands for (api/inline.def)
+??0Font@oapi@@QAE@ABV01@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??0Pen@oapi@@IAE@HHK@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??0Pen@oapi@@QAE@ABV01@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??0PointLight@@QAE@PAXABTVECTOR3@@NNNN@Z # as the light is laid out (helper/light.cpp, api/inline.def)
+??0Sketchpad@oapi@@QAE@ABV01@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??0SpotLight@@QAE@PAXABTVECTOR3@@1NNNNNN@Z # as the light is laid out (helper/light.cpp, api/inline.def)
+??0VESSEL2@@QAE@ABV0@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??0VESSEL3@@QAE@ABV0@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??0VESSEL4@@QAE@ABV0@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??1Brush@oapi@@UAE@XZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??1DrawingTool@oapi@@UAE@XZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??1Font@oapi@@UAE@XZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??1Pen@oapi@@UAE@XZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??4Brush@oapi@@QAEAAV01@ABV01@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??4DrawingTool@oapi@@QAEAAV01@ABV01@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??4Font@oapi@@QAEAAV01@ABV01@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??4LightEmitter@@QAEAAV0@ABV0@@Z # as the light is laid out (helper/light.cpp, api/inline.def)
+??4Pen@oapi@@QAEAAV01@ABV01@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??4PointLight@@QAEAAV0@ABV0@@Z # as the light is laid out (helper/light.cpp, api/inline.def)
+??4Sketchpad@oapi@@QAEAAV01@ABV01@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??4SpotLight@@QAEAAV0@ABV0@@Z # as the light is laid out (helper/light.cpp, api/inline.def)
+??4VESSEL2@@QAEAAV0@ABV0@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??4VESSEL3@@QAEAAV0@ABV0@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??4VESSEL4@@QAEAAV0@ABV0@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??4VESSEL@@QAEAAV0@ABV0@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+??_DBrush@oapi@@QAEXXZ # made by the compiler, the function it stands for (api/inline.def)
+??_DDrawingTool@oapi@@QAEXXZ # made by the compiler, the function it stands for (api/inline.def)
+??_DFont@oapi@@QAEXXZ # made by the compiler, the function it stands for (api/inline.def)
+??_DPen@oapi@@QAEXXZ # made by the compiler, the function it stands for (api/inline.def)
+??_DSketchpad@oapi@@QAEXXZ # made by the compiler, the function it stands for (api/inline.def)
+?Clear@Sketchpad@oapi@@UAEXK_N0@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?ClipRect@Sketchpad@oapi@@UAEXQAUtagRECT@@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?Clipper@Sketchpad@oapi@@UAEXHPBTVECTOR3@@NN@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?ColorCompatibility@Sketchpad@oapi@@UAEX_N@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?ColorFill@Sketchpad@oapi@@UAEXKQAUtagRECT@@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?ColorKey@Sketchpad@oapi@@UAEXQAXQAUtagRECT@@HH@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?CopyRect@Sketchpad@oapi@@UAEXQAXQAUtagRECT@@HH@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?CopyTetragon@Sketchpad@oapi@@UAEXQAXQAUtagRECT@@QBUFVECTOR2@2@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?DepthEnable@Sketchpad@oapi@@UAEX_N@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?Detach@LightEmitter@@IAEPAXXZ # defined by the helper (helper/light.cpp)
+?DrawMeshGroup@Sketchpad@oapi@@UAEHQAXKW4MeshFlags@12@0@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?DrawPoly@Sketchpad@oapi@@UAEXQAXK@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?Ellipse@Sketchpad@oapi@@UAEXHHHH@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?FillTetragon@Sketchpad@oapi@@UAEXKQBUFVECTOR2@2@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?GetAmbientColour@LightEmitter@@QBEABUCOLOUR4@@XZ # as the light is laid out (helper/light.cpp, api/inline.def)
+?GetAttenuation@PointLight@@QBEPBNXZ # as the light is laid out (helper/light.cpp, api/inline.def)
+?GetCharSize@Sketchpad@oapi@@UAEKXZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?GetColorMatrix@Sketchpad@oapi@@UAEPBTFMATRIX4@2@XZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?GetDC@Sketchpad@oapi@@UAEPAUHDC__@@XZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?GetDiffuseColour@LightEmitter@@QBEABUCOLOUR4@@XZ # as the light is laid out (helper/light.cpp, api/inline.def)
+?GetDirection@LightEmitter@@QBE?ATVECTOR3@@XZ # defined by the helper (helper/light.cpp)
+?GetDirectionRef@LightEmitter@@QBEPBTVECTOR3@@XZ # defined by the helper (helper/light.cpp)
+?GetGDIFont@Font@oapi@@UBEPAUHFONT__@@XZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?GetIntensity@LightEmitter@@QBENXZ # defined by the helper (helper/light.cpp)
+?GetIntensityRef@LightEmitter@@QBEPBNXZ # defined by the helper (helper/light.cpp)
+?GetObjectHandle@LightEmitter@@QBEQAXXZ # as the light is laid out (helper/light.cpp, api/inline.def)
+?GetOrigin@Sketchpad@oapi@@UBEXPAH0@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?GetPenumbra@SpotLight@@QBENXZ # as the light is laid out (helper/light.cpp, api/inline.def)
+?GetPosition@LightEmitter@@QBE?ATVECTOR3@@XZ # as the light is laid out (helper/light.cpp, api/inline.def)
+?GetPositionRef@LightEmitter@@QBEPBTVECTOR3@@XZ # defined by the helper (helper/light.cpp)
+?GetRange@PointLight@@QBENXZ # as the light is laid out (helper/light.cpp, api/inline.def)
+?GetRenderParam@Sketchpad@oapi@@UAE?ATFVECTOR4@2@W4RenderParam@12@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?GetRenderSurfaceSize@Sketchpad@oapi@@UAEXPAUtagSIZE@@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?GetSpecularColour@LightEmitter@@QBEABUCOLOUR4@@XZ # as the light is laid out (helper/light.cpp, api/inline.def)
+?GetSurface@Sketchpad@oapi@@QBEPAXXZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?GetTextWidth@Sketchpad@oapi@@UAEKPBDH@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?GetType@LightEmitter@@QBE?AW4TYPE@1@XZ # as the light is laid out (helper/light.cpp, api/inline.def)
+?GetUmbra@SpotLight@@QBENXZ # as the light is laid out (helper/light.cpp, api/inline.def)
+?GetVersion@Sketchpad@oapi@@UAEHXZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?GetViewProjectionMatrix@Sketchpad@oapi@@UBEPBTFMATRIX4@2@XZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?GetVisibility@LightEmitter@@QBE?AW4VISIBILITY@1@XZ # as the light is laid out (helper/light.cpp, api/inline.def)
+?GetWorldTransform@Sketchpad@oapi@@UBE?ATFMATRIX4@2@XZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?GradientFillRect@Sketchpad@oapi@@UAEXQAUtagRECT@@KK_N@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?IsActive@LightEmitter@@QBE_NXZ # defined by the helper (helper/light.cpp)
+?Line@Sketchpad@oapi@@UAEXHHHH@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?LineTo@Sketchpad@oapi@@UAEXHH@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?Lines@Sketchpad@oapi@@UAEXPBUFVECTOR2@2@H@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?MoveTo@Sketchpad@oapi@@UAEXHH@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?Pixel@Sketchpad@oapi@@UAEXHHK@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?Polygon@Sketchpad@oapi@@UAEXPBTIVECTOR2@2@H@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?Polyline@Sketchpad@oapi@@UAEXPBTIVECTOR2@2@H@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?PopWorldTransform@Sketchpad@oapi@@UAEXXZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?ProjectionMatrix@Sketchpad@oapi@@UBEPBTFMATRIX4@2@XZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?PushWorldTransform@Sketchpad@oapi@@UAEXXZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?QuickBrush@Sketchpad@oapi@@UAEXK@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?QuickPen@Sketchpad@oapi@@UAEXKMK@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?RotateRect@Sketchpad@oapi@@UAEXQAXQAUtagRECT@@HHMMM@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetAperture@SpotLight@@QAEXNN@Z # defined by the helper (helper/light.cpp)
+?SetAttenuation@PointLight@@QAEXNNN@Z # defined by the helper (helper/light.cpp)
+?SetBackgroundColor@Sketchpad@oapi@@UAEKK@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetBackgroundMode@Sketchpad@oapi@@UAEXW4BkgMode@12@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetBlendState@Sketchpad@oapi@@UAEXW4BlendState@12@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetBrightness@Sketchpad@oapi@@UAEXPBTFVECTOR4@2@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetBrush@Sketchpad@oapi@@UAEPAVBrush@2@PAV32@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetClipDistance@Sketchpad@oapi@@UAEXMM@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetColorMatrix@Sketchpad@oapi@@UAEXPBTFMATRIX4@2@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetDirectionRef@LightEmitter@@QAEXPBTVECTOR3@@@Z # defined by the helper (helper/light.cpp)
+?SetFont@Sketchpad@oapi@@UAEPAVFont@2@PAV32@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetGlobalLineScale@Sketchpad@oapi@@UAEXMM@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetIntensityRef@LightEmitter@@QAEXPAN@Z # defined by the helper (helper/light.cpp)
+?SetOrigin@Sketchpad@oapi@@UAEXHH@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetPen@Sketchpad@oapi@@UAEPAVPen@2@PAV32@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetPositionRef@LightEmitter@@QAEXPBTVECTOR3@@@Z # defined by the helper (helper/light.cpp)
+?SetProjectionMatrix@Sketchpad@oapi@@UAEXPBTFMATRIX4@2@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetRange@PointLight@@QAEXN@Z # defined by the helper (helper/light.cpp)
+?SetRenderParam@Sketchpad@oapi@@UAEXW4RenderParam@12@PBTFVECTOR4@2@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetTextAlign@Sketchpad@oapi@@UAEXW4TAlign_horizontal@12@W4TAlign_vertical@12@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetTextColor@Sketchpad@oapi@@UAEKK@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetViewMatrix@Sketchpad@oapi@@UAEXPBTFMATRIX4@2@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetViewMode@Sketchpad@oapi@@UAEXW4SkpView@12@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetVisibility@LightEmitter@@QAEXW4VISIBILITY@1@@Z # as the light is laid out (helper/light.cpp, api/inline.def)
+?SetWorldBillboard@Sketchpad@oapi@@UAEXABTFVECTOR3@2@M_NPBT32@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetWorldScaleTransform2D@Sketchpad@oapi@@UAEXPBUFVECTOR2@2@PBTIVECTOR2@2@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetWorldTransform2D@Sketchpad@oapi@@UAEXMMPBTIVECTOR2@2@0@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetWorldTransform@Sketchpad@oapi@@UAEXPBTFMATRIX4@2@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?ShiftExplicitPosition@LightEmitter@@QAEXABTVECTOR3@@@Z # defined by the helper (helper/light.cpp)
+?StretchRect@Sketchpad@oapi@@UAEXQAXQAUtagRECT@@1@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?StretchRegion@Sketchpad@oapi@@UAEXPBUskpRegion@12@QAXQAUtagRECT@@@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?Text@Sketchpad@oapi@@UAE_NHHPBDH@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?TextEx@Sketchpad@oapi@@UAEXMMPBDMM@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?TextW@Sketchpad@oapi@@UAE_NHHQA_WH@Z # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?Version@VESSEL@@QBEHXZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?ViewMatrix@Sketchpad@oapi@@UBEPBTFMATRIX4@2@XZ # inline in the header or made by the compiler; made by helper/made.cpp or draw.cpp (api/inline.def)
+?SetFont@Sketchpad@oapi@@UBEPAVFont@2@PAV32@@Z # the 2010 sketchpad's const default, the 2024 one (api/inline.def)
+?SetPen@Sketchpad@oapi@@UBEPAVPen@2@PAV32@@Z # the 2010 sketchpad's const default, the 2024 one (api/inline.def)
+?SetBrush@Sketchpad@oapi@@UBEPAVBrush@2@PAV32@@Z # the 2010 sketchpad's const default, the 2024 one (api/inline.def)
+?AddAnimComp@VESSEL@@QAE_NIPAUANIMCOMP@@@Z # defined by the helper (helper/vdata.cpp)
+?Create@VESSEL@@SAPAXPBD0ABUVESSELSTATUS@@@Z # defined by the helper (helper/vdata.cpp)
+?DelBeacon@VESSEL@@QAE_NPAUBEACONLIGHTSPEC@@@Z # defined by the helper (helper/vdata.cpp)
+?GetAnimPtr@VESSEL@@QBEIPAPAUANIMATION@@@Z # defined by the helper (helper/vdata.cpp)
+?GetBeacon@VESSEL@@QBEPBUBEACONLIGHTSPEC@@K@Z # defined by the helper (helper/vdata.cpp)
+?GetExhaustSpec@VESSEL@@QAE_NIPAUEXHAUSTSPEC@@@Z # defined by the helper (helper/vdata.cpp)
+?GetExhaustSpec@VESSEL@@QBE_NIPAN0PATVECTOR3@@1PAPAX@Z # defined by the helper (helper/vdata.cpp)
+?GetMainThrustModPtr@VESSEL@@QBEPANXZ # defined by the helper (helper/vdata.cpp)
+?GetMeshName@VESSEL@@QBEPBDI@Z # defined by the helper (helper/vdata.cpp)
+?GetSupervessel@VESSEL@@QBEPAXXZ # defined by the helper (helper/vdata.cpp)
+?ParseScenarioLine@VESSEL@@QBEXPADPAUVESSELSTATUS@@@Z # defined by the helper (helper/vdata.cpp)
+?SendBufferedKey@VESSEL@@QAEHK_NPAD@Z # defined by the helper (helper/vdata.cpp)
+?ClearBeacons@VESSEL@@QAEXXZ # defined by the helper (helper/vdata.cpp)
+?oapiGetAtm@@YAXPAXPAUATMPARAM@@PAPAX@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiGetCmdLine@@YAPBDXZ # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiGetOrbiterInstance@@YAPAUHINSTANCE__@@XZ # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiGetObjectParam@@YAPBXPAXK@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiGetObjectFileName@@YAPBDPAX@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiElevationManager@@YAPAXPAX@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiInflate@@YAKPBEKPAEK@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiDeflate@@YAKPBEKPAEK@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiGetHUDMode@@YAHPATHUDPARAM@@@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiSetHUDMode@@YA_NHPBTHUDPARAM@@@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiSetPanelBlink@@YAXQATVECTOR3@@@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiSimulateImmediateKey@@YA_NQAD_N@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiObjectVisualPtr@@YAPAPAXPAX@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiGetWindVector@@YA?ATVECTOR3@@PAXNNNH@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiOpenInputBoxEx@@YAXPBDP6A_NPAXPAD1@Z32H1K@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiCreateFontEx@@YAPAVFont@oapi@@HPADHHW4FontStyle@@M@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?ExitLib@@YAXPAUHINSTANCE__@@@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiGetMeshGroup@@YAHPAHKPAUGROUPREQUESTSPEC@@@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiEditMeshGroup@@YAHPAXKPAUGROUPEDITSPEC@@@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiMeshGroup@@YAPAUMESHGROUP@@PAHK@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiMeshMaterialEx@@YAHPAHKW4MatProp@@PATFVECTOR4@oapi@@@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiSetMaterialEx@@YAHPAHKW4MatProp@@PBTFVECTOR4@oapi@@@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiLoadMeshGlobal@@YAQAXPBDP6AXPAX_N@Z@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiGetMeshFilename@@YAPBDPAX@Z # defined by the helper (helper/oapi.cpp, manual.cpp, draw.cpp, api2010.cpp)
+?oapiAsyncScriptCmd@@YA_NPAXPBD@Z # defined by the helper (helper/script.cpp)
+?oapiCreateInterpreter@@YAPAXXZ # defined by the helper (helper/script.cpp)
+?oapiDelInterpreter@@YAHPAX@Z # defined by the helper (helper/script.cpp)
+?oapiExecScriptCmd@@YA_NPAXPBD@Z # defined by the helper (helper/script.cpp)
+?oapiGetLua@@YAPAUlua_State@@PAX@Z # defined by the helper (helper/script.cpp)
+?LaunchpadVideoWndProc@@YGHPAUHWND__@@IIJ@Z # defined by the helper (helper/dialog.cpp)
+?WndProc@@YGJPAUHWND__@@IIJ@Z # defined by the helper (helper/dialog.cpp)
+?oapiAddTitleButton@@YA_NKPAUHBITMAP__@@K@Z # defined by the helper (helper/dialog.cpp)
+?oapiCloseDialog@@YAXPAUHWND__@@@Z # defined by the helper (helper/dialog.cpp)
+?oapiDefDialogProc@@YAHPAUHWND__@@IIJ@Z # defined by the helper (helper/dialog.cpp)
+?oapiFindDialog@@YAPAUHWND__@@PAUHINSTANCE__@@H@Z # defined by the helper (helper/dialog.cpp)
+?oapiGetDialogContext@@YAPAXPAUHWND__@@@Z # defined by the helper (helper/dialog.cpp)
+?oapiGetTitleButtonState@@YAKPAUHWND__@@K@Z # defined by the helper (helper/dialog.cpp)
+?oapiOpenDialog@@YAPAUHWND__@@PAUHINSTANCE__@@HP6GHPAU1@IIJ@ZPAX@Z # defined by the helper (helper/dialog.cpp)
+?oapiOpenDialogEx@@YAPAUHWND__@@PAUHINSTANCE__@@HP6GHPAU1@IIJ@ZKPAX@Z # defined by the helper (helper/dialog.cpp)
+?oapiRegisterWindow@@YA_NPAUHINSTANCE__@@PAUHWND__@@K@Z # defined by the helper (helper/dialog.cpp)
+?oapiSetTitleButtonState@@YA_NPAUHWND__@@KK@Z # defined by the helper (helper/dialog.cpp)

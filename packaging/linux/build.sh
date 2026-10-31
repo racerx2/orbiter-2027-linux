@@ -1,5 +1,6 @@
 #!/bin/bash
 # not upstream: builds the portable Linux package inside the AlmaLinux 9 environment (Dockerfile); build.sh <src> <out> <version> [manuals dir]
+# WB_FROM: the Wine bridge's helper build (rc.sh builds it on the PC), so the root builds the bridge's Linux module
 set -euo pipefail
 SRC=$(readlink -f "$1"); OUT=$(readlink -f "$2"); VER=$3; MAN=${4:-}
 source /opt/rh/gcc-toolset-14/enable
@@ -9,7 +10,7 @@ rm -rf "$STAGE" "$OUT/src"; mkdir -p "$B" "$OUT/src"
 tar -C "$SRC" --exclude=./out --exclude=./.git --exclude="./Textures/*/Archive" -cf - . | tar -C "$OUT/src" -xf -
 SRC=$OUT/src
 cmake -S "$SRC" -B "$B" -G Ninja -DCMAKE_BUILD_TYPE=Release -DORBITER_MAKE_DOC=OFF -DORBITER_MAKE_TESTS=OFF \
-	-DCMAKE_PREFIX_PATH="$QTDIR;$DEPS" -DVulkan_INCLUDE_DIR="$DEPS/include" -DCMAKE_INSTALL_PREFIX="$STAGE/inst"
+	-DCMAKE_PREFIX_PATH="$QTDIR;$DEPS" -DVulkan_INCLUDE_DIR="$DEPS/include" -DCMAKE_INSTALL_PREFIX="$STAGE/inst" -DORBITER_WB_HELPER_FROM="${WB_FROM:-}"
 cmake --build "$B" -j "${JOBS:-$(nproc)}"
 [ "${PACK:-1}" = 1 ] || exit 0 # PACK=0: compile only (rc.sh build)
 cmake --install "$B"

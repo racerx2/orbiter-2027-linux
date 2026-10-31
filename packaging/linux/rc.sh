@@ -21,9 +21,22 @@ portable() { # $1 version, $2 PACK (0: compile only)
 	[ -d "$ROOT/opt/deps" ] || die "no release root at $ROOT (set ORBITER_RELEASE_ROOT)"
 	local qt; qt=$(ls "$ROOT/opt/Qt" | grep -m1 '^6\.') || die "no Qt in $ROOT/opt/Qt"
 	mkdir -p "$OUT"
-	inroot env QTDIR=/opt/Qt/$qt/gcc_64 DEPS=/opt/deps JOBS=$(( $(nproc) > 3 ? $(nproc) - 2 : 1 )) PACK="$2" \
-		bash "$W/packaging/linux/build.sh" "$W" "$W/out/portable" "$1" "$W/out/portable/man" > "$OUT/build-$1.log" 2>&1 \
-		|| { tail -15 "$OUT/build-$1.log" >&2; die "release build failed: $OUT/build-$1.log"; }
+	rootbuild "$1" 0 "" "$qt" > "$OUT/build-$1.log" 2>&1 || { tail -15 "$OUT/build-$1.log" >&2; die "release build failed: $OUT/build-$1.log"; }
+	wbhelper "$1"
+	rootbuild "$1" "$2" "$W/out/portable/wbhost" "$qt" >> "$OUT/build-$1.log" 2>&1 || { tail -15 "$OUT/build-$1.log" >&2; die "release build failed: $OUT/build-$1.log"; }
+}
+
+rootbuild() { # $1 version, $2 PACK, $3 the Wine bridge's helper build ("": none yet), $4 Qt version: build.sh in the root
+	inroot env QTDIR=/opt/Qt/$4/gcc_64 DEPS=/opt/deps JOBS=$(( $(nproc) > 3 ? $(nproc) - 2 : 1 )) PACK="$2" WB_FROM="$3" \
+		bash "$W/packaging/linux/build.sh" "$W" "$W/out/portable" "$1" "$W/out/portable/man"
+}
+
+wbhelper() { # $1 version: the Wine bridge's Windows files and generated calls on this PC (Wine, clang), against the root's build tree
+	local L=$OUT/wbhost-$1.log
+	cmake -S "$SRC/Src/WineBridge" -B "$OUT/wbhost" -G Ninja -DCMAKE_BUILD_TYPE=Release -DORBITER_ROOT="$OUT/build" > "$L" 2>&1 \
+		|| { tail -15 "$L" >&2; die "Wine bridge, this PC's part (needs Wine's headers and libraries, clang, lld, python3 with clang): $L"; }
+	nice -n 10 ninja -C "$OUT/wbhost" WineBridgeHelper >> "$L" 2>&1 || { tail -15 "$L" >&2; die "Wine bridge, this PC's part: $L"; }
+	! grep -i 'warning' "$L" || die "Wine bridge, this PC's part: warnings in $L"
 }
 
 clean() { [ -z "$(git status --porcelain --untracked-files=no)" ] || die "uncommitted changes"; }

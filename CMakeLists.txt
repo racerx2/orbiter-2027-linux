@@ -318,6 +318,7 @@ if(ORBITER_MAKE_TESTS) # not upstream: XRSound registers its tests in its own fo
 endif()
 add_subdirectory(Sound)
 add_subdirectory(Html)
+include(cmake/winebridge.cmake) # not upstream: the Wine bridge (Src/WineBridge), after Orbiter, its SDK, XRSound and lua
 
 if(ORBITER_MAKE_DOC)
 	add_subdirectory(Doc)

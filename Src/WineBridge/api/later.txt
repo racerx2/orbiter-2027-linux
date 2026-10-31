@@ -1,0 +1,2 @@
+# not bridged yet: in api/imports.txt, but neither generated nor exported; a module importing one is refused and the log names it.
+# Each line goes when its stage brings it (design-any-addon.md, design-any-addon-b.md).
