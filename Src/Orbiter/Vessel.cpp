@@ -39,6 +39,7 @@
 #include "Util.h"
 #include "elevmgr.h"
 #include "HullPoints.h" // not upstream (terrain-contact)
+#include "NoseWheel.h" // not upstream (nose-wheel)
 #include "WinModule.h" // not upstream (vessel-hooks)
 #include <fstream>
 #include <iomanip>
@@ -4680,6 +4681,18 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 				fn[i] = -tdy[i]*kst; 						// horizon-normal force component: gear compression forces
 				double maxpress = min (-tdy[i], 0.1)*kst;
 
+				double gv_hor = hypot (gv_lon, gv_lat); // not upstream (nose-wheel)
+				if (!i && !hull && ntouchdown_vtx >= 3 && NoseWheel::IsWheel (touchdown_vtx[0].mu_lng, kmu) && gv_hor > NoseWheel::HOLD && dt > 0.0) {
+					// not upstream (nose-wheel): rolling, the nose wheel swivels at taxi speed or rolls where nosewheel steering points it
+					double delta = nosewheeldir * NoseWheel::SteerMax (gv_hor), vw, vn;
+					NoseWheel::Frame (delta, gv_lon, gv_lat, vw, vn);
+					Vector w (d1h*cos(delta) + d2h*sin(delta)), nw (d2h*cos(delta) - d1h*sin(delta));
+					double fw = min (touchdown_vtx[0].mu_lng * maxpress, fabs(vw) / (invmass (w, tv) * dt * ncontact));
+					double fs = min (kmu * maxpress * NoseWheel::Grip (gv_hor, nosewheeldir), fabs(vn) / (invmass (nw, tv) * dt * ncontact));
+					NoseWheel::ToVessel (delta, vw > 0.0 ? -fw : fw, vn > 0.0 ? -fs : fs, flng[i], flat[i]);
+					flng_tot += flng[i];
+					flat_tot += flat[i];
+				} else {
 				if (i < 3) {
 					mu = touchdown_vtx[i].mu_lng;
 					if (i && wbrake_level[i-1])
@@ -4697,6 +4710,7 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 				if (dt > 0.0) flat[i] = min (flat[i], fabs(gv_lat) / (invmass (d2h, tv) * dt * ncontact)); // not upstream (ground-friction)
 				if (gv_lat > 0.0) flat[i] = -flat[i];
 				flat_tot += flat[i];
+				}
 
 				E_comp -= fn[i]*tdy[i]*0.5; // compression energy
 				fn_tot_undamped += fn[i];
@@ -4901,6 +4915,12 @@ bool Vessel::AddSurfaceForces (Vector *F, Vector *M, const StateVectors *s, doub
 
 void Vessel::Update (bool force)
 {
+	// not upstream (nose-wheel): the focus vessel's nosewheel steering follows the yaw controls, once a frame (AddSurfaceForces reads it)
+	if (this == g_focusobj && nosesteering)
+		nosewheeldir = NoseWheel::Follow (nosewheeldir, g_pOrbiter->ManCtrlLevel (THGROUP_ATT_YAWRIGHT, MANCTRL_ANYMODE) -
+			g_pOrbiter->ManCtrlLevel (THGROUP_ATT_YAWLEFT, MANCTRL_ANYMODE), td.SimDT);
+	else nosewheeldir = 0.0;
+
 	// if the vessel is part of a composite structure or passively attached
 	// to a parent vessel, its state is updated by the composite or parent
 	if (attach)

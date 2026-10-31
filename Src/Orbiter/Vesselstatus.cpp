@@ -16,6 +16,7 @@
 #include "Base.h"
 #include "Util.h"
 #include "Log.h"
+#include "TileStream.h" // not upstream (ground-first): TsWaitGround
 #include <fstream>
 #include <iomanip>
 #include <stdio.h>
@@ -442,6 +443,7 @@ void Vessel::ApplyPackedState (const char *data)
 		InitOrbiting (sd->rpos, sd->rvel, sd->arot, &sd->vrot);
 		break;
 	case 1: // landed
+		TsWaitGround (cbody, sd->lng, sd->lat, size, name.c_str()); // not upstream (ground-first)
 		InitLandedOnGround ((Planet*)cbody, sd->lng, sd->lat, sd->hdg); // not upstream (terrain-contact): on the terrain under its primary points
 		if (proxybase) proxybase->ReportTouchdown (this, sd->lng, sd->lat);
 		break;
@@ -503,6 +505,7 @@ void Vessel::SetState (const VESSELSTATUS &status)
 			//landtgt->Pad_EquPos (nport, lng, lat);
 			proxybase = landtgt;
 		}
+		TsWaitGround (cbody, lng, lat, size, name.c_str()); // not upstream (ground-first)
 		InitLandedOnGround ((Planet*)cbody, lng, lat, dir); // not upstream (terrain-contact): on the terrain under its primary points
 		break;
 	default:
@@ -588,6 +591,7 @@ void Vessel::SetState2 (const void *status)
 			lstatus = 1;
 			proxybase = landtgt;
 		}
+		TsWaitGround (cbody, vs->surf_lng, vs->surf_lat, size, name.c_str()); // not upstream (ground-first)
 		if (vs->arot.x <= 4.0) { // extended information available
 			Matrix lrot;
 			lrot.Set (MakeVector(vs->arot));

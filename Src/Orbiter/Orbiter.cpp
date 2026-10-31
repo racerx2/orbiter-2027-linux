@@ -848,7 +848,9 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 	StartTileStream (); // not upstream: before the planet visuals check their tile folders
 	time_prev = std::chrono::steady_clock::now() - std::chrono::milliseconds(1); // make sure SimDT > 0 for first frame
 
+	TsGroundWaitBegin (20.0); // not upstream (ground-first): landed vessels are placed on the ground the stream is writing
 	g_psys->InitState (ScnPath (scenario));
+	TsGroundWaitEnd ();
 
 	g_focusobj = 0;
 	Vessel *vfocus = g_psys->GetVessel (pState->Focus());

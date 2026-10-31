@@ -98,6 +98,7 @@ set(common_src
 	Vesselbase.cpp
 	Vesselstatus.cpp
 	HullPoints.cpp # not upstream (terrain-contact): hull contact points and the landed pose
+	NoseWheel.cpp # not upstream (nose-wheel): the nose wheel at taxi speed and under nosewheel steering
 # Surface base classes
 	Base.cpp
 	BaseClear.cpp # not upstream: a base file's clear zones

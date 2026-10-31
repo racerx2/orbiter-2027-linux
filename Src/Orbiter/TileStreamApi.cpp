@@ -4,8 +4,12 @@
 #include "Body.h"
 #include "TileStream.h"
 #include "OrbiterAPI.h"
+#include "Log.h"
+#include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <iterator>
+#include <thread>
 
 extern Orbiter *g_pOrbiter;
 
@@ -31,6 +35,47 @@ int TsSessionElev (const std::string &body)
 {
 	if (!g_pOrbiter || !g_pOrbiter->GetGraphicsClient() || !g_pOrbiter->Cfg()->bTileStream) return 0;
 	return TsCfgElev (oapiResolvePath (g_pOrbiter->ConfigPath ("TileStream")), body);
+}
+
+// not upstream (ground-first): while a session starts, a landed vessel is placed after the stream's last-level Elev tiles under it are
+// written (they come after the base flattening), so it stands on the ground the session will have; all placements share the time
+static bool g_groundWait = false;
+static std::chrono::steady_clock::time_point g_groundEnd;
+
+void TsGroundWaitBegin (double sec)
+{
+	g_groundWait = true;
+	g_groundEnd = std::chrono::steady_clock::now() + std::chrono::milliseconds ((long long)(sec * 1e3));
+}
+
+void TsGroundWaitEnd ()
+{
+	g_groundWait = false;
+}
+
+void TsWaitGround (const Body *body, double lng, double lat, double radius, const char *name)
+{
+	TileStream *ts = Stream();
+	if (!g_groundWait || !ts || !body || !(body->Size() > 0.0)) return;
+	std::string b = body->Name();
+	int L = TsSessionElev (b);
+	if (L < 4 || !ts->Enabled (b)) return;
+	const double deg = 180.0 / 3.14159265358979323846;
+	double km = std::max (radius, 100.0) * 6371.0 / body->Size(); // RegionKeys' distances are on a 6371 km sphere
+	std::vector<TileStream::TileKey> keys;
+	for (const TileStream::TileKey &k : TileStream::RegionKeys (lat * deg, lng * deg, km, L)) if (k.L == L) keys.push_back (k);
+	auto t0 = std::chrono::steady_clock::now();
+	size_t left;
+	for (;;) {
+		left = 0;
+		for (const TileStream::TileKey &k : keys) if (!ts->Want (b, k.L, k.ilat, k.ilng, 4)) left++;
+		if (!left || std::chrono::steady_clock::now() >= g_groundEnd) break;
+		std::this_thread::sleep_for (std::chrono::milliseconds (50));
+	}
+	double waited = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
+	if (waited >= 0.05)
+		LOGOUT ("TileStream: %s placed after %.1f s for the ground under it (%zu of %zu tiles%s)", name ? name : "a vessel", waited,
+			keys.size() - left, keys.size(), left ? ", the rest not in time" : "");
 }
 
 DLLEXPORT int oapiTileStreamElev (OBJHANDLE hBody)

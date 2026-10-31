@@ -132,6 +132,10 @@ namespace TsWay {
 bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::string &err);
 int TsCfgElev (const std::string &file, const std::string &body); // the last level of the body's ELEV source, 0 for none
 int TsSessionElev (const std::string &body); // TileStreamApi.cpp: TsCfgElev when this session streams; Elev archive tiles under the stream's files are not read
+class Body;
+void TsGroundWaitBegin (double sec); // not upstream (ground-first): TileStreamApi.cpp; a session starts: placements wait, sec for all of them
+void TsGroundWaitEnd ();
+void TsWaitGround (const Body *body, double lng, double lat, double radius, const char *name); // a landed vessel's last-level Elev tiles first
 unsigned TsElevGen (); // not upstream (elev-consistency): Elev and Elev_mod files the streams of this process wrote or removed so far; a new value: heights may have changed, a missing Elev may be there now
 
 namespace TsImg {
