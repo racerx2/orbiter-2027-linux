@@ -106,6 +106,14 @@ protected:
 
 	HUDPAINTSPEC spec;        // parameters required for painting the HUD (defined in Orbitersdk.h)
 	static Mesh hudMesh;      // mesh for drawing HUD elements
+	static Mesh gpsMesh;      // not upstream (gpsnav-hud): the add-on's caret, magenta, apart from the HUD's own colour
+	int gpsVtx = 0, gpsIdx = 0;
+	SURFHANDLE gpsTex = NULL;
+	oapi::Pen *gpsPen = NULL;
+	oapi::Brush *gpsBrush = NULL;
+	bool GpsBearing (const Vessel *self, const SurfParam *sp, double &ddir) const;
+	void DrawGpsCaret (oapi::Sketchpad *skp, double ddir);
+	void AddMesh_GpsCaret (double ddir);
 	SURFHANDLE hudTex;        // HUD texture elements
 
 	struct {

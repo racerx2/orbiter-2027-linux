@@ -5000,7 +5000,7 @@ OAPIFUNC int oapiGetHUDMode ();
 OAPIFUNC int oapiGetHUDMode (HUDPARAM *prm);
 
 	/**
-	* \brief Not upstream (gpsnav-hud): a point on a body for the Surface HUD's heading-tape caret of a vessel, in place of the Map MFD's base target.
+	* \brief Not upstream (gpsnav-hud): a point on a body for a magenta caret on a vessel's Surface HUD heading tape, beside the Map MFD's base caret.
 	* \param hVessel the vessel (its HUD shows it while it has the focus)
 	* \param hBody the body the point is on (shown while it is the vessel's surface reference); NULL clears the point
 	* \param lng, lat the point [rad]

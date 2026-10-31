@@ -35,6 +35,7 @@ static double hudtexh = 256.0;
 static WORD rectidx[6] = {0,2,1, 2,3,1};
 
 Mesh HUD::hudMesh;
+Mesh HUD::gpsMesh; // not upstream (gpsnav-hud)
 
 // not upstream (gpsnav-hud): an add-on's point (a GPS waypoint) for the focus vessel's heading-tape caret
 static struct { const void *vessel = nullptr, *body = nullptr; double lng = 0.0, lat = 0.0; } g_hudBearing;
@@ -44,16 +45,67 @@ DLLEXPORT void oapiSetHUDBearingTarget (OBJHANDLE hVessel, OBJHANDLE hBody, doub
 	g_hudBearing.vessel = hBody ? hVessel : nullptr, g_hudBearing.body = hBody, g_hudBearing.lng = lng, g_hudBearing.lat = lat;
 }
 
-// the caret's point: the add-on's on the surface reference, else the Map MFD's base
-static bool CaretTarget (const Vessel *self, const SurfParam *sp, double &lng, double &lat)
+static const DWORD GPSCOL = 0xFF46FF; // magenta, the same whichever way the channels go
+
+// the add-on's point from here, as a heading change [rad, -Pi..Pi], when it is on the surface reference
+bool HUD::GpsBearing (const Vessel *self, const SurfParam *sp, double &ddir) const
 {
-	if (g_hudBearing.vessel && g_hudBearing.vessel == (const void*)self && g_hudBearing.body == (const void*)sp->ref) {
-		lng = g_hudBearing.lng, lat = g_hudBearing.lat;
-		return true;
+	if (!g_hudBearing.vessel || g_hudBearing.vessel != (const void*)self || g_hudBearing.body != (const void*)sp->ref) return false;
+	double adist, bdir;
+	Orthodome (sp->lng, sp->lat, g_hudBearing.lng, g_hudBearing.lat, adist, bdir);
+	ddir = bdir - sp->dir;
+	while (ddir <= -Pi) ddir += Pi2;
+	while (ddir > Pi) ddir -= Pi2;
+	return true;
+}
+
+// a filled magenta caret on the compass ribbon, or an arrow at its end: as the base's, larger, drawn under it
+void HUD::DrawGpsCaret (oapi::Sketchpad *skp, double ddir)
+{
+	if (!gc) return;
+	if (!gpsPen) gpsPen = gc->clbkCreatePen (1, 2, GPSCOL);
+	if (!gpsBrush) gpsBrush = gc->clbkCreateBrush (GPSCOL);
+	double scalerange = Rad (spec.W/40.0);
+	oapi::IVECTOR2 pt[3];
+	if (ddir > scalerange) {
+		int x = HRES05 + spec.W/5 + 5;
+		pt[0] = {x, 8}, pt[1] = {x+15, 16}, pt[2] = {x, 24};
+	} else if (ddir < -scalerange) {
+		int x = HRES05 - spec.W/5 - 5;
+		pt[0] = {x, 8}, pt[1] = {x, 24}, pt[2] = {x-15, 16};
+	} else {
+		int x = HRES05 + (int)(Deg(ddir)*8.0+0.5);
+		pt[0] = {x, 8}, pt[1] = {x+8, 24}, pt[2] = {x-8, 24};
 	}
-	const Base *base = self->LandingTarget();
-	if (base) base->EquPos (lng, lat);
-	return base != 0;
+	oapi::Pen *pen0 = skp->SetPen (gpsPen);
+	oapi::Brush *brush0 = skp->SetBrush (gpsBrush);
+	skp->Polygon (pt, 3);
+	skp->SetBrush (brush0);
+	skp->SetPen (pen0);
+}
+
+// the same for the mesh (glass cockpit, 2D panel): triangles on a magenta texture, in gpsMesh
+void HUD::AddMesh_GpsCaret (double ddir)
+{
+	const double range05 = 30.0, scal = renderprm.scal, d = Deg (ddir);
+	double x[3], y[3];
+	if (d > range05) x[0] = x[2] = HRES05+scal*262, x[1] = HRES05+scal*280, y[0] = scal*38, y[1] = scal*51, y[2] = scal*64;
+	else if (d < -range05) x[0] = x[1] = HRES05-scal*262, x[2] = HRES05-scal*280, y[0] = scal*38, y[1] = scal*64, y[2] = scal*51;
+	else {
+		double ofs = HRES05 + d*scal*250.0/range05;
+		x[0] = ofs, x[1] = ofs+scal*12, x[2] = ofs-scal*12, y[0] = scal*42, y[1] = y[2] = scal*66;
+	}
+	GroupSpec *gs = gpsMesh.GetGroup (0);
+	if (!gs) {
+		NTVERTEX *vtx = new NTVERTEX[3];
+		WORD *idx = new WORD[3];
+		memset (vtx, 0, 3*sizeof(NTVERTEX));
+		for (int i = 0; i < 3; i++) idx[i] = (WORD)i, vtx[i].tu = vtx[i].tv = 0.5f;
+		gpsMesh.AddGroup (vtx, 3, idx, 3, 0, 0);
+		gs = gpsMesh.GetGroup (0);
+	}
+	for (int i = 0; i < 3; i++) gs->Vtx[i].x = (float)x[i], gs->Vtx[i].y = (float)y[i];
+	gpsVtx = gpsIdx = 3;
 }
 
 HUD::HUD (const Pane *_pane): pane(_pane)
@@ -70,6 +122,9 @@ HUD::HUD (const Pane *_pane): pane(_pane)
 HUD::~HUD ()
 {
 	if (gc) {
+		if (gpsTex) gc->clbkReleaseSurface (gpsTex); // not upstream (gpsnav-hud)
+		if (gpsPen) gc->clbkReleasePen (gpsPen);
+		if (gpsBrush) gc->clbkReleaseBrush (gpsBrush);
 		if (font) gc->clbkReleaseFont (font);
 		if (font2) gc->clbkReleaseFont(font2);
 		if (hudTex) gc->clbkReleaseSurface (hudTex);
@@ -143,6 +198,7 @@ void HUD::DrawDefault (oapi::Sketchpad *skp)
 void HUD::RenderDefault ()
 {
 	int ivtx = 0, iidx = 0;
+	gpsVtx = gpsIdx = 0;
 	AddMesh_CenterMarker (ivtx, iidx);
 	UpdateMesh (ivtx, iidx);
 
@@ -157,6 +213,11 @@ void HUD::RenderDefault ()
 		gc->clbkRender2DPanel (&hudTex, (MESHHANDLE)&hudMesh, &transf, intens, transp);
 		gs->nVtx = nvtx;
 		gs->nIdx = nidx;
+		if (gpsVtx) { // not upstream (gpsnav-hud): the add-on's caret over it, on a magenta texture
+			if (!gpsTex && (gpsTex = gc->clbkCreateSurfaceEx (4, 4, OAPISURFACE_TEXTURE | OAPISURFACE_RENDERTARGET)))
+				gc->clbkFillSurface (gpsTex, 0xFF000000 | GPSCOL);
+			if (gpsTex) gc->clbkRender2DPanel (&gpsTex, (MESHHANDLE)&gpsMesh, &transf, intens, transp);
+		}
 	}
 }
 
@@ -1673,11 +1734,14 @@ void HUD_Surface::Display (oapi::Sketchpad *skp)
 	DrawTopRibbon (skp, Deg(sp->dir));
 
 	// draw target direction index
-	double blng, blat;
-	if (CaretTarget (self, sp, blng, blat)) { // not upstream (gpsnav-hud): or an add-on's point
+	double gdir;
+	if (GpsBearing (self, sp, gdir)) DrawGpsCaret (skp, gdir); // not upstream (gpsnav-hud): an add-on's point, magenta, under the base's
+	const Base *base = self->LandingTarget();
+	if (base) {
 		static const double scalerange = Rad(spec.W/40.0);
-		double adist, bdir, ddir;
+		double blng, blat, adist, bdir, ddir;
 		int x;
+		base->EquPos (blng, blat);
 		Orthodome (sp->lng, sp->lat, blng, blat, adist, bdir);
 		ddir = bdir - sp->dir;
 		if      (ddir <= -Pi) ddir += Pi2;
@@ -1754,13 +1818,17 @@ void HUD_Surface::UpdateMesh (int &ivtx, int &iidx)
 		}
 
 		// Heading tape
-		double bdir = 0.0, blng, blat;
-		bool caret = CaretTarget (self, sp, blng, blat); // not upstream (gpsnav-hud): or an add-on's point
-		if (caret) {
-			double adist;
+		const Base *base = self->LandingTarget();
+		double bdir = 0.0;
+		if (base) {
+			static const double scalerange = Rad(spec.W/40.0);
+			double blng, blat, adist;
+			base->EquPos (blng, blat);
 			Orthodome (sp->lng, sp->lat, blng, blat, adist, bdir);
 		}
-		AddMesh_HeadingTape (ivtx, iidx, sp->dir*DEG, caret, bdir*DEG);
+		AddMesh_HeadingTape (ivtx, iidx, sp->dir*DEG, base != 0, bdir*DEG);
+		double gdir;
+		if (GpsBearing (self, sp, gdir)) AddMesh_GpsCaret (gdir); // not upstream (gpsnav-hud): an add-on's point, magenta
 
 		// Pitch ladder
 		double sina, cosa, phi0, d, d0, d1;
