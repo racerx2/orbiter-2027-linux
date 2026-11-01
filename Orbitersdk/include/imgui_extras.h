@@ -30,5 +30,8 @@ namespace ImGui {
 	OAPIFUNC void EndAnimatedCombo();
 	OAPIFUNC bool BeginAnimatedCollapsingHeader(const char* label, ImGuiTreeNodeFlags flags = 0, float speed = 1000.0f);
 	OAPIFUNC void EndAnimatedCollapsingHeader();
+	// not upstream: the next window keeps width = (height - extra) * aspect, at least min_width wide, when resized by
+	// any edge or corner, by ImGui or by the window manager (extra: e.g. the title bar's height)
+	OAPIFUNC void SetNextWindowAspect(float aspect, float extra = 0.0f, float min_width = 0.0f);
 };
 

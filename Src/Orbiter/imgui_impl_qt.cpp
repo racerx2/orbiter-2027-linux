@@ -56,7 +56,9 @@ struct ImGui_ImplQt_ViewportData {
 	bool Anchored = false;                       // a button is down in it: the mouse is mapped from Anchor
 	ImVec2 PressPos;                             // the press there, in ImGui's coordinates
 	QPointF PressLocal, Local;                   // the press and the last position, in the window
-	bool SystemDrag = false;                     // Wayland: the compositor moves or resizes it for that button
+	bool SystemDrag = false;                     // Wayland: the compositor was asked to move or resize it for that button
+	Qt::Edges Edges;                             // Wayland: the compositor's last resize of it, until the next press
+	QSize Configured;                            // Wayland: a size the compositor gave it, for ImGui's next frame
 };
 
 class ImGui_ImplQt_Filter : public QObject {
@@ -134,17 +136,27 @@ static bool ImGui_ImplQt_Moving (ImGuiViewport *vp)
 	return iw && g.MovingWindow && g.MovingWindow->RootWindowDockTree == iw;
 }
 
-// the mouse position ImGui gets for an event in w: the window's own, or with viewports the desktop's
-static ImVec2 ImGui_ImplQt_MousePos (QWindow *w, ImGuiViewport *vp, const QPointF &local)
+// ImGui's active item is a resize corner or border of vp's window
+static bool ImGui_ImplQt_Gripped (ImGuiViewport *vp)
+{
+	ImGuiContext &g = *GImGui;
+	ImGuiWindow *iw = ((ImGuiViewportP*)vp)->Window;
+	if (!iw || !g.ActiveId) return false;
+	for (int n = 0; n < 4; n++)
+		if (g.ActiveId == ImGui::GetWindowResizeCornerID (iw, n) || g.ActiveId == ImGui::GetWindowResizeBorderID (iw, (ImGuiDir)n)) return true;
+	return false;
+}
+
+// the mouse position ImGui gets for an event in vp's window: the window's own, or with viewports the desktop's. X11: the
+// event's own root position (Win32's cursor position); Qt maps a local one from the geometry last asked for, which is
+// ahead of the server while ImGui moves the window
+static ImVec2 ImGui_ImplQt_MousePos (ImGuiViewport *vp, const QPointF &local, const QPointF &global)
 {
 	if (!ImGui_ImplQt_Viewports()) return ImVec2 ((float)local.x(), (float)local.y());
 	ImGui_ImplQt_Data *bd = ImGui_ImplQt_GetBackendData();
-	if (!bd->Wayland) {
-		QPointF g = w->mapToGlobal (local);
-		return ImVec2 ((float)g.x(), (float)g.y());
-	}
+	if (!bd->Wayland) return ImVec2 ((float)global.x(), (float)global.y());
 	ImGui_ImplQt_ViewportData *vd = ImGui_ImplQt_Data_ (vp);
-	if (vd && vd->Anchored && (vd->SystemDrag || ImGui_ImplQt_Moving (vp))) return vd->PressPos; // only the compositor moves it
+	if (vd && vd->Anchored && (vd->SystemDrag || ImGui_ImplQt_Moving (vp) || ImGui_ImplQt_Gripped (vp))) return vd->PressPos; // only the compositor moves or resizes it
 	ImVec2 o = (vd && vd->Anchored) ? vd->Anchor : vp->Pos; // a window ImGui resizes under a held button stays put here
 	return ImVec2 (o.x + (float)local.x(), o.y + (float)local.y());
 }
@@ -180,6 +192,21 @@ template<class T> static auto ImGui_ImplQt_RestoreId (T *w, const QString &id, i
 }
 template<class T> static void ImGui_ImplQt_RestoreId (T*, const QString&, long) {}
 
+// X11: a detached window whose title bar isn't wholly on the monitors (its monitor gone since it was placed; ImGui itself
+// keeps only a strip of it on one) goes back to the middle of the primary monitor. Not while ImGui moves it. Wayland
+// windows are placed by the compositor
+static void ImGui_ImplQt_KeepOnMonitors (ImGuiViewport *vp)
+{
+	ImGuiWindow *iw = ((ImGuiViewportP*)vp)->Window;
+	ImGuiPlatformIO &pio = ImGui::GetPlatformIO();
+	if (!iw || pio.Monitors.Size == 0 || ImGui_ImplQt_Moving (vp)) return;
+	float y = vp->Pos.y + 0.5f * iw->TitleBarHeight;
+	if (ImGui_ImplQt_TitleOnMonitors (vp->Pos.x, vp->Pos.x + vp->Size.x, y, pio.Monitors.Data, pio.Monitors.Size)) return;
+	ImVec2 p = ImGui_ImplQt_BackOnPrimary (vp->Size, pio.Monitors[0]); // UpdateMonitors puts the primary first
+	ImGui::SetWindowPos (iw, p);
+	vp->Pos = p;
+}
+
 // ImGui_ImplWin32_CreateWindow
 static void ImGui_ImplQt_CreateWindow (ImGuiViewport *vp)
 {
@@ -199,6 +226,7 @@ static void ImGui_ImplQt_CreateWindow (ImGuiViewport *vp)
 	w->setTransientParent (ImGui_ImplQt_ParentWindow (vp));
 	w->setProperty ("_q_showWithoutActivating", (vp->Flags & ImGuiViewportFlags_NoFocusOnAppearing) != 0);
 	w->setCursor (QCursor (bd->CursorShape));
+	if (!bd->Wayland && !vd->Popup) ImGui_ImplQt_KeepOnMonitors (vp);
 	ImGui_ImplQt_Place (vp, vd);
 	w->installEventFilter (bd->Filter);
 	w->create ();
@@ -313,10 +341,20 @@ static float ImGui_ImplQt_GetWindowDpiScale (ImGuiViewport *vp)
 	return (float)ImGui_ImplQt_Data_ (vp)->Window->devicePixelRatio ();
 }
 
-// Wayland: a drag of a window's own ImGui title bar or top/left edge, once past ImGui's drag threshold (clicks and
+// Wayland: the compositor took the press for its own move or resize. Qt's own end of the buttons (handleEndDrag) is a
+// release sent to no window, so ImGui's are ended here, at the held press point: its move or resize stops on the
+// unchanged rectangle
+static void ImGui_ImplQt_GiveUpPress (ImGui_ImplQt_ViewportData *vd)
+{
+	ImGuiIO &io = ImGui::GetIO();
+	io.AddMousePosEvent (vd->PressPos.x, vd->PressPos.y);
+	for (int i = 0; i < ImGuiMouseButton_COUNT; i++) io.AddMouseButtonEvent (i, false);
+	vd->Anchored = false;
+}
+
+// Wayland: a drag of a window's own ImGui title bar, edge or corner, once past ImGui's drag threshold (clicks and
 // double-clicks stay ImGui's), becomes the compositor's: a move carries the window (WlWindowDrag), so that ImGui knows
-// when it is over the render window; a resize, or a move without that protocol, is the compositor's own, after which
-// Qt ends the button
+// when it is over the render window; a resize, or a move without that protocol, is the compositor's own
 static void ImGui_ImplQt_CompositorDrag (ImGuiViewport *vp, ImGui_ImplQt_ViewportData *vd)
 {
 	ImGuiContext &g = *GImGui;
@@ -331,8 +369,10 @@ static void ImGui_ImplQt_CompositorDrag (ImGuiViewport *vp, ImGui_ImplQt_Viewpor
 			bd->Carry = 1, bd->CarryId = vp->ID, bd->CarryGrab = grab;
 			bd->CarryOver = false;
 			bd->Hold = vd->PressPos; // where ImGui has it
-		} else
-			vd->SystemDrag = vd->Window->startSystemMove ();
+		} else {
+			vd->SystemDrag = true;
+			if (vd->Window->startSystemMove ()) ImGui_ImplQt_GiveUpPress (vd);
+		}
 		return;
 	}
 	int corner = -1, border = -1;
@@ -340,8 +380,19 @@ static void ImGui_ImplQt_CompositorDrag (ImGuiViewport *vp, ImGui_ImplQt_Viewpor
 		if (g.ActiveId == ImGui::GetWindowResizeCornerID (iw, n)) corner = n;
 		if (g.ActiveId == ImGui::GetWindowResizeBorderID (iw, (ImGuiDir)n)) border = n;
 	}
-	if (Qt::Edges e = ImGui_ImplQt_ResizeEdges (corner, border))
-		vd->SystemDrag = vd->Window->startSystemResize (e);
+	Qt::Edges e = ImGui_ImplQt_ResizeEdges (corner, border);
+	if (!e) return;
+	vd->SystemDrag = true;
+	if (vd->Window->startSystemResize (e)) {
+		vd->Edges = e;
+		ImGui_ImplQt_GiveUpPress (vd);
+	}
+}
+
+Qt::Edges ImGui_ImplQt_SystemResizeEdges (ImGuiViewport *vp)
+{
+	ImGui_ImplQt_ViewportData *vd = ImGui_ImplQt_GetBackendData() ? ImGui_ImplQt_Data_ (vp) : nullptr;
+	return vd ? vd->Edges : Qt::Edges();
 }
 
 // ImGui_ImplWin32_UpdateWindow: parent and flags changed after creation
@@ -500,7 +551,23 @@ void ImGui_ImplQt_NewFrame ()
 	io.DisplaySize = ImVec2 ((float)bd->Window->width(), (float)bd->Window->height());
 	float dpr = (float)bd->Window->devicePixelRatio();
 	io.DisplayFramebufferScale = ImVec2 (dpr, dpr);
-	if (bd->WantUpdateMonitors) ImGui_ImplQt_UpdateMonitors ();
+	if (bd->WantUpdateMonitors) {
+		ImGui_ImplQt_UpdateMonitors ();
+		if (!bd->Wayland)
+			for (ImGuiViewport *v : ImGui::GetPlatformIO().Viewports)
+				if (ImGui_ImplQt_ViewportData *d = ImGui_ImplQt_Data_ (v); d && d->Owned && !d->Popup) ImGui_ImplQt_KeepOnMonitors (v);
+	}
+
+	// Wayland: a size from the compositor goes to the window as its own request, so ImGui's size constraints answer it
+	// in this frame, as a configure is answered (as the platform's size, ImGui would push its own back only once the
+	// compositor stops resizing it)
+	for (ImGuiViewport *v : ImGui::GetPlatformIO().Viewports) {
+		ImGui_ImplQt_ViewportData *d = ImGui_ImplQt_Data_ (v);
+		if (!d || d->Configured.isEmpty()) continue;
+		if (ImGuiWindow *iw = ((ImGuiViewportP*)v)->Window) ImGui::SetWindowSize (iw, ImVec2 ((float)d->Configured.width(), (float)d->Configured.height()));
+		else v->PlatformRequestResize = true;
+		d->Configured = QSize();
+	}
 
 	qint64 now = bd->Timer.nsecsElapsed();
 	io.DeltaTime = (now > bd->Time ? (float)((now - bd->Time) * 1e-9) : 1.0f/60.0f);
@@ -666,7 +733,7 @@ bool ImGui_ImplQt_EventHandler (QWindow *window, QEvent *event)
 		if (bd->Carry) return false; // the drag has the pointer
 		QMouseEvent *me = static_cast<QMouseEvent*> (event);
 		vd->Local = me->position();
-		ImVec2 p = ImGui_ImplQt_MousePos (window, vp, me->position());
+		ImVec2 p = ImGui_ImplQt_MousePos (vp, me->position(), me->globalPosition());
 		io.AddMouseSourceEvent (ImGuiMouseSource_Mouse);
 		io.AddMousePosEvent (p.x, p.y);
 		} return false;
@@ -688,12 +755,13 @@ bool ImGui_ImplQt_EventHandler (QWindow *window, QEvent *event)
 				bd->PressSerial = app->lastInputSerial(), bd->PressWindow = window;
 			if (vd->Owned && !vd->Popup && !vd->Anchored) {
 				vd->Anchor = vp->Pos, vd->Anchored = true;
+				vd->SystemDrag = false, vd->Edges = Qt::Edges();
 				vd->PressLocal = me->position();
 				vd->PressPos = ImVec2 (vd->Anchor.x + (float)me->position().x(), vd->Anchor.y + (float)me->position().y());
 			}
 		}
 		int b = ImGui_ImplQt_MouseButton (me->button());
-		ImVec2 p = ImGui_ImplQt_MousePos (window, vp, me->position());
+		ImVec2 p = ImGui_ImplQt_MousePos (vp, me->position(), me->globalPosition());
 		ImGui_ImplQt_UpdateKeyModifiers (me->modifiers());
 		io.AddMouseSourceEvent (ImGuiMouseSource_Mouse);
 		if (b >= 0) {
@@ -751,9 +819,11 @@ bool ImGui_ImplQt_Filter::eventFilter (QObject *o, QEvent *e)
 	case QEvent::Move:
 		if (!bd->Wayland) vp->PlatformRequestMove = true;
 		return false;
-	case QEvent::Resize:
-		vp->PlatformRequestResize = true;
-		return false;
+	case QEvent::Resize: {
+		ImGui_ImplQt_ViewportData *vd = ImGui_ImplQt_Data_ (vp);
+		if (bd->Wayland && vd && vd->Owned && !vd->Popup) vd->Configured = w->size(); // as the window's own size request (NewFrame)
+		else vp->PlatformRequestResize = true;
+		} return false;
 	default:
 		return ImGui_ImplQt_EventHandler (w, e);
 	}

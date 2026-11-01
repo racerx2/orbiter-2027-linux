@@ -29,19 +29,50 @@ inline Qt::WindowFlags ImGui_ImplQt_WindowFlags (ImGuiViewportFlags flags, bool 
 	return f;
 }
 
-// Wayland: the edges of a compositor resize for an ImGui resize corner (0 bottom-right, 1 bottom-left, 2 top-left,
-// 3 top-right) or border (ImGuiDir); none where ImGui's own resize keeps the top-left corner in place
+// Wayland: the edges of the compositor's resize for an ImGui resize corner (0 bottom-right, 1 bottom-left, 2 top-left,
+// 3 top-right) or border (ImGuiDir). Every one: a client can't place its window, so its own resize would grow about
+// wherever the compositor keeps it (KWin: the centre)
 inline Qt::Edges ImGui_ImplQt_ResizeEdges (int corner, int border)
 {
 	switch (corner) {
+	case 0: return Qt::RightEdge | Qt::BottomEdge;
 	case 1: return Qt::LeftEdge | Qt::BottomEdge;
 	case 2: return Qt::LeftEdge | Qt::TopEdge;
 	case 3: return Qt::RightEdge | Qt::TopEdge;
 	default: break;
 	}
-	if (border == ImGuiDir_Left) return Qt::LeftEdge;
-	if (border == ImGuiDir_Up) return Qt::TopEdge;
-	return Qt::Edges();
+	switch (border) {
+	case ImGuiDir_Left: return Qt::LeftEdge;
+	case ImGuiDir_Right: return Qt::RightEdge;
+	case ImGuiDir_Up: return Qt::TopEdge;
+	case ImGuiDir_Down: return Qt::BottomEdge;
+	default: return Qt::Edges();
+	}
+}
+
+// Wayland: the edges of the compositor's last resize of a detached window, until the next press in it; none elsewhere
+Qt::Edges ImGui_ImplQt_SystemResizeEdges (ImGuiViewport *vp);
+
+// X11: whether the row y of a window's title bar lies on the monitors over its whole width [x0, x1)
+inline bool ImGui_ImplQt_TitleOnMonitors (float x0, float x1, float y, const ImGuiPlatformMonitor *mon, int n)
+{
+	float x = x0; // covered up to here
+	for (bool grew = true; grew && x < x1;) {
+		grew = false;
+		for (int i = 0; i < n; i++) {
+			const ImGuiPlatformMonitor &m = mon[i];
+			if (y < m.MainPos.y || y >= m.MainPos.y + m.MainSize.y) continue;
+			if (m.MainPos.x <= x && m.MainPos.x + m.MainSize.x > x) x = m.MainPos.x + m.MainSize.x, grew = true;
+		}
+	}
+	return x >= x1;
+}
+
+// X11: where a window of that size goes back on the primary monitor: the middle of its work area, the top-left inside it
+inline ImVec2 ImGui_ImplQt_BackOnPrimary (ImVec2 size, const ImGuiPlatformMonitor &primary)
+{
+	float x = primary.WorkPos.x + 0.5f * (primary.WorkSize.x - size.x), y = primary.WorkPos.y + 0.5f * (primary.WorkSize.y - size.y);
+	return ImVec2 (x > primary.WorkPos.x ? x : primary.WorkPos.x, y > primary.WorkPos.y ? y : primary.WorkPos.y);
 }
 
 // Wayland: where a window the compositor carried out of the render window is kept in ImGui's coordinates (relative to

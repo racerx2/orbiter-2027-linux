@@ -152,6 +152,7 @@ set(common_src
 	ZTreeMgr.cpp
 # ImGui platform backend
 	imgui_impl_qt.cpp
+	ImGuiAspect.cpp # not upstream: windows that keep their shape
 )
 
 set(Orbiter_includes

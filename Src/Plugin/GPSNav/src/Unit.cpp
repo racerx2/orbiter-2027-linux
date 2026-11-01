@@ -5,6 +5,7 @@
 
 // not upstream in Orbiter (the Custom build's gpsnav-hud): weak, so the module loads in an Orbiter without it (no caret there)
 OAPIFUNC void oapiSetHUDBearingTarget (OBJHANDLE hVessel, OBJHANDLE hBody, double lng, double lat) __attribute__((weak));
+namespace ImGui { OAPIFUNC void SetNextWindowAspect (float aspect, float extra, float min_width) __attribute__((weak)); } // likewise (gpsnav-window)
 #include <algorithm>
 #include <cfloat>
 #include <cstdio>
@@ -158,12 +159,9 @@ void Symbol (ImDrawList *dl, ImVec2 p, const Wpt &w, float u)
 	if (w.tunable && w.kind != Kind::Pad) dl->AddCircleFilled (ImVec2 (p.x + u, p.y - u), 0.25f * u, C_GREEN);
 }
 
-void SizeAspect (ImGuiSizeCallbackData *d) // the unit keeps its shape: the side dragged most decides
+void SizeWidth (ImGuiSizeCallbackData *d) // an Orbiter without SetNextWindowAspect: the height follows the width
 {
-	float t = ImGui::GetFrameHeight ();
-	if (std::fabs (d->DesiredSize.x - d->CurrentSize.x) >= std::fabs (d->DesiredSize.y - d->CurrentSize.y))
-		d->DesiredSize.y = d->DesiredSize.x / ASPECT + t;
-	else d->DesiredSize.x = (d->DesiredSize.y - t) * ASPECT;
+	d->DesiredSize.y = d->DesiredSize.x / ASPECT + ImGui::GetFrameHeight ();
 }
 
 } // namespace
@@ -222,7 +220,8 @@ void Unit::Reset ()
 void Unit::Display ()
 {
 	ImGui::SetNextWindowSize (ImVec2 (defaultSize.width, defaultSize.height), ImGuiCond_FirstUseEver);
-	ImGui::SetNextWindowSizeConstraints (ImVec2 (360.0f, 0.0f), ImVec2 (FLT_MAX, FLT_MAX), SizeAspect);
+	if (ImGui::SetNextWindowAspect) ImGui::SetNextWindowAspect (ASPECT, ImGui::GetFrameHeight (), 360.0f); // the unit keeps its shape
+	else ImGui::SetNextWindowSizeConstraints (ImVec2 (360.0f, 0.0f), ImVec2 (FLT_MAX, FLT_MAX), SizeWidth);
 	ImGui::PushStyleVar (ImGuiStyleVar_WindowPadding, ImVec2 (0.0f, 0.0f));
 	bool open = ImGui::Begin (name.c_str (), &active, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNavInputs);
 	ImGui::PopStyleVar ();
