@@ -429,7 +429,7 @@ TEST_CASE ("A feature in two tiles' buffers is painted once", "[ways]")
 	CHECK (diff <= 1); // east of the tile edge B alone paints; A's copy in its buffer adds nothing
 }
 
-TEST_CASE ("A raster lists its runways for their lights: once, by its midpoint's box, not a cut one or one on a base", "[rwylights]")
+TEST_CASE ("A raster lists its runways for their lights: by every box the centre line crosses, not a cut one or one on a base", "[rwylights]")
 {
 	auto T = Make (TX, TY, {{TSWAY_RUNWAY, 0, "09/27", {{{1000, 2048}, {3000, 2048}}}}});
 	WayGeom::Input in = Box (*T, 0, 0, 4096, 4096);
@@ -447,12 +447,15 @@ TEST_CASE ("A raster lists its runways for their lights: once, by its midpoint's
 	CHECK (r.des[0] == "09");
 	CHECK (r.des[1] == "27");
 
-	WayGeom::Input w = Box (*T, 0, 0, 1800, 4096), e = Box (*T, 1800, 0, 4096, 4096); // its midpoint at u = 2000
-	w.tiles = e.tiles = {T};
+	WayGeom::Input w = Box (*T, 0, 0, 1800, 4096), e = Box (*T, 1800, 0, 4096, 4096), n = Box (*T, 0, 0, 4096, 1800); // both halves it crosses, a box north of it
+	w.tiles = e.tiles = n.tiles = {T};
 	WayGeom::Raster (w, o);
-	CHECK (o.runways.empty());
+	REQUIRE (o.runways.size() == 1);
+	CHECK_THAT (o.runways[0].lng[1], WithinAbs (T->Lng (3000), 1e-9)); // the whole runway, not the box's part
 	WayGeom::Raster (e, o);
 	CHECK (o.runways.size() == 1);
+	WayGeom::Raster (n, o);
+	CHECK (o.runways.empty());
 
 	auto C = Make (TX, TY, {{TSWAY_RUNWAY, 0, "09/27", {{{3000, 2048}, {4160, 2048}}}}}); // runs on into the next tile, not read
 	WayGeom::Input c = Box (*C, 0, 0, 4096, 4096);

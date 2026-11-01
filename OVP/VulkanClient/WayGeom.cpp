@@ -703,6 +703,21 @@ std::vector<std::pair<int, int>> RunwayTiles (const std::vector<std::shared_ptr<
 	return out;
 }
 
+// not upstream (rwylights-any-box): the segment a-b crosses the box |x| <= hw, |y| <= hh, edges included (Liang-Barsky)
+static bool Crosses (double ax, double ay, double bx, double by, double hw, double hh)
+{
+	double t0 = 0.0, t1 = 1.0;
+	auto clip = [&] (double p, double q) {
+		if (p == 0.0) return q >= 0.0;
+		double r = q / p;
+		if (p < 0.0) { if (r > t1) return false; t0 = std::max (t0, r); }
+		else { if (r < t0) return false; t1 = std::min (t1, r); }
+		return true;
+	};
+	double dx = bx - ax, dy = by - ay;
+	return clip (-dx, ax + hw) && clip (dx, hw - ax) && clip (-dy, ay + hh) && clip (dy, hh - ay);
+}
+
 void Raster (const Input &in, Output &out)
 {
 	out = Output();
@@ -763,12 +778,9 @@ void Raster (const Input &in, Output &out)
 		double brb = brg + 180.0;
 		r.desB = Designator (r.ref, brb >= 360.0 ? brb - 360.0 : brb);
 	}
-	for (const Runway &r : rw) { // stream-rwylights: listed by the box holding its midpoint
-		if (r.cutA || r.cutB) continue;
+	for (const Runway &r : rw) { // stream-rwylights: listed by every box its centre line crosses (rwylights-any-box)
+		if (r.cutA || r.cutB || !Crosses (r.ax, r.ay, r.bx, r.by, 0.5 * W, 0.5 * H)) continue;
 		RunwayLL l;
-		double mlat, mlng;
-		g.LatLng ({0.5 * (r.ax + r.bx), 0.5 * (r.ay + r.by)}, mlat, mlng);
-		if (mlat < in.lat0 || mlat >= in.lat1 || mlng < in.lng0 || mlng >= in.lng1) continue;
 		g.LatLng ({r.ax, r.ay}, l.lat[0], l.lng[0]);
 		g.LatLng ({r.bx, r.by}, l.lat[1], l.lng[1]);
 		l.w = r.w;

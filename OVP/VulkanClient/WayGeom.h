@@ -43,7 +43,7 @@ struct Style {
 enum Marks { M_NONE, M_ROAD, M_TAXIWAY, M_RUNWAY, M_RAIL };
 Style StyleOf (uint8_t kind, uint8_t flags);
 
-// a runway for its lights: both ends true thresholds, not on a base, its midpoint in the box (stream-rwylights)
+// a runway for its lights: both ends true thresholds, not on a base, its centre line crossing the box (stream-rwylights, rwylights-any-box)
 struct RunwayLL {
 	double lat[2] = {0, 0}, lng[2] = {0, 0}; // radians, end A then B
 	double w = 0.0;                          // width [m]
