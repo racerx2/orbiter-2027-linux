@@ -56,6 +56,8 @@ struct TsBase {
 	double lng = 0.0, lat = 0.0; // radians
 	std::vector<Part> parts;
 	double ext = 0.0;            // reach of the furthest part, metres
+	bool rwy = false;            // not upstream (stream-rwyflat): a streamed runway, part 0 its centre line, h[0] at (n0, e0) to h[1] at (n1, e1)
+	double h[2] = {0.0, 0.0};
 };
 bool TsReadBase (const std::string &file, TsBase &b);
 
@@ -66,6 +68,7 @@ namespace TsSky {
 	double TerrAt (const QImage &tile, int z, int row, int col, double lng, double lat); // degrees
 	void TerrTile (double lng, double lat, int z, int &row, int &col);
 	bool Hits (const TsBase &b, double R, int L, int ilat, int ilng, double blend);
+	double PartDist (const TsBase::Part &p, double nn, double ee, double *t = nullptr); // to the part's edge, negative inside; t: along it, 0 to 1
 	// not upstream (loading-events): false only when no part of b comes within its reach of a node ElevMod visits in the tile
 	bool Reaches (const TsBase &b, double R, int L, int ilat, int ilng, double blend);
 	std::string ElevMod (int L, int ilat, int ilng, const std::vector<std::pair<const TsBase *, double>> &bases, double R, double scale, const std::string &elev, double blend);
@@ -129,6 +132,33 @@ namespace TsWay {
 	bool Decode (const std::string &pbf, Tile &t); // layers transportation, aeroway, waterway; z, x, y as set
 	std::string Encode (const Tile &t);           // "OWAY" version 1
 	bool Read (const std::string &bytes, Tile &t);
+}
+
+// not upstream (stream-rwyflat): streamed runways from z11 vector tiles, flattened as bases are (TileStreamRwy.cpp)
+namespace TsRwy {
+	const int Z = 11;                // the vector tiles' zoom
+	const int CheckLevel = 15;       // Elev tiles from here on wait for their runways (an L15 tile is about a z11 tile's size); coarser ones take them as they come
+	const double Shoulder = 20.0;    // flat past the runway's edge, m
+	struct Run {                     // a runway from its pieces
+		double lat[2] = {0, 0}, lng[2] = {0, 0}; // radians, its ends
+		bool cut[2] = {false, false};            // the end lies at the edge of the tiles read: not its true end
+		double w = 0.0;                          // width, m
+		std::string ref;
+	};
+	TsWay::Tile Keep (const TsWay::Tile &t); // its runway lines and areas
+	std::vector<Run> Runways (const std::vector<TsWay::Tile> &tiles, double R); // joined across the tiles
+	void TileOf (double lat, double lng, int &x, int &y); // the z11 tile of a point (radians)
+	void TileBox (int x, int y, double &lat0, double &lat1, double &lng0, double &lng1); // its bounds (radians), lat0 south
+	double Length (const Run &r, double R);
+	bool OnBase (const Run &r, const std::vector<TsBase> &bases, double R); // an end or its middle inside a base's part
+	bool Same (const Run &r, const TsBase &b, double R);  // the fixed runway b
+	TsBase Flat (const Run &r, double R, double h0, double h1);
+	// where r's flat zone meets fixed runways': (t along r, the fixed one's height there)
+	std::vector<std::pair<double, double>> Meets (const Run &r, const std::vector<const TsBase *> &fixed, double R);
+	// the line h0 to h1 along t 0..1 through samples (t, h), outliers dropped, meets held; level unless its slope stands out of the noise (len: metres); false with too few
+	bool Fit (const std::vector<std::pair<double, double>> &s, const std::vector<std::pair<double, double>> &meets, double step, double len, double &h0, double &h1);
+	std::string Line (const TsBase &b, double R);             // its runways.idx line
+	bool Parse (const std::string &line, double R, TsBase &b);
 }
 
 bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::string &err);
@@ -246,8 +276,10 @@ public:
 	// flags 1: the file failed to load, 2: the client loaded it from the cache
 	// 1: the Surf file is there, 0: wanted, -1: never (an installed archive's tile included)
 	// flags 4: only the tile's Elev (its imagery from elsewhere); 1 the Elev file is there, 0 wanted, -1 never
+	// flags 4 | 8 (not upstream: stream-rwyflat): 1 only once its streamed runways are in it too (or can't be this session)
 	int Want (const std::string &body, int L, int ilat, int ilng, int flags);
 	int Done (const std::string &body, int *keys, int nmax); // (L, ilat, ilng) triples
+	int ElevChanged (const std::string &body, int *keys, int nmax); // not upstream (stream-rwyflat): Elev keys whose Elev_mod changed over an Elev already there
 	// z14 building tiles: 1 the file is there, 0 wanted, -1 never
 	int WantBldg (const std::string &body, int x, int y);
 	std::string BldgPath (const std::string &body, int x, int y) const;

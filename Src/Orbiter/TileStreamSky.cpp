@@ -160,10 +160,11 @@ static double ElvNode (const std::string &e, int i, int j)
 }
 
 // distance in metres from a point to a base part's edge (negative inside)
-static double PartDist (const TsBase::Part &p, double nn, double ee)
+double PartDist (const TsBase::Part &p, double nn, double ee, double *tp)
 {
 	double dn = p.n1 - p.n0, de = p.e1 - p.e0, l2 = dn * dn + de * de;
 	double t = l2 > 0 ? std::clamp (((nn - p.n0) * dn + (ee - p.e0) * de) / l2, 0.0, 1.0) : 0.0;
+	if (tp) *tp = t;
 	return std::hypot (nn - p.n0 - t * dn, ee - p.e0 - t * de) - p.r;
 }
 
@@ -251,10 +252,13 @@ std::string ElevMod (int L, int ilat, int ilng, const std::vector<std::pair<cons
 				double dl = remainder (lng - b.lng, 2.0 * M_PI);
 				double nn = (lat - b.lat) * R, ee = dl * R * cos (b.lat);
 				if (std::fabs (nn) > b.ext + blend || std::fabs (ee) > b.ext + blend) continue;
-				double d = 1e30;
-				for (const TsBase::Part &p : b.parts) d = std::min (d, PartDist (p, nn, ee));
+				double d = 1e30, t = 0.0;
+				for (const TsBase::Part &p : b.parts) {
+					double tp, dp = PartDist (p, nn, ee, &tp);
+					if (dp < d) d = dp, t = tp;
+				}
 				double k = d <= 0 ? 1.0 : d < blend ? 0.5 * (1.0 + cos (M_PI * d / blend)) : 0.0;
-				if (k > 0 && (wt == 0 || d < best)) { best = d; wt = k; H = bh.second; }
+				if (k > 0 && (wt == 0 || d < best)) { best = d; wt = k; H = b.rwy ? b.h[0] + t * (b.h[1] - b.h[0]) : bh.second; } // stream-rwyflat: a runway's line
 			}
 			if (wt <= 0) continue;
 			double e0 = wt < 1.0 ? ElvNode (elev, i, j) : H;

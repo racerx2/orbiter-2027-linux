@@ -70,6 +70,9 @@ Every airport OpenStreetMap knows is there, streamed with the ground around it:
 - **Lit at night** like a real field: white edge lights turning yellow near the end, centre line, green thresholds,
   red ends, touchdown zone and approach lights.
 - **PAPI** on the left of each end: two white and two red on a 3° glide path.
+- **Flat runways**: the ground under each runway is laid on one straight line fitted to the terrain along it, level
+  unless the slope stands out of the elevation data's noise, at one height where runways cross. Trees and roofs in
+  the elevation data no longer put bumps under the wheels.
 - **Ready on the runway**: a scenario's landed ships wait for the finest ground under them, so they stand on the
   runway from the first frame, not above or under it.
 

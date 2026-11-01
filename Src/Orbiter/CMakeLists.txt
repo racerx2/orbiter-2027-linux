@@ -56,6 +56,7 @@ set(common_src
 	TileStreamMvt.cpp # not upstream
 	TileStreamNet.cpp # not upstream
 	TileStreamSky.cpp # not upstream: clouds, base flattening, ground track
+	TileStreamRwy.cpp # not upstream (stream-rwyflat): streamed runways flattened
 	TabStream.cpp # not upstream: Launchpad Planet streaming page
 	TabControls.cpp # not upstream (input-bindings): Launchpad Controllers page
 	InputDevices.cpp # not upstream (input-bindings): every controller

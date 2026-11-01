@@ -40,8 +40,10 @@ private:
 		bool night = false;
 		bool base = false;                    // a base's runway: its base lights it
 		double tSun = -1e9;
+		double h[2] = {0.0, 0.0};             // not upstream (stream-rwyflat): the ground at its ends when built
 	};
 	void Build (Rwy &r);
+	bool Moved (const Rwy &r) const;          // not upstream (stream-rwyflat): that ground has changed since
 	void ReadBases ();
 	struct BaseRwy { VECTOR3 a, b; };     // a base's RUNWAY or RUNWAYLIGHTS ends, planet frame
 	std::vector<BaseRwy> baseRwys;

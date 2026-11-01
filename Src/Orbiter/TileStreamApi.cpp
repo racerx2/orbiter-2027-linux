@@ -69,7 +69,7 @@ void TsWaitGround (const Body *body, double lng, double lat, double radius, cons
 	size_t left, shown = keys.size() + 1;
 	for (;;) {
 		left = 0;
-		for (const TileStream::TileKey &k : keys) if (!ts->Want (b, k.L, k.ilat, k.ilng, 4)) left++;
+		for (const TileStream::TileKey &k : keys) if (!ts->Want (b, k.L, k.ilat, k.ilng, 4 | 8)) left++; // not upstream (stream-rwyflat): 8, its runways in it too
 		if (!left || std::chrono::steady_clock::now() >= g_groundEnd) break;
 		if (left != shown) { // not upstream (loading-events): what the load waits for, on the splash
 			char cbuf[128];
@@ -101,6 +101,12 @@ DLLEXPORT int oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax)
 {
 	TileStream *ts = Stream();
 	return ts && hBody ? ts->Done (((Body*)hBody)->Name(), keys, nmax) : 0;
+}
+
+DLLEXPORT int oapiTileStreamElevChanged (OBJHANDLE hBody, int *keys, int nmax) // not upstream (stream-rwyflat)
+{
+	TileStream *ts = Stream();
+	return ts && hBody ? ts->ElevChanged (((Body*)hBody)->Name(), keys, nmax) : 0;
 }
 
 DLLEXPORT int oapiTileStreamBldgWant (OBJHANDLE hBody, int x, int y)

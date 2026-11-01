@@ -20,6 +20,7 @@
 #include <list>
 #include <map>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <thread>
 #include <unordered_map>
@@ -83,6 +84,7 @@ bool InGrid (int L, int a, int b)
 bool KeyOk (const std::string &idx, int L, int a, int b, int lmin = 1, int lmax = 21)
 {
 	if (idx == "bldg" || idx == "way") return L == 14 && a >= 0 && b >= 0 && a < 1 << 14 && b < 1 << 14; // not upstream (design-ways): way
+	if (idx == "rwy") return L == TsRwy::Z && a >= 0 && b >= 0 && a < 1 << TsRwy::Z && b < 1 << TsRwy::Z; // not upstream (stream-rwyflat)
 	return L >= lmin && L <= lmax && InGrid (L, a, b);
 }
 
@@ -240,6 +242,12 @@ std::string VecFile (const std::string &dir, int v, uint64_t k)
 	return dir + (v ? "/Way/14/" : "/Bldg/14/") + std::to_string (KLat (k)) + "/" + std::to_string (KLng (k)) + (v ? ".way" : ".bld");
 }
 
+// not upstream (stream-rwyflat): a z11 runway tile, Key (11, x, y)
+std::string RwyFile (const std::string &dir, uint64_t k)
+{
+	return dir + "/Rwy/11/" + std::to_string (KLat (k)) + "/" + std::to_string (KLng (k)) + ".way";
+}
+
 std::string BldgFile (const std::string &dir, uint64_t k)
 {
 	return VecFile (dir, 0, k);
@@ -249,6 +257,7 @@ std::string BldgFile (const std::string &dir, uint64_t k)
 std::string StreamFile (const std::string &dir, const std::string &idx, uint64_t k)
 {
 	if (idx == "way") return VecFile (dir, 1, k); // not upstream (design-ways)
+	if (idx == "rwy") return RwyFile (dir, k); // not upstream (stream-rwyflat)
 	return idx == "bldg" ? BldgFile (dir, k) : Tile (dir, idx == "mod" ? "Elev_mod" : "Cloud", k);
 }
 
@@ -328,6 +337,11 @@ struct TileStream::Impl {
 		bool bytesKnown = false, writtenDirty = false;
 		std::atomic<bool> marked {false};  // design dropin-addons: its files carry the mark, so a file without it is someone else's
 		bool Arch (int layer, uint64_t k) const { return arch[layer].Has (KL (k), KLat (k), KLng (k)); }
+		std::deque<TsBase> rwys;                   // not upstream (stream-rwyflat): fixed streamed runways (runways.idx), appended under mx
+		std::unordered_set<uint64_t> rwyChk;       // stream-rwyflat: Elev keys whose runways are in their Elev_mod (rwychk.idx), under mx
+		std::unordered_set<uint64_t> rwyTile;      // stream-rwyflat: z11 runway tiles written (rwy.idx), under mx
+		std::unordered_set<uint64_t> noCheck, checkSeen; // stream-rwyflat: this session, a check that failed, a check asked for
+		std::deque<uint64_t> elevChanged;          // stream-rwyflat: Elev_mod changed over an Elev already there, for the client, under mx
 	};
 	struct BJob { int body = 0, stage = 0, tries = 0; uint64_t key = 0; Clock::time_point want, retry; bool pre = false; uint64_t seq = 0; }; // pre, seq: design-preload
 	struct Src {
@@ -340,6 +354,7 @@ struct TileStream::Impl {
 		uint64_t id = 0, key = 0;
 		int body = 0, stage = 0, tries = 0, waiting = 0; // stage 0 queued, 1 fetching, 2 building
 		bool required = false, low = false, fallback = false, elevOnly = false;
+		bool check = false;          // not upstream (stream-rwyflat): an Elev job that only puts its runways into an Elev already there
 		bool pre = false;            // earth-sky: ground-track prefetch
 		bool warm = false;           // not upstream (mars-stream): a cog body's low levels at startup, a prefetch never dropped
 		bool eoxWait = false;        // waits out a retry after an EOX failure: falls back at once when EOX pauses
@@ -393,7 +408,7 @@ struct TileStream::Impl {
 	std::unordered_map<std::string, int> syncWait;
 	std::unordered_map<std::string, std::pair<int, std::shared_ptr<const QByteArray>>> syncRes;
 	int coverFails = 0;
-	void FetchAll (std::vector<TsCog::Req> &rq, int h);
+	void FetchAll (std::vector<TsCog::Req> &rq, int h, int sec = 90); // stream-rwyflat: sec; a request of length 0 is the whole file
 	std::unordered_map<uint64_t, BJob> bjobs;               // building tiles, by Id (body, Key (14, x, y))
 	std::unordered_map<std::string, uint64_t> binflight;    // url -> bjob id
 	std::unordered_map<std::string, int> bjson;             // TileJSON url -> body
@@ -433,7 +448,7 @@ struct TileStream::Impl {
 	}
 
 	int Want (const std::string &name, int L, int ilat, int ilng, int flags);
-	int WantElev (int b, int L, int ilat, int ilng);
+	int WantElev (int b, int L, int ilat, int ilng, int flags = 4);
 	void Trim ();
 	void Run ();
 	void Work ();
@@ -521,6 +536,18 @@ struct TileStream::Impl {
 	void InhLine (Body &B, uint64_t k, const Body::Inh &n);
 	void AddonMods (Body &B);
 	void Settle (Body &B, uint64_t k);
+	std::mutex rwyMx;                     // not upstream (stream-rwyflat): one check at a time, taken before modMx
+	bool RwyOn (const Body &B, int L) const; // stream-rwyflat: an Elev at L waits for its runways
+	int Check (Body &B, uint64_t k);      // 1 its runways fixed, 0 not (a fetch failed), -1 another worker checks
+	void CheckJob (Body &B, const Job &J);
+	bool BldgJson (Body &B);              // the vector tiles' URL, asked for and waited on
+	bool RwyTile (Body &B, int x, int y, TsWay::Tile &t);
+	bool FixRunway (Body &B, const TsRwy::Run &r, const TsBase *&f);
+	void RwyMods (Body &B, const std::vector<const TsBase *> &fs);
+	void RwyAgain (const Job &J);         // an Elev job back in the queue for a second, its tries kept
+	void SetChecked (Body &B, uint64_t k, bool on);
+	void PushChanged (Body &B, uint64_t k);
+	void LoadRunways (Body &B);
 	int WantVec (int v, int b, int x, int y); // TileStreamMvt.cpp's tiles, below imagery; v: VecIdx
 	void StartBldg (Clock::time_point now);
 	void BldgDeliver (const std::string &url, int status, const std::shared_ptr<const QByteArray> &data, Clock::time_point now);
@@ -683,7 +710,7 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 {
 	int b = FindBody (name);
 	if (b < 0) return -1;
-	if (flags & 4) return WantElev (b, L, ilat, ilng);
+	if (flags & 4) return WantElev (b, L, ilat, ilng, flags);
 	Body &B = *bodies[b];
 	if (L < 1 || L > B.cfg.SurfMax() || ilat < 0 || ilng < 0) return -1;
 	if (L < 4 ? (ilat || ilng) : (ilat >= 1 << (L - 4) || ilng >= 1 << (L - 3))) return -1;
@@ -694,6 +721,14 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 	if (flags & 2) {
 		if (ro || !B.written.count (k)) return 1;
 		B.hits.push_back (k);
+		if (RwyOn (B, L) && B.elev.count (k) && !B.rwyChk.count (k) && !B.noCheck.count (k) && !jobs.count (id) && B.checkSeen.insert (k).second) { // not upstream (stream-rwyflat)
+			Job &J = NewJob (b, k, opt.now());
+			J.elevOnly = J.check = true;
+			Trim ();
+			kick = true;
+			cv.notify_all();
+			return 1;
+		}
 		const TsSource &es = B.cfg.elev;
 		if (!net || es.kind.empty() || L < 4 || L > es.lmax || B.Arch (A_ELEV, k) || !B.elevSeen.insert (k).second || B.noElev.count (k) || jobs.count (id)) return 1;
 		lk.unlock();
@@ -770,14 +805,27 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 }
 
 // the Elev of a tile whose imagery isn't the stream's (an installed archive's, say): an Elev job of its own
-int TileStream::Impl::WantElev (int b, int L, int ilat, int ilng)
+int TileStream::Impl::WantElev (int b, int L, int ilat, int ilng, int flags)
 {
 	Body &B = *bodies[b];
 	const TsSource &es = B.cfg.elev;
 	if (es.kind.empty() || L < 4 || L > es.lmax || ilat < 0 || ilng < 0 || ilat >= 1 << (L - 4) || ilng >= 1 << (L - 3)) return -1;
 	uint64_t k = Key (L, ilat, ilng), id = Id (b, k);
 	std::error_code ec;
-	if (fs::exists (Tile (B.dir, "Elev", k), ec)) return 1;
+	if (fs::exists (Tile (B.dir, "Elev", k), ec)) {
+		if (!(flags & 8)) return 1;
+		std::lock_guard<std::mutex> lk (mx); // not upstream (stream-rwyflat): its runways too, unless they can't be had this session
+		if (stop || !RwyOn (B, L) || !B.elev.count (k) || B.rwyChk.count (k) || B.noCheck.count (k)) return 1;
+		if (!jobs.count (id)) {
+			Job &J = NewJob (b, k, opt.now());
+			J.elevOnly = J.check = true;
+			B.checkSeen.insert (k);
+			Trim ();
+			kick = true;
+			cv.notify_all();
+		}
+		return 0;
+	}
 	std::lock_guard<std::mutex> lk (mx);
 	if (stop || !net || Ocean (B, k) || B.noElev.count (k)) return -1;
 	if (jobs.count (id)) return 0; // a Surf job of ours queues its Elev when it is built
@@ -1128,8 +1176,8 @@ void TileStream::Impl::Start (Job &J, Clock::time_point now)
 		J.lights = Srcs (B.cfg.lights, L, la, ln);
 		J.water = Srcs (B.cfg.water, L, la, ln);
 	}
-	if (J.elevOnly) J.elev = Srcs (B.cfg.elev, L, la, ln); // a Surf job never waits on Terrarium
-	if (J.elevOnly) BaseSrcs (B, J); // earth-sky: base centre heights still unknown
+	if (J.elevOnly && !J.check) J.elev = Srcs (B.cfg.elev, L, la, ln); // a Surf job never waits on Terrarium; stream-rwyflat: a check fetches in its worker
+	if (J.elevOnly && !J.check) BaseSrcs (B, J); // earth-sky: base centre heights still unknown
 	J.stage = 1;
 	J.waiting = 0;
 	J.eoxWait = false;
@@ -1259,6 +1307,10 @@ void TileStream::Impl::Build (Job J)
 		ElevRetry (J);
 		return;
 	}
+	if (J.check) { // not upstream (stream-rwyflat)
+		CheckJob (B, J);
+		return;
+	}
 	if (J.elevOnly) {
 		bool mine;
 		{
@@ -1272,9 +1324,16 @@ void TileStream::Impl::Build (Job J)
 			Disown (B, "elev", J.key, Tile (B.dir, "Elev", J.key));
 			theirs = true;
 		}
+		int chk = 2; // not upstream (stream-rwyflat): 1 its runways fixed first, 0 not, 2 none to wait for
+		if (!theirs && !elv.empty() && RwyOn (B, L) && (chk = Check (B, J.key)) < 0) {
+			RwyAgain (J);
+			return;
+		}
 		bool ok = !theirs && !elv.empty() && Mods (B, J.key, elv) && Write (B, Tile (B.dir, "Elev", J.key), elv); // earth-sky: its Elev_mod first
+		if (ok && chk < 2) SetChecked (B, J.key, chk == 1);
 		if (ok) Settle (B, J.key); // elev-consistency: then the tiles under it
 		std::lock_guard<std::mutex> lk (mx);
+		if (chk == 0) B.noCheck.insert (J.key); // stream-rwyflat: not tried again this session, the ground wait goes on
 		if (ok) {
 			if (B.elev.insert (J.key).second) Append (B, "elev", J.key, -1);
 			B.bytes += elv.size();
@@ -1389,12 +1448,12 @@ void TileStream::Impl::Build (Job J)
 }
 
 // a worker's range reads on host h (WorldCover, USGS), through its cap and pause; waits for all of them
-void TileStream::Impl::FetchAll (std::vector<TsCog::Req> &rq, int h)
+void TileStream::Impl::FetchAll (std::vector<TsCog::Req> &rq, int h, int sec)
 {
 	std::unique_lock<std::mutex> lk (mx);
 	std::vector<std::string> keys;
 	for (TsCog::Req &r : rq) {
-		keys.push_back (r.url + "#" + std::to_string (r.off) + "+" + std::to_string (r.len));
+		keys.push_back (r.len ? r.url + "#" + std::to_string (r.off) + "+" + std::to_string (r.len) : r.url); // stream-rwyflat: a whole file under its URL
 		const std::string &k = keys.back();
 		if ((r.data = CacheGet (k))) { r.status = 200; continue; }
 		if (!net || stop || Paused (h, opt.now())) { r.status = 0; continue; }
@@ -1413,7 +1472,7 @@ void TileStream::Impl::FetchAll (std::vector<TsCog::Req> &rq, int h)
 			if (rq[i].status < 0 && !syncRes.count (keys[i])) return false;
 		return true;
 	};
-	scv.wait_for (lk, std::chrono::seconds (90), ready);
+	scv.wait_for (lk, std::chrono::seconds (sec), ready);
 	for (size_t i = 0; i < rq.size(); i++) {
 		if (rq[i].status >= 0) continue;
 		auto it = syncRes.find (keys[i]);
@@ -1645,6 +1704,8 @@ void TileStream::Impl::LoadIdx (Body &B)
 	load ("refetch", false, 1, 21, [&] (uint64_t k, int64_t) { return B.refetch.insert (k).second; });
 	load ("bldg", false, 14, 14, [&] (uint64_t k, int64_t) { return B.bldg.insert (k).second; });
 	load ("way", false, 14, 14, [&] (uint64_t k, int64_t) { return B.way.insert (k).second; }); // not upstream (design-ways)
+	load ("rwy", false, TsRwy::Z, TsRwy::Z, [&] (uint64_t k, int64_t) { return B.rwyTile.insert (k).second; }); // not upstream (stream-rwyflat)
+	load ("rwychk", false, 4, 21, [&] (uint64_t k, int64_t) { return B.rwyChk.insert (k).second; });
 	std::error_code ec;
 	auto age = fs::file_time_type::clock::now() - fs::last_write_time (Idx (B, "none"), ec);
 	if (!ec && age > std::chrono::hours (24 * 30)) { // nothing marked for 30 days: every line is out of date
@@ -2161,6 +2222,15 @@ void TileStream::Impl::StartBldg (Clock::time_point now)
 
 void TileStream::Impl::BldgDeliver (const std::string &url, int status, const std::shared_ptr<const QByteArray> &data, Clock::time_point now)
 {
+	auto si = inflight.find (url); // not upstream (stream-rwyflat): a worker's runway tile (FetchAll)
+	if (si != inflight.end()) {
+		inflight.erase (si);
+		if (syncWait.count (url)) {
+			syncRes[url] = {status, data};
+			scv.notify_all();
+		}
+		return;
+	}
 	auto js = bjson.find (url);
 	if (js != bjson.end()) {
 		Body &B = *bodies[js->second];
@@ -2176,6 +2246,7 @@ void TileStream::Impl::BldgDeliver (const std::string &url, int status, const st
 		Log ("TileStream: " + B.cfg.name + " buildings from " + B.bldgUrl);
 		B.bldgState = 2;
 		kick = true;
+		scv.notify_all(); // not upstream (stream-rwyflat): a check waits for it
 		return;
 	}
 	auto it = binflight.find (url);
@@ -2282,7 +2353,7 @@ void TileStream::PrepareDirs (const std::string &cfgfile, const std::function<st
 		while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
 		if (dir.empty()) continue;
 		std::error_code ec;
-		for (const char *s : {"/Surf", "/Mask", "/Elev", "/Class", "/TileStream/tmp", "/Cloud", "/Elev_mod"}) fs::create_directories (dir + s, ec);
+		for (const char *s : {"/Surf", "/Mask", "/Elev", "/Class", "/TileStream/tmp", "/Cloud", "/Elev_mod", "/Rwy"}) fs::create_directories (dir + s, ec); // not upstream (stream-rwyflat): Rwy
 	}
 }
 
@@ -2314,6 +2385,23 @@ int TileStream::Done (const std::string &body, int *keys, int nmax)
 	for (; n < nmax && !B.done.empty(); n++) {
 		uint64_t k = B.done.front();
 		B.done.pop_front();
+		keys[3 * n] = KL (k);
+		keys[3 * n + 1] = KLat (k);
+		keys[3 * n + 2] = KLng (k);
+	}
+	return n;
+}
+
+int TileStream::ElevChanged (const std::string &body, int *keys, int nmax) // not upstream (stream-rwyflat)
+{
+	int b = d->FindBody (body);
+	if (b < 0 || !keys || nmax <= 0) return 0;
+	std::lock_guard<std::mutex> lk (d->mx);
+	Impl::Body &B = *d->bodies[b];
+	int n = 0;
+	for (; n < nmax && !B.elevChanged.empty(); n++) {
+		uint64_t k = B.elevChanged.front();
+		B.elevChanged.pop_front();
 		keys[3 * n] = KL (k);
 		keys[3 * n + 1] = KLat (k);
 		keys[3 * n + 2] = KLng (k);
@@ -2651,11 +2739,14 @@ void TileStream::Impl::LoadBases (Body &B)
 		}
 	}
 	AddonMods (B); // elev-consistency: before the bases' tiles, which then follow it
+	LoadRunways (B); // not upstream (stream-rwyflat)
 	int made = 0;
-	for (size_t i = 0; i < B.bases.size(); i++) {
-		const TsBase &b = B.bases[i];
+	std::vector<const TsBase *> flat;
+	for (size_t i = 0; i < B.bases.size(); i++) if (!std::isnan (B.baseH[i])) flat.push_back (&B.bases[i]);
+	for (const TsBase &r : B.rwys) flat.push_back (&r); // not upstream (stream-rwyflat)
+	for (const TsBase *bp : flat) {
+		const TsBase &b = *bp;
 		double lng = b.lng * 180.0 / M_PI, lat = b.lat * 180.0 / M_PI;
-		if (std::isnan (B.baseH[i])) continue;
 		for (int L = ModLevel; L <= B.cfg.elev.lmax; L++) {
 			double span = 180.0 / (1 << (L - 4)), r = (b.ext + Blend) / B.radius * 180.0 / M_PI, rl = r / std::max (0.05, cos (b.lat));
 			int a0 = std::max (0, (int)((90.0 - lat - r) / span)), a1 = std::min ((1 << (L - 4)) - 1, (int)((90.0 - lat + r) / span));
@@ -2670,7 +2761,7 @@ void TileStream::Impl::LoadBases (Body &B)
 				}
 		}
 	}
-	Log ("TileStream: " + std::to_string (B.bases.size()) + " bases for " + B.cfg.name + ", " + std::to_string (made) + " Elev_mod tiles made for Elev on disk");
+	Log ("TileStream: " + std::to_string (B.bases.size()) + " bases and " + std::to_string (B.rwys.size()) + " streamed runways for " + B.cfg.name + ", " + std::to_string (made) + " Elev_mod tiles made for Elev on disk");
 }
 
 // with mx held: base centre tiles appended to an Elev job's sources, for the bases it touches whose height isn't known
@@ -2783,7 +2874,7 @@ bool TileStream::Impl::ModsAt (Body &B, uint64_t k, const std::string &elv, bool
 		std::string src = ReadAll (Tile (B.dir, "Elev_mod", s));
 		if (TsSky::ModOk (src)) m = TsSky::InheritMod (L, KLat (k), KLng (k), KL (s), KLat (s), KLng (s), src, elv, B.cfg.elevScale);
 		else if (!src.empty() && B.badSrc.insert (s).second) Log ("TileStream: " + Tile (B.dir, "Elev_mod", s) + " can't be read, the Elev under it stays unmodified");
-	} else if (L >= ModLevel && !B.bases.empty()) {
+	} else if (L >= ModLevel) { // stream-rwyflat: the runways looked at under mx only, a worker may be adding one
 		std::vector<std::pair<const TsBase *, double>> hit;
 		{
 			std::lock_guard<std::mutex> lk (mx);
@@ -2792,6 +2883,8 @@ bool TileStream::Impl::ModsAt (Body &B, uint64_t k, const std::string &elv, bool
 				if (std::isnan (B.baseH[i])) return false;
 				hit.push_back ({&B.bases[i], B.baseH[i]});
 			}
+			for (const TsBase &r : B.rwys) // not upstream (stream-rwyflat): the streamed runways, their height their line's
+				if (TsSky::Reaches (r, B.radius, L, KLat (k), KLng (k), Blend)) hit.push_back ({&r, 0.0});
 		}
 		if (!hit.empty()) m = TsSky::ElevMod (L, KLat (k), KLng (k), hit, B.radius, B.cfg.elevScale, elv, Blend);
 	}
@@ -2891,8 +2984,299 @@ bool TileStream::Impl::ModsNone (Body &B, uint64_t k)
 		if (B.mod.count (k)) return false;
 		for (const TsBase &b : B.bases)
 			if (TsSky::Reaches (b, B.radius, KL (k), KLat (k), KLng (k), Blend)) return false;
+		for (const TsBase &b : B.rwys) // not upstream (stream-rwyflat)
+			if (TsSky::Reaches (b, B.radius, KL (k), KLat (k), KLng (k), Blend)) return false;
 	}
 	return !ModSource (B, k);
+}
+
+// not upstream (stream-rwyflat): this body's Elev at L waits for the streamed runways under it
+bool TileStream::Impl::RwyOn (const Body &B, int L) const
+{
+	return net && !ro && opt.ways && !B.cfg.bldgUrl.empty() && !B.cfg.Cog() && B.modsKnown && L >= std::max ({TsRwy::CheckLevel, ModLevel, B.cfg.elev.lmin}) && L <= B.cfg.elev.lmax;
+}
+
+void TileStream::Impl::PushChanged (Body &B, uint64_t k)
+{
+	std::lock_guard<std::mutex> lk (mx);
+	B.elevChanged.push_back (k);
+	if (B.elevChanged.size() > 1024) B.elevChanged.pop_front();
+}
+
+void TileStream::Impl::SetChecked (Body &B, uint64_t k, bool on)
+{
+	std::lock_guard<std::mutex> lk (mx);
+	if (on) { if (B.rwyChk.insert (k).second) Append (B, "rwychk", k, -1); }
+	else if (B.rwyChk.erase (k)) Rewrite (B, "rwychk", B.rwyChk);
+}
+
+void TileStream::Impl::RwyAgain (const Job &J)
+{
+	std::lock_guard<std::mutex> lk (mx);
+	auto it = jobs.find (J.id);
+	if (it != jobs.end()) Retry (it->second, opt.now(), 1);
+	kick = true;
+	cv.notify_all();
+}
+
+// the runways kept from earlier sessions
+void TileStream::Impl::LoadRunways (Body &B)
+{
+	std::ifstream f (Idx (B, "runways"));
+	std::string line;
+	size_t bad = 0;
+	while (std::getline (f, line)) {
+		if (line.find_first_not_of (" \t\r") == std::string::npos) continue;
+		TsBase r;
+		if (TsRwy::Parse (line, B.radius, r)) B.rwys.push_back (r);
+		else bad++;
+	}
+	if (bad) Log ("TileStream: " + std::to_string (bad) + " lines of " + Idx (B, "runways") + " can't be read, their runways are fitted again when met");
+}
+
+// the vector tiles' URL from their TileJSON, asked for as a want would, waited on
+bool TileStream::Impl::BldgJson (Body &B)
+{
+	std::unique_lock<std::mutex> lk (mx);
+	if (!B.bldgState) {
+		for (int b = 0; b < (int)bodies.size(); b++) if (bodies[b].get() == &B) bjson[B.cfg.bldgJson] = b;
+		B.bldgState = 1;
+		host[BLDG].queue.push_front (B.cfg.bldgJson);
+		kick = true;
+		cv.notify_all();
+	}
+	scv.wait_for (lk, std::chrono::seconds (20), [&] { return stop || B.bldgState == 2; });
+	return !stop && B.bldgState == 2 && !B.bldgUrl.empty();
+}
+
+// a z11 tile's runways, from its file or fetched and kept; false when it can't be had now
+bool TileStream::Impl::RwyTile (Body &B, int x, int y, TsWay::Tile &t)
+{
+	uint64_t k = Key (TsRwy::Z, x, y);
+	std::string p = RwyFile (B.dir, k);
+	if (TsWay::Read (ReadAll (p), t) && t.z == TsRwy::Z && t.x == x && t.y == y) return true;
+	std::string url;
+	{
+		std::lock_guard<std::mutex> lk (mx);
+		url = B.bldgUrl;
+	}
+	for (auto r : {std::make_pair ("{z}", TsRwy::Z), std::make_pair ("{x}", x), std::make_pair ("{y}", y)}) {
+		size_t at = url.find (r.first);
+		if (at == std::string::npos) return false;
+		url.replace (at, 3, std::to_string (r.second));
+	}
+	std::vector<TsCog::Req> rq (1);
+	rq[0].url = url;
+	FetchAll (rq, BLDG, 20);
+	if (rq[0].status != 200 && rq[0].status != 204 && rq[0].status != 404) return false; // 204 and 404: no tile, no runway
+	std::string raw = rq[0].status == 200 && rq[0].data ? rq[0].data->toStdString() : std::string(), pbf;
+	if (raw.size() >= 2 && (uint8_t)raw[0] == 0x1f && (uint8_t)raw[1] == 0x8b) { if (!TsBldg::Inflate (raw, pbf)) return false; }
+	else pbf.swap (raw);
+	TsWay::Tile all;
+	all.z = TsRwy::Z, all.x = x, all.y = y;
+	if (!TsWay::Decode (pbf, all)) {
+		Log ("TileStream: the vector tile " + url + " can't be read, its runways are left out");
+		all.f.clear();
+	}
+	t = TsRwy::Keep (all);
+	if (Write (B, p, TsWay::Encode (t))) {
+		std::lock_guard<std::mutex> lk (mx);
+		if (B.rwyTile.insert (k).second) Append (B, "rwy", k, -1);
+	}
+	return true;
+}
+
+// the Elev_mod of every Elev on disk new runways reach, again, once a tile; a change over an Elev already there goes to the client
+void TileStream::Impl::RwyMods (Body &B, const std::vector<const TsBase *> &fs)
+{
+	std::set<uint64_t> keys;
+	for (const TsBase *f : fs) {
+		double lng = f->lng * 180.0 / M_PI, lat = f->lat * 180.0 / M_PI;
+		for (int L = ModLevel; L <= B.cfg.elev.lmax; L++) {
+			double span = 180.0 / (1 << (L - 4)), r = (f->ext + Blend) / B.radius * 180.0 / M_PI, rl = r / std::max (0.05, cos (f->lat));
+			int a0 = std::max (0, (int)((90.0 - lat - r) / span)), a1 = std::min ((1 << (L - 4)) - 1, (int)((90.0 - lat + r) / span));
+			int nl = 1 << (L - 3), c0 = (int)std::floor ((lng + 180.0 - rl) / span), c1 = std::min (c0 + nl - 1, (int)std::floor ((lng + 180.0 + rl) / span));
+			for (int a = a0; a <= a1; a++)
+				for (int c = c0; c <= c1; c++) {
+					uint64_t k = Key (L, a, (c % nl + nl) % nl);
+					if (TsSky::Reaches (*f, B.radius, L, KLat (k), KLng (k), Blend)) keys.insert (k);
+				}
+		}
+	}
+	for (uint64_t k : keys) {
+		std::string e = ReadAll (Tile (B.dir, "Elev", k));
+		if (e.empty()) continue;
+		bool ch = false;
+		{
+			std::lock_guard<std::mutex> ml (modMx);
+			ModsAt (B, k, e, &ch);
+		}
+		if (ch) PushChanged (B, k);
+	}
+}
+
+// a runway's line from the Terrarium heights along it, held where it meets runways already fixed
+bool TileStream::Impl::FixRunway (Body &B, const TsRwy::Run &run, const TsBase *&f)
+{
+	const TsBodyCfg &C = B.cfg;
+	int z = std::min (13, C.elev.nmax);
+	TsBase g = TsRwy::Flat (run, B.radius, 0.0, 0.0);
+	const TsBase::Part &p = g.parts[0];
+	double len = std::hypot (p.n1 - p.n0, p.e1 - p.e0), k = B.radius * std::cos (g.lat);
+	if (len < 1.0) return false;
+	double un = (p.n1 - p.n0) / len, ue = (p.e1 - p.e0) / len;
+	int ns = (int)std::ceil (len / 10.0);
+	struct Pt { double t, lat, lng; int row, col; };
+	std::vector<Pt> pts;
+	std::map<std::pair<int, int>, size_t> tiles;
+	for (int i = 0; i <= ns; i++)
+		for (double off : {-0.25 * run.w, 0.0, 0.25 * run.w}) {
+			double t = (double)i / ns, nn = p.n0 + t * (p.n1 - p.n0) + off * ue, ee = p.e0 + t * (p.e1 - p.e0) - off * un;
+			Pt q {t, (g.lat + nn / B.radius) * 180.0 / M_PI, std::remainder (g.lng + ee / k, 2.0 * M_PI) * 180.0 / M_PI, 0, 0};
+			TsSky::TerrTile (q.lng, q.lat, z, q.row, q.col);
+			tiles.emplace (std::make_pair (q.row, q.col), tiles.size());
+			pts.push_back (q);
+		}
+	if (tiles.size() > 16) return false; // no runway crosses so many
+	std::vector<TsCog::Req> rq (tiles.size());
+	for (auto &e : tiles) rq[e.second].url = TsImg::Url (C.elev.url, z, e.first.first, e.first.second);
+	FetchAll (rq, TERR, 20);
+	std::vector<QImage> img (rq.size());
+	for (size_t i = 0; i < rq.size(); i++) {
+		if (rq[i].status != 200 || !rq[i].data || !img[i].loadFromData (*rq[i].data) || img[i].isNull()) return false;
+		img[i] = img[i].convertToFormat (QImage::Format_RGB888); // TerrAt's format: once, not per height
+	}
+	std::vector<std::pair<double, double>> s;
+	for (const Pt &q : pts) {
+		double h = TsSky::TerrAt (img[tiles[{q.row, q.col}]], z, q.row, q.col, q.lng, q.lat);
+		if (std::isfinite (h)) s.push_back ({q.t, std::max (TsImg::FloorAt (C.floor, q.lng, q.lat), h)});
+	}
+	std::vector<const TsBase *> fixed;
+	{
+		std::lock_guard<std::mutex> lk (mx);
+		for (const TsBase &r : B.rwys) fixed.push_back (&r);
+	}
+	std::vector<std::pair<double, double>> meets = TsRwy::Meets (run, fixed, B.radius);
+	double h0, h1;
+	if (!TsRwy::Fit (s, meets, C.elevScale, len, h0, h1)) return false;
+	{
+		std::lock_guard<std::mutex> lk (mx);
+		B.rwys.push_back (TsRwy::Flat (run, B.radius, h0, h1));
+		f = &B.rwys.back();
+	}
+	char b[200];
+	snprintf (b, sizeof b, "TileStream: runway %s at %.5f %.5f, %.0f x %.0f m, %.1f to %.1f m (%zu heights, %zu runways met)",
+		run.ref.empty() ? "-" : run.ref.c_str(), g.lat * 180.0 / M_PI, g.lng * 180.0 / M_PI, len, run.w, h0, h1, s.size(), meets.size());
+	Log (b);
+	return true;
+}
+
+// the runways reaching Elev tile k completed from the z11 tiles over it and its margin, then fixed; one worker at a time
+int TileStream::Impl::Check (Body &B, uint64_t k)
+{
+	std::unique_lock<std::mutex> rl (rwyMx, std::try_to_lock);
+	if (!rl.owns_lock()) return -1;
+	{
+		std::lock_guard<std::mutex> lk (mx);
+		if (B.rwyChk.count (k)) return 1;
+	}
+	if (!BldgJson (B)) return 0;
+	int L = KL (k);
+	double w, n, dw, dh;
+	TsImg::Bounds (L, KLat (k), KLng (k), w, n, dw, dh);
+	const double rad = M_PI / 180.0, m = (Blend + 0.5 * 80.0 + TsRwy::Shoulder) / B.radius; // the blend past the widest runway's flat zone
+	double lat0 = (n - dh) * rad - m, lat1 = n * rad + m, cl = std::max (0.05, std::cos (std::max (std::fabs (lat0), std::fabs (lat1))));
+	int x0, y0, x1, y1, nx = 1 << TsRwy::Z;
+	TsRwy::TileOf (lat1, w * rad - m / cl, x0, y0);
+	TsRwy::TileOf (lat0, (w + dw) * rad + m / cl, x1, y1);
+	std::set<std::pair<int, int>> have;
+	std::vector<TsWay::Tile> tiles;
+	auto add = [&] (int x, int y) {
+		TsWay::Tile t;
+		if (!RwyTile (B, x, y, t)) return false;
+		have.insert ({x, y});
+		tiles.push_back (std::move (t));
+		return true;
+	};
+	for (int i = 0; i <= ((x1 - x0) % nx + nx) % nx; i++)
+		for (int y = y0; y <= y1; y++)
+			if (!add ((x0 + i) % nx, y)) return 0;
+	auto reach = [&] (const TsRwy::Run &r) { return TsSky::Reaches (TsRwy::Flat (r, B.radius, 0.0, 0.0), B.radius, L, KLat (k), KLng (k), Blend); };
+	std::vector<TsRwy::Run> runs;
+	for (int more = 0; ; ) { // a runway reaching the tile cut at the edge of the tiles read: the next tile along it
+		runs = TsRwy::Runways (tiles, B.radius);
+		std::vector<std::pair<int, int>> need;
+		for (const TsRwy::Run &r : runs) {
+			if (!reach (r)) continue;
+			double len = TsRwy::Length (r, B.radius);
+			for (int e = 0; e < 2 && len >= 1.0; e++) {
+				if (!r.cut[e]) continue;
+				double f = 100.0 / len, lat = r.lat[e] + f * (r.lat[e] - r.lat[1 - e]), lng = r.lng[e] + f * std::remainder (r.lng[e] - r.lng[1 - e], 2.0 * M_PI);
+				int x, y;
+				TsRwy::TileOf (lat, lng, x, y);
+				if (!have.count ({x, y}) && std::find (need.begin(), need.end(), std::make_pair (x, y)) == need.end()) need.push_back ({x, y});
+			}
+		}
+		if (need.empty() || more >= 8) break; // a runway still cut is left out
+		for (auto &q : need) {
+			if (more >= 8) break;
+			more++;
+			if (!add (q.first, q.second)) return 0;
+		}
+	}
+	std::vector<const TsBase *> fixed;
+	bool ok = true;
+	for (const TsRwy::Run &r : runs) {
+		if (!reach (r) || r.cut[0] || r.cut[1] || TsRwy::Length (r, B.radius) < 100.0 || TsRwy::OnBase (r, B.bases, B.radius)) continue;
+		bool known = false;
+		{
+			std::lock_guard<std::mutex> lk (mx);
+			for (const TsBase &f : B.rwys) if (TsRwy::Same (r, f, B.radius)) { known = true; break; }
+		}
+		const TsBase *f = nullptr;
+		if (known) continue;
+		if (FixRunway (B, r, f)) fixed.push_back (f);
+		else {
+			char b[160];
+			snprintf (b, sizeof b, "TileStream: runway %s at %.5f %.5f can't be fitted now, tried again next session", r.ref.empty() ? "-" : r.ref.c_str(), r.lat[0] * 180.0 / M_PI, r.lng[0] * 180.0 / M_PI);
+			Log (b);
+			ok = false;
+		}
+	}
+	if (!fixed.empty()) {
+		RwyMods (B, fixed);
+		if (!ro) { // after their tiles: a line lost is fitted again
+			std::ofstream o (Idx (B, "runways"), std::ios::app);
+			for (const TsBase *f : fixed) o << TsRwy::Line (*f, B.radius) << '\n';
+		}
+	}
+	return ok ? 1 : 0;
+}
+
+// an Elev of ours already there: its runways put in
+void TileStream::Impl::CheckJob (Body &B, const Job &J)
+{
+	int chk = Check (B, J.key);
+	if (chk < 0) {
+		RwyAgain (J);
+		return;
+	}
+	bool done = false;
+	if (chk == 1) {
+		std::string e = ReadAll (Tile (B.dir, "Elev", J.key));
+		bool ch = false;
+		if (!e.empty()) {
+			std::lock_guard<std::mutex> ml (modMx);
+			done = ModsAt (B, J.key, e, &ch);
+		}
+		if (ch) PushChanged (B, J.key);
+		if (done) SetChecked (B, J.key, true);
+	}
+	std::lock_guard<std::mutex> lk (mx);
+	if (!done) B.noCheck.insert (J.key);
+	jobs.erase (J.id);
+	kick = true;
+	cv.notify_all();
 }
 
 TileStream::Impl::Body::Inh TileStream::Impl::Stamp (const Body &B, uint64_t src, bool has) const
@@ -3107,7 +3491,7 @@ int MarkAll (const std::string &dir)
 	for (uint64_t k : ReadIdx (dir, "written"))
 		for (const char *layer : {"Surf", "Mask", "Class"}) MarkFile (Tile (dir, layer, k));
 	for (uint64_t k : ElevIdx (dir)) MarkFile (Tile (dir, "Elev", k));
-	for (const char *idx : {"bldg", "way", "mod", "cloud"}) // not upstream (design-ways): way
+	for (const char *idx : {"bldg", "way", "mod", "cloud", "rwy"}) // not upstream (design-ways): way; (stream-rwyflat): rwy
 		for (uint64_t k : ReadIdx (dir, idx)) MarkFile (StreamFile (dir, idx, k));
 	std::ofstream f (ts + "marked", std::ios::trunc);
 	f << "the stream's files carry its mark (design dropin-addons)\n";
@@ -3181,7 +3565,7 @@ uint64_t TileStream::CacheBytes (const std::string &bodyDir, uint64_t *total, si
 		uint64_t b = FileBytes (Tile (dir, "Elev", k));
 		if (b) { n += b; t++; }
 	}
-	for (const char *idx : {"bldg", "way", "mod", "cloud"}) // not upstream (design-ways): way
+	for (const char *idx : {"bldg", "way", "mod", "cloud", "rwy"}) // not upstream (design-ways): way; (stream-rwyflat): rwy
 		for (uint64_t k : ReadIdx (dir, idx)) {
 			uint64_t s = FileBytes (StreamFile (dir, idx, k));
 			if (s) { n += s; t++; }
@@ -3189,7 +3573,7 @@ uint64_t TileStream::CacheBytes (const std::string &bodyDir, uint64_t *total, si
 	if (tiles) *tiles = t;
 	if (total) {
 		*total = 0;
-		for (const char *layer : {"/Surf", "/Mask", "/Elev", "/Class", "/Bldg", "/Way", "/Cloud", "/Elev_mod"}) { // not upstream (design-ways): Way
+		for (const char *layer : {"/Surf", "/Mask", "/Elev", "/Class", "/Bldg", "/Way", "/Cloud", "/Elev_mod", "/Rwy"}) { // not upstream (design-ways): Way; (stream-rwyflat): Rwy
 			std::error_code ec;
 			for (fs::recursive_directory_iterator it (dir + layer, ec), end; !ec && it != end; it.increment (ec)) {
 				std::error_code fe;
@@ -3236,7 +3620,7 @@ size_t TileStream::Clear (const std::string &bodyDir, bool keepBase, bool *refus
 		else if (!std::binary_search (w.begin(), w.end(), k) && rmOurs (Tile (dir, "Elev", k))) n++;
 	}
 	WriteIdx (ts + "elev.idx", elKept);
-	for (const char *idx : {"bldg", "way", "mod", "cloud"}) { // buildings, ways (not upstream, design-ways), Elev_mod and clouds this stream wrote
+	for (const char *idx : {"bldg", "way", "mod", "cloud", "rwy"}) { // buildings, ways (not upstream, design-ways), Elev_mod, clouds and runway tiles (stream-rwyflat) this stream wrote
 		if (!fs::exists (ts + idx + ".idx", ec)) continue;
 		std::vector<uint64_t> keep;
 		for (uint64_t k : ReadIdx (dir, idx)) {
@@ -3253,6 +3637,8 @@ size_t TileStream::Clear (const std::string &bodyDir, bool keepBase, bool *refus
 	}
 	fs::remove (ts + "none.idx", ec);
 	fs::remove (ts + "inh.idx", ec); // elev-consistency
+	fs::remove (ts + "runways.idx", ec); // not upstream (stream-rwyflat): the runways are fitted again, as before, with their Elev_mod
+	fs::remove (ts + "rwychk.idx", ec);
 	if (!keepBase) fs::remove (ts + "ocean.idx", ec);
 	for (fs::directory_iterator it (ts + "tmp", ec), end; !ec && it != end; it.increment (ec)) {
 		std::error_code rc;

@@ -6363,12 +6363,15 @@ OAPIFUNC std::string oapiResolvePath (const char *path);
 
 // not upstream: the planet tile stream (TileStream.cpp) fills Textures/<body>/Surf and Mask while the sim runs
 OAPIFUNC bool oapiTileStreamEnabled (OBJHANDLE hBody);
-// lvl: file level; flags 1: the file failed to load, 2: loaded from the cache, 4: only its Elev; returns 1 file there, 0 wanted, -1 never
+// lvl: file level; flags 1: the file failed to load, 2: loaded from the cache, 4: only its Elev (with 8, not upstream: and its streamed runways in it); returns 1 file there, 0 wanted, -1 never
 OAPIFUNC int  oapiTileStreamWant (OBJHANDLE hBody, int lvl, int ilat, int ilng, int flags);
 // not upstream: the last level the stream makes Elev for (0: none); Elev archive tiles under its files are not read, nor Elev_mod over them
 OAPIFUNC int  oapiTileStreamElev (OBJHANDLE hBody);
 // finished tiles as (lvl, ilat, ilng) triples, keys holds 3*nmax; returns the count
 OAPIFUNC int  oapiTileStreamDone (OBJHANDLE hBody, int *keys, int nmax);
+// not upstream (stream-rwyflat): Elev tiles whose Elev_mod changed after their Elev was there, as (lvl, ilat, ilng) triples; returns the count
+#define OAPI_TILESTREAM_ELEVCHANGED 1 // feature test for clients
+OAPIFUNC int  oapiTileStreamElevChanged (OBJHANDLE hBody, int *keys, int nmax);
 // not upstream (mars-stream): the layers the stream makes for this body besides Surf and Elev (TSLAYER_ bits), 0 when it is not streamed
 #define TSLAYER_MASK  1 // a Mask with every Surf
 #define TSLAYER_CLASS 2 // land class tiles from L12

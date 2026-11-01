@@ -78,6 +78,8 @@ protected:
 	double horCheck;				// not upstream: sys time missing grids were last checked
 	int horMissing;					// not upstream: neighbour grids missing at the job
 	bool horRedone;					// not upstream: made again once with them
+	bool horStale;					// not upstream (stream-rwyflat): heights under the map changed, it is made again
+	void Remesh ();					// not upstream (stream-rwyflat): the mesh made again from its owner's new heights
 	SurfTile *ElevOwner ();			// not upstream: the ancestor whose elev holds my ggelev
 	void HorizonParams ();			// not upstream: shader values for the owner's map
 	VkTex *wtex;					// not upstream (design-ways): its own way texture (Waymgr.cpp)

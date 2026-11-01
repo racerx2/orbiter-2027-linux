@@ -2026,3 +2026,427 @@ TEST_CASE ("A region download takes the building and road tiles under its finest
 	CHECK (p.done == p.total);
 	CHECK (p.failed == 0);
 }
+
+// ---- streamed runways (TileStreamRwy.cpp, stream-rwyflat) ----
+
+namespace {
+const double RwyR = 6371010.0;
+
+TsWay::Feature RwyLine (const std::vector<std::pair<int, int>> &pts, const std::string &ref)
+{
+	TsWay::Feature f;
+	f.kind = TsWay::RUNWAY;
+	f.ref = ref;
+	std::vector<int16_t> q;
+	for (const auto &p : pts) { q.push_back ((int16_t)p.first); q.push_back ((int16_t)p.second); }
+	f.parts.push_back (q);
+	return f;
+}
+
+TsWay::Feature RwyArea (int u0, int v0, int u1, int v1)
+{
+	TsWay::Feature f = RwyLine ({{u0, v0}, {u1, v0}, {u1, v1}, {u0, v1}}, "");
+	f.flags = TsWay::AREA;
+	return f;
+}
+
+const TsRwy::Run *RwyRef (const std::vector<TsRwy::Run> &v, const std::string &ref)
+{
+	for (const TsRwy::Run &r : v) if (r.ref == ref) return &r;
+	return nullptr;
+}
+
+// metres between two points (radians)
+double RwyDist (double la0, double ln0, double la1, double ln1)
+{
+	return std::hypot ((la1 - la0) * RwyR, std::remainder (ln1 - ln0, 2.0 * M_PI) * RwyR * std::cos (la0));
+}
+}
+
+TEST_CASE ("Streamed runway pieces join across z11 tiles; the width comes from the areas round them, else from the length", "[TileStream]")
+{
+	int x, y;
+	TsRwy::TileOf (28.6 * M_PI / 180.0, -80.7 * M_PI / 180.0, x, y);
+	double la0, la1, ln0, ln1;
+	TsRwy::TileBox (x, y, la0, la1, ln0, ln1);
+	CHECK (la0 < 28.6 * M_PI / 180.0);
+	CHECK (la1 > 28.6 * M_PI / 180.0);
+	CHECK (ln0 < -80.7 * M_PI / 180.0);
+	CHECK (ln1 > -80.7 * M_PI / 180.0);
+	TsWay::Tile a, b;
+	a.z = b.z = TsRwy::Z;
+	a.x = x, a.y = y;
+	b.x = x + 1, b.y = y;
+	// one runway across the tiles' edge into each tile's buffer, with its area; a unit is 4.19 m here
+	a.f.push_back (RwyLine ({{3851, 2048}, {4160, 2048}}, "09/27"));
+	b.f.push_back (RwyLine ({{-64, 2048}, {245, 2048}}, "\n09/27 ")); // a ref as the tiles may have it
+	a.f.push_back (RwyArea (3851, 2041, 4160, 2055));
+	b.f.push_back (RwyArea (-64, 2041, 245, 2055));
+	a.f.push_back (RwyLine ({{1000, 1000}, {1000, 1240}}, "18/36"));  // 1 km, no area
+	a.f.push_back (RwyLine ({{2000, 3800}, {2000, 4160}}, "01/19"));  // leaves the tiles read
+	b.f.push_back (RwyLine ({{200, 2048}, {500, 2048}}, "10/28"));    // along the first, another ref
+	TsWay::Feature road = RwyLine ({{0, 0}, {100, 100}}, "");
+	road.kind = TsWay::PRIMARY;
+	a.f.push_back (road);
+	TsWay::Tile k = TsRwy::Keep (a);
+	CHECK (k.f.size() == a.f.size() - 1);
+	CHECK (k.x == a.x);
+
+	std::vector<TsRwy::Run> runs = TsRwy::Runways ({a, b}, RwyR);
+	REQUIRE (runs.size() == 4);
+	double lat, lng;
+	TsBldg::LatLng (TsRwy::Z, x, y + 0.5, lat, lng);
+	const double unit = 2.0 * M_PI * RwyR / (2048.0 * 4096.0) * std::cos (lat); // the line's latitude
+	const TsRwy::Run *r = RwyRef (runs, "09/27");
+	REQUIRE (r);
+	CHECK_FALSE (r->cut[0]);
+	CHECK_FALSE (r->cut[1]);
+	TsBldg::LatLng (TsRwy::Z, x + 3851.0 / 4096.0, y + 0.5, lat, lng);
+	CHECK (std::min (RwyDist (r->lat[0], r->lng[0], lat, lng), RwyDist (r->lat[1], r->lng[1], lat, lng)) < 0.01);
+	TsBldg::LatLng (TsRwy::Z, x + 1 + 245.0 / 4096.0, y + 0.5, lat, lng);
+	CHECK (std::min (RwyDist (r->lat[0], r->lng[0], lat, lng), RwyDist (r->lat[1], r->lng[1], lat, lng)) < 0.01);
+	CHECK (std::fabs (TsRwy::Length (*r, RwyR) - 490 * unit) < 2.0);
+	CHECK (std::fabs (r->w - 14 * unit) < 1.0); // from its area
+	r = RwyRef (runs, "18/36");
+	REQUIRE (r);
+	CHECK (r->w == 23.0); // 1 km: by its length
+	r = RwyRef (runs, "01/19");
+	REQUIRE (r);
+	CHECK (r->cut[0] != r->cut[1]);
+	CHECK (RwyRef (runs, "10/28"));
+	CHECK (TsRwy::Runways ({}, RwyR).empty());
+}
+
+TEST_CASE ("A runway's line: outliers dropped, level unless its slope stands out of the noise, held where it meets a fixed runway", "[TileStream]")
+{
+	std::mt19937 rng (20261101);
+	std::normal_distribution<double> nz (0.0, 0.3), big (0.0, 3.0);
+	std::vector<std::pair<double, double>> s, l, rough;
+	for (int i = 0; i <= 200; i++) s.push_back ({i / 200.0, 10.0 + 4.0 * i / 200.0 + nz (rng)});
+	for (int i = 0; i < 20; i++) s[i * 10 + 3].second += 15.0; // trees
+	double h0, h1;
+	REQUIRE (TsRwy::Fit (s, {}, 0.5, 2000.0, h0, h1));
+	CHECK (std::fabs (h0 - 10.0) < 0.2);
+	CHECK (std::fabs (h1 - 14.0) < 0.2);
+	for (int i = 0; i <= 100; i++) l.push_back ({i / 100.0, 20.3 + 0.6 * i / 100.0});
+	REQUIRE (TsRwy::Fit (l, {}, 0.5, 2000.0, h0, h1));
+	CHECK (h0 == 20.5); // under 1 m end to end: level, its mean 20.6 on the 0.5 m step
+	CHECK (h1 == 20.5);
+	// 2 m end to end in heights 3 m apart, a kilometre: level, as the noise allows
+	for (int i = 0; i <= 300; i++) rough.push_back ({i / 300.0, 5.0 + 2.0 * i / 300.0 + big (rng)});
+	REQUIRE (TsRwy::Fit (rough, {}, 0.5, 1000.0, h0, h1));
+	CHECK (h0 == h1);
+	CHECK (std::fabs (h0 - 6.0) < 0.75);
+	CHECK (std::fmod (h0, 0.5) == 0.0);
+	// the same over 20 km of samples: the slope stands out
+	REQUIRE (TsRwy::Fit (rough, {}, 0.5, 20000.0, h0, h1));
+	CHECK (h1 - h0 > 1.0);
+	REQUIRE (TsRwy::Fit (l, {{0.5, 25.0}}, 0.5, 2000.0, h0, h1));
+	CHECK (h0 == 25.0); // level at the crossing's height
+	CHECK (h1 == 25.0);
+	REQUIRE (TsRwy::Fit (s, {{0.0, 11.0}}, 0.5, 2000.0, h0, h1));
+	CHECK (std::fabs (h0 - 11.0) < 0.05); // sloped, held at the crossing
+	CHECK (h1 - h0 > 1.0);
+	CHECK_FALSE (TsRwy::Fit ({{0.5, 3.0}}, {}, 0.5, 2000.0, h0, h1));
+	REQUIRE (TsRwy::Fit ({}, {{0.3, 7.0}}, 0.5, 2000.0, h0, h1));
+	CHECK (h0 == 7.0);
+	CHECK (h1 == 7.0);
+}
+
+TEST_CASE ("A fixed runway: flat along its line in Elev_mod, held past its ends, blended out; Meets, Same, OnBase and its runways.idx line", "[TileStream]")
+{
+	double lat = 28.6 * M_PI / 180.0, lng = -80.7 * M_PI / 180.0, k = RwyR * std::cos (lat);
+	TsRwy::Run r;
+	r.lat[0] = r.lat[1] = lat;
+	r.lng[0] = lng - 1000.0 / k;
+	r.lng[1] = lng + 1000.0 / k;
+	r.w = 45.0;
+	r.ref = "09/27";
+	TsBase f = TsRwy::Flat (r, RwyR, 98.0, 102.0);
+	CHECK (f.rwy);
+	CHECK (f.name == "runway 09/27");
+	REQUIRE (f.parts.size() == 1);
+	CHECK (std::fabs (f.parts[0].e0 + 1000.0) < 0.01);
+	CHECK (std::fabs (f.parts[0].e1 - 1000.0) < 0.01);
+	CHECK (std::fabs (f.parts[0].n0) < 0.01);
+	CHECK (f.parts[0].r == 42.5);
+	CHECK (f.ext >= 1042.5);
+
+	// Elev_mod over terrain at 120 m: the line inside the flat zone, held past the ends, a blend 150 m wide, nothing past it
+	int L = 16, ilat, ilng;
+	TileAt (L, 28.6, -80.7, ilat, ilng);
+	std::string m = TsSky::ElevMod (L, ilat, ilng, {{&f, 0.0}}, RwyR, 0.5, FlatElv (L, ilat, ilng, 120.0), 150.0);
+	REQUIRE (m.size() == 100 + 259 * 259 * 2);
+	double dh = 180.0 / (1 << (L - 4)), n = 90.0 - ilat * dh, w = -180.0 + ilng * dh;
+	int flat = 0, blend = 0, bad = 0;
+	for (int i = 0; i < 259; i++)
+		for (int j = 0; j < 259; j++) {
+			int16_t q;
+			memcpy (&q, &m[100 + ((size_t)i * 259 + j) * 2], 2);
+			double nl = (n - dh + (i - 1) * dh / 256.0) * M_PI / 180.0, ng = (w + (j - 1) * dh / 256.0) * M_PI / 180.0;
+			double nn = (nl - f.lat) * RwyR, ee = std::remainder (ng - f.lng, 2.0 * M_PI) * RwyR * std::cos (f.lat);
+			double t = std::clamp ((ee + 1000.0) / 2000.0, 0.0, 1.0), d = std::hypot (nn, ee - (-1000.0 + 2000.0 * t)) - 42.5;
+			double H = 98.0 + 4.0 * t;
+			if (d <= -0.5) { flat++; bad += std::fabs (q * 0.5 - H) > 0.26; }
+			else if (d > 0.5 && d < 149.5) { blend++; bad += q == SHRT_MAX || q * 0.5 < std::min (H, 120.0) - 0.26 || q * 0.5 > std::max (H, 120.0) + 0.26; }
+			else if (d >= 150.5) bad += q != SHRT_MAX;
+		}
+	CHECK (flat > 400);
+	CHECK (blend > 1000);
+	CHECK (bad == 0);
+
+	// where others meet it: a crossing, a V off its west end, one far off
+	TsRwy::Run c;
+	c.lat[0] = lat - 600.0 / RwyR;
+	c.lat[1] = lat + 600.0 / RwyR;
+	c.lng[0] = c.lng[1] = lng + 300.0 / k;
+	c.w = 30.0;
+	auto mt = TsRwy::Meets (c, {&f}, RwyR);
+	REQUIRE (mt.size() == 1);
+	CHECK (std::fabs (mt[0].first - 0.5) < 1e-3);
+	CHECK (std::fabs (mt[0].second - (98.0 + 0.65 * 4.0)) < 1e-3);
+	TsRwy::Run v;
+	v.lat[0] = lat + 40.0 / RwyR;
+	v.lng[0] = lng - 1000.0 / k;
+	v.lat[1] = lat + 1040.0 / RwyR;
+	v.lng[1] = lng - 1500.0 / k;
+	v.w = 30.0;
+	mt = TsRwy::Meets (v, {&f}, RwyR);
+	REQUIRE (mt.size() == 1);
+	CHECK (mt[0].first < 1e-3);
+	CHECK (std::fabs (mt[0].second - 98.0) < 1e-3);
+	TsRwy::Run far = c;
+	far.lng[0] = far.lng[1] = lng + 5000.0 / k;
+	CHECK (TsRwy::Meets (far, {&f}, RwyR).empty());
+	CHECK (TsRwy::Meets (c, {nullptr}, RwyR).empty());
+
+	// the same runway: ends within 20 m either way round, the ref agreeing or missing
+	TsRwy::Run s2 = r;
+	std::swap (s2.lat[0], s2.lat[1]);
+	std::swap (s2.lng[0], s2.lng[1]);
+	s2.lng[0] += 15.0 / k;
+	CHECK (TsRwy::Same (r, f, RwyR));
+	CHECK (TsRwy::Same (s2, f, RwyR));
+	s2.lng[0] += 10.0 / k;
+	CHECK_FALSE (TsRwy::Same (s2, f, RwyR));
+	TsRwy::Run o = r;
+	o.ref = "08/26";
+	CHECK_FALSE (TsRwy::Same (o, f, RwyR));
+	o.ref.clear();
+	CHECK (TsRwy::Same (o, f, RwyR));
+
+	// a base's footprint over an end leaves it to the base; a fixed runway is no base
+	TsBase base;
+	base.lat = lat;
+	base.lng = lng + 1000.0 / k;
+	base.parts.push_back ({0, 0, 0, 0, 200.0});
+	base.ext = 200.0;
+	CHECK (TsRwy::OnBase (r, {base}, RwyR));
+	base.lng = lng + 1300.0 / k;
+	CHECK_FALSE (TsRwy::OnBase (r, {base}, RwyR));
+	CHECK_FALSE (TsRwy::OnBase (r, {f}, RwyR));
+
+	// runways.idx: a line and back
+	std::string line = TsRwy::Line (f, RwyR);
+	TsBase g;
+	REQUIRE (TsRwy::Parse (line, RwyR, g));
+	CHECK (g.rwy);
+	CHECK (g.name == f.name);
+	CHECK (g.h[0] == 98.0);
+	CHECK (g.h[1] == 102.0);
+	REQUIRE (g.parts.size() == 1);
+	CHECK (std::fabs (g.parts[0].r - 42.5) < 1e-9);
+	CHECK (std::fabs (g.parts[0].e0 - f.parts[0].e0) < 0.05);
+	CHECK (std::fabs (g.parts[0].e1 - f.parts[0].e1) < 0.05);
+	CHECK (TsRwy::Same (r, g, RwyR));
+	REQUIRE (TsRwy::Parse (TsRwy::Line (TsRwy::Flat (o, RwyR, 5.0, 5.0), RwyR) + "\r\n", RwyR, g));
+	CHECK (g.name == "runway");
+	CHECK (TsRwy::Line (base, RwyR).empty());
+	for (const char *bad : {"", "x", "28.6 -80.7 28.6", "nan -80.7 28.6 -80.69 45 1 2", "88 0 88 0.1 45 1 2", "28.6 -80.7 28.6 -80.7 45 1 2",
+	                        "28.6 -80.7 28.6 -80.69 0 1 2", "28.6 -80.7 28.6 -80.69 45 1 20000", "28.6 -80.7 28.6 -80.69 45 1 2 0123456789abcdefgh"})
+		CHECK_FALSE (TsRwy::Parse (bad, RwyR, g));
+}
+
+namespace {
+// a Terrarium tile from heights h (lat, lng in radians) at its pixel centres
+void TerrPng (const fs::path &p, int z, int col, int row, const std::function<double (double, double)> &h)
+{
+	QImage img (256, 256, QImage::Format_RGB32);
+	double nt = (double)(1 << z);
+	for (int py = 0; py < 256; py++) {
+		double lat = std::atan (std::sinh (M_PI * (1.0 - 2.0 * (row + (py + 0.5) / 256.0) / nt)));
+		for (int px = 0; px < 256; px++) {
+			double lng = (col + (px + 0.5) / 256.0) / nt * 2.0 * M_PI - M_PI, v = h (lat, lng) + 32768.0;
+			img.setPixel (px, py, qRgb ((int)std::floor (v / 256.0), (int)std::floor (v) % 256, (int)std::floor ((v - std::floor (v)) * 256.0)));
+		}
+	}
+	fs::create_directories (p.parent_path());
+	img.save (QString::fromStdString (p.string()), "PNG");
+}
+
+std::string RwyPbf (int u0, int u1, int v, const std::string &ref)
+{
+	std::string g, f, tg, l, v0, v1, tile;
+	PVar (g, 1 | 1 << 3); PVar (g, Zig (u0)); PVar (g, Zig (v));
+	PVar (g, 2 | 1 << 3); PVar (g, Zig (u1 - u0)); PVar (g, Zig (0));
+	PVar (tg, 0); PVar (tg, 0); PVar (tg, 1); PVar (tg, 1);
+	PBytes (f, 2, tg); PKey (f, 3, 0); PVar (f, 2); PBytes (f, 4, g);
+	PBytes (l, 1, "aeroway");
+	PBytes (l, 2, f);
+	PBytes (l, 3, "class");
+	PBytes (l, 3, "ref");
+	PBytes (v0, 1, "runway");
+	PBytes (v1, 1, ref);
+	PBytes (l, 4, v0);
+	PBytes (l, 4, v1);
+	PKey (l, 5, 0); PVar (l, 4096);
+	PKey (l, 15, 0); PVar (l, 2);
+	PBytes (tile, 3, l);
+	return tile;
+}
+}
+
+TEST_CASE ("An Elev tile waits for the streamed runways over it: fitted once from file:// sources, flattened, listed, its changes told", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	fs::path srv = t.root / "srv", tex = t.root / "Earth";
+	// a 2 km runway east-west across a z11 tile edge, which is an L16 tile edge too, in rolling ground sloping 2 m a km eastwards
+	int x, y;
+	TsRwy::TileOf (28.6 * M_PI / 180.0, -80.68 * M_PI / 180.0, x, y);
+	double latc, lngb;
+	TsBldg::LatLng (TsRwy::Z, x, y + 0.5, latc, lngb);
+	const double kx = RwyR * std::cos (latc);
+	auto ground = [=] (double la, double ln) { double e = std::remainder (ln - lngb, 2.0 * M_PI) * kx; (void)la; return 100.0 + 0.002 * e + 3.0 * std::sin (e / 37.0); };
+	fs::create_directories (srv / "bldg" / "11" / std::to_string (x - 1));
+	fs::create_directories (srv / "bldg" / "11" / std::to_string (x));
+	std::ofstream (srv / "bldg" / "11" / std::to_string (x - 1) / (std::to_string (y) + ".pbf"), std::ios::binary) << RwyPbf (3851, 4160, 2048, "09/27");
+	std::ofstream (srv / "bldg" / "11" / std::to_string (x) / (std::to_string (y) + ".pbf"), std::ios::binary) << RwyPbf (-64, 245, 2048, "09/27");
+	std::ofstream (t.root / "tiles.json") << "{\"tiles\":[\"file://" << (srv / "bldg").string() << "/{z}/{x}/{y}.pbf\"],\"maxzoom\":14}";
+	int wla, wln, ela, eln;
+	TileAt (16, latc * 180.0 / M_PI, (lngb - 500.0 / kx) * 180.0 / M_PI, wla, wln);
+	TileAt (16, latc * 180.0 / M_PI, (lngb + 500.0 / kx) * 180.0 / M_PI, ela, eln);
+	REQUIRE (eln == wln + 1);
+	int cla, cln; // the L14 tile west of the edge: coarser than the checked levels
+	TileAt (14, latc * 180.0 / M_PI, (lngb - 500.0 / kx) * 180.0 / M_PI, cla, cln);
+	std::set<std::array<int, 3>> terr;
+	for (auto [L, la, ln] : {std::array<int, 3> {16, wla, wln}, std::array<int, 3> {16, ela, eln}, std::array<int, 3> {14, cla, cln}}) {
+		TsImg::Grid g = TsImg::TerrGrid (L, la, ln, 15);
+		REQUIRE (g.z == L - 3);
+		for (int r = 0; r < g.nrow; r++)
+			for (int c = 0; c < g.ncol; c++) terr.insert ({g.z, g.row0 + r, g.col0 + c});
+	}
+	for (auto [z, row, col] : terr) TerrPng (srv / "terr" / std::to_string (z) / std::to_string (col) / (std::to_string (row) + ".png"), z, col, row, ground);
+	std::string cfg = (t.root / "ts.cfg").string();
+	std::ofstream (cfg) << "BODY Earth\nSURF eox file:///none/{z}/{row}/{col}.png 1 16\nLIGHTS gibs file:///none/{n}/{row}/{col}.png 7\nWATER gibs file:///none/{n}/{row}/{col}.png 8\n"
+		"ELEV terrarium file://" << (srv / "terr").string() << "/{z}/{col}/{row}.png 15 16\n"
+		"BLDG file://" << (t.root / "tiles.json").string() << " file:///none/{z}/{x}/{y}.pbf\nEND\n";
+	std::mutex lm;
+	std::vector<std::string> logs;
+	auto opt = [&] (bool ways) {
+		TileStream::Options o;
+		o.cfgfile = cfg;
+		o.bodyDir = [&] (const std::string &) { return tex.string(); };
+		o.bodies = {"Earth"};
+		o.capMB = 0;
+		o.staleSec = 30.0;
+		o.radius = [] (const std::string &) { return RwyR; };
+		o.ways = ways;
+		o.log = [&] (const std::string &s) { std::lock_guard<std::mutex> lk (lm); logs.push_back (s); };
+		return o;
+	};
+	auto file = [&] (const char *layer, int la, int ln) {
+		char s[64];
+		snprintf (s, sizeof s, "16/%06d/%06d.elv", la, ln);
+		return tex / layer / s;
+	};
+
+	// before: Elev made without its runway
+	{
+		TileStream ts (opt (false));
+		CHECK (ts.Want ("Earth", 16, wla, wln, 4) == 0);
+		CHECK (ts.Want ("Earth", 16, ela, eln, 4) == 0);
+		CHECK (ts.Want ("Earth", 14, cla, cln, 4) == 0);
+		REQUIRE (WaitFor ([&] { return ts.Want ("Earth", 16, wla, wln, 4) == 1 && ts.Want ("Earth", 16, ela, eln, 4) == 1 && ts.Want ("Earth", 14, cla, cln, 4) == 1; }, 30.0));
+		CHECK (ts.Want ("Earth", 16, wla, wln, 4 | 8) == 1); // no ways: nothing to wait for
+	}
+	CHECK_FALSE (fs::exists (file ("Elev_mod", wla, wln)));
+	CHECK_FALSE (fs::exists (tex / "TileStream" / "runways.idx"));
+
+	// with the ways: the ground wait waits for the check, which fits the runway once and tells both tiles
+	{
+		TileStream ts (opt (true));
+		CHECK (ts.Want ("Earth", 14, cla, cln, 4 | 8) == 1); // coarser than L15: takes the runways as they come
+		CHECK (ts.Want ("Earth", 16, wla, wln, 4 | 8) == 0);
+		REQUIRE (WaitFor ([&] { return ts.Want ("Earth", 16, wla, wln, 4 | 8) == 1; }, 30.0));
+		int k[3 * 16];
+		std::set<std::array<int, 3>> ch;
+		for (int i = 0, n = ts.ElevChanged ("Earth", k, 16); i < n; i++) ch.insert ({k[3 * i], k[3 * i + 1], k[3 * i + 2]});
+		CHECK (ch.count ({16, wla, wln}));
+		CHECK (ch.count ({16, ela, eln}));
+		CHECK (ch.count ({14, cla, cln}));
+		CHECK (ts.ElevChanged ("Earth", k, 16) == 0);
+		CHECK (ts.Want ("Earth", 16, ela, eln, 4 | 8) == 0); // checked too, the runway already known
+		REQUIRE (WaitFor ([&] { return ts.Want ("Earth", 16, ela, eln, 4 | 8) == 1; }, 30.0));
+		CHECK (ts.ElevChanged ("Earth", k, 16) == 0);
+	}
+	std::string idx = Read (tex / "TileStream" / "runways.idx");
+	REQUIRE (std::count (idx.begin(), idx.end(), '\n') == 1);
+	TsBase g;
+	REQUIRE (TsRwy::Parse (idx.substr (0, idx.find ('\n')), RwyR, g));
+	CHECK (g.name == "runway 09/27");
+	CHECK (g.parts[0].r == 35.0); // 2 km, no area: 30 m wide
+	double v[4];
+	REQUIRE (sscanf (idx.c_str(), "%lf %lf %lf %lf", v, v + 1, v + 2, v + 3) == 4);
+	double e0 = std::remainder (v[1] * M_PI / 180.0 - lngb, 2.0 * M_PI) * kx, e1 = std::remainder (v[3] * M_PI / 180.0 - lngb, 2.0 * M_PI) * kx;
+	CHECK (std::fabs (e1 - e0) > 2000.0);
+	CHECK (std::fabs (g.h[0] - (100.0 + 0.002 * e0)) < 0.6); // the rolling ground's line
+	CHECK (std::fabs (g.h[1] - (100.0 + 0.002 * e1)) < 0.6);
+	std::string chk = Read (tex / "TileStream" / "rwychk.idx");
+	CHECK (chk.find ("16 " + std::to_string (wla) + " " + std::to_string (wln)) != std::string::npos);
+	CHECK (chk.find ("16 " + std::to_string (ela) + " " + std::to_string (eln)) != std::string::npos);
+	CHECK (chk.find ("14 ") == std::string::npos);
+	{
+		std::lock_guard<std::mutex> lk (lm);
+		CHECK (std::count_if (logs.begin(), logs.end(), [] (const std::string &s) { return s.find ("TileStream: runway 09/27 at") == 0; }) == 1);
+	}
+
+	// on the runway's line both Elev_mod tiles follow it; the Elev under them rolls
+	int on = 0, rolls = 0, bad = 0;
+	for (auto [la, ln] : {std::make_pair (wla, wln), std::make_pair (ela, eln)}) {
+		std::string m = Read (file ("Elev_mod", la, ln)), e = Read (file ("Elev", la, ln));
+		REQUIRE (m.size() == 100 + 259 * 259 * 2);
+		REQUIRE (e.size() == 100 + 259 * 259 * 2);
+		double dh = 180.0 / (1 << 12), n = 90.0 - la * dh, w = -180.0 + ln * dh;
+		for (int i = 0; i < 259; i++) {
+			double nl = (n - dh + (i - 1) * dh / 256.0) * M_PI / 180.0;
+			if (std::fabs (nl - g.lat) * RwyR > 10.0) continue;
+			for (int j = 0; j < 259; j++) {
+				double ng = (w + (j - 1) * dh / 256.0) * M_PI / 180.0, ee = std::remainder (ng - lngb, 2.0 * M_PI) * kx;
+				double tt = (ee - e0) / (e1 - e0);
+				if (tt < 0.02 || tt > 0.98) continue;
+				int16_t q, qe;
+				memcpy (&q, &m[100 + ((size_t)i * 259 + j) * 2], 2);
+				memcpy (&qe, &e[100 + ((size_t)i * 259 + j) * 2], 2);
+				double H = g.h[0] + tt * (g.h[1] - g.h[0]);
+				on++;
+				bad += std::fabs (q * 0.5 - H) > 0.26;
+				rolls += std::fabs (qe * 0.5 - H) > 1.0;
+			}
+		}
+	}
+	CHECK (on > 80);
+	CHECK (bad == 0);
+	CHECK (rolls > on / 4);
+
+	// the next session: both checked, the runway read back
+	{
+		TileStream ts (opt (true));
+		CHECK (ts.Want ("Earth", 16, wla, wln, 4 | 8) == 1);
+		CHECK (ts.Want ("Earth", 16, ela, eln, 4 | 8) == 1);
+	}
+	idx = Read (tex / "TileStream" / "runways.idx");
+	CHECK (std::count (idx.begin(), idx.end(), '\n') == 1);
+	std::lock_guard<std::mutex> lk (lm);
+	CHECK (std::count_if (logs.begin(), logs.end(), [] (const std::string &s) { return s.find ("1 streamed runways for Earth") != std::string::npos; }) == 1);
+}

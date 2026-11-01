@@ -187,21 +187,21 @@ add_unit_test(PbrMaterial.Test ${ORBITER_SOURCE_ROOT_DIR}/OVP/VulkanClient/PbrMa
 target_include_directories(PbrMaterial.Test PRIVATE ${ORBITER_SOURCE_ROOT_DIR}/OVP/VulkanClient)
 target_link_libraries(PbrMaterial.Test Qt6::Core) # VkGltfImage.h
 # not upstream: the planet tile stream: grids, pixels, DDS, config, size cap, and the service on file:// sources
-add_unit_test(TileStream.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp)
+add_unit_test(TileStream.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamRwy.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp)
 target_link_libraries(TileStream.Test Qt6::Network Qt6::Gui stb_dxt zlib)
 target_compile_options(TileStream.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 target_link_options(TileStream.Test PRIVATE -fsanitize=address)
 set_tests_properties(TileStream.Test PROPERTIES TIMEOUT 120) # room for a slow machine: the binary runs in seconds
-add_unit_test(TileStreamDecode.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream: the tile stream's decoders on hostile input, ASan
+add_unit_test(TileStreamDecode.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamRwy.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream: the tile stream's decoders on hostile input, ASan
 target_link_libraries(TileStreamDecode.Test Qt6::Network Qt6::Gui stb_dxt zlib)
 target_compile_options(TileStreamDecode.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 target_link_options(TileStreamDecode.Test PRIVATE -fsanitize=address)
-add_unit_test(TileStreamCore.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream: the core's lock, holds, ownership, indexes, archives, disks and caps
+add_unit_test(TileStreamCore.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamRwy.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream: the core's lock, holds, ownership, indexes, archives, disks and caps
 target_link_libraries(TileStreamCore.Test Qt6::Network Qt6::Gui stb_dxt zlib)
 target_compile_options(TileStreamCore.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 target_link_options(TileStreamCore.Test PRIVATE -fsanitize=address)
 # not upstream: the Launchpad Earth streaming page: base list, when Clear and Download are refused, how they end
-add_unit_test(TileStreamMars.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream (mars-stream): COGs read in the job, a cog body's tiles, ASan
+add_unit_test(TileStreamMars.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamRwy.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream (mars-stream): COGs read in the job, a cog body's tiles, ASan
 target_link_libraries(TileStreamMars.Test Qt6::Network Qt6::Gui stb_dxt zlib)
 target_compile_options(TileStreamMars.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
 target_link_options(TileStreamMars.Test PRIVATE -fsanitize=address)

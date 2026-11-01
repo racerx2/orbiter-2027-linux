@@ -428,6 +428,8 @@ public:
 protected:
 	struct StreamLoad { int L, ilat, ilng; VkPixels *surf, *mask, *cls; bool checked; uint64_t stamp; }; // not upstream: checked, StreamApply found a tile to take it; stamp, the Surf file read
 	std::vector<StreamLoad> streamKeys; // not upstream: tiles to swap in, pixels read once taken
+	struct ElevKey { int L, ilat, ilng; bool operator== (const ElevKey &o) const { return L == o.L && ilat == o.ilat && ilng == o.ilng; } };
+	std::vector<ElevKey> elevKeys; // not upstream (stream-rwyflat): Elev_mod files the stream rewrote under loaded tiles, read again by StreamElev
 	MATRIX4 WorldMatrix (int ilng, int nlng, int ilat, int nlat);
 	MATRIX4 WorldMatrix(Tile *tile);
 
@@ -533,6 +535,7 @@ protected:
 
 	void StreamRead ();  // not upstream: read the next streamed tiles' files, outside the loader mutex
 	void StreamApply (); // not upstream: swap them in, under the loader mutex
+	void StreamElev ();  // not upstream (stream-rwyflat): under the loader mutex, loaded tiles take a changed Elev_mod
 
 public:
 	TileType *NodeAt (int ilvl, int ilat, int ilng); // not upstream: the tile at exactly that internal level, any state; lng wraps

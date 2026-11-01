@@ -104,6 +104,13 @@ static uint64_t FileStamp (const char *path) // not upstream: inode, mtime and s
 // =======================================================================
 // =======================================================================
 
+// not upstream: a tile's heights by generation, for horizon jobs and height fog; a new one when they change
+static unsigned HorNewGen ()
+{
+	static std::atomic<unsigned> gens{0};
+	return ++gens;
+}
+
 SurfTile::SurfTile (TileManager2Base *_mgr, int _lvl, int _ilat, int _ilng)
 : Tile (_mgr, _lvl, _ilat, _ilng)
 {
@@ -114,14 +121,14 @@ SurfTile::SurfTile (TileManager2Base *_mgr, int _lvl, int _ilat, int _ilng)
 	texStamp = 0; // not upstream
 	touchT = -1e9; // not upstream
 	touchF = 0; // not upstream
-	static std::atomic<unsigned> horGens{0}; // not upstream: horizon maps
 	elevReady.store(false);
-	horGen = ++horGens;
+	horGen = HorNewGen(); // not upstream: horizon maps
 	htex = NULL;
 	horAsk = -1.0;
 	horCheck = 0.0;
 	horMissing = 0;
 	horRedone = false;
+	horStale = false; // not upstream (stream-rwyflat)
 	elev = NULL;
 	ggelev = NULL;
 	elev_file = NULL;
@@ -281,6 +288,18 @@ void SurfTile::Load ()
 	}
 
 	CreateLabels();
+}
+
+// not upstream (stream-rwyflat): as Load, under the loader mutex; the edges are matched again through the neighbour levels
+void SurfTile::Remesh ()
+{
+	ggelev = NULL;
+	if (!mesh || lvl <= 0) return;
+	int res = mgr->GridRes();
+	float *e = ElevationData ();
+	VBMESH *m = CreateMesh_quadpatch (res, res, e, 1.0, 0.0, &texrange, lvl >= 4, &vtxshift, mgr->GetPlanet()->prm.tilebb_excess);
+	delete mesh;
+	mesh = m;
 }
 
 // -----------------------------------------------------------------------
@@ -1700,6 +1719,138 @@ void TileManager2<SurfTile>::StreamApply ()
 	streamKeys.swap(keep);
 }
 
+// not upstream (stream-rwyflat): a tile's box overlaps or touches b (minlat, maxlat, minlng, maxlng), round the date line too
+static bool BoxTouches (const TILEBOUNDS &a, const double *b)
+{
+	const double eps = 1e-9;
+	if (a.maxlat < b[0] - eps || a.minlat > b[1] + eps) return false;
+	for (int k = -1; k <= 1; k++)
+		if (a.maxlng >= b[2] + k * PI2 - eps && a.minlng <= b[3] + k * PI2 + eps) return true;
+	return false;
+}
+
+// not upstream (stream-rwyflat): under the loader mutex, main pass: loaded tiles take an Elev_mod the stream rewrote (a runway flattened)
+template<>
+void TileManager2<SurfTile>::StreamElev ()
+{
+	typedef QuadTreeNode<SurfTile> Node;
+	int k[3 * 16], n;
+	while ((n = oapiTileStreamElevChanged(Cbody(), k, 16)) > 0)
+		for (int i = 0; i < n; i++) {
+			ElevKey e = {k[3 * i], k[3 * i + 1], k[3 * i + 2]};
+			if (std::find(elevKeys.begin(), elevKeys.end(), e) == elevKeys.end()) elevKeys.push_back(e);
+		}
+	if (elevKeys.empty()) return;
+
+	std::vector<Node *> roots;   // the keys' loaded tiles
+	std::vector<SurfTile *> src; // the tiles whose heights came from their files
+	std::vector<ElevKey> keep;
+	for (size_t i = 0; i < elevKeys.size(); i++) {
+		const ElevKey &e = elevKeys[i];
+		if (i >= 16) { keep.push_back(e); continue; } // the rest next frame
+		Node *node = StreamNode(tiletree, e.L, e.ilat, e.ilng);
+		SurfTile *t = node ? node->Entry() : NULL;
+		if (!t) continue; // not made: it reads the file when it is
+		if (t->state == Tile::Loading) { keep.push_back(e); continue; } // it may have read the old file
+		if (!(t->state & TILE_VALID) || !t->elev) continue; // nothing read it
+		std::vector<SurfTile *> s;
+		std::vector<std::pair<Node *, bool>> st(1, std::make_pair(node, true)); // a node, and whether heights from t's file may reach it
+		bool busy = false;
+		while (!st.empty() && !busy) {
+			Node *m = st.back().first;
+			bool from = st.back().second;
+			st.pop_back();
+			SurfTile *u = m->Entry();
+			if (!u) continue;
+			if (u->state == Tile::Loading) busy = true; // a loading tile reads its ancestors' heights without the mutex
+			bool pass = u == t || !u->has_elevfile;  // a tile with its own file gives its own heights to the tiles under it
+			if (from && pass && u->elev) s.push_back(u);
+			for (int c = 0; c < 4; c++)
+				if (m->Child(c)) st.push_back(std::make_pair(m->Child(c), from && pass));
+		}
+		if (busy) { keep.push_back(e); continue; }
+		roots.push_back(node);
+		src.insert(src.end(), s.begin(), s.end());
+	}
+	elevKeys.swap(keep);
+	if (roots.empty()) return;
+	std::sort(src.begin(), src.end());
+	src.erase(std::unique(src.begin(), src.end()), src.end());
+
+	// the meshes made from those heights: their pointers into them go first
+	std::vector<SurfTile *> remesh;
+	for (Node *r : roots) {
+		std::vector<Node *> st(1, r);
+		while (!st.empty()) {
+			Node *m = st.back();
+			st.pop_back();
+			SurfTile *u = m->Entry();
+			if (!u) continue;
+			if (std::binary_search(src.begin(), src.end(), u->ElevOwner())) {
+				u->ggelev = NULL;
+				if ((u->state & TILE_VALID) && u->mesh) remesh.push_back(u);
+			}
+			for (int c = 0; c < 4; c++)
+				if (m->Child(c)) st.push_back(m->Child(c));
+		}
+	}
+	std::sort(remesh.begin(), remesh.end());
+	remesh.erase(std::unique(remesh.begin(), remesh.end()), remesh.end());
+
+	// heights again, coarse first: a tile without a file interpolates its ancestor's
+	std::vector<SurfTile *> order(src);
+	std::stable_sort(order.begin(), order.end(), [](const SurfTile *a, const SurfTile *b) { return a->lvl < b->lvl; });
+	for (SurfTile *u : order) {
+		u->elevReady.store(false, std::memory_order_release);
+		g_pMemgr_f->Free(u->elev);
+		u->elev = NULL;
+		if (u->elev_file) g_pMemgr_i->Free(u->elev_file);
+		u->elev_file = NULL;
+		u->has_elevfile = false;
+		u->LoadElevationData();
+	}
+	for (SurfTile *u : remesh) u->Remesh();
+
+	// round each key's tile, at its level and finer: edges matched again when drawn, and horizon maps that may hold its heights made again
+	struct Area { double box[4], wide[4]; int lvl; };
+	std::vector<Area> areas;
+	for (Node *r : roots) {
+		const TILEBOUNDS &b = r->Entry()->bnd;
+		double h = b.maxlat - b.minlat, w = b.maxlng - b.minlng;
+		areas.push_back({{b.minlat, b.maxlat, b.minlng, b.maxlng}, {b.minlat - h, b.maxlat + h, b.minlng - w, b.maxlng + w}, r->Entry()->lvl});
+	}
+	size_t nEdge = 0, nHor = 0;
+	std::vector<Node *> st = {&tiletree[0], &tiletree[1]};
+	while (!st.empty()) {
+		Node *m = st.back();
+		st.pop_back();
+		SurfTile *u = m->Entry();
+		if (!u) continue;
+		bool wide = false, fine = false, edge = false;
+		for (const Area &a : areas) {
+			if (!BoxTouches(u->bnd, a.wide)) continue;
+			wide = true;
+			if (u->lvl < a.lvl) continue;
+			fine = true;
+			if (BoxTouches(u->bnd, a.box)) edge = true;
+		}
+		if (!wide) continue; // nor any tile under it
+		if (fine && (u->hor || u->horAsk >= 0.0 || std::binary_search(src.begin(), src.end(), u))) {
+			u->horGen = HorNewGen(); // a job made before is dropped, height fog reads it again
+			u->horAsk = -1.0;
+			if (u->hor) { u->horStale = true; u->horRedone = false; }
+			nHor++;
+		}
+		if (edge && (u->state & TILE_VALID)) {
+			u->lngnbr_lvl = u->latnbr_lvl = u->dianbr_lvl = -1;
+			nEdge++;
+		}
+		for (int c = 0; c < 4; c++)
+			if (m->Child(c)) st.push_back(m->Child(c));
+	}
+	LogAlw("Streamed heights: %zu keys, %zu tiles read again, %zu meshes made again, %zu tiles' edges and %zu horizon grids redone", roots.size(), src.size(), remesh.size(), nEdge, nHor);
+}
+
 // =======================================================================
 // not upstream: horizon map jobs (design-ground-graphics 2.3)
 
@@ -1743,18 +1894,21 @@ void TileManager2<SurfTile>::HorizonRequest (SurfTile *o, double dist)
 	double now = oapiGetSysTime();
 	bool redo = false;
 	if (o->hor) {
-		if (!o->horMissing || o->horRedone || o->horAsk >= 0.0 || now - o->horCheck < 2.0) return;
-		o->horCheck = now;
-		for (int a = -1; a <= 1; a++)
-			for (int b = -1; b <= 1; b++) {
-				if ((!a && !b) || o->ilat + a < 0 || o->ilat + a >= (1 << o->lvl)) continue;
-				if (!ready(NodeAt(o->lvl, o->ilat + a, o->ilng + b))) return;
-			}
-		redo = true;
+		if (o->horAsk >= 0.0) return;
+		if (!o->horStale) { // stream-rwyflat: a stale map is made again with the grids there now
+			if (!o->horMissing || o->horRedone || now - o->horCheck < 2.0) return;
+			o->horCheck = now;
+			for (int a = -1; a <= 1; a++)
+				for (int b = -1; b <= 1; b++) {
+					if ((!a && !b) || o->ilat + a < 0 || o->ilat + a >= (1 << o->lvl)) continue;
+					if (!ready(NodeAt(o->lvl, o->ilat + a, o->ilng + b))) return;
+				}
+			redo = true;
+		}
 	}
 	else if (o->horAsk >= 0.0 && now - o->horAsk < 10.0) return; // pending; a lost job expires
 	if (!ready(o)) return;
-	double prio = dist + (redo ? 1e9 : 0.0);
+	double prio = dist + (o->hor ? 1e9 : 0.0); // a map made again waits behind the first maps
 	if (horizon->cand && prio >= horizon->candPrio) return;
 	horizon->cand = o;
 	horizon->candPrio = prio;
@@ -1858,6 +2012,7 @@ void TileManager2<SurfTile>::HorizonUpload ()
 		delete t->htex;
 		t->htex = nt;
 		t->hor = r.map;
+		t->horStale = false; // not upstream (stream-rwyflat): a job made before the change has an older horGen
 		t->horMissing = r.missing;
 		if (r.redo) t->horRedone = true; // set here: a dropped redo is asked again
 		t->horCheck = oapiGetSysTime();
@@ -2060,6 +2215,7 @@ void TileManager2<SurfTile>::Render (MATRIX4 &dwmat, bool use_zbuf, const vPlane
 	loader->WaitForMutex();
 
 	if (bStreamPass) StreamApply(); // not upstream
+	if (bStreamPass) StreamElev(); // not upstream (stream-rwyflat)
 	if (scene->GetRenderPass() == RENDERPASS_MAINSCENE) { // not upstream: horizon maps in, tiles recorded for SceneFx
 		HorizonUpload();
 		WayUpload(); // not upstream (design-ways)

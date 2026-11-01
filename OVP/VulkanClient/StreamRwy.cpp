@@ -110,17 +110,26 @@ void StreamRwys::Add (const std::vector<WayGeom::RunwayLL> &in)
 	}
 }
 
+// stream-rwyflat: the ends on the physics ground, the runway's profile once the stream has flattened it
+bool StreamRwys::Moved (const Rwy &r) const
+{
+	OBJHANDLE hP = vp->GetObject ();
+	for (int i = 0; i < 2; i++)
+		if (std::fabs (oapiSurfaceElevation (hP, r.d.lng[i], r.d.lat[i]) - r.h[i]) > 0.25) return true;
+	return false;
+}
+
 void StreamRwys::Build (Rwy &r)
 {
 	OBJHANDLE hP = vp->GetObject ();
-	double R = vp->GetSize (), mlat, mlng, elv = 0.0;
+	double R = vp->GetSize (), mlat, mlng;
 	RwyFrame::LatLng (r.mid, mlat, mlng);
-	if (vp->GetElevation (mlng, mlat, &elv) != 1) elv = oapiSurfaceElevation (hP, mlng, mlat);
+	double elv = oapiSurfaceElevation (hP, mlng, mlat);
 	r.f.a = RwyFrame::At (mlat, mlng, R + elv);
 	VECTOR3 e[2];
 	for (int i = 0; i < 2; i++) {
-		e[i] = RwyFrame::FromPlanet (r.f.a, RwyFrame::Point (r.d.lat[i], r.d.lng[i], R + elv));
-		e[i].y = 0.0;
+		r.h[i] = oapiSurfaceElevation (hP, r.d.lng[i], r.d.lat[i]); // stream-rwyflat: tilted to its slope
+		e[i] = RwyFrame::FromPlanet (r.f.a, RwyFrame::Point (r.d.lat[i], r.d.lng[i], R + r.h[i]));
 	}
 	r.lights = std::make_unique<RunwayLights> (&r.f, hP, scn);
 	r.lights->SetEnd1 (e[0]);
@@ -148,6 +157,7 @@ void StreamRwys::Render (VkDev *dev)
 		double dist = length (pg + mul (prot, r.mid * R) - cam);
 		if (r.base) continue;
 		if (check) {
+			if (r.lights && Moved (r)) r.lights.reset (); // stream-rwyflat: made again on the new ground
 			if (!r.lights && dist < LitRange) Build (r);
 			else if (r.lights && dist > FreeRange) r.lights.reset ();
 		}
