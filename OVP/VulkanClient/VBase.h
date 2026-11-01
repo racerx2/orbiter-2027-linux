@@ -10,6 +10,7 @@
 
 #include "VObject.h"
 #include "Mesh.h"
+#include "BeaconFrame.h" // not upstream (stream-rwylights)
 #include <vector> // not upstream
 
 class RunwayLights;
@@ -27,7 +28,7 @@ class TaxiLights;
  * on the surface of a planet or moon, usually with runways or landing pads
  * where vessels can land and take off.
  */
-class vBase: public vObject {
+class vBase: public vObject, public BeaconFrame { // not upstream: BeaconFrame, its ToLocal and FromLocal (stream-rwylights)
 	friend class vPlanet;
 
 public:

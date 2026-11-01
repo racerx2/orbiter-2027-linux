@@ -11,6 +11,7 @@
 #include "D3D9Client.h"
 #include "D3D9Effect.h"
 #include "D3DXMath.h" // d3d9.h/d3dx9.h
+#include "BeaconFrame.h" // not upstream (stream-rwylights)
 
 
 /**
@@ -50,7 +51,7 @@ public:
 	 * \param pArray Pointer into a BeaconArrayEntry list.
 	 * \param nArray Number of entries in the array
 	 */
-	BeaconArray(BeaconArrayEntry *pArray, DWORD nArray, class vBase *vP=NULL);
+	BeaconArray(BeaconArrayEntry *pArray, DWORD nArray, const BeaconFrame *vP=NULL); // not upstream: a frame, a vBase or a streamed runway (stream-rwylights)
 	~BeaconArray();
 
 	void UnLockVertexBuffer();		///< Unlocks the vertex buffer after manipulation is finished
@@ -74,7 +75,7 @@ private:
 	BAVERTEX *pVBSys;				///< not upstream: system copy that Lock/Unlock edit
 	SURFHANDLE pBright;				///< D3D9RwyLight.dds texture handle
 	OBJHANDLE hBase;
-	class vBase *vB;
+	const BeaconFrame *vB; // not upstream: was vBase (stream-rwylights)
 	BeaconPos *pBeaconPos;
 	double base_elev;
 };

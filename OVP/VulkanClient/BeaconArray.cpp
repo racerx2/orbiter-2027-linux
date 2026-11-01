@@ -16,7 +16,7 @@ using namespace oapi;
 
 // ===========================================================================================
 //
-BeaconArray::BeaconArray(BeaconArrayEntry *pEnt, DWORD nEntry, vBase *_vB)
+BeaconArray::BeaconArray(BeaconArrayEntry *pEnt, DWORD nEntry, const BeaconFrame *_vB) // not upstream: a frame (stream-rwylights)
 	: D3D9Effect()
 	, nVert(nEntry)
 	, vB(_vB)
@@ -28,7 +28,7 @@ BeaconArray::BeaconArray(BeaconArrayEntry *pEnt, DWORD nEntry, vBase *_vB)
 {
 	_TRACE;
 
-	if (vB) hBase = vB->GetObject();
+	// hBase from vB left out: a frame has no object, and hBase is not read (stream-rwylights)
 
 	pBeaconPos = new BeaconPos[nEntry];
 

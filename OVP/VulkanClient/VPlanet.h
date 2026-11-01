@@ -14,11 +14,13 @@
 #include "D3D9Util.h"
 #include "Mesh.h"
 #include <list>
+#include <vector> // not upstream
 
 class D3D9Mesh;
 class SurfTile;
 class CloudTile;
 class vBase;                                // g++: friend declarations don't introduce these names
+namespace WayGeom { struct RunwayLL; }      // not upstream (stream-rwylights)
 class SurfaceManager;
 template<class T> class TileManager2;
 class CloudManager;
@@ -246,6 +248,8 @@ public:
 	vPlanet (OBJHANDLE _hObj, const Scene *scene);
 	~vPlanet ();
 
+	void AddStreamRunways (const std::vector<WayGeom::RunwayLL> &rw); // not upstream (stream-rwylights): from the way rasters
+
 	bool			ParseConfig(const char *fname);
 	virtual bool	GetMinMaxDistance(float *zmin, float *zmax, float *dmin);
 	virtual void	UpdateBoundingBox();
@@ -443,6 +447,7 @@ private:
 	TileManager2<SurfTile> *surfmgr2;   // planet surface tile manager (v2)
 	class BldgMgr *bldgmgr = nullptr;          // not upstream: streamed 3D buildings (BldgMgr.h)
 	class TreeMgr *treemgr = nullptr;          // not upstream: 3D trees on the land class (TreeMgr.h)
+	class StreamRwys *srwy = nullptr;          // not upstream: runway lights on the streamed airports (StreamRwy.h)
 	TileManager2<CloudTile> *cloudmgr2; // planet cloud layer tile manager (v2)
 	mutable class SurfTile *tile_cache;
 	HazeManager *hazemgr;     // horizon haze rendering

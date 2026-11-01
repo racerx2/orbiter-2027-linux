@@ -33,7 +33,10 @@ RunwayLights::RunwayLights(class vBase *_vB, const class Scene *scn)
 	apr_length = 257.0;
 	iCategory = 0;
 	nPAPI = 0;
-	hObj = vB->GetObject();
+	hObj = vB ? vB->GetObject() : NULL; // not upstream: NULL from the streamed runway's constructor
+	frame = vB;                          // not upstream (stream-rwylights)
+	hPlanet = hObj ? oapiGetBasePlanet(hObj) : NULL;
+	bSnapPAPI = false;
 	nVASI = 0;
 	bSingleEnded = false;
 	bDisp2 = false;
@@ -52,6 +55,15 @@ RunwayLights::RunwayLights(class vBase *_vB, const class Scene *scn)
 
 	beacons1 = beacons2 = NULL;
 	currentTime = 0.0f;
+}
+
+// not upstream (stream-rwylights): a streamed runway's lights, in its own frame on the planet
+RunwayLights::RunwayLights(const BeaconFrame *_frame, OBJHANDLE _hPlanet, const class Scene *scn)
+	: RunwayLights((vBase *)NULL, scn)
+{
+	frame = _frame;
+	hObj = hPlanet = _hPlanet;
+	bSnapPAPI = true;
 }
 
 RunwayLights::~RunwayLights()
@@ -507,12 +519,12 @@ BeaconArray *RunwayLights::BuildLights(VECTOR3 _start, VECTOR3 _end, double disp
 	for (int k=0;k<i;k++) beaconsEntry1[k].pos.y = 0;
 	
 	// Post process lights ------------------------------------------
-	OBJHANDLE hPlanet = oapiGetBasePlanet(hObj);
+	// hPlanet from oapiGetBasePlanet(hObj) left out: a member now, and hObj may be the planet (stream-rwylights)
 //	double size = oapiGetSize(hPlanet);
 
 	for (int k=0;k<i;k++) beaconsEntry1[k].dir = _V(-beaconsEntry1[k].dir.x, beaconsEntry1[k].dir.y, -beaconsEntry1[k].dir.z);
 
-	BeaconArray *beacons = new BeaconArray(beaconsEntry1, i, vB);
+	BeaconArray *beacons = new BeaconArray(beaconsEntry1, i, frame); // not upstream: the frame (stream-rwylights)
 	delete[] beaconsEntry1;
 	return beacons;
 }
@@ -554,7 +566,7 @@ BeaconArray * RunwayLights::BuildPAPI(VECTOR3 start, VECTOR3 end, DWORD i)
 		entryPAPI[j].pos = start + dir*PAPI_pos[i].z + widthDir*disp + widthDir*j*papi_separation - widthDir*papi_separation*1.5;
 	}
 
-	BeaconArray *beacons = new BeaconArray(entryPAPI, 4);
+	BeaconArray *beacons = new BeaconArray(entryPAPI, 4, bSnapPAPI ? frame : NULL); // not upstream: a streamed runway's PAPI on the terrain (stream-rwylights)
 	return beacons;
 }
 
@@ -625,8 +637,7 @@ BeaconArray *RunwayLights::BuildVASI(VECTOR3 _start, VECTOR3 _end, DWORD idx)
 	
 	// Post process lights ------------------------------------------
 
-	OBJHANDLE hPlanet = oapiGetBasePlanet(hObj);
-	double size = oapiGetSize(hPlanet);
+	double size = oapiGetSize(hPlanet); // not upstream: the member (stream-rwylights)
 
 	for (int k=0;k<i;k++) {
 		beaconsEntry1[k].dir = _V(-beaconsEntry1[k].dir.x, beaconsEntry1[k].dir.y, -beaconsEntry1[k].dir.z);
@@ -690,6 +701,7 @@ void RunwayLights::Update(class vPlanet *vP)
 {
 	if (beacons1) beacons1->Update(50, vP);
 	if (beacons2) beacons2->Update(50, vP);
+	if (bSnapPAPI) for (DWORD i=0;i<nPAPI;i++) if (papi[i]) papi[i]->Update(4, vP); // not upstream (stream-rwylights)
 }
 
 

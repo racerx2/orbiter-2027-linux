@@ -106,6 +106,7 @@ void D3D9Config::Reset ()
 	VolCloudQuality		= 1;
 	Trees				= 1;
 	TreeRange			= 2500.0f;
+	StreamRwyLights		= 1; // not upstream (stream-rwylights)
 	TreeDensity			= 1.0f;
 	BldgRange			= 20.0f;
 	AutoExposure		= 1;
@@ -240,6 +241,7 @@ bool D3D9Config::ReadParams ()
 	if (oapiReadItem_int   (hFile, (char*)"VolCloudQuality", i))				VolCloudQuality = max(0, min(2, i));
 	if (oapiReadItem_int   (hFile, (char*)"Trees", i))						Trees = max(0, min(1, i));
 	if (oapiReadItem_float (hFile, (char*)"TreeRange", d))					TreeRange = float(max(500.0, min(4000.0, d)));
+	if (oapiReadItem_int   (hFile, (char*)"StreamRwyLights", i))				StreamRwyLights = max(0, min(1, i)); // not upstream
 	if (oapiReadItem_float (hFile, (char*)"TreeDensity", d))					TreeDensity = float(max(0.1, min(2.0, d)));
 	if (oapiReadItem_float (hFile, (char*)"BldgRange", d))					BldgRange = float(max(5.0, min(40.0, d)));
 	if (oapiReadItem_int   (hFile, (char*)"AutoExposure", i))					AutoExposure = max(0, min(1, i));
@@ -373,6 +375,7 @@ void D3D9Config::WriteParams ()
 	oapiWriteItem_int   (hFile, (char*)"VolCloudQuality", VolCloudQuality);
 	oapiWriteItem_int   (hFile, (char*)"Trees", Trees);
 	oapiWriteItem_float (hFile, (char*)"TreeRange", TreeRange);
+	oapiWriteItem_int   (hFile, (char*)"StreamRwyLights", StreamRwyLights); // not upstream
 	oapiWriteItem_float (hFile, (char*)"TreeDensity", TreeDensity);
 	oapiWriteItem_float (hFile, (char*)"BldgRange", BldgRange);
 	oapiWriteItem_int   (hFile, (char*)"AutoExposure", AutoExposure);

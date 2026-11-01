@@ -41,6 +41,7 @@
 #include "OrbiterResource.h"
 #include "BldgMgr.h" // not upstream
 #include "TreeMgr.h" // not upstream
+#include "StreamRwy.h" // not upstream
 #include "SceneShadows.h" // not upstream
 #include <filesystem>
 
@@ -561,6 +562,8 @@ vPlanet::~vPlanet ()
 		delete []vbase;
 		vbase = NULL;
 	}
+	delete srwy; // not upstream (stream-rwylights)
+	srwy = NULL;
 	delete treemgr; // not upstream: first, its worker reads the surface manager
 	treemgr = NULL;
 	delete bldgmgr; // not upstream: before the surface manager too, its workers read it
@@ -1310,7 +1313,17 @@ void vPlanet::RenderBaseSurfaces(VkDev *dev)
 			vbase[i]->RenderSurface(dev);
 			vbase[i]->RenderRunwayLights(dev);
 		}
+		if (srwy) srwy->Render(dev); // not upstream (stream-rwylights)
 	}
+}
+
+// ==============================================================
+// not upstream (stream-rwylights)
+
+void vPlanet::AddStreamRunways (const std::vector<WayGeom::RunwayLL> &rw)
+{
+	if (!srwy) srwy = new StreamRwys(this, scn);
+	srwy->Add(rw);
 }
 
 // ==============================================================

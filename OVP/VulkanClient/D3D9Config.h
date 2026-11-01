@@ -106,6 +106,7 @@ public:
 	int VolCloudQuality;			// not upstream: 0 low, 1 medium, 2 high
 	int Trees;						// not upstream: 3D trees from the land class tiles (0,1)
 	float TreeRange;				// not upstream: m, 500...4000
+	int StreamRwyLights;			// not upstream: runway lights on the streamed airports (0,1)
 	float TreeDensity;				// not upstream: 0.1...2
 	float BldgRange;				// not upstream: km, 5...40, streamed buildings out to this distance
 	int AutoExposure;				// not upstream: eye adaptation (0,1)

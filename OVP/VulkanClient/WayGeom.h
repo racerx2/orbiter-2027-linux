@@ -43,6 +43,13 @@ struct Style {
 enum Marks { M_NONE, M_ROAD, M_TAXIWAY, M_RUNWAY, M_RAIL };
 Style StyleOf (uint8_t kind, uint8_t flags);
 
+// a runway for its lights: both ends true thresholds, not on a base, its midpoint in the box (stream-rwylights)
+struct RunwayLL {
+	double lat[2] = {0, 0}, lng[2] = {0, 0}; // radians, end A then B
+	double w = 0.0;                          // width [m]
+	std::string ref, des[2];
+};
+
 // a terrain tile's box and what to paint
 struct Input {
 	double lat0 = 0, lat1 = 0, lng0 = 0, lng1 = 0; // radians, lat0 south
@@ -58,6 +65,7 @@ struct Output {
 	// way: R paved share, G luminance x R, B yellow paint x R, A water share
 	// lamp: sqrt (value / 4) of R pool, G lamp head, B spill; A the imagery's share in the pavement colour
 	std::vector<std::vector<uint8_t>> way, lamp;
+	std::vector<RunwayLL> runways; // stream-rwylights
 };
 void Raster (const Input &in, Output &out);
 

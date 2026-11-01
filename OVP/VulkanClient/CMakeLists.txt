@@ -101,6 +101,7 @@ set(SourceFiles
 	BaseShapes.cpp # not upstream: what streamed trees and ways keep off (design-ways)
 	WayGeom.cpp # not upstream (design-ways)
 	Waymgr.cpp # not upstream (design-ways)
+	StreamRwy.cpp # not upstream (stream-rwylights)
 	VideoTab.cpp
 	VObject.cpp
 	VPlanet.cpp

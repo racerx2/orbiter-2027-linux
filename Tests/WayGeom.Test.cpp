@@ -4,6 +4,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "TileStream.h"
 #include "WayGeom.h"
+#include "RwyFrame.h" // stream-rwylights
 #include <cmath>
 #include <cstring>
 #include <set>
@@ -426,4 +427,95 @@ TEST_CASE ("A feature in two tiles' buffers is painted once", "[ways]")
 		for (int i = 260; i < 512; i++)
 			for (int c = 0; c < 4; c++) diff = std::max (diff, std::abs ((int)both.way[0][4 * (j * 512 + i) + c] - (int)one.way[0][4 * (j * 512 + i) + c]));
 	CHECK (diff <= 1); // east of the tile edge B alone paints; A's copy in its buffer adds nothing
+}
+
+TEST_CASE ("A raster lists its runways for their lights: once, by its midpoint's box, not a cut one or one on a base", "[rwylights]")
+{
+	auto T = Make (TX, TY, {{TSWAY_RUNWAY, 0, "09/27", {{{1000, 2048}, {3000, 2048}}}}});
+	WayGeom::Input in = Box (*T, 0, 0, 4096, 4096);
+	in.tiles = {T};
+	WayGeom::Output o;
+	WayGeom::Raster (in, o);
+	REQUIRE (o.runways.size() == 1);
+	const WayGeom::RunwayLL &r = o.runways[0];
+	CHECK_THAT (r.lat[0], WithinAbs (T->Lat (2048), 1e-9));
+	CHECK_THAT (r.lng[0], WithinAbs (T->Lng (1000), 1e-9));
+	CHECK_THAT (r.lat[1], WithinAbs (T->Lat (2048), 1e-9));
+	CHECK_THAT (r.lng[1], WithinAbs (T->Lng (3000), 1e-9));
+	CHECK_THAT (r.w, WithinAbs (23.0, 1e-9)); // no runway area, 900 to 1500 m long
+	CHECK (r.ref == "09/27");
+	CHECK (r.des[0] == "09");
+	CHECK (r.des[1] == "27");
+
+	WayGeom::Input w = Box (*T, 0, 0, 1800, 4096), e = Box (*T, 1800, 0, 4096, 4096); // its midpoint at u = 2000
+	w.tiles = e.tiles = {T};
+	WayGeom::Raster (w, o);
+	CHECK (o.runways.empty());
+	WayGeom::Raster (e, o);
+	CHECK (o.runways.size() == 1);
+
+	auto C = Make (TX, TY, {{TSWAY_RUNWAY, 0, "09/27", {{{3000, 2048}, {4160, 2048}}}}}); // runs on into the next tile, not read
+	WayGeom::Input c = Box (*C, 0, 0, 4096, 4096);
+	c.tiles = {C};
+	WayGeom::Raster (c, o);
+	CHECK (o.runways.empty());
+
+	in.blocked = [] (double, double) { return true; }; // a base draws this airport
+	WayGeom::Raster (in, o);
+	CHECK (o.runways.empty());
+}
+
+TEST_CASE ("A streamed runway's frame: east, up and north; back and forth; PAPI on the pilot's left; one runway listed twice", "[rwylights]")
+{
+	const double R = 6371010.0, rad = R + 14.0, lat = 29.645336 * RAD, lng = -95.276812 * RAD;
+	RwyFrame::Axes a = RwyFrame::At (lat, lng, rad);
+	VECTOR3 n = RwyFrame::FromPlanet (a, RwyFrame::Point (lat + 1000.0 / rad, lng, rad));
+	CHECK_THAT (n.x, WithinAbs (0.0, 1e-6));
+	CHECK_THAT (n.z, WithinAbs (1000.0, 0.01));
+	CHECK_THAT (n.y, WithinAbs (-1000.0 * 1000.0 / (2.0 * rad), 0.001)); // the ground falls away from the tangent plane
+	VECTOR3 e = RwyFrame::FromPlanet (a, RwyFrame::Point (lat, lng + 1000.0 / (rad * std::cos (lat)), rad));
+	CHECK_THAT (e.x, WithinAbs (1000.0, 0.05));
+	CHECK (std::fabs (e.z) < 0.1);
+	VECTOR3 p = _V(123.0, -4.5, 678.0), q = RwyFrame::FromPlanet (a, RwyFrame::ToPlanet (a, p));
+	CHECK_THAT (q.x, WithinAbs (p.x, 1e-6));
+	CHECK_THAT (q.y, WithinAbs (p.y, 1e-6));
+	CHECK_THAT (q.z, WithinAbs (p.z, 1e-6));
+	double la, lo;
+	RwyFrame::LatLng (RwyFrame::ToPlanet (a, _V(0, 0, 0)), la, lo);
+	CHECK_THAT (la, WithinAbs (lat, 1e-12));
+	CHECK_THAT (lo, WithinAbs (lng, 1e-12));
+	const MATRIX3 &m = a.r;
+	double det = m.m11 * (m.m22 * m.m33 - m.m23 * m.m32) - m.m12 * (m.m21 * m.m33 - m.m23 * m.m31) + m.m13 * (m.m21 * m.m32 - m.m22 * m.m31);
+	CHECK_THAT (det, WithinAbs (1.0, 1e-12)); // a rotation, not a mirror
+
+	// RunwayLights::BuildPAPI's side, unit (crossp (direction, up)) with disp +1: the pilot's left
+	CHECK (unit (crossp (_V(0, 0, 1), _V(0, 1, 0))).x < -0.99); // landing north: west
+	CHECK (unit (crossp (_V(1, 0, 0), _V(0, 1, 0))).z > 0.99);  // landing east: north
+
+	WayGeom::RunwayLL A, B;
+	A.lat[0] = A.lat[1] = lat;
+	A.lng[0] = lng;
+	A.lng[1] = lng + 2000.0 / (R * std::cos (lat));
+	A.ref = "09/27";
+	CHECK_THAT (RwyFrame::Length (A, R), WithinAbs (2000.0, 0.5));
+	B = A;
+	std::swap (B.lat[0], B.lat[1]);
+	std::swap (B.lng[0], B.lng[1]);
+	B.lat[0] += 20.0 / R;
+	B.ref.clear();
+	CHECK (RwyFrame::Same (A, B, R)); // the other way round, 20 m off, no ref
+	B.lat[0] += 20.0 / R;
+	CHECK_FALSE (RwyFrame::Same (A, B, R)); // 40 m off
+	B = A;
+	B.ref = "04/22";
+	CHECK_FALSE (RwyFrame::Same (A, B, R));
+
+	// a base's runway, 100 m off and a little shorter, either way round: the base's; crossing it or 400 m to the side: not
+	VECTOR3 pa = RwyFrame::Point (A.lat[0], A.lng[0], R), pb = RwyFrame::Point (A.lat[1], A.lng[1], R);
+	VECTOR3 up = unit ((pa + pb) * 0.5), along = unit (pb - pa), side = crossp (up, along);
+	CHECK (RwyFrame::OnBase (pa, pb, pa + side * 100.0 + along * 30.0, pb + side * 100.0 - along * 30.0));
+	CHECK (RwyFrame::OnBase (pa, pb, pb, pa));
+	CHECK_FALSE (RwyFrame::OnBase (pa, pb, pa + side * 400.0, pb + side * 400.0));
+	VECTOR3 mid = (pa + pb) * 0.5;
+	CHECK_FALSE (RwyFrame::OnBase (pa, pb, mid - side * 1000.0, mid + side * 1000.0));
 }

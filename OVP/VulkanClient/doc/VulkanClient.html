@@ -770,6 +770,15 @@
       keeps a night scene dark instead of pushing the lights to white. Daytime
       is unchanged.
     </p>
+  <li>Runway lights of the streamed airports (<code>StreamRwyLights</code> 1, in <code>VulkanClient.cfg</code> only)</li>
+    <p>
+      Every runway the Earth stream paints that is 800 m or longer and not part
+      of a base gets the lights of a base's runway: edges, centre line,
+      threshold and end, touchdown zone and approach lights at night, and a
+      PAPI for a 3&deg; path on the pilot's left 300 m past each threshold, by
+      day too. The stream can't tell a lit runway from a grass strip. The
+      <code>RwyLight</code> settings apply to them as to bases.
+    </p>
 </ul>
 
 <h2>Generic configuration</h2>

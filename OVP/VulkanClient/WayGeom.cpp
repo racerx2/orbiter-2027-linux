@@ -763,6 +763,20 @@ void Raster (const Input &in, Output &out)
 		double brb = brg + 180.0;
 		r.desB = Designator (r.ref, brb >= 360.0 ? brb - 360.0 : brb);
 	}
+	for (const Runway &r : rw) { // stream-rwylights: listed by the box holding its midpoint
+		if (r.cutA || r.cutB) continue;
+		RunwayLL l;
+		double mlat, mlng;
+		g.LatLng ({0.5 * (r.ax + r.bx), 0.5 * (r.ay + r.by)}, mlat, mlng);
+		if (mlat < in.lat0 || mlat >= in.lat1 || mlng < in.lng0 || mlng >= in.lng1) continue;
+		g.LatLng ({r.ax, r.ay}, l.lat[0], l.lng[0]);
+		g.LatLng ({r.bx, r.by}, l.lat[1], l.lng[1]);
+		l.w = r.w;
+		l.ref = r.ref;
+		l.des[0] = r.desA;
+		l.des[1] = r.desB;
+		out.runways.push_back (std::move (l));
+	}
 	for (const Runway &r : rw) {
 		Shape S;
 		S.kind = TSWAY_RUNWAY;

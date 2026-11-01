@@ -290,6 +290,7 @@ void TileManager2<SurfTile>::WayUpload ()
 			r = std::move(W.box->done.front());
 			W.box->done.pop_front();
 		}
+		if (r.out && !r.out->runways.empty()) GetPlanet()->AddStreamRunways(r.out->runways); // stream-rwylights: whatever became of the tile
 		SurfTile *t = NodeAt(r.lvl, r.ilat, r.ilng);
 		if (!t || t->wayGen != r.gen) { n--; continue; } // gone, made again, or its fixed structures changed
 		if (!r.out) { t->wayState = 0; n--; continue; } // dropped: asked again later

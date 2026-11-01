@@ -35,6 +35,7 @@ Earth streams in as you fly, from free servers with no account or key:
   roofs and windows lit at night. With the Collision module on they are solid: ships crash into them and can land on their roofs.
 - **Roads, railways, airports and rivers** from OpenStreetMap, painted on the ground: runways with their markings,
   taxiways and aprons, lane lines, and street lamps where the city is lit at night.
+- **Runway lights** at every streamed airport: edges, centre line and approach lights at night, and a PAPI at each end.
 - **Ground detail**: 3D trees from land cover out to the horizon, terrain shadows, volumetric clouds without tile seams.
 - **Ahead of you**: the ground, buildings and roads under the next minute of your flight path load before you get there.
 - **On the runway from the start**: a scenario's landed ships are placed once the finest ground under them is in,

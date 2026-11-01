@@ -25,6 +25,7 @@ class RunwayLights
 {
 public:
 	RunwayLights(class vBase *vB, const class Scene *snc);
+	RunwayLights(const class BeaconFrame *frame, OBJHANDLE hPlanet, const class Scene *snc); // not upstream: a streamed runway's frame, its PAPI on the terrain too (stream-rwylights)
 	virtual ~RunwayLights();
 
 	void SetEnd1(VECTOR3 pos);
@@ -86,6 +87,9 @@ protected:
 	const class Scene * scene;
 	class vBase *vB;
 	float currentTime;
+	const class BeaconFrame *frame; // not upstream (stream-rwylights): the base, or the streamed runway's frame
+	OBJHANDLE hPlanet;              // not upstream
+	bool bSnapPAPI;                 // not upstream: PAPI set on the terrain as the other lights
 };
 
 
