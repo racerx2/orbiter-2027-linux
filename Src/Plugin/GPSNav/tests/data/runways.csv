@@ -1,0 +1,4 @@
+airport,id1,lat1,lon1,elev1_m,id2,lat2,lon2,elev2_m,width_m,length_m,surface
+KTTS,15,28.6347,-80.7073,3,33,28.5947,-80.6812,3,91,4572,CON
+KMCO,18L,28.4514,-81.3104,27,36R,28.4192,-81.3104,29,61,3659,ASP
+NONE,01,1,1,0,19,1.1,1,0,10,100,ASP

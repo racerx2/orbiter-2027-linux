@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>GPS navigator</title>
+<style>
+body { font-family: sans-serif; }
+code, pre { font-family: monospace; }
+table { border-collapse: collapse; }
+td, th { border: 1px solid #888; padding: 2px 6px; text-align: left; vertical-align: top; }
+</style>
+</head>
+<body>
+<h1>GPS navigator</h1>
+<p>A panel GPS navigator for any vessel on any body: a moving map, Direct-To, flight plans, the nearest airports, bases and beacons, waypoint information, and a glide path to a runway or a pad.</p>
+
+<h2>Opening it</h2>
+<p>Enable <b>GPSNav</b> in the Launchpad's Modules tab. In flight, click the <b>GPS</b> pin on the menu bar, or open <b>Custom functions</b> (Ctrl+F4) and choose <b>GPS navigator</b>. The unit shows the focus vessel and the body it is nearest. Drag a window corner or side to resize it; it keeps its shape. A scenario saved with the unit open opens it again.</p>
+
+<h2>Keys and knobs</h2>
+<table>
+<tr><th>Control</th><th>What it does</th></tr>
+<tr><td>Soft keys (under the screen)</td><td>What their labels on the screen say; they change with the page.</td></tr>
+<tr><td>D&rarr; (Direct-To)</td><td>Enter a waypoint and go straight to it from where the vessel is. It starts with the waypoint under the cursor or the active one: ENT takes that, typing or the inner knob starts a new one. An ident or a name (three letters or more) is found.</td></tr>
+<tr><td>MENU</td><td>Units, the data strip's five fields, map orientation and colours, the HUD caret, the CDI scale, the glide path angle and crossing height, cancel Direct-To, clear the flight plan.</td></tr>
+<tr><td>FPL</td><td>The flight plan page, and back to the map.</td></tr>
+<tr><td>NRST</td><td>The nearest pages, and back to the map.</td></tr>
+<tr><td>CLR</td><td>Deletes a letter being entered, closes a window, turns the cursor off, or goes back to the map.</td></tr>
+<tr><td>ENT</td><td>Accepts: a waypoint entered, a menu line, the row under the cursor.</td></tr>
+<tr><td>RNG &#9650; &#9660;</td><td>The map range: up is a larger range, down a smaller one.</td></tr>
+<tr><td>Outer knob</td><td>The page group: MAP, WPT, NRST, FPL, VNAV. When entering a waypoint: the letter's place. In the menu: the line's value.</td></tr>
+<tr><td>Inner knob</td><td>The page in a group, the map's range, the row under the cursor. When entering a waypoint: the letter. In the menu: the line.</td></tr>
+<tr><td>PUSH CRSR (click the inner knob)</td><td>The cursor on a list, or a waypoint to look up on the WPT page.</td></tr>
+</table>
+<p>With the mouse: the wheel over the ring turns the outer knob, over the centre the inner knob; a click on the left or right half of the ring turns it one step. The wheel over the map changes its range, over a list moves the cursor. A click on a list row selects it, a second click is ENT. While a waypoint is being entered the keyboard types it; Backspace, Enter, Escape and the arrow keys work too.</p>
+
+<h2>The screen</h2>
+<p>The top strip shows five fields (MENU changes them): GS ground speed, DTK desired track, TRK track, DIS distance to the active waypoint, ETE time to it, BRG bearing to it, XTK cross-track error, ETA arrival time (UTC), ALT altitude, VS vertical speed, WPT the active waypoint. Values about the active waypoint are magenta, the vessel's own cyan. Below 1 m/s ground speed there is no track and no time: dashes.</p>
+
+<h3>MAP</h3>
+<p>Colours (the first soft key, or MENU): <b>TOPO</b> tints the ground as aviation charts do, by height: on Earth the sea blue and the land from dark green in the lowlands through olive, tan and brown to grey and white above 4000 m; on a body with no sea, greys and tans from the lowest to the highest ground in view. Hills are shaded with the light from the upper left. <b>TERRAIN</b> colours the ground against your altitude: red within 100 ft below you or above you, yellow within 1000 ft below, the rest dark; on the ground it shows TOPO. <b>PLAIN</b> is a dark map with lines only. The colours come from the body's elevation tiles: where your Orbiter has none (not streamed yet), the map is plain there. Roads and rivers aren't in what Orbiter gives an add-on.</p>
+<p>North up or track up (soft key). The vessel is the white arrow; the white line ahead is its track. The active leg is magenta, the other legs of the flight plan white. Coastlines (Earth) or contours (Mars) come from the body's Map MFD data; a body without them gets a latitude and longitude grid. Airports are cyan circles (larger ones with ticks), Orbiter bases white squares, pads green squares, VORs hexagons, DMEs squares, NDBs dotted circles, user waypoints white diamonds, cities yellow spots, other named places (craters, mountains) grey crosses; a green dot marks a beacon a NAV receiver can tune. Runways are drawn to scale at 15 nm and less. DCLTR hides small things in two steps.</p>
+<p><b>CDI</b>: at the bottom of the map with an active leg, the course needle: the magenta bar is where the course line is (left when you are right of it), five dots a side, the full-scale distance at its left (AUTO: 5 nm en route, 1 nm within 30 nm of the waypoint; MENU sets it), the triangle up for TO and down for FROM (past the waypoint).</p>
+<p><b>GPSS</b> (the fourth soft key): GPS roll steering. The unit banks the vessel with its ailerons to fly the magenta line: onto it at an angle that eases as the line nears (at most 45 degrees), then along it, at most 25 degrees of bank, and on to the next leg as each waypoint is passed. It steers only: altitude and speed stay yours. It works in the air with aileron-equipped vessels and turns itself off on the ground, below 20 m/s, at more than 4x time acceleration, without an active leg, or when the focus changes; GPSS in green next to the leg shows it is on. Your stick adds to its aileron, so you can always roll against it; another autopilot on the ailerons (the DG's own) would fight it.</p>
+
+<h3>HUD caret</h3>
+<p>On the Surface HUD (H cycles the HUD modes), the caret on the heading tape points to the active waypoint, in the cockpit and the virtual cockpit; at the end of the tape an arrow shows the way to turn when it is further round. It replaces the caret Orbiter shows for a base chosen in the Map MFD while the unit has an active leg. MENU turns it off. This needs the Custom Orbiter of 2026-10-31 or later; in another Orbiter there is no caret.</p>
+
+<h3>WPT</h3>
+<p>A waypoint's position, elevation, bearing and distance, frequency, and runways (length, width, surface, ILS). IDENT finds another; TUNE sets an Orbiter beacon's frequency on the vessel's NAV1; ADD FPL puts it at the end of the flight plan.</p>
+
+<h3>NRST</h3>
+<p>The 25 nearest airports, VORs (and DMEs, ILS), NDBs, bases (and pads), user waypoints, by the soft keys or the inner knob. Select one (cursor or click), then D&rarr; to go there, or INFO / ENT for its page.</p>
+
+<h3>FPL</h3>
+<p>The flight plan of the focus vessel: each leg's desired track, distance and time. INSERT puts a waypoint before the cursor's row (the empty row at the end appends), DELETE removes one, ACT LEG makes the leg to the cursor's waypoint the active one, INVERT reverses the plan, CLR FPL clears it. A plan's first leg goes to its first waypoint from where the vessel is (so a plan of one waypoint flies straight to it); the unit moves on to the next leg as the vessel reaches each waypoint. Each vessel has its own plan, on one body; editing it on another body starts a new one.</p>
+
+<h3>VNAV</h3>
+<p><b>GP</b>: a glide path to the active waypoint. For an airport or base with runways it ends at the threshold of the runway best aligned with the course (RWY picks another end); otherwise at the waypoint itself, such as a pad. It shows the distance and height to the threshold, the path's height there, the deviation (green within limits), the vertical speed the path asks for at the ground speed, and the scales: V (vertical, a dot is 0.35&deg;, the diamond is the path) and LOC (the runway's centreline, a dot is 1.25&deg;). The angle (3&deg;) and the crossing height (15 m) are in MENU. <b>ALT</b>: a target altitude at the active waypoint (PUSH CRSR, then the knobs) and the vertical speed to reach it.</p>
+
+<h2>The data</h2>
+<ul>
+<li><b>Orbiter</b>: every base loaded, built in or installed with an add-on, on every body; their pads and VTOL beacons; the runways and beacons in each base's file; the body's own beacons (Earth's VORs), the beacons NAV receivers can tune; the body's marker files (<code>Config/&lt;body&gt;/Marker/*.mkr</code>: Earth's cities, the outer moons' craters and other features), found by name.</li>
+<li><b>OurAirports</b> (ourairports.com, public domain) for Earth: about 72 000 airports, heliports and seaplane bases, their runways, and 11 000 navaids, in <code>GPSNav/Data/Earth</code>. It has no ILS frequencies; an ILS comes from an Orbiter base's runway. A navaid at the same place as an Orbiter beacon of the same ident is one waypoint, tunable.</li>
+<li><b>Your own</b>, next.</li>
+</ul>
+<p>Headings and tracks are true (Orbiter has no magnetic model). Altitudes and elevations are above the body's mean radius. The data of a body is read the first time the unit looks at it; the screen says LOADING DATABASE for a moment.</p>
+
+<h2>Your own airports and waypoints</h2>
+<p>Put CSV files in <code>GPSNav/User/&lt;body&gt;/</code>, for example <code>GPSNav/User/Earth/</code> or <code>GPSNav/User/Moon/</code>. A file's name begins with what it holds: <code>airports*.csv</code>, <code>runways*.csv</code>, <code>navaids*.csv</code>, <code>waypoints*.csv</code> (so <code>airports-myfield.csv</code> works). The first line names the columns; their order doesn't matter, and quotes hold a comma. Lines starting with <code>#</code> or <code>;</code> are skipped. Positions are degrees (north and east positive), heights and lengths metres.</p>
+<table>
+<tr><th>File</th><th>Columns</th></tr>
+<tr><td>airports</td><td><code>ident,name,type,lat,lon,elev_m</code> &mdash; type: large_airport, medium_airport, small_airport, heliport or seaplane_base</td></tr>
+<tr><td>runways</td><td><code>airport,id1,lat1,lon1,elev1_m,id2,lat2,lon2,elev2_m,width_m,length_m,surface</code> &mdash; airport is an airport's ident (yours or OurAirports'); the ends are the thresholds; empty ids are made from the heading</td></tr>
+<tr><td>navaids</td><td><code>ident,name,type,freq,lat,lon,elev_m</code> &mdash; type: VOR, VOR-DME, VORTAC, TACAN, DME, NDB; freq in MHz (NDB in kHz)</td></tr>
+<tr><td>waypoints</td><td><code>ident,name,lat,lon,elev_m</code></td></tr>
+</table>
+<p>An example, <code>GPSNav/User/Earth/airports-home.csv</code> and <code>runways-home.csv</code>:</p>
+<pre>ident,name,type,lat,lon,elev_m
+XHOM,Home Strip,small_airport,30.123456,-97.654321,180
+
+airport,id1,lat1,lon1,elev1_m,id2,lat2,lon2,elev2_m,width_m,length_m,surface
+XHOM,17,30.128,-97.6545,180,35,30.119,-97.6541,180,20,1000,TURF</pre>
+<p>Your airport with the ident of an OurAirports one takes its runways from your file. An add-on base needs nothing: Orbiter's own bases are read as they are. Changes are read at the next simulation start.</p>
+
+<h2>In the scenario</h2>
+<p>The unit's settings, whether it is open and each vessel's flight plan are saved in a <code>BEGIN_GPSNav</code> block.</p>
+</body>
+</html>

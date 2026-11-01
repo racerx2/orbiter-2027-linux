@@ -1,0 +1,4 @@
+ident,name,type,lat,lon,elev_m
+# a comment
+KTTS,My Strip,small_airport,28.62,-80.70,4
+XHOM,"Home, Strip",small_airport,30.123456,-97.654321,180

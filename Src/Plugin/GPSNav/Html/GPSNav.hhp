@@ -1,0 +1,6 @@
+[OPTIONS]
+Title=GPS navigator
+Default topic=GPSNav.htm
+
+[FILES]
+GPSNav.htm

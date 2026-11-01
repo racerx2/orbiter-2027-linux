@@ -1,0 +1,3 @@
+airport,id1,lat1,lon1,elev1_m,id2,lat2,lon2,elev2_m,width_m,length_m,surface
+KTTS,09,28.62,-80.705,4,27,28.62,-80.695,4,20,980,TURF
+XHOM,,30.128,-97.6545,180,,30.119,-97.6541,180,20,1000,TURF

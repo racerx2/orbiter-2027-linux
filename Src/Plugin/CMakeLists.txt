@@ -23,6 +23,7 @@ add_subdirectory(ScriptMFD)
 add_subdirectory(TransX)
 add_subdirectory(Notes)
 add_subdirectory(Collision) # not upstream: collision and impact damage addon
+add_subdirectory(GPSNav) # not upstream: GPS navigator addon
 
 # ==========================================================================
 # SDK Sample Installation

@@ -1,0 +1,6 @@
+ident,name,type,lat,lon,elev_m
+KXMR,"Cape Canaveral Space Force Station Skid Strip, FL",medium_airport,28.4676,-80.5666,3
+KTTS,NASA Shuttle Landing Facility,small_airport,28.615,-80.6945,3
+KMCO,Orlando International Airport,large_airport,28.4294,-81.3090,29
+FD99,Some Heliport,heliport,28.5,-80.8,5
+BAD,no position,small_airport,,,

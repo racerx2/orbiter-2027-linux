@@ -1,0 +1,13 @@
+BEGIN_HEADER
+InitialState on
+ColourIdx 4
+END_HEADER
+
+BEGIN_DATA
+ 121.45806  31.22222 : Shanghai
+  -0.12574  51.50853 : London : extra
+ 200.0 10.0 : Over the line
+bad line
+ 1 2 :
+END_DATA
+ 5 5 : after the data
