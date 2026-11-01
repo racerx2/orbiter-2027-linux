@@ -32,3 +32,20 @@ TEST_CASE("tints without a sea and against an altitude", "[colour]")
 	REQUIRE(Warn (10.0, 1000.0, true, 0, 0) == Scale (Topo (10.0, true, 0, 0), 0.45));
 	REQUIRE(Scale (Rgb (200, 100, 50), 2.0) == Rgb (255, 200, 100));
 }
+
+TEST_CASE("the map decides land and water", "[colour]")
+{
+	uint32_t polder = Topo (-5.0, true, 0, 0, 0), lake = Topo (200.0, true, 0, 0, 1), sea = Topo (-50.0, true, 0, 0, 1);
+	REQUIRE((G (polder) > R (polder) && G (polder) > B (polder))); // land below sea level: lowland green
+	REQUIRE(polder == Topo (0.0, true, 0, 0, 0));
+	REQUIRE((B (lake) > R (lake) && B (lake) > G (lake)));          // a lake above sea level: water
+	REQUIRE(lake == Topo (0.0, true, 0, 0, 1));
+	REQUIRE(sea == Topo (-50.0, true, 0, 0));                       // the map agrees with the height: as before
+	REQUIRE(Topo (-5.0, true, 0, 0, -1) == Topo (-5.0, true, 0, 0)); // no map: by height
+	REQUIRE(Topo (300.0, false, 0, 600, 1) == Topo (300.0, false, 0, 600)); // a body without a sea ignores it
+	REQUIRE(Warn (10.0, 1000.0, true, 0, 0, 1) == Scale (Topo (10.0, true, 0, 0, 1), 0.45));
+	REQUIRE(IsWater (100.0, 1));
+	REQUIRE_FALSE(IsWater (-100.0, 0));
+	REQUIRE(IsWater (-1.0, -1));
+	REQUIRE_FALSE(IsWater (1.0, -1));
+}

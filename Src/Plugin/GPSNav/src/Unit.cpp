@@ -23,7 +23,7 @@ const char *FIELDS[NFIELD] = {"GS", "DTK", "TRK", "DIS", "ETE", "BRG", "XTK", "E
 const char *NRST_PAGE[5] = {"APT", "VOR", "NDB", "BASE", "USER"};
 const char *NRST_TITLE[5] = {"NEAREST AIRPORTS", "NEAREST VOR", "NEAREST NDB", "NEAREST BASES", "NEAREST USER WPTS"};
 const char *GROUP[Unit::NGROUP] = {"MAP", "WPT", "NRST", "FPL", "VNAV"};
-enum { M_UNITS, M_FIELD1, M_FIELD5 = M_FIELD1 + 4, M_MAP, M_COLOURS, M_MARKER, M_CDI, M_GP, M_TCH, M_CANCEL, M_CLEAR, NMENU }; // the MENU's lines
+enum { M_UNITS, M_FIELD1, M_FIELD5 = M_FIELD1 + 4, M_MAP, M_COLOURS, M_DOWNLOAD, M_MARKER, M_CDI, M_GP, M_TCH, M_CANCEL, M_CLEAR, NMENU }; // the MENU's lines
 const char *MAPMODE[3] = {"TOPO", "TERRAIN", "PLAIN"};
 const char *CDISCALE[4] = {"AUTO", "5.0 NM", "1.0 NM", "0.3 NM"};
 
@@ -173,19 +173,19 @@ void SizeAspect (ImGuiSizeCallbackData *d) // the unit keeps its shape: the side
 std::string Options::Save () const
 {
 	char b[160];
-	snprintf (b, sizeof b, "%d %d %d %d %d %d %d %d %d %.3f %.1f %d %d %d", metric ? 1 : 0, trackUp ? 1 : 0, dcl, range,
-		fields[0], fields[1], fields[2], fields[3], fields[4], gpAngle * gps::DEG, tch, mapMode, marker ? 1 : 0, cdi);
+	snprintf (b, sizeof b, "%d %d %d %d %d %d %d %d %d %.3f %.1f %d %d %d %d", metric ? 1 : 0, trackUp ? 1 : 0, dcl, range,
+		fields[0], fields[1], fields[2], fields[3], fields[4], gpAngle * gps::DEG, tch, mapMode, marker ? 1 : 0, cdi, mapDownload ? 1 : 0);
 	return b;
 }
 
 void Options::Load (const char *s)
 {
-	int m, t, d, r, f[5], c = 0, mk = 1, cd = 0;
+	int m, t, d, r, f[5], c = 0, mk = 1, cd = 0, dl = 1;
 	double a, h;
-	if (sscanf (s, "%d%d%d%d%d%d%d%d%d%lf%lf%d%d%d", &m, &t, &d, &r, f, f + 1, f + 2, f + 3, f + 4, &a, &h, &c, &mk, &cd) < 11) return; // the map colours, the marker and the CDI came later
+	if (sscanf (s, "%d%d%d%d%d%d%d%d%d%lf%lf%d%d%d%d", &m, &t, &d, &r, f, f + 1, f + 2, f + 3, f + 4, &a, &h, &c, &mk, &cd, &dl) < 11) return; // the map colours, the marker, the CDI and the map download came later
 	metric = m != 0, trackUp = t != 0, dcl = std::clamp (d, 0, 2), range = std::clamp (r, 0, NRANGE - 1);
 	for (int i = 0; i < 5; i++) fields[i] = std::clamp (f[i], 0, NFIELD - 1);
-	gpAngle = std::clamp (a, 1.0, 30.0) * gps::RAD, tch = std::clamp (h, 0.0, 100.0), mapMode = std::clamp (c, 0, 2), marker = mk != 0, cdi = std::clamp (cd, 0, 3);
+	gpAngle = std::clamp (a, 1.0, 30.0) * gps::RAD, tch = std::clamp (h, 0.0, 100.0), mapMode = std::clamp (c, 0, 2), marker = mk != 0, cdi = std::clamp (cd, 0, 3), mapDownload = dl != 0;
 }
 
 // ---------------------------------------------------------------------
@@ -653,7 +653,7 @@ void Unit::Press (int k, Ctx &c)
 		} else if (ov == O_MENU) {
 			if (menuSel == M_CANCEL) { if (c.plan && c.plan->direct) c.plan->direct = false, Msg ("Direct-To cancelled"); }
 			else if (menuSel == M_CLEAR) { plans[c.vname] = Plan (), c.plan = nullptr; Msg ("Flight plan cleared"); }
-			else if (menuSel == M_UNITS || menuSel == M_MAP || menuSel == M_COLOURS || menuSel == M_MARKER || menuSel == M_CDI) Outer (1, c);
+			else if (menuSel == M_UNITS || menuSel == M_MAP || menuSel == M_COLOURS || menuSel == M_DOWNLOAD || menuSel == M_MARKER || menuSel == M_CDI) Outer (1, c);
 			else ov = O_NONE;
 		} else if (cursor && group == G_NRST && row < (int)nrst.size ()) {
 			wptBody = c.b, wptIdx = nrst[row], group = G_WPT, cursor = false;
@@ -674,6 +674,7 @@ void Unit::Outer (int d, Ctx &c)
 		case M_UNITS: opt.metric = !opt.metric; break;
 		case M_MAP: opt.trackUp = !opt.trackUp; break;
 		case M_COLOURS: opt.mapMode = (opt.mapMode + d + 3) % 3; break;
+		case M_DOWNLOAD: opt.mapDownload = !opt.mapDownload; break;
 		case M_MARKER: opt.marker = !opt.marker; break;
 		case M_CDI: opt.cdi = (opt.cdi + d + 4) % 4; break;
 		case M_GP: opt.gpAngle = std::clamp (opt.gpAngle + d * 0.5 * gps::RAD, 1.0 * gps::RAD, 30.0 * gps::RAD); break;
@@ -1006,12 +1007,14 @@ void Unit::DrawMap (ImDrawList *dl, const Ctx &c)
 	};
 
 	// the terrain's colours, coastlines or contours, else a grid of latitude and longitude
-	bool relief = false;
+	bool relief = false, shore = false;
 	if (opt.mapMode != 2) {
 		Terrain::View tv {c.hRef, c.R, c.pos, up, k, own.x, own.y, sx0, cy0, sx1, cy1};
-		relief = terrain.Draw (dl, tv, opt.mapMode == 1 && !c.ground ? Terrain::WARN : Terrain::TOPO, c.alt, b.coast, c.sys);
+		tv.osm = b.coast && !strcasecmp (c.body.c_str (), "Earth"), tv.download = opt.mapDownload;
+		relief = terrain.Draw (dl, tv, opt.mapMode == 1 && !c.ground ? Terrain::WARN : Terrain::TOPO, c.alt, b.coast, c.sys, C_COAST, &shore);
 	}
-	for (const auto &l : b.lines) Poly (l, !relief ? C_LAND : b.coast ? C_COAST : IM_COL32 (60, 48, 38, 255), relief ? 1.2f : 1.4f);
+	if (!(relief && shore)) // the map's shores, else the body's map lines
+		for (const auto &l : b.lines) Poly (l, !relief ? C_LAND : b.coast ? C_COAST : IM_COL32 (60, 48, 38, 255), relief ? 1.2f : 1.4f);
 	if (b.lines.empty () && !relief) {
 		const double steps[] = {30, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01};
 		double st = steps[0];
@@ -1427,7 +1430,7 @@ void Unit::DrawMenu (ImDrawList *dl, const Ctx &c)
 		{"Units", opt.metric ? "KM M/S M" : "NM KT FT"},
 		{"Data field 1", FIELDS[opt.fields[0]]}, {"Data field 2", FIELDS[opt.fields[1]]}, {"Data field 3", FIELDS[opt.fields[2]]},
 		{"Data field 4", FIELDS[opt.fields[3]]}, {"Data field 5", FIELDS[opt.fields[4]]},
-		{"Map", opt.trackUp ? "TRACK UP" : "NORTH UP"}, {"Map colours", MAPMODE[opt.mapMode]}, {"HUD caret", opt.marker ? "ON" : "OFF"}, {"CDI scale", CDISCALE[opt.cdi]},
+		{"Map", opt.trackUp ? "TRACK UP" : "NORTH UP"}, {"Map colours", MAPMODE[opt.mapMode]}, {"Map download", opt.mapDownload ? "ON" : "OFF"}, {"HUD caret", opt.marker ? "ON" : "OFF"}, {"CDI scale", CDISCALE[opt.cdi]},
 		{"Glide path", gp}, {"Crossing height", tc},
 		{"Cancel Direct-To", ""}, {"Clear flight plan", ""}};
 	float y = a.y + 1.4f * fs, rh = std::min (1.1f * fs, (e.y - 1.6f * fs - y) / (float)NMENU);

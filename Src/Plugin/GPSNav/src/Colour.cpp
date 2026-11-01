@@ -36,19 +36,19 @@ uint32_t Scale (uint32_t c, double f)
 	return (c & 0xFF000000u) | C ((c >> 16) & 255) << 16 | C ((c >> 8) & 255) << 8 | C (c & 255);
 }
 
-uint32_t Topo (double elev, bool sea, double lo, double hi)
+uint32_t Topo (double elev, bool sea, double lo, double hi, int water)
 {
-	if (sea) return elev <= 0.0 ? Ramp (SEA, 3, elev) : Ramp (LAND, 10, elev);
+	if (sea) return IsWater (elev, water) ? Ramp (SEA, 3, std::min (elev, 0.0)) : Ramp (LAND, 10, std::max (elev, 0.0));
 	double t = hi > lo ? (elev - lo) / (hi - lo) : 0.5;
 	return Ramp (DRY, 5, t);
 }
 
-uint32_t Warn (double elev, double alt, bool sea, double lo, double hi)
+uint32_t Warn (double elev, double alt, bool sea, double lo, double hi, int water)
 {
 	const double FT = 0.3048;
 	if (elev > alt - 100.0 * FT) return Rgb (205, 30, 30);
 	if (elev > alt - 1000.0 * FT) return Rgb (215, 190, 30);
-	return Scale (Topo (elev, sea, lo, hi), 0.45);
+	return Scale (Topo (elev, sea, lo, hi, water), 0.45);
 }
 
 } // namespace gps

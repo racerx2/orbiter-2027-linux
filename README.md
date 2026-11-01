@@ -92,6 +92,8 @@ It comes with Orbiter: turn on **GPSNav** in the Launchpad's **Modules** tab and
 A panel GPS unit for any ship on any planet or moon, laid out like the real thing:
 
 - **Moving map** with the terrain in colour, airports, runways, beacons, Orbiter's bases and pads, north up or track up.
+  On Earth, water, land and shores come from the OpenStreetMap map (OpenFreeMap), fetched as you fly and kept in
+  `GPSNav/Cache/Map`: lakes above sea level are water, polders below it are land.
 - **Direct-To, flight plans and Nearest**: plans are saved with the scenario; the nearest airports, bases and beacons
   are a button away, with their runways, frequencies and elevations.
 - **Approach**: a glide path to any runway or pad, a course needle, and GPS roll steering (GPSS) that banks the ship
@@ -466,7 +468,7 @@ The same credits are on the Launchpad page Options > Planet streaming, from
     right 2015. All rights reserved
   - United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data
     courtesy of the U.S. Geological Survey.
-- Buildings, roads, railways, airports and rivers: © OpenMapTiles https://openmaptiles.org © OpenStreetMap
+- Buildings, roads, railways, airports and rivers, and the GPS navigator's water: © OpenMapTiles https://openmaptiles.org © OpenStreetMap
   contributors, available under the Open Database License
   https://www.openstreetmap.org/copyright, served by OpenFreeMap https://openfreemap.org
 

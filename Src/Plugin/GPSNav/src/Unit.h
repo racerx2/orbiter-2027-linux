@@ -21,6 +21,7 @@ struct Options {
 	int mapMode = 0;                   // 0 TOPO, 1 TERRAIN (against the altitude), 2 PLAIN
 	bool marker = true;                // the HUD's heading-tape caret toward the active waypoint
 	int cdi = 0;                       // the CDI's full scale: 0 AUTO, 1 5 nm, 2 1 nm, 3 0.3 nm
+	bool mapDownload = true;           // the map's water tiles fetched from OpenFreeMap (else the cache only)
 	std::string Save () const;
 	void Load (const char *s);
 };
