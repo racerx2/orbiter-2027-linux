@@ -14,7 +14,7 @@ Glow is drawn as Orbiter draws it: a material's emissive colour lights its textu
 Without a window (headless) or for batch use: `ORBITER_GLTF_EXPORT=1 ./Orbiter --plugin=GltfExport ...` exports the focus vessel on the third frame; `ORBITER_GLTF_EXPORT=thread` does it through the worker thread as the menu does (needs the window).
 
 ## Back into Orbiter
-In Blender: File, Export, glTF 2.0, glTF Binary, with Include > Data > Custom Properties ticked (the Orbiter data rides on them), and keep each action's name starting with its number. Put the .glb in the vessel's mesh folder (`Meshes/dg-xr1` for the XR1); Orbiter uses it for every mesh it was exported from. Untouched parts, materials, textures and animations stay as the vessel has them; changed ones come from the file. Orbiter.log says what came from the file. Export from the vessel as it ships (no drop-in file in its folder), so the recorded parts are the program's.
+In Blender: File, Export, glTF 2.0, glTF Binary, with Include > Data > Custom Properties ticked (the Orbiter data rides on them), and keep each action's name starting with its number. Put the .glb in the vessel's mesh folder (`Meshes/DG` for the Delta-glider); Orbiter uses it for every mesh it was exported from. Untouched parts, materials, textures and animations stay as the vessel has them; changed ones come from the file. Orbiter.log says what came from the file. Export from the vessel as it ships (no drop-in file in its folder), so the recorded parts are the program's.
 
 Files from version 0.1 of this add-on can't go back: export them again.
 

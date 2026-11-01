@@ -185,7 +185,7 @@ TEST_CASE("a vessel class's profile is found whatever its letter case", "[editor
 	Put (dir + "/Input/vessels/deltaglider.cfg", "BIND Stick.B1 = FUNC Pause\n"); // made from Config/Vessels/Deltaglider.cfg's name
 	REQUIRE(InputResolveCase (dir + "/Input/Vessels/DeltaGlider.cfg") == dir + "/Input/vessels/deltaglider.cfg");
 	REQUIRE(InputResolveCase (dir + "/Input/Vessels/Other.cfg") == dir + "/Input/vessels/Other.cfg"); // a new file in the folder that is there
-	REQUIRE(InputClassPath ("XR\\XR2Ravenstar") == "XR/XR2Ravenstar");
+	REQUIRE(InputClassPath ("Vendor\\Ship2") == "Vendor/Ship2");
 	InputDevices devs (dir + "/nosys", dir + "/nodev");
 	InputSystem sys (dir + "/Input", &devs);
 	InputEditor ed (&sys, InputEditor::VesselDir (&sys));

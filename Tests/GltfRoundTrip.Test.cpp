@@ -137,8 +137,8 @@ TEST_CASE ("glTF round trip: names and records", "[gltfrt]")
 	CHECK (RtAnimIndex ("11 glider4-1.001") == 11);
 	CHECK (RtAnimIndex ("x11") == -1);
 	CHECK (RtAnimIndex ("11x") == -1);
-	CHECK (RtSameMeshName ("dg-xr1\\DeltaGlider-XR1", "DG-XR1/deltaglider-xr1"));
-	CHECK (!RtSameMeshName ("dg-xr1\\a", "dg-xr1\\b"));
+	CHECK (RtSameMeshName ("ship-a1\\Ship-A1", "SHIP-A1/ship-a1"));
+	CHECK (!RtSameMeshName ("ship-a1\\a", "ship-a1\\b"));
 	RtRecord r;
 	std::string err;
 	CHECK (!RtParseRecord ("{\"orbiter\":{\"version\":1}}", r, err));

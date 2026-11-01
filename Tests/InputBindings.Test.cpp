@@ -478,11 +478,11 @@ TEST_CASE("an axis acts once it has moved since its device was found", "[binding
 
 TEST_CASE("profiles: global, vessel and inherited", "[bindings]")
 {
-	InputProfile g, xr, xr2;
+	InputProfile g, cls, sub;
 	g.binds = Binds ({ "Stick.B1 = KEY G", "Stick.B2 = FUNC Pause", "Stick.X = AXIS Bank" });
-	xr.binds = Binds ({ "Stick.B1 = KEY H", "Stick.B3 = KEY J" });
-	xr2.binds = Binds ({ "Stick.B2 = NONE", "Stick.B1 @1 = KEY K" });
-	std::vector<Binding> m = InputMerge ({ &g, &xr, &xr2 });
+	cls.binds = Binds ({ "Stick.B1 = KEY H", "Stick.B3 = KEY J" });
+	sub.binds = Binds ({ "Stick.B2 = NONE", "Stick.B1 @1 = KEY K" });
+	std::vector<Binding> m = InputMerge ({ &g, &cls, &sub });
 	REQUIRE(m.size() == 4);
 	int g1 = 0, h1 = 0, k1 = 0, p = 0;
 	for (auto &b : m) {
