@@ -172,6 +172,14 @@ keyboard and the mouse. Under **Options > Controllers**, in the Launchpad or in 
 
 ### Every monitor
 
+![One view of the Moon spanning three monitors of different sizes, with a lunar base in the middle](./.github/readme/monitors-span.jpg)
+
+*Multiple displays: one view of the Moon across three monitors.*
+
+![An MFD and the Scenario Editor dragged out of the render window onto a second monitor and resized there, with the Moon view on the first](./.github/readme/monitors-windows.jpg)
+
+*An MFD and the Scenario Editor dragged out onto a second monitor and resized there, leaving the first monitor to the view.*
+
 - **Full screen** opens on the Launchpad's monitor. **Multiple displays** spans all monitors (X11, and KDE Plasma on
   Wayland).
 - **In-flight windows** (external MFDs, the map, dialogs) drag out of the render window onto other monitors and stay on top.
