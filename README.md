@@ -139,6 +139,10 @@ Ctrl+Shift+L always brings back the classic Launchpad.
 
 *BaseSync MFD 3.3, built for Orbiter 2016 on Windows, running in the Delta-glider's left MFD.*
 
+![Orbiter 2010 add-ons on the Moon: a large NASA ship on its landing legs, a rover beside it and a cargo hauler on a landing pad](./.github/readme/windows-addons-2010.jpg)
+
+*Older add-ons from the Orbiter 2010 days, such as UCGO and UMmu, now load too, all through Wine.*
+
 Two decades of Orbiter add-ons are Windows `.dll` modules. They load here too, through Wine:
 
 - **No setup**: install the add-on as on Windows, by extracting its zip into Orbiter. Where Orbiter finds a Windows
