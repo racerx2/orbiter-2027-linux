@@ -20,39 +20,76 @@ This tree is the Linux-only code of a line-by-line port of [orbitersim/orbiter](
 windows and dialogs on Qt 6, sound on PipeWire. Orbiter itself holds no Windows code; the one Windows part is the
 optional Wine bridge that runs old Windows add-ons. Orbiter for Windows is [orbitersim/orbiter](https://github.com/orbitersim/orbiter).
 
+## Why fly this one
+
+- **Fly anywhere on Earth.** The whole planet streams in as you fly: real imagery and terrain, 3D cities, roads and
+  rivers, and real airports with their runways painted on and lit up at night. No texture packs, no accounts.
+- **Land on the real Mars.** Valles Marineris, Olympus Mons and Jezero stream in from USGS maps, down to 6 m detail.
+- **Navigate like a pilot.** A GPS comes with it: moving map, flight plans, 80,000 airports and beacons, glide
+  paths and GPS steering, on any ship.
+- **Keep your Windows add-ons.** Ships, MFDs and plugins made for Orbiter 2010, 2016 and 2024 fly from their zips,
+  through Wine, with nothing to set up.
+- **Crash like it matters.** Hulls dent, tear and break into debris; buildings take the hit too.
+- **Build in Blender.** glTF ships with every PBR material, and a round trip to Blender and back with the animations.
+- **See it properly.** Shadows, reflections, volumetric plumes, re-entry plasma, valley fog and cities lit street by street.
+- **Fly your own pit.** Any key or function on any stick, throttle, pedal set or button box; windows on any monitor.
+- **Native and portable.** Vulkan, Qt 6 and PipeWire. One download runs on Ubuntu, Mint, Debian, Fedora, Arch,
+  SteamOS and more.
+
 ## What's new since the Windows version
 
-### Streamed Earth and 3D cities
+### The whole Earth, streamed
 
 ![New York, Paris, Chicago and London](./.github/readme/earth-cities.jpg)
 
 *New York, Paris, Chicago and London, streamed in while flying.*
 
-Earth streams in as you fly, from free servers with no account or key:
+Take off anywhere and fly over the real thing. Earth streams in as you fly, from free servers with no account or key:
 
 - **Imagery and terrain** for the whole planet: Sentinel-2 imagery, elevation, water and coastlines.
 - **3D cities**: buildings from OpenStreetMap wherever it has them, set on the terrain with textured walls and
   roofs and windows lit at night. With the Collision module on they are solid: ships crash into them and can land on their roofs.
-- **Roads, railways, airports and rivers** from OpenStreetMap, painted on the ground: runways with their markings,
-  taxiways and aprons, lane lines, and street lamps where the city is lit at night.
-- **Runway lights** at every streamed airport: edges, centre line and approach lights at night, and a PAPI at each end.
+- **Roads, railways, airports and rivers** from OpenStreetMap, painted on the ground, with street lamps where the
+  city is lit at night (below).
 - **Ground detail**: 3D trees from land cover out to the horizon, terrain shadows, volumetric clouds without tile seams.
 - **Ahead of you**: the ground, buildings and roads under the next minute of your flight path load before you get there.
-- **On the runway from the start**: a scenario's landed ships are placed once the finest ground under them is in,
-  so they stand on the runway, not above or under it.
 - **Offline**: download a region ahead of time under Options > Planet streaming, buildings and roads included.
-- **Mars streams too**: USGS colour, 6 m CTX detail along the equator and MOLA elevation, in place of the old Mars pack.
 
 Sources, settings and credits: [Earth imagery](#earth-imagery).
 
-### GPS navigator
+### Real airports, day and night
+
+<p><img src="./.github/readme/airport-day.jpg" width="49%" alt="Hobby airport, Houston, by day: runways with their numbers and markings, taxiways, hangars, downtown Houston behind"> <img src="./.github/readme/airport-night.jpg" width="49%" alt="Hobby airport at night: both runways lit, approach lights, green thresholds, red ends, PAPI bars, the city's street lamps around"></p>
+
+*Houston Hobby by day, and on final at night. Nothing here was modelled by hand.*
+
+Every airport OpenStreetMap knows is there, streamed with the ground around it:
+
+- **Runways as pilots see them**: their numbers, threshold bars, touchdown zones, aiming points and centre lines,
+  the taxiways and aprons around them, and the hangars and terminals.
+- **Lit at night** like a real field: white edge lights turning yellow near the end, centre line, green thresholds,
+  red ends, touchdown zone and approach lights.
+- **PAPI** on the left of each end: two white and two red on a 3° glide path.
+- **Ready on the runway**: a scenario's landed ships wait for the finest ground under them, so they stand on the
+  runway from the first frame, not above or under it.
+
+### Mars, streamed
+
+![A Delta-glider on the rim of Coprates Chasma, the walls of Valles Marineris across the canyon](./.github/readme/mars.jpg)
+
+*A Delta-glider on the rim of Coprates Chasma, Valles Marineris.*
+
+Mars streams the same way, from USGS's public maps: natural-colour imagery, 6 m CTX detail along the equator and
+MOLA terrain. Land in Valles Marineris, on Olympus Mons or at Jezero. The old Mars texture pack is retired.
+
+### A GPS in every cockpit
 
 ![The GPS navigator at Hobby airport, Houston](./.github/readme/gpsnav.jpg)
 
 *The GPS navigator with a flight plan from Hobby to Bush Intercontinental, Houston.*
 
-A panel GPS unit for any ship on any planet or moon. Turn on **GPSNav** in the Launchpad's **Modules** tab, then click
-the GPS pin on the menu bar:
+It comes with Orbiter: turn on **GPSNav** in the Launchpad's **Modules** tab and click the GPS pin on the menu bar.
+A panel GPS unit for any ship on any planet or moon, laid out like the real thing:
 
 - **Moving map** with the terrain in colour, airports, runways, beacons, Orbiter's bases and pads, north up or track up.
 - **Direct-To, flight plans and Nearest**: plans are saved with the scenario; the nearest airports, bases and beacons
@@ -65,7 +102,7 @@ the GPS pin on the menu bar:
 
 The manual is the unit's help button. Source: [Src/Plugin/GPSNav](./Src/Plugin/GPSNav/README.md).
 
-### Planets and moons
+### More planets and moons
 
 ![Pluto and Charon](./.github/readme/planets.jpg)
 
@@ -96,9 +133,13 @@ Change how the Launchpad looks without changing what it does. Pick a skin under 
 
 Ctrl+Shift+L always brings back the classic Launchpad.
 
-### Windows add-ons
+### Your Windows add-ons still fly
 
-Add-ons made for Orbiter 2010, 2016 and 2024 on Windows load with their `.dll` modules through Wine:
+![BaseSync MFD 3.3, a Windows add-on, on the left MFD of a Delta-glider at Hobby](./.github/readme/windows-addons.jpg)
+
+*BaseSync MFD 3.3, built for Orbiter 2016 on Windows, running in the Delta-glider's left MFD.*
+
+Two decades of Orbiter add-ons are Windows `.dll` modules. They load here too, through Wine:
 
 - **No setup**: install the add-on as on Windows, by extracting its zip into Orbiter. Where Orbiter finds a Windows
   module and no Linux one of that name, it opens it through the Wine bridge.
@@ -111,7 +152,7 @@ Add-ons made for Orbiter 2010, 2016 and 2024 on Windows load with their `.dll` m
 
 How it works: [Src/WineBridge](./Src/WineBridge/README.md).
 
-### Controllers
+### Fly your own pit
 
 Every key and every function can be bound to any controller: joysticks, throttles, rudder pedals, button boxes, the
 keyboard and the mouse. Under **Options > Controllers**, in the Launchpad or in flight:
@@ -121,13 +162,15 @@ keyboard and the mouse. Under **Options > Controllers**, in the Launchpad or in 
 - **Plug and play**: controllers are found as they are plugged in; a new setup binds the first stick.
 - **`<Disabled>`** has Orbiter ignore every controller.
 
-### Monitors
+### Every monitor
 
 - **Full screen** opens on the Launchpad's monitor. **Multiple displays** spans all monitors (X11, and KDE Plasma on
   Wayland).
 - **In-flight windows** (external MFDs, the map, dialogs) drag out of the render window onto other monitors and stay on top.
 
-### On the ground
+### Solid ground
+
+Ships sit, roll and taxi like ships:
 
 - **Nothing goes into the terrain**: wheels stand on the ground at rest, landed ships settle on slopes, and a hull that
   touches down rests on its own shape.
@@ -137,6 +180,8 @@ keyboard and the mouse. Under **Options > Controllers**, in the Launchpad or in 
 - **Hard landings** at any time acceleration: stiff ground contacts get the substeps they need.
 
 ### Collisions and damage
+
+Ships finally hit things.
 
 ![Two Delta Gliders hit head-on at 70 m/s in orbit: the noses crush and break into debris](./.github/readme/collisions.gif)
 
@@ -159,16 +204,29 @@ An add-on that makes ships collide with each other, with base buildings and with
 
 Turn it on in the Launchpad's **Modules** tab (Collision). Settings are in `Config/Collision.cfg`.
 
-### glTF models and PBR materials
+### glTF ships and a Blender round trip, animations included
 
 ![A Delta Glider exported from Blender as a .glb with PBR materials, next to the stock Delta Glider GL-01](./.github/readme/gltf-pbr.jpg)
 
 *A Delta Glider exported from Blender as a .glb, with PBR materials, next to the stock Delta Glider (GL-01).*
 
-Ships no longer have to be converted to Orbiter's `.msh` format:
+![The stock Delta-glider exported from Orbiter to glTF and opened in Blender: its nosecone, ladder, top hatch, radiator and landing gear opened by its own animations](./.github/readme/gltf-blender.jpg)
 
-- **Straight from Blender**: export glTF Binary (`.glb`, +Y Up on) or `.gltf`, put it in a folder under `Meshes`
-  and name it in the vessel's cfg, for example `MeshName = MyShip\myship.glb`. A `.glb` carries its textures
+*The stock Delta-glider, exported from Orbiter and opened in Blender: its animations come along as Blender actions,
+posed here with the nosecone, ladder, top hatch, radiator and gear open.*
+
+Ships no longer have to be converted to Orbiter's `.msh` format, and any ship can go to Blender and come back:
+
+- **To Blender, animations included**: the GltfExport add-on ([Tools/GltfExport](./Tools/GltfExport/README.md))
+  writes any vessel, stock or add-on, as one `.glb`: meshes, materials, textures, and every animation as a Blender
+  action with its hinges and keyframes.
+- **Back into Orbiter**: edit it in Blender (export with *Include > Custom Properties* ticked) and drop the `.glb` in
+  the vessel's mesh folder, for example `Meshes\DG`. Orbiter uses it in place of the `.msh` meshes it was made
+  from, outside and cockpit, keeping the part, material and texture numbers the vessel's program uses. What you left
+  alone stays exactly as before; what you changed (shapes, new parts, hinges, keyframes, colours, painted images)
+  comes from the file, animations included. Remove the file to go back.
+- **New ships straight from Blender**: export glTF Binary (`.glb`, +Y Up on) or `.gltf`, put it in a folder under
+  `Meshes` and name it in the vessel's cfg, for example `MeshName = MyShip\myship.glb`. A `.glb` carries its textures
   inside, so there is no converter, no texture folder and no material file to write. In Blender the nose points
   along +Y and the top along +Z.
 - **Every glTF PBR material feature**: base colour and alpha (opaque, cut-out, transparent), metallic and
@@ -177,24 +235,13 @@ Ships no longer have to be converted to Orbiter's `.msh` format:
   colours).
 - **Lit by the simulation**: the sun with shadows, the ship's own lights, and reflections of its surroundings.
 - **Glass seen through glass**: a HUD behind the canopy, a visor inside a helmet, or another ship's windows
-  behind your own now show through, tinted by the glass in front. Glass shows what is behind it by bending a
-  copy of the screen. That copy used to be taken once, before any glass was drawn, so glass behind other glass
-  was missing from it, and a canopy around the HUD was drawn first and hid it completely. Glass is now drawn in
-  the right order, and the copy is refreshed whenever glass already drawn lies behind the next pane.
+  behind your own show through, tinted by the glass in front.
 - **Old models unchanged**: `.msh` meshes look exactly as before. They can get PBR materials too, through
   `PBR` lines in their `Config/GC` material file.
 - **Collisions**: with the collision add-on, glTF ships collide on their real shape.
-- **To Blender**: the GltfExport add-on ([Tools/GltfExport](./Tools/GltfExport/README.md)) writes a vessel as one `.glb`
-  with its meshes, materials and animations.
-- **Back from Blender**: a `.glb` made from an Orbiter vessel and edited in Blender (export with
-  *Include > Custom Properties* ticked) goes in the vessel's mesh folder, for example `Meshes\dg-xr1`. Orbiter then
-  uses it in place of the `.msh` meshes it was made from, outside and cockpit, keeping the part, material and
-  texture numbers the vessel's program uses. What was left alone in Blender stays exactly as before; what was
-  changed (shapes, new parts, hinges, keyframes, colours, painted images) comes from the file, animations
-  included. Remove the file to go back.
 
-Not supported yet: animations in a `.glb` named in a cfg, skeletons, morph targets, a second UV set, texture
-transforms, and Draco or KTX2 compression.
+Not supported yet: skeletons, morph targets, a second UV set, texture transforms, Draco or KTX2 compression, and
+animations in a `.glb` named directly in a cfg (a vessel's program makes its animations; the round trip above keeps them).
 
 Try it with the **Delta-glider > DG and DG-S and DGTest** scenario, and **Graphics > PBR material bench**,
 which shows every material on its own sphere.
