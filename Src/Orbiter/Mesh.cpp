@@ -1120,6 +1120,7 @@ const Mesh *MeshManager::LoadMesh (const char *fname, bool *firstload)
 		}
 	}
 	// not found, so load from file
+	if (g_pOrbiter) g_pOrbiter->ProcessLoadingEvents (); // not upstream (loading-events): a scenario's meshes while it loads
 	Mesh *mesh = new Mesh; TRACENEW
 	bool gltf = GltfIsName (fname); // not upstream: glTF meshes
 	if (gltf) LoadGltfMesh (fname, *mesh);

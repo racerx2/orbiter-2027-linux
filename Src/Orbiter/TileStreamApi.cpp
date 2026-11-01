@@ -7,6 +7,7 @@
 #include "Log.h"
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <fstream>
 #include <iterator>
 #include <thread>
@@ -65,12 +66,19 @@ void TsWaitGround (const Body *body, double lng, double lat, double radius, cons
 	std::vector<TileStream::TileKey> keys;
 	for (const TileStream::TileKey &k : TileStream::RegionKeys (lat * deg, lng * deg, km, L)) if (k.L == L) keys.push_back (k);
 	auto t0 = std::chrono::steady_clock::now();
-	size_t left;
+	size_t left, shown = keys.size() + 1;
 	for (;;) {
 		left = 0;
 		for (const TileStream::TileKey &k : keys) if (!ts->Want (b, k.L, k.ilat, k.ilng, 4)) left++;
 		if (!left || std::chrono::steady_clock::now() >= g_groundEnd) break;
+		if (left != shown) { // not upstream (loading-events): what the load waits for, on the splash
+			char cbuf[128];
+			snprintf (cbuf, sizeof cbuf, "Ground under %s: %zu of %zu tiles", name ? name : "a vessel", keys.size() - left, keys.size());
+			g_pOrbiter->OutputLoadStatus (cbuf, 1);
+			shown = left;
+		}
 		std::this_thread::sleep_for (std::chrono::milliseconds (50));
+		g_pOrbiter->ProcessLoadingEvents (); // not upstream (loading-events)
 	}
 	double waited = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count();
 	if (waited >= 0.05)

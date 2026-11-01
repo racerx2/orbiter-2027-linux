@@ -1416,6 +1416,7 @@ DLLEXPORT VISHANDLE *oapiObjectVisualPtr (OBJHANDLE hObject)
 
 DLLEXPORT MESHHANDLE oapiLoadMesh (const char *fname)
 {
+	g_pOrbiter->ProcessLoadingEvents (); // not upstream (loading-events): a scenario's meshes while it loads
 	Mesh *mesh = new Mesh; TRACENEW
 	if (GltfIsName (fname)) { // not upstream: glTF meshes
 		if (LoadGltfMesh (fname, *mesh)) mesh->SetName (fname);

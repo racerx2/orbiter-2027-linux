@@ -497,8 +497,13 @@ struct TileStream::Impl {
 	double CamDist (const Job &J) const; // its tile centre from that point (rad), 0 without one
 	int PrefetchVec (int b, int x, int y);
 	int Prefetch (const std::string &name, int L, int ilat, int ilng);
-	QByteArray Fetch (const std::string &url, int sec);
+	QByteArray Fetch (const std::string &url, int sec, const Body *start = nullptr);
 	QByteArray Source (Body &B, const std::string &url, const char *file, const char *fmt, int sec);
+	std::thread::id startThread;       // not upstream (loading-events): the constructor's thread, the only one Busy calls opt.busy on
+	bool starting = false;             // the constructor's passes are running
+	bool Starting () const { return std::this_thread::get_id() == startThread && starting; }
+	void Busy (const Body &B) { if (opt.busy && Starting()) opt.busy (B.cfg.name); }
+	bool ModsNone (Body &B, uint64_t k);
 	void Clouds (Body &B);
 	void BakeClouds (Body &B, const QImage &src, int l0, int l1);
 	void LoadBases (Body &B);
@@ -571,12 +576,16 @@ TileStream::Impl::Impl (const Options &o)
 		bodies.push_back (std::move (b));
 	}
 	if (bodies.empty()) return;
+	startThread = std::this_thread::get_id();
+	starting = true;
 	try {
 		Init ();
 	} catch (...) { // ~Impl never runs when the constructor throws: the locks and threads go here
+		starting = false;
 		Shutdown ();
 		throw;
 	}
+	starting = false;
 }
 
 // the folder locks, indexes, archives, net, clouds and threads
@@ -601,13 +610,15 @@ void TileStream::Impl::Init ()
 		lockKeys.clear();
 	}
 	for (auto &b : bodies) {
+		Busy (*b);
 		LoadIdx (*b);
+		Busy (*b);
 		LoadArchives (*b);
 		Log ("TileStream: " + b->cfg.name + " tiles go to " + b->dir + (opt.offline || ro ? " (offline)" : ""));
 	}
 	if (!opt.offline && !ro) net = std::make_unique<TsNet> (opt.userAgent);
-	for (auto &b : bodies) Retire (*b); // mars-stream: before the planets look for their tiles
-	if (opt.sky && !ro) for (auto &b : bodies) { LoadBases (*b); Clouds (*b); } // earth-sky: before the planet visuals load their tiles
+	for (auto &b : bodies) { Busy (*b); Retire (*b); } // mars-stream: before the planets look for their tiles
+	if (opt.sky && !ro) for (auto &b : bodies) { Busy (*b); LoadBases (*b); Busy (*b); Clouds (*b); } // earth-sky: before the planet visuals load their tiles
 	Clock::time_point now = opt.now();
 	nextHits = now + std::chrono::seconds (5);
 	nextEvict = now + std::chrono::seconds (300);
@@ -1490,6 +1501,7 @@ void TileStream::Impl::Retire (Body &B)
 	size_t gone = 0, kept = 0;
 	std::vector<char> buf ((size_t)1 << 20);
 	while (std::getline (f, line)) {
+		Busy (B); // not upstream (loading-events)
 		std::istringstream is (line);
 		std::string rel;
 		unsigned long long size;
@@ -1621,7 +1633,7 @@ void TileStream::Impl::LoadIdx (Body &B)
 		size_t lines = 0, good = 0;
 		while (std::getline (f, line)) {
 			if (line.find_first_not_of (" \t\r") == std::string::npos) continue;
-			lines++;
+			if (!(++lines & 4095)) Busy (B); // not upstream (loading-events)
 			int L, a, b;
 			long long t = 0;
 			if (ParseLine (line, extra, L, a, b, t) && KeyOk (name, L, a, b, lmin, lmax) && add (Key (L, a, b), (int64_t)t)) good++;
@@ -1967,6 +1979,7 @@ void TileStream::Impl::LoadArchives (Body &B)
 	size_t dropped = 0;
 	std::error_code ec;
 	auto rm = [&] (const char *layer, uint64_t k) {
+		Busy (B); // not upstream (loading-events)
 		std::string f = Tile (B.dir, layer, k);
 		if (!Ours (B, f)) return; // design dropin-addons: an add-on's file stays (its key leaves the index below)
 		fs::remove (f, ec);
@@ -2409,8 +2422,8 @@ int TileStream::Impl::Prefetch (const std::string &name, int L, int ilat, int il
 	return 1;
 }
 
-// a GET on the net thread, waited for here up to sec (0: until stop)
-QByteArray TileStream::Impl::Fetch (const std::string &url, int sec)
+// a GET on the net thread, waited for here up to sec (0: until stop); start: Busy while it waits in the constructor's passes
+QByteArray TileStream::Impl::Fetch (const std::string &url, int sec, const Body *start)
 {
 	if (!net) return QByteArray();
 	struct W { std::mutex m; std::condition_variable c; bool done = false; int st = 0; QByteArray body; };
@@ -2423,8 +2436,17 @@ QByteArray TileStream::Impl::Fetch (const std::string &url, int sec)
 		w->c.notify_all();
 	}, -1, 0, sec ? sec * 1000 : TsNet::LongMs); // a wait given up stops its download too
 	Clock::time_point until = Clock::now() + std::chrono::seconds (sec);
+	bool busy = start && Starting();
 	std::unique_lock<std::mutex> l (w->m);
-	while (!w->done && !quit && (!sec || Clock::now() < until)) w->c.wait_for (l, std::chrono::milliseconds (200));
+	while (!w->done && !quit && (!sec || Clock::now() < until)) {
+		if (busy) { // not upstream (loading-events)
+			l.unlock();
+			Busy (*start);
+			l.lock();
+			if (w->done) break;
+		}
+		w->c.wait_for (l, std::chrono::milliseconds (busy ? 50 : 200));
+	}
 	return w->done && w->st == 200 ? w->body : QByteArray();
 }
 
@@ -2448,7 +2470,7 @@ QByteArray TileStream::Impl::Source (Body &B, const std::string &url, const char
 	long long day = -1;
 	std::ifstream (stamp) >> day;
 	if (day == Today()) return QByteArray(); // a bad answer today already
-	QByteArray d = Fetch (url, sec);
+	QByteArray d = Fetch (url, sec, &B);
 	if (d.isEmpty()) return d;
 	fs::create_directories (B.dir + "/TileStream/src", ec);
 	if (!ImageOk (d, fmt)) {
@@ -2525,6 +2547,7 @@ void TileStream::Impl::BakeClouds (Body &B, const QImage &src, int l0, int l1)
 			for (int c = 0; c < (L < 4 ? 1 : 1 << (L - 3)) && !quit; c++) {
 				uint64_t k = Key (L, a, c);
 				if (B.Arch (A_CLOUD, k)) continue;
+				Busy (B); // not upstream (loading-events): the small image's levels in the constructor
 				std::string p = Tile (B.dir, "Cloud", k);
 				bool ours;
 				{
@@ -2616,6 +2639,7 @@ void TileStream::Impl::LoadBases (Body &B)
 	for (size_t i = 0; i < B.bases.size(); i++) {
 		const TsBase &b = B.bases[i];
 		double lng = b.lng * 180.0 / M_PI, lat = b.lat * 180.0 / M_PI;
+		Busy (B); // not upstream (loading-events)
 		for (int L = B.cfg.elev.lmax; std::isnan (B.baseH[i]) && L >= 14; L--) { // a fine Elev tile at the base point
 			double span = 180.0 / (1 << (L - 4));
 			uint64_t k = Key (L, std::clamp ((int)((90.0 - lat) / span), 0, (1 << (L - 4)) - 1), std::clamp ((int)((lng + 180.0) / span), 0, (1 << (L - 3)) - 1));
@@ -2639,7 +2663,9 @@ void TileStream::Impl::LoadBases (Body &B)
 			for (int a = a0; a <= a1; a++)
 				for (int c = c0; c <= c1; c++) {
 					uint64_t k = Key (L, a, (c % nl + nl) % nl); // fix-decoders: wrapped column
+					Busy (B); // not upstream (loading-events)
 					if (!fs::exists (Tile (B.dir, "Elev", k), ec) || fs::exists (Tile (B.dir, "Elev_mod", k), ec)) continue;
+					if (ModsNone (B, k)) continue; // not upstream (loading-events): nothing to make, known without reading the tile
 					made += Mods (B, k, ReadAll (Tile (B.dir, "Elev", k))) && fs::exists (Tile (B.dir, "Elev_mod", k), ec) ? 1 : 0;
 				}
 		}
@@ -2762,7 +2788,7 @@ bool TileStream::Impl::ModsAt (Body &B, uint64_t k, const std::string &elv, bool
 		{
 			std::lock_guard<std::mutex> lk (mx);
 			for (size_t i = 0; i < B.bases.size(); i++) {
-				if (!TsSky::Hits (B.bases[i], B.radius, L, KLat (k), KLng (k), Blend)) continue;
+				if (!TsSky::Reaches (B.bases[i], B.radius, L, KLat (k), KLng (k), Blend)) continue; // not upstream (loading-events): was its box (Hits)
 				if (std::isnan (B.baseH[i])) return false;
 				hit.push_back ({&B.bases[i], B.baseH[i]});
 			}
@@ -2854,6 +2880,21 @@ uint64_t TileStream::Impl::ModSource (Body &B, uint64_t k)
 	return 0;
 }
 
+// not upstream (loading-events): k, with no Elev_mod file, is one ModsAt leaves as it is with nothing written or indexed (no record
+// of k, no source above it, no base reaching it); known without k's heights, cheapest test first
+bool TileStream::Impl::ModsNone (Body &B, uint64_t k)
+{
+	std::lock_guard<std::mutex> ml (modMx);
+	if (!B.modsKnown || KL (k) < ModLevel || B.inh.count (k) || B.addonMod.count (k)) return false;
+	{
+		std::lock_guard<std::mutex> lk (mx);
+		if (B.mod.count (k)) return false;
+		for (const TsBase &b : B.bases)
+			if (TsSky::Reaches (b, B.radius, KL (k), KLat (k), KLng (k), Blend)) return false;
+	}
+	return !ModSource (B, k);
+}
+
 TileStream::Impl::Body::Inh TileStream::Impl::Stamp (const Body &B, uint64_t src, bool has) const
 {
 	Body::Inh n;
@@ -2911,6 +2952,7 @@ void TileStream::Impl::AddonMods (Body &B)
 	std::string top = B.dir + "/Elev_mod";
 	for (fs::recursive_directory_iterator it (top, ec), end; !ec && it != end; it.increment (ec)) {
 		std::error_code fe;
+		Busy (B); // not upstream (loading-events): modMx is held, Busy never calls the stream
 		if (it.depth() != 2 || it->path().extension() != ".elv" || !it->is_regular_file (fe)) continue;
 		const fs::path &p = it->path();
 		long long v[3];
@@ -2961,6 +3003,7 @@ void TileStream::Impl::AddonMods (Body &B)
 	size_t appends = B.inhAppends, carried = 0, redone = 0;
 	std::sort (keys.begin(), keys.end()); // Key: the level first
 	for (uint64_t k : keys) {
+		Busy (B); // not upstream (loading-events)
 		std::string ep = Tile (B.dir, "Elev", k), mp = Tile (B.dir, "Elev_mod", k);
 		if (!fs::exists (ep, ec)) continue; // Prune drops it
 		uint64_t s = ModSource (B, k);

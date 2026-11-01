@@ -7,7 +7,9 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QImage>
+#include <algorithm> // not upstream (loading-events)
 #include <array> // not upstream (design-preload)
+#include <random> // not upstream (loading-events)
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
@@ -1008,6 +1010,82 @@ TEST_CASE ("Elev_mod lays a base flat at its height, blends to the terrain and k
 	CHECK (node (0, 258) == SHRT_MAX);
 	CHECK (TsSky::ElevMod (L, ilat, ilng + 5, {{&b, 20.0}}, R, 0.5, elv, 150.0).empty());
 	CHECK (std::isnan (TsSky::ElvAt (elv, b.lng + 1.0, b.lat)));
+}
+
+// not upstream (loading-events): the startup pass skips tiles Reaches says no base can change
+static void Ext (TsBase &b)
+{
+	b.ext = 0.0;
+	for (const TsBase::Part &p : b.parts) b.ext = std::max (b.ext, std::max (std::hypot (p.n0, p.e0), std::hypot (p.n1, p.e1)) + p.r);
+}
+
+static void TileAt (int L, double latDeg, double lngDeg, int &ilat, int &ilng)
+{
+	double d = 180.0 / (1 << (L - 4));
+	lngDeg = std::remainder (lngDeg, 360.0);
+	ilat = std::clamp ((int)std::floor ((90.0 - latDeg) / d), 0, (1 << (L - 4)) - 1);
+	ilng = std::clamp ((int)std::floor ((lngDeg + 180.0) / d), 0, (1 << (L - 3)) - 1);
+}
+
+TEST_CASE ("Reaches is false only for tiles ElevMod leaves alone", "[TileStream]")
+{
+	const double R = 6.37101e6;
+	std::mt19937 rng (20261101);
+	auto U = [&rng] (double a, double b) { return std::uniform_real_distribution<double> (a, b) (rng); };
+	int no = 0, yes = 0, fine = 0, fineEmpty = 0;
+	for (int trial = 0; trial < 600; trial++) {
+		TsBase b;
+		double latDeg = trial % 10 == 0 ? U (88.0, 89.99) : U (-75.0, 75.0), lngDeg = trial % 7 == 0 ? U (179.5, 180.0) : U (-180.0, 180.0);
+		b.lat = latDeg * M_PI / 180.0;
+		b.lng = lngDeg * M_PI / 180.0;
+		for (int i = 0, np = 1 + (int)U (0.0, 3.99); i < np; i++) {
+			double n0 = U (-2500.0, 2500.0), e0 = U (-2500.0, 2500.0), len = U (0.0, 3000.0), a = U (0.0, 2.0 * M_PI);
+			b.parts.push_back ({n0, e0, n0 + len * std::cos (a), e0 + len * std::sin (a), U (15.0, 500.0)});
+		}
+		Ext (b);
+		int L = 11 + (int)U (0.0, 5.99), ilat, ilng;
+		double far = b.ext + 150.0 + 0.75 * 180.0 / (1 << (L - 4)) * M_PI / 180.0 * R; // the base's tile, its neighbours and some beyond
+		double dn = U (-far, far), de = U (-far, far);
+		TileAt (L, latDeg + dn / R * 180.0 / M_PI, lngDeg + de / (R * std::max (1e-3, std::cos (b.lat))) * 180.0 / M_PI, ilat, ilng);
+		std::string m = TsSky::ElevMod (L, ilat, ilng, {{&b, 20.0}}, R, 0.5, FlatElv (L, ilat, ilng, 100.0), 150.0);
+		if (!TsSky::Reaches (b, R, L, ilat, ilng, 150.0)) {
+			no++;
+			CHECK (m.empty());
+		} else {
+			yes++;
+			if (L >= 14) { // nodes 76 m apart or less, closer than any reach
+				fine++;
+				fineEmpty += m.empty();
+			}
+		}
+	}
+	CHECK (no > 100);
+	CHECK (yes > 100);
+	CHECK (fineEmpty * 10 < fine); // reached and still left alone: only between nodes or within the metre to spare
+
+	// a runway crossing the tile with both ends outside it
+	TsBase rw;
+	int L = 14, ilat = 400, ilng = 1000;
+	double dh = 180.0 / (1 << (L - 4)), span = dh * M_PI / 180.0 * R;
+	rw.lat = (90.0 - (ilat + 0.5) * dh) * M_PI / 180.0;
+	rw.lng = (-180.0 + (ilng + 0.5) * dh) * M_PI / 180.0;
+	rw.parts.push_back ({0.0, -1.5 * span, 0.0, 1.5 * span, 50.0});
+	Ext (rw);
+	CHECK (TsSky::Reaches (rw, R, L, ilat, ilng, 150.0));
+	CHECK (!TsSky::ElevMod (L, ilat, ilng, {{&rw, 20.0}}, R, 0.5, FlatElv (L, ilat, ilng, 100.0), 150.0).empty());
+	CHECK (!TsSky::Reaches (rw, R, L, ilat + 1, ilng, 150.0));
+
+	// across the date line: a base 190 m west of it reaches the first column east of it, and no further
+	TsBase dl;
+	dl.lat = 10.0 * M_PI / 180.0;
+	dl.lng = (180.0 - 0.01 * dh) * M_PI / 180.0;
+	dl.parts.push_back ({0.0, 0.0, 0.0, 0.0, 300.0});
+	Ext (dl);
+	TileAt (L, 10.0, -180.0 + 0.1 * dh, ilat, ilng);
+	REQUIRE (ilng == 0);
+	CHECK (TsSky::Reaches (dl, R, L, ilat, 0, 150.0));
+	CHECK (!TsSky::ElevMod (L, ilat, 0, {{&dl, 20.0}}, R, 0.5, FlatElv (L, ilat, 0, 100.0), 150.0).empty());
+	CHECK (!TsSky::Reaches (dl, R, L, ilat, 2, 150.0));
 }
 
 TEST_CASE ("Cloud tiles are white DXT5 with the image's density in alpha", "[TileStream]")

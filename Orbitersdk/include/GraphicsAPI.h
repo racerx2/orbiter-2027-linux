@@ -1682,6 +1682,16 @@ protected:
 public: // not upstream
 	// not upstream: a device mesh group's user flags now (oapiGetMeshGroupFlags); 0 ok, -2 not supported. Last virtual: the vtable's earlier slots stay
 	virtual int clbkGetMeshGroupFlags (DEVMESHHANDLE hMesh, DWORD grpidx, DWORD *usrFlag) { return -2; }
+
+	/**
+	 * \brief While a simulation session loads, answers the desktop: its checks that
+	 *   Orbiter still responds, and the render window's exposure and moves.
+	 * \note Not upstream. User input and a close of the render window wait until
+	 *   the session runs.
+	 * \note Call it during long work while loading, for example after each splash
+	 *   message or file. It does nothing outside loading or off the main thread.
+	 */
+	void ProcessLoadingEvents ();
 protected: // not upstream: as before
 
 	/**

@@ -1065,6 +1065,7 @@ VkShaderEXT CompilePixelShader(VkDev *pDev, const char *file, const char *functi
 	VkMacros macro; // D3DXMACRO[16]
 	bool bDisassemble = false;
 
+	g_client->ProcessLoadingEvents(); // not upstream (loading-events): a shader at a time while a session loads
 	LogAlw("Compiling a Shader [%s] function [%s] name [%s]...", file, function, name);
 
 	if (options) {
@@ -1169,6 +1170,7 @@ VkShaderEXT CompileVertexShader(VkDev *pDev, const char *file, const char *funct
 		}
 	}
 
+	g_client->ProcessLoadingEvents(); // not upstream (loading-events): a shader at a time while a session loads
 	LogAlw("Compiling a Shader [%s] function [%s]...", file, function);
 
 	std::string src;

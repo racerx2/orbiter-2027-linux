@@ -105,6 +105,7 @@ SURFHANDLE NatLoadSurface(const char* file, DWORD flags, bool bPath)
 	SurfNative* pNat = NULL;
 
 	NatCheckFlags(flags);
+	g_client->ProcessLoadingEvents(); // not upstream (loading-events): a scenario's textures while it loads
 
 	if (VkIsGltfImage(file)) { // not upstream: an image inside a glTF mesh (claude/design-gltf-loader.md 4)
 		VkPixels px;

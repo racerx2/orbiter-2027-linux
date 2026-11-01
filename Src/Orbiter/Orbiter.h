@@ -14,6 +14,7 @@
 #include "Mesh.h"
 #include "TimeData.h"
 #include <chrono>
+#include <string>
 
 class DInput;
 class Config;
@@ -73,6 +74,7 @@ public:
 	VOID Output2DData ();
 	void OutputLoadStatus (const char *msg, int line);
 	void OutputLoadTick (int line, bool ok = true);
+	void ProcessLoadingEvents (); // not upstream (loading-events): the desktop's events while a session loads
 	void TerminateOnError();
 	void UpdateServerWnd (QWidget *hWnd);
 	void InitRotationMode ();
@@ -408,6 +410,16 @@ private:
 	void StreamTrackStep ();               // not upstream
 	void StreamPathStep ();                // not upstream (design-preload): the path ahead below 10x
 	StreamTrack *m_pStreamTrack;           // not upstream: StreamPrefetch's state, one per session
+
+	// not upstream (loading-events): while CreateRenderWindow runs
+	void LoadingBegin ();
+	void LoadingEnd ();
+	bool bLoading = false;                 // a session is being created
+	bool bInLoadingEvents = false;         // inside ProcessLoadingEvents
+	std::chrono::steady_clock::time_point m_loadStart, m_loadPass; // the start, the last pass of events
+	double m_loadWaitMax = 0.0, m_loadWaitFrom = 0.0; // the longest stretch without a pass, and when it began
+	std::string m_loadText, m_loadPassText, m_loadWaitText; // the splash text now, at the last pass, during the longest stretch
+
 	ScriptInterface *script;
 	INTERPRETERHANDLE hScnInterp;
 

@@ -176,6 +176,43 @@ bool Hits (const TsBase &b, double R, int L, int ilat, int ilng, double blend)
 	return la + r >= n - dh && la - r <= n && std::fabs (std::remainder (ln - (w + dw / 2), 360.0)) <= dw / 2 + rl; // across the date line too
 }
 
+// not upstream (loading-events): segment (an, ae)-(bn, be) to the rectangle [n0, n1] x [e0, e1]; 0 when they meet
+static double SegRectDist (double an, double ae, double bn, double be, double n0, double n1, double e0, double e1)
+{
+	double dn = bn - an, de = be - ae, t0 = 0.0, t1 = 1.0;
+	auto clip = [&] (double p, double q) { // Liang-Barsky: keep p t <= q
+		if (p == 0.0) return q >= 0.0;
+		double t = q / p;
+		if (p < 0.0) { if (t > t1) return false; t0 = std::max (t0, t); }
+		else { if (t < t0) return false; t1 = std::min (t1, t); }
+		return true;
+	};
+	if (clip (-dn, an - n0) && clip (dn, n1 - an) && clip (-de, ae - e0) && clip (de, e1 - ae)) return 0.0;
+	auto toRect = [&] (double pn, double pe) { return std::hypot (pn - std::clamp (pn, n0, n1), pe - std::clamp (pe, e0, e1)); };
+	auto toSeg = [&] (double pn, double pe) {
+		double l2 = dn * dn + de * de, t = l2 > 0.0 ? std::clamp (((pn - an) * dn + (pe - ae) * de) / l2, 0.0, 1.0) : 0.0;
+		return std::hypot (pn - an - t * dn, pe - ae - t * de);
+	};
+	return std::min ({toRect (an, ae), toRect (bn, be), toSeg (n0, e0), toSeg (n0, e1), toSeg (n1, e0), toSeg (n1, e1)}); // apart: a vertex of one is nearest
+}
+
+// ElevMod's nodes of the tile in its north/east metres from the base (lat and lng each with the one-node border, the east range split
+// where remainder() wraps); a part reaches when it comes within r + blend of them, with a metre to spare
+bool Reaches (const TsBase &b, double R, int L, int ilat, int ilng, double blend)
+{
+	double w, n, dw, dh;
+	Bounds (L, ilat, ilng, w, n, dw, dh);
+	const double rad = M_PI / 180.0, k = R * std::cos (b.lat);
+	double n0 = ((n - dh - dh / 256.0) * rad - b.lat) * R, n1 = ((n + dh / 256.0) * rad - b.lat) * R;
+	double d0 = std::remainder ((w - dw / 256.0) * rad - b.lng, 2.0 * M_PI), d1 = d0 + (dw + 2.0 * dw / 256.0) * rad;
+	double e[2][2] = {{d0 * k, std::min (d1, M_PI) * k}, {-M_PI * k, (d1 - 2.0 * M_PI) * k}};
+	int ne = d1 > M_PI ? 2 : 1;
+	for (const TsBase::Part &p : b.parts)
+		for (int i = 0; i < ne; i++)
+			if (SegRectDist (p.n0, p.e0, p.n1, p.e1, n0, n1, std::min (e[i][0], e[i][1]), std::max (e[i][0], e[i][1])) < p.r + blend + 1.0) return true;
+	return false;
+}
+
 // elev-consistency: an Elev_mod file of tile (L, ilat, ilng): the header, then the 259x259 nodes
 static std::string ModFile (int L, int ilat, int ilng, const std::vector<int16_t> &z, double scale, double emin, double emax, double emean)
 {

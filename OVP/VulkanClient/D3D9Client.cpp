@@ -3072,12 +3072,11 @@ bool D3D9Client::OutputLoadStatus(const char *txt, int line)
 		pDevice->StretchRect(pTextScreen, NULL, pBackBuffer, &txt, VK_FILTER_NEAREST);
 
 		// GetSwapChain(0), Present(D3DPRESENT_DONOTWAIT)
-		if (pFramework->Present() == 0) {
-			return true;
-		}
+		bool shown = (pFramework->Present() == 0);
 
 		// Prevent "Not Responding" during loading
-		QCoreApplication::processEvents(); // PeekMessage, DispatchMessage
+		ProcessLoadingEvents(); // PeekMessage, DispatchMessage; not upstream (loading-events): after every message, input and a close wait for the session
+		return shown;
 	}
 	return false;
 }

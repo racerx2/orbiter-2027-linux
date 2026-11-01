@@ -609,6 +609,13 @@ bool GraphicsClient::RenderWndProc (QWindow *hWnd, QEvent *event)
 
 // ======================================================================
 
+void GraphicsClient::ProcessLoadingEvents ()
+{
+	g_pOrbiter->ProcessLoadingEvents ();
+}
+
+// ======================================================================
+
 void GraphicsClient::LaunchpadVideoWndProc (QWidget *hWnd)
 {
 }

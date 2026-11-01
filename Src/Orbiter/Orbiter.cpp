@@ -769,6 +769,12 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 	LOGOUT("%s", ""); // not upstream: blank line, "" is a zero-length format to GCC
 	LOGOUT("**** Creating simulation session");
 
+	struct LoadScope { // not upstream (loading-events): every way out of here ends the loading
+		Orbiter *o;
+		~LoadScope () { o->LoadingEnd (); }
+	} loadScope {this};
+	LoadingBegin ();
+
 	m_pLaunchpad->Hide(); // hide launchpad dialog while the render window is visible
 	
 	if (gclient) {
@@ -817,6 +823,7 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 	else {
 		pDlgMgr = new DialogManager(this, m_pConsole->WindowHandle());
 	}
+	ProcessLoadingEvents (); // not upstream (loading-events)
 
 	// read simulation environment state
 	snprintf (ScenarioName, sizeof ScenarioName, "%s", scenario); // not upstream: bounded; nothing is cut, ScnPath (scenario) fit its [256] in Launch or the session ended
@@ -829,6 +836,7 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 	}
 	BroadcastGlobalInit ();
 	RigidBody::GlobalSetup();
+	ProcessLoadingEvents (); // not upstream (loading-events)
 
 	td.Reset (pState->Mjd());
 	if (Cfg()->CfgCmdlinePrm.FixedStep > 0.0)
@@ -859,6 +867,7 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 	SetFocusObject (vfocus, false);
 
 	LOGOUT("Finished initialising status");
+	ProcessLoadingEvents (); // not upstream (loading-events)
 
 	if (g_camera) {
 		g_camera->InitState (scenario, g_focusobj);
@@ -893,6 +902,7 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 				opcLoadState((FILEHANDLE)&ifs);
 			}
 		}
+		ProcessLoadingEvents (); // not upstream (loading-events)
 	}
 
 	Module::RenderMode rendermode = (
@@ -909,11 +919,14 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 	hScnInterp = (scriptcmd ? script->RunInterpreter (scriptcmd) : NULL);
 
 	if (gclient) gclient->clbkPostCreation();
+	ProcessLoadingEvents (); // not upstream (loading-events)
 	g_psys->PostCreation ();
+	ProcessLoadingEvents (); // not upstream (loading-events)
 
 	for (auto it = m_Plugin.begin(); it != m_Plugin.end(); it++) {
 		it->pModule->clbkSimulationStart(rendermode);
 		CHECKCWD(cwd, it->sName.c_str());
+		ProcessLoadingEvents (); // not upstream (loading-events)
 	}
 
 	if (g_pane) {
@@ -1127,7 +1140,7 @@ INT Orbiter::Run ()
 
 	QMetaObject::Connection idle = QObject::connect (dispatcher, &QAbstractEventDispatcher::aboutToBlock, [&]() {
 		// nested loops (modal dialogs) run no frames, as their own message loops didn't on Windows
-		if (!bSession || bInFrame || QThread::currentThread()->loopLevel() > 1) return;
+		if (!bSession || bLoading || bInFrame || QThread::currentThread()->loopLevel() > 1) return; // not upstream: bLoading (loading-events)
 		bInFrame = true;
 		if (bAllowInput) bActive = true, bAllowInput = false;
 		if (BeginTimeStep (bRunning)) {
@@ -1769,6 +1782,8 @@ static char linebuf[2][70] = {"", ""};
 
 void Orbiter::OutputLoadStatus (const char *msg, int line)
 {
+	ProcessLoadingEvents (); // not upstream (loading-events): the step before this message ends here
+	m_loadText = line ? std::string (linebuf[0]) + " / " + msg : std::string (msg);
 	if (gclient) {
 		strncpy (linebuf[line], msg, 64); linebuf[line][63] = '\0';
 		gclient->clbkSplashLoadMsg (linebuf[line], line);
@@ -1783,6 +1798,52 @@ void Orbiter::OutputLoadTick (int line, bool ok)
 		strcat (cbuf, ok ? " ok" : " xx");
 		gclient->clbkSplashLoadMsg (cbuf, line);
 	}
+}
+
+// not upstream (loading-events): while a session loads, the desktop's pings and window events are answered; user input waits
+// for the first frame, a close request too (Qt counts it as input), and Run's frame stays out
+void Orbiter::ProcessLoadingEvents ()
+{
+	QCoreApplication *app = QCoreApplication::instance();
+	if (!app || QThread::currentThread() != app->thread() || !bLoading || bInLoadingEvents) return;
+	auto now = std::chrono::steady_clock::now();
+	double gap = std::chrono::duration<double> (now - m_loadPass).count();
+	if (gap < 0.025) return;
+	if (gap > m_loadWaitMax) {
+		m_loadWaitMax = gap;
+		m_loadWaitFrom = std::chrono::duration<double> (m_loadPass - m_loadStart).count();
+		m_loadWaitText = m_loadPassText;
+	}
+	bInLoadingEvents = true;
+	QCoreApplication::processEvents (QEventLoop::ExcludeUserInputEvents); // no wait: the time-limited form blocks and emits aboutToBlock
+	bInLoadingEvents = false;
+	m_loadPass = std::chrono::steady_clock::now();
+	m_loadPassText = m_loadText;
+}
+
+void Orbiter::LoadingBegin ()
+{
+	bLoading = true;
+	m_loadStart = m_loadPass = std::chrono::steady_clock::now();
+	m_loadWaitMax = m_loadWaitFrom = 0.0;
+	m_loadText.clear();
+	m_loadPassText.clear();
+	m_loadWaitText.clear();
+}
+
+void Orbiter::LoadingEnd ()
+{
+	if (!bLoading) return;
+	auto now = std::chrono::steady_clock::now();
+	double gap = std::chrono::duration<double> (now - m_loadPass).count();
+	if (gap > m_loadWaitMax) {
+		m_loadWaitMax = gap;
+		m_loadWaitFrom = std::chrono::duration<double> (m_loadPass - m_loadStart).count();
+		m_loadWaitText = m_loadPassText;
+	}
+	bLoading = false;
+	LOGOUT ("Session loaded in %.2f s; the desktop waited at most %.2f s, from %.2f s (%s)", std::chrono::duration<double> (now - m_loadStart).count(),
+		m_loadWaitMax, m_loadWaitFrom, m_loadWaitText.empty() ? "before the first splash message" : m_loadWaitText.c_str());
 }
 
 //-----------------------------------------------------------------------------
@@ -1893,6 +1954,11 @@ void Orbiter::StartTileStream ()
 		for (size_t i = 0; i < g_psys->nPlanet(); i++)
 			if (name == g_psys->GetPlanet ((int)i)->Name()) return g_psys->GetPlanet ((int)i)->Size();
 		return 6.37101e6;
+	};
+	OutputLoadStatus ("Planet streaming", 0); // not upstream (loading-events)
+	o.busy = [this, shown = std::string()] (const std::string &body) mutable { // once per body on the splash, else only the events
+		if (body == shown) ProcessLoadingEvents ();
+		else OutputLoadStatus ((shown = body).c_str(), 1);
 	};
 	try {
 		m_pTileStream = new TileStream (o);

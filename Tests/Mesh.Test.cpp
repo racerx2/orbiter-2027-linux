@@ -5,10 +5,11 @@
 #include "Mesh.h"
 #include "Config.h"
 #include "Util.h"
+#include "Orbiter.h"
 
 // stubs: Mesh.cpp links against the core for paths, logging and textures
-class Orbiter;
 Orbiter *g_pOrbiter = nullptr;
+void Orbiter::ProcessLoadingEvents () {} // not upstream (loading-events)
 char *Config::MeshPath (const char *name) { static char p[256]; strncpy (p, name, 255); return p; }
 DWORDLONG Str2Crc (const char *str) { return 0; }
 void LogOut_Error (const char *func, const char *file, int line, const char *msg, ...) {}

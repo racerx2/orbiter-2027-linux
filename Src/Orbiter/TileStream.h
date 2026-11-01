@@ -66,6 +66,8 @@ namespace TsSky {
 	double TerrAt (const QImage &tile, int z, int row, int col, double lng, double lat); // degrees
 	void TerrTile (double lng, double lat, int z, int &row, int &col);
 	bool Hits (const TsBase &b, double R, int L, int ilat, int ilng, double blend);
+	// not upstream (loading-events): false only when no part of b comes within its reach of a node ElevMod visits in the tile
+	bool Reaches (const TsBase &b, double R, int L, int ilat, int ilng, double blend);
 	std::string ElevMod (int L, int ilat, int ilng, const std::vector<std::pair<const TsBase *, double>> &bases, double R, double scale, const std::string &elev, double blend);
 	// elev-consistency: tile (L, ilat, ilng)'s Elev_mod from an add-on's Elev_mod of its ancestor (aL, ailat, ailng); "" if it modifies nothing there
 	std::string InheritMod (int L, int ilat, int ilng, int aL, int ailat, int ailng, const std::string &amod, const std::string &elev, double scale);
@@ -231,6 +233,7 @@ public:
 		bool crossDisk = false;                                    // tests: the rename out of TileStream/tmp fails as across disks
 		std::function<void (int, int, int)> onBuild;              // tests: a tile's build starting on its worker (L, ilat, ilng)
 		std::function<void ()> evictScanned;                       // tests: Evict between its scan and its commit
+		std::function<void (const std::string &)> busy;           // not upstream (loading-events): now and then in the constructor's passes, on its thread, with the body; must not call into the stream
 	};
 
 	explicit TileStream (const Options &opt);
