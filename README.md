@@ -18,9 +18,268 @@ a try. Orbiter is free, so you don’t need to invest more than a bit of your
 spare time.
 
 This tree is the Linux-only code of a line-by-line port of [orbitersim/orbiter](https://github.com/orbitersim/orbiter)
-to native Linux: no Wine, no DXVK, graphics on Vulkan 1.3,
-windows and dialogs on Qt 6, sound on PipeWire. It holds no Windows code; Orbiter for
-Windows is [orbitersim/orbiter](https://github.com/orbitersim/orbiter).
+(commits in `UPSTREAM`, via [racerx2/orbiter-2027-Linux](https://github.com/racerx2/orbiter-2027-Linux)) to native Linux: no Wine, no DXVK, graphics on Vulkan 1.3,
+windows and dialogs on Qt 6, sound on PipeWire. Orbiter itself holds no Windows code; the one Windows part is the
+optional Wine bridge that runs old Windows add-ons. Orbiter for Windows is [orbitersim/orbiter](https://github.com/orbitersim/orbiter).
+
+## Why fly this one
+
+- **Fly anywhere on Earth.** The whole planet streams in as you fly: real imagery and terrain, 3D cities, roads and
+  rivers, and real airports with their runways painted on and lit up at night. No texture packs, no accounts.
+- **Land on the real Mars.** Valles Marineris, Olympus Mons and Jezero stream in from USGS maps, down to 6 m detail.
+- **Navigate like a pilot.** A GPS comes with it: moving map, flight plans, 80,000 airports and beacons, glide
+  paths and GPS steering, on any ship.
+- **Keep your Windows add-ons.** Ships, MFDs and plugins made for Orbiter 2010, 2016 and 2024 fly from their zips,
+  through Wine, with nothing to set up.
+- **Crash like it matters.** Hulls dent, tear and break into debris; buildings take the hit too.
+- **Build in Blender.** glTF ships with every PBR material, and a round trip to Blender and back with the animations.
+- **See it properly.** Shadows, reflections, volumetric plumes, re-entry plasma, valley fog and cities lit street by street.
+- **Fly your own pit.** Any key or function on any stick, throttle, pedal set or button box; windows on any monitor.
+- **Native and portable.** Vulkan, Qt 6 and PipeWire. One download runs on Ubuntu, Mint, Debian, Fedora, Arch,
+  SteamOS and more.
+
+## What's new since the Windows version
+
+### The whole Earth, streamed
+
+![New York, Paris, Chicago and London](./.github/readme/earth-cities.jpg)
+
+*New York, Paris, Chicago and London, streamed in while flying.*
+
+Take off anywhere and fly over the real thing. Earth streams in as you fly, from free servers with no account or key:
+
+- **Imagery and terrain** for the whole planet: Sentinel-2 imagery, elevation, water and coastlines.
+- **3D cities**: buildings from OpenStreetMap wherever it has them, set on the terrain with textured walls and
+  roofs and windows lit at night. With the Collision module on they are solid: ships crash into them and can land on their roofs.
+- **Roads, railways, airports and rivers** from OpenStreetMap, painted on the ground, with street lamps where the
+  city is lit at night (below).
+- **Ground detail**: 3D trees from land cover out to the horizon, terrain shadows, volumetric clouds without tile seams.
+- **Ahead of you**: the ground, buildings and roads under the next minute of your flight path load before you get there.
+- **Offline**: download a region ahead of time under Options > Planet streaming, buildings and roads included.
+
+Sources, settings and credits: [Earth imagery](#earth-imagery).
+
+### Real airports, day and night
+
+<p><img src="./.github/readme/airport-day.jpg" width="49%" alt="Hobby airport, Houston, by day: runways with their numbers and markings, taxiways, hangars, downtown Houston behind"> <img src="./.github/readme/airport-night.jpg" width="49%" alt="Hobby airport at night: both runways lit, approach lights, green thresholds, red ends, PAPI bars, the city's street lamps around"></p>
+
+*Houston Hobby by day, and on final at night. Nothing here was modelled by hand.*
+
+Every airport OpenStreetMap knows is there, streamed with the ground around it:
+
+- **Runways as pilots see them**: their numbers, threshold bars, touchdown zones, aiming points and centre lines,
+  the taxiways and aprons around them, and the hangars and terminals.
+- **Lit at night** like a real field: white edge lights turning yellow near the end, centre line, green thresholds,
+  red ends, touchdown zone and approach lights.
+- **PAPI** on the left of each end: two white and two red on a 3° glide path.
+- **Ready on the runway**: a scenario's landed ships wait for the finest ground under them, so they stand on the
+  runway from the first frame, not above or under it.
+
+### Mars, streamed
+
+![A Delta-glider on the rim of Coprates Chasma, the walls of Valles Marineris across the canyon](./.github/readme/mars.jpg)
+
+*A Delta-glider on the rim of Coprates Chasma, Valles Marineris.*
+
+Mars streams the same way, from USGS's public maps: natural-colour imagery, 6 m CTX detail along the equator and
+MOLA terrain. Land in Valles Marineris, on Olympus Mons or at Jezero. The old Mars texture pack is retired.
+
+### A GPS in every cockpit
+
+![The GPS navigator at Hobby airport, Houston](./.github/readme/gpsnav.jpg)
+
+*The GPS navigator with a flight plan from Hobby to Bush Intercontinental, Houston.*
+
+It comes with Orbiter: turn on **GPSNav** in the Launchpad's **Modules** tab and click the GPS pin on the menu bar.
+A panel GPS unit for any ship on any planet or moon, laid out like the real thing:
+
+- **Moving map** with the terrain in colour, airports, runways, beacons, Orbiter's bases and pads, north up or track up.
+- **Direct-To, flight plans and Nearest**: plans are saved with the scenario; the nearest airports, bases and beacons
+  are a button away, with their runways, frequencies and elevations.
+- **Approach**: a glide path to any runway or pad, a course needle, and GPS roll steering (GPSS) that banks the ship
+  to follow the plan.
+- **On the HUD**: a magenta caret on the heading tape points to the active waypoint.
+- **Data**: about 80,000 airports and beacons and 35,000 runways on Earth from [OurAirports](https://ourairports.com/data/),
+  every base on every body, and your own airports and waypoints in simple CSV files (`GPSNav/User`).
+
+The manual is the unit's help button. Source: [Src/Plugin/GPSNav](https://github.com/racerx2/orbiter-2027-linux/blob/Custom/Src/Plugin/GPSNav/README.md).
+
+### More planets and moons
+
+![Pluto and Charon](./.github/readme/planets.jpg)
+
+*Pluto, with its thin nitrogen atmosphere and blue haze, and Charon.*
+
+- **The Pluto system**: Pluto, Charon, Nix, Hydra, Kerberos and Styx, which Orbiter never had.
+- **New ephemeris modules** for Phobos, Deimos, Miranda, Ariel, Umbriel, Titania, Oberon and Triton (Windows has
+  them only as 32-bit binaries), and better orbits for Hyperion, Proteus, Nereid and Vesta.
+- **Spin axes and prime meridians** from the IAU rotation model.
+- **Every planet and moon on the tile renderer**, with new maps for Mercury, Saturn, Uranus, Triton, Pluto and
+  Charon. The textures are a separate download
+  ([Orbiter-linux-orbital-bodies-textures](https://github.com/racerx2/Orbiter-linux-orbital-bodies-textures));
+  the Launchpad offers to download and install the missing ones.
+- **Measured atmospheres** for every body that has one, so drag and aerobraking use real densities.
+- **SPICE ephemerides**: the planets and moons from JPL's kernels (Orbiter's new SPICE module, with Kerberos and Styx
+  added). The Launchpad downloads the kernels; until then the built-in modules are used.
+
+### Launchpad skins
+
+![The Horizon skin](./.github/readme/skin-horizon.jpg)
+
+Change how the Launchpad looks without changing what it does. Pick a skin under **Extra > Launchpad skin**:
+
+- **Dark**: a dark style sheet for the classic Launchpad.
+- **Horizon** (above) and **Planetary Defense**: complete new launchers, made as Qt Designer forms.
+- **Your own**: copy a skin, or make a new layout of the stock Launchpad, and edit it in Qt Designer.
+  See [Skins/README.md](https://github.com/racerx2/orbiter-2027-linux/blob/Custom/Skins/README.md).
+
+Ctrl+Shift+L always brings back the classic Launchpad.
+
+### Your Windows add-ons still fly
+
+![BaseSync MFD 3.3, a Windows add-on, on the left MFD of a Delta-glider at Hobby](./.github/readme/windows-addons.jpg)
+
+*BaseSync MFD 3.3, built for Orbiter 2016 on Windows, running in the Delta-glider's left MFD.*
+
+![Orbiter 2010 add-ons on the Moon: a large NASA ship on its landing legs, a rover beside it and a cargo hauler on a landing pad](./.github/readme/windows-addons-2010.jpg)
+
+*Older add-ons from the Orbiter 2010 days, such as UCGO and UMmu, now load too, all through Wine.*
+
+Two decades of Orbiter add-ons are Windows `.dll` modules. They load here too, through Wine:
+
+- **No setup**: install the add-on as on Windows, by extracting its zip into Orbiter. Where Orbiter finds a Windows
+  module and no Linux one of that name, it opens it through the Wine bridge.
+- **What works**: ships with their 2D panels, virtual cockpits and HUDs, MFDs, plugins with their dialogs, planets and
+  atmospheres, Launchpad items, camera modes, Lua methods, and the add-ons' sounds through XRSound (OrbiterSound calls too).
+  BaseSync MFD and Launch MFD, for example, run as on Windows.
+- **Needs** Wine with 32-bit support (on Linux Mint: Software Manager, **Wine**). 32-bit add-ons only for now.
+- **Add-ons that add bases** to a planet bring their own part in `Config/<Planet>.d/`, so extracting one zip over
+  another never undoes it.
+
+How it works: [Src/WineBridge](https://github.com/racerx2/orbiter-2027-linux/blob/Custom/Src/WineBridge/README.md).
+
+### Fly your own pit
+
+Every key and every function can be bound to any controller: joysticks, throttles, rudder pedals, button boxes, the
+keyboard and the mouse. Under **Options > Controllers**, in the Launchpad or in flight:
+
+- **Bind** by pressing the button, moving the axis or pressing the key, for every ship or for one ship class.
+- **Rename and calibrate** each controller; set the dead zone and the throttle saturation; reset to the defaults.
+- **Plug and play**: controllers are found as they are plugged in; a new setup binds the first stick.
+- **`<Disabled>`** has Orbiter ignore every controller.
+
+### Every monitor
+
+- **Full screen** opens on the Launchpad's monitor. **Multiple displays** spans all monitors (X11, and KDE Plasma on
+  Wayland).
+- **In-flight windows** (external MFDs, the map, dialogs) drag out of the render window onto other monitors and stay on top.
+
+### Solid ground
+
+Ships sit, roll and taxi like ships:
+
+- **Nothing goes into the terrain**: wheels stand on the ground at rest, landed ships settle on slopes, and a hull that
+  touches down rests on its own shape.
+- **Ships hold on slopes**: the ground pushes along its real slope, and friction holds a parked ship.
+- **Taxiing**: nosewheel steering works (the Delta-glider with its gear down, from the yaw keys, stick or pedals), and
+  the nose wheel swivels at taxi speed, so the brakes alone turn the ship too.
+- **Hard landings** at any time acceleration: stiff ground contacts get the substeps they need.
+
+### Collisions and damage
+
+Ships finally hit things.
+
+![Two Delta Gliders hit head-on at 70 m/s in orbit: the noses crush and break into debris](./.github/readme/collisions.gif)
+
+*Two Delta Gliders hit head-on at 70 m/s in orbit.*
+
+An add-on that makes ships collide with each other, with base buildings and with the ground:
+
+- Colliders follow each ship's real mesh, so cargo bays stay open.
+- Docked and attached stacks respond as one body, and every impact conserves momentum.
+- Hulls dent, crush and tear where they hit, sized by the crash energy.
+- Structures break apart live in the simulation with NVIDIA Blast, on the CPU (no special graphics card needed).
+  Pieces that come off fly away as debris.
+- Crashes into buildings and into the ground do the same damage.
+- The streamed 3D buildings are solid too, with the shape they are drawn with: ships crash into them and can land on their roofs.
+- Damage and debris are saved with the scenario and play back in flight recordings.
+- A ship that absorbs more than 1 kJ per kg is destroyed: it loses thrust, and the player loses its controls
+  (keys, joystick, cockpit switches); its MFDs can still be switched with the Shift keys.
+- High-speed crashes don't freeze the game, even when a breakup makes dozens of pieces.
+- Autopilots can ask the add-on whether a path is clear (Developer Manual, *Clearance queries*).
+
+Turn it on in the Launchpad's **Modules** tab (Collision). Settings are in `Config/Collision.cfg`.
+
+### glTF ships and a Blender round trip, animations included
+
+![A Delta Glider exported from Blender as a .glb with PBR materials, next to the stock Delta Glider GL-01](./.github/readme/gltf-pbr.jpg)
+
+*A Delta Glider exported from Blender as a .glb, with PBR materials, next to the stock Delta Glider (GL-01).*
+
+![The stock Delta-glider exported from Orbiter to glTF and opened in Blender: its nosecone, ladder, top hatch, radiator and landing gear opened by its own animations](./.github/readme/gltf-blender.jpg)
+
+*The stock Delta-glider, exported from Orbiter and opened in Blender: its animations come along as Blender actions,
+posed here with the nosecone, ladder, top hatch, radiator and gear open.*
+
+Ships no longer have to be converted to Orbiter's `.msh` format, and any ship can go to Blender and come back:
+
+- **To Blender, animations included**: the GltfExport add-on ([Tools/GltfExport](https://github.com/racerx2/orbiter-2027-linux/blob/Custom/Tools/GltfExport/README.md))
+  writes any vessel, stock or add-on, as one `.glb`: meshes, materials, textures, and every animation as a Blender
+  action with its hinges and keyframes.
+- **Back into Orbiter**: edit it in Blender (export with *Include > Custom Properties* ticked) and drop the `.glb` in
+  the vessel's mesh folder, for example `Meshes\DG`. Orbiter uses it in place of the `.msh` meshes it was made
+  from, outside and cockpit, keeping the part, material and texture numbers the vessel's program uses. What you left
+  alone stays exactly as before; what you changed (shapes, new parts, hinges, keyframes, colours, painted images)
+  comes from the file, animations included. Remove the file to go back.
+- **New ships straight from Blender**: export glTF Binary (`.glb`, +Y Up on) or `.gltf`, put it in a folder under
+  `Meshes` and name it in the vessel's cfg, for example `MeshName = MyShip\myship.glb`. A `.glb` carries its textures
+  inside, so there is no converter, no texture folder and no material file to write. In Blender the nose points
+  along +Y and the top along +Z.
+- **Every glTF PBR material feature**: base colour and alpha (opaque, cut-out, transparent), metallic and
+  roughness, normal maps, emission with strength, ambient occlusion, IOR and specular, transmission and volume
+  (tinted glass), clearcoat (car paint), sheen (fabric), anisotropy (brushed metal) and iridescence (thin-film
+  colours).
+- **Lit by the simulation**: the sun with shadows, the ship's own lights, and reflections of its surroundings.
+- **Glass seen through glass**: a HUD behind the canopy, a visor inside a helmet, or another ship's windows
+  behind your own show through, tinted by the glass in front.
+- **Old models unchanged**: `.msh` meshes look exactly as before. They can get PBR materials too, through
+  `PBR` lines in their `Config/GC` material file.
+- **Collisions**: with the collision add-on, glTF ships collide on their real shape.
+
+Not supported yet: skeletons, morph targets, a second UV set, texture transforms, Draco or KTX2 compression, and
+animations in a `.glb` named directly in a cfg (a vessel's program makes its animations; the round trip above keeps them).
+
+Try it with the **Delta-glider > DG and DG-S and DGTest** scenario, and **Graphics > PBR material bench**,
+which shows every material on its own sphere.
+
+### Graphics effects
+
+![Re-entry plasma and hull heating, valley fog in the Alps, a ship's shadow and sea reflections, Atlantis' plume at launch](./.github/readme/effects.jpg)
+
+*Re-entry plasma and hull heating; valley fog in the Alps; shadows and sea reflections; Atlantis' plume.*
+
+New in the Vulkan client, each a switch in `Modules/VulkanClient/VulkanClient.cfg` (on by default, fog off):
+
+- **Shadows** (`SceneShadows`): sun shadows of ships, buildings and terrain out to about 40 km from the camera.
+- **Reflections** (`SSR`): water and glossy hulls reflect the scene around them.
+- **Bounce light** (`SSGI`): sunlit ground and hulls light up what is next to them.
+- **Plumes and smoke** (`VolPlumes`): lit volumetric exhaust with shock diamonds, ground clouds and smoke.
+- **Re-entry** (`VolPlumes`): a plasma sheath shaped by the hull, and a hull that heats up and glows from the
+  nose and leading edges, then cools slowly. Works for any ship, no add-on changes needed.
+- **Fog** (`HeightFog`): fog that fills valleys and lies over the sea, by time of day and season.
+- **Night look** (`NightLook`): cities lit by street lamps that light the ground, building windows that come on
+  at dusk, and nights that stay dark.
+- **Orbiter's flame or the plume, per ship**: `ExhaustStyle = legacy` or `volumetric` in a vessel's cfg, so an add-on
+  keeps the exhaust its maker drew.
+
+How they work: the Technical Reference (*Vulkan effects*). For add-on makers: the Developer Manual
+(*Graphics content*).
+
+### Multiplayer
+
+![Multiplayer](./.github/readme/multiplayer.png)
+
+**Under construction – stay tuned.**
 
 ## License
 
@@ -41,9 +300,20 @@ Hardware requirements needed by Orbiter:
 
 The Vulkan driver also needs the extensions listed in [COMPILE.md](./COMPILE.md).
 
+### Download a build
+
+Ready-to-run builds for 64-bit PCs are on the [Releases](https://github.com/racerx2/orbiter2027-Linux/releases) page
+(`Orbiter2027-Linux-x86_64-<version>.tar.xz`). One download runs on Ubuntu 22.04 or newer (and Linux Mint, Pop!_OS,
+Zorin OS), Debian 12 or newer, Fedora 36 or newer, RHEL / AlmaLinux / Rocky Linux 9 or newer, openSUSE Tumbleweed,
+Arch Linux, Manjaro and SteamOS. Unpack it into a folder you own and start `OpenOrbiter`; it checks the few system
+libraries Orbiter uses and offers to install any that are missing. Qt and the other libraries that differ between
+distributions come with the download. How it is built: [packaging/linux](https://github.com/racerx2/orbiter-2027-linux/blob/Custom/packaging/linux/README.md).
+
+### Build from source
+
 Get the port repository from github
 ```bash
-git clone https://github.com/racerx2/orbiter-linux.git
+git clone -b Custom https://github.com/racerx2/orbiter2027-Linux.git
 ```
 
 To configure and build you need CMake 3.28 or later, Ninja and GCC with C++20.
@@ -68,6 +338,135 @@ This path can also be set using ORBITER_PLANET_TEXTURE_INSTALL_DIR environment v
 
 Alternatively, you can configure the texture directory after building Orbiter
 by setting the `PlanetTexDir` entry in `Orbiter.cfg`.
+
+## Earth imagery
+
+Earth is not part of the texture download. While Orbiter runs, the tiles it
+draws stream in from free servers that need no account or key, and are kept
+in `Textures/Earth` like installed tiles. The sources are listed in
+`Config/TileStream.cfg`; with the shipped file the requests go to:
+
+- `tiles.maps.eox.at`: surface imagery, EOX Sentinel-2 cloudless 2016, levels 1 to 16
+- `gibs.earthdata.nasa.gov`: night lights (NASA Black Marble 2016), the
+  OpenStreetMap water mask, and NASA Blue Marble standing in at levels 10 and
+  below while EOX does not answer
+- `esa-worldcover.s3.eu-central-1.amazonaws.com`: ESA WorldCover 2021, the
+  10 m water mask and the land classes for the ground detail, from level 12
+- `s3.amazonaws.com` (`elevation-tiles-prod`): elevation, Terrain Tiles on AWS
+- `eoimages.gsfc.nasa.gov`: clouds, the NASA Visible Earth cloud map (levels 1 to 7)
+- `tiles.openfreemap.org`: 3D buildings out to the building range (20 km by
+  default, 5 to 40 km in the VulkanClient's advanced setup) below 15 km
+  altitude, nearest first; past about 4 km only those tall enough to show.
+  They are set on the terrain with textured walls, roofs and lit windows
+  at night; the textures are drawn by the build itself (`Utils/bldgtex`, into
+  `Textures/Bldg`), and a building inside a base's own buildings is left out;
+  from the same tiles, the roads, railways, airports and rivers painted on
+  the ground
+
+The runways and pads of the Earth surface bases are laid flat at the base's
+height. Elevation below sea level is raised to 0 m except in the `FLOOR` boxes
+of `Config/TileStream.cfg` (the Dead Sea, the Caspian Sea, Death Valley, the
+Qattara Depression and other large depressions); the Netherlands polders stay
+at 0 m.
+
+An Orbiter 2016 Earth pack installed in `Textures/Earth/Archive` is still used
+for its imagery, masks and clouds. Its elevation, which includes trees and
+buildings, is replaced with streaming on: a tile takes the streamed heights
+once the stream has the elevation of its parent tile, and shows them the next
+time it is loaded. Nothing has to be deleted for this.
+
+`Orbiter.cfg` keys:
+
+- `TileStream` (default `TRUE`): stream Earth tiles
+- `TileStreamOffline` (default `FALSE`): no requests, only tiles on disk
+- `TileStreamCacheMB` (default `2048`, `0` no limit): at the start of a session
+  and every five minutes the tiles used longest ago go first; levels 8 and
+  below are always kept
+- `TileStreamBuildings` (default `TRUE`): stream 3D buildings
+- `TileStreamWays` (default `TRUE`): stream roads, railways, airports and rivers
+
+The Launchpad page Options > Planet streaming sets the first three, shows the
+cache size, clears the streamed tiles (only files the stream wrote, listed in
+`Textures/Earth/TileStream`) and downloads a region ahead of time around a base
+or a position, for flying offline. A region download is refused while Offline
+is ticked or while the tiles are being cleared.
+
+The VulkanClient draws 3D trees from the streamed land cover where it shows
+forest or shrub, below 3 km above the ground. With the terrain horizon
+shadows, ambient occlusion, volumetric clouds and auto exposure they are the
+Ground graphics group of the VulkanClient Advanced Setup dialog;
+`VulkanClient.cfg` keys (defaults): `HorizonShadows` (1), `SSAO` (1),
+`SSAOStrength` (0.8), `SSAORadius` (1.5 m), `VolClouds` (1),
+`VolCloudQuality` (1, 0 low to 2 high), `Trees` (1), `TreeRange` (2500 m),
+`TreeDensity` (1), `AutoExposure` (1), `AutoExpMinEV` (-1.5), `AutoExpMaxEV`
+(2.5), `CloudAtlas` (1, cloud layer without tile seams).
+
+The Effects group of the same dialog switches the look passes, each on its
+own; `VulkanClient.cfg` keys (defaults): `LensFlare` (1), `LightShafts` (1),
+`TAA` (1, temporal anti-aliasing), `WaterFx` (1, waves, glitter, sky
+reflection, foam), `VolCloudShadows` (1, shadows of the volumetric clouds),
+`Filmic` (0, filmic tone curve), `Vignette` (1), `Sharpen` (1), `HeatHaze`
+(1, shimmer behind engines), and in its third row `SceneShadows` (1, sun
+shadows of terrain, buildings, trees and vessels), `SSR` (1, reflections of
+the scene in water, runways and glossy hulls), `VolPlumes` (1, volumetric
+engine plumes, lit smoke, soft particle trails, re-entry plasma and hulls
+glowing from re-entry heating), `SSGI` (1, one bounce of light
+from nearby surfaces), `SSGIStrength` (1.0, 0 to 2), `HeightFog` (0, valley
+fog and haze layers), `NightLook` (1, street lamps, lit windows and a darker
+night exposure).
+
+Privacy: each tile request tells the server which part of Earth is shown. Its
+only headers are `Host`, `User-Agent: OrbiterLinux/<version>`,
+`Accept-Language: en`, `Accept-Encoding` and `Connection`, and `Range` for a
+WorldCover read; no cookies are kept or sent. Offline mode makes no requests.
+
+### Earth credits
+
+The same credits are on the Launchpad page Options > Planet streaming, from
+`Config/TileStream.cfg`, and in the user manual's Credits section.
+
+- Imagery: EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH
+  (Contains modified Copernicus Sentinel data 2016 & 2017), CC BY 4.0
+- Imagery where EOX does not answer: NASA Blue Marble: Next Generation (NASA
+  Earth Observatory, Reto Stöckli), via NASA GIBS
+- Night lights: NASA Black Marble 2016 (VIIRS), via NASA GIBS
+  https://www.earthdata.nasa.gov/gibs, part of NASA's Earth Science Data and
+  Information System (ESDIS)
+- Water mask: © OpenStreetMap contributors, available under the Open Database
+  License https://www.openstreetmap.org/copyright, via NASA GIBS
+- Water and land cover: © ESA WorldCover project 2021 / Contains modified
+  Copernicus Sentinel data (2021) processed by ESA WorldCover consortium,
+  CC BY 4.0 https://esa-worldcover.org
+- Clouds: NASA Visible Earth, Blue Marble clouds (NASA Goddard Space Flight
+  Center, Reto Stöckli) https://visibleearth.nasa.gov
+- Elevation: Terrain Tiles on AWS https://registry.opendata.aws/terrain-tiles: Mapzen
+  - ArcticDEM terrain data DEM(s) were created from DigitalGlobe, Inc., imagery
+    and funded under National Science Foundation awards 1043681, 1559691, and 1542736
+  - Australia terrain data © Commonwealth of Australia (Geoscience Australia) 2017
+  - Austria terrain data © offene Daten Österreichs – Digitales Geländemodell (DGM) Österreich
+  - Canada terrain data contains information licensed under the Open Government Licence – Canada
+  - Europe terrain data produced using Copernicus data and information funded by
+    the European Union - EU-DEM layers
+  - Global ETOPO1 terrain data U.S. National Oceanic and Atmospheric Administration
+  - Mexico terrain data source: INEGI, Continental relief, 2016
+  - New Zealand terrain data Copyright 2011 Crown copyright (c) Land Information
+    New Zealand and the New Zealand Government (All rights reserved)
+  - Norway terrain data © Kartverket
+  - United Kingdom terrain data © Environment Agency copyright and/or database
+    right 2015. All rights reserved
+  - United States 3DEP (formerly NED) and global GMTED2010 and SRTM terrain data
+    courtesy of the U.S. Geological Survey.
+- Buildings, roads, railways, airports and rivers: © OpenMapTiles https://openmaptiles.org © OpenStreetMap
+  contributors, available under the Open Database License
+  https://www.openstreetmap.org/copyright, served by OpenFreeMap https://openfreemap.org
+
+### Mars imagery
+
+Mars streams the same way, from USGS Astrogeology (public domain): the MDIM 2.1
+colour mosaic, the CTX controlled equatorial mosaics (Robbins et al. 2023) and
+MOLA elevation. The tiles are kept in `Textures/Mars`; the old Mars pack is no
+longer offered. Every streamed body's cache and credits are on the Launchpad
+page Options > Planet streaming.
 
 ## Help
 
