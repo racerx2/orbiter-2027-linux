@@ -160,6 +160,10 @@ How it works: [Src/WineBridge](https://github.com/racerx2/orbiter-2027-linux/blo
 
 ### Fly your own pit
 
+![Options > Controllers in the Launchpad: a throttle, a stick and rudder pedals connected, live axes and buttons, and the bindings list](./.github/readme/controllers.png)
+
+*A throttle, a stick and rudder pedals, each named, calibrated and bound, right in the Launchpad.*
+
 Every key and every function can be bound to any controller: joysticks, throttles, rudder pedals, button boxes, the
 keyboard and the mouse. Under **Options > Controllers**, in the Launchpad or in flight:
 
