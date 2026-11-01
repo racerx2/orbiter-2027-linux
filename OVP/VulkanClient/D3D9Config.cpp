@@ -109,6 +109,7 @@ void D3D9Config::Reset ()
 	StreamRwyLights		= 1; // not upstream (stream-rwylights)
 	TreeDensity			= 1.0f;
 	BldgRange			= 20.0f;
+	GroundMaterials		= 2; // not upstream (design-ground-detail 1)
 	AutoExposure		= 1;
 	AutoExpMinEV		= -1.5f;
 	AutoExpMaxEV		= 1.0f; // not upstream: a dark view lifted 2x at most (design-exposure-override)
@@ -244,6 +245,7 @@ bool D3D9Config::ReadParams ()
 	if (oapiReadItem_int   (hFile, (char*)"StreamRwyLights", i))				StreamRwyLights = max(0, min(1, i)); // not upstream
 	if (oapiReadItem_float (hFile, (char*)"TreeDensity", d))					TreeDensity = float(max(0.1, min(2.0, d)));
 	if (oapiReadItem_float (hFile, (char*)"BldgRange", d))					BldgRange = float(max(5.0, min(40.0, d)));
+	if (oapiReadItem_int   (hFile, (char*)"GroundMaterials", i))				GroundMaterials = max(0, min(2, i)); // not upstream
 	if (oapiReadItem_int   (hFile, (char*)"AutoExposure", i))					AutoExposure = max(0, min(1, i));
 	if (oapiReadItem_float (hFile, (char*)"AutoExpMinEV", d))					AutoExpMinEV = float(max(-4.0, min(0.0, d)));
 	if (oapiReadItem_float (hFile, (char*)"AutoExpMaxEV", d))					AutoExpMaxEV = float(max(0.0, min(4.0, d)));
@@ -378,6 +380,7 @@ void D3D9Config::WriteParams ()
 	oapiWriteItem_int   (hFile, (char*)"StreamRwyLights", StreamRwyLights); // not upstream
 	oapiWriteItem_float (hFile, (char*)"TreeDensity", TreeDensity);
 	oapiWriteItem_float (hFile, (char*)"BldgRange", BldgRange);
+	oapiWriteItem_int   (hFile, (char*)"GroundMaterials", GroundMaterials); // not upstream
 	oapiWriteItem_int   (hFile, (char*)"AutoExposure", AutoExposure);
 	oapiWriteItem_float (hFile, (char*)"AutoExpMinEV", AutoExpMinEV);
 	oapiWriteItem_float (hFile, (char*)"AutoExpMaxEV", AutoExpMaxEV);

@@ -154,7 +154,9 @@ layout(binding = 19) uniform sampler2D tNoise;				//
 layout(binding = 20) uniform sampler2D	tOcean;				// Ocean Normal Map Texture
 layout(binding = 21) uniform sampler2D	tMicroA;
 layout(binding = 22) uniform sampler2D	tMicroB;
+#if !defined(_GROUNDMAT)
 layout(binding = 23) uniform sampler2D	tMicroC;
+#endif
 layout(binding = 24) uniform sampler2D tGlare;
 layout(binding = 25) uniform sampler2D	tShadowMap;
 layout(binding = 26) uniform sampler2D	tOverlay;
@@ -168,6 +170,13 @@ layout(binding = 17) uniform sampler2D	tWay;				// R paved share, G luminance x 
 layout(binding = 18) uniform sampler2D	tWayN;				// sqrt (value / 4) of lamp pool, head, spill; A the imagery's share in the pavement colour
 #endif
 #include "SceneShadow.glsl" // not upstream: CsmVis (_CSM, pixel stage); tShadowMap carries the atlas
+
+#if defined(_GROUNDMAT) // not upstream (design-ground-detail 1): the ground materials on tMicroC's binding, which the Earth shader never reads (no _MICROTEX)
+#if defined(_MICROTEX)
+#error "_GROUNDMAT takes the micro texture binding 23"
+#endif
+layout(binding = 23) uniform sampler2DArray tGround;		// layers 0-5 albedo, height; 6-11 normal x y (+y north), ao
+#endif
 
 #if defined(_SSR) // not upstream: screen-space reflections of the water (design-ssr); on tMicroA/tMicroB's bindings, which the Earth shader never reads (no _MICROTEX), so _DEVTOOLS keeps 26-28 (r3-ssr2)
 #if defined(_MICROTEX)
@@ -519,6 +528,124 @@ float ClsNoise(vec2 p, float P)
 	return mix(mix(ClsHash(a), ClsHash(vec2(b.x, a.y)), f.x), mix(ClsHash(vec2(a.x, b.y)), ClsHash(b), f.x), f.y);
 }
 
+#if defined(_GROUNDMAT)
+// not upstream (design-ground-detail 1): GroundGeom.cpp is the tested copy; hex-tiling after Mikkelsen, "Practical Real-Time Hex-Tiling", JCGT 2022 (MIT, CREDITS)
+const float GM_K = 3.4641016;	// 2 sqrt 3
+
+struct GmTri { vec3 w; vec2 id[3]; vec2 c[3]; };
+
+GmTri GmGrid(vec2 uv, vec4 sk) // sk: the tile corner's skewed fraction (xy) and id base (zw)
+{
+	vec2 s = vec2(GM_K * (uv.x - uv.y * 0.57735027), GM_K * uv.y * 1.15470054) + sk.xy;
+	vec2 b = floor(s), t = s - b;
+	float tz = 1.0 - t.x - t.y, q = tz <= 0.0 ? 1.0 : 0.0, q2 = 2.0 * q - 1.0;
+	GmTri r;
+	r.w = vec3(-tz * q2, q - t.y * q2, q - t.x * q2);
+	vec2 v[3] = vec2[3](b + vec2(q, q), b + vec2(q, 1.0 - q), b + vec2(1.0 - q, q));
+	for (int j = 0; j < 3; j++) {
+		r.id[j] = mod(v[j] + sk.zw, 4096.0);
+		vec2 a = v[j] - sk.xy;
+		r.c[j] = vec2(a.x + 0.5 * a.y, 0.8660254 * a.y) / GM_K;
+	}
+	return r;
+}
+
+// one material, three hex taps: albedo and height (a), normal x y on the lattice and ao (n)
+void GmSample(int m, vec2 uv, vec2 gx, vec2 gy, GmTri t, out vec4 a, out vec3 n)
+{
+	vec4 ta[3];
+	vec3 tn[3];
+	for (int j = 0; j < 3; j++) {
+		float rot = 6.2831853 * ClsHash(t.id[j] + vec2(0.25, 0.75)), c = cos(rot), s = sin(rot);
+		vec2 off = vec2(ClsHash(t.id[j] + vec2(0.75, 0.25)), ClsHash(t.id[j] + vec2(0.5)));
+		mat2 R = mat2(c, s, -s, c);
+		vec2 tc = R * (uv - t.c[j]) + off;
+		ta[j] = textureGrad(tGround, vec3(tc, float(m)), R * gx, R * gy);
+		vec3 b = textureGrad(tGround, vec3(tc, float(m + 6)), R * gx, R * gy).xyz;
+		vec2 d = b.xy * 2.0 - 1.0;
+		tn[j] = vec3(c * d.x + s * d.y, -s * d.x + c * d.y, b.z); // GroundGeom::TurnNormal
+	}
+	vec3 w2 = t.w * t.w, w = w2 * w2 * w2 * t.w * (1.0 + (vec3(ta[0].a, ta[1].a, ta[2].a) - 1.0) * 0.6); // GroundGeom::HexWeights
+	float sw = w.x + w.y + w.z;
+	w = sw > 0.0 ? w / sw : vec3(1.0 / 3.0);
+	a = ta[0] * w.x + ta[1] * w.y + ta[2] * w.z;
+	n = tn[0] * w.x + tn[1] * w.y + tn[2] * w.z;
+}
+
+float GmVeg(vec3 s) { return smoothstep(0.02, 0.10, (2.0 * s.g - s.r - s.b) / (s.r + s.g + s.b + 0.01)); }
+
+float GmSandy(vec3 s)
+{
+	float mx = max(s.r, max(s.g, s.b)), mn = min(s.r, min(s.g, s.b)), d = mx - mn;
+	if (d < 1e-4) return 0.0;
+	float h = mx == s.r ? 60.0 * (s.g - s.b) / d : (mx == s.g ? 60.0 * ((s.b - s.r) / d + 2.0) : 60.0 * ((s.r - s.g) / d + 4.0));
+	if (h < 0.0) h += 360.0;
+	return smoothstep(0.30, 0.40, (s.r + s.g + s.b) / 3.0) * smoothstep(20.0, 30.0, h) * (1.0 - smoothstep(55.0, 65.0, h)) * smoothstep(0.08, 0.15, d / mx);
+}
+
+// class weights, satellite colour, mesh and planet normals, material uv and its derivatives, share: colour times the materials, the normal, ao
+void GroundMat(vec3 cls, vec3 sat, vec3 nvr, vec3 up, vec2 uv, vec2 gx, vec2 gy, float cover, inout vec3 col, inout vec3 nrm, out float ao)
+{
+	ao = 1.0;
+	float tot = cls.r + cls.g + cls.b;
+	if (tot > 1.0) { cls /= tot; tot = 1.0; }
+	float r = 1.0 - smoothstep(0.64278761, 0.81915204, dot(nvr, up)), k = 1.0 - r, v = GmVeg(sat), y = GmSandy(sat); // GroundGeom::Weights
+	float W[6] = float[6]((cls.g + cls.b) * v * k, cls.r * k, cls.g * (1.0 - v) * k, cls.b * (1.0 - v) * y * k, r, cls.b * (1.0 - v) * (1.0 - y) * k);
+	int idx[3];
+	float w[3], all = W[0] + W[1] + W[2] + W[3] + W[4] + W[5], top = 0.0;
+	bool used[6] = bool[6](false, false, false, false, false, false);
+	for (int j = 0; j < 3; j++) { // GroundGeom::Top3
+		int b = -1;
+		for (int i = 0; i < 6; i++) if (!used[i] && (b < 0 || W[i] > W[b])) b = i;
+		used[b] = true; idx[j] = b; w[j] = W[b]; top += W[b];
+	}
+	if (top <= 0.0) return;
+	GmTri t = GmGrid(uv, Prm.vMSc[1]);
+	vec4 ma[3];
+	vec3 mn[3];
+	float hm = -1e9, sw = 0.0, sb = 0.0, hb[3];
+	for (int j = 0; j < 3; j++) {
+		w[j] *= all / top;
+		ma[j] = vec4(0.0); mn[j] = vec3(0.0, 0.0, 1.0);
+		if (w[j] > 0.0) { GmSample(idx[j], uv, gx, gy, t, ma[j], mn[j]); hm = max(hm, w[j] + ma[j].a); }
+		sw += w[j];
+	}
+	for (int j = 0; j < 3; j++) { hb[j] = w[j] > 0.0 ? max(w[j] + ma[j].a - hm + 0.2, 0.0) : 0.0; sb += hb[j]; } // GroundGeom::HeightBlend
+	vec3 R = vec3(1.0 - sw), nx = vec3(0.0);
+	float o = 1.0 - sw;
+	for (int j = 0; j < 3; j++) {
+		hb[j] = sb > 0.0 ? hb[j] * sw / sb : 0.0;
+		if (hb[j] <= 0.0) continue;
+		vec3 q = pow(max(ma[j].rgb / max(textureLod(tGround, vec3(0.5, 0.5, float(idx[j])), 16.0).rgb, vec3(0.02)), vec3(1e-3)), vec3(0.8)); // over its own mean (the 1x1 mip), the scan's contrast eased: its shade is lit again here
+		float l = dot(q, vec3(0.2126, 0.7152, 0.0722));
+		R += clamp(l + (q - l) * 0.5, 0.3, 2.0) * hb[j];
+		nx.xy += mn[j].xy * hb[j];
+		o += clamp(mn[j].z / max(textureLod(tGround, vec3(0.5, 0.5, float(idx[j] + 6)), 16.0).b, 0.05), 0.3, 1.5) * hb[j]; // over its own mean too: the satellite colour holds the mean shade
+	}
+	col *= mix(vec3(1.0), R, cover);
+	ao = mix(1.0, o, cover);
+	vec3 E = cross(Const.vPolarAxis, up);
+	if (!(dot(E, E) > 1e-6)) return; // at a pole the lattice has no east
+	E = normalize(E);
+	vec3 N = cross(up, E);
+	nx.xy *= cover;
+	vec3 d = vec3(nx.xy, sqrt(max(1.0 - dot(nx.xy, nx.xy), 0.0)));
+	vec3 m = vec3(dot(nvr, E), dot(nvr, N), dot(nvr, up)) + vec3(0.0, 0.0, 1.0), u = d * vec3(-1.0, -1.0, 1.0);
+	vec3 rn = m * dot(m, u) / m.z - u; // reoriented normal mapping onto the mesh normal (Barre-Brisebois, Hill 2012)
+	nrm = normalize(rn.x * E + rn.y * N + rn.z * up);
+}
+
+// cubic B-spline of a texture in 4 bilinear taps (Sigg, Hadwiger 2005); GroundGeom::BSpline
+vec4 TexBSpline(sampler2D tx, vec2 uv, vec2 gx, vec2 gy)
+{
+	vec2 sz = vec2(textureSize(tx, 0)), c = uv * sz - 0.5, i = floor(c), f = c - i, f2 = f * f, f3 = f2 * f, o = 1.0 - f;
+	vec2 w0 = o * o * o / 6.0, w1 = (3.0 * f3 - 6.0 * f2 + 4.0) / 6.0, w2 = (-3.0 * f3 + 3.0 * f2 + 3.0 * f + 1.0) / 6.0, w3 = f3 / 6.0;
+	vec2 g0 = w0 + w1, g1 = w2 + w3, h0 = (i + w1 / g0 - 0.5) / sz, h1 = (i + w3 / g1 + 1.5) / sz;
+	return g0.y * (g0.x * textureGrad(tx, h0, gx, gy) + g1.x * textureGrad(tx, vec2(h1.x, h0.y), gx, gy))
+		+ g1.y * (g0.x * textureGrad(tx, vec2(h0.x, h1.y), gx, gy) + g1.x * textureGrad(tx, h1, gx, gy));
+}
+#endif
+
 #if defined(_NIGHTLOOK)
 // not upstream: night look street lamps (design-night-look 5, Rev 2 M4); profile exp(-r^2/s^2); qw warped 128 m blocks, fq its footprint a pixel; AutoExpo.cpp NightLook::LampField is the tested copy
 const vec3 NL_PAL0 = vec3(1.0, 0.54, 0.07), NL_PAL1 = vec3(1.0, 0.71, 0.42), NL_PAL2 = vec3(1.0, 0.82, 0.64); // sodium 2000 K, LED 3000 K, LED 4000 K
@@ -576,6 +703,15 @@ vec4 TerrainPS(TileVS frg)
 	vec2 vUVSrf = frg.texUV.xy * Prm.vTexOff.zw + Prm.vTexOff.xy;
 	vec2 vUVWtr = frg.texUV.xy * Prm.vMicroOff.zw + Prm.vMicroOff.xy;
 	vec2 vUVCld = frg.texUV.xy * Prm.vCloudOff.zw + Prm.vCloudOff.xy;
+#if defined(_GROUNDMAT)
+	vec2 vUVGm = frg.texUV.xy * (2.0 * Prm.vMSc[0].xy); // not upstream (design-ground-detail 1): 4 m material repeats from the tile's corner
+	vec2 gGmX = vec2(0.0), gGmY = vec2(0.0), gSrX = vec2(0.0), gSrY = vec2(0.0);
+#ifdef STAGE_PS
+	gGmX = dFdx(vUVGm); gGmY = dFdy(vUVGm); gSrX = dFdx(vUVSrf); gSrY = dFdy(vUVSrf); // in uniform flow: the branches below sample with them
+#endif
+	float fGm = Flow.bClass ? 1.0 - smoothstep(150.0, 600.0, length(frg.camW.xyz)) : 0.0; // GroundGeom::Near, Far
+	float fGao = 1.0;
+#endif
 
 #if defined(_WATERFX)
 	vec2 vUVWt0 = vUVWtr; // not upstream: the unscrolled ocean uv, whole repeats per L14 tile
@@ -604,6 +740,9 @@ vec4 TerrainPS(TileVS frg)
 	// Fetch Main Textures
 	vec4 cTex = vec4(0.5, 0.5, 0.5, 1.0);
 	if (Flow.bTexture) cTex = texture(tDiff, vUVSrf);
+#if defined(_GROUNDMAT)
+	if (Flow.bTexture && fGm > 0.0) cTex = mix(cTex, TexBSpline(tDiff, vUVSrf, gSrX, gSrY), fGm); // not upstream (design-ground-detail 1.7): no 10 m squares under the materials
+#endif
 
 	vec4 cMsk = vec4(0, 0, 0, 1);
 	if (Flow.bMask) cMsk = texture(tMask, vUVSrf);
@@ -867,6 +1006,9 @@ vec4 TerrainPS(TileVS frg)
 	// not upstream: land class micro detail, 8 m and 2 m cells, fading in below 5 km
 	if (Flow.bClass)
 	{
+#if defined(_GROUNDMAT)
+		vec3 cSat = cTex.rgb; // not upstream (design-ground-detail 1.3): the satellite colour picks the materials
+#endif
 		float fade = 1.0 - smoothstep(800.0, 5000.0, dst), fadeP = 0.0;
 #if defined(_WAYS)
 		fadeP = fade * fWP; // not upstream (design-ways): wear and patches on pavement in place of the land detail
@@ -882,7 +1024,18 @@ vec4 TerrainPS(TileVS frg)
 			float fB = (n2 - 0.5) * 0.35 + (n1 - 0.5) * 0.1;	// grit
 			cTex.rgb *= 1.0 + (w.r * fT + w.g * fG + w.b * fB) * fade + ((n1 - 0.5) * 0.2 + (n2 - 0.5) * 0.08) * fadeP;
 		}
+#if defined(_GROUNDMAT)
+		float fGc = fGm * (1.0 - fMask); // not upstream (design-ground-detail 1): the materials, not on water
+#if defined(_WAYS)
+		fGc *= 1.0 - fWP; // nor on pavement
+#endif
+		if (fGc > 0.0) GroundMat(w, cSat, nvrW, vPlN, vUVGm, gGmX, gGmY, fGc, cTex.rgb, nrmW, fGao);
+#endif
 	}
+#if defined(_GROUNDMAT)
+	float fGl = clamp(1.0 + (dot(nrmW, Const.toSun) - dot(nvrW, Const.toSun)) / max(dot(nvrW, Const.toSun) + 0.1, 0.1), 0.0, 2.5) * mix(1.0, fGao, 0.25); // not upstream (design-ground-detail 1.6): GroundGeom::LambertRatio
+	float fGa = fGao * (1.0 + dot(nrmW, vPlN)) / max(1.0 + dot(nvrW, vPlN), 1e-3);
+#endif
 
 
 	// Render Eclipse ------------------------------------------------------------
@@ -919,6 +1072,9 @@ vec4 TerrainPS(TileVS frg)
 #endif
 
 	fLvl *= fSHD;	// Apply planet shadow
+#if defined(_GROUNDMAT)
+	fLvl *= fGl; // not upstream (design-ground-detail 1.6)
+#endif
 	fLvl *= fECL;	// Apply eclipse
 
 	vec3 color = cTex.rgb * LightFX(max(fLvl, 0.0) * fShadow + cDiffLocal);
@@ -1031,6 +1187,9 @@ vec4 TerrainPS(TileVS frg)
 
 	// Bake light and shadow terms
 	vec3 cL = cSF * fD * fShadow * fShd;
+#if defined(_GROUNDMAT)
+	cL *= fGl; cA *= fGa; // not upstream (design-ground-detail 1.6): the materials' relief and cavities
+#endif
 
 	// Lit the texture with various things
 	cTex.rgb *= cL * 2.0f + (cA + cDiffLocal + Const.cAmbient * Const.Ambient) * clamp(1.0f + fG + fZ, 0.0, 1.0) + cNgt;

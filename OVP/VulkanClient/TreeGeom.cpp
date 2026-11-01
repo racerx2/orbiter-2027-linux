@@ -61,7 +61,7 @@ void Lattice (double lat, double lng, double c, double *px, double *py)
 static inline float Fract (float x) { return x - std::floor(x); }
 static inline float Mod (float x, float y) { return x - y * std::floor(x / y); }
 
-static float ClsHash (float x, float y) // the shader's, in float; hash12 of "Hash without Sine", Dave Hoskins, MIT (CREDITS)
+float ClsHash (float x, float y) // the shader's, in float; hash12 of "Hash without Sine", Dave Hoskins, MIT (CREDITS)
 {
 	float a = Fract(x * 0.1031f), b = Fract(y * 0.1031f), c = Fract(x * 0.1031f);
 	float d = a * (b + 33.33f) + b * (c + 33.33f) + c * (a + 33.33f);

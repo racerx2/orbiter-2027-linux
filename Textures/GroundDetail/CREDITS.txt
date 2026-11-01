@@ -1,0 +1,7 @@
+Ground materials (Textures/GroundDetail), made by Utils/GroundMat/make.py from these scans, all CC0 (public domain):
+grass: Grass 004, ambientCG, https://ambientcg.com/view?id=Grass004
+forest: Forest Leaves 02, Rob Tuytel, Poly Haven, https://polyhaven.com/a/forest_leaves_02
+soil: Dry Mud Field 001, Rob Tuytel, Rico Cilliers, Poly Haven, https://polyhaven.com/a/dry_mud_field_001
+sand: Aerial Beach 01, Rob Tuytel, Poly Haven, https://polyhaven.com/a/aerial_beach_01
+rock: Aerial Rocks 02, Rob Tuytel, Poly Haven, https://polyhaven.com/a/aerial_rocks_02
+gravel: Gravel Ground 01, Rob Tuytel, Poly Haven, https://polyhaven.com/a/gravel_ground_01

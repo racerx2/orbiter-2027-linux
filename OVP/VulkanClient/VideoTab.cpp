@@ -825,6 +825,8 @@ void VideoTab::InitSetupDialog(QWidget *hWnd)
 	oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_GG_TREERANGE), "4 km");
 	DlgItem<QComboBox>(hWnd, IDC_GG_BLDGRANGE)->clear();
 	for (const char *s : {"5 km", "10 km", "20 km", "40 km"}) oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_GG_BLDGRANGE), s);
+	DlgItem<QComboBox>(hWnd, IDC_GG_GROUNDMAT)->clear(); // not upstream (design-ground-detail 1)
+	for (const char *s : {"Off", "Medium", "High"}) oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_GG_GROUNDMAT), s);
 
 	// gcGUI -----------------------------------------
 	if (Config->gcGUIMode == 1) Config->gcGUIMode = 0;
@@ -945,6 +947,7 @@ void VideoTab::InitSetupDialog(QWidget *hWnd)
 	DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ)->setCurrentIndex(Config->VolCloudQuality);
 	DlgItem<QComboBox>(hWnd, IDC_GG_TREERANGE)->setCurrentIndex(Config->TreeRange < 1750.0f ? 0 : Config->TreeRange < 3250.0f ? 1 : 2);
 	DlgItem<QComboBox>(hWnd, IDC_GG_BLDGRANGE)->setCurrentIndex(Config->BldgRange < 7.5f ? 0 : Config->BldgRange < 15.0f ? 1 : Config->BldgRange < 30.0f ? 2 : 3);
+	DlgItem<QComboBox>(hWnd, IDC_GG_GROUNDMAT)->setCurrentIndex(Config->GroundMaterials); // not upstream
 
 
 	DlgItem<QAbstractButton>(hWnd, IDC_NORMALMAPS)->setChecked(Config->UseNormalMap==1);
@@ -1056,6 +1059,10 @@ void VideoTab::SaveSetupState(QWidget *hWnd)
 		static const float km[4] = { 5.0f, 10.0f, 20.0f, 40.0f };
 		int r = (int)DlgItem<QComboBox>(hWnd, IDC_GG_BLDGRANGE)->currentIndex();
 		if (r >= 0 && r < 4) Config->BldgRange = km[r];
+	}
+	{ // not upstream (design-ground-detail 1)
+		int r = (int)DlgItem<QComboBox>(hWnd, IDC_GG_GROUNDMAT)->currentIndex();
+		if (r >= 0 && r < 3) Config->GroundMaterials = r;
 	}
 
 	// Sliders

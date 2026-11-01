@@ -18,6 +18,7 @@ enum Kind { SPRUCE = 0, PINE, BROAD1, BROAD2, BUSH, NKIND };
 
 double LatticeC (double R);		// lattice cells per radian: 2^round(log2(pi R / 8)) / pi
 void Lattice (double lat, double lng, double c, double *px, double *py);	// NewPlanet.glsl's class lattice point, mod P
+float ClsHash (float x, float y);					// NewPlanet.glsl ClsHash in float (Dave Hoskins, "Hash without Sine", MIT)
 float ClsNoise (float px, float py, float period);	// NewPlanet.glsl ClsNoise (ClsHash: Dave Hoskins, "Hash without Sine", MIT)
 float Canopy (double px, double py);				// 0..1 canopy clumps from the shader's n1
 

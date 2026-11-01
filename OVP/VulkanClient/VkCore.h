@@ -90,7 +90,7 @@ public:
 class VkTex {
 public:
 	VkTex (VkDev *dev, UINT w, UINT h, UINT levels, VkFormat fmt, VkImageUsageFlags usage,
-		UINT layers = 1, bool cube = false, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT);
+		UINT layers = 1, bool cube = false, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT, bool array = false); // not upstream: array, a 2D array view of any layer count
 	~VkTex ();
 
 	void Transition (VkCommandBuffer cmd, VkImageLayout layout); // records a barrier to the new layout
@@ -107,6 +107,7 @@ public:
 	VkFormat fmt;
 	UINT w, h, levels, layers;
 	bool cube;
+	bool array = false;    // not upstream: viewed as a 2D array even with one layer (the default texture of sampler2DArray)
 	VkSampleCountFlagBits samples;
 	VkImageUsageFlags usage;
 	VkImageLayout layout;  // after the last recorded barrier: the render thread records its transitions into the frame in order; one-time submits only touch images no frame uses (new, pool, loader), or end in the layout they found (readback)
@@ -366,7 +367,7 @@ private:
 	VkConstBuffer *cbActive;
 	const std::vector<VkSamplerSlot> *cbSlots;
 	std::vector<std::pair<VkSamplerDesc, VkSampler>> samplers;
-	VkTex *defTex[3];                    // 2D, cube, 3D
+	VkTex *defTex[4];                    // 2D, cube, 3D, 2D array (not upstream)
 	VkDescriptorSetLayout setLayout;
 	VkPipelineLayout pipeLayout;
 };

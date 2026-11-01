@@ -97,6 +97,8 @@ set(SourceFiles
 	VolCloudMap.cpp # not upstream
 	CloudAtlas.cpp # not upstream
 	TreeGeom.cpp # not upstream
+	GroundGeom.cpp # not upstream
+	GroundMat.cpp # not upstream
 	TreeMgr.cpp # not upstream
 	BaseShapes.cpp # not upstream: what streamed trees and ways keep off (design-ways)
 	WayGeom.cpp # not upstream (design-ways)

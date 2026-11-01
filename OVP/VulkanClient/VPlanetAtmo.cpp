@@ -19,6 +19,7 @@
 #include "VectorHelpers.h"
 #include "IProcess.h"
 #include "SceneShadows.h" // not upstream
+#include "GroundMat.h" // not upstream
 
 using namespace oapi;
 
@@ -173,6 +174,7 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	if (bNightLights && Config->NightLook) flags += "_NIGHTLOOK "; // not upstream: night city look (design-night-look 5)
 	if (bLocals) flags += "_LOCALLIGHTS ";
 	flags += "_WAYS "; // not upstream (design-ways): streamed roads, rail, airports and waterways on tWay/tWayN
+	if (GroundMat::Tex()) flags += "_GROUNDMAT "; // not upstream (design-ground-detail 1): the materials on binding 23
 
 	if (Config->ShadowMapMode) flags += "_SHDMAP ";
 	if (Config->EnableMeshDbg) flags += "_DEVTOOLS ";

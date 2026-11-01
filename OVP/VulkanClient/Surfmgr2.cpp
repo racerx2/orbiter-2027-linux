@@ -28,6 +28,8 @@
 #include "SceneFx.h" // not upstream: DepthWanted
 #include "FogMath.h" // not upstream: ElevGrids' tile range
 #include "SceneShadows.h" // not upstream: scene shadow casters and receivers
+#include "GroundMat.h" // not upstream
+#include "GroundGeom.h" // not upstream
 #include "SceneSsr.h" // not upstream: the water's reflections
 #include <functional> // not upstream
 #include <deque> // not upstream
@@ -1188,6 +1190,12 @@ void SurfTile::Render ()
 		sp->vMSc[0] = FVECTOR4(float(rep), float(rep), float(std::fmod(ilng * rep, P)), float(std::fmod(ilat * rep, P)));
 		pShader->SetTexture("tClass", ctex, IPF_CLAMP | IPF_LINEAR);
 		fc->bClass = true;
+		if (VkTex *gt = GroundMat::Tex()) { // not upstream (design-ground-detail 1): the hex grid's base at the tile's corner, in 4 m material repeats; vMSc[1] is a micro texture slot, unused without them
+			float cx, cy, fx, fy;
+			GroundGeom::SkewSplit(2.0 * ilng * rep, 2.0 * ilat * rep, &cx, &cy, &fx, &fy);
+			sp->vMSc[1] = FVECTOR4(fx, fy, cx, cy);
+			pShader->SetTexture("tGround", gt, IPF_WRAP | IPF_ANISOTROPIC, Config->Anisotrophy);
+		}
 	}
 
 	HorizonParams(); // not upstream: terrain shadows from the owner's horizon map

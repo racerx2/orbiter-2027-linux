@@ -109,6 +109,7 @@ public:
 	int StreamRwyLights;			// not upstream: runway lights on the streamed airports (0,1)
 	float TreeDensity;				// not upstream: 0.1...2
 	float BldgRange;				// not upstream: km, 5...40, streamed buildings out to this distance
+	int GroundMaterials;			// not upstream: ground materials up close, 0 off, 1 half size, 2 full (design-ground-detail 1)
 	int AutoExposure;				// not upstream: eye adaptation (0,1)
 	float AutoExpMinEV;				// not upstream: -4...0
 	float AutoExpMaxEV;				// not upstream: 0...4

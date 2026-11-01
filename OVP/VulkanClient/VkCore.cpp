@@ -203,9 +203,10 @@ static bool HasStencil (VkFormat f)
 }
 
 VkTex::VkTex (VkDev *_dev, UINT _w, UINT _h, UINT _levels, VkFormat _fmt, VkImageUsageFlags _usage,
-	UINT _layers, bool _cube, VkSampleCountFlagBits _samples)
+	UINT _layers, bool _cube, VkSampleCountFlagBits _samples, bool _array)
 {
 	dev = _dev;
+	array = _array;
 	w = _w, h = _h;
 	levels = _levels ? _levels : 1;
 	if (_levels == 0) { // D3D9: 0 = the full mip chain
@@ -251,7 +252,7 @@ VkTex::VkTex (VkDev *_dev, UINT _w, UINT _h, UINT _levels, VkFormat _fmt, VkImag
 	if (!(usage & (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT))) return; // transfer-only: no view
 	VkImageViewCreateInfo vi = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
 	vi.image = img;
-	vi.viewType = cube ? VK_IMAGE_VIEW_TYPE_CUBE : (layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D);
+	vi.viewType = cube ? VK_IMAGE_VIEW_TYPE_CUBE : (layers > 1 || array ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D);
 	vi.format = fmt;
 	vi.subresourceRange = { Aspect(), 0, levels, 0, layers };
 	if (IsDepth()) vi.subresourceRange.aspectMask = HasStencil (fmt) && fmt == VK_FORMAT_S8_UINT ? VK_IMAGE_ASPECT_STENCIL_BIT : VK_IMAGE_ASPECT_DEPTH_BIT;
@@ -352,7 +353,7 @@ void VkTex::SetSwizzle (VkComponentMapping swz)
 	dev->Defer ([d, old]() { vkDestroyImageView (d, old, NULL); });
 	VkImageViewCreateInfo vi = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
 	vi.image = img;
-	vi.viewType = depth > 1 ? VK_IMAGE_VIEW_TYPE_3D : (cube ? VK_IMAGE_VIEW_TYPE_CUBE : (layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D));
+	vi.viewType = depth > 1 ? VK_IMAGE_VIEW_TYPE_3D : (cube ? VK_IMAGE_VIEW_TYPE_CUBE : (layers > 1 || array ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D));
 	vi.format = fmt;
 	vi.components = swz;
 	swizzle = swz;
@@ -580,7 +581,7 @@ VkDev::VkDev (QVulkanInstance *inst, VkPhysicalDevice _phys)
 	scissor = {};
 	timelineValue = 0;
 	memset (frame, 0, sizeof(frame));
-	defTex[0] = defTex[1] = defTex[2] = NULL;
+	defTex[0] = defTex[1] = defTex[2] = defTex[3] = NULL;
 	curVS = curFS = VK_NULL_HANDLE;
 	copyVS = copyFS = VK_NULL_HANDLE;
 	cbActive = NULL;
@@ -821,7 +822,7 @@ VkDev::~VkDev ()
 {
 	if (!dev) return;
 	vkDeviceWaitIdle (dev);
-	for (int i = 0; i < 3; i++) delete defTex[i];
+	for (int i = 0; i < 4; i++) delete defTex[i];
 	for (VkTex *t : resolveTemps) delete t;
 	for (VkTex *t : scaleTemps) delete t;
 	for (int i = 0; i < NFRAMES; i++) {
@@ -1633,12 +1634,12 @@ void VkDev::PrepareSample (VkTex *t)
 
 VkTex *VkDev::DefaultTexture (VkImageViewType type)
 {
-	int i = type == VK_IMAGE_VIEW_TYPE_CUBE ? 1 : (type == VK_IMAGE_VIEW_TYPE_3D ? 2 : 0);
+	int i = type == VK_IMAGE_VIEW_TYPE_CUBE ? 1 : (type == VK_IMAGE_VIEW_TYPE_3D ? 2 : (type == VK_IMAGE_VIEW_TYPE_2D_ARRAY ? 3 : 0)); // not upstream: 3, sampler2DArray's
 	if (!defTex[i]) {
 		static const DWORD black = 0xFF000000; // D3D9 samples (0,0,0,1) without a texture
 		VkImageUsageFlags u = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 		if (i == 2) defTex[i] = new VkTex (this, VK_FORMAT_B8G8R8A8_UNORM, 1, 1, 1, u);
-		else defTex[i] = new VkTex (this, 1, 1, 1, VK_FORMAT_B8G8R8A8_UNORM, u, 1, i == 1);
+		else defTex[i] = new VkTex (this, 1, 1, 1, VK_FORMAT_B8G8R8A8_UNORM, u, 1, i == 1, VK_SAMPLE_COUNT_1_BIT, i == 3);
 		for (UINT l = 0; l < defTex[i]->layers; l++) defTex[i]->Upload (0, l, &black, 4);
 	}
 	return defTex[i];

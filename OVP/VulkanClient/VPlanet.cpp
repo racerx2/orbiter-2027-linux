@@ -38,6 +38,7 @@
 #include "OapiExtension.h"
 #include "IProcess.h"
 #include "VkTexFile.h"
+#include "GroundMat.h" // not upstream
 #include "OrbiterResource.h"
 #include "BldgMgr.h" // not upstream
 #include "TreeMgr.h" // not upstream
@@ -362,6 +363,7 @@ void vPlanet::GlobalExit()
 
 	SAFE_DELETE(pIP);
 	SAFE_DELETE(ptEclipse);
+	GroundMat::Release(); // not upstream
 
 	for (int i=0;i<8;i++) SAFE_DELETE(pRender[i]);
 }
@@ -374,6 +376,7 @@ void vPlanet::GlobalInit(oapi::D3D9Client* gc)
 
 	ptEclipse = new VkTex(pDev, 512, 1, 1, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT); // D3DUSAGE_DYNAMIC: rewritten with Upload
 	LoadMicroTextures(pDev);
+	GroundMat::Load(pDev, Config->GroundMaterials); // not upstream (design-ground-detail 1): before the Earth shader, which takes _GROUNDMAT only with it
 	GlobalInitAtmosphere(gc);
 }
 
