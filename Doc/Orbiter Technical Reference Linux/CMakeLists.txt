@@ -14,6 +14,7 @@ add_custom_command(
 	COMMAND ${pdflatex_cmd}
 	COMMAND ${bibtex_cmd}
 	COMMAND ${pdflatex_cmd}
+	COMMAND ${pdflatex_cmd} # the pass after the bibliography numbers its new citations
 	DEPENDS ${tex_files}
 	WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 	JOB_POOL latex

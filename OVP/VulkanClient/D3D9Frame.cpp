@@ -655,6 +655,7 @@ int CD3DFramework9::CreateFullscreenMode()
 	LogAlw("[FULLSCREEN MODE] %u x %u,  hWindow=%s", dwRenderWidth, dwRenderHeight, _PTR(hWnd));
 
 	// D3DMULTISAMPLE_NONE, D3DFMT_X8R8G8B8 backbuffer, D24S8 depth (d3dPP)
+	VkDev::wantRayQuery = Config->SSGI && Config->GIMethod == 1; // not upstream (design-ddgi 2)
 	pDevice = new VkDev(g_pD3DObject, PickAdapter(Adapter)); // CreateDevice
 	if (!pDevice->IsOK()) {
 		SAFE_DELETE(pDevice);
@@ -698,6 +699,7 @@ int CD3DFramework9::CreateWindowedMode()
 	// NVPerfHUD's D3DDEVTYPE_REF left out: no reference rasterizer (lavapipe can be picked as the adapter instead)
 	if (nvPerfHud) LogErr("[WARNING] NVPerfHUD mode is not available (Disable from D3D9Client.cfg) [WARNING]");
 
+	VkDev::wantRayQuery = Config->SSGI && Config->GIMethod == 1; // not upstream (design-ddgi 2)
 	pDevice = new VkDev(g_pD3DObject, PickAdapter(Adapter)); // CreateDevice
 	if (!pDevice->IsOK()) {
 		LogErr("CreateDevice() Failed");

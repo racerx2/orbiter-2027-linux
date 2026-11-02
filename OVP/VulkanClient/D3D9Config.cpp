@@ -132,6 +132,8 @@ void D3D9Config::Reset ()
 	HeightFog		= 0;
 	NightLook		= 1;
 	SSGIStrength	= 1.0f;
+	GIMethod		= 0;
+	GIRayMs		= 0.25f;
 	
 	GFXIntensity = 0.5;
 	GFXDistance = 0.8;
@@ -269,6 +271,8 @@ bool D3D9Config::ReadParams ()
 	if (oapiReadItem_int   (hFile, (char*)"HeightFog", i))					HeightFog = max(0, min(1, i));
 	if (oapiReadItem_int   (hFile, (char*)"NightLook", i))					NightLook = max(0, min(1, i));
 	if (oapiReadItem_float (hFile, (char*)"SSGIStrength", d))				SSGIStrength = float(max(0.0, min(2.0, d)));
+	if (oapiReadItem_int   (hFile, (char*)"GIMethod", i))					GIMethod = max(0, min(1, i));
+	if (oapiReadItem_float (hFile, (char*)"GIRayMs", d))					GIRayMs = float(max(0.1, min(2.0, d)));
 
 	if (oapiReadItem_float (hFile, (char*)"GFXIntensity", d))					GFXIntensity = max(0.0, min(1.0, d));
 	if (oapiReadItem_float (hFile, (char*)"GFXDistance", d))					GFXDistance = max(0.0, min(1.0, d));
@@ -403,6 +407,8 @@ void D3D9Config::WriteParams ()
 	oapiWriteItem_int   (hFile, (char*)"HeightFog", HeightFog);
 	oapiWriteItem_int   (hFile, (char*)"NightLook", NightLook);
 	oapiWriteItem_float (hFile, (char*)"SSGIStrength", double(SSGIStrength));
+	oapiWriteItem_int   (hFile, (char*)"GIMethod", GIMethod);
+	oapiWriteItem_float (hFile, (char*)"GIRayMs", double(GIRayMs));
 
 	oapiWriteItem_string (hFile,(char*) "SolCfg", SolCfg);
 	oapiWriteItem_string (hFile,(char*) "DebugLineFont", DebugFont);

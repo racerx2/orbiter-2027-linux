@@ -198,9 +198,10 @@ bool VkCompileGLSL (const char *file, const std::string &src, const char *entry,
 	return !spirv.empty ();
 }
 
-VkShaderEXT VkCreateShaderObject (VkDev *dev, const std::vector<uint32_t> &spirv, VkShaderStageFlagBits stage)
+VkShaderEXT VkCreateShaderObject (VkDev *dev, const std::vector<uint32_t> &spirv, VkShaderStageFlagBits stage, bool rt)
 {
-	VkDescriptorSetLayout sl = dev->SetLayout ();
+	VkDescriptorSetLayout sl2[2] = { dev->SetLayout (), dev->RtSetLayout () };
+	VkDescriptorSetLayout sl = sl2[0];
 	VkPushConstantRange pr = { VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, VkDev::PUSHCONST };
 	VkShaderCreateInfoEXT ci = { VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT };
 	ci.stage = stage;
@@ -209,8 +210,8 @@ VkShaderEXT VkCreateShaderObject (VkDev *dev, const std::vector<uint32_t> &spirv
 	ci.codeSize = spirv.size() * sizeof(uint32_t);
 	ci.pCode = spirv.data();
 	ci.pName = "main";
-	ci.setLayoutCount = 1;
-	ci.pSetLayouts = &sl;
+	ci.setLayoutCount = (rt && sl2[1]) ? 2 : 1;
+	ci.pSetLayouts = ci.setLayoutCount == 2 ? sl2 : &sl;
 	ci.pushConstantRangeCount = 1;
 	ci.pPushConstantRanges = &pr;
 	VkShaderEXT sh = VK_NULL_HANDLE;

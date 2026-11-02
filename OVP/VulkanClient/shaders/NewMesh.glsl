@@ -33,7 +33,21 @@ struct PSGi {		// not upstream: SceneDepth_PS's albedo for SSGI (design-ssgi 4.1
 	vec4 vMtl;		// metal factor (x), metal map bound (y), map channel b (z, else g), decode the base texture sRGB to linear (w)
 	vec4 vCls;		// class (x: 2 bases and buildings, 3 vessels), family (y: 0 legacy, 1 metalness, 2 pbr, 3 base tile)
 };
+#if defined(_DDGI)
+struct PSRef {		// not upstream (design-ddgi 6): the ambient a vessel's own shader adds, which the ray-traced GI replaces
+	vec4 vSrc;		// source (x: 0 none, 1 irradiance map squared, 2 earth glow, 3 irradiance cube), irradiance map bound (y)
+	vec4 vAmb;		// the vessel's sun ambient (rgb), cos of the proxy's half size (w)
+	vec4 vGlow;		// atmosphere glow colour (rgb), glow constant (w)
+	vec4 vCam;		// planet to camera, unit, global axes (xyz), 1 / (1 - proxy size) (w)
+	vec4 vEast;
+	vec4 vNorth;
+};
+layout(binding = 1, row_major, scalar) uniform PSConstBlock { PSConst ps_const; PSBools ps_bools; PSGi ps_gi; PSRef ps_ref; };
+layout(binding = 6) uniform sampler2D tIrrR;	// the vessel's irradiance map
+layout(binding = 7) uniform samplerCube tIrrC;	// its irradiance cube (PbrMesh)
+#else
 layout(binding = 1, row_major, scalar) uniform PSConstBlock { PSConst ps_const; PSBools ps_bools; PSGi ps_gi; };
+#endif
 layout(binding = 5) uniform sampler2D tMR;	// metalness map
 #else
 layout(binding = 1, row_major, scalar) uniform PSConstBlock { PSConst ps_const; PSBools ps_bools; };
@@ -248,6 +262,28 @@ vec2 OctEnc(vec3 n)
 	return p * 0.5 + 0.5;
 }
 #endif
+#if defined(_DDGI)
+layout(location = 3) out vec4 oRef;	// not upstream (design-ddgi 6): the vessel's own ambient (rgb) as its family's composite reads it, 1 - metal (a)
+vec3 ParaLVLH(vec3 i)	// Common.glsl's Paraboloidal_LVLH
+{
+	float z = dot(ps_ref.vCam.xyz, i);
+	vec2 p = vec2(dot(ps_ref.vEast.xyz, i), dot(ps_ref.vNorth.xyz, i)) / (1.0 + abs(z));
+	p *= vec2(0.2273, 0.4545);
+	vec3 A = texture(tIrrR, p + vec2(0.25, 0.5)).rgb;
+	vec3 B = texture(tIrrR, p + vec2(0.75, 0.5)).rgb;
+	return mix(A, B, smoothstep(-0.03, 0.03, z));
+}
+vec3 L2SR(vec3 c) { c = max(c, vec3(0.0)); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }
+vec3 HullAmb(vec3 n)	// Metalness.fx cAmbient before its metal factor; PbrMesh Irradiance() before Decode
+{
+	int s = int(ps_ref.vSrc.x + 0.5);
+	vec3 amb = ps_ref.vAmb.rgb;
+	if (s == 1) { vec3 c = ps_ref.vSrc.y > 0.5 ? ParaLVLH(n) : vec3(0.0); return max(c * c, amb); }
+	if (s == 3) return max(L2SR(texture(tIrrC, n).rgb), amb);
+	float angl = clamp((-dot(ps_ref.vCam.xyz, n) - ps_ref.vAmb.w) * ps_ref.vCam.w, 0.0, 1.0);
+	return ps_ref.vGlow.rgb * max(0.0, angl * ps_ref.vGlow.w) + amb;
+}
+#endif
 void main()
 {
 #if defined(_SSGI)
@@ -268,6 +304,9 @@ void main()
 	if (dot(n, frg.posW) > 0.25 * length(frg.posW)) n = -n;	// inverted mesh normals; slight silhouette ones are bent in SSGI.glsl
 	oAlb = vec4(clamp(rho * 0.25, 0.0, 1.0), ps_gi.vCls.y / 3.0);
 	oNrm = vec4(OctEnc(n), 0.0, ps_gi.vCls.x / 3.0);
+#endif
+#if defined(_DDGI)
+	oRef = ps_ref.vSrc.x > 0.5 ? vec4(HullAmb(normalize(frg.nrmW)), 1.0 - clamp(metal, 0.0, 1.0)) : vec4(0.0);	// the shader's own normal, unflipped
 #endif
 }
 #endif

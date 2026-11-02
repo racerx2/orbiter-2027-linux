@@ -99,6 +99,15 @@ public:
 		float4 vCls;		// class, family
 	} ps_gi;
 
+	static struct PSRef {	// not upstream (design-ddgi 6): a vessel's own ambient under _DDGI (NewMesh.glsl PSRef)
+		float4 vSrc;		// 0 none, 1 irradiance map squared, 2 earth glow, 3 irradiance cube; map bound
+		float4 vAmb;		// the vessel's sun ambient, cos of the proxy's half size
+		float4 vGlow;		// atmosphere glow colour, glow constant
+		float4 vCam;		// planet to camera, unit; 1 / (1 - proxy size)
+		float4 vEast;
+		float4 vNorth;
+	} ps_ref;
+
 
 	MeshShader(VkDev *pDev, const char *file, const char *vs, const char *ps, const char *opt = NULL) :
 		ShaderClass(pDev, "Modules/VulkanClient/NewMesh.glsl", vs, ps, "MeshShader", opt)
@@ -110,6 +119,9 @@ public:
 		hPST[0] = GetPSHandle("tDiff");
 		hPSG  = GetPSHandle("ps_gi");	// not upstream: NULL without _SSGI
 		hPST[1] = hPSG ? GetPSHandle("tMR") : NULL; // not upstream
+		hPSR  = GetPSHandle("ps_ref");	// not upstream: NULL without _DDGI
+		hPST[2] = hPSR ? GetPSHandle("tIrrR") : NULL;
+		hPST[3] = hPSR ? GetPSHandle("tIrrC") : NULL;
 	}
 
 	~MeshShader()
@@ -119,6 +131,7 @@ public:
 
 	VkConstHandle hPSB, hVSC, hPSC, hPST[16];
 	VkConstHandle hPSG;	// not upstream: ps_gi
+	VkConstHandle hPSR;	// not upstream: ps_ref
 };
 
 
@@ -149,6 +162,7 @@ public:
 	DWORD nIdx;
 	DWORD mapMode;
 	bool  bMustRemap;
+	uint64_t serial = 0;	// not upstream (design-ddgi 3): new at each Map that remakes the buffers
 
 	const class D3D9Mesh	*pRoot;
 };
@@ -354,9 +368,22 @@ public:
 	static void		GlobalInit(VkDev *pDev);
 	static void		GlobalExit();
 	static void		SetGiClass(int cls) { giCls = cls; } // not upstream: SSGI class of the next SceneDepth draws (2 bases and buildings, 3 vessels), -1 outside SceneFx::DepthPass
+	static void		SetGiRef(bool on);	// not upstream (design-ddgi 6): vessels write their own ambient into the fourth SceneDepth target; the frame's glow values taken here
+
+	// not upstream (design-ddgi 3): a group as the ray-traced GI sees it, by RenderShadowMap's SceneDepth rules
+	struct GiGroupDesc {
+		bool used;				// opaque, in the traced geometry
+		D3DXMATRIX tf;			// group to mesh frame, put before the world matrix
+		VkTex *tex, *mr;		// base texture and metal map, NULL none
+		D3DXVECTOR4 mat;		// albedo factor (rgb), base texture used (w)
+		D3DXVECTOR4 mtl;		// metal factor, metal map bound, map channel b (else g), base texture decoded to linear
+		int fam;				// 0 legacy, 1 metalness, 2 PBR, 3 base tile
+	};
+	bool			GiGroup(DWORD g, GiGroupDesc &d) const; // false: no such group
 
 private:
 	static int giCls;			// not upstream: SetGiClass
+	static bool giRef;			// not upstream: SetGiRef
 	bool bGiTile = false;		// not upstream: a base's tile mesh (SSGI family 3)
 
 

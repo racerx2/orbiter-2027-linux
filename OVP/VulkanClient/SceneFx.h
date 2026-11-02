@@ -64,6 +64,7 @@ private:
 	static void FreeVolShadow (VolShadowState *s); // SceneFxShadow.cpp
 	void InitVolShadow ();                  // SceneFxShadow.cpp
 	void Gi (VkSurf *target, vPlanet *vp);  // SceneFxGi.cpp: screen-space GI (design-ssgi), after VolShadow
+	bool GiRt (VkSurf *target, vPlanet *vp, struct ConstParams *cp, const struct DdgiGiPS &gps); // SceneFxGi.cpp: ray-traced GI's passes (design-ddgi 6)
 	struct GiState;
 	static void FreeGi (GiState *s);        // SceneFxGi.cpp
 	void InitGi ();                         // SceneFxGi.cpp, at start when SSGI is on

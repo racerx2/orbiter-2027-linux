@@ -119,7 +119,7 @@ void TreeMgr::MakeMeshes ()
 		{1, 20, VK_FORMAT_R8G8B8A8_UNORM, DECL_TEXCOORD, 2},
 		{1, 24, VK_FORMAT_R8G8B8A8_UNORM, DECL_TEXCOORD, 3}};
 	decl = new VkVertexDecl (el, 7, sizeof (TreeGeom::Vtx), sizeof (Inst), true);
-	std::string fl = std::string(Config->Filmic ? "_FILMIC " : "") + (Config->TAA ? "_TAA " : "") + (Config->SSGI ? "_SSGI " : ""); // not upstream: _FILMIC, _TAA (the dither moves per frame), _SSGI (albedo and normal in the distance pass)
+	std::string fl = std::string(Config->Filmic ? "_FILMIC " : "") + (Config->TAA ? "_TAA " : "") + (Config->SSGI ? "_SSGI " : "") + (Config->RayTracedGI(dev->rayQuery) ? "_DDGI " : ""); // not upstream: _FILMIC, _TAA (the dither moves per frame), _SSGI (albedo and normal in the distance pass), _DDGI (its fourth target)
 	if (SceneShadows::Enabled ()) fl += "_CSM "; // not upstream: scene shadow receivers (design-scene-shadows)
 	sh = new ShaderClass (dev, "Modules/VulkanClient/Tree.glsl", "TreeVS", "TreePS", "Trees", fl.c_str());
 }

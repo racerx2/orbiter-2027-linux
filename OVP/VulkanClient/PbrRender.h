@@ -53,6 +53,8 @@ public:
 	static void BeginVariant (PbrVariant *v, VkTex *legacyEnv); // shared values from the legacy effect, frame values, environment
 
 	static void SetEnvironment (const PbrEnv *env) { curEnv = env; }
+	static const PbrEnv *ReadyEnv () { return (curEnv && curEnv->ready) ? curEnv : NULL; } // not upstream: the environment the variants read, NULL none
+	static int IrrMode (const VkTex *irr);       // not upstream: PbrMesh's gIrrMode with this irradiance map: 0 earth glow, 1 the map, 2 the environment's cube
 	static void PrefilterEnv (VkDev *dev, VkTex *legacyCube, PbrEnv &env);
 
 	static void SetPhase (Phase p) { phase = p; }

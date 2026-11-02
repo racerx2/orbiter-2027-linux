@@ -37,6 +37,7 @@ struct VBMESH {
 	D3DXVECTOR3 bsCnt;				// bounding sphere position
 	float  bsRad;					// bounding sphere radius
 	bool bBox;						// true if bounding box data is valid
+	uint64_t serial = 0;			// not upstream (design-ddgi 3): new at each MapVertices, keys the ray-traced GI's copy
 };
 
 void CreateSphere(VkDev *pDev, VBMESH &mesh, DWORD nrings, bool hemisphere, int which_half, int texres);

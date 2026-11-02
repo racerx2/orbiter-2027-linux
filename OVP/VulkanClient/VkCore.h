@@ -48,6 +48,18 @@ struct VkExtFunctions {
 };
 extern VkExtFunctions vkx;
 
+// not upstream (design-ddgi 2): VK_KHR_acceleration_structure entry points, when the device has ray queries
+struct VkRtFunctions {
+	PFN_vkCreateAccelerationStructureKHR CreateAccelerationStructureKHR;
+	PFN_vkDestroyAccelerationStructureKHR DestroyAccelerationStructureKHR;
+	PFN_vkGetAccelerationStructureBuildSizesKHR GetAccelerationStructureBuildSizesKHR;
+	PFN_vkGetAccelerationStructureDeviceAddressKHR GetAccelerationStructureDeviceAddressKHR;
+	PFN_vkCmdBuildAccelerationStructuresKHR CmdBuildAccelerationStructuresKHR;
+	PFN_vkCmdWriteAccelerationStructuresPropertiesKHR CmdWriteAccelerationStructuresPropertiesKHR;
+	PFN_vkCmdCopyAccelerationStructureKHR CmdCopyAccelerationStructureKHR;
+};
+extern VkRtFunctions vkrt;
+
 // Buffer (IDirect3DVertexBuffer9, IDirect3DIndexBuffer9): host visible and persistently mapped when dynamic
 
 class VkBuf {
@@ -57,6 +69,7 @@ public:
 	void *Map () const { return mapped; } // Lock; NULL for device-local buffers and when the allocation failed
 	void Upload (const void *data, VkDeviceSize size, VkDeviceSize offset = 0); // UpdateSubresource path
 	void Invalidate ();                   // readback buffers: the GPU's writes become visible to Map
+	VkDeviceAddress Address () const;      // not upstream (design-ddgi 2): with ray queries, vertex, index and storage buffers have one
 	VkBuffer buf;
 	VkDeviceSize size;
 private:
@@ -289,7 +302,15 @@ public:
 	// descriptors: set 0 is pushed per draw (textures and constant blocks of the bound effect)
 	VkSampler Sampler (const VkSamplerDesc &desc);
 	VkDescriptorSetLayout SetLayout () const { return setLayout; }
-	VkPipelineLayout PipelineLayout () const { return pipeLayout; }
+	VkPipelineLayout PipelineLayout () const { return rtActive ? rtPipeLayout : pipeLayout; } // not upstream: set 0 pushed with the two-set layout while set 1 is bound
+
+	// not upstream (design-ddgi 2): ray queries; set 1 of the GI shaders: 0 the TLAS, 1 and 2 storage buffers
+	static bool wantRayQuery;                        // set before the device is made: the client's GI mode asks for them
+	static bool RayQuerySupported (VkPhysicalDevice phys); // every part the ray-traced GI needs (the setup dialog asks before a device exists)
+	bool rayQuery = false;                           // acceleration structures, ray queries with position fetch, buffer addresses, dual-source blend
+	VkDescriptorSetLayout RtSetLayout () const { return rtSetLayout; }
+	VkPipelineLayout RtPipelineLayout () const { return rtPipeLayout; }
+	void BindRtSet (VkDescriptorSet set);            // set 1 for the next draws of the GI shaders; VK_NULL_HANDLE: back to set 0 alone
 
 	// identity
 	VkInstance instance;
@@ -370,6 +391,9 @@ private:
 	VkTex *defTex[4];                    // 2D, cube, 3D, 2D array (not upstream)
 	VkDescriptorSetLayout setLayout;
 	VkPipelineLayout pipeLayout;
+	VkDescriptorSetLayout rtSetLayout = VK_NULL_HANDLE; // not upstream (design-ddgi 2)
+	VkPipelineLayout rtPipeLayout = VK_NULL_HANDLE;
+	bool rtActive = false;                           // set 1 is bound in this command buffer: pushes use rtPipeLayout
 };
 
 // D3DPRIMITIVETYPE primitive count → the vertex or index count a Vk draw takes

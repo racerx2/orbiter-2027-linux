@@ -125,6 +125,7 @@ private:
 };
 
 template<> std::shared_ptr<const Horizon::Map> TileManager2<SurfTile>::HorizonAt (double lat, double lng, double bnd[4]); // not upstream
+template<> void TileManager2<SurfTile>::GiTiles (MATRIX4 &dwmat, const vPlanet::RenderPrm &rprm, double range, double kLod, std::vector<GiTileRec> &out); // not upstream (design-ddgi 3)
 unsigned WayNewGen (); // not upstream (design-ways): Waymgr.cpp
 
 #endif // !__SURFMGR2_H

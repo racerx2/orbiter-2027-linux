@@ -387,6 +387,11 @@ PbrVariant *PbrRender::Variant (unsigned f)
 	return &v;
 }
 
+int PbrRender::IrrMode (const VkTex *irr)
+{
+	return ReadyEnv () ? 2 : ((irr && Config->bIrradiance && Config->EnvMapMode) ? 1 : 0);
+}
+
 void PbrRender::BeginVariant (PbrVariant *v, VkTex *legacyEnv)
 {
 	VkEffect *fx = v->fx;
@@ -402,9 +407,9 @@ void PbrRender::BeginVariant (PbrVariant *v, VkTex *legacyEnv)
 	if (SceneShadows *ss = SceneShadows::Get ()) if (ss->Ok ()) fx->SetTexture (fx->GetParameterByName (0, "CsmS"), ss->Atlas ()); // not upstream
 	fx->SetTexture (v->hIrradS, irr);
 
-	const PbrEnv *e = (curEnv && curEnv->ready) ? curEnv : NULL;
+	const PbrEnv *e = ReadyEnv ();
 	int envMode = e ? 2 : (legacyEnv ? 1 : 0);
-	int irrMode = e ? 2 : ((irr && Config->bIrradiance && Config->EnvMapMode) ? 1 : 0);
+	int irrMode = IrrMode (irr);
 	fx->SetTexture (v->hEnvIrrS, e ? e->irr : NULL);
 	fx->SetTexture (v->hEnvGgxS, e ? e->ggx : NULL);
 	fx->SetTexture (v->hEnvSheenS, e ? e->sheen : NULL);

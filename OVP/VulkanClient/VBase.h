@@ -30,6 +30,7 @@ class TaxiLights;
  */
 class vBase: public vObject, public BeaconFrame { // not upstream: BeaconFrame, its ToLocal and FromLocal (stream-rwylights)
 	friend class vPlanet;
+	friend class DdgiScene; // not upstream: reads the meshes (design-ddgi 3)
 
 public:
 	vBase (OBJHANDLE _hObj, const Scene *scene, vPlanet *vP=NULL);

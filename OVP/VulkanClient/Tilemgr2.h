@@ -92,6 +92,18 @@ typedef union {
 
 bool FileExists(const char* path);
 
+// not upstream (design-ddgi 3): a loaded tile the ray-traced GI traces against, valid in the frame it was listed
+struct GiTileRec {
+	uint64_t serial;			// its mesh's VBMESH::serial
+	VkBuf *vb, *ib;				// VERTEX_2TEX, 16-bit indices
+	DWORD nv, nf;
+	MATRIX4 W;					// tile to camera-relative global
+	double ext[4];				// latmin, latmax, lngmin, lngmax
+	VkTex *tex;					// diffuse texture, NULL none
+	TEXCRDRANGE2 range;			// its part of tex
+	double dist;				// camera to its bounding sphere [m]
+};
+
 // =======================================================================
 
 /**
@@ -548,6 +560,7 @@ public:
 	void WayUpload ();                                   // not upstream: under the loader mutex, main pass: results in, fixed structures checked
 	void RenderDepth (ShaderClass *sh, const D3DXMATRIX &mVP); // not upstream: the recorded tiles' camera distance
 	void RenderCasters (ShaderClass *sh, MATRIX4 &dwmat, const vPlanet::RenderPrm &rprm, const class SceneShadows &s, double minSpacing); // not upstream: scene shadow casters from the loaded tiles
+	void GiTiles (MATRIX4 &dwmat, const vPlanet::RenderPrm &rprm, double range, double kLod, std::vector<GiTileRec> &out); // not upstream (design-ddgi 3): loaded tiles within range, vertex spacing down to kLod times their distance; takes the loader mutex
 	int VolTiles (double lat, double lng, double half, std::vector<VolCloud::Src> &out); // not upstream: cloud tiles with density under a box (cloud frame), takes the loader mutex
 	std::shared_ptr<const Horizon::Map> HorizonAt (double lat, double lng, double bnd[4]); // not upstream: the horizon map over a point and its owner's bounds (minlat, maxlat, minlng, maxlng), takes the loader mutex
 	int ElevGrids (double lat0, double lat1, double lng0, double lng1, int lvl, int maxn, bool heights, const std::vector<unsigned> &have, std::vector<Horizon::Grid> &out, std::vector<unsigned> &keys); // not upstream: height fog: the ready elevation grids at lvl over a box, else the finest ready ancestor; keys are horGen, heights only when asked and not in have; -1 above maxn tiles; takes the loader mutex

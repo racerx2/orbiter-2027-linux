@@ -827,6 +827,10 @@ void VideoTab::InitSetupDialog(QWidget *hWnd)
 	for (const char *s : {"5 km", "10 km", "20 km", "40 km"}) oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_GG_BLDGRANGE), s);
 	DlgItem<QComboBox>(hWnd, IDC_GG_GROUNDMAT)->clear(); // not upstream (design-ground-detail 1)
 	for (const char *s : {"Off", "Medium", "High"}) oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_GG_GROUNDMAT), s);
+	bool rtGi = VkDev::RayQuerySupported(adapter[SelectedAdapterIdx]); // not upstream (design-ddgi 0): Ray-traced only where the device has every part
+	DlgItem<QComboBox>(hWnd, IDC_FX_GIMODE)->clear();
+	for (const char *s : {"Off", "Screen-space"}) oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_FX_GIMODE), s);
+	if (rtGi) oapiComboAddString(DlgItem<QComboBox>(hWnd, IDC_FX_GIMODE), "Ray-traced");
 
 	// gcGUI -----------------------------------------
 	if (Config->gcGUIMode == 1) Config->gcGUIMode = 0;
@@ -941,7 +945,7 @@ void VideoTab::InitSetupDialog(QWidget *hWnd)
 	DlgItem<QAbstractButton>(hWnd, IDC_FX_SCENESHD)->setChecked(Config->SceneShadows == 1);
 	DlgItem<QAbstractButton>(hWnd, IDC_FX_SSR)->setChecked(Config->SSR == 1);
 	DlgItem<QAbstractButton>(hWnd, IDC_FX_PLUMES)->setChecked(Config->VolPlumes == 1);
-	DlgItem<QAbstractButton>(hWnd, IDC_FX_SSGI)->setChecked(Config->SSGI == 1);
+	DlgItem<QComboBox>(hWnd, IDC_FX_GIMODE)->setCurrentIndex(Config->SSGI == 0 ? 0 : (Config->GIMethod == 1 && rtGi) ? 2 : 1); // not upstream (design-ddgi 0)
 	DlgItem<QAbstractButton>(hWnd, IDC_FX_FOG)->setChecked(Config->HeightFog == 1);
 	DlgItem<QAbstractButton>(hWnd, IDC_FX_NIGHT)->setChecked(Config->NightLook == 1);
 	DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ)->setCurrentIndex(Config->VolCloudQuality);
@@ -1046,7 +1050,10 @@ void VideoTab::SaveSetupState(QWidget *hWnd)
 	Config->SceneShadows = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_SCENESHD)->isChecked();
 	Config->SSR = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_SSR)->isChecked();
 	Config->VolPlumes = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_PLUMES)->isChecked();
-	Config->SSGI = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_SSGI)->isChecked();
+	{ // not upstream (design-ddgi 0): Off, Screen-space, Ray-traced
+		int g = (int)DlgItem<QComboBox>(hWnd, IDC_FX_GIMODE)->currentIndex();
+		if (g >= 0 && g < 3) { Config->SSGI = g > 0; if (g > 0) Config->GIMethod = g - 1; }
+	}
 	Config->HeightFog = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_FOG)->isChecked();
 	Config->NightLook = (int)DlgItem<QAbstractButton>(hWnd, IDC_FX_NIGHT)->isChecked();
 	Config->VolCloudQuality = std::max(0, (int)DlgItem<QComboBox>(hWnd, IDC_GG_CLOUDQ)->currentIndex());

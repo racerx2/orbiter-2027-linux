@@ -19,6 +19,7 @@
 #include "PbrRender.h" // custom: PBR materials
 #include <QMessageBox>
 #include <algorithm>
+#include <atomic> // not upstream
 
 // xnamath.h left out (Windows only): its vector operations below are written out on D3DXVECTOR3/4
 
@@ -30,7 +31,10 @@ MeshShader::VSConst MeshShader::vs_const = {};
 MeshShader::PSConst MeshShader::ps_const = {};
 MeshShader::PSBools MeshShader::ps_bools = { FALSE, 0.75f, FALSE }; // custom: fCutoff, the legacy alpha test level
 MeshShader::PSGi MeshShader::ps_gi = {}; // not upstream: SSGI
+MeshShader::PSRef MeshShader::ps_ref = {}; // not upstream: ray-traced GI
 int D3D9Mesh::giCls = -1; // not upstream: SSGI
+bool D3D9Mesh::giRef = false; // not upstream: ray-traced GI
+static std::atomic<uint64_t> bufSerial{0}; // not upstream (design-ddgi 3)
 
 
 int compare_lights(const void * a, const void * b)
@@ -129,6 +133,7 @@ void MeshBuffer::Map(VkDev *pDev)
 	if (!bMustRemap) return;
 
 	bMustRemap = false;
+	serial = ++bufSerial; // not upstream (design-ddgi 3)
 
 	bool bHost = false; // Usage = 0
 
@@ -3094,7 +3099,22 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 
 	bool bInit = true;
 	bool bCurrentState = false;
+	UINT txf = opt == 2 ? (IPF_WRAP | IPF_ANISOTROPIC) : (IPF_WRAP | IPF_POINT); // not upstream: SceneDepth filters as the main pass (its alpha test, the GI albedo and metal)
+	UINT txa = opt == 2 ? UINT(std::max(2, Config->Anisotrophy)) : 0;
 	bool bGi = opt == 2 && giCls >= 0 && pShader->hPSG; // not upstream: SSGI albedo, inside SceneFx::DepthPass only (design-ssgi Rev 2)
+	bool bRef = opt == 2 && pShader->hPSR != NULL; // not upstream (design-ddgi 6): the shader has the ambient output, written for vessels only
+	float srcMetal = 0.0f, srcPbr = 0.0f, irrBound = 0.0f;
+	if (bRef && bGi && giRef && giCls == 3) { // what Metalness.fx and PbrMesh.fx read in vVessel::Render's main pass
+		VkTex *irr = FX->GetTexture(eIrradMap);
+		const PbrEnv *env = PbrRender::ReadyEnv();
+		int im = PbrRender::IrrMode(irr);
+		srcMetal = (Config->EnvMapMode && Config->bIrradiance) ? 1.0f : 2.0f; // _IRRADIANCE, else the earth glow
+		srcPbr = im == 2 ? 3.0f : (im == 1 ? 1.0f : 2.0f);
+		irrBound = irr ? 1.0f : 0.0f;
+		MeshShader::ps_ref.vAmb = float4(sunLight.Ambient.x, sunLight.Ambient.y, sunLight.Ambient.z, MeshShader::ps_ref.vAmb.w);
+		if (irr) pShader->SetTexture(pShader->hPST[2], irr, IPF_CLAMP | IPF_LINEAR);
+		if (im == 2) pShader->SetTexture(pShader->hPST[3], env->irr, IPF_CLAMP | IPF_LINEAR);
+	}
 
 	for (DWORD g = 0; g < nGrp; g++)
 	{
@@ -3116,15 +3136,15 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 			MeshShader::ps_bools.bOIT = (test && t);
 			MeshShader::ps_bools.fCutoff = cut;
 			MeshShader::ps_bools.bClip = TRUE;
-			if (MeshShader::ps_bools.bOIT) pShader->SetTexture(pShader->hPST[0], t, IPF_WRAP | IPF_POINT);
+			if (MeshShader::ps_bools.bOIT) pShader->SetTexture(pShader->hPST[0], t, txf, txa);
 			if (bGi) { // not upstream: SSGI, linear base colour times 1 - metal; fully lit groups get none (design-ssgi M6, S2)
 				VkTex *mr = m->map[PBR_METALROUGH].get();
 				bool tex = t && !(Grp[g].UsrFlag & 0x10);
 				MeshShader::ps_gi.vMat = (Grp[g].UsrFlag & 0x4) ? float4(0, 0, 0, 0) : float4(m->baseColor[0], m->baseColor[1], m->baseColor[2], tex ? 1.0f : 0.0f);
 				MeshShader::ps_gi.vMtl = float4(m->metallic, mr ? 1.0f : 0.0f, 1.0f, (tex && PbrRender::NeedsDecode(t)) ? 1.0f : 0.0f);
 				MeshShader::ps_gi.vCls = float4(float(giCls), IsPbrGroup(g) ? 2.0f : 0.0f, 0.0f, 0.0f);
-				if (t) pShader->SetTexture(pShader->hPST[0], t, IPF_WRAP | IPF_POINT);
-				if (mr) pShader->SetTexture(pShader->hPST[1], mr, IPF_WRAP | IPF_POINT);
+				if (t) pShader->SetTexture(pShader->hPST[0], t, txf, txa);
+				if (mr) pShader->SetTexture(pShader->hPST[1], mr, txf, txa);
 			}
 		}
 		else {
@@ -3137,14 +3157,14 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 			const D3D9MatExt *m = (Grp[g].MtrlIdx == SPEC_DEFAULT) ? &defmat : &Mtrl[Grp[g].MtrlIdx];
 			if ((bModulateMatAlpha || !hTex) && m->Diffuse.w < 0.5f) continue;
 			MeshShader::ps_bools.bOIT = (hTex != NULL);
-			if (hTex) pShader->SetTexture(pShader->hPST[0], hTex, IPF_WRAP | IPF_POINT);
+			if (hTex) pShader->SetTexture(pShader->hPST[0], hTex, txf, txa);
 			if (bGi) { // not upstream: SSGI, texture times material diffuse; Metalness groups times 1 - metal (design-ssgi M3, M6)
 				int fam = bGiTile ? 3 : (Grp[g].Shader == SHADER_METALNESS ? 1 : 0);
 				VkTex *mt = (fam == 1 && ti && Tex[ti]) ? Tex[ti]->GetMap(MAP_METALNESS) : NULL;
 				MeshShader::ps_gi.vMat = (Grp[g].UsrFlag & 0x4) ? float4(0, 0, 0, 0) : float4(m->Diffuse.x, m->Diffuse.y, m->Diffuse.z, (hTex && !(Grp[g].UsrFlag & 0x10)) ? 1.0f : 0.0f); // 0x10: no texture colour, as the legacy shaders' bNoC
 				MeshShader::ps_gi.vMtl = float4(fam == 1 ? (mt ? 1.0f : m->Metalness) : 0.0f, mt ? 1.0f : 0.0f, 0.0f, 0.0f);
 				MeshShader::ps_gi.vCls = float4(float(giCls), float(fam), 0.0f, 0.0f);
-				if (mt) pShader->SetTexture(pShader->hPST[1], mt, IPF_WRAP | IPF_POINT);
+				if (mt) pShader->SetTexture(pShader->hPST[1], mt, txf, txa);
 			}
 		}
 		else if (MeshShader::ps_bools.bOIT) {
@@ -3172,10 +3192,61 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 		if (pShader->hPSC) pShader->SetPSConstants(pShader->hPSC, &MeshShader::ps_const, sizeof(MeshShader::ps_const));
 		if (pShader->hPSB) pShader->SetPSConstants(pShader->hPSB, &MeshShader::ps_bools, sizeof(MeshShader::ps_bools));
 		if (bGi) pShader->SetPSConstants(pShader->hPSG, &MeshShader::ps_gi, sizeof(MeshShader::ps_gi)); // not upstream: SSGI
+		if (bRef) { // not upstream (design-ddgi 6): Metalness and PBR groups of vessels, every other draw none
+			int fam = bGi ? int(MeshShader::ps_gi.vCls.y + 0.5f) : 0;
+			MeshShader::ps_ref.vSrc = float4(fam == 1 ? srcMetal : (fam == 2 ? srcPbr : 0.0f), irrBound, 0.0f, 0.0f);
+			pShader->SetPSConstants(pShader->hPSR, &MeshShader::ps_ref, sizeof(MeshShader::ps_ref));
+		}
 		pShader->UpdateTextures();
 
 		pDev->DrawIndexedPrimitive(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, Grp[g].VertOff, Grp[g].IdexOff, VkPrimVerts(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, Grp[g].nFace));
 	}
+}
+
+
+// ================================================================================================
+// not upstream (design-ddgi 3): the groups SceneDepth draws are the traced ones, with the albedo it writes
+bool D3D9Mesh::GiGroup(DWORD g, GiGroupDesc &d) const
+{
+	if (g >= nGrp) return false;
+	d.used = false;
+	d.tex = d.mr = NULL;
+	d.mat = d.mtl = D3DXVECTOR4(0, 0, 0, 0);
+	d.fam = 0;
+	if (Grp[g].bTransform) d.tf = pGrpTF[g];
+	else if (bGlobalTF) d.tf = mTransform;
+	else D3DXMatrixIdentity(&d.tf);
+	if (Grp[g].bDeleted || (Grp[g].UsrFlag & 0x3) || Grp[g].nFace == 0) return true;
+	if (Grp[g].bPbr) {
+		const PbrMaterial *m = GetPbrMaterial(Grp[g].MtrlIdx);
+		if (!m || m->transmission > 0 || m->alphaMode == PBR_BLEND) return true;
+		VkTex *t = m->map[PBR_BASECOLOR].get();
+		if (!t && Grp[g].TexIdx && Tex[Grp[g].TexIdx]) t = Tex[Grp[g].TexIdx]->GetTexture();
+		float cut = (m->alphaMode == PBR_MASK ? m->alphaCutoff : 0.5f) / std::max(m->baseColor[3], 0.001f);
+		if (m->alphaMode != PBR_OPAQUE && !t && cut > 1.0f) return true;
+		VkTex *mr = m->map[PBR_METALROUGH].get();
+		bool tex = t && !(Grp[g].UsrFlag & 0x10);
+		d.tex = tex ? t : NULL;
+		d.mr = mr;
+		d.mat = (Grp[g].UsrFlag & 0x4) ? D3DXVECTOR4(0, 0, 0, 0) : D3DXVECTOR4(m->baseColor[0], m->baseColor[1], m->baseColor[2], tex ? 1.0f : 0.0f);
+		d.mtl = D3DXVECTOR4(m->metallic, mr ? 1.0f : 0.0f, 1.0f, (tex && PbrRender::NeedsDecode(t)) ? 1.0f : 0.0f);
+		d.fam = IsPbrGroup(g) ? 2 : 0;
+	}
+	else {
+		DWORD ti = Grp[g].TexIdx;
+		VkTex *hTex = (ti && Tex[ti]) ? Tex[ti]->GetTexture() : NULL;
+		const D3D9MatExt *m = (Grp[g].MtrlIdx == SPEC_DEFAULT) ? &defmat : &Mtrl[Grp[g].MtrlIdx];
+		if ((bModulateMatAlpha || !hTex) && m->Diffuse.w < 0.5f) return true;
+		d.fam = bGiTile ? 3 : (Grp[g].Shader == SHADER_METALNESS ? 1 : 0);
+		VkTex *mt = (d.fam == 1 && ti && Tex[ti]) ? Tex[ti]->GetMap(MAP_METALNESS) : NULL;
+		bool tex = hTex && !(Grp[g].UsrFlag & 0x10);
+		d.tex = tex ? hTex : NULL;
+		d.mr = mt;
+		d.mat = (Grp[g].UsrFlag & 0x4) ? D3DXVECTOR4(0, 0, 0, 0) : D3DXVECTOR4(m->Diffuse.x, m->Diffuse.y, m->Diffuse.z, tex ? 1.0f : 0.0f);
+		d.mtl = D3DXVECTOR4(d.fam == 1 ? (mt ? 1.0f : m->Metalness) : 0.0f, mt ? 1.0f : 0.0f, 0.0f, 0.0f);
+	}
+	d.used = true;
+	return true;
 }
 
 
@@ -3790,7 +3861,27 @@ void D3D9Mesh::GlobalInit(VkDev *pDev)
 	s_pShader[SHADER_SHADOWMAP] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "ShdMapVS", "ShdMapPS");
 	s_pShader[SHADER_SHADOWMAP_OIT] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "ShdMapOIT_VS", "ShdMapOIT_PS");
 	s_pShader[SHADER_NORMAL_DEPTH] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "NormalDepth_VS", "NormalDepth_PS");
-	s_pShader[SHADER_SCENE_DEPTH] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "NormalDepth_VS", "SceneDepth_PS", Config->SSGI ? "_SSGI" : NULL); // not upstream; _SSGI: albedo and normal MRT
+	s_pShader[SHADER_SCENE_DEPTH] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "NormalDepth_VS", "SceneDepth_PS", Config->RayTracedGI(pDev->rayQuery) ? "_SSGI _DDGI" : (Config->SSGI ? "_SSGI" : NULL)); // not upstream; _SSGI: albedo and normal MRT; _DDGI: the vessels' own ambient
+}
+
+// not upstream (design-ddgi 6): the legacy effect's values for this frame's vessels (UpdateEffectCamera; the glow as EnablePlanetGlow(true) sets it)
+void D3D9Mesh::SetGiRef(bool on)
+{
+	giRef = on;
+	if (!on) return;
+	D3DXVECTOR3 cam(0, 0, 0), east(0, 0, 0), north(0, 0, 0);
+	float ps = 0.0f, ips = 0.0f, glow = 0.0f;
+	FX->GetValue(eCameraPos, &cam, sizeof(cam));
+	FX->GetValue(eEast, &east, sizeof(east));
+	FX->GetValue(eNorth, &north, sizeof(north));
+	FX->GetValue(eProxySize, &ps, sizeof(ps));
+	FX->GetValue(eInvProxySize, &ips, sizeof(ips));
+	FX->GetValue(eGlowConst, &glow, sizeof(glow));
+	MeshShader::ps_ref.vAmb = float4(0.0f, 0.0f, 0.0f, ps);
+	MeshShader::ps_ref.vGlow = float4(atm_color.x, atm_color.y, atm_color.z, glow);
+	MeshShader::ps_ref.vCam = float4(cam.x, cam.y, cam.z, ips);
+	MeshShader::ps_ref.vEast = float4(east.x, east.y, east.z, 0.0f);
+	MeshShader::ps_ref.vNorth = float4(north.x, north.y, north.z, 0.0f);
 }
 
 

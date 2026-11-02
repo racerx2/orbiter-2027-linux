@@ -52,7 +52,7 @@ void SceneFx::InitDepth ()
 		delete sDepthDS;
 		sDepthDS = new VkSurf(dev, W, H, gc->GetFramework()->GetDepthFormat(), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
 	}
-	pTerrain = new ShaderClass(dev, "Modules/VulkanClient/SceneDepth.glsl", "TerrainDepthVS", "TerrainDepthPS", "TerrainDepth", Config->SSGI ? "_SSGI" : ""); // not upstream: _SSGI, the albedo and normal MRT
+	pTerrain = new ShaderClass(dev, "Modules/VulkanClient/SceneDepth.glsl", "TerrainDepthVS", "TerrainDepthPS", "TerrainDepth", Config->RayTracedGI(dev->rayQuery) ? "_SSGI _DDGI" : (Config->SSGI ? "_SSGI" : "")); // not upstream: _SSGI, the albedo and normal MRT; _DDGI, the fourth target
 	depthOK = tDepth->img && sDepthDS->tex->img;
 	if (!depthOK) LogErr("SceneFx: SceneDepth targets failed, SSAO and volume clouds off");
 	if (depthOK && Config->TAA) {

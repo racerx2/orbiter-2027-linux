@@ -47,6 +47,7 @@ template<> void TileManager2<SurfTile>::HorizonSubmit ();
 template<> void TileManager2<SurfTile>::HorizonUpload ();
 template<> void TileManager2<SurfTile>::RenderDepth (ShaderClass *sh, const D3DXMATRIX &mVP);
 template<> void TileManager2<SurfTile>::RenderCasters (ShaderClass *sh, MATRIX4 &dwmat, const vPlanet::RenderPrm &rprm, const SceneShadows &s, double minSpacing);
+template<> void TileManager2<SurfTile>::GiTiles (MATRIX4 &dwmat, const vPlanet::RenderPrm &rprm, double range, double kLod, std::vector<GiTileRec> &out);
 template<> std::shared_ptr<const Horizon::Map> TileManager2<SurfTile>::HorizonAt (double lat, double lng, double bnd[4]);
 template<> void TileManager2<SurfTile>::WayRequest (SurfTile *t, double dist); // not upstream (design-ways): Waymgr.cpp
 template<> void TileManager2<SurfTile>::WayClaim ();
@@ -2107,6 +2108,50 @@ void TileManager2<SurfTile>::RenderCasters (ShaderClass *sh, MATRIX4 &dwmat, con
 		dev->SetStreamSource(0, t->mesh->pVB, 0, sizeof(VERTEX_2TEX));
 		dev->SetIndices(t->mesh->pIB);
 		dev->DrawIndexedPrimitive(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 0, 0, VkPrimVerts(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, t->mesh->nf));
+	};
+	for (int i = 0; i < 2; i++) walk(tiletree + i);
+	loader->ReleaseMutex();
+}
+
+// not upstream (design-ddgi 3): the loaded tiles within range, view independent: down while all four children are loaded and the vertex spacing is above kLod times the distance
+template<>
+void TileManager2<SurfTile>::GiTiles (MATRIX4 &dwmat, const vPlanet::RenderPrm &rprm, double range, double kLod, std::vector<GiTileRec> &out)
+{
+	SetRenderPrm(dwmat, 0, true, rprm); // this frame's tile matrices
+	double span = PI * obj_size / double(GridRes());
+	bool tex = vp->HasTextures();
+	loader->WaitForMutex();
+	std::function<void(QuadTreeNode<SurfTile> *)> walk = [&](QuadTreeNode<SurfTile> *node) {
+		SurfTile *t = node->Entry();
+		if (!t || !(t->State() & TILE_VALID) || !t->mesh || !t->mesh->pVB || !t->mesh->pIB || !t->mesh->nf) return;
+		MATRIX4 W = WorldMatrix(t);
+		const D3DXVECTOR3 &c = t->mesh->bsCnt;
+		VECTOR3 bc = { c.x * W.m11 + c.y * W.m21 + c.z * W.m31 + W.m41, c.x * W.m12 + c.y * W.m22 + c.z * W.m32 + W.m42, c.x * W.m13 + c.y * W.m23 + c.z * W.m33 + W.m43 };
+		double d = std::max(0.0, length(bc) - double(t->mesh->bsRad));
+		if (d > range) return;
+		bool down = span / double(1 << t->Level()) > kLod * d;
+		for (int k = 0; k < 4 && down; k++) {
+			QuadTreeNode<SurfTile> *ch = node->Child(k);
+			SurfTile *ct = ch ? ch->Entry() : NULL;
+			if (!ct || !(ct->State() & TILE_VALID) || !ct->mesh || !ct->mesh->pVB || !ct->mesh->pIB || !ct->mesh->nf) down = false;
+		}
+		if (down) {
+			for (int k = 0; k < 4; k++) walk(node->Child(k));
+			return;
+		}
+		if (span / double(1 << t->Level()) > range / 16.0) return; // too coarse to stand for the ground here: left out until its children load
+		GiTileRec r;
+		r.serial = t->mesh->serial;
+		r.vb = t->mesh->pVB;
+		r.ib = t->mesh->pIB;
+		r.nv = t->mesh->nv;
+		r.nf = t->mesh->nf;
+		r.W = W;
+		t->Extents(&r.ext[0], &r.ext[1], &r.ext[2], &r.ext[3]);
+		r.tex = tex ? t->Tex() : NULL;
+		r.range = *t->GetTexRange();
+		r.dist = d;
+		out.push_back(r);
 	};
 	for (int i = 0; i < 2; i++) walk(tiletree + i);
 	loader->ReleaseMutex();

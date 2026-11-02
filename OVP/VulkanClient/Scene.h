@@ -81,6 +81,7 @@ class Scene {
 	friend class SceneShadows; // not upstream: scene shadows
 	friend class SceneSsr;
 	friend class PostPlume;
+	friend class DdgiScene; // not upstream: walks the visuals (design-ddgi 3)
 
 	// Visual record ===================================================================
 	//

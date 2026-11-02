@@ -14,6 +14,7 @@
 #include "Tilemgr2.h"
 
 static float TEX2_MULTIPLIER = 4.0f; // microtexture multiplier
+static std::atomic<uint64_t> meshSerial{0}; // not upstream (design-ddgi 3): loader threads map meshes too
 
 // ==============================================================
 // struct VBMESH
@@ -65,6 +66,7 @@ void VBMESH::ComputeSphere()
 
 void VBMESH::MapVertices(VkDev *pDev, DWORD MemFlag)
 {
+	serial = ++meshSerial; // not upstream (design-ddgi 3)
 	if (nv!=nv_cur && vtx) {
 		pVB = g_pVtxmgr_vb->New(nv); nv_cur = nv;
 	}

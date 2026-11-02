@@ -1373,6 +1373,14 @@ void vPlanet::RenderCasters (VkDev *dev, const SceneShadows &s)
 }
 
 // ==============================================================
+// not upstream (design-ddgi 3)
+
+void vPlanet::GiTiles (double range, double kLod, std::vector<GiTileRec> &out)
+{
+	if (surfmgr2) surfmgr2->GiTiles(dmWorld, prm, range, kLod, out);
+}
+
+// ==============================================================
 
 void vPlanet::RenderBaseStructures (VkDev *dev)
 {

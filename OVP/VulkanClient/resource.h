@@ -202,6 +202,7 @@
 #define IDC_FX_NIGHT                    3059 // not upstream
 #define IDC_GG_BLDGRANGE                3060 // not upstream
 #define IDC_GG_GROUNDMAT                3061 // not upstream (design-ground-detail 1)
+#define IDC_FX_GIMODE                   3062 // not upstream (design-ddgi 0)
 #define IDC_ATM_S1                              4000
 #define IDC_ATM_S2                              4001
 #define IDC_ATM_S3                              4002

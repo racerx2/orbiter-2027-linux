@@ -124,6 +124,9 @@ layout(location = 0) out vec4 oColor;
 layout(location = 1) out vec4 oAlbG;	// not upstream: SSGI albedo / 4 (distance pass only)
 layout(location = 2) out vec4 oNrmG;	// not upstream: SSGI octahedral world normal, class
 #endif
+#if defined(_DDGI)
+layout(location = 3) out vec4 oRefG;	// not upstream (design-ddgi 6): a vessel's own ambient, none here
+#endif
 void main()
 {
 	bool imp = Prm.vSun.w > 0.5;
@@ -168,6 +171,9 @@ void main()
 		oColor = vec4(length(frg.posW));
 		oAlbG = vec4(ab * 0.25, 0.0);
 		oNrmG = vec4(oc * 0.5 + 0.5, 0.0, 1.0 / 3.0); // class 1 trees
+#if defined(_DDGI)
+		oRefG = vec4(0.0);
+#endif
 		return;
 	}
 #else

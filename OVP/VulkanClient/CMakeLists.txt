@@ -86,6 +86,9 @@ set(SourceFiles
 	SsrMath.cpp # not upstream
 	SceneFxGi.cpp # not upstream
 	SsgiMath.cpp # not upstream
+	DdgiMath.cpp # not upstream
+	DdgiScene.cpp # not upstream
+	DdgiVolume.cpp # not upstream
 	SceneFxFog.cpp # not upstream
 	FogMath.cpp # not upstream
 	PostPlume.cpp # not upstream

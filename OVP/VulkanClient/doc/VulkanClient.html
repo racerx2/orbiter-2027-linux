@@ -773,6 +773,15 @@
       walls of buildings beside it. Below about 20 km above the ground, or near a
       vessel. Only what is on screen gives light.
     </p>
+    <p>
+      <i>Ray-traced</i> in the Global illumination dropdown
+      (<code>GIMethod</code> 1) traces rays against the terrain, vessels and
+      bases around the camera, on screen or not, on graphics cards with
+      hardware ray queries. Light comes from behind the camera too, sky blocked
+      under wings and in canyons darkens, and light bounces more than once.
+      <code>GIRayMs</code> (0.25, 0.1...2) is its tracing time per frame in
+      milliseconds. Trees and 3D buildings are not traced yet.
+    </p>
   <li>Height fog (<code>HeightFog</code> 0)</li>
     <p>
       Ground fog and haze that collect in valleys and over water, most around

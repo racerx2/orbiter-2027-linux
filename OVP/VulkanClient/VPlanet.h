@@ -22,6 +22,7 @@ class SurfTile;
 class CloudTile;
 class vBase;                                // g++: friend declarations don't introduce these names
 namespace WayGeom { struct RunwayLL; }      // not upstream (stream-rwylights)
+struct GiTileRec;                           // not upstream (design-ddgi 3): Tilemgr2.h
 class SurfaceManager;
 template<class T> class TileManager2;
 class CloudManager;
@@ -274,6 +275,7 @@ public:
 	bool			Render(VkDev *dev);
 	void			RenderDepth(VkDev *dev, ShaderClass *pTerrain, const D3DXMATRIX &mVP); // not upstream: SceneFx distance pass, what the main pass drew
 	void			RenderCasters(VkDev *dev, const class SceneShadows &s); // not upstream: scene shadow casters in the cascade being drawn
+	void			GiTiles(double range, double kLod, std::vector<GiTileRec> &out); // not upstream (design-ddgi 3): the loaded tiles the ray-traced GI traces
 	void			RenderBeacons(VkDev *dev);
 	void            RenderVectors (VkDev *dev, D3D9Pad* pSkp);
 	bool			CameraInAtmosphere() const;

@@ -55,9 +55,15 @@ vec2 OctEnc(vec3 n)
 	return p * 0.5 + 0.5;
 }
 #endif
+#if defined(_DDGI)
+layout(location = 3) out vec4 oRef;	// not upstream (design-ddgi 6): a vessel's own ambient, none here
+#endif
 void main()
 {
 	oColor = vec4(length(iPosW));
+#if defined(_DDGI)
+	oRef = vec4(0.0);
+#endif
 #if defined(_SSGI)
 	vec3 t = Prm.vAlb.z > 0.5 ? texture(tDiff, iUV).rgb : vec3(0.5);	// NewPlanet: grey without a texture
 	vec3 rho = pow(clamp(t, 0.0, 1.0), vec3(Prm.vAlb.x)) * Prm.vAlb.y;

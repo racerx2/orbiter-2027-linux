@@ -277,7 +277,8 @@ New in the Vulkan client, each a switch in `Modules/VulkanClient/VulkanClient.cf
 
 - **Shadows** (`SceneShadows`): sun shadows of ships, buildings and terrain out to about 40 km from the camera.
 - **Reflections** (`SSR`): water and glossy hulls reflect the scene around them.
-- **Bounce light** (`SSGI`): sunlit ground and hulls light up what is next to them.
+- **Bounce light** (`SSGI`): sunlit ground and hulls light up what is next to them; ray-traced on cards with
+  hardware ray queries (`GIMethod` 1): light from off screen, blocked sky and several bounces.
 - **Plumes and smoke** (`VolPlumes`): lit volumetric exhaust with shock diamonds, ground clouds and smoke.
 - **Re-entry** (`VolPlumes`): a plasma sheath shaped by the hull, and a hull that heats up and glows from the
   nose and leading edges, then cools slowly. Works for any ship, no add-on changes needed.
@@ -426,7 +427,8 @@ shadows of terrain, buildings, trees and vessels), `SSR` (1, reflections of
 the scene in water, runways and glossy hulls), `VolPlumes` (1, volumetric
 engine plumes, lit smoke, soft particle trails, re-entry plasma and hulls
 glowing from re-entry heating), `SSGI` (1, one bounce of light
-from nearby surfaces), `SSGIStrength` (1.0, 0 to 2), `HeightFog` (0, valley
+from nearby surfaces), `SSGIStrength` (1.0, 0 to 2), `GIMethod` (0, 1 ray-traced), `GIRayMs`
+(0.25, its tracing time per frame in ms), `HeightFog` (0, valley
 fog and haze layers), `NightLook` (1, street lamps, lit windows and a darker
 night exposure).
 

@@ -157,6 +157,11 @@ vec3 MeshAmb(vec3 Pg)
 	return normalize(Const.cAmbient + cs * 2.0) * fA * Const.cAmbient.g * exp(-alt * Const.iH.x) * Const.rmI.x * 6e5 + vAmbC.rgb;
 }
 
+#if defined(_DDGI)
+#include "DdgiProbe.glsl"	// not upstream (design-ddgi 6): the ray-traced probes
+layout(binding = 31) uniform sampler2D tRefG;	// a vessel's own ambient as its family's composite reads it (rgb), 1 - metal (a); NewMesh.glsl SceneDepth_PS
+#endif
+
 float QMax(int cls, int fam)
 {
 	if (cls == 1) return 0.98;
@@ -223,6 +228,47 @@ vec3 CompositeDy(vec3 y, vec3 A, vec3 Iraw, vec3 Io, vec3 rho, vec3 E, int cls, 
 	return max(Fin(dy), 0.0);
 }
 
+#if defined(_DDGI)
+// CompositeDy with a signed E: blocked sky takes light away (design-ddgi 6), never below what the curves hold without it
+vec3 CompositeDyS(vec3 y, vec3 A, vec3 Iraw, vec3 Io, vec3 rho, vec3 E, int cls, int fam)
+{
+	float e = max(vCurve.z, 1e-6);
+	vec3 rh = max(rho, vec3(1e-5)), dy;
+	if (cls == 0) {
+		if (vFade.w > 0.5) {
+			vec3 u = TwI(min(y, vec3(0.98)));
+			dy = TwF(max(u + A * vCurve.y * rho * E, 0.0)) - TwF(u);
+		}
+		else {
+			vec3 v = TaI(y) / vCurve.y, x = v / e;
+			vec3 r = min(x / rh, vec3(1.9)), L0 = r / (2.0 - r);
+			vec3 dx = rho * (LFX(max(L0 + E / e, 0.0)) - LFX(L0));
+			dy = TaF(max(vCurve.y * (v + e * dx), 0.0)) - TaF(vCurve.y * v);
+		}
+	}
+	else {
+		vec3 Ac = max(A, vec3(0.05));
+		vec3 q = clamp((y - Io) / Ac, 0.0, QMax(cls, fam));
+		if (cls == 1) {
+			vec3 u = TwI(q);
+			dy = (TwF(max(u + vMisc.y * rho * E, 0.0)) - TwF(u)) * A;
+		}
+		else if (fam == 1) {
+			vec3 v = TmI(q), L = min(v / e / rh, vec3(1.75));
+			vec3 S = 2.0 * L * L / (3.24 - L * L), Ee = E / e;
+			vec3 v1 = v + e * rho * (LFXSq(max(S + sign(Ee) * Ee * Ee, 0.0)) - L);
+			dy = (TmF(max(v1, 0.0)) - TmF(v)) * A;
+		}
+		else if (fam == 2) {
+			vec3 v = TmI(q), cl = max(S2L(v / e) + rho * sign(E) * S2L(abs(E) / e), 0.0);
+			dy = (TmF(e * L2S(cl)) - TmF(v)) * A;
+		}
+		else dy = clamp(rho * E, -q, max(e * rho - q, 0.0)) * A;
+	}
+	return Fin(dy);
+}
+#endif
+
 // slice measure cos(t - g) |sin t| on [g - pi/2, g + pi/2], t from V (SsgiMath::SliceCdf); q: g, sin g, cos g, the mass below t = 0
 float SliceCdf(float t, vec4 q)
 {
@@ -241,6 +287,7 @@ uint Bits(float ta, float tb, vec4 q, float iM, float jit)	// the 32 sectors uni
 	return m << uint(i0);
 }
 
+#if defined(STAGE_PS)	// not upstream (design-ddgi): the passes are pixel shaders; DDGI.glsl's vertex shaders include this file too
 // ---------------------------------------------------------------------------------------------
 // half res: the sender radiance of the 2x2 texels near the reference one's distance, capped by what their albedo and light allow (design-ssgi S5)
 vec4 PSGiPrep(float x, float y)
@@ -439,10 +486,93 @@ vec4 PSGiComposite(float x, float y)
 	return vec4(dy, 0.0);
 }
 
-#if defined(PS_PSGiPrep) || defined(PS_PSGiMarch) || defined(PS_PSGiBlur) || defined(PS_PSGiTemporal) || defined(PS_PSGiComposite)
+#if defined(_DDGI)
+// not upstream (design-ddgi 6): half res, the probes' irradiance less what each receiver's shader already gave it (exposed units, signed), distance (a)
+vec4 PSGiRtSample(float x, float y)
+{
+	vec2 uv0 = SnapF(vec2(x, y));
+	float d = DistF(uv0);
+	if (d <= 0.0 || d >= vFade.y) return vec4(0.0);
+	vec3 ray = PixelRay(uv0), P = ray * d, V = -ray;
+	vec3 N = OctDec(textureLod(tNrmG, uv0, 0.0).xy);
+	float nv = dot(N, V);
+	if (nv < 0.05) N = normalize(N + V * (0.05 - nv));	// as the march: silhouette normals bent toward the view
+	int rc = ClassOf(textureLod(tNrmG, uv0, 0.0).a), rf = ClassOf(textureLod(tAlbG, uv0, 0.0).a);
+	vec3 toA = vec3(dot(Dg.ax.xyz, P), dot(Dg.ay.xyz, P), dot(Dg.az.xyz, P));
+	vec3 Pa = toA + Dg.cam.xyz;
+	vec3 Na = vec3(dot(Dg.ax.xyz, N), dot(Dg.ay.xyz, N), dot(Dg.az.xyz, N));
+	vec3 Va = vec3(dot(Dg.ax.xyz, V), dot(Dg.ay.xyz, V), dot(Dg.az.xyz, V));
+	float cover;
+	vec3 E = DgIrradiance(Pa, Na, Va, cover);
+	if (cover <= 0.0) return vec4(0.0, 0.0, 0.0, d);
+	if (rc == 3 && (rf == 1 || rf == 2)) {	// the hull's own ambient R becomes the fill plus E, as each family's composite reads a change x
+		vec3 R = textureLod(tRefG, uv0, 0.0).rgb, En = vAmbC.rgb + E;
+		vec3 D = cover * (rf == 1 ? En * En - R * R : S2L(En) - S2L(R));	// Metalness: squared inside LightFXSq, its metal factor at full res; PbrMesh: decoded
+		vec3 x = sign(D) * (rf == 1 ? sqrt(abs(D)) : L2S(abs(D)));
+		return vec4(Fin(vCurve.z * x), d);
+	}
+	vec3 Pg = Const.CamPos + P;
+	vec3 ref = rc == 0 ? TerrSky(Pg) : MeshSky(Pg);	// the sky in the ambient the shaders add; their fill light stays
+	return vec4(Fin(vCurve.z * (E - ref) * cover), d);
+}
+
+// full res: the 2x2 up-sample of the signed change, through each receiver's own curve; dual-source: dst' = src0 + dst * src1
+vec4 PSGiCompositeRt(float x, float y, out vec4 fac)
+{
+	fac = vec4(1.0);
+	vec2 uv = vec2(x, y);
+	float d = DistF(uv);
+	if (d <= 0.0 || d >= vFade.y) return vec4(0.0);
+	vec4 al = textureLod(tAlbG, uv, 0.0);
+	vec3 rho = al.rgb * 4.0;
+	if (Max3G(rho) <= 1e-4) return vec4(0.0);
+	vec4 nc = textureLod(tNrmG, uv, 0.0);
+	vec3 n = OctDec(nc.xy);
+	vec2 c = (floor(uv / vTex.zw - 0.5) + 0.5) * vTex.zw;
+	vec3 s = vec3(0.0);
+	float ws = 0.0;
+	for (int j = 0; j < 2; j++)
+		for (int i = 0; i < 2; i++) {
+			vec2 q = c + vec2(i, j) * vTex.zw;
+			vec2 qs = SnapF(q);
+			float dq = DistF(qs);
+			vec2 f = 1.0 - abs(uv - q) / vTex.zw;
+			float nn = max(dot(n, OctDec(textureLod(tNrmG, qs, 0.0).xy)), 0.0);
+			nn *= nn; nn *= nn; nn *= nn;
+			float w = max(f.x * f.y, 1e-3) * (dq > 0.0 ? exp(-abs(dq - d) / (0.02 * d + 0.05)) : 1e-3) * max(nn, 1e-3);
+			s += textureLod(tHistG, q, 0.0).rgb * w;
+			ws += w;
+		}
+	vec3 E = clamp(Fin(s / ws), vec3(-4.0 * vCurve.w), vec3(4.0 * vCurve.w)) * vMisc.x * (1.0 - smoothstep(vFade.x, vFade.y, d));
+	int cls = ClassOf(nc.a), fam = ClassOf(al.a);
+	if (cls == 3 && fam == 1) E *= textureLod(tRefG, uv, 0.0).a;	// Metalness: its ambient's metal factor, this pixel's
+	if (Max3G(abs(E)) <= 0.0) return vec4(0.0);
+	vec3 dir = PixelRay(uv);
+	vec3 A, Iraw, Ao, Io;
+	AtmoAt(Const.CamPos + dir * d, dir, d, A, Iraw, Ao, Io);
+	vec3 yv = textureLod(tScnG, uv, 0.0).rgb;
+	vec3 dy = cls == 0 ? CompositeDyS(yv, A, Iraw, Io, rho, E, 0, 0) : CompositeDyS(yv, Ao, Iraw, Io, rho, E, cls, fam);
+	vec3 dn = min(dy, 0.0);
+	fac = vec4(mix(vec3(1.0), clamp((yv + dn) / max(yv, vec3(1e-4)), 0.0, 1.0), lessThan(dn, vec3(0.0))), 1.0);
+	return vec4(max(dy, 0.0), 0.0);
+}
+#endif
+#endif // STAGE_PS
+
+#if defined(PS_PSGiPrep) || defined(PS_PSGiMarch) || defined(PS_PSGiBlur) || defined(PS_PSGiTemporal) || defined(PS_PSGiComposite) || defined(PS_PSGiRtSample) || defined(PS_PSGiCompositeRt)
 layout(location = 0) in float iX;	// TEXCOORD0 of IPI.glsl
 layout(location = 1) in float iY;	// TEXCOORD1
+#endif
+#if defined(PS_PSGiPrep) || defined(PS_PSGiMarch) || defined(PS_PSGiBlur) || defined(PS_PSGiTemporal) || defined(PS_PSGiComposite) || defined(PS_PSGiRtSample)
 layout(location = 0) out vec4 oColor;
+#endif
+#ifdef PS_PSGiRtSample
+void main() { oColor = PSGiRtSample(iX, iY); }
+#endif
+#ifdef PS_PSGiCompositeRt
+layout(location = 0, index = 0) out vec4 oColor;	// not upstream (design-ddgi 6): dual-source blend
+layout(location = 0, index = 1) out vec4 oFactor;
+void main() { oColor = PSGiCompositeRt(iX, iY, oFactor); }
 #endif
 #ifdef PS_PSGiPrep
 void main() { oColor = PSGiPrep(iX, iY); }

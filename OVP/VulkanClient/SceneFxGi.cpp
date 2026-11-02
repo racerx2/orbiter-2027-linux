@@ -7,7 +7,10 @@
 // not upstream: screen-space global illumination, one diffuse bounce from the lit opaque scene (design-ssgi, Rev 2)
 
 #include "SsgiMath.h" // first: D3D9Util.h defines PI as a macro
+#include "DdgiMath.h"
 #include "SceneFx.h"
+#include "DdgiScene.h"
+#include "DdgiVolume.h"
 #include "Scene.h"
 #include "AtmoControls.h"
 #include "D3D9Client.h"
@@ -89,11 +92,19 @@ struct SceneFx::GiState {
 	OBJHANDLE lastProxy = NULL, lastFocus = NULL, lastTarget = NULL;
 	bool lastInternal = false;
 	ConstParams zero;                      // no proxy or no scatter constants: no air, TrGamma 1
+	DdgiScene *dScene = nullptr;           // not upstream (design-ddgi): Ray-traced, the probes in place of the march
+	DdgiVolume *dVol = nullptr;
+	VkTex *tRef = nullptr;                 // the depth pass's fourth target: a vessel's own ambient (rgb), 1 - metal (a), W x H RGBA16F
+	VkSurf *sRef = nullptr;
+	bool rt = false;
 };
 
 void SceneFx::FreeGi (GiState *s)
 {
 	if (!s) return;
+	SAFE_DELETE(s->dVol);
+	SAFE_DELETE(s->dScene);
+	SAFE_DELETE(s->sRef); SAFE_DELETE(s->tRef);
 	SAFE_DELETE(s->ip);
 	SAFE_DELETE(s->sAlb); SAFE_DELETE(s->tAlb);
 	SAFE_DELETE(s->sNrm); SAFE_DELETE(s->tNrm);
@@ -125,8 +136,25 @@ void SceneFx::InitGi ()
 		make(gi->tHist[i], gi->sHist[i], W / 2, H / 2, VK_FORMAT_R16G16B16A16_SFLOAT);
 	}
 	std::string ppf = std::string(Config->bAtmoQuality ? "" : "_PERFORMANCE ") + (Config->Filmic ? "_FILMIC " : "") + (Config->PostProcess == PP_DEFAULT ? "_LIGHTGLOW " : "");
-	gi->ip = new ImageProcessing(dev, "Modules/VulkanClient/SSGI.glsl", "PSGiPrep", ppf.empty() ? NULL : ppf.c_str());
+	bool rt = Config->RayTracedGI(dev->rayQuery); // not upstream (design-ddgi 0): Ray-traced where the device made it
+	std::string ipf = ppf + (rt ? "_DDGI " : "");
+	gi->ip = new ImageProcessing(dev, "Modules/VulkanClient/SSGI.glsl", "PSGiPrep", ipf.empty() ? NULL : ipf.c_str());
 	for (const char *e : { "PSGiMarch", "PSGiBlur", "PSGiTemporal", "PSGiComposite" }) ok = gi->ip->CompileShader(e) && ok;
+	if (rt && ok) {
+		bool r = gi->ip->CompileShader("PSGiRtSample") && gi->ip->CompileShader("PSGiCompositeRt");
+		gi->tRef = new VkTex(dev, W, H, 1, VK_FORMAT_R16G16B16A16_SFLOAT, GiUsage);
+		gi->sRef = new VkSurf(gi->tRef, 0);
+		gi->dScene = new DdgiScene(dev);
+		gi->dVol = new DdgiVolume(dev, ppf.c_str());
+		gi->rt = r && gi->tRef->img && gi->dScene->OK() && gi->dVol->OK();
+		if (!gi->rt) {
+			LogErr("SceneFx: ray-traced GI failed, screen-space GI instead");
+			SAFE_DELETE(gi->dVol);
+			SAFE_DELETE(gi->dScene);
+			SAFE_DELETE(gi->sRef); SAFE_DELETE(gi->tRef);
+		}
+	}
+	else if (Config->GIMethod == 1) LogAlw("SceneFx: the device has no ray queries, screen-space GI");
 	gi->ok = ok && gi->ip->IsOK();
 	if (!gi->ok) {
 		LogErr("SceneFx: SSGI targets or shaders failed, SSGI off");
@@ -147,15 +175,19 @@ void SceneFx::GiBind (int phase, const std::list<vVessel*> &vessels)
 		if (!gi->bound) return;
 		dev->SetRenderTargetN(1, gi->sAlb);
 		dev->SetRenderTargetN(2, gi->sNrm);
+		if (gi->rt) dev->SetRenderTargetN(3, gi->sRef); // not upstream (design-ddgi 6)
 		D3D9Mesh::SetGiClass(2); // the proxy's bases and buildings
 	}
 	else if (phase == 1) {
 		if (gi->bound) D3D9Mesh::SetGiClass(3);
+		if (gi->bound && gi->rt) D3D9Mesh::SetGiRef(true);
 	}
 	else {
 		D3D9Mesh::SetGiClass(-1);
+		D3D9Mesh::SetGiRef(false);
 		if (!gi->bound) return;
-		dev->SetRenderTargetN(2, NULL); // the extra targets are a list ending at the first NULL: the last first
+		dev->SetRenderTargetN(3, NULL); // the extra targets are a list ending at the first NULL: the last first
+		dev->SetRenderTargetN(2, NULL);
 		dev->SetRenderTargetN(1, NULL);
 		gi->bound = false;
 		gi->mrtFrame = scn->GetFrameId();
@@ -265,8 +297,9 @@ void SceneFx::Gi (VkSurf *target, vPlanet *vp)
 	ip->SetTextureNative("tNrmG", gi->tNrm, IPF_POINT | IPF_CLAMP);
 	ip->SetTextureNative("tAlbG", gi->tAlb, IPF_POINT | IPF_CLAMP);
 	ip->SetTextureNative("tScnG", gi->tScn, IPF_POINT | IPF_CLAMP);
-	ip->SetOutputNative(0, gi->sSrc[0]);
-	if (ip->Execute(true)) {
+	if (gi->rt) done = GiRt(target, vp, cp, { fade, curve, ambc, misc }); // not upstream (design-ddgi 6): the probes in place of the march, blur and history
+	if (!gi->rt) ip->SetOutputNative(0, gi->sSrc[0]);
+	if (!gi->rt && ip->Execute(true)) {
 		dev->StretchRect(gi->sSrc[0], NULL, gi->sSrc[1], NULL, VK_FILTER_LINEAR);
 		dev->StretchRect(gi->sSrc[1], NULL, gi->sSrc[2], NULL, VK_FILTER_LINEAR);
 
@@ -308,4 +341,26 @@ void SceneFx::Gi (VkSurf *target, vPlanet *vp)
 	gi->prev = now;
 	gi->lastFrame = fid;
 	gi->ePrev = e;
+}
+
+// not upstream (design-ddgi 6): this frame's structures and probe updates, then the signed change at half res and its composite; Gi's values are set on the IPI
+bool SceneFx::GiRt (VkSurf *target, vPlanet *vp, ConstParams *cp, const DdgiGiPS &gps)
+{
+	if (!vp) return false;
+	if (!gi->dScene->Build(scn, vp, DdgiScene::RANGE) || !gi->dVol->Update(*gi->dScene, scn, vp, cp, gps)) return false; // nothing traced yet: no change
+	ImageProcessing *ip = gi->ip;
+	ip->Activate("PSGiRtSample");
+	ip->SetStruct("Dg", &gi->dVol->Prm(), sizeof(DdgiGpuPrm));
+	ip->SetTextureNative("tRefG", gi->tRef, IPF_POINT | IPF_CLAMP);
+	ip->SetTextureNative("tIrrD", gi->dVol->Irr(), IPF_POINT | IPF_CLAMP);
+	ip->SetTextureNative("tDstD", gi->dVol->Dst(), IPF_POINT | IPF_CLAMP);
+	ip->SetTextureNative("tStateD", gi->dVol->State(), IPF_POINT | IPF_CLAMP);
+	ip->SetTextureNative("tAlbTab", gi->dScene->Table(), IPF_POINT | IPF_CLAMP);
+	ip->SetOutputNative(0, gi->sGi[0]);
+	if (!ip->Execute(true)) return false;
+	ip->Activate("PSGiCompositeRt");
+	ip->SetTextureNative("tHistG", gi->tGi[0], IPF_POINT | IPF_CLAMP);
+	ip->SetOutputNative(0, target);
+	dev->SetBlendFunc(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_SRC1_COLOR, VK_BLEND_OP_ADD); // dst' = src0 + dst * src1: each channel rises or falls
+	return ip->Execute(2, true);
 }

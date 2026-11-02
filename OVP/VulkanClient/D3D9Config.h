@@ -132,6 +132,9 @@ public:
 	int HeightFog;				// not upstream: height and valley fog (0,1)
 	int NightLook;				// not upstream: night city lights, windows and exposure (0,1)
 	float SSGIStrength;			// not upstream: global illumination strength (0...2)
+	int GIMethod;				// not upstream: global illumination method, 0 screen-space, 1 ray-traced (design-ddgi 0)
+	float GIRayMs;				// not upstream: ray-traced GI probe trace budget [ms] (0.1...2)
+	bool RayTracedGI(bool rayQuery) const { return SSGI && GIMethod == 1 && rayQuery; } // not upstream (design-ddgi 0): chosen, and the device has ray queries
 	char *DebugFont;				///< Font face for debug lines (default="Fixed")
 	char *SolCfg;					///< Solar system to use (default="Sol")
 	float GFXIntensity;			///< Post Processing | Light glow intensity (0.0...1.0, default=0.5)

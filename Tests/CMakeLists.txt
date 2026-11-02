@@ -266,6 +266,8 @@ add_unit_test(SsrMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/SsrMath.cpp ${CM
 target_include_directories(SsrMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 add_unit_test(SsgiMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/SsgiMath.cpp)
 target_include_directories(SsgiMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
+add_unit_test(DdgiMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/DdgiMath.cpp) # not upstream: ray-traced probe GI maths (design-ddgi)
+target_include_directories(DdgiMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 add_unit_test(FogMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/FogMath.cpp)
 target_include_directories(FogMath.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 add_unit_test(PlumeMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/PlumeMath.cpp)

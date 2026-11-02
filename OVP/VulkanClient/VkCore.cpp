@@ -15,6 +15,8 @@
 #include <string>
 
 VkExtFunctions vkx;
+VkRtFunctions vkrt = {}; // not upstream (design-ddgi 2)
+bool VkDev::wantRayQuery = false;
 
 static const VkBufferUsageFlags TransientUsage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
 static void TransferDone (VkCommandBuffer cmd);
@@ -39,6 +41,8 @@ VkBuf::VkBuf (VkDev *_dev, VkDeviceSize _size, VkBufferUsageFlags usage, bool ho
 	VkBufferCreateInfo bi = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
 	bi.size = size;
 	bi.usage = usage | (host ? 0 : VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT); // device local: Upload and CopyBuffer
+	if (dev->rayQuery && (usage & (VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT))) // not upstream (design-ddgi 2): geometry the ray-traced GI builds from where it is
+		bi.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
 	VmaAllocationCreateInfo ai = {};
 	ai.usage = VMA_MEMORY_USAGE_AUTO;
 	if (host) ai.flags = (readback ? VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT : VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT) | VMA_ALLOCATION_CREATE_MAPPED_BIT;
@@ -74,6 +78,14 @@ void VkBuf::Upload (const void *data, VkDeviceSize n, VkDeviceSize offset)
 	if (!staging.Map ()) return;
 	memcpy (staging.Map(), data, n);
 	dev->BufferCopy (staging.buf, buf, 0, offset, n); // the staging buffer is deferred past the frame that reads it
+}
+
+VkDeviceAddress VkBuf::Address () const
+{
+	if (!buf || !dev->rayQuery) return 0;
+	VkBufferDeviceAddressInfo ai = { VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
+	ai.buffer = buf;
+	return vkGetBufferDeviceAddress (dev->dev, &ai);
 }
 
 void VkBuf::Invalidate ()
@@ -613,6 +625,24 @@ VkDev::VkDev (QVulkanInstance *inst, VkPhysicalDevice _phys)
 	CreateDevice ();
 }
 
+bool VkDev::RayQuerySupported (VkPhysicalDevice phys)
+{
+	UINT ne = 0;
+	vkEnumerateDeviceExtensionProperties (phys, NULL, &ne, NULL);
+	std::vector<VkExtensionProperties> ep(ne);
+	vkEnumerateDeviceExtensionProperties (phys, NULL, &ne, ep.data());
+	auto listed = [&ep](const char *name) { for (auto &e : ep) if (!strcmp (e.extensionName, name)) return true; return false; };
+	if (!listed (VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) || !listed (VK_KHR_RAY_QUERY_EXTENSION_NAME)
+		|| !listed (VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME) || !listed (VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME)) return false;
+	VkPhysicalDeviceAccelerationStructureFeaturesKHR fas = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR };
+	VkPhysicalDeviceRayQueryFeaturesKHR frq = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR, &fas };
+	VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR fpf = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR, &frq };
+	VkPhysicalDeviceVulkan12Features f12 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &fpf };
+	VkPhysicalDeviceFeatures2 f2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f12 };
+	vkGetPhysicalDeviceFeatures2 (phys, &f2);
+	return fas.accelerationStructure && frq.rayQuery && fpf.rayTracingPositionFetch && f12.bufferDeviceAddress && f2.features.dualSrcBlend;
+}
+
 void VkDev::CreateDevice ()
 {
 	// queue: the first family with graphics (presentation is checked against the window surface by the framework)
@@ -671,6 +701,8 @@ void VkDev::CreateDevice ()
 		return;
 	}
 
+	bool rq = wantRayQuery && RayQuerySupported (phys); // not upstream (design-ddgi 2): only when the ray-traced GI is chosen
+
 	VkPhysicalDeviceFeatures2 e2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
 	e2.features.samplerAnisotropy = features.samplerAnisotropy;
 	e2.features.textureCompressionBC = features.textureCompressionBC;
@@ -702,6 +734,17 @@ void VkDev::CreateDevice ()
 	VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT evi = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT };
 	evi.vertexInputDynamicState = VK_TRUE;
 	e2.pNext = &e12; e12.pNext = &e13; e13.pNext = &eso; eso.pNext = &eds3; eds3.pNext = &evi;
+	VkPhysicalDeviceAccelerationStructureFeaturesKHR eas = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR };
+	VkPhysicalDeviceRayQueryFeaturesKHR erq = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR, &eas };
+	VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR epf = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR, &erq };
+	if (rq) { // not upstream (design-ddgi 2)
+		eas.accelerationStructure = VK_TRUE;
+		erq.rayQuery = VK_TRUE;
+		epf.rayTracingPositionFetch = VK_TRUE;
+		e12.bufferDeviceAddress = VK_TRUE;
+		e2.features.dualSrcBlend = VK_TRUE;
+		evi.pNext = &epf;
+	}
 #ifdef VK_VERSION_1_4
 	VkPhysicalDeviceVulkan14Features e14 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES, &eso };
 	e14.pushDescriptor = VK_TRUE;
@@ -710,6 +753,7 @@ void VkDev::CreateDevice ()
 	features = e2.features;
 	std::vector<const char*> ext (devExt, devExt + sizeof(devExt)/sizeof(devExt[0]));
 	if (pushExt) ext.push_back (VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+	if (rq) for (const char *x : { VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, VK_KHR_RAY_QUERY_EXTENSION_NAME, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME, VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME }) ext.push_back (x);
 
 	// D3DRS_MULTISAMPLEANTIALIAS off: every sample at the pixel centre, which needs VK_EXT_sample_locations with dynamic enable
 	if (listed (VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME) && fds3.extendedDynamicState3SampleLocationsEnable) {
@@ -758,8 +802,22 @@ void VkDev::CreateDevice ()
 #undef VKX
 	vkx.CmdPushDescriptorSet = (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr (dev, pushExt ? "vkCmdPushDescriptorSetKHR" : "vkCmdPushDescriptorSet");
 	if (!vkx.CmdPushDescriptorSet) { LogErr("VkDev: no push descriptor command"); ok = false; }
+	if (rq) { // not upstream (design-ddgi 2)
+#define VKRT(name) vkrt.name = (PFN_vk##name)vkGetDeviceProcAddr (dev, "vk" #name)
+		VKRT(CreateAccelerationStructureKHR);
+		VKRT(DestroyAccelerationStructureKHR);
+		VKRT(GetAccelerationStructureBuildSizesKHR);
+		VKRT(GetAccelerationStructureDeviceAddressKHR);
+		VKRT(CmdBuildAccelerationStructuresKHR);
+		VKRT(CmdWriteAccelerationStructuresPropertiesKHR);
+		VKRT(CmdCopyAccelerationStructureKHR);
+#undef VKRT
+		rayQuery = vkrt.CreateAccelerationStructureKHR && vkrt.DestroyAccelerationStructureKHR && vkrt.GetAccelerationStructureBuildSizesKHR && vkrt.GetAccelerationStructureDeviceAddressKHR
+			&& vkrt.CmdBuildAccelerationStructuresKHR && vkrt.CmdWriteAccelerationStructuresPropertiesKHR && vkrt.CmdCopyAccelerationStructureKHR;
+	}
 
 	VmaAllocatorCreateInfo ai = {};
+	if (rq) ai.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT; // not upstream: the feature is on, so VMA may use the address flag for any buffer
 	ai.vulkanApiVersion = VK_API_VERSION_1_3; // the client's minimum; VMA uses no 1.4 command
 	ai.physicalDevice = phys;
 	ai.device = dev;
@@ -812,6 +870,27 @@ void VkDev::CreateDevice ()
 	pli.pPushConstantRanges = &pr;
 	VKCHECK(vkCreatePipelineLayout (dev, &pli, NULL, &pipeLayout));
 
+	if (rayQuery) { // not upstream (design-ddgi 2): set 1 of the GI shaders, bound as an ordinary set (set 0 has every push descriptor)
+		VkDescriptorSetLayoutBinding rb[3] = {};
+		for (int i = 0; i < 3; i++) {
+			rb[i].binding = i;
+			rb[i].descriptorType = i == 0 ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			rb[i].descriptorCount = 1;
+			rb[i].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+		}
+		VkDescriptorSetLayoutCreateInfo rli = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+		rli.bindingCount = 3;
+		rli.pBindings = rb;
+		VKCHECK(vkCreateDescriptorSetLayout (dev, &rli, NULL, &rtSetLayout));
+		VkDescriptorSetLayout two[2] = { setLayout, rtSetLayout };
+		VkPipelineLayoutCreateInfo rpi = pli;
+		rpi.setLayoutCount = 2;
+		rpi.pSetLayouts = two;
+		VKCHECK(vkCreatePipelineLayout (dev, &rpi, NULL, &rtPipeLayout));
+		if (!rtSetLayout || !rtPipeLayout) rayQuery = false;
+	}
+
+	LogAlw("VkDev: ray queries for global illumination: %s", rayQuery ? "Yes" : (wantRayQuery ? "No (the device lacks a part)" : "not asked"));
 	LogAlw("VkDev: %s, Vulkan %u.%u.%u", props.deviceName, VK_API_VERSION_MAJOR(props.apiVersion),
 		VK_API_VERSION_MINOR(props.apiVersion), VK_API_VERSION_PATCH(props.apiVersion));
 	LogAlw("VkDev: per-draw multisampling off (sample locations): %s", sampleLocations ? "Yes" : "No");
@@ -845,6 +924,8 @@ VkDev::~VkDev ()
 	if (copyFS) vkx.DestroyShaderEXT (dev, copyFS, NULL);
 	vkDestroyPipelineLayout (dev, pipeLayout, NULL);
 	vkDestroyDescriptorSetLayout (dev, setLayout, NULL);
+	if (rtPipeLayout) vkDestroyPipelineLayout (dev, rtPipeLayout, NULL); // not upstream (design-ddgi 2)
+	if (rtSetLayout) vkDestroyDescriptorSetLayout (dev, rtSetLayout, NULL);
 	for (int i = 0; i < NFRAMES; i++) vkDestroyCommandPool (dev, frame[i].pool, NULL);
 	vkDestroyCommandPool (dev, oneTimePool, NULL);
 	vkDestroySemaphore (dev, timeline, NULL);
@@ -1297,8 +1378,17 @@ bool VkDev::GetScissor (RECT *r) const
 	return scissorSet;
 }
 
+void VkDev::BindRtSet (VkDescriptorSet set)
+{
+	if (!rayQuery) return;
+	if (set) vkCmdBindDescriptorSets (Cmd (), VK_PIPELINE_BIND_POINT_GRAPHICS, rtPipeLayout, 1, 1, &set, 0, NULL);
+	if ((set != VK_NULL_HANDLE) != rtActive && cbActive) cbActive->Invalidate (); // set 0 pushed again with the other layout
+	rtActive = set != VK_NULL_HANDLE;
+}
+
 void VkDev::ReplayState ()
 {
+	rtActive = false; // not upstream (design-ddgi 2): a new command buffer has no set 1
 	VkCommandBuffer cmd = Cmd();
 	vkCmdSetRasterizerDiscardEnable (cmd, VK_FALSE);
 	vkCmdSetFrontFace (cmd, VK_FRONT_FACE_CLOCKWISE); // Direct3D front faces are clockwise on screen

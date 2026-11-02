@@ -61,6 +61,8 @@ The client reads VulkanClient.cfg when Orbiter starts and writes it back when Or
 	\hline\rule{0pt}{2ex}
 	SSGI & 1 & One bounce of indirect light between the surfaces on screen, below about 20 km above the ground or with a vessel within 2 km. SSGIStrength: 0 to 2, default 1.\\
 	\hline\rule{0pt}{2ex}
+	GIMethod & 0 & 1: the global illumination is ray-traced (probes lit by rays against terrain, vessels and bases, on and off screen, several bounces) where the graphics card has hardware ray queries. GIRayMs: its trace budget per frame, 0.1 to 2 ms, default 0.25.\\
+	\hline\rule{0pt}{2ex}
 	HeightFog & 0 & Ground fog and haze in valleys and over water, below 45 km (section \ref{ssec:vk_planets}).\\
 	\hline\rule{0pt}{2ex}
 	NightLook & 1 & City lights drawn as lamps along streets, streamed buildings' windows lit one by one at dusk, and an exposure that keeps night scenes dark. Daytime is unchanged.\\
