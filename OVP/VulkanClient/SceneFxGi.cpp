@@ -355,7 +355,6 @@ bool SceneFx::GiRt (VkSurf *target, vPlanet *vp, ConstParams *cp, const DdgiGiPS
 	ip->SetTextureNative("tIrrD", gi->dVol->Irr(), IPF_POINT | IPF_CLAMP);
 	ip->SetTextureNative("tDstD", gi->dVol->Dst(), IPF_POINT | IPF_CLAMP);
 	ip->SetTextureNative("tStateD", gi->dVol->State(), IPF_POINT | IPF_CLAMP);
-	ip->SetTextureNative("tAlbTab", gi->dScene->Table(), IPF_POINT | IPF_CLAMP);
 	ip->SetOutputNative(0, gi->sGi[0]);
 	if (!ip->Execute(true)) return false;
 	ip->Activate("PSGiCompositeRt");
