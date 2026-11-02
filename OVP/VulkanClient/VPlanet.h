@@ -15,6 +15,7 @@
 #include "Mesh.h"
 #include <list>
 #include <vector> // not upstream
+#include "GroundMat.h" // not upstream
 
 class D3D9Mesh;
 class SurfTile;
@@ -112,8 +113,10 @@ struct ShaderParams
 	float4   vCldAtlasW;		// not upstream: x 1 with the atlas, y max anisotropy, z 1 when the texture is at or below the atlas level
 	float4   vWaterFx;			// not upstream: water effects, x foam mask mip, yz foam ring radius in uv, w spare
 	float4   vWayOff;			// not upstream (design-ways): way and lamp texture uv offset (xy) and scale (zw)
+	float4   vGmLat;			// not upstream (design-ground-detail 4): material repeats (4 m) per tile, 0 for none (x); the 8 m lattice's tile corner mod 16384 (yz); GroundMat::Mode (w)
+	float4   vGmHex;			// not upstream: the hex grid's fraction (xy) and id base (zw) at the tile corner (GroundGeom::SkewSplit)
 };
-static_assert(sizeof(ShaderParams) == 480, "ShaderParams must match NewPlanet.glsl PerObjectParams"); // not upstream
+static_assert(sizeof(ShaderParams) == 512, "ShaderParams must match NewPlanet.glsl PerObjectParams"); // not upstream
 static_assert(offsetof(ShaderParams, vCldAtlas) == 416 && offsetof(ShaderParams, vWaterFx) == 448, "ShaderParams must match NewPlanet.glsl PerObjectParams"); // not upstream
 
 // Bools for NewPlanet.hlsl
@@ -275,6 +278,7 @@ public:
 	void            RenderVectors (VkDev *dev, D3D9Pad* pSkp);
 	bool			CameraInAtmosphere() const;
 	double			CameraAltitude() const { return cdist - size; }
+	const GroundMat::Set *GroundSet() const { return groundSet; } // not upstream (design-ground-detail 4): its material set, null for none
 	double			GetHorizonAlt() const;
 	double          GetMinElevation() const { return minelev; };
 	double			GetMaxElevation() const { return maxelev; };
@@ -497,6 +501,7 @@ public:
 		bool bNormals;			// Normals enabled
 		bool bEnabled;			// Micro textures enabled
 	} MicroCfg;
+	const GroundMat::Set *groundSet = nullptr; // not upstream (design-ground-detail 4)
 
 	struct SHDPrm {
 		float se;	// Shadow entry

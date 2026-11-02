@@ -530,6 +530,7 @@ vPlanet::vPlanet (OBJHANDLE _hObj, const Scene *scene) :
 	// Finish creation -------------------------------------------
 	//
 	MicroCfg.bEnabled = ParseMicroTextures();
+	{ char gn[64]; oapiGetObjectName(hObj, gn, 64); groundSet = GroundMat::ForBody(gn); } // not upstream (design-ground-detail 4)
 
 	ParseConfig(oapiGetObjectFileName(hObj));
 

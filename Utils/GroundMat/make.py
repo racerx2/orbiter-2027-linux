@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # not upstream: the ground materials' DDS files from CC0 scans (design-ground-detail 1.1); run by hand, not at build time
-# make.py <sources> <out>: <sources>/<material>/ holds the scan's colour, height, OpenGL normal and ambient occlusion maps
+# make.py <sources> <out> [material...]: <sources>/<material>/ holds the scan's colour, height, OpenGL normal and ambient occlusion maps; no names: every folder there
 # writes <out>/<material>_a.dds (colour, height) and _b.dds (normal x y, +y north, ao), BC7 with full mips, and <out>/CREDITS.txt
 # needs numpy, Pillow and etcpak (BC7: bc7enc by Rich Geldreich)
 
@@ -13,7 +13,6 @@ import numpy as np
 from PIL import Image
 
 SIZE = 1024
-NAMES = ["grass", "forest", "soil", "sand", "rock", "gravel"]  # GroundGeom::Name order
 
 # the picked scans: asset, source, url (CC0)
 ASSETS = {
@@ -23,6 +22,13 @@ ASSETS = {
 	"sand": ("Aerial Beach 01", "Rob Tuytel, Poly Haven", "https://polyhaven.com/a/aerial_beach_01"),
 	"rock": ("Aerial Rocks 02", "Rob Tuytel, Poly Haven", "https://polyhaven.com/a/aerial_rocks_02"),
 	"gravel": ("Gravel Ground 01", "Rob Tuytel, Poly Haven", "https://polyhaven.com/a/gravel_ground_01"),
+	"lunar_dust": ("Moon Dusted 01", "Greg Zaal, Rico Cilliers, Jenelle van Heerden, Dario Barresi, Poly Haven", "https://polyhaven.com/a/moon_dusted_01"),
+	"lunar_coarse": ("Moon Macro 01", "Greg Zaal, Jenelle van Heerden, Rico Cilliers, Dario Barresi, Poly Haven", "https://polyhaven.com/a/moon_macro_01"),
+	"lunar_pebbles": ("Moon Dusted 05", "Greg Zaal, Rico Cilliers, Jenelle van Heerden, Dario Barresi, Poly Haven", "https://polyhaven.com/a/moon_dusted_05"),
+	"rock_grey": ("Gray Rocks", "Dimitrios Savva, Poly Haven", "https://polyhaven.com/a/gray_rocks"),
+	"mars_sand": ("Gravelly Sand", "Dario Barresi, Poly Haven", "https://polyhaven.com/a/gravelly_sand"),
+	"mars_stony": ("Dry Ground Rocks", "Rob Tuytel, Poly Haven", "https://polyhaven.com/a/dry_ground_rocks"),
+	"mars_crust": ("Dry Ground 01", "Rob Tuytel, Poly Haven", "https://polyhaven.com/a/dry_ground_01"),
 }
 
 PATTERNS = {
@@ -37,7 +43,7 @@ PATTERNS = {
 
 def find(d, key):
 	for p in PATTERNS[key]:
-		hits = sorted(f for f in glob.glob(os.path.join(d, p)) if os.path.splitext(f)[1].lower() in (".png", ".jpg", ".jpeg", ".tif", ".tiff"))
+		hits = sorted((f for f in glob.glob(os.path.join(d, p)) if os.path.splitext(f)[1].lower() in (".png", ".jpg", ".jpeg", ".tif", ".tiff")), key=lambda f: (os.path.splitext(f)[1].lower() in (".jpg", ".jpeg"), f))  # lossless first
 		if hits:
 			return hits[0]
 	return None
@@ -126,6 +132,12 @@ def material(src, name, out):
 		n = lin
 	if flip:
 		n[..., 1] = -n[..., 1]
+	sx, sy = n[..., 0] - n[..., 0].mean(), n[..., 1] - n[..., 1].mean()
+	r = np.mean(sx * sy) / max(sx.std() * sy.std(), 1e-9)
+	print(f"{name}: normal x y correlation {r:+.3f}")
+	if abs(r) > 0.15:
+		# JPEG's luma noise lands on x and y alike: bumps leaning one diagonal way, streaks once turned at random
+		sys.exit(f"{name}: the normal map's x and y slopes correlate ({r:+.2f}): lossy compressed? use the PNG")
 	n /= np.maximum(np.linalg.norm(n, axis=-1, keepdims=True), 1e-9)
 	ao_path, arm = find(d, "ao"), find(d, "arm")
 	if ao_path:
@@ -150,17 +162,18 @@ def material(src, name, out):
 
 
 def main():
-	if len(sys.argv) != 3:
-		sys.exit("make.py <sources> <out>")
+	if len(sys.argv) < 3:
+		sys.exit("make.py <sources> <out> [material...]")
 	src, out = sys.argv[1], sys.argv[2]
 	os.makedirs(out, exist_ok=True)
-	for name in NAMES:
+	for name in sys.argv[3:] or sorted(d for d in os.listdir(src) if os.path.isdir(os.path.join(src, d))):
+		if name not in ASSETS:
+			sys.exit(f"{name}: not in ASSETS, so its credit line is unknown")
 		material(src, name, out)
 	with open(os.path.join(out, "CREDITS.txt"), "w") as f:
 		f.write("Ground materials (Textures/GroundDetail), made by Utils/GroundMat/make.py from these scans, all CC0 (public domain):\n")
-		for name in NAMES:
-			a = ASSETS.get(name)
-			if a:
+		for name, a in ASSETS.items():
+			if os.path.exists(os.path.join(out, f"{name}_a.dds")):
 				f.write(f"{name}: {a[0]}, {a[1]}, {a[2]}\n")
 
 

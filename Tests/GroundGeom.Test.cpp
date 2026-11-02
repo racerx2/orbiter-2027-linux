@@ -51,6 +51,28 @@ TEST_CASE("Ground materials: weights by class, colour and slope", "[ground]")
 	}
 }
 
+TEST_CASE("Ground materials: weights without land class (Moon, Mars)", "[ground]")
+{
+	const float flat = 1.0f, steep = std::cos (55.0f * 3.14159265f / 180.0f);
+	float W[NMAT];
+	WeightsFree (steep, 0.5f, 0.0f, W); CHECK_THAT(W[FROCK], WithinAbs (1.0, 1e-5));
+	WeightsFree (flat, 0.5f, 1.0f, W); CHECK(Argmax (W) == BRIGHT);
+	WeightsFree (flat, 1.0f, 0.0f, W); CHECK(Argmax (W) == FINE);
+	WeightsFree (flat, 0.0f, 0.0f, W); CHECK(Argmax (W) == COARSE);
+	std::mt19937 rng (9);
+	std::uniform_real_distribution<float> u (0.0f, 1.0f);
+	for (int i = 0; i < 2000; i++) {
+		WeightsFree (u (rng), Patches (u (rng), u (rng)), Third (u (rng)), W);
+		CHECK_THAT(Sum (W, NMAT), WithinAbs (1.0, 1e-4)); // all of the ground has a material
+		for (int k = NFREE; k < NMAT; k++) CHECK(W[k] == 0.0f);
+		for (float w : W) CHECK(w >= 0.0f);
+	}
+	CHECK(Patches (0.0f, 0.0f) == 0.0f);
+	CHECK(Patches (1.0f, 1.0f) == 1.0f);
+	CHECK(Third (0.5f) == 0.0f);
+	CHECK(Third (0.9f) == 1.0f);
+}
+
 TEST_CASE("Ground materials: the height blend lets a minor material show in patches", "[ground]")
 {
 	std::mt19937 rng (3);
@@ -129,21 +151,37 @@ TEST_CASE("Ground materials: two tiles agree on every hex vertex and tap", "[gro
 
 TEST_CASE("Ground materials: a tap's normal turns back with its texture", "[ground]")
 {
-	// height h(t) = t.x in a tap turned by rot: its slope on the lattice is (cos, -sin), so its normal leans (-cos, sin)
-	for (float rot : { 0.0f, 0.7f, 2.0f, 4.5f }) {
-		float wx, wy;
-		TurnNormal (-1.0f, 0.0f, rot, &wx, &wy);
-		CHECK_THAT(wx, WithinAbs (-std::cos (rot), 1e-5));
-		CHECK_THAT(wy, WithinAbs (std::sin (rot), 1e-5));
+	// a height h(t) = a t.x + b t.y in the texture (t.y grows down the image): its map normal is (-a, b), y image-up;
+	// on the ground (v grows south) its normal in east, north is (-dh/du, dh/dv)
+	std::mt19937 rng (17);
+	std::uniform_real_distribution<float> uf (0.0f, 50.0f), af (-1.0f, 1.0f);
+	for (int i = 0; i < 500; i++) {
+		float u = uf (rng), v = uf (rng), a = af (rng), b = af (rng), e = 1e-2f;
 		Tri t;
-		Grid (3.3f, 1.7f, 0.0f, 0.0f, 0.0f, 0.0f, t);
-		float ua, va, ub, vb, e = 1e-3f;
-		float rr, ou, ov;
-		VertexXf (t.id[0], &rr, &ou, &ov);
-		TapUV (3.3f, 1.7f, t, 0, &ua, &va);
-		TapUV (3.3f + e, 1.7f, t, 0, &ub, &vb);
-		CHECK_THAT((ub - ua) / e, WithinAbs (std::cos (rr), 2e-2)); // the tap's u grows by cos(rot) per lattice u
+		Grid (u, v, 0.3f, 0.6f, 7.0f, 9.0f, t);
+		for (int j = 0; j < 3; j++) {
+			float t0u, t0v, tuu, tuv, tvu, tvv, rot, ou, ov, wx, wy;
+			TapUV (u, v, t, j, &t0u, &t0v);
+			TapUV (u + e, v, t, j, &tuu, &tuv);
+			TapUV (u, v + e, t, j, &tvu, &tvv);
+			float h0 = a * t0u + b * t0v, dhu = (a * tuu + b * tuv - h0) / e, dhv = (a * tvu + b * tvv - h0) / e;
+			VertexXf (t.id[j], &rot, &ou, &ov);
+			TurnNormal (-a, b, rot, &wx, &wy);
+			CHECK_THAT(wx, WithinAbs (-dhu, 2e-2));
+			CHECK_THAT(wy, WithinAbs (dhv, 2e-2));
+		}
 	}
+	float wx, wy;
+	TurnNormal (0.0f, -1.0f, 0.0f, &wx, &wy); // height rising north leans the normal south
+	CHECK_THAT(wy, WithinAbs (-1.0, 1e-5));
+	Tri t;
+	Grid (3.3f, 1.7f, 0.0f, 0.0f, 0.0f, 0.0f, t);
+	float ua, va, ub, vb, e = 1e-3f;
+	float rr, ou, ov;
+	VertexXf (t.id[0], &rr, &ou, &ov);
+	TapUV (3.3f, 1.7f, t, 0, &ua, &va);
+	TapUV (3.3f + e, 1.7f, t, 0, &ub, &vb);
+	CHECK_THAT((ub - ua) / e, WithinAbs (std::cos (rr), 2e-2)); // the tap's u grows by cos(rot) per lattice u
 }
 
 TEST_CASE("Ground materials: the Lambert ratio", "[ground]")

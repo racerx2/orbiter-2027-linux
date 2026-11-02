@@ -634,14 +634,18 @@
   <li>Ground detail (<code>GroundMaterials</code> 0 off, 1 medium, 2 high (default))</li>
     <p>
       Within about 600 m of the camera the ground gets photo-scanned materials
-      (grass, forest floor, soil, sand, rock and gravel) with their relief in
-      the light, strongest in a low sun. They are picked by the streamed land
-      cover, the slope (rock from 35 to 50 degrees) and the satellite colour,
-      which still gives the ground its colour; the satellite image is also
-      smoothed there, so its 10 m pixels don't show. No repeating pattern: each
-      material is laid in randomly turned and shifted pieces. Not on water or
-      pavement. Medium uses half-size textures (4 MB of video memory instead of
-      16 MB). Needs Earth streaming (land class tiles).
+      with their relief in the light, strongest in a low sun. On the Earth
+      (grass, forest floor, soil, sand, rock and gravel) they are picked by the
+      streamed land cover, the slope (rock from 35 to 50 degrees) and the
+      satellite colour; on the Moon, Mars, Mercury and the other rocky and icy
+      bodies (dust, lumpy regolith, pebbles and rock on the Moon; sand, stony
+      ground, cracked crust and rock on Mars) by the slope and broad patches, and there
+      they take over from the micro textures near the camera. The satellite colour still gives
+      the ground its colour, and its image is smoothed there, so its pixels
+      don't show. No repeating pattern: each material is laid in randomly
+      turned and shifted pieces. Not on water or pavement. Medium uses
+      half-size textures (about 19 MB of video memory instead of 37 MB). The
+      sets and the bodies that use them are in Config/GroundDetail.cfg.
     </p>
 </ul>
 

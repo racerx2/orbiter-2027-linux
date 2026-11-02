@@ -5,3 +5,10 @@ soil: Dry Mud Field 001, Rob Tuytel, Rico Cilliers, Poly Haven, https://polyhave
 sand: Aerial Beach 01, Rob Tuytel, Poly Haven, https://polyhaven.com/a/aerial_beach_01
 rock: Aerial Rocks 02, Rob Tuytel, Poly Haven, https://polyhaven.com/a/aerial_rocks_02
 gravel: Gravel Ground 01, Rob Tuytel, Poly Haven, https://polyhaven.com/a/gravel_ground_01
+lunar_dust: Moon Dusted 01, Greg Zaal, Rico Cilliers, Jenelle van Heerden, Dario Barresi, Poly Haven, https://polyhaven.com/a/moon_dusted_01
+lunar_coarse: Moon Macro 01, Greg Zaal, Jenelle van Heerden, Rico Cilliers, Dario Barresi, Poly Haven, https://polyhaven.com/a/moon_macro_01
+lunar_pebbles: Moon Dusted 05, Greg Zaal, Rico Cilliers, Jenelle van Heerden, Dario Barresi, Poly Haven, https://polyhaven.com/a/moon_dusted_05
+rock_grey: Gray Rocks, Dimitrios Savva, Poly Haven, https://polyhaven.com/a/gray_rocks
+mars_sand: Gravelly Sand, Dario Barresi, Poly Haven, https://polyhaven.com/a/gravelly_sand
+mars_stony: Dry Ground Rocks, Rob Tuytel, Poly Haven, https://polyhaven.com/a/dry_ground_rocks
+mars_crust: Dry Ground 01, Rob Tuytel, Poly Haven, https://polyhaven.com/a/dry_ground_01

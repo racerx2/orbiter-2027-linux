@@ -12,12 +12,6 @@
 
 namespace GroundGeom {
 
-const char *Name (int m)
-{
-	static const char *n[NMAT] = { "grass", "forest", "soil", "sand", "rock", "gravel" };
-	return m >= 0 && m < NMAT ? n[m] : "";
-}
-
 float Smooth (float e0, float e1, float x)
 {
 	float t = std::clamp ((x - e0) / (e1 - e0), 0.0f, 1.0f);
@@ -51,6 +45,26 @@ void Weights (V3 cls, V3 s, float cosSlope, float W[NMAT])
 	W[SAND] = cls.z * (1.0f - v) * y * k;
 	W[GRAVEL] = cls.z * (1.0f - v) * (1.0f - y) * k;
 	W[ROCK] = r; // steep ground is rock whatever the class says, snow and glacier too
+}
+
+void WeightsFree (float cosSlope, float patch, float e, float W[NMAT])
+{
+	float r = 1.0f - Smooth (0.64278761f, 0.81915204f, cosSlope);
+	for (int i = 0; i < NMAT; i++) W[i] = 0.0f;
+	W[FINE] = (1.0f - r) * (1.0f - e) * patch;
+	W[COARSE] = (1.0f - r) * (1.0f - e) * (1.0f - patch);
+	W[BRIGHT] = (1.0f - r) * e;
+	W[FROCK] = r;
+}
+
+float Patches (float n32, float n128)
+{
+	return Smooth (0.25f, 0.75f, 0.6f * n32 + 0.4f * n128);
+}
+
+float Third (float n64)
+{
+	return Smooth (0.55f, 0.85f, n64);
 }
 
 void Top3 (const float W[NMAT], int idx[3], float w[3])
@@ -131,7 +145,7 @@ void HexWeights (const float w[3], const float h[3], float out[3])
 void TurnNormal (float nx, float ny, float rot, float *wx, float *wy)
 {
 	float c = std::cos (rot), s = std::sin (rot);
-	*wx = c * nx + s * ny; *wy = -s * nx + c * ny;
+	*wx = c * nx - s * ny; *wy = s * nx + c * ny; // the map's y is image-up, against v: R(+rot) in east, north
 }
 
 float LambertRatio (V3 n, V3 m, V3 L)

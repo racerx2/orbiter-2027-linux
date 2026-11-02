@@ -152,6 +152,7 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	if (!Config->bAtmoQuality) flags += "_PERFORMANCE ";
 	if (Config->Filmic) flags += "_FILMIC "; // not upstream
 	if (SceneShadows::Enabled()) flags += "_CSM "; // not upstream: scene shadow receivers (design-scene-shadows)
+	if (GroundMat::Any()) flags += "_GROUNDMAT "; // not upstream (design-ground-detail 4): the materials on binding 17 beside the micro textures
 
 	pRender[PLT_MARS] = new PlanetShader(pDev, "Modules/VulkanClient/NewPlanet.glsl", "TerrainVS", "TerrainPS", "Mars", (flags + blend).c_str());
 
@@ -174,7 +175,7 @@ void vPlanet::GlobalInitAtmosphere(oapi::D3D9Client* gc)
 	if (bNightLights && Config->NightLook) flags += "_NIGHTLOOK "; // not upstream: night city look (design-night-look 5)
 	if (bLocals) flags += "_LOCALLIGHTS ";
 	flags += "_WAYS "; // not upstream (design-ways): streamed roads, rail, airports and waterways on tWay/tWayN
-	if (GroundMat::Tex()) flags += "_GROUNDMAT "; // not upstream (design-ground-detail 1): the materials on binding 23
+	if (GroundMat::Any()) flags += "_GROUNDMAT "; // not upstream (design-ground-detail 1): the materials on binding 23
 
 	if (Config->ShadowMapMode) flags += "_SHDMAP ";
 	if (Config->EnableMeshDbg) flags += "_DEVTOOLS ";

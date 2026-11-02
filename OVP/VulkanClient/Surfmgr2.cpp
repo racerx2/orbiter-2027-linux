@@ -1190,12 +1190,19 @@ void SurfTile::Render ()
 		sp->vMSc[0] = FVECTOR4(float(rep), float(rep), float(std::fmod(ilng * rep, P)), float(std::fmod(ilat * rep, P)));
 		pShader->SetTexture("tClass", ctex, IPF_CLAMP | IPF_LINEAR);
 		fc->bClass = true;
-		if (VkTex *gt = GroundMat::Tex()) { // not upstream (design-ground-detail 1): the hex grid's base at the tile's corner, in 4 m material repeats; vMSc[1] is a micro texture slot, unused without them
-			float cx, cy, fx, fy;
-			GroundGeom::SkewSplit(2.0 * ilng * rep, 2.0 * ilat * rep, &cx, &cy, &fx, &fy);
-			sp->vMSc[1] = FVECTOR4(fx, fy, cx, cy);
-			pShader->SetTexture("tGround", gt, IPF_WRAP | IPF_ANISOTROPIC, Config->Anisotrophy);
-		}
+	}
+
+	sp->vGmLat = FVECTOR4(0.0f, 0.0f, 0.0f, 0.0f); // not upstream (design-ground-detail 1, 4): the body's material set on this tile, near the ground
+	const GroundMat::Set *gs = vPlanet->GroundSet();
+	if (gs && tex && vPlanet->HasTextures() && vPlanet->CameraAltitude() < 20e3 && (gs->mode == GroundMat::FREE || fc->bClass)) {
+		double rep = height * vPlanet->GetSize() / 8.0; // the class lattice: 8 m cells, a power of two per tile
+		rep = std::max(1.0, std::exp2(std::round(std::log2(std::max(rep, 1.0)))));
+		double P = 16384.0;
+		float cx, cy, fx, fy;
+		GroundGeom::SkewSplit(2.0 * ilng * rep, 2.0 * ilat * rep, &cx, &cy, &fx, &fy); // in 4 m material repeats from the tile's corner
+		sp->vGmLat = FVECTOR4(float(2.0 * rep), float(std::fmod(ilng * rep, P)), float(std::fmod(ilat * rep, P)), float(gs->mode));
+		sp->vGmHex = FVECTOR4(fx, fy, cx, cy);
+		pShader->SetTexture("tGround", gs->tex, IPF_WRAP | IPF_ANISOTROPIC, Config->Anisotrophy);
 	}
 
 	HorizonParams(); // not upstream: terrain shadows from the owner's horizon map
