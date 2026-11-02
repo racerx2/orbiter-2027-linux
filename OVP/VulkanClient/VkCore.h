@@ -302,7 +302,7 @@ public:
 	// descriptors: set 0 is pushed per draw (textures and constant blocks of the bound effect)
 	VkSampler Sampler (const VkSamplerDesc &desc);
 	VkDescriptorSetLayout SetLayout () const { return setLayout; }
-	VkPipelineLayout PipelineLayout () const { return rtActive ? rtPipeLayout : pipeLayout; } // not upstream: set 0 pushed with the two-set layout while set 1 is bound
+	VkPipelineLayout PipelineLayout () const { return rtActive ? rtPipeLayout : (lrActive ? lrPipeLayout : pipeLayout); } // not upstream: set 0 pushed with the layout of the bound shaders
 
 	// not upstream (design-ddgi 2): ray queries; set 1 of the GI shaders: 0 the TLAS, 1 and 2 storage buffers
 	static bool wantRayQuery;                        // set before the device is made: the client's GI mode asks for them
@@ -311,6 +311,15 @@ public:
 	VkDescriptorSetLayout RtSetLayout () const { return rtSetLayout; }
 	VkPipelineLayout RtPipelineLayout () const { return rtPipeLayout; }
 	void BindRtSet (VkDescriptorSet set);            // set 1 for the next draws of the GI shaders; VK_NULL_HANDLE: back to set 0 alone
+
+	// not upstream (design-ddgi-cockpit Rev 4): dynamic rendering local read, a pass reads its colour target's own pixel in place
+	bool localRead = false;                          // VK_KHR_dynamic_rendering_local_read (core in 1.4)
+	bool localReadMS = false;                        // multisampled targets too (Vulkan 1.4 dynamicRenderingLocalReadMultisampledAttachments)
+	static const int LRBIND = 30;                    // set 0's input attachment in the local read layout (no sampler of those passes uses it)
+	VkDescriptorSetLayout LrSetLayout () const { return lrSetLayout; }
+	void BindLocalRead (bool on);                    // the next draws read colour target 0 at their pixel; false: back
+	bool LocalReadActive () const { return lrActive; }
+	VkImageView LocalReadView () const { return rtColor ? rtColor->view : VK_NULL_HANDLE; }
 
 	// identity
 	VkInstance instance;
@@ -394,7 +403,16 @@ private:
 	VkDescriptorSetLayout rtSetLayout = VK_NULL_HANDLE; // not upstream (design-ddgi 2)
 	VkPipelineLayout rtPipeLayout = VK_NULL_HANDLE;
 	bool rtActive = false;                           // set 1 is bound in this command buffer: pushes use rtPipeLayout
+	VkDescriptorSetLayout lrSetLayout = VK_NULL_HANDLE; // not upstream: set 0 with an input attachment at LRBIND
+	VkPipelineLayout lrPipeLayout = VK_NULL_HANDLE;
+	bool lrActive = false;                           // local read draws: colour target 0 in the local read layout, pushes use lrPipeLayout
 };
+
+#ifdef VK_KHR_dynamic_rendering_local_read
+static const VkImageLayout VkLocalReadLayout = VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR; // not upstream
+#else
+static const VkImageLayout VkLocalReadLayout = VK_IMAGE_LAYOUT_GENERAL; // unused: localRead stays false
+#endif
 
 // D3DPRIMITIVETYPE primitive count → the vertex or index count a Vk draw takes
 inline UINT VkPrimVerts (VkPrimitiveTopology t, UINT prims)

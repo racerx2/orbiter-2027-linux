@@ -680,9 +680,18 @@ void VkDev::CreateDevice ()
 	VkPhysicalDeviceVulkan14Features f14 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES, &fso };
 	if (push14) f13.pNext = &f14; // a 1.4 structure is chained for a 1.4 device only
 #endif
+	bool lrExt = listed ("VK_KHR_dynamic_rendering_local_read"), lrHave = false; // not upstream (design-ddgi-cockpit Rev 4): in-place target reads
+#ifdef VK_KHR_dynamic_rendering_local_read
+	VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR flr = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_LOCAL_READ_FEATURES_KHR };
+	if (lrExt && !push14) fvi.pNext = &flr; // a 1.4 device has it in its 1.4 structure
+#endif
 	vkGetPhysicalDeviceFeatures2 (phys, &f2);
 #ifdef VK_VERSION_1_4
 	if (push14) pushOK = f14.pushDescriptor;
+	if (push14) lrHave = f14.dynamicRenderingLocalRead;
+#endif
+#ifdef VK_KHR_dynamic_rendering_local_read
+	if (lrExt && !push14) lrHave = flr.dynamicRenderingLocalRead;
 #endif
 
 	std::string missing;
@@ -754,6 +763,27 @@ void VkDev::CreateDevice ()
 	std::vector<const char*> ext (devExt, devExt + sizeof(devExt)/sizeof(devExt[0]));
 	if (pushExt) ext.push_back (VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
 	if (rq) for (const char *x : { VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, VK_KHR_RAY_QUERY_EXTENSION_NAME, VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME, VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME }) ext.push_back (x);
+#ifdef VK_KHR_dynamic_rendering_local_read
+	VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR elr = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_LOCAL_READ_FEATURES_KHR };
+	if (lrHave && !push14) { // not upstream: the extension's structure on a 1.3 device
+		elr.dynamicRenderingLocalRead = VK_TRUE;
+		elr.pNext = e2.pNext;
+		e2.pNext = &elr;
+		ext.push_back ("VK_KHR_dynamic_rendering_local_read");
+	}
+#endif
+#ifdef VK_VERSION_1_4
+	if (lrHave && push14) e14.dynamicRenderingLocalRead = VK_TRUE;
+#endif
+	localRead = lrHave;
+#ifdef VK_VERSION_1_4
+	if (localRead && std::min (props.apiVersion, VK_MAKE_API_VERSION (0, iv.majorVersion (), iv.minorVersion (), 0)) >= VK_MAKE_API_VERSION (0, 1, 4, 0)) { // a 1.4 property
+		VkPhysicalDeviceVulkan14Properties p14 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_PROPERTIES };
+		VkPhysicalDeviceProperties2 pp = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &p14 };
+		vkGetPhysicalDeviceProperties2 (phys, &pp);
+		localReadMS = p14.dynamicRenderingLocalReadMultisampledAttachments;
+	}
+#endif
 
 	// D3DRS_MULTISAMPLEANTIALIAS off: every sample at the pixel centre, which needs VK_EXT_sample_locations with dynamic enable
 	if (listed (VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME) && fds3.extendedDynamicState3SampleLocationsEnable) {
@@ -869,6 +899,15 @@ void VkDev::CreateDevice ()
 	pli.pushConstantRangeCount = 1;
 	pli.pPushConstantRanges = &pr;
 	VKCHECK(vkCreatePipelineLayout (dev, &pli, NULL, &pipeLayout));
+	if (localRead) { // not upstream (design-ddgi-cockpit Rev 4): set 0 with an input attachment, for the passes that read their target in place
+		b[LRBIND].descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+		b[LRBIND].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+		VKCHECK(vkCreateDescriptorSetLayout (dev, &li, NULL, &lrSetLayout));
+		VkPipelineLayoutCreateInfo lpi = pli;
+		lpi.pSetLayouts = &lrSetLayout;
+		if (lrSetLayout) VKCHECK(vkCreatePipelineLayout (dev, &lpi, NULL, &lrPipeLayout));
+		if (!lrSetLayout || !lrPipeLayout) localRead = false;
+	}
 
 	if (rayQuery) { // not upstream (design-ddgi 2): set 1 of the GI shaders, bound as an ordinary set (set 0 has every push descriptor)
 		VkDescriptorSetLayoutBinding rb[3] = {};
@@ -895,6 +934,7 @@ void VkDev::CreateDevice ()
 		VK_API_VERSION_MINOR(props.apiVersion), VK_API_VERSION_PATCH(props.apiVersion));
 	LogAlw("VkDev: per-draw multisampling off (sample locations): %s", sampleLocations ? "Yes" : "No");
 	LogAlw("VkDev: push descriptors from %s", pushExt ? "VK_KHR_push_descriptor" : "Vulkan 1.4");
+	LogAlw("VkDev: in-place target reads (dynamic rendering local read): %s", localRead ? (localReadMS ? "Yes, multisampled targets too" : "Yes, single-sampled targets") : "No, copies instead");
 }
 
 VkDev::~VkDev ()
@@ -926,6 +966,8 @@ VkDev::~VkDev ()
 	vkDestroyDescriptorSetLayout (dev, setLayout, NULL);
 	if (rtPipeLayout) vkDestroyPipelineLayout (dev, rtPipeLayout, NULL); // not upstream (design-ddgi 2)
 	if (rtSetLayout) vkDestroyDescriptorSetLayout (dev, rtSetLayout, NULL);
+	if (lrPipeLayout) vkDestroyPipelineLayout (dev, lrPipeLayout, NULL); // not upstream
+	if (lrSetLayout) vkDestroyDescriptorSetLayout (dev, lrSetLayout, NULL);
 	for (int i = 0; i < NFRAMES; i++) vkDestroyCommandPool (dev, frame[i].pool, NULL);
 	vkDestroyCommandPool (dev, oneTimePool, NULL);
 	vkDestroySemaphore (dev, timeline, NULL);
@@ -1255,11 +1297,12 @@ void VkDev::BeginRendering ()
 		VkSurf *c[4] = { rtColor, rtExtra[0], rtExtra[1], rtExtra[2] };
 		UINT n = 0;
 		for (; n < 4 && c[n]; n++) {
-			c[n]->tex->Transition (cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+			VkImageLayout l = (n == 0 && lrActive) ? VkLocalReadLayout : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // not upstream: read in place by local read draws
+			c[n]->tex->Transition (cmd, l);
 			c[n]->tex->Written (c[n]->level);
 			ca[n] = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
 			ca[n].imageView = c[n]->view;
-			ca[n].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+			ca[n].imageLayout = l;
 			ca[n].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
 			ca[n].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 		}
@@ -1283,6 +1326,10 @@ void VkDev::BeginRendering ()
 	ab.srcStageMask = ab.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
 	ab.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 	ab.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+	if (lrActive) { // not upstream: the input attachment reads of a local read draw
+		ab.dstStageMask |= VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+		ab.dstAccessMask |= VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT;
+	}
 	VkDependencyInfo ad = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
 	ad.memoryBarrierCount = 1;
 	ad.pMemoryBarriers = &ab;
@@ -1386,9 +1433,19 @@ void VkDev::BindRtSet (VkDescriptorSet set)
 	rtActive = set != VK_NULL_HANDLE;
 }
 
+// not upstream (design-ddgi-cockpit Rev 4): a new rendering in the other layout of colour target 0; set 0 pushed again with its layout
+void VkDev::BindLocalRead (bool on)
+{
+	if (!localRead || on == lrActive) return;
+	EndRendering ();
+	lrActive = on;
+	if (cbActive) cbActive->Invalidate ();
+}
+
 void VkDev::ReplayState ()
 {
 	rtActive = false; // not upstream (design-ddgi 2): a new command buffer has no set 1
+	lrActive = false; // not upstream: nor a local read draw
 	VkCommandBuffer cmd = Cmd();
 	vkCmdSetRasterizerDiscardEnable (cmd, VK_FALSE);
 	vkCmdSetFrontFace (cmd, VK_FRONT_FACE_CLOCKWISE); // Direct3D front faces are clockwise on screen

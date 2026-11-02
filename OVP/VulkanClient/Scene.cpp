@@ -2103,14 +2103,13 @@ void Scene::RenderMainScene()
 		}
 
 		pDevice->Clear(false, true, false, 0, 1.0f, 0); // clear z-buffer
-		double znear = Config->VCNearPlane;
-		if (znear<0.01) znear=0.01;
-		if (znear>1.0)  znear=1.0;
-		OBJHANDLE hFocus = oapiGetFocusObject();
-		SetCameraFrustumLimits(znear, oapiGetSize(hFocus)*2.0);
+		double znear, zfar;
+		CockpitFrustumLimits(znear, zfar); // not upstream: shared with SceneFx's cockpit pre-pass
+		SetCameraFrustumLimits(znear, zfar);
 		PbrRender::SetPhase(PbrRender::PHASE_OPAQUE); // custom: cockpit glass after the cockpit's opaque parts
 		vFocus->Render(pDevice, true);
 		PbrRender::SetPhase(PbrRender::PHASE_ALL);
+		if (pFx) pFx->CockpitGi(pBackBuffer); // not upstream (design-ddgi-cockpit 6): ray-traced GI on the cockpit, before its glass
 		RenderPbrDeferred(true);
 	}
 
@@ -3425,6 +3424,31 @@ FMATRIX4 Scene::PopCameraFrustumLimits()
 	SetCameraFrustumLimits(FrustumStack.top().znear, FrustumStack.top().zfar);
 	FrustumStack.pop();
 	return FMATRIX4(GetProjectionViewMatrix());
+}
+
+// ===========================================================================================
+// not upstream: the cockpit pass's planes (were inline in RenderMainScene)
+void Scene::CockpitFrustumLimits(double &znear, double &zfar) const
+{
+	znear = std::min(std::max(double(Config->VCNearPlane), 0.01), 1.0);
+	zfar = oapiGetSize(oapiGetFocusObject()) * 2.0;
+}
+
+// not upstream: the cockpit is drawn after the TAA resolve, without jitter
+void Scene::PushCockpitCamera()
+{
+	double zn, zf;
+	CockpitFrustumLimits(zn, zf);
+	JitterStack.push(bJitter);
+	bJitter = false;
+	PushCameraFrustumLimits(float(zn), float(zf));
+}
+
+void Scene::PopCockpitCamera()
+{
+	bJitter = JitterStack.top();
+	JitterStack.pop();
+	PopCameraFrustumLimits();
 }
 
 // ===========================================================================================

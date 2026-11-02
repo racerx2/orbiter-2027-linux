@@ -34,6 +34,7 @@ MeshShader::PSGi MeshShader::ps_gi = {}; // not upstream: SSGI
 MeshShader::PSRef MeshShader::ps_ref = {}; // not upstream: ray-traced GI
 int D3D9Mesh::giCls = -1; // not upstream: SSGI
 bool D3D9Mesh::giRef = false; // not upstream: ray-traced GI
+bool D3D9Mesh::giCockpit = false; // not upstream: ray-traced GI in the cockpit
 static std::atomic<uint64_t> bufSerial{0}; // not upstream (design-ddgi 3)
 
 
@@ -71,6 +72,7 @@ MeshBuffer::MeshBuffer(DWORD _nVtx, DWORD _nFace, const class D3D9Mesh *_pRoot)
 	pRoot = _pRoot;
 	mapMode = MAPMODE_STATIC;
 	bMustRemap = true;
+	geoSerial = ++bufSerial; // not upstream
 }
 
 
@@ -97,6 +99,7 @@ MeshBuffer::MeshBuffer(MeshBuffer *pSrc, const class D3D9Mesh *_pRoot)
 	pRoot = _pRoot;
 	mapMode = MAPMODE_STATIC;
 	bMustRemap = true;
+	geoSerial = pSrc->geoSerial; // not upstream: the template's vertices
 }
 
 
@@ -793,6 +796,7 @@ bool D3D9Mesh::CopyVertices(GROUPREC *grp, const MESHGROUPEX *mg, D3DXVECTOR3 *r
 
 	if (mg->nVtx>0) BoundingBox(pVert, mg->nVtx, &grp->BBox);
 	else D9ZeroAABB(&grp->BBox);
+	pBuf->geoSerial = ++bufSerial; // not upstream
 
 	return true;
 }
@@ -829,6 +833,7 @@ int D3D9Mesh::EditGroup(DWORD grp, GROUPEDITSPEC *ges)
 		}
 
 		pBuf->MustRemap(MAPMODE_CURRENT);
+		bool moved = false; // not upstream: the traced structure follows positions only (design-ddgi-cockpit 3)
 
 		SMVERTEX *pShad = pBuf->pSBSys + g->VertOff;
 		D3DXVECTOR4 *pGeo = pBuf->pGBSys + g->VertOff;
@@ -840,6 +845,7 @@ int D3D9Mesh::EditGroup(DWORD grp, GROUPEDITSPEC *ges)
 			for (i = 0; i < ges->nVtx; i++) {
 				vi = (ges->vIdx ? ges->vIdx[i] : i);
 				if (vi < g->nVert) {
+					const float ox = vtx[vi].x, oy = vtx[vi].y, oz = vtx[vi].z; // not upstream
 
 					if      (flag & GRPEDIT_VTXCRDX)    vtx[vi].x   = ges->Vtx[i].x;
 					else if (flag & GRPEDIT_VTXCRDADDX) vtx[vi].x  += ges->Vtx[i].x;
@@ -858,6 +864,7 @@ int D3D9Mesh::EditGroup(DWORD grp, GROUPEDITSPEC *ges)
 					if      (flag & GRPEDIT_VTXTEXV)    vtx[vi].v  = ges->Vtx[i].tv;
 					else if (flag & GRPEDIT_VTXTEXADDV) vtx[vi].v += ges->Vtx[i].tv;
 
+					if (vtx[vi].x != ox || vtx[vi].y != oy || vtx[vi].z != oz) moved = true; // not upstream
 					if ((flag & GRPEDIT_VTXCRD)!=0 || (flag & GRPEDIT_VTXCRDADD)!=0) {
 						pGeo[vi] = D3DXVECTOR4(vtx[vi].x, vtx[vi].y, vtx[vi].z, 0);
 
@@ -867,6 +874,7 @@ int D3D9Mesh::EditGroup(DWORD grp, GROUPEDITSPEC *ges)
 				}
 			}
 
+			if (moved) g->geoEdit = ++bufSerial; // not upstream
 			if (Config->UseNormalMap) UpdateTangentSpace(vtx, idx, g->nVert, g->nFace, g->TexIdx!=0);
 			if (g->bPbrTangents) UpdateTangentSpace(vtx, idx, g->nVert, g->nFace, true); // custom: the PBR maps need UV tangents
 
@@ -3142,7 +3150,7 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 				bool tex = t && !(Grp[g].UsrFlag & 0x10);
 				MeshShader::ps_gi.vMat = (Grp[g].UsrFlag & 0x4) ? float4(0, 0, 0, 0) : float4(m->baseColor[0], m->baseColor[1], m->baseColor[2], tex ? 1.0f : 0.0f);
 				MeshShader::ps_gi.vMtl = float4(m->metallic, mr ? 1.0f : 0.0f, 1.0f, (tex && PbrRender::NeedsDecode(t)) ? 1.0f : 0.0f);
-				MeshShader::ps_gi.vCls = float4(float(giCls), IsPbrGroup(g) ? 2.0f : 0.0f, 0.0f, 0.0f);
+				MeshShader::ps_gi.vCls = float4(float(giCls), IsPbrGroup(g) ? 2.0f : 0.0f, giCockpit ? 1.0f : 0.0f, 0.0f);
 				if (t) pShader->SetTexture(pShader->hPST[0], t, txf, txa);
 				if (mr) pShader->SetTexture(pShader->hPST[1], mr, txf, txa);
 			}
@@ -3163,7 +3171,7 @@ void D3D9Mesh::RenderShadowMap(const LPD3DXMATRIX pW, const LPD3DXMATRIX pVP, in
 				VkTex *mt = (fam == 1 && ti && Tex[ti]) ? Tex[ti]->GetMap(MAP_METALNESS) : NULL;
 				MeshShader::ps_gi.vMat = (Grp[g].UsrFlag & 0x4) ? float4(0, 0, 0, 0) : float4(m->Diffuse.x, m->Diffuse.y, m->Diffuse.z, (hTex && !(Grp[g].UsrFlag & 0x10)) ? 1.0f : 0.0f); // 0x10: no texture colour, as the legacy shaders' bNoC
 				MeshShader::ps_gi.vMtl = float4(fam == 1 ? (mt ? 1.0f : m->Metalness) : 0.0f, mt ? 1.0f : 0.0f, 0.0f, 0.0f);
-				MeshShader::ps_gi.vCls = float4(float(giCls), float(fam), 0.0f, 0.0f);
+				MeshShader::ps_gi.vCls = float4(float(giCls), float(fam), giCockpit ? 1.0f : 0.0f, 0.0f);
 				if (mt) pShader->SetTexture(pShader->hPST[1], mt, txf, txa);
 			}
 		}
@@ -3864,8 +3872,8 @@ void D3D9Mesh::GlobalInit(VkDev *pDev)
 	s_pShader[SHADER_SCENE_DEPTH] = new MeshShader(pDev, "Modules/VulkanClient/NewMesh.glsl", "NormalDepth_VS", "SceneDepth_PS", Config->RayTracedGI(pDev->rayQuery) ? "_SSGI _DDGI" : (Config->SSGI ? "_SSGI" : NULL)); // not upstream; _SSGI: albedo and normal MRT; _DDGI: the vessels' own ambient
 }
 
-// not upstream (design-ddgi 6): the legacy effect's values for this frame's vessels (UpdateEffectCamera; the glow as EnablePlanetGlow(true) sets it)
-void D3D9Mesh::SetGiRef(bool on)
+// not upstream (design-ddgi 6): the legacy effect's values for this frame's vessels (UpdateEffectCamera; the glow as EnablePlanetGlow sets it, off for the cockpit)
+void D3D9Mesh::SetGiRef(bool on, bool cockpit)
 {
 	giRef = on;
 	if (!on) return;
@@ -3878,7 +3886,7 @@ void D3D9Mesh::SetGiRef(bool on)
 	FX->GetValue(eInvProxySize, &ips, sizeof(ips));
 	FX->GetValue(eGlowConst, &glow, sizeof(glow));
 	MeshShader::ps_ref.vAmb = float4(0.0f, 0.0f, 0.0f, ps);
-	MeshShader::ps_ref.vGlow = float4(atm_color.x, atm_color.y, atm_color.z, glow);
+	MeshShader::ps_ref.vGlow = cockpit ? float4(0.0f, 0.0f, 0.0f, glow) : float4(atm_color.x, atm_color.y, atm_color.z, glow);
 	MeshShader::ps_ref.vCam = float4(cam.x, cam.y, cam.z, ips);
 	MeshShader::ps_ref.vEast = float4(east.x, east.y, east.z, 0.0f);
 	MeshShader::ps_ref.vNorth = float4(north.x, north.y, north.z, 0.0f);

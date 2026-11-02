@@ -16,6 +16,13 @@
 #define DG_IRR 6
 #define DG_DST 14
 #define DG_RAYS 96
+#define DG_NW 41472			// the world's probes, DG_NC x DG_NPC
+#define DG_VG 16			// the cockpit volume (design-ddgi-cockpit 2): DG_VG^3 probes after the world's
+#define DG_NVC 4096
+#define DG_VCASC 6
+#define DG_AROWS 80			// atlas rows of DG_ROW probes
+#define DG_MWORLD 0x03u		// ray masks: terrain, bases and other vessels (0x01), the focus vessel's exterior (0x02), its cockpit view (0x04)
+#define DG_MCOCKPIT 0x05u
 
 struct DdgiPrm
 {
@@ -32,10 +39,12 @@ struct DdgiPrm
 	vec4 prm;		// hysteresis, ray reach [m], distance cap [cells], probes scheduled
 	vec4 alb;		// terrain albedo pow and scale
 	vec4 lpos[8];	// local lights, anchor frame
-	vec4 ldir[8];	// direction (xyz), spot (w)
+	vec4 ldir[8];	// direction (xyz); w: 1 spot, 2 lights the exterior, 4 the cockpit
 	vec4 ldif[8];
 	vec4 latt[8];
 	vec4 lprm[8];	// range, falloff, theta, phi
+	vec4 vo;		// cockpit volume: lowest cell corner, vessel frame (xyz), spacing (w, 0 none)
+	vec4 vr[3];		// vessel frame to anchor frame: rotation rows (xyz), translation (w)
 	ivec4 nl;		// lights, probes per ray row, block side of the pass, entries for the state pass
 };
 
@@ -50,6 +59,15 @@ float DgSpacing(int c) { return exp2(2.0 * float(c)); }
 int DgMod(int a, int m) { return a - m * int(floor(float(a) / float(m))); }	// GLSL leaves % of a negative undefined
 ivec3 DgDims() { return ivec3(DG_GX, DG_GY, DG_GZ); }
 ivec2 DgBlock(int p) { return ivec2(p % DG_ROW, p / DG_ROW); }
+int DgCasc(int p) { return p < DG_NW ? p / DG_NPC : DG_VCASC; }
+
+// the cockpit volume (DdgiMath::VProbePos): its frame is the focus vessel's
+vec3 DgV2A(vec3 v) { return vec3(dot(Dg.vr[0].xyz, v) + Dg.vr[0].w, dot(Dg.vr[1].xyz, v) + Dg.vr[1].w, dot(Dg.vr[2].xyz, v) + Dg.vr[2].w); }
+vec3 DgV2Ad(vec3 v) { return vec3(dot(Dg.vr[0].xyz, v), dot(Dg.vr[1].xyz, v), dot(Dg.vr[2].xyz, v)); }
+vec3 DgA2Vd(vec3 a) { return a.x * Dg.vr[0].xyz + a.y * Dg.vr[1].xyz + a.z * Dg.vr[2].xyz; }
+vec3 DgA2V(vec3 a) { return DgA2Vd(a - vec3(Dg.vr[0].w, Dg.vr[1].w, Dg.vr[2].w)); }
+ivec3 DgVCell(int slot) { return ivec3(slot % DG_VG, slot / (DG_VG * DG_VG), (slot / DG_VG) % DG_VG); }
+vec3 DgVProbe(int slot, vec3 off) { return Dg.vo.xyz + (vec3(DgVCell(slot)) + 0.5 + off) * Dg.vo.w; }
 
 int DgSlot(ivec3 cellA, int c)	// a cell from the anchor to its slot (DdgiMath::Slot of its absolute cell)
 {
@@ -156,6 +174,54 @@ vec3 DgIrradiance(vec3 P, vec3 n, vec3 v, out float cover)
 	}
 	cover = 1.0 - rest;
 	return cover > 1e-4 ? E / cover : vec3(0.0);
+}
+
+// the cockpit volume's irradiance at Pv for the normal n, v toward the viewer (vessel frame); cover 1 within its box, 0 a cell beyond it
+vec3 DgIrradianceV(vec3 Pv, vec3 n, vec3 v, out float cover)
+{
+	cover = 0.0;
+	float s = Dg.vo.w;
+	if (s <= 0.0) return vec3(0.0);
+	vec3 Pb = Pv + (n * 0.2 + v * 0.1) * s;
+	vec3 q = (Pb - Dg.vo.xyz) / s - 0.5;
+	vec3 fl = min(q, vec3(float(DG_VG - 1)) - q);
+	float b = clamp(min(min(fl.x, fl.y), fl.z) + 1.5, 0.0, 1.0);	// the box's faces are half a cell past the outer probes
+	if (b <= 0.0) return vec3(0.0);
+	ivec3 i0 = ivec3(floor(q));
+	vec3 f = q - vec3(i0);
+	vec3 sum = vec3(0.0);
+	float ws = 0.0;
+	for (int k = 0; k < 8; k++) {
+		ivec3 o = ivec3(k & 1, (k >> 1) & 1, k >> 2);
+		ivec3 cl = clamp(i0 + o, ivec3(0), ivec3(DG_VG - 1));
+		int p = DG_NW + (cl.y * DG_VG + cl.z) * DG_VG + cl.x;
+		vec4 st = texelFetch(tStateD, DgBlock(p), 0);
+		if (st.w < 0.5 || st.w > 1.5) continue;
+		vec3 pp = Dg.vo.xyz + (vec3(cl) + 0.5 + st.xyz) * s;
+		vec3 t3 = mix(1.0 - f, f, vec3(o));
+		float wt = t3.x * t3.y * t3.z;
+		vec3 toProbe = normalize(pp - Pv);
+		float wb = max(1e-4, (dot(toProbe, n) + 1.0) * 0.5);
+		float w = wb * wb + 0.2;
+		vec3 d = Pb - pp;
+		float r = length(d) / s;
+		vec2 m = DgOctRead(tDstD, p, d / max(r * s, 1e-6), DG_DST).xy;
+		float ch = 1.0;
+		if (r > m.x) {
+			float var = abs(m.y - m.x * m.x) + 1e-4, dd = r - m.x;
+			ch = var / (var + dd * dd);
+			ch = ch * ch * ch;
+		}
+		w *= max(0.05, ch);
+		w = max(1e-6, w);
+		if (w < 0.2) w *= w * w / 0.04;
+		w *= wt;
+		sum += DgOctRead(tIrrD, p, n, DG_IRR).rgb * w;
+		ws += w;
+	}
+	if (ws < 1e-5) return vec3(0.0);
+	cover = b;
+	return sum / ws;
 }
 
 vec3 DgGeo(vec3 P) { return Dg.geo.xyz + Dg.ax.xyz * P.x + Dg.ay.xyz * P.y + Dg.az.xyz * P.z; }	// anchor frame to geocentric

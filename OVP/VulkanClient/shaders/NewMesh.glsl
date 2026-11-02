@@ -31,7 +31,7 @@ layout(binding = 0, row_major, scalar) uniform VSConstBlock { VSConst vs_const; 
 struct PSGi {		// not upstream: SceneDepth_PS's albedo for SSGI (design-ssgi 4.1)
 	vec4 vMat;		// albedo factor (rgb), base texture bound (w)
 	vec4 vMtl;		// metal factor (x), metal map bound (y), map channel b (z, else g), decode the base texture sRGB to linear (w)
-	vec4 vCls;		// class (x: 2 bases and buildings, 3 vessels), family (y: 0 legacy, 1 metalness, 2 pbr, 3 base tile)
+	vec4 vCls;		// class (x: 2 bases and buildings, 3 vessels), family (y: 0 legacy, 1 metalness, 2 pbr, 3 base tile), a cockpit (z)
 };
 #if defined(_DDGI)
 struct PSRef {		// not upstream (design-ddgi 6): the ambient a vessel's own shader adds, which the ray-traced GI replaces
@@ -303,7 +303,7 @@ void main()
 	vec3 n = normalize(frg.nrmW);
 	if (dot(n, frg.posW) > 0.25 * length(frg.posW)) n = -n;	// inverted mesh normals; slight silhouette ones are bent in SSGI.glsl
 	oAlb = vec4(clamp(rho * 0.25, 0.0, 1.0), ps_gi.vCls.y / 3.0);
-	oNrm = vec4(OctEnc(n), 0.0, ps_gi.vCls.x / 3.0);
+	oNrm = vec4(OctEnc(n), ps_gi.vCls.z, ps_gi.vCls.x / 3.0);	// b: the cockpit pass's mark (design-ddgi-cockpit 6)
 #endif
 #if defined(_DDGI)
 	oRef = ps_ref.vSrc.x > 0.5 ? vec4(HullAmb(normalize(frg.nrmW)), 1.0 - clamp(metal, 0.0, 1.0)) : vec4(0.0);	// the shader's own normal, unflipped

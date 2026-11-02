@@ -287,6 +287,7 @@ void SceneFx::AfterOpaque (const std::list<vVessel*> &vessels, VkSurf *target)
 	if (ssao) Ssao(target);
 	if (clouds && Config->VolCloudShadows) VolShadow(target, vp, wV); // not upstream: before the clouds, so they cover their own shadow
 	else volShdFade = 0.0f;
+	if (gi) CockpitPre(); // not upstream (design-ddgi-cockpit Rev 4)
 	if (gi) Gi(target, vp); // not upstream: one bounce from the lit opaque scene (design-ssgi)
 	FogAndClouds(target, vp, clouds, wV); // not upstream: the height fog under or over the volume clouds (design-height-fog)
 	gc->PushRenderTarget(target, gc->GetDepthStencil(), RENDERPASS_MAINSCENE); // the main target, viewport and depth back

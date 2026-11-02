@@ -408,6 +408,9 @@ public:
 	void			PopCamera();	// Restore a camera from a stack
 	FMATRIX4		PushCameraFrustumLimits(float nearlimit, float farlimit);
 	FMATRIX4		PopCameraFrustumLimits();
+	void			CockpitFrustumLimits(double &znear, double &zfar) const; // not upstream: the cockpit pass's near and far planes
+	void			PushCockpitCamera();	// not upstream: the cockpit pass's camera, unjittered (design-ddgi-cockpit Rev 4)
+	void			PopCockpitCamera();
 	
 
 
@@ -543,6 +546,7 @@ private:
 	class SceneSsr *pSsr = nullptr;         // not upstream: screen-space reflection capture
 	class PostPlume *pPlume = nullptr;      // not upstream: volumetric plumes, smoke, plasma
 	bool bJitter = false;            // not upstream: SetCameraAperture adds the TAA jitter
+	std::stack<bool> JitterStack;    // not upstream: PushCockpitCamera
 	float jitX = 0.0f, jitY = 0.0f;  // not upstream: jitter in pixels
 	bool bLabelsLate = false;        // not upstream: with TAA the in-scene labels are drawn after the resolve, unjittered
 	float zNearPlanet = 0.5f;        // not upstream: the near plane the planets drew with in the main pass

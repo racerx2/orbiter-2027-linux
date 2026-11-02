@@ -48,25 +48,28 @@ bool DgSunBlocked(vec3 P)	// the body itself, below the local horizon of the tra
 	return b < 0.0 && b * b > c;
 }
 
-vec3 DgLocal(vec3 P, vec3 n)	// NewPlanet's LocalLights, unshadowed
+vec3 DgLocal(vec3 P, vec3 n, int scope)	// NewPlanet's LocalLights, unshadowed; scope 2 an exterior hit, 4 a cockpit hit
 {
 	vec3 sum = vec3(0.0);
 	for (int i = 0; i < Dg.nl.x; i++) {
+		int fl = int(Dg.ldir[i].w + 0.5);
+		if ((fl & scope) == 0) continue;
 		vec3 p = P - Dg.lpos[i].xyz;
 		float d2 = max(dot(p, p), 1e-6), d = sqrt(d2);
 		p /= d;
 		float att = 1.0 / max(dot(Dg.latt[i].xyz, vec3(1.0, d, d2)), 1e-6);
-		float spt = Dg.ldir[i].w > 0.5 ? clamp((dot(p, Dg.ldir[i].xyz) - Dg.lprm[i].w) * Dg.lprm[i].z, 0.0, 1.0) : 1.0;
+		float spt = (fl & 1) != 0 ? clamp((dot(p, Dg.ldir[i].xyz) - Dg.lprm[i].w) * Dg.lprm[i].z, 0.0, 1.0) : 1.0;
 		sum += Dg.ldif[i].rgb * clamp(dot(-p, n), 0.0, 1.0) * att * spt;
 	}
 	return sum;
 }
 
 // light leaving a hit toward the probe: its albedo times the sun, the local lights and the probes' irradiance there (light units)
-vec3 DgShade(vec3 P, vec3 n, vec3 v, int row, int geo)
+// a cockpit mesh (a.z): the sun at the cockpit pass's half strength, the cockpit's lights and volume, no open sky (design-ddgi-cockpit 4)
+vec3 DgShade(vec3 P, vec3 n, vec3 v, int row, int geo, uint mask)
 {
 	DgRow R = rows[row];
-	bool terr = R.a.x < 0.5;
+	bool terr = R.a.x < 0.5, vc = R.a.z > 0.5;
 	vec3 rho;
 	if (terr) {
 		vec2 uv = clamp(vec2(dot(P, R.u.xyz) + R.u.w, dot(P, R.v.xyz) + R.v.w), 0.0, 1.0);
@@ -85,14 +88,21 @@ vec3 DgShade(vec3 P, vec3 n, vec3 v, int row, int geo)
 	vec3 sun = vec3(0.0);
 	if (nl > 0.0 && !DgSunBlocked(P)) {
 		rayQueryEXT q;
-		rayQueryInitializeEXT(q, tTlas, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, 0xFF, P + n * (0.02 + 2e-5 * length(P)), 0.0, L, Dg.prm.y);
+		rayQueryInitializeEXT(q, tTlas, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, mask, P + n * (0.02 + 2e-5 * length(P)), 0.0, L, Dg.prm.y);
 		while (rayQueryProceedEXT(q)) {}
-		if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT) sun = SunAt(Pg) * nl * (terr ? 2.0 : 1.0);
+		if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT) sun = SunAt(Pg) * nl * (terr ? 2.0 : (vc ? 0.5 : 1.0));
 	}
 	float cover;
-	vec3 E = DgIrradiance(P, n, v, cover);
-	vec3 sky = terr ? TerrSky(Pg) : MeshSky(Pg);
-	return rho * (sun + E * cover + sky * (1.0 - cover) + DgLocal(P, n));
+	vec3 E, sky;
+	if (vc) {
+		E = DgIrradianceV(DgA2V(P), DgA2Vd(n), DgA2Vd(v), cover);
+		sky = vec3(0.0);
+	}
+	else {
+		E = DgIrradiance(P, n, v, cover);
+		sky = terr ? TerrSky(Pg) : MeshSky(Pg);
+	}
+	return rho * (sun + E * cover + sky * (1.0 - cover) + DgLocal(P, n, vc ? 4 : 2));
 }
 
 // beyond the traced region: the sky above the horizon, the far ground below it
@@ -111,15 +121,28 @@ vec4 PSDgTrace(ivec2 px)
 	int i = px.y * K + px.x / DG_RAYS, r = px.x % DG_RAYS;
 	if (i >= int(Dg.prm.w)) return vec4(0.0, 0.0, 0.0, DG_SKIP);
 	uint e = sched[i];
-	int p = int(e & 0xFFFFu), c = p / DG_NPC;
+	int p = int(e & 0xFFFFu), c = DgCasc(p);
 	vec4 st = texelFetch(tStateD, DgBlock(p), 0);
 	bool fresh = (e & DG_RESET) != 0u || st.w < 0.5;
 	if (!fresh && (e & DG_RECHECK) == 0u && st.w > 1.5) return vec4(0.0, 0.0, 0.0, DG_SKIP);	// open air or shut in: only on a recheck
-	float s = DgSpacing(c);
-	vec3 o = (vec3(DgCell(p % DG_NPC, c)) + 0.5 + (fresh ? vec3(0.0) : st.xyz)) * s;
-	vec3 d = DgRayDir(r);
+	vec3 off = fresh ? vec3(0.0) : st.xyz;
+	vec3 d = DgRayDir(r);	// the probe's own frame: the cockpit volume's turns with the vessel
+	float s;
+	vec3 o;
+	uint mask;
+	if (c == DG_VCASC) {
+		s = Dg.vo.w;
+		o = DgV2A(DgVProbe(p - DG_NW, off));
+		d = DgV2Ad(d);
+		mask = DG_MCOCKPIT;
+	}
+	else {
+		s = DgSpacing(c);
+		o = (vec3(DgCell(p % DG_NPC, c)) + 0.5 + off) * s;
+		mask = DG_MWORLD;
+	}
 	rayQueryEXT q;
-	rayQueryInitializeEXT(q, tTlas, gl_RayFlagsOpaqueEXT, 0xFF, o, 0.0, d, Dg.prm.y);
+	rayQueryInitializeEXT(q, tTlas, gl_RayFlagsOpaqueEXT, mask, o, 0.0, d, Dg.prm.y);
 	while (rayQueryProceedEXT(q)) {}
 	if (rayQueryGetIntersectionTypeEXT(q, true) != gl_RayQueryCommittedIntersectionTriangleEXT) return vec4(Fin(DgMiss(o, d)), Dg.prm.z);
 	float t = rayQueryGetIntersectionTEXT(q, true);
@@ -133,7 +156,7 @@ vec4 PSDgTrace(ivec2 px)
 	if (dot(n, d) > 0.0) n = -n;
 	int row = rayQueryGetIntersectionInstanceCustomIndexEXT(q, true);
 	int geo = rayQueryGetIntersectionGeometryIndexEXT(q, true);
-	return vec4(Fin(DgShade(o + d * t, n, -d, row, geo)), dc);
+	return vec4(Fin(DgShade(o + d * t, n, -d, row, geo, mask)), dc);
 }
 
 // the blend weight of each scheduled probe: 1 - hysteresis, lower hysteresis where the light changed (Majercik 2021)
@@ -236,7 +259,7 @@ void main()	// one quad per entry over its probe's block of the target (Dg.nl.z 
 	ivec2 cr = ivec2(k == 1 || k == 3 || k == 4 ? 1 : 0, k == 2 || k == 4 || k == 5 ? 1 : 0);
 	int p = int(sched[i] & 0xFFFFu), n = Dg.nl.z;
 	vec2 px = vec2(DgBlock(p) * n + cr * n);
-	vec2 sz = vec2(DG_ROW * n, (DG_NC * DG_NPC / DG_ROW) * n);
+	vec2 sz = vec2(DG_ROW * n, DG_AROWS * n);
 	gl_Position = vec4(px.x / sz.x * 2.0 - 1.0, 1.0 - px.y / sz.y * 2.0, 0.0, 1.0);
 	oEntry = i;
 }

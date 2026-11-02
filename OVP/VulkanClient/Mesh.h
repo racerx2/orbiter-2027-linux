@@ -96,7 +96,7 @@ public:
 	static struct PSGi {	// not upstream: SceneDepth_PS's SSGI albedo under _SSGI (NewMesh.glsl PSGi)
 		float4 vMat;		// albedo factor (rgb), base texture bound (w)
 		float4 vMtl;		// metal factor, metal map bound, map channel b (else g), decode the base texture to linear
-		float4 vCls;		// class, family
+		float4 vCls;		// class, family, a cockpit
 	} ps_gi;
 
 	static struct PSRef {	// not upstream (design-ddgi 6): a vessel's own ambient under _DDGI (NewMesh.glsl PSRef)
@@ -163,6 +163,7 @@ public:
 	DWORD mapMode;
 	bool  bMustRemap;
 	uint64_t serial = 0;	// not upstream (design-ddgi 3): new at each Map that remakes the buffers
+	uint64_t geoSerial = 0;	// not upstream (design-ddgi-cockpit 3): new when the vertices are loaded; a group's moves are its GROUPREC::geoEdit
 
 	const class D3D9Mesh	*pRoot;
 };
@@ -214,6 +215,7 @@ public:
 		bool  bRendered;
 		bool  bPbr;				// custom: the material has a PBR record (drawn by RenderPbr unless an MFD screen)
 		bool  bPbrTangents;		// custom: UV tangents made for the PBR normal/anisotropy maps
+		uint64_t geoEdit;		// not upstream (design-ddgi-cockpit Rev 4): serial of the last move of its vertices, 0 never; the traced structures keep such groups apart
 		D3DXMATRIX  Transform;	// Group specific transformation matrix
 		D9BBox BBox;
 		DWORD TexIdxEx[MAXTEX];
@@ -368,7 +370,8 @@ public:
 	static void		GlobalInit(VkDev *pDev);
 	static void		GlobalExit();
 	static void		SetGiClass(int cls) { giCls = cls; } // not upstream: SSGI class of the next SceneDepth draws (2 bases and buildings, 3 vessels), -1 outside SceneFx::DepthPass
-	static void		SetGiRef(bool on);	// not upstream (design-ddgi 6): vessels write their own ambient into the fourth SceneDepth target; the frame's glow values taken here
+	static void		SetGiRef(bool on, bool cockpit = false);	// not upstream (design-ddgi 6): vessels write their own ambient into the fourth SceneDepth target; the frame's glow values taken here, none in the cockpit pass
+	static void		SetGiCockpit(bool on) { giCockpit = on; } // not upstream (design-ddgi-cockpit 6): the next SceneDepth draws are the cockpit's, marked
 
 	// not upstream (design-ddgi 3): a group as the ray-traced GI sees it, by RenderShadowMap's SceneDepth rules
 	struct GiGroupDesc {
@@ -384,6 +387,7 @@ public:
 private:
 	static int giCls;			// not upstream: SetGiClass
 	static bool giRef;			// not upstream: SetGiRef
+	static bool giCockpit;		// not upstream: SetGiCockpit
 	bool bGiTile = false;		// not upstream: a base's tile mesh (SSGI family 3)
 
 

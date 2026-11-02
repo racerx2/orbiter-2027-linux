@@ -54,7 +54,7 @@ bool VkCompileGLSL (const char *file, const std::string &src, const char *entry,
 	const VkMacros &macros, std::vector<uint32_t> &spirv, VkConstTable *table);
 
 // shader object for a compiled stage (IDirect3DDevice9::CreateVertexShader/CreatePixelShader)
-VkShaderEXT VkCreateShaderObject (VkDev *dev, const std::vector<uint32_t> &spirv, VkShaderStageFlagBits stage, bool rt = false); // not upstream: rt, set 1 of the GI shaders (design-ddgi 2)
+VkShaderEXT VkCreateShaderObject (VkDev *dev, const std::vector<uint32_t> &spirv, VkShaderStageFlagBits stage, bool rt = false, bool lr = false); // not upstream: rt, set 1 of the GI shaders (design-ddgi 2); lr, set 0 with the input attachment
 
 // uniform block contents and bound textures of a shader pair, pushed per draw
 class VkConstBuffer {

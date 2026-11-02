@@ -28,6 +28,7 @@ public:
 	float BeginFrame ();                   // main scene start: reads the measure two frames back, returns e
 	void AfterOpaque (const std::list<vVessel*> &vessels, VkSurf *target); // after the opaque vessels, main pass
 	void Measure (VkSurf *target);         // after the cockpit, main pass
+	void CockpitGi (VkSurf *target);       // SceneFxGi.cpp: ray-traced GI on the virtual cockpit, after its opaque draw (design-ddgi-cockpit 6)
 	float CloudFade () const { return cloudFade; } // volume weight drawn last frame (the proxy's 2D layer fades by it)
 	float VolShadowFade () const { return volShdFade; } // volume shadow weight drawn last frame (the proxy's 2D cloud shadow fades by it)
 	ShaderClass *TerrainDepth () const { return pTerrain; }
@@ -44,7 +45,7 @@ public:
 	float FogTowardSun () const;                // SceneFxFog.cpp: fog transmittance from the camera toward the sun, 1 without fog
 	VkTex *FogTex () const;                     // SceneFxFog.cpp: half-res fog (rgb in-scatter premultiplied, a opacity) when drawn this frame, else NULL
 	VkTex *FogDist () const;                    // SceneFxFog.cpp: half-res R32F, the fog's transmittance-weighted distance (m, 0 none), with FogTex
-	VkTex *Normal () const;                     // SceneFxGi.cpp: W x H A2B10G10R10, rg oct(world normal)*0.5+0.5, a class round(a*3) 0 terrain 1 tree 2 base 3 vessel; when written this frame, else NULL
+	VkTex *Normal () const;                     // SceneFxGi.cpp: W x H A2B10G10R10, rg oct(world normal)*0.5+0.5, b 1 on the cockpit, a class round(a*3) 0 terrain 1 tree 2 base 3 vessel; when written this frame, else NULL
 	VkTex *Albedo () const;                     // SceneFxGi.cpp: W x H A2B10G10R10, rgb albedo/4, a family round(a*3) 0 legacy 1 metalness 2 pbr 3 base tile; when written this frame, else NULL
 
 private:
@@ -65,10 +66,14 @@ private:
 	void InitVolShadow ();                  // SceneFxShadow.cpp
 	void Gi (VkSurf *target, vPlanet *vp);  // SceneFxGi.cpp: screen-space GI (design-ssgi), after VolShadow
 	bool GiRt (VkSurf *target, vPlanet *vp, struct ConstParams *cp, const struct DdgiGiPS &gps); // SceneFxGi.cpp: ray-traced GI's passes (design-ddgi 6)
+	bool InPlace (VkSurf *target) const;   // SceneFxGi.cpp: the ray-traced composite reads the target in place, no copy
+	class DdgiPass *InPlacePass (VkSurf *target) const; // SceneFxGi.cpp: its pass for the target's sample count, NULL: the copy
+	bool GiComposite (VkSurf *target, const D3DXVECTOR4 &camX, const D3DXVECTOR4 &camY, const D3DXVECTOR4 &camZ, const D3DXVECTOR4 &dir, VkTex *dist); // SceneFxGi.cpp: tGi[0]'s change over the target
 	struct GiState;
 	static void FreeGi (GiState *s);        // SceneFxGi.cpp
 	void InitGi ();                         // SceneFxGi.cpp, at start when SSGI is on
 	void GiBind (int phase, const std::list<vVessel*> &vessels); // SceneFxGi.cpp, DepthPass only: 0 gate and bind the albedo and normal MRT, 1 vessels next, 2 unbind
+	void CockpitPre ();                     // SceneFxGi.cpp: the virtual cockpit into the GI targets before the scene's GI, which leaves its pixels (design-ddgi-cockpit Rev 4)
 	void FogAndClouds (VkSurf *target, vPlanet *vp, bool clouds, float wV); // SceneFxFog.cpp: the height fog and the volume clouds, in the order the camera altitude needs
 	struct FogState;
 	static void FreeFog (FogState *s);      // SceneFxFog.cpp

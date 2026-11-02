@@ -96,15 +96,22 @@ struct SceneFx::GiState {
 	DdgiVolume *dVol = nullptr;
 	VkTex *tRef = nullptr;                 // the depth pass's fourth target: a vessel's own ambient (rgb), 1 - metal (a), W x H RGBA16F
 	VkSurf *sRef = nullptr;
+	VkTex *tDepthC = nullptr;              // the cockpit's camera distance, 0 elsewhere, W x H R16F (design-ddgi-cockpit Rev 4)
+	VkSurf *sDepthC = nullptr;
 	bool rt = false;
+	DWORD rtFrame = 0, preFrame = 0;       // scene frames of the last probe update and cockpit pre-pass: the cockpit pass reads both
+	DdgiPass *pComp = nullptr, *pCompMS = nullptr; // PSGiCompositeRtL, M: the composite reading its single- or multisampled target in place (design-ddgi-cockpit Rev 4), NULL without local read
+	struct Vals { ConstParams *cp = nullptr; vPlanet *vp = nullptr; bool tables = false; D3DXVECTOR4 tex, fade, curve, ambc, misc; } vals; // Gi's, for the composites
 };
 
 void SceneFx::FreeGi (GiState *s)
 {
 	if (!s) return;
+	SAFE_DELETE(s->pComp); SAFE_DELETE(s->pCompMS);
 	SAFE_DELETE(s->dVol);
 	SAFE_DELETE(s->dScene);
 	SAFE_DELETE(s->sRef); SAFE_DELETE(s->tRef);
+	SAFE_DELETE(s->sDepthC); SAFE_DELETE(s->tDepthC);
 	SAFE_DELETE(s->ip);
 	SAFE_DELETE(s->sAlb); SAFE_DELETE(s->tAlb);
 	SAFE_DELETE(s->sNrm); SAFE_DELETE(s->tNrm);
@@ -144,14 +151,26 @@ void SceneFx::InitGi ()
 		bool r = gi->ip->CompileShader("PSGiRtSample") && gi->ip->CompileShader("PSGiCompositeRt");
 		gi->tRef = new VkTex(dev, W, H, 1, VK_FORMAT_R16G16B16A16_SFLOAT, GiUsage);
 		gi->sRef = new VkSurf(gi->tRef, 0);
+		gi->tDepthC = new VkTex(dev, W, H, 1, VK_FORMAT_R16_SFLOAT, GiUsage);
+		gi->sDepthC = new VkSurf(gi->tDepthC, 0);
 		gi->dScene = new DdgiScene(dev);
 		gi->dVol = new DdgiVolume(dev, ppf.c_str());
-		gi->rt = r && gi->tRef->img && gi->dScene->OK() && gi->dVol->OK();
+		if (dev->localRead) { // not upstream (design-ddgi-cockpit Rev 4)
+			gi->pComp = new DdgiPass(dev, "Modules/VulkanClient/SSGI.glsl", "GiFull", "PSGiCompositeRtL", ipf.c_str(), false, true);
+			if (!gi->pComp->OK()) { LogErr("SceneFx: the in-place GI composite failed, copies instead"); SAFE_DELETE(gi->pComp); }
+		}
+		if (dev->localReadMS) {
+			gi->pCompMS = new DdgiPass(dev, "Modules/VulkanClient/SSGI.glsl", "GiFull", "PSGiCompositeRtM", ipf.c_str(), false, true);
+			if (!gi->pCompMS->OK()) { LogErr("SceneFx: the in-place GI composite for multisampled targets failed, copies instead"); SAFE_DELETE(gi->pCompMS); }
+		}
+		gi->rt = r && gi->tRef->img && gi->tDepthC->img && gi->dScene->OK() && gi->dVol->OK();
 		if (!gi->rt) {
 			LogErr("SceneFx: ray-traced GI failed, screen-space GI instead");
+			SAFE_DELETE(gi->pComp); SAFE_DELETE(gi->pCompMS);
 			SAFE_DELETE(gi->dVol);
 			SAFE_DELETE(gi->dScene);
 			SAFE_DELETE(gi->sRef); SAFE_DELETE(gi->tRef);
+			SAFE_DELETE(gi->sDepthC); SAFE_DELETE(gi->tDepthC);
 		}
 	}
 	else if (Config->GIMethod == 1) LogAlw("SceneFx: the device has no ray queries, screen-space GI");
@@ -264,10 +283,12 @@ void SceneFx::Gi (VkSurf *target, vPlanet *vp)
 	D3DXVECTOR4 dir(0.0f, 0.0f, tF ? 1.0f : 0.0f, 0.0f);
 	F16 fP = ToF(mP), fV = ToF(mV), fPrev = ToF(mPrev);
 
+	gi->vals.cp = cp; gi->vals.vp = vp; gi->vals.tables = tables;
+	gi->vals.tex = tex; gi->vals.fade = fade; gi->vals.curve = curve; gi->vals.ambc = ambc; gi->vals.misc = misc;
 	VkDev::State st = dev->GetState();
 	ImageProcessing *ip = gi->ip;
 	bool done = false;
-	dev->StretchRect(target, NULL, gi->sScn, NULL, VK_FILTER_NEAREST); // resolves MSAA
+	if (!gi->rt || !InPlace(target)) dev->StretchRect(target, NULL, gi->sScn, NULL, VK_FILTER_NEAREST); // resolves MSAA; the ray-traced composite in place needs none
 	for (int i = 1; i < 4; i++) ip->SetOutputNative(i, NULL);
 
 	ip->Activate("PSGiPrep");
@@ -348,6 +369,7 @@ bool SceneFx::GiRt (VkSurf *target, vPlanet *vp, ConstParams *cp, const DdgiGiPS
 {
 	if (!vp) return false;
 	if (!gi->dScene->Build(scn, vp, DdgiScene::RANGE) || !gi->dVol->Update(*gi->dScene, scn, vp, cp, gps)) return false; // nothing traced yet: no change
+	gi->rtFrame = scn->GetFrameId();
 	ImageProcessing *ip = gi->ip;
 	ip->Activate("PSGiRtSample");
 	ip->SetStruct("Dg", &gi->dVol->Prm(), sizeof(DdgiGpuPrm));
@@ -357,9 +379,141 @@ bool SceneFx::GiRt (VkSurf *target, vPlanet *vp, ConstParams *cp, const DdgiGiPS
 	ip->SetTextureNative("tStateD", gi->dVol->State(), IPF_POINT | IPF_CLAMP);
 	ip->SetOutputNative(0, gi->sGi[0]);
 	if (!ip->Execute(true)) return false;
-	ip->Activate("PSGiCompositeRt");
-	ip->SetTextureNative("tHistG", gi->tGi[0], IPF_POINT | IPF_CLAMP);
-	ip->SetOutputNative(0, target);
-	dev->SetBlendFunc(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_SRC1_COLOR, VK_BLEND_OP_ADD); // dst' = src0 + dst * src1: each channel rises or falls
-	return ip->Execute(2, true);
+	D3DXVECTOR4 camX, camY, camZ;
+	CameraRays(camX, camY, camZ);
+	return GiComposite(target, camX, camY, camZ, D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f), tDepth);
+}
+
+// not upstream (design-ddgi-cockpit Rev 4): the composite pass that reads this target in place, NULL: the copy
+DdgiPass *SceneFx::InPlacePass (VkSurf *target) const
+{
+	if (!gi || !target || !target->tex) return NULL;
+	return target->tex->samples == VK_SAMPLE_COUNT_1_BIT ? gi->pComp : gi->pCompMS;
+}
+
+bool SceneFx::InPlace (VkSurf *target) const { return InPlacePass(target) != NULL; }
+
+// not upstream (design-ddgi 6, design-ddgi-cockpit Rev 4): the half-res change in tGi[0] over the target, in place or from the copy in tScn
+bool SceneFx::GiComposite (VkSurf *target, const D3DXVECTOR4 &camX, const D3DXVECTOR4 &camY, const D3DXVECTOR4 &camZ, const D3DXVECTOR4 &dir, VkTex *dist)
+{
+	const GiState::Vals &v = gi->vals;
+	if (!InPlace(target)) {
+		ImageProcessing *ip = gi->ip;
+		ip->Activate("PSGiCompositeRt");
+		ip->SetFloat("vCamX", &camX, sizeof(camX));
+		ip->SetFloat("vCamY", &camY, sizeof(camY));
+		ip->SetFloat("vCamZ", &camZ, sizeof(camZ));
+		ip->SetFloat("vDir", &dir, sizeof(dir));
+		ip->SetTextureNative("tDepthG", dist, IPF_POINT | IPF_CLAMP);
+		ip->SetTextureNative("tScnG", gi->tScn, IPF_POINT | IPF_CLAMP);
+		ip->SetTextureNative("tHistG", gi->tGi[0], IPF_POINT | IPF_CLAMP);
+		ip->SetOutputNative(0, target);
+		dev->SetBlendFunc(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_SRC1_COLOR, VK_BLEND_OP_ADD); // dst' = src0 + dst * src1: each channel rises or falls
+		return ip->Execute(2, true);
+	}
+	DdgiPass *p = InPlacePass(target);
+	D3DXVECTOR4 misc = v.misc;
+	misc.z = float(target->tex->samples); // the samples the multisampled read averages
+	p->Set("Const", v.cp, sizeof(ConstParams));
+	p->Set("vCamX", &camX, sizeof(camX));
+	p->Set("vCamY", &camY, sizeof(camY));
+	p->Set("vCamZ", &camZ, sizeof(camZ));
+	p->Set("vTex", &v.tex, sizeof(v.tex));
+	p->Set("vFade", &v.fade, sizeof(v.fade));
+	p->Set("vCurve", &v.curve, sizeof(v.curve));
+	p->Set("vAmbC", &v.ambc, sizeof(v.ambc));
+	p->Set("vMisc", &misc, sizeof(misc));
+	p->Set("vDir", &dir, sizeof(dir));
+	if (v.tables && v.vp) {
+		p->Tex("tSun", v.vp->GetScatterTable(SUN_COLOR), true);
+		p->Tex("tLndRay", v.vp->GetScatterTable(RAY_LAND), true);
+		p->Tex("tLndMie", v.vp->GetScatterTable(MIE_LAND), true);
+		p->Tex("tLndAtn", v.vp->GetScatterTable(ATN_LAND), true);
+	}
+	p->Tex("tDepthG", dist, false);
+	p->Tex("tNrmG", gi->tNrm, false);
+	p->Tex("tAlbG", gi->tAlb, false);
+	p->Tex("tRefG", gi->tRef, false);
+	p->Tex("tHistG", gi->tGi[0], false);
+	dev->SetRenderTarget(target, NULL);
+	for (int i = 1; i < 4; i++) dev->SetRenderTargetN(i, NULL);
+	dev->SetViewport(0.0f, 0.0f, float(target->w), float(target->h));
+	VkDev::State s = dev->GetState();
+	s.depthTest = s.depthWrite = s.stencil = false;
+	s.cull = VK_CULL_MODE_NONE;
+	s.fill = VK_POLYGON_MODE_FILL;
+	s.writeMask = 0xF;
+	dev->SetState(s);
+	dev->SetBlend(true);
+	dev->SetBlendFunc(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_SRC1_COLOR, VK_BLEND_OP_ADD); // dst' = src0 + dst * src1, per sample
+	p->Draw(3);
+	dev->SetBlend(false);
+	return true;
+}
+
+// not upstream (design-ddgi-cockpit Rev 4): the cockpit's distance (its own target), albedo, marked normal and reference, unjittered; tDepth stays the scene's
+void SceneFx::CockpitPre ()
+{
+	if (!gi || !gi->ok || !gi->rt || !gi->run || gi->mrtFrame != scn->GetFrameId() || !DepthValid() || !gi->sDepthC) return;
+	vVessel *vf = scn->GetFocusVisual();
+	if (!vf || !oapiCameraInternal() || oapiCockpitMode() != COCKPIT_VIRTUAL) return;
+	gi->dVol->CutMark(0);
+	dev->ColorFill(gi->sDepthC, NULL, 0); // 0: no cockpit
+	scn->PushCockpitCamera();
+	scn->BeginPass(RENDERPASS_SCENE_DEPTH);
+	gc->PushRenderTarget(gi->sDepthC, sDepthDS, RENDERPASS_SCENE_DEPTH);
+	dev->SetRenderTargetN(1, gi->sAlb);
+	dev->SetRenderTargetN(2, gi->sNrm);
+	dev->SetRenderTargetN(3, gi->sRef);
+	dev->Clear(false, true, false, 0, 1.0f, 0); // the depth only: the scene's albedo, normal and reference stay where the cockpit leaves them
+	dev->SetCullMode(VK_CULL_MODE_BACK_BIT);
+	D3D9Mesh::SetGiClass(3);
+	D3D9Mesh::SetGiRef(true, true);
+	D3D9Mesh::SetGiCockpit(true);
+	vf->Render(dev, true);
+	D3D9Mesh::SetGiCockpit(false);
+	D3D9Mesh::SetGiRef(false);
+	D3D9Mesh::SetGiClass(-1);
+	dev->SetRenderTargetN(3, NULL);
+	dev->SetRenderTargetN(2, NULL);
+	dev->SetRenderTargetN(1, NULL);
+	gc->PopRenderTargets();
+	scn->PopPass();
+	scn->PopCockpitCamera();
+	gi->dVol->CutMark(1);
+	gi->preFrame = scn->GetFrameId();
+}
+
+// not upstream (design-ddgi-cockpit 6, Rev 4): the change from the cockpit volume over the lit cockpit, on the pre-pass's pixels; Gi's values stay set
+void SceneFx::CockpitGi (VkSurf *target)
+{
+	if (!gi || !gi->ok || !gi->rt || !target || gi->preFrame != scn->GetFrameId() || gi->rtFrame != scn->GetFrameId()) return;
+	if (!gi->dScene->Cockpit().on || !gi->dVol->CockpitOn()) return;
+	VkDev::State st = dev->GetState();
+	gi->dVol->CutMark(2);
+	if (!InPlace(target)) dev->StretchRect(target, NULL, gi->sScn, NULL, VK_FILTER_NEAREST); // the lit cockpit, the composite's display values
+	D3DXVECTOR4 camX, camY, camZ;
+	CameraRays(camX, camY, camZ); // after the resolve: no jitter, as the pre-pass
+	D3DXVECTOR4 dir(0.0f, 0.0f, 0.0f, 1.0f);
+	ImageProcessing *ip = gi->ip;
+	for (int i = 1; i < 4; i++) ip->SetOutputNative(i, NULL);
+	ip->Activate("PSGiRtSample");
+	ip->SetFloat("vCamX", &camX, sizeof(camX));
+	ip->SetFloat("vCamY", &camY, sizeof(camY));
+	ip->SetFloat("vCamZ", &camZ, sizeof(camZ));
+	ip->SetFloat("vDir", &dir, sizeof(dir));
+	ip->SetStruct("Dg", &gi->dVol->Prm(), sizeof(DdgiGpuPrm));
+	ip->SetTextureNative("tDepthG", gi->tDepthC, IPF_POINT | IPF_CLAMP); // the cockpit's distance
+	ip->SetTextureNative("tNrmG", gi->tNrm, IPF_POINT | IPF_CLAMP);
+	ip->SetTextureNative("tAlbG", gi->tAlb, IPF_POINT | IPF_CLAMP);
+	ip->SetTextureNative("tRefG", gi->tRef, IPF_POINT | IPF_CLAMP);
+	ip->SetTextureNative("tIrrD", gi->dVol->Irr(), IPF_POINT | IPF_CLAMP);
+	ip->SetTextureNative("tDstD", gi->dVol->Dst(), IPF_POINT | IPF_CLAMP);
+	ip->SetTextureNative("tStateD", gi->dVol->State(), IPF_POINT | IPF_CLAMP);
+	ip->SetOutputNative(0, gi->sGi[0]);
+	if (ip->Execute(true)) GiComposite(target, camX, camY, camZ, dir, gi->tDepthC);
+	gi->dVol->CutMark(3);
+	gc->PushRenderTarget(target, gc->GetDepthStencil(), RENDERPASS_MAINSCENE); // the main target, viewport and depth back
+	gc->PopRenderTargets();
+	dev->SetState(st);
 }

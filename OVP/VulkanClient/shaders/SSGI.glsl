@@ -20,10 +20,10 @@ vec4	vRad;		// R0 m, R per m of distance, min and max radius (half-res px)
 vec4	vFade;		// fade start, fade end (m), frame % 64, atmosphere (1) or not (0)
 vec4	vCurve;		// TrGamma, terrain s (Expo / e, TrExpo / e without air), e, sender cap uMax
 vec4	vAmbC;		// config ambient (rgb, light units), building twilight factor tw_bld (w)
-vec4	vMisc;		// strength, tree s (their Expo / e), spare, half-res height px
+vec4	vMisc;		// strength, tree s (their Expo / e), the target's samples (the in-place composite), half-res height px
 vec4	vProbe;		// probe-lit hulls: gain from a sender's display value to what the probe holds, Metalness (x), PbrMesh (y); the probe draws terrain and trees (z), bases (w)
 vec4	vTemp;		// alpha at rest, alpha moving, reset (1), e now / e last frame
-vec4	vDir;		// blur step (uv), TAA flag valid (z)
+vec4	vDir;		// blur step (uv), TAA flag valid (z), the cockpit pass (w, ray-traced only)
 mat4	mRigP;		// camera-relative point now to camera-relative a frame back, static in the proxy body's frame
 mat4	mRigV;		// the same, rigid with the camera target vessel
 mat4	mPrevVP;	// last frame's view projection, unjittered
@@ -493,17 +493,20 @@ vec4 PSGiRtSample(float x, float y)
 	vec2 uv0 = SnapF(vec2(x, y));
 	float d = DistF(uv0);
 	if (d <= 0.0 || d >= vFade.y) return vec4(0.0);
+	vec4 nc = textureLod(tNrmG, uv0, 0.0);
+	bool cp = vDir.w > 0.5;
+	if (cp != (nc.b > 0.5)) return vec4(0.0, 0.0, 0.0, d);	// the cockpit pass takes the cockpit's pixels, the scene pass the rest (design-ddgi-cockpit 6)
 	vec3 ray = PixelRay(uv0), P = ray * d, V = -ray;
-	vec3 N = OctDec(textureLod(tNrmG, uv0, 0.0).xy);
+	vec3 N = OctDec(nc.xy);
 	float nv = dot(N, V);
 	if (nv < 0.05) N = normalize(N + V * (0.05 - nv));	// as the march: silhouette normals bent toward the view
-	int rc = ClassOf(textureLod(tNrmG, uv0, 0.0).a), rf = ClassOf(textureLod(tAlbG, uv0, 0.0).a);
+	int rc = ClassOf(nc.a), rf = ClassOf(textureLod(tAlbG, uv0, 0.0).a);
 	vec3 toA = vec3(dot(Dg.ax.xyz, P), dot(Dg.ay.xyz, P), dot(Dg.az.xyz, P));
 	vec3 Pa = toA + Dg.cam.xyz;
 	vec3 Na = vec3(dot(Dg.ax.xyz, N), dot(Dg.ay.xyz, N), dot(Dg.az.xyz, N));
 	vec3 Va = vec3(dot(Dg.ax.xyz, V), dot(Dg.ay.xyz, V), dot(Dg.az.xyz, V));
 	float cover;
-	vec3 E = DgIrradiance(Pa, Na, Va, cover);
+	vec3 E = cp ? DgIrradianceV(DgA2V(Pa), DgA2Vd(Na), DgA2Vd(Va), cover) : DgIrradiance(Pa, Na, Va, cover);	// a cockpit only from its own volume: the world's probes don't see it
 	if (cover <= 0.0) return vec4(0.0, 0.0, 0.0, d);
 	if (rc == 3 && (rf == 1 || rf == 2)) {	// the hull's own ambient R becomes the fill plus E, as each family's composite reads a change x
 		vec3 R = textureLod(tRefG, uv0, 0.0).rgb, En = vAmbC.rgb + E;
@@ -512,9 +515,25 @@ vec4 PSGiRtSample(float x, float y)
 		return vec4(Fin(vCurve.z * x), d);
 	}
 	vec3 Pg = Const.CamPos + P;
-	vec3 ref = rc == 0 ? TerrSky(Pg) : MeshSky(Pg);	// the sky in the ambient the shaders add; their fill light stays
+	vec3 ref = cp ? vec3(0.0) : (rc == 0 ? TerrSky(Pg) : MeshSky(Pg));	// the sky in the ambient the shaders add (none in the cockpit pass); their fill light stays
 	return vec4(Fin(vCurve.z * (E - ref) * cover), d);
 }
+
+#if defined(PS_PSGiCompositeRtL)
+layout(input_attachment_index = 0, binding = 30) uniform subpassInput tSelf;	// not upstream (design-ddgi-cockpit Rev 4): the target itself, its own pixel (VkDev::LRBIND)
+vec3 GiShown(vec2 uv) { return subpassLoad(tSelf).rgb; }
+#elif defined(PS_PSGiCompositeRtM)
+layout(input_attachment_index = 0, binding = 30) uniform subpassInputMS tSelf;	// multisampled: the samples' mean, as the copy's resolve
+vec3 GiShown(vec2 uv)
+{
+	int n = max(int(vMisc.z + 0.5), 1);
+	vec3 s = vec3(0.0);
+	for (int i = 0; i < n; i++) s += subpassLoad(tSelf, i).rgb;
+	return s / float(n);
+}
+#else
+vec3 GiShown(vec2 uv) { return textureLod(tScnG, uv, 0.0).rgb; }	// the copy of the target
+#endif
 
 // full res: the 2x2 up-sample of the signed change, through each receiver's own curve; dual-source: dst' = src0 + dst * src1
 vec4 PSGiCompositeRt(float x, float y, out vec4 fac)
@@ -523,10 +542,12 @@ vec4 PSGiCompositeRt(float x, float y, out vec4 fac)
 	vec2 uv = vec2(x, y);
 	float d = DistF(uv);
 	if (d <= 0.0 || d >= vFade.y) return vec4(0.0);
+	vec4 nc = textureLod(tNrmG, uv, 0.0);
+	bool mk = nc.b > 0.5;
+	if (mk != (vDir.w > 0.5)) return vec4(0.0);
 	vec4 al = textureLod(tAlbG, uv, 0.0);
 	vec3 rho = al.rgb * 4.0;
 	if (Max3G(rho) <= 1e-4) return vec4(0.0);
-	vec4 nc = textureLod(tNrmG, uv, 0.0);
 	vec3 n = OctDec(nc.xy);
 	vec2 c = (floor(uv / vTex.zw - 0.5) + 0.5) * vTex.zw;
 	vec3 s = vec3(0.0);
@@ -537,20 +558,23 @@ vec4 PSGiCompositeRt(float x, float y, out vec4 fac)
 			vec2 qs = SnapF(q);
 			float dq = DistF(qs);
 			vec2 f = 1.0 - abs(uv - q) / vTex.zw;
-			float nn = max(dot(n, OctDec(textureLod(tNrmG, qs, 0.0).xy)), 0.0);
+			vec4 nq = textureLod(tNrmG, qs, 0.0);
+			if ((nq.b > 0.5) != mk) continue;	// the cockpit and the scene beyond it don't mix
+			float nn = max(dot(n, OctDec(nq.xy)), 0.0);
 			nn *= nn; nn *= nn; nn *= nn;
 			float w = max(f.x * f.y, 1e-3) * (dq > 0.0 ? exp(-abs(dq - d) / (0.02 * d + 0.05)) : 1e-3) * max(nn, 1e-3);
 			s += textureLod(tHistG, q, 0.0).rgb * w;
 			ws += w;
 		}
+	if (ws <= 0.0) return vec4(0.0);
 	vec3 E = clamp(Fin(s / ws), vec3(-4.0 * vCurve.w), vec3(4.0 * vCurve.w)) * vMisc.x * (1.0 - smoothstep(vFade.x, vFade.y, d));
 	int cls = ClassOf(nc.a), fam = ClassOf(al.a);
 	if (cls == 3 && fam == 1) E *= textureLod(tRefG, uv, 0.0).a;	// Metalness: its ambient's metal factor, this pixel's
 	if (Max3G(abs(E)) <= 0.0) return vec4(0.0);
 	vec3 dir = PixelRay(uv);
-	vec3 A, Iraw, Ao, Io;
-	AtmoAt(Const.CamPos + dir * d, dir, d, A, Iraw, Ao, Io);
-	vec3 yv = textureLod(tScnG, uv, 0.0).rgb;
+	vec3 A = vec3(1.0), Iraw = vec3(0.0), Ao = vec3(1.0), Io = vec3(0.0);
+	if (cls == 0 || d >= 800.0) AtmoAt(Const.CamPos + dir * d, dir, d, A, Iraw, Ao, Io);	// an object nearer than 800 m has no air between (AtmoAt's k), a cockpit above all
+	vec3 yv = GiShown(uv);
 	vec3 dy = cls == 0 ? CompositeDyS(yv, A, Iraw, Io, rho, E, 0, 0) : CompositeDyS(yv, Ao, Iraw, Io, rho, E, cls, fam);
 	vec3 dn = min(dy, 0.0);
 	fac = vec4(mix(vec3(1.0), clamp((yv + dn) / max(yv, vec3(1e-4)), 0.0, 1.0), lessThan(dn, vec3(0.0))), 1.0);
@@ -559,7 +583,7 @@ vec4 PSGiCompositeRt(float x, float y, out vec4 fac)
 #endif
 #endif // STAGE_PS
 
-#if defined(PS_PSGiPrep) || defined(PS_PSGiMarch) || defined(PS_PSGiBlur) || defined(PS_PSGiTemporal) || defined(PS_PSGiComposite) || defined(PS_PSGiRtSample) || defined(PS_PSGiCompositeRt)
+#if defined(PS_PSGiPrep) || defined(PS_PSGiMarch) || defined(PS_PSGiBlur) || defined(PS_PSGiTemporal) || defined(PS_PSGiComposite) || defined(PS_PSGiRtSample) || defined(PS_PSGiCompositeRt) || defined(PS_PSGiCompositeRtL) || defined(PS_PSGiCompositeRtM)
 layout(location = 0) in float iX;	// TEXCOORD0 of IPI.glsl
 layout(location = 1) in float iY;	// TEXCOORD1
 #endif
@@ -569,10 +593,25 @@ layout(location = 0) out vec4 oColor;
 #ifdef PS_PSGiRtSample
 void main() { oColor = PSGiRtSample(iX, iY); }
 #endif
-#ifdef PS_PSGiCompositeRt
-layout(location = 0, index = 0) out vec4 oColor;	// not upstream (design-ddgi 6): dual-source blend
+#if defined(PS_PSGiCompositeRt) || defined(PS_PSGiCompositeRtL) || defined(PS_PSGiCompositeRtM)
+layout(location = 0, index = 0) out vec4 oColor;	// not upstream (design-ddgi 6): dual-source blend, each sample its own
 layout(location = 0, index = 1) out vec4 oFactor;
-void main() { oColor = PSGiCompositeRt(iX, iY, oFactor); }
+void main()
+{
+	oColor = PSGiCompositeRt(iX, iY, oFactor);
+	if (Max3G(oColor.rgb) <= 0.0 && min(min(oFactor.r, oFactor.g), oFactor.b) >= 1.0) discard;	// no change: the pixel isn't written (design-ddgi-cockpit Rev 4)
+}
+#endif
+#if defined(VS_GiFull)
+layout(location = 0) out float oX;	// as IPI.glsl's TEXCOORD0 and 1
+layout(location = 1) out float oY;
+void main()	// not upstream: a triangle over the target for the in-place composite, uv from the top left
+{
+	vec2 p = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);
+	gl_Position = vec4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);	// the device's viewport has y up, as DDGI.glsl's DgFull
+	oX = p.x;
+	oY = p.y;
+}
 #endif
 #ifdef PS_PSGiPrep
 void main() { oColor = PSGiPrep(iX, iY); }

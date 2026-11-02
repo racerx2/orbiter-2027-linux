@@ -24,8 +24,44 @@ static int Mod (int a, int m) { int r = a % m; return r < 0 ? r + m : r; }
 double Spacing (int c) { return std::ldexp (1.0, 2 * c); }
 
 int Weight (int c) { static const int w[NCASC] = { 8, 4, 2, 1, 1, 1 }; return c >= 0 && c < NCASC ? w[c] : 0; }
+int CockpitTake (int left) { return left <= 0 ? 0 : std::min (NVC, std::max (1, left / 2)); }
 
 I3 Dims () { return { GX, GY, GZ }; }
+
+int Cascade (int probe) { return probe < NWORLD ? probe / NPC : VCASC; }
+
+VGrid CockpitGrid (const V3 &lo, const V3 &hi, const V3 &eye)
+{
+	VGrid g;
+	V3 ext = Sub (hi, lo);
+	double e = std::max ({ ext.x, ext.y, ext.z, 0.0 });
+	V3 c = Scale (Add (lo, hi), 0.5);
+	if (e > VG * VSMAX) { g.s = VSMAX; c = eye; g.eye = true; }
+	else g.s = std::clamp (e / VG, VSMIN, VSMAX);
+	g.o = Sub (c, Scale ({ 1.0, 1.0, 1.0 }, 0.5 * VG * g.s));
+	return g;
+}
+
+bool SameGrid (const VGrid &a, const VGrid &b)
+{
+	double q = 0.25 * std::min (a.s, b.s);
+	V3 d = Sub (a.o, b.o);
+	return a.eye == b.eye && std::fabs (a.s - b.s) * VG <= q && std::fabs (d.x) <= q && std::fabs (d.y) <= q && std::fabs (d.z) <= q;
+}
+
+bool EyeKept (const VGrid &g, const V3 &eye)
+{
+	if (!g.eye) return true;
+	V3 q = Scale (Sub (eye, g.o), 1.0 / g.s);
+	double a = 0.25 * VG, b = 0.75 * VG;
+	return q.x >= a && q.x <= b && q.y >= a && q.y <= b && q.z >= a && q.z <= b;
+}
+
+V3 VProbePos (const VGrid &g, int slot)
+{
+	int x = slot % VG, z = (slot / VG) % VG, y = slot / (VG * VG);
+	return Add (g.o, Scale ({ x + 0.5, y + 0.5, z + 0.5 }, g.s));
+}
 
 I3 Origin (int c, const V3 &cam, double ground)
 {
@@ -160,7 +196,7 @@ int Budget (int n, double ms, double target, int nmin, int nmax)
 
 void AtlasTexel (int probe, int n, int *x, int *y) { *x = (probe % ROW) * n; *y = (probe / ROW) * n; }
 
-void AtlasSize (int n, int *w, int *h) { *w = ROW * n; *h = (NPROBE / ROW) * n; }
+void AtlasSize (int n, int *w, int *h) { *w = ROW * n; *h = ((NPROBE + ROW - 1) / ROW) * n; }
 
 V3 MissRadiance (const V3 &dir, const V3 &up, const V3 &sky, const V3 &ground) { return Dot (dir, up) >= 0.0 ? sky : ground; }
 

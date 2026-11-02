@@ -198,10 +198,10 @@ bool VkCompileGLSL (const char *file, const std::string &src, const char *entry,
 	return !spirv.empty ();
 }
 
-VkShaderEXT VkCreateShaderObject (VkDev *dev, const std::vector<uint32_t> &spirv, VkShaderStageFlagBits stage, bool rt)
+VkShaderEXT VkCreateShaderObject (VkDev *dev, const std::vector<uint32_t> &spirv, VkShaderStageFlagBits stage, bool rt, bool lr)
 {
 	VkDescriptorSetLayout sl2[2] = { dev->SetLayout (), dev->RtSetLayout () };
-	VkDescriptorSetLayout sl = sl2[0];
+	VkDescriptorSetLayout sl = (lr && dev->LrSetLayout ()) ? dev->LrSetLayout () : sl2[0];
 	VkPushConstantRange pr = { VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, VkDev::PUSHCONST };
 	VkShaderCreateInfoEXT ci = { VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT };
 	ci.stage = stage;
@@ -333,6 +333,15 @@ void VkConstBuffer::Push (const std::vector<VkSamplerSlot> &samplers)
 		w[n].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 		w[n].pImageInfo = &ii[ni];
 		n++, ni++;
+	}
+	VkDescriptorImageInfo li = { VK_NULL_HANDLE, dev->LocalReadView (), VkLocalReadLayout };
+	if (dev->LocalReadActive () && li.imageView && n < VkDev::MAXBINDINGS) { // not upstream: colour target 0, read in place
+		w[n] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+		w[n].dstBinding = VkDev::LRBIND;
+		w[n].descriptorCount = 1;
+		w[n].descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+		w[n].pImageInfo = &li;
+		n++;
 	}
 	if (n) vkx.CmdPushDescriptorSet (dev->Cmd (), VK_PIPELINE_BIND_POINT_GRAPHICS, dev->PipelineLayout (), 0, n, w);
 }

@@ -168,3 +168,39 @@ TEST_CASE("DDGI: beyond the traced region an open receiver gets what its shader 
 		CHECK_THAT(s.x, WithinAbs (r.x, 5e-3)); CHECK_THAT(s.z, WithinAbs (r.z, 5e-3));
 	}
 }
+
+TEST_CASE("DDGI: the cockpit volume covers the cockpit, or a cube on the eye", "[ddgi]")
+{
+	V3 eye = { 0.1, 1.2, 4.0 };
+	VGrid g = CockpitGrid ({ -1.0, 0.4, 2.5 }, { 1.0, 1.9, 5.5 }, eye); // a small cockpit: 3 m along z
+	CHECK(!g.eye);
+	CHECK_THAT(g.s, WithinAbs (3.0 / VG, 1e-12));
+	V3 lo = VProbePos (g, 0), hi = VProbePos (g, NVC - 1);
+	CHECK_THAT(lo.z - 0.5 * g.s, WithinAbs (2.5, 1e-9)); CHECK_THAT(hi.z + 0.5 * g.s, WithinAbs (5.5, 1e-9));
+	CHECK(lo.x - 0.5 * g.s <= -1.0); CHECK(hi.x + 0.5 * g.s >= 1.0); // the shorter sides inside too
+	CHECK(lo.y - 0.5 * g.s <= 0.4); CHECK(hi.y + 0.5 * g.s >= 1.9);
+	VGrid t = CockpitGrid ({ 0.0, 0.0, 0.0 }, { 0.2, 0.3, 0.1 }, eye); // a tiny one: the finest spacing
+	CHECK(t.s == VSMIN);
+	VGrid b = CockpitGrid ({ -20.0, -5.0, -40.0 }, { 20.0, 5.0, 40.0 }, eye); // a whole interior: a cube on the eye
+	CHECK(b.eye);
+	CHECK(b.s == VSMAX);
+	V3 m = Scale (Add (VProbePos (b, 0), VProbePos (b, NVC - 1)), 0.5);
+	CHECK_THAT(m.x, WithinAbs (eye.x, 1e-9)); CHECK_THAT(m.y, WithinAbs (eye.y, 1e-9)); CHECK_THAT(m.z, WithinAbs (eye.z, 1e-9));
+	CHECK(EyeKept (b, { eye.x + 1.9, eye.y, eye.z })); // head moves inside the middle half keep it
+	CHECK(!EyeKept (b, { eye.x + 2.1, eye.y, eye.z }));
+	CHECK(EyeKept (g, { 100.0, 0.0, 0.0 })); // a box grid doesn't follow the eye
+	CHECK(SameGrid (g, CockpitGrid ({ -1.0, 0.4, 2.5 }, { 1.0, 1.9, 5.5 + 0.1 * g.s }, eye))); // noise keeps it
+	CHECK(!SameGrid (g, CockpitGrid ({ -1.0, 0.4, 2.5 }, { 1.0, 1.9, 6.5 }, eye)));
+	CHECK(!SameGrid (g, b));
+	std::set<long> cells; // every slot its own cell
+	for (int k = 0; k < NVC; k++) { V3 q = VProbePos (g, k); cells.insert (std::lround ((q.x - g.o.x) / g.s * 4) * 1000000 + std::lround ((q.y - g.o.y) / g.s * 4) * 1000 + std::lround ((q.z - g.o.z) / g.s * 4)); }
+	CHECK((int)cells.size () == NVC);
+	CHECK(Cascade (NWORLD - 1) == NCASC - 1);
+	CHECK(Cascade (NWORLD) == VCASC);
+	CHECK(Cascade (NPROBE - 1) == VCASC);
+	CHECK(Weight (VCASC) == 0);
+	CHECK(CockpitTake (0) == 0);
+	CHECK(CockpitTake (1) == 1);
+	CHECK(CockpitTake (600) == 300);
+	CHECK(CockpitTake (100000) == NVC);
+}

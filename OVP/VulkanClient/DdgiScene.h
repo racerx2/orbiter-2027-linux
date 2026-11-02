@@ -38,6 +38,15 @@ struct DdgiAnchor {
 	bool reset = false;		// set again this frame: every probe starts over
 };
 
+// the focus vessel's virtual cockpit this frame (design-ddgi-cockpit 2)
+struct DdgiCockpit {
+	bool on = false;		// camera in its virtual cockpit, with cockpit meshes
+	OBJHANDLE vessel = NULL;
+	float M[3][4] = {};		// vessel frame to anchor frame, rows
+	double lo[3] = {}, hi[3] = {};	// the cockpit meshes' box, vessel frame
+	double eye[3] = {};		// the camera, vessel frame
+};
+
 class DdgiScene {
 public:
 	static const int MAXINST = 4096;	// TLAS instances
@@ -55,6 +64,7 @@ public:
 	bool Build (Scene *scn, vPlanet *vp, double range);
 
 	const DdgiAnchor &Anchor () const { return anc; }
+	const DdgiCockpit &Cockpit () const { return ck; }
 	VkAccelerationStructureKHR Tlas () const { return tlas; }
 	VkBuf *Rows () const { return rows; }
 	VkTex *Atlas () const { return tAtlas; }
@@ -80,15 +90,21 @@ private:
 		uint64_t used = 0;
 		bool albedo = false;
 	};
-	struct MeshEntry {
+	struct MeshPart {					// the groups whose vertices stay (0), those an instrument moves (1): each its own structure
 		Blas b;
-		uint64_t geo = 0, tf = 0, alb = 0; // geometry, group matrices and albedo hashes of the last build and write
-		int slot = -1, nslot = 0;
+		uint64_t geo = 0, tf = 0, vtx = 0; // group layout, group matrices and vertex serials of the last build or refit
 		int refits = 0;
-		uint64_t used = 0;
-		std::vector<DWORD> groups;		// traced groups, by geometry index
+		uint64_t moved = 0, queued = 0;	// frames: last refit, last build or refit queued
 	};
-	struct MeshUse { D3D9Mesh *mesh; D3DXMATRIX W; };
+	struct MeshEntry {
+		MeshPart part[2];
+		uint64_t alb = 0;				// albedo hash of the last write
+		int slot = -1, nslot = 0;
+		int nstat = 0;					// the first nstat groups are part 0's
+		uint64_t used = 0;				// frame last traced
+		std::vector<DWORD> groups;		// traced groups: part 0's, then part 1's
+	};
+	struct MeshUse { D3D9Mesh *mesh; D3DXMATRIX W; uint8_t mask = 0x01; bool vc = false; }; // ray mask (DdgiProbe.glsl DG_M*), drawn in the cockpit pass
 
 	void Anchor (Scene *scn, vPlanet *vp);
 	void Gather (Scene *scn, vPlanet *vp, double range, std::vector<GiTileRec> &tiles, std::vector<MeshUse> &meshes);
@@ -108,6 +124,7 @@ private:
 	VkDev *dev;
 	bool ok = false;
 	DdgiAnchor anc;
+	DdgiCockpit ck;
 	VECTOR3 lastCam = { 0, 0, 0 };	// body frame
 	uint64_t frame = 0;
 	VkDeviceSize scratchAlign = 256;

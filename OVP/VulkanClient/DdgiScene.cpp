@@ -118,7 +118,7 @@ DdgiScene::DdgiScene (VkDev *_dev) : dev(_dev)
 DdgiScene::~DdgiScene ()
 {
 	for (auto &t : tiles) FreeBlas(t.second.b);
-	for (auto &m : meshes) FreeBlas(m.second.b);
+	for (auto &m : meshes) for (MeshPart &p : m.second.part) FreeBlas(p.b);
 	VkDevice d = dev->dev;
 	VkAccelerationStructureKHR a = tlas;
 	VkQueryPool q = queries;
@@ -242,19 +242,52 @@ void DdgiScene::Gather (Scene *scn, vPlanet *vp, double range, std::vector<GiTil
 {
 	vp->GiTiles(range, 1.0 / 32.0, tl);
 	std::sort(tl.begin(), tl.end(), [](const GiTileRec &a, const GiTileRec &b) { return a.dist < b.dist; });
+	ck.on = false;
+	OBJHANDLE hF = oapiGetFocusObject();
+	bool vcView = oapiCameraInternal() && oapiCockpitMode() == COCKPIT_VIRTUAL;
 	for (Scene::VOBJREC *r = scn->vobjFirst; r; r = r->next) {
 		if (!r->vobj || !r->vobj->IsActive() || r->type != OBJTP_VESSEL) continue;
 		vVessel *v = (vVessel *)r->vobj;
 		if (v->CamDist() - v->GetBoundingSphereRadius() > range) continue;
-		for (UINT i = 0; i < v->nmesh; i++) {
+		bool focus = v->Object() == hF, vc = focus && vcView;
+		double lo[3] = { 1e30, 1e30, 1e30 }, hi[3] = { -1e30, -1e30, -1e30 };
+		for (UINT i = 0; i < v->nmesh; i++) { // design-ddgi-cockpit 3: the focus vessel's exterior 0x02, its cockpit view 0x04, the rest 0x01
 			const auto &m = v->meshlist[i];
-			if (!m.mesh || !(m.vismode & MESHVIS_EXTERNAL)) continue;
+			if (!m.mesh) continue;
 			MeshUse u;
+			if (m.vismode & MESHVIS_EXTERNAL) u.mask = focus ? 0x02 : 0x01;
+			else u.mask = 0;
+			bool cv = vc && (m.vismode & (MESHVIS_COCKPIT | MESHVIS_VC));
+			if (cv) u.mask |= 0x04;
+			if (!u.mask) continue;
+			u.vc = cv && !(m.vismode & MESHVIS_EXTPASS); // drawn in the cockpit pass, as vVessel::Render picks it
 			u.mesh = m.mesh;
 			if (m.trans) D3DXMatrixMultiply(&u.W, (const D3DXMATRIX *)m.trans, &v->mWorld);
 			else u.W = v->mWorld;
 			ml.push_back(u);
+			if (!u.vc) continue;
+			const D9BBox *b = m.mesh->GetAABB();
+			for (int k = 0; k < 8; k++) { // the box's corners through the mesh's offset, vessel frame
+				D3DXVECTOR3 p((k & 1) ? b->max.x : b->min.x, (k & 2) ? b->max.y : b->min.y, (k & 4) ? b->max.z : b->min.z), q;
+				if (m.trans) D3DXVec3TransformCoord(&q, &p, (const D3DXMATRIX *)m.trans);
+				else q = p;
+				const float c[3] = { q.x, q.y, q.z };
+				for (int a = 0; a < 3; a++) { lo[a] = std::min(lo[a], double(c[a])); hi[a] = std::max(hi[a], double(c[a])); }
+			}
 		}
+		if (!vc || lo[0] > hi[0]) continue;
+		VESSEL *ves = oapiGetVesselInterface(hF);
+		if (!ves) continue;
+		ck.on = true;
+		ck.vessel = hF;
+		double W[4][4];
+		for (int a = 0; a < 4; a++) for (int c = 0; c < 4; c++) W[a][c] = v->mWorld.m[a][c];
+		Transform(W, ck.M);
+		VECTOR3 gp, lp;
+		oapiCameraGlobalPos(&gp);
+		ves->Global2Local(gp, lp);
+		for (int a = 0; a < 3; a++) { ck.lo[a] = lo[a]; ck.hi[a] = hi[a]; }
+		ck.eye[0] = lp.x; ck.eye[1] = lp.y; ck.eye[2] = lp.z;
 	}
 	for (DWORD i = 0; i < vp->GetBaseCount(); i++) {
 		vBase *b = vp->GetBaseByIndex(i);
@@ -316,7 +349,7 @@ void DdgiScene::Evict ()
 	}
 	for (auto it = meshes.begin(); it != meshes.end(); ) {
 		if (it->second.used >= keep) { ++it; continue; }
-		FreeBlas(it->second.b);
+		for (MeshPart &p : it->second.part) FreeBlas(p.b);
 		SlotFree(it->second.slot, it->second.nslot);
 		it = meshes.erase(it);
 	}
@@ -454,11 +487,11 @@ bool DdgiScene::Build (Scene *scn, vPlanet *vp, double range)
 	std::vector<VkAccelerationStructureInstanceKHR> inst;
 	std::vector<Row> rws;
 	UINT tri = 0;
-	auto addInst = [&](const double W[4][4], Blas *b, const Row &row) { // the structure's address is set once the builds are recorded
+	auto addInst = [&](const double W[4][4], Blas *b, const Row &row, uint8_t mask) { // the structure's address is set once the builds are recorded
 		if ((int)inst.size() >= MAXINST) return;
 		VkAccelerationStructureInstanceKHR in = {};
 		Transform(W, in.transform.matrix);
-		in.mask = 0xFF;
+		in.mask = mask;
 		in.flags = VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR;
 		in.accelerationStructureReference = (uint64_t)(uintptr_t)b;
 		inst.push_back(in);
@@ -516,7 +549,7 @@ bool DdgiScene::Build (Scene *scn, vPlanet *vp, double range)
 		Row row = { { 0.0f, float(e.cell), 0.0f, 0.0f },
 			{ float(U.x), float(U.y), float(U.z), float(0.5 - dotp(pc, U)) },
 			{ float(Vv.x), float(Vv.y), float(Vv.z), float(0.5 - dotp(pc, Vv)) } };
-		addInst(W, &e.b, row);
+		addInst(W, &e.b, row, 0x01);
 	}
 	WriteFar(vp, tl);
 
@@ -529,21 +562,26 @@ bool DdgiScene::Build (Scene *scn, vPlanet *vp, double range)
 		m->pBuf->Map(dev);
 		MeshBuffer *mb = m->pBuf;
 		if (!mb->pVB || !mb->pIB || !mb->pVB->buf || !mb->pIB->buf) continue;
-		std::vector<DWORD> gl;
-		uint64_t hg = Mix(0xcbf29ce484222325ULL, mb->serial), ht = 0xcbf29ce484222325ULL, ha = 0xcbf29ce484222325ULL;
-		UINT ntri = 0;
+		std::vector<DWORD> gp[2]; // design-ddgi-cockpit Rev 4: groups an instrument moves get their own structure, refit alone
+		const uint64_t seed = 0xcbf29ce484222325ULL;
+		uint64_t hg[2] = { seed, seed }, ht[2] = { seed, seed }, hv[2] = { mb->geoSerial, seed }, ha = seed;
+		UINT ntri[2] = { 0, 0 };
 		for (DWORD g = 0; g < m->GetGroupCount(); g++) {
 			D3D9Mesh::GiGroupDesc d;
 			if (!m->GiGroup(g, d) || !d.used) continue;
 			const D3D9Mesh::GROUPREC *gr = m->GetGroup(g);
 			if (!gr || gr->VertOff + gr->nVert > mb->nVtx || gr->IdexOff + gr->nFace * 3 > mb->nIdx) continue;
-			gl.push_back(g);
-			hg = Mix(Mix(Mix(hg, g), gr->nFace), gr->nVert);
-			ht = MixBytes(ht, &d.tf, sizeof(d.tf));
+			int k = gr->geoEdit ? 1 : 0;
+			gp[k].push_back(g);
+			hg[k] = Mix(Mix(Mix(hg[k], g), gr->nFace), gr->nVert);
+			ht[k] = MixBytes(ht[k], &d.tf, sizeof(d.tf));
+			if (k) hv[1] = Mix(hv[1], gr->geoEdit);
 			ha = Mix(Mix(Mix(ha, (uint64_t)(uintptr_t)d.tex), (uint64_t)(uintptr_t)d.mr), d.fam);
 			ha = MixBytes(MixBytes(ha, &d.mat, sizeof(d.mat)), &d.mtl, sizeof(d.mtl));
-			ntri += gr->nFace;
+			ntri[k] += gr->nFace;
 		}
+		std::vector<DWORD> gl = gp[0];
+		gl.insert(gl.end(), gp[1].begin(), gp[1].end());
 		if (gl.empty()) continue;
 		auto found = meshes.find(m);
 		if (found == meshes.end() && (int)inst.size() >= MAXINST) continue;
@@ -556,43 +594,62 @@ bool DdgiScene::Build (Scene *scn, vPlanet *vp, double range)
 			e.alb = 0;
 		}
 		if (e.slot < 0) continue;
-		bool regroup = e.groups != gl;
+		bool regroup = e.groups != gl || e.nstat != (int)gp[0].size();
 		e.groups = gl;
+		e.nstat = (int)gp[0].size();
 		if (e.alb != ha || regroup) {
 			WriteMesh(m, e);
 			e.alb = ha;
 		}
-		bool rebuild = !e.b.as || e.geo != hg || regroup;
-		bool refit = !rebuild && e.tf != ht;
-		if (refit && e.refits >= 64) rebuild = true, refit = false;
-		bool queued = false;
-		if ((rebuild && tri + ntri <= TRI_FRAME) || refit) {
-			if (rebuild) FreeBlas(e.b);
-			Job j = { &e.b, refit, false, 0, geos.size(), gl.size(), VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT_KHR };
-			tfRanges.push_back({ geos.size(), tfs.size() });
-			for (DWORD g : gl) {
-				D3D9Mesh::GiGroupDesc d;
-				m->GiGroup(g, d);
-				const D3D9Mesh::GROUPREC *gr = m->GetGroup(g);
-				VkTransformMatrixKHR M;
-				for (int r = 0; r < 3; r++) for (int c = 0; c < 4; c++) M.matrix[r][c] = c < 3 ? ((const float *)&d.tf)[c * 4 + r] : ((const float *)&d.tf)[12 + r];
-				tfs.push_back(M);
-				geos.emplace_back();
-				tri3(geos.back(), mb->pVB->Address() + VkDeviceSize(gr->VertOff) * sizeof(NMVERTEX), sizeof(NMVERTEX), gr->nVert - 1, mb->pIB->Address() + VkDeviceSize(gr->IdexOff) * sizeof(WORD), 1);
-				ranges.push_back({ gr->nFace, 0, 0, 0 });
-			}
-			jobs.push_back(j);
-			e.refits = refit ? e.refits + 1 : 0;
-			e.geo = hg;
-			e.tf = ht;
-			if (rebuild) tri += ntri;
-			queued = true;
-		}
-		if (!e.b.as && !queued) continue;
 		double W[4][4];
 		for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) W[r][c] = u.W.m[r][c];
-		Row row = { { 1.0f, float(e.slot), 0.0f, 0.0f }, {}, {} };
-		addInst(W, &e.b, row);
+		for (int k = 0; k < 2; k++) {
+			MeshPart &pt = e.part[k];
+			if (gp[k].empty()) {
+				if (pt.b.as) FreeBlas(pt.b);
+				pt = MeshPart();
+				continue;
+			}
+			bool rebuild = !pt.b.as || pt.geo != hg[k] || regroup;
+			bool refit = !rebuild && (pt.tf != ht[k] || pt.vtx != hv[k]); // moved groups or vertices, the same triangles: refit
+			if (refit) pt.moved = frame;
+			if (refit && pt.refits >= 1024) rebuild = true, refit = false; // refit for long: rebuilt to its full quality
+			else if (!refit && pt.refits > 0 && frame - pt.moved >= 30) rebuild = true; // settled after refits: the same
+			bool queued = pt.queued == frame; // a mesh drawn twice is built once
+			if (!queued && ((rebuild && tri + ntri[k] <= TRI_FRAME) || refit)) {
+				if (rebuild) FreeBlas(pt.b);
+				Job j = { &pt.b, refit, false, 0, geos.size(), gp[k].size(), VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT_KHR };
+				tfRanges.push_back({ geos.size(), tfs.size() });
+				for (DWORD g : gp[k]) {
+					D3D9Mesh::GiGroupDesc d;
+					m->GiGroup(g, d);
+					const D3D9Mesh::GROUPREC *gr = m->GetGroup(g);
+					VkTransformMatrixKHR M;
+					for (int r = 0; r < 3; r++) for (int c = 0; c < 4; c++) M.matrix[r][c] = c < 3 ? ((const float *)&d.tf)[c * 4 + r] : ((const float *)&d.tf)[12 + r];
+					tfs.push_back(M);
+					geos.emplace_back();
+					tri3(geos.back(), mb->pVB->Address() + VkDeviceSize(gr->VertOff) * sizeof(NMVERTEX), sizeof(NMVERTEX), gr->nVert - 1, mb->pIB->Address() + VkDeviceSize(gr->IdexOff) * sizeof(WORD), 1);
+					ranges.push_back({ gr->nFace, 0, 0, 0 });
+				}
+				jobs.push_back(j);
+				pt.refits = refit ? pt.refits + 1 : 0;
+				pt.geo = hg[k];
+				pt.tf = ht[k];
+				pt.vtx = hv[k];
+				pt.queued = frame;
+				if (rebuild) tri += ntri[k];
+				queued = true;
+			}
+			if (!pt.b.as && !queued) continue;
+			Row row = { { 1.0f, float(e.slot + (k ? e.nstat : 0)), u.vc ? 1.0f : 0.0f, 0.0f }, {}, {} };
+			if (u.vc && (u.mask & 0x03)) { // in both views: the exterior's rays shade it as the exterior pass, the cockpit's as the cockpit pass
+				Row ext = row;
+				ext.a[2] = 0.0f;
+				addInst(W, &pt.b, ext, u.mask & 0x03);
+				addInst(W, &pt.b, row, 0x04);
+			}
+			else addInst(W, &pt.b, row, u.mask);
+		}
 	}
 
 	dev->EndRendering(); // structures are built outside a rendering pass
@@ -691,7 +748,7 @@ bool DdgiScene::Build (Scene *scn, vPlanet *vp, double range)
 	bool moved = !refs;
 	for (size_t i = 0; refs && i < inst.size(); i++) {
 		const VkAccelerationStructureInstanceKHR &a = inst[i], &b = lastInst[i];
-		refs = a.accelerationStructureReference == b.accelerationStructureReference && a.instanceCustomIndex == b.instanceCustomIndex;
+		refs = a.accelerationStructureReference == b.accelerationStructureReference && a.instanceCustomIndex == b.instanceCustomIndex && a.mask == b.mask;
 		for (int r = 0; r < 3 && !moved; r++) for (int c = 0; c < 4; c++) if (std::fabs(a.transform.matrix[r][c] - b.transform.matrix[r][c]) > (c == 3 ? 1e-3f : 1e-6f)) moved = true;
 	}
 	if (refs && !moved && infos.empty() && !copies) return true; // nothing built and nothing moved by a millimetre: the structure and the rows hold

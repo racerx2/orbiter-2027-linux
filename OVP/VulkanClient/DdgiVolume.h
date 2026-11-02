@@ -22,7 +22,7 @@ struct ConstParams;
 // a vertex and pixel shader pair outside the effects: its own constants, and set 1 when it traces rays
 class DdgiPass {
 public:
-	DdgiPass (VkDev *dev, const char *file, const char *vs, const char *ps, const char *macros, bool rt);
+	DdgiPass (VkDev *dev, const char *file, const char *vs, const char *ps, const char *macros, bool rt, bool lr = false); // lr: reads its colour target in place
 	~DdgiPass ();
 	bool OK () const { return vs && fs; }
 	void Set (const char *name, const void *data, UINT bytes);
@@ -31,7 +31,7 @@ public:
 private:
 	VkConstHandle Find (const char *name) const;
 	VkDev *dev;
-	bool rt;
+	bool rt, lr;
 	VkShaderEXT vs = VK_NULL_HANDLE, fs = VK_NULL_HANDLE;
 	VkConstTable tv, tf;
 	VkConstBuffer cb;
@@ -52,10 +52,12 @@ struct DdgiGpuPrm {
 	float prm[4];			// hysteresis, ray reach [m], distance cap [cells], probes scheduled
 	float alb[4];			// terrain albedo pow and scale (NewPlanet's), far ground set (z)
 	float lpos[8][4];		// local lights: position, anchor frame
-	float ldir[8][4];		// direction (xyz), spot (w)
+	float ldir[8][4];		// direction (xyz); w: 1 spot, 2 lights the exterior, 4 the cockpit
 	float ldif[8][4];		// colour
 	float latt[8][4];		// attenuation
 	float lprm[8][4];		// range, falloff, theta, phi
+	float vo[4];			// cockpit volume: lowest cell corner, vessel frame (xyz), spacing (w, 0 none)
+	float vr[3][4];			// vessel frame to anchor frame: rotation rows (xyz), translation (w)
 	int nl[4];				// lights, probes per ray row, block side of the pass, entries for the state pass
 };
 
@@ -77,6 +79,8 @@ public:
 	bool Update (DdgiScene &scene, Scene *scn, vPlanet *vp, ConstParams *cp, const DdgiGiPS &gps);
 
 	const DdgiGpuPrm &Prm () const { return prm; }
+	bool CockpitOn () const { return vOn; }	// the cockpit volume is in this frame's probes
+	void CutMark (int k);					// the cockpit passes' timestamps: 0 and 1 around the pre-pass, 2 and 3 around the late pass; their mean comes off the update's target
 	VkTex *Irr () const { return tIrr; }
 	VkTex *Dst () const { return tDst; }
 	VkTex *State () const { return tState; }
@@ -84,6 +88,7 @@ public:
 
 private:
 	void Schedule (const DdgiScene &scene);
+	void CockpitVolume (const DdgiScene &scene);
 	void Lights (const DdgiScene &scene, Scene *scn);
 	void Timing ();
 	void Bind (DdgiPass *p, DdgiScene &scene, ConstParams *cp, vPlanet *vp, const DdgiGiPS &gps);
@@ -103,13 +108,20 @@ private:
 	double tickNs = 1.0;
 	uint64_t uses = 0;
 	bool timed[3] = {};
+	bool cutTimed[3] = {};
+	uint64_t cutFrame = 0;
 	int budget = 1024;
 	float rayMs = 0.25f;
+	float cutMs = 0.0f;
 	// schedule
 	bool have = false;
 	DdgiMath::I3 org[DdgiMath::NCASC];		// cascade origins, absolute cells
-	int cursor[DdgiMath::NCASC] = {};
-	int cycle[DdgiMath::NCASC] = {};
+	int cursor[DdgiMath::NCASC + 1] = {};	// the world's cascades and the cockpit volume
+	int cycle[DdgiMath::NCASC + 1] = {};
+	bool vOn = false;						// the cockpit volume this frame
+	OBJHANDLE vVes = NULL;
+	DdgiMath::VGrid vGrid;
+	VECTOR3 sunV = { 0, 0, 0 };				// the sun in the vessel frame
 	std::vector<uint8_t> fresh;				// per probe: starts over at its next update
 	std::vector<float> lastSun;				// per probe: the sun at its last update
 	std::vector<uint32_t> list;				// this frame's entries
