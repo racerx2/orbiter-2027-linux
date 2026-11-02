@@ -148,6 +148,11 @@ void TurnNormal (float nx, float ny, float rot, float *wx, float *wy)
 	*wx = c * nx - s * ny; *wy = s * nx + c * ny; // the map's y is image-up, against v: R(+rot) in east, north
 }
 
+float Handover (float texels)
+{
+	return 1.0f - Smooth (2.0f, 5.0f, std::log2 (std::max (texels, 1e-6f)));
+}
+
 float LambertRatio (V3 n, V3 m, V3 L)
 {
 	float dn = n.x * L.x + n.y * L.y + n.z * L.z, dm = m.x * L.x + m.y * L.y + m.z * L.z;

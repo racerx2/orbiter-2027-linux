@@ -41,6 +41,7 @@ void TapUV (float u, float v, const Tri &t, int j, float *tu, float *tv);	// tap
 void HexWeights (const float w[3], const float h[3], float out[3]);		// w^7 by height (contrast 0.6), sum 1
 void TurnNormal (float nx, float ny, float rot, float *wx, float *wy);		// a tap's map normal (x right, y image-up) to east, north
 
+float Handover (float texels);				// a scan's texels per screen pixel to its share against the micro textures: 1 to 4, 0 from 32
 float LambertRatio (V3 n, V3 m, V3 L);		// detail normal n against the mesh normal m: 1 when equal
 void BSpline (float f, float *g0, float *g1, float *h0, float *h1); // 2 bilinear taps per axis: weights, offsets from floor(x - 0.5) in texels
 

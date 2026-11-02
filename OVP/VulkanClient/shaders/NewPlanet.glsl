@@ -728,6 +728,7 @@ vec4 TerrainPS(TileVS frg)
 	gGmX = dFdx(vUVGm); gGmY = dFdy(vUVGm); gSrX = dFdx(vUVSrf); gSrY = dFdy(vUVSrf); // in uniform flow: the branches below sample with them
 #endif
 	float fGm = Prm.vGmLat.x > 0.0 ? 1.0 - smoothstep(150.0, 600.0, length(frg.camW.xyz)) : 0.0; // GroundGeom::Near, Far
+	float fGd = fGm * (1.0 - smoothstep(2.0, 5.0, log2(max(float(textureSize(tGround, 0).x) * sqrt(abs(gGmX.x * gGmY.y - gGmX.y * gGmY.x)), 1e-6)))); // GroundGeom::Handover (design-ground-detail 6): the micro textures give way only where the scan shows
 	float fGao = 1.0;
 #endif
 
@@ -992,10 +993,10 @@ vec4 TerrainPS(TileVS frg)
 		step1 *= (step1 * step1);
 		vec3 cFnl = max(vec3(0), min(vec3(2), 1.333f * (cFar + cMed + cLow) - 1));
 #if defined(_GROUNDMAT)
-		if (fGm > 0.0) { // not upstream (design-ground-detail 4): near the camera the materials take the micro textures' detail, all three levels, and keep their mean shade (the 1x1 mips)
+		if (fGd > 0.0) { // not upstream (design-ground-detail 4, 6): where the scans show, they take the micro textures' detail, all three levels, and keep their mean shade (the 1x1 mips)
 			vec4 mC = textureLod(tMicroC, vec2(0.5), 16.0), mB = textureLod(tMicroB, vec2(0.5), 16.0), mA = textureLod(tMicroA, vec2(0.5), 16.0);
 			vec3 mF = Flow.bMicroNormals ? mC.agb + mB.agb + mA.agb : mC.rgb + mB.rgb + mA.rgb;
-			cFnl = mix(cFnl, max(vec3(0), min(vec3(2), 1.333f * mF - 1)), fGm);
+			cFnl = mix(cFnl, max(vec3(0), min(vec3(2), 1.333f * mF - 1)), fGd);
 		}
 #endif
 
@@ -1017,7 +1018,7 @@ vec4 TerrainPS(TileVS frg)
 #endif
 
 #if defined(_GROUNDMAT)
-			vec3 cNrm = vec3((cMix - 1.0f) * 2.0f, 0) * step1 * (1.0 - fGm); // not upstream (design-ground-detail 4): the materials' relief replaces the micro normal near the camera
+			vec3 cNrm = vec3((cMix - 1.0f) * 2.0f, 0) * step1 * (1.0 - fGd); // not upstream (design-ground-detail 4, 6): the materials' relief replaces the micro normal where they show
 #else
 			vec3 cNrm = vec3((cMix - 1.0f) * 2.0f, 0) * step1;
 #endif

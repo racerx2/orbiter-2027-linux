@@ -184,6 +184,24 @@ TEST_CASE("Ground materials: a tap's normal turns back with its texture", "[grou
 	CHECK_THAT((ub - ua) / e, WithinAbs (std::cos (rr), 2e-2)); // the tap's u grows by cos(rot) per lattice u
 }
 
+TEST_CASE("Ground materials: the micro textures give way by what the scan shows", "[ground]")
+{
+	CHECK(Handover (0.5f) == 1.0f);
+	CHECK(Handover (4.0f) == 1.0f);   // 4 texels a pixel: the scan in full
+	CHECK(Handover (32.0f) == 0.0f);  // 32: only its mean is left, the micro textures are back
+	CHECK(Handover (1000.0f) == 0.0f);
+	CHECK(Handover (0.0f) == 1.0f);
+	float last = 1.0f;
+	for (float t = 1.0f; t < 64.0f; t *= 1.1f) { float h = Handover (t); CHECK(h <= last); last = h; }
+	// a 4 m scan of 1024 texels, 2508 px across a 50 deg view: from 2 m up the scan holds at 10 m, from 100 m up it's gone at 200 m
+	auto texels = [](double eye, double dist) {
+		double px = 0.8727 / 2508.0, along = px * dist * dist / eye, across = px * dist;
+		return float(std::sqrt (along * across) / 4.0 * 1024.0);
+	};
+	CHECK(Handover (texels (2.0, 10.0)) > 0.9f);
+	CHECK(Handover (texels (100.0, 200.0)) < 0.1f);
+}
+
 TEST_CASE("Ground materials: the Lambert ratio", "[ground]")
 {
 	V3 up = C (0, 0, 1);
