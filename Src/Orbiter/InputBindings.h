@@ -63,7 +63,8 @@ struct InputRef {
 	double zlo = 0, zhi = 0;
 };
 
-enum InputOut : uint8_t { IOUT_NONE, IOUT_FUNC, IOUT_KEY, IOUT_AXIS, IOUT_MFD, IOUT_LAYER };
+enum InputOut : uint8_t { IOUT_NONE, IOUT_FUNC, IOUT_KEY, IOUT_AXIS, IOUT_MFD, IOUT_LAYER, IOUT_HEADTRACK }; // HEADTRACK: not upstream (head-track)
+enum InputHeadTrack { IHT_CENTER, IHT_TOGGLE };
 enum InputMode : uint8_t { IMODE_AUTO, IMODE_HOLD, IMODE_PRESS, IMODE_RELEASE, IMODE_BOTH, IMODE_TOGGLE, IMODE_REPEAT };
 enum InputAxMode : uint8_t { IAX_VALUE, IAX_STEP, IAX_SET };
 enum { IMFD_PWR = -1, IMFD_SEL = -2, IMFD_MNU = -3 };
@@ -84,6 +85,7 @@ struct Binding {
 	double aval = 1.0;
 	int mfd = 0, mfdbtn = 0;  // mfdbtn: 0.. or IMFD_*
 	int lnum = 0;             // LAYER
+	int ht = IHT_CENTER;      // HEADTRACK
 	bool latch = false;
 	bool invert = false, half = false, pickup = false;
 	double dz = 0.0, sat = 1.0, curve = 1.0, scale = 1.0;
@@ -149,6 +151,7 @@ struct InputFrame {
 	std::vector<InputKeyEv> ev;
 	std::vector<InputChanSet> set;
 	std::vector<InputMfdEv> mfd;
+	std::vector<int> ht;             // HEADTRACK presses (IHT_*)
 };
 
 class InputEngine {
@@ -230,6 +233,7 @@ private:
 	std::vector<InputKeyEv> pendEv_;
 	std::vector<InputChanSet> pendSet_;
 	std::vector<InputMfdEv> pendMfd_;
+	std::vector<int> pendHt_;
 	std::map<std::pair<int,int>, int> mfdHeld_;
 	InputFrame frame_;
 	uint64_t frameNo_;

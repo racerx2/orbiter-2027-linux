@@ -5,6 +5,7 @@ Pre-release @VER@ of Orbiter 2027 for Linux, built from the Custom branch.
 
 ## What's in it
 - **Streamed Earth and Mars**: Earth's imagery, terrain, water, OpenStreetMap buildings, roads and airports (runways with their markings, lit at night), and forests out to the horizon; Mars in natural colour with 6 m detail near the equator and MOLA terrain. Both stream in as you fly, from free servers with no account or key.
+- **TrackIR head tracking** (Options > Controllers): a TrackIR 4 or 5 turns, leans and tilts the cockpit view, natively, with no Wine and no NaturalPoint software.
 - **GPS navigator** (Modules tab, GPSNav, then the GPS pin on the menu bar): moving map, flight plans, the nearest airports, glide paths and GPS steering, on any ship and any planet.
 - **Windows add-ons** through Wine: ships, MFDs and plugins made for Orbiter 2010, 2016 and 2024 load from their zips. Needs Wine with 32-bit support (Linux Mint: Software Manager, Wine).
 - **Graphics effects** in the Vulkan client: shadows, reflections, bounce light, volumetric plumes, re-entry plasma and hull heating, fog, night look.

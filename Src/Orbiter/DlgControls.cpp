@@ -5,8 +5,10 @@
 #include "Orbiter.h"
 #include "Vessel.h"
 #include "InputEditor.h"
+#include "HeadTrack.h" // not upstream (head-track)
 #include "imgui.h"
 #include "imgui_extras.h"
+#include <cmath>
 #include <cstring>
 #include <memory>
 
@@ -15,7 +17,7 @@ extern Vessel* g_focusobj;
 
 namespace {
 
-enum Page { P_FUNC, P_KEY, P_AXIS, P_MFD, P_LAYER, P_NONE };
+enum Page { P_FUNC, P_KEY, P_AXIS, P_MFD, P_LAYER, P_HEADTRACK, P_NONE }; // HEADTRACK: not upstream (head-track)
 
 struct Ui {
 	std::unique_ptr<InputEditor> ed;
@@ -60,7 +62,7 @@ void Stop (InputSystem *inp) // the page went away or a popup ended: no capture,
 const char *modes[] = { "Normal (held: held; others once)", "Held while pressed", "Once on press", "Once on release",
 	"Once on press and once on release", "Toggle: press on, press off", "Repeat while held" };
 const char *views[] = { "Any view", "Cockpit view only", "Outside view only" };
-const char *types[] = { "An Orbiter function", "A key or key combination", "An analog control", "An MFD button", "A shift layer", "Nothing" };
+const char *types[] = { "An Orbiter function", "A key or key combination", "An analog control", "An MFD button", "A shift layer", "Head tracking", "Nothing" };
 const char *amodes[] = { "Value while held", "Step by", "Set to" };
 
 std::string MfdName (int m) { return m == 0 ? "Left MFD" : m == 1 ? "Right MFD" : "MFD " + std::to_string (m+1); }
@@ -87,6 +89,7 @@ Binding Collect ()
 		break;
 	case P_MFD: b.out = IOUT_MFD; break;
 	case P_LAYER: b.out = IOUT_LAYER; if (b.lnum < 1) b.lnum = 1; break;
+	case P_HEADTRACK: b.out = IOUT_HEADTRACK; break;
 	default: b.out = IOUT_NONE; break;
 	}
 	return b;
@@ -100,7 +103,7 @@ void StartEdit (InputSystem *inp, const Binding &init, int index, bool have)
 	ui.info.clear ();
 	ui.vessel = ui.ed && strcasecmp (ui.ed->Name().c_str(), "Global");
 	ui.page = init.out == IOUT_KEY ? P_KEY : init.out == IOUT_AXIS ? P_AXIS : init.out == IOUT_MFD ? P_MFD :
-		init.out == IOUT_LAYER ? P_LAYER : init.out == IOUT_NONE && have ? P_NONE : P_FUNC;
+		init.out == IOUT_LAYER ? P_LAYER : init.out == IOUT_HEADTRACK ? P_HEADTRACK : init.out == IOUT_NONE && have ? P_NONE : P_FUNC;
 	ui.funcFilter[0] = '\0';
 	ui.keycap.reset ();
 	ui.cap.reset (have ? nullptr : new InputCaptureFilter (inp, InputCaptureFilter::INPUT));
@@ -167,7 +170,7 @@ void DrawBinding (InputSystem *inp)
 	ImGui::SeparatorText ("Does");
 	if (ui.vessel) types[P_NONE] = "Nothing (takes this control's Global binding away)";
 	else types[P_NONE] = "Nothing";
-	ImGui::Combo ("##type", &ui.page, types, 6);
+	ImGui::Combo ("##type", &ui.page, types, 7);
 	switch (ui.page) {
 	case P_FUNC: {
 		ImGui::InputTextWithHint ("##ff", "Search", ui.funcFilter, sizeof ui.funcFilter);
@@ -250,6 +253,11 @@ void DrawBinding (InputSystem *inp)
 		ImGui::SliderInt ("Layer##lnum", &ui.b.lnum, 1, 8);
 		ImGui::Checkbox ("Latch: press on, press off (otherwise while held)", &ui.b.latch);
 		break;
+	case P_HEADTRACK: { // not upstream (head-track)
+		static const char *ht[] = { "Centre the view on the head as it is now", "Head tracking on or off" };
+		ImGui::Combo ("##ht", &ui.b.ht, ht, 2);
+		break;
+	}
 	default:
 		break;
 	}
@@ -392,6 +400,173 @@ void DrawReset ()
 	ImGui::EndPopup ();
 }
 
+// not upstream (head-track): the TrackIR, as the Launchpad page's Head tracking group and its dialog's tabs
+struct HtUi {
+	ht::Settings work;
+	int lastFrame = -100, keysFrame = -1000;
+	bool dirty = false, keysSeen = false;
+	std::string keys, fwMsg, err;
+	char folder[512] = "";
+};
+HtUi hui;
+
+bool HtNumber (const char *label, double v, double lo, double hi, double step, int dec, double &out)
+{
+	char fmt[8];
+	snprintf (fmt, sizeof fmt, "%%.%df", dec);
+	if (!ImGui::DragScalar (label, ImGuiDataType_Double, &v, (float)step, &lo, &hi, fmt, ImGuiSliderFlags_AlwaysClamp)) return false;
+	out = v;
+	return true;
+}
+
+void HtLive (const ht::TrackStatus &st)
+{
+	ImVec2 p0 = ImGui::GetCursorScreenPos (), sz (160, 120);
+	ImGui::Dummy (sz);
+	ImDrawList *dl = ImGui::GetWindowDrawList ();
+	ImVec2 p1 (p0.x + sz.x, p0.y + sz.y), c (p0.x + sz.x/2, p0.y + sz.y/2);
+	dl->AddRectFilled (p0, p1, IM_COL32 (20, 20, 24, 255));
+	dl->AddRect (p0, p1, IM_COL32 (70, 70, 80, 255));
+	dl->AddLine (ImVec2 (c.x, p0.y), ImVec2 (c.x, p1.y), IM_COL32 (70, 70, 80, 255));
+	dl->AddLine (ImVec2 (p0.x, c.y), ImVec2 (p1.x, c.y), IM_COL32 (70, 70, 80, 255));
+	if (st.state == ht::HT_TRACKING && st.width > 0 && st.height > 0) {
+		float sx = sz.x / st.width, sy = sz.y / st.height;
+		for (const ht::Blob &b : st.blobs) // from the centre, +y up
+			dl->AddCircleFilled (ImVec2 (c.x + b.x * sx, c.y - b.y * sy), std::max (2.0f, std::sqrt ((float)b.score) * sx),
+				st.havePose ? IM_COL32 (120, 230, 120, 255) : IM_COL32 (230, 180, 90, 255));
+	}
+	ImGui::SameLine ();
+	ImGui::BeginGroup ();
+	if (st.state == ht::HT_TRACKING && st.havePose)
+		for (int i = 0; i < 2; i++) {
+			const ht::RawPose &p = i ? st.pose : st.raw;
+			ImGui::Text ("%s: yaw %.1f  pitch %.1f  roll %.1f deg", i ? "View" : "Head", p.yaw, p.pitch, p.roll);
+			ImGui::Text ("      x %.0f  y %.0f  z %.0f mm", p.tx, p.ty, p.tz);
+		}
+	else if (st.state == ht::HT_TRACKING)
+		ImGui::Text ("%d point%s seen: the model needs 3", (int)st.blobs.size (), st.blobs.size () == 1 ? "" : "s");
+	ImGui::EndGroup ();
+}
+
+void HtFieldsOf (const char *tab)
+{
+	for (const HtField &f : HtFields ()) {
+		if (strcmp (f.tab, tab) || (f.shown && !f.shown (hui.work))) continue;
+		bool ch = false;
+		double v = f.get ? f.get (hui.work) : 0, out = v;
+		switch (f.kind) {
+		case HtField::HEADING: ImGui::SeparatorText (f.label); continue;
+		case HtField::CHECK: { bool b = v != 0; if ((ch = ImGui::Checkbox (f.label, &b))) out = b; break; }
+		case HtField::NUMBER: ch = HtNumber (f.label, v, f.lo, f.hi, f.step, f.decimals, out); break;
+		case HtField::CHOICE: { int i = (int)v; if ((ch = ImGui::Combo (f.label, &i, f.choices))) out = i; break; }
+		}
+		if (f.tip && *f.tip) ImGui::SetItemTooltip ("%s", f.tip);
+		if (ch) f.set (hui.work, out), hui.dirty = true;
+	}
+}
+
+void DrawHeadTrack (InputSystem *inp)
+{
+	HeadTrack *ht = g_pOrbiter->GetHeadTrack ();
+	if (!ht) return;
+	int frame = ImGui::GetFrameCount ();
+	if (frame - hui.lastFrame > 2) hui.work = ht->Settings (), hui.dirty = false, hui.keysFrame = -1000, hui.keysSeen = ht->Settings ().keysAdded; // shown again
+	hui.lastFrame = frame;
+	ht->Touch (); // the live view while the page shows
+	if (ht->Settings ().keysAdded != hui.keysSeen) { // the first TrackIR got its keys: the bindings again
+		hui.keysSeen = ht->Settings ().keysAdded;
+		if (ui.ed) ui.ed->Open (ui.ed->Name ());
+		hui.keysFrame = -1000;
+	}
+	if (frame - hui.keysFrame > 60) hui.keys = HeadTrack::KeysText (inp), hui.keysFrame = frame;
+
+	bool on = ht->Settings ().enable;
+	if (ImGui::Checkbox ("TrackIR head tracking##ht", &on)) {
+		ht::Settings s = ht->Settings ();
+		s.enable = hui.work.enable = on;
+		hui.err.clear ();
+		ht->SetSettings (s, hui.err);
+	}
+	ImGui::SetItemTooltip ("A TrackIR 4 or 5 moves the cockpit view with your head");
+	ImGui::SameLine ();
+	if (ImGui::Button ("Centre##ht")) ht->Center ();
+	ImGui::SetItemTooltip ("The head as it is now is the centre");
+	ImGui::SameLine ();
+	bool off = !ht->tracker.On ();
+	if (ImGui::Button (off ? "Switch on##ht" : "Switch off##ht")) ht->Toggle ();
+	ImGui::SetItemTooltip ("Off: the view goes back to its default, and the mouse and keys have it");
+	ht::TrackStatus st = ht->Status ();
+	ImGui::TextWrapped ("%s", ht->StatusText ().c_str ());
+	if (st.state == ht::HT_NO_ACCESS) {
+		ImGui::BeginDisabled (ht->GivingAccess ());
+		if (ImGui::Button ("Give access##ht")) ht->GiveAccess ();
+		ImGui::EndDisabled ();
+		ImGui::SetItemTooltip ("Writes this udev rule (your desktop asks for your password): %s", HeadTrack::AccessHint ().c_str ());
+	}
+	if (!hui.err.empty ()) ImGui::TextColored (ImVec4 (0.9f, 0.4f, 0.4f, 1.0f), "%s", hui.err.c_str ());
+	ImGui::TextWrapped ("Keys: %s", hui.keys.c_str ());
+	if (st.state == ht::HT_TRACKING) HtLive (st); // the points and the numbers only while it tracks
+
+	ImGui::PushID ("ht");
+	if (ImGui::CollapsingHeader ("Head tracking: model")) HtFieldsOf ("Model");
+	if (ImGui::CollapsingHeader ("Head tracking: axes")) {
+		const auto &cols = HtAxisColumns ();
+		if (ImGui::BeginTable ("axes", (int)cols.size () + 1, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingStretchProp)) {
+			ImGui::TableSetupColumn ("Axis");
+			for (auto &c : cols) ImGui::TableSetupColumn (c.label);
+			ImGui::TableHeadersRow ();
+			for (int a = 0; a < ht::AX_COUNT; a++) {
+				ImGui::PushID (a);
+				ImGui::TableNextRow ();
+				ImGui::TableNextColumn ();
+				ImGui::TextUnformatted (ht::AxisName (a));
+				for (size_t k = 0; k < cols.size (); k++) {
+					const HtAxisColumn &c = cols[k];
+					ImGui::TableNextColumn ();
+					ImGui::PushID ((int)k);
+					double v = c.get (hui.work.axes[a]), out = v;
+					bool ch;
+					if (c.check) { bool b = v != 0; if ((ch = ImGui::Checkbox ("##v", &b))) out = b; }
+					else { ImGui::SetNextItemWidth (-FLT_MIN); ch = HtNumber ("##v", v, c.lo, c.hi, c.step, c.decimals, out); }
+					if (*c.tip) ImGui::SetItemTooltip ("%s", c.tip);
+					if (ch) c.set (hui.work.axes[a], out), hui.dirty = true;
+					ImGui::PopID ();
+				}
+				ImGui::PopID ();
+			}
+			ImGui::EndTable ();
+		}
+		if (ImGui::Button ("Defaults")) {
+			for (int a = 0; a < ht::AX_COUNT; a++) hui.work.axes[a] = ht::DefaultAxis (a);
+			hui.dirty = true;
+		}
+		ImGui::SetItemTooltip ("linuxtrack's settings for every axis");
+	}
+	if (ImGui::CollapsingHeader ("Head tracking: views")) HtFieldsOf ("Views");
+	if (ImGui::CollapsingHeader ("Head tracking: device")) {
+		HtFieldsOf ("Device");
+		ImGui::SeparatorText ("Firmware");
+		ImGui::TextWrapped ("%s", ht->FirmwareText ().c_str ());
+		ImGui::InputTextWithHint ("##fw", "The TrackIR software's folder (from a Windows install)", hui.folder, sizeof hui.folder);
+		ImGui::SameLine ();
+		ImGui::BeginDisabled (!hui.folder[0]);
+		if (ImGui::Button ("Find firmware")) ht->FindFirmware (hui.folder, hui.fwMsg);
+		ImGui::EndDisabled ();
+		ImGui::SetItemTooltip ("The TrackIR 4 and the TrackIR 5 revisions 1 and 2 take NaturalPoint's firmware at every start: Orbiter finds it in that folder "
+			"and keeps a copy in Config/HeadTrack");
+		if (!hui.fwMsg.empty ()) ImGui::TextWrapped ("%s", hui.fwMsg.c_str ());
+	}
+	ImGui::PopID ();
+	if (hui.dirty) ht->Preview (hui.work);
+	if (hui.dirty && !ImGui::IsAnyItemActive ()) { // written once the control is let go
+		ht::Settings s = hui.work;
+		s.enable = ht->Settings ().enable, s.keysAdded = ht->Settings ().keysAdded;
+		hui.err.clear ();
+		ht->SetSettings (s, hui.err);
+		hui.dirty = false;
+	}
+}
+
 } // namespace
 
 void DlgOptions::DrawControls() // not upstream (input-bindings, controls-editor): was DrawJoystick, the one joystick's settings
@@ -473,6 +648,11 @@ void DlgOptions::DrawControls() // not upstream (input-bindings, controls-editor
 	ImGui::Checkbox ("Controllers work while Orbiter is in the background", &g_pOrbiter->Cfg()->CfgJoystickPrm.bBackground);
 	int joy = g_pOrbiter->Cfg()->CfgJoystickPrm.bOff ? 0 : 1; // not upstream: the old Joystick tab's device list (input-bindings)
 	if (ImGui::Combo ("Joystick device", &joy, "<Disabled>\0<All controllers>\0")) g_pOrbiter->Cfg()->CfgJoystickPrm.bOff = (joy == 0);
+
+	if (g_pOrbiter->GetHeadTrack()) { // not upstream (head-track)
+		ImGui::SeparatorText ("Head tracking");
+		DrawHeadTrack (inp);
+	}
 
 	// the bindings
 	ImGui::SeparatorText ("Bindings");

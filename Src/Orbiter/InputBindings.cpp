@@ -469,12 +469,19 @@ bool InputParseBinding (const std::string &text, Binding &b, std::string &err)
 		else if (k.size() > 1 && toupper (k[0]) == 'B' && atoi (k.c_str()+1) >= 1 && atoi (k.c_str()+1) <= 20) b.mfdbtn = atoi (k.c_str()+1) - 1;
 		else { err = "MFD button B1..B20, PWR, SEL or MNU"; return false; }
 		i += 2;
+	} else if (Upper (o, "HEADTRACK")) { // not upstream (head-track)
+		if (i >= t.size()) { err = "HEADTRACK CENTER or TOGGLE"; return false; }
+		b.out = IOUT_HEADTRACK;
+		if (Upper (t[i], "CENTER")) b.ht = IHT_CENTER;
+		else if (Upper (t[i], "TOGGLE")) b.ht = IHT_TOGGLE;
+		else { err = "HEADTRACK CENTER or TOGGLE"; return false; }
+		i++;
 	} else if (Upper (o, "LAYER")) {
 		if (i >= t.size() || atoi (t[i].c_str()) < 1 || atoi (t[i].c_str()) > 8) { err = "LAYER 1 to 8"; return false; }
 		b.out = IOUT_LAYER, b.lnum = atoi (t[i].c_str());
 		i++;
 		if (i < t.size() && Upper (t[i], "LATCH")) b.latch = true, i++;
-	} else { err = "unknown output \"" + o + "\": FUNC, KEY, AXIS, MFD, LAYER or NONE"; return false; }
+	} else { err = "unknown output \"" + o + "\": FUNC, KEY, AXIS, MFD, LAYER, HEADTRACK or NONE"; return false; }
 
 	for (; i < t.size(); i++) {
 		const std::string &s = t[i];
@@ -529,6 +536,7 @@ std::string InputFormatBinding (const Binding &b)
 		break;
 	}
 	case IOUT_LAYER: s += "LAYER " + std::to_string (b.lnum) + (b.latch ? " LATCH" : ""); break;
+	case IOUT_HEADTRACK: s += b.ht == IHT_TOGGLE ? "HEADTRACK TOGGLE" : "HEADTRACK CENTER"; break;
 	}
 	if (b.invert) s += " INVERT";
 	if (b.half) s += " HALF";
@@ -862,7 +870,7 @@ bool InputEngine::HeldType (int func) const
 
 bool InputEngine::Suspends (const Binding &b) const
 {
-	return b.out == IOUT_FUNC || b.out == IOUT_KEY || b.out == IOUT_MFD;
+	return b.out == IOUT_FUNC || b.out == IOUT_KEY || b.out == IOUT_MFD || b.out == IOUT_HEADTRACK;
 }
 
 int InputEngine::DevIndex (const std::string &name)
@@ -1008,7 +1016,7 @@ void InputEngine::ReleaseAll (InputFrame &rel)
 	mfdHeld_.clear();
 	rel.ev = std::move (pendEv_);
 	rel.mfd = std::move (pendMfd_);
-	pendEv_.clear(), pendMfd_.clear(), pendSet_.clear();
+	pendEv_.clear(), pendMfd_.clear(), pendSet_.clear(), pendHt_.clear();
 	memset (frame_.key, 0, sizeof frame_.key);   // the frame the core reads until the next Step
 	memset (frame_.func, 0, sizeof frame_.func);
 	memset (frame_.chan, 0, sizeof frame_.chan);
@@ -1038,6 +1046,7 @@ void InputEngine::SetSuspended (bool s, InputFrame *released)
 		}
 		pendEv_.clear();
 		pendMfd_.clear();
+		pendHt_.clear();
 	}
 	suspended_ = s;
 }
@@ -1128,6 +1137,7 @@ void InputEngine::Edge (int bi, bool press)
 	BindState &s = st_[bi];
 	if (suspended_ && Suspends (b)) return;
 	if (b.out == IOUT_NONE) return;
+	if (b.out == IOUT_HEADTRACK) { if (press) pendHt_.push_back (b.ht); return; } // not upstream (head-track): a press, whatever the mode
 	if (b.out == IOUT_LAYER) {
 		if (b.latch || b.mode == IMODE_TOGGLE) { if (press) layerLatch_[b.lnum] = !layerLatch_[b.lnum]; }
 		else if (press) Hold (bi);
@@ -1455,7 +1465,8 @@ const InputFrame &InputEngine::Step (double dt)
 	f.ev = std::move (pendEv_);
 	f.set = std::move (pendSet_);
 	f.mfd = std::move (pendMfd_);
-	pendEv_.clear(), pendSet_.clear(), pendMfd_.clear();
+	f.ht = std::move (pendHt_);
+	pendEv_.clear(), pendSet_.clear(), pendMfd_.clear(), pendHt_.clear();
 
 	// repeats
 	for (size_t bi = 0; bi < binds_.size(); bi++) {

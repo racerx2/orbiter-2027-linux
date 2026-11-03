@@ -19,6 +19,7 @@ class QTableWidget;
 class QTimer;
 class QWidget;
 class InputEditor;
+class HeadTrackBox; // not upstream (head-track)
 
 class OptionsPage_Controls : public OptionsPage {
 public:
@@ -60,6 +61,7 @@ private:
 	QLabel *m_dzVal = nullptr, *m_satVal = nullptr;
 	QPointer<QTimer> m_zoneTimer;
 	QPushButton *m_rename = nullptr, *m_calib = nullptr, *m_change = nullptr, *m_remove = nullptr;
+	HeadTrackBox *m_head = nullptr; // not upstream (head-track): the TrackIR
 	QPointer<QTimer> m_timer;
 	std::unique_ptr<InputEditor> m_ed;
 	std::string m_devKey;   // the device rows shown, to fill the table only when it changes

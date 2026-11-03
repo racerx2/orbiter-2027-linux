@@ -7,10 +7,10 @@ LINUX: PREREQUISITES
 ====================
 The packages, one line per distribution (only the Ubuntu names are tested so far):
 
-- Debian/Ubuntu: `cmake ninja-build g++ git pkg-config python3 libvulkan-dev glslang-dev glslang-tools qt6-base-dev libwayland-dev wayland-protocols libpipewire-0.3-dev libpng-dev zlib1g-dev`
-- Fedora: `cmake ninja-build gcc-c++ git pkgconf-pkg-config python3 vulkan-headers vulkan-loader-devel glslang-devel qt6-qtbase-devel wayland-devel wayland-protocols-devel pipewire-devel libpng-devel zlib-devel`
-- openSUSE: `cmake ninja gcc-c++ git pkg-config python3 vulkan-devel vulkan-headers glslang-devel qt6-base-devel wayland-devel wayland-protocols-devel pipewire-devel libpng16-devel zlib-devel`
-- Arch: `cmake ninja gcc git pkgconf python vulkan-headers vulkan-icd-loader glslang qt6-base wayland wayland-protocols libpipewire libpng zlib`
+- Debian/Ubuntu: `cmake ninja-build g++ git pkg-config python3 libvulkan-dev glslang-dev glslang-tools qt6-base-dev libwayland-dev wayland-protocols libpipewire-0.3-dev libpng-dev zlib1g-dev libusb-1.0-0-dev`
+- Fedora: `cmake ninja-build gcc-c++ git pkgconf-pkg-config python3 vulkan-headers vulkan-loader-devel glslang-devel qt6-qtbase-devel wayland-devel wayland-protocols-devel pipewire-devel libpng-devel zlib-devel libusb1-devel`
+- openSUSE: `cmake ninja gcc-c++ git pkg-config python3 vulkan-devel vulkan-headers glslang-devel qt6-base-devel wayland-devel wayland-protocols-devel pipewire-devel libpng16-devel zlib-devel libusb-1_0-devel`
+- Arch: `cmake ninja gcc git pkgconf python vulkan-headers vulkan-icd-loader glslang qt6-base wayland wayland-protocols libpipewire libpng zlib libusb`
 
 Optional, Dragonfly's ADI ball (the vessel is left out without it): `libgl-dev libglu1-mesa-dev`
 (Fedora `mesa-libGLU-devel libglvnd-devel`, openSUSE `glu-devel Mesa-libGL-devel`, Arch `glu libglvnd`).
@@ -22,11 +22,12 @@ PipeWire's headers are for sound (XRSound loads libpipewire at run time, and wit
 libpng is for the utilities plsplit and tileedit; zlib is for the compressed .tree texture and elevation archives
 (Orbiter, tileedit, texpack), the help files and oapiDeflate/oapiInflate (it is the system libz, which Qt, libpng and
 FreeType load too). On Fedora 40 and newer zlib-devel is zlib-ng-compat: its deflate output bytes differ from zlib's
-but are valid (Script/Tests/GeneralApiTest.lua's `#zdata == 30` holds for zlib's output).
+but are valid (Script/Tests/GeneralApiTest.lua's `#zdata == 30` holds for zlib's output). libusb is for the TrackIR
+(head tracking, Src/HeadTrack).
 
 Minimum versions: CMake 3.28, GCC with C++20 (built with GCC 15.2), Qt 6.5 (tested with 6.10), Vulkan
 headers 1.3.246, glslang with its CMake package, PipeWire 0.3, Wayland with wayland-protocols, libpng, zlib 1.2
-(built with 1.3.1), Python 3.
+(built with 1.3.1), libusb 1.0, Python 3.
 By package versions that is Ubuntu 26.04 (tested), Debian 13, Fedora 43 or newer, openSUSE Tumbleweed and Arch;
 not Ubuntu 24.04 (Qt 6.4) or Debian 12 (Qt 6.4, CMake 3.25, Vulkan headers 1.3.239).
 

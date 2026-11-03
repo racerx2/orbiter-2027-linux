@@ -1,6 +1,7 @@
 # Copyright (c) Martin Schweiger
 # Licensed under the MIT License
 
+add_subdirectory(HeadTrack) # not upstream (head-track): before Orbiter, which links it
 add_subdirectory(Orbiter)
 add_subdirectory(Orbitersdk)
 add_subdirectory(DlgCtrl)

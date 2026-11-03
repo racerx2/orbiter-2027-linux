@@ -62,6 +62,8 @@ set(common_src
 	InputDevices.cpp # not upstream (input-bindings): every controller
 	InputBindings.cpp # not upstream (input-bindings): their bindings
 	InputEditor.cpp # not upstream (controls-editor): editing them on the Controls pages
+	HeadTrack.cpp # not upstream (head-track): the TrackIR as the camera's control
+	HeadTrackUi.cpp # not upstream (head-track): its group on the Launchpad Controllers page
 	StreamBases.cpp # not upstream: its base list and refusal rules
 # Dialogs
 	CustomControls.cpp
@@ -171,6 +173,7 @@ set(Orbiter_common_libs
 	Qt6::DBus
 	Qt6::Network # not upstream: TexPack.cpp downloads
 	stb_dxt # not upstream: TileStreamImg.cpp
+	HeadTrack # not upstream (head-track): Src/HeadTrack
 	${CMAKE_DL_LIBS}
 )
 set(Orbiter_libs

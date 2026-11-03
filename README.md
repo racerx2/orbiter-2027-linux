@@ -33,6 +33,7 @@ optional Wine bridge that runs old Windows add-ons. Orbiter for Windows is [orbi
 - **Build in Blender.** glTF ships with every PBR material, and a round trip to Blender and back with the animations.
 - **See it properly.** Shadows, reflections, volumetric plumes, re-entry plasma, valley fog and cities lit street by street.
 - **Fly your own pit.** Any key or function on any stick, throttle, pedal set or button box; windows on any monitor.
+- **Look around with your head.** A TrackIR turns, leans and tilts the cockpit view, natively: no Wine, no NaturalPoint software.
 - **Native and portable.** Vulkan, Qt 6 and PipeWire. One download runs on Ubuntu, Mint, Debian, Fedora, Arch,
   SteamOS and more.
 
@@ -175,6 +176,23 @@ keyboard and the mouse. Under **Options > Controllers**, in the Launchpad or in 
 - **Rename and calibrate** each controller; set the dead zone and the throttle saturation; reset to the defaults.
 - **Plug and play**: controllers are found as they are plugged in; a new setup binds the first stick.
 - **`<Disabled>`** has Orbiter ignore every controller.
+
+### Head tracking
+
+A NaturalPoint TrackIR 4 or 5 moves the view with your head, driven by Orbiter itself: no Wine, no NaturalPoint
+software. The driver and the head pose are ported from [linuxtrack](https://github.com/uglyDwarf/linuxtrack) (MIT).
+
+- **Turn, lean and tilt** in the virtual cockpit; turn in the 2D panels and the generic cockpit; orbit and zoom in the
+  track view; look around as a ground observer. Each can be switched on or off.
+- **Any clip:** the TrackClip PRO, the reflective TrackClip on a cap, or three points of your own.
+- **Set up under Options > Controllers**, in the Launchpad or in flight: on and off, centre, the points the camera
+  sees live, and per axis the speed, dead zone, curves, limits and smoothing.
+- **Keys:** F12 centres the view, Ctrl+F12 turns head tracking on and off. They are ordinary bindings, so any
+  button can do it.
+- **Access:** where the desktop doesn't give the TrackIR to the user, **Give access** writes the udev rule after
+  asking for your password.
+- **Firmware:** the TrackIR 5 revision 3 needs none. The TrackIR 4 and the revisions 1 and 2 take NaturalPoint's
+  firmware at every start; **Find firmware** takes it from your own TrackIR software folder (a Windows install).
 
 ### Every monitor
 

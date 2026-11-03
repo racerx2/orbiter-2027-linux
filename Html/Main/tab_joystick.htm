@@ -36,11 +36,25 @@ A controller the desktop doesn't give to the user (some button boxes, and pedals
 <p>
 If ticked, the controllers keep flying when another window has the focus, for example an external MFD or a map on another screen. The keyboard and the mouse stay with the Orbiter window.</p>
 
+<!-- not upstream (head-track) -->
+<h2>Head tracking</h2>
+<p>
+A NaturalPoint TrackIR 4 or 5 moves the view with your head, without NaturalPoint's software or Wine. Wear the TrackClip PRO (or the TrackClip on a cap), start Orbiter and look at this group: it shows the TrackIR found, what it is doing, and the points it sees (three are needed).</p>
+<ul>
+<li><b>No access</b>: the desktop doesn't give the TrackIR to the user. The line shows the udev rule that does, for /etc/udev/rules.d/71-orbiter-trackir.rules; then plug the TrackIR in again.</li>
+<li><b>Firmware missing</b>: the TrackIR 4 and the TrackIR 5 revisions 1 and 2 take NaturalPoint's firmware at every start (revision 3 needs none). It can't come with Orbiter. <b>Head tracking...</b>, Device, <b>Find firmware...</b>: pick the TrackIR software's folder from a Windows install (Program Files\NaturalPoint\TrackIR5, from a Windows drive or a copy), or a linuxtrack firmware folder. Orbiter finds the firmware there by its signature and keeps a copy in Config/HeadTrack.</li>
+<li><b>TrackIR head tracking in flight</b> turns it on for the simulation. <b>Centre</b> takes the head as it is now as the centre (it is also centred when it starts).</li>
+<li>The first time a TrackIR is found, F12 is bound to centre the view and Ctrl+F12 to turn head tracking on and off, for all vessels, if those keys are free. They are ordinary bindings: change or remove them under Bindings.</li>
+<li><b>Head tracking...</b>: <b>Model</b>: what you wear, and how the TrackIR sits. <b>Axes</b>: per axis (pitch, yaw, roll, and the moves X, Y, Z), on, invert, speed, dead zone, the curve on each side, the limits and the smoothing; changes act at once, with the points and the numbers below. <b>Views</b>: the views it moves (virtual cockpit, 2D panels, generic cockpit, track view, ground observer), and how. <b>Device</b>: the threshold, the lamps, the status light and the point sizes, and the firmware.</li>
+</ul>
+<p>
+The settings are kept in Config/TrackIR.cfg. The in-sim Options dialog's Controllers page has the same settings.</p>
+
 <h2>Bindings</h2>
 <p>
 <b>For</b> picks the profile: all vessels (Global), or one vessel class (type to search). A vessel class's bindings come on top of the ones for all vessels, which are shown in grey under it.</p>
 <ul>
-<li><b>Add...</b>: press the control (a button, the hat, a dial, a key, or a mouse button; left and right with Shift, Ctrl or Alt), or move an axis through at least 40 % of its range (a centred stick to one end). Then pick what it does: an Orbiter function, a key or key combination, an analog control (attitude, throttles, trims, flaps, toe brakes, views), an MFD button or a shift layer.</li>
+<li><b>Add...</b>: press the control (a button, the hat, a dial, a key, or a mouse button; left and right with Shift, Ctrl or Alt), or move an axis through at least 40 % of its range (a centred stick to one end). Then pick what it does: an Orbiter function, a key or key combination, an analog control (attitude, throttles, trims, flaps, toe brakes, views), an MFD button, a shift layer, or head tracking (centre the view, or turn it on and off).</li>
 <li>For a button: the shift layer it belongs to, how it acts (held, once on press, once on release, both for a toggle switch, toggle, repeat), and the view it works in.</li>
 <li>For an axis on an analog control: invert, dead zone, saturation, curve and scale, with the value it gives now. Part of an axis can work as a button (a detent or lever position).</li>
 <li><b>Change...</b> (or a double click) edits the selected binding. Changing a grey binding gives this vessel class its own. <b>Remove</b> deletes it.</li>

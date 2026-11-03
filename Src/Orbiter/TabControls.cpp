@@ -4,6 +4,7 @@
 #include "Orbiter.h"
 #include "Config.h"
 #include "InputEditor.h"
+#include "HeadTrackUi.h" // not upstream (head-track)
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCompleter>
@@ -55,7 +56,7 @@ public:
 	Binding Result () const { return m_res; }
 
 private:
-	enum Page { P_FUNC, P_KEY, P_AXIS, P_MFD, P_LAYER, P_NONE };
+	enum Page { P_FUNC, P_KEY, P_AXIS, P_MFD, P_LAYER, P_HEADTRACK, P_NONE }; // HEADTRACK: not upstream (head-track)
 	void Tick ();
 	void InputChanged ();
 	Binding Collect () const;
@@ -68,7 +69,7 @@ private:
 	std::unique_ptr<InputCaptureFilter> m_cap, m_keycap;
 	QLabel *m_in, *m_inLive, *m_line, *m_outLive;
 	QPushButton *m_capBtn, *m_keyBtn, *m_ok;
-	QComboBox *m_layer, *m_mode, *m_view, *m_type, *m_key, *m_chan, *m_amode, *m_mfd, *m_mfdbtn;
+	QComboBox *m_layer, *m_mode, *m_view, *m_type, *m_key, *m_chan, *m_amode, *m_mfd, *m_mfdbtn, *m_ht;
 	QCheckBox *m_zone, *m_pass, *m_shift, *m_ctrl, *m_alt, *m_invert, *m_half, *m_pickup, *m_latch;
 	QDoubleSpinBox *m_zlo, *m_zhi, *m_rate, *m_dz, *m_sat, *m_curve, *m_scale, *m_aval;
 	QSpinBox *m_lnum;
@@ -142,7 +143,7 @@ BindDialog::BindDialog (InputSystem *inp, const Binding &init, bool haveInput, b
 	auto *go = new QGroupBox ("Does", this);
 	auto *lo = new QVBoxLayout (go);
 	m_type = new QComboBox (go);
-	m_type->addItems ({"An Orbiter function", "A key or key combination", "An analog control", "An MFD button", "A shift layer",
+	m_type->addItems ({"An Orbiter function", "A key or key combination", "An analog control", "An MFD button", "A shift layer", "Head tracking",
 		vesselProfile ? "Nothing (takes this control's Global binding away)" : "Nothing"});
 	lo->addWidget (m_type);
 	m_pages = new QStackedWidget (go);
@@ -228,6 +229,14 @@ BindDialog::BindDialog (InputSystem *inp, const Binding &init, bool haveInput, b
 	ll->addWidget (new QLabel ("Layer", pl)), ll->addWidget (m_lnum), ll->addWidget (m_latch), ll->addStretch (1);
 	m_pages->addWidget (pl);
 
+	auto *ph = new QWidget (m_pages); // head tracking (not upstream: head-track)
+	auto *lh = new QHBoxLayout (ph);
+	lh->setContentsMargins (0, 0, 0, 0);
+	m_ht = new QComboBox (ph);
+	m_ht->addItems ({"Centre the view on the head as it is now", "Head tracking on or off"});
+	lh->addWidget (m_ht), lh->addStretch (1);
+	m_pages->addWidget (ph);
+
 	m_pages->addWidget (new QLabel (vesselProfile ? "This vessel class doesn't use the control's binding from Global." : "", m_pages));
 	top->addWidget (go);
 
@@ -258,6 +267,7 @@ BindDialog::BindDialog (InputSystem *inp, const Binding &init, bool haveInput, b
 	case IOUT_AXIS: page = P_AXIS; break;
 	case IOUT_MFD: page = P_MFD; break;
 	case IOUT_LAYER: page = P_LAYER; break;
+	case IOUT_HEADTRACK: page = P_HEADTRACK; break;
 	case IOUT_NONE: page = (haveInput && m_b.line ? P_NONE : (m_b.in.kind == INK_AXIS ? P_AXIS : P_FUNC)); break;
 	}
 	if (m_b.out == IOUT_KEY) {
@@ -276,13 +286,14 @@ BindDialog::BindDialog (InputSystem *inp, const Binding &init, bool haveInput, b
 		m_mfdbtn->setCurrentIndex (std::max (0, m_mfdbtn->findData (m_b.mfdbtn)));
 	}
 	if (m_b.out == IOUT_LAYER) m_lnum->setValue (std::max (1, m_b.lnum)), m_latch->setChecked (m_b.latch);
+	if (m_b.out == IOUT_HEADTRACK) m_ht->setCurrentIndex (m_b.ht == IHT_TOGGLE ? 1 : 0);
 	m_type->setCurrentIndex (page);
 	m_pages->setCurrentIndex (page);
 
 	// signals
 	auto changed = [this]() { InputChanged (); };
 	connect (m_type, &QComboBox::currentIndexChanged, this, [this](int i) { m_pages->setCurrentIndex (i); InputChanged (); });
-	for (QComboBox *c : {m_layer, m_mode, m_view, m_key, m_chan, m_amode, m_mfd, m_mfdbtn})
+	for (QComboBox *c : {m_layer, m_mode, m_view, m_key, m_chan, m_amode, m_mfd, m_mfdbtn, m_ht})
 		connect (c, &QComboBox::currentIndexChanged, this, changed);
 	for (QCheckBox *c : {m_zone, m_pass, m_shift, m_ctrl, m_alt, m_invert, m_half, m_pickup, m_latch})
 		connect (c, &QCheckBox::toggled, this, changed);
@@ -448,6 +459,10 @@ Binding BindDialog::Collect () const
 		b.out = IOUT_LAYER;
 		b.lnum = m_lnum->value();
 		b.latch = m_latch->isChecked();
+		break;
+	case P_HEADTRACK:
+		b.out = IOUT_HEADTRACK;
+		b.ht = m_ht->currentIndex() == 1 ? IHT_TOGGLE : IHT_CENTER;
 		break;
 	default:
 		b.out = IOUT_NONE;
@@ -659,6 +674,8 @@ BOOL OptionsPage_Controls::OnInitDialog(QWidget *hPage)
 	m_background->setToolTip ("For cockpits with more windows (external MFDs, a map on another screen): the controllers keep flying when another window has the focus");
 	ld->addWidget (m_background);
 	top->addWidget (gd);
+	m_head = new HeadTrackBox (body); // not upstream (head-track)
+	top->addWidget (m_head);
 
 	// the bindings
 	auto *gb = new QGroupBox ("Bindings", body);
@@ -752,6 +769,7 @@ void OptionsPage_Controls::Tick()
 {
 	InputSystem *inp = g_pOrbiter->GetInput();
 	if (m_page && HParent() && m_page->size() != HParent()->size()) m_page->resize (HParent()->size()); // fills the pane, as Planet streaming
+	if (m_head && m_head->Tick (m_devs && m_devs->isVisible())) Reload (); // not upstream (head-track): the first TrackIR's keys were bound
 	if (!inp || !m_devs || !m_devs->isVisible()) return;
 	inp->Engine().SetMuted (true); // nothing acts on the Launchpad
 	inp->SetDevicesOff (false);    // ... so the live values show while controllers are off for flight
@@ -883,6 +901,7 @@ void OptionsPage_Controls::FillBindings()
 	if (keep >= 0 && keep < m_binds->rowCount()) m_binds->selectRow (keep);
 	int r = m_binds->currentRow();
 	m_change->setEnabled (r >= 0), m_remove->setEnabled (r >= 0 && r < (int)p.binds.size());
+	if (m_head) m_head->Keys (); // not upstream (head-track)
 }
 
 void OptionsPage_Controls::ShowZones()

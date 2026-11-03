@@ -104,6 +104,9 @@ TEST_CASE("binding lines read and written", "[bindings]")
 		"Pedals.Z = AXIS BrakeL HALF",
 		"Box.B22 = AXIS Main1 SET 0.5",
 		"Box.B23 = NONE",
+		"Key.F12 = HEADTRACK CENTER",
+		"Key.F12 CTRL = HEADTRACK TOGGLE",
+		"Stick.B5 @1 = HEADTRACK TOGGLE",
 	};
 	for (const char *l : lines) {
 		Binding b = Parse (l);
@@ -135,6 +138,9 @@ TEST_CASE("binding lines read and written", "[bindings]")
 		"Mouse.Stick = KEY G",
 		"Key.Stick.B1 = KEY G",
 		"Box.B1 = MFD 13 B1",
+		"Stick.X = HEADTRACK CENTER",    // an axis drives a channel
+		"Box.B1 = HEADTRACK",
+		"Box.B1 = HEADTRACK LEFT",
 	};
 	for (const char *l : bad) {
 		Binding x;
@@ -281,6 +287,25 @@ TEST_CASE("button modes and one-frame presses", "[bindings]")
 	REQUIRE(Downs (e.Step (0.02), OAPI_KEY_M) == 0);
 	Btn (e, 2, 5, 0);
 	REQUIRE(Downs (e.Step (0.02), OAPI_KEY_M) == 1);
+}
+
+TEST_CASE("head tracking presses: one each, none while a text box has the keys", "[bindings]") // not upstream (head-track)
+{
+	InputEngine e;
+	e.SetBindings (Binds ({ "Box.B1 = HEADTRACK CENTER", "Box.B2 HOLD = HEADTRACK TOGGLE" }));
+	InputDevice d = Dev (4, 4, {});
+	e.AttachDevice (d, "Box");
+	Btn (e, 4, 0, 1);
+	const InputFrame *f = &e.Step (0.02);
+	REQUIRE(f->ht == std::vector<int>{IHT_CENTER});
+	REQUIRE(e.Step (0.02).ht.empty ());
+	Btn (e, 4, 0, 0);
+	REQUIRE(e.Step (0.02).ht.empty ()); // the release does nothing
+	Btn (e, 4, 1, 1); Btn (e, 4, 1, 0);
+	REQUIRE(e.Step (0.02).ht == std::vector<int>{IHT_TOGGLE});
+	e.SetSuspended (true); // a text box
+	Btn (e, 4, 0, 1); Btn (e, 4, 0, 0);
+	REQUIRE(e.Step (0.02).ht.empty ());
 }
 
 TEST_CASE("key combinations carry their modifiers", "[bindings]")

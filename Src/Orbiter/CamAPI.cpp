@@ -31,7 +31,7 @@ ExternalCameraControl::ExternalCameraControl (DWORD dmode, DWORD cmode)
 
 void ExternalCameraControl::SetDataMode (DWORD mode)
 {
-	datamode = mode & 0x2F;
+	datamode = mode & 0x3F; // not upstream (head-track): 0x2F lost CAMDATA_PITCH
 }
 
 DWORD ExternalCameraControl::GetDataMode () const

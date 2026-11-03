@@ -294,6 +294,7 @@ public:
 	// Interface for external camera control
 	bool RegisterExternalControl (ExternalCameraControl *ecc);
 	bool UnregisterExternalControl ();
+	ExternalCameraControl *ExternalControl () const { return ECC; } // not upstream (head-track)
 
 private:
 	void SetViewInternal ();
@@ -399,6 +400,7 @@ private:
 	mutable std::vector<ElevationTile> etile;
 
 	ExternalCameraControl *ECC;
+	double vcroll;          // not upstream (head-track): the control's roll in the VC [rad]
 
 };
 

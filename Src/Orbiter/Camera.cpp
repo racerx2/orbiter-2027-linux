@@ -90,6 +90,7 @@ Camera::Camera (double _nearplane, double _farplane)
 	VMAT_identity (view_mat);
 	SetFrustumLimits (nearplane, farplane);
 	ECC = 0;
+	vcroll = 0.0; // not upstream (head-track)
 	etile.resize(8);
 }
 
@@ -887,7 +888,7 @@ DWORD Camera::UpdateExternalControl (ExternalCameraControl *ecc)
 	if (external_view) {
 		if (extmode == CAMERA_GROUNDOBSERVER) { // ground mode
 			if (cmode & CAMMODE_GROUND) {
-				ExternalCameraControl::CamData data;
+				ExternalCameraControl::CamData data = {}; // not upstream (head-track): an add-on that leaves roll unset gives 0
 				if (ECC->clbkPoll (&data)) {
 					go.phi = data.yaw;
 					go.tht = data.pitch;
@@ -895,7 +896,7 @@ DWORD Camera::UpdateExternalControl (ExternalCameraControl *ecc)
 			}
 		} else { // track mode
 			if (cmode & CAMMODE_TRACK) {
-				ExternalCameraControl::CamData data;
+				ExternalCameraControl::CamData data = {}; // not upstream (head-track): an add-on that leaves roll unset gives 0
 				if (ECC->clbkPoll (&data)) {
 					const ExternalCameraControl::TrackMode *trkmode = ECC->GetTrackMode();
 					double vel, datax, datay;
@@ -956,11 +957,12 @@ DWORD Camera::UpdateExternalControl (ExternalCameraControl *ecc)
 			break;
 		}
 		if (extctrl) {
-			ExternalCameraControl::CamData data;
+			ExternalCameraControl::CamData data = {}; // not upstream (head-track): an add-on that leaves roll unset gives 0
 			if (ECC->clbkPoll (&data)) {
 				if (dorot) {
 					double yaw = data.yaw*rotscale;
 					double pitch = data.pitch*rotscale;
+					vcroll = (intmode == CAMERA_VIRTUALCOCKPIT && (ECC->GetDataMode() & CAMDATA_ROLL) ? data.roll*rotscale : 0.0); // not upstream (head-track)
 					if (dragrot) {
 						cntr_phi = yaw;
 						cntr_tht = pitch;
@@ -1003,6 +1005,7 @@ void Camera::Update ()
 	// is copied back to state S0
 
 	ExtCtrlMode = 0;
+	if (!ECC || external_view || intmode != CAMERA_VIRTUALCOCKPIT || !(ECC->GetCameraMode() & CAMMODE_VC)) vcroll = 0.0; // not upstream (head-track): roll only in the VC, while a control gives it
 	if (ECC) ExtCtrlMode = UpdateExternalControl (ECC);
 
 	// get a list of current visuals
@@ -1244,6 +1247,7 @@ void Camera::Update ()
 		}
 
 		grot.Set (target->GRot() * (isStdDir ? rrot : rrot0*rrot));
+		if (vcroll) grot.postmul (Matrix (cos(vcroll), -sin(vcroll), 0, sin(vcroll), cos(vcroll), 0, 0, 0, 1)); // not upstream (head-track): the head's roll, as a cockpit's tilt
 		gspos.Set (mul (target->GRot(), *rofs + rpos + eyeofs));
 		gpos.Set (gspos + target->GPos());
 		GPOS = MakeVECTOR3 (gpos);

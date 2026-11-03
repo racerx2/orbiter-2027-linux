@@ -35,6 +35,7 @@ class ImageIO;
 class TileStream; // not upstream
 class QKeyEvent;  // not upstream (input-bindings)
 class QWheelEvent;
+class HeadTrack;  // not upstream (head-track)
 struct StreamTrack; // not upstream
 namespace orbiter {
 	class ConsoleNG;
@@ -186,6 +187,7 @@ public:
 	inline KeyboardDevice *GetKbdDevice() const { return pDI->GetKbdDevice(); }
 	// GetJoyDevice left out: controllers are InputDevices (input-bindings)
 	inline InputSystem *GetInput() const { return m_input; } // not upstream (input-bindings)
+	inline HeadTrack *GetHeadTrack() const { return m_headTrack; } // not upstream (head-track)
 
 	// memory monitor
 	MemStat *memstat;
@@ -397,6 +399,7 @@ private:
 	bool            bWINEenv;      // we are running under Linux/WINE
 	InputDevices   *m_inputDevs;   // not upstream (input-bindings): every controller
 	InputSystem    *m_input;       // not upstream: the bindings in Config/Input
+	HeadTrack      *m_headTrack;   // not upstream (head-track): the TrackIR
 	Vessel         *m_inputFocus;  // not upstream: the vessel whose profile is bound
 	int             m_wheelAcc[2]; // not upstream: wheel steps short of a notch
 	int             video_skip_count; // count skipped frames for frame sequence capturing

@@ -63,6 +63,7 @@
 #include "SleepWatch.h"
 #include "TileStream.h" // not upstream
 #include "KernelInstall.h" // not upstream
+#include "HeadTrack.h" // not upstream (head-track)
 #include <filesystem>
 
 static std::function<std::string (const std::string &)> StreamBodyDir (class Config *cfg); // not upstream: TileStream.cpp tile folders
@@ -328,6 +329,7 @@ Orbiter::Orbiter ()
 	pDI             = new DInput(this); TRACENEW
 	m_inputDevs     = NULL; // not upstream (input-bindings)
 	m_input         = NULL;
+	m_headTrack     = NULL; // not upstream (head-track)
 	m_inputFocus    = NULL;
 	m_wheelAcc[0]   = m_wheelAcc[1] = 0;
 	pConfig         = new Config; TRACENEW
@@ -443,6 +445,7 @@ int Orbiter::Create (void *hInstance)
 		m_input->Engine().SetMuted (true); // the Launchpad: nothing acts until a session runs
 		keymap.SetHeld (m_input->Engine().Frame().func);
 		InputLog ();
+		m_headTrack = new HeadTrack (dir); TRACENEW // not upstream (head-track): Config/TrackIR.cfg
 	}
 
     pState = new State(); TRACENEW
@@ -520,6 +523,8 @@ VOID Orbiter::CloseApp (bool fast_shutdown)
 {
 	SaveConfig();
 	while (m_Plugin.size()) UnloadModule (m_Plugin.begin()->hDLL);
+	delete m_headTrack; // not upstream (head-track): the TrackIR stopped, its lights off, on a fast exit too
+	m_headTrack = NULL;
 
 	if (bRoughType)
 		DeactivateRoughType();
@@ -944,6 +949,7 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 		CHECKCWD(cwd, it->sName.c_str());
 		ProcessLoadingEvents (); // not upstream (loading-events)
 	}
+	if (m_headTrack && hRenderWnd) m_headTrack->SessionStart (); // not upstream (head-track): after the plugins, so a module's own camera control comes first; none without a view (headless runs)
 
 	if (g_pane) {
 		g_pane->InitState (ScnPath (scenario));
@@ -991,6 +997,7 @@ void Orbiter::CloseSession ()
 	ExitRotationMode (); // not upstream: a session closed mid right-drag keeps the blank cursor and bKeepFocus otherwise
 	WlShortcutsDetach (); // before the render window's surface goes: KWin keeps an inhibitor of a destroyed surface
 	InputSessionEnd (); // not upstream (input-bindings): keys held by bindings go up for the focus vessel
+	if (m_headTrack) m_headTrack->SessionEnd (); // not upstream (head-track)
 
 	if      (bRecord)   ToggleRecorder();
 	else if (bPlayback) EndPlayback();
@@ -2478,6 +2485,7 @@ static uint16_t KstateMods (const char *ks)
 
 const InputFrame &Orbiter::InputStep (bool skipkbd)
 {
+	if (m_headTrack) m_headTrack->Poll (m_input); // not upstream (head-track): its state logged, the keys for the first TrackIR
 	InputEngine &e = m_input->Engine();
 	InputFrame rel;
 	e.SetMuted (m_input->HeldBack(), &rel); // the Controls page captures or calibrates: nothing acts (controls-editor)
@@ -2500,6 +2508,7 @@ const InputFrame &Orbiter::InputStep (bool skipkbd)
 void Orbiter::InputIdle ()
 {
 	if (!m_input) return;
+	if (m_headTrack) m_headTrack->Poll (m_input); // not upstream (head-track)
 	InputFrame rel;
 	m_input->Engine().SetMuted (true, &rel); // no focus: nothing acts, the controllers' state is kept current
 	InputRelease (rel);
@@ -2535,6 +2544,7 @@ void Orbiter::InputEvents (const InputFrame &inp, const char *phys)
 			else if (m.btn == IMFD_PWR) g_pane->ToggleMFD_on (m.mfd);
 			else g_pane->MFDConsumeKeyBuffered (m.mfd, m.btn == IMFD_SEL ? OAPI_KEY_F1 : OAPI_KEY_GRAVE);
 		}
+	if (m_headTrack) for (int a : inp.ht) m_headTrack->Action (a); // not upstream (head-track): HEADTRACK CENTER and TOGGLE
 }
 
 void Orbiter::InputRelease (InputFrame &rel, Vessel *v)
