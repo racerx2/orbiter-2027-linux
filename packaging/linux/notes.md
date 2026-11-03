@@ -35,6 +35,9 @@ One package for all of them: it is built on AlmaLinux 9 (glibc 2.34) and brings 
 A Vulkan 1.3 driver: Mesa (AMD, Intel) or NVIDIA. Drivers without `VK_EXT_shader_object` (Intel, older AMD Mesa) use the Khronos shader-object layer included in `lib/vulkan`.
 
 ## Included
-Qt 6.8 and the other libraries that differ between distributions (`lib/`), the Orbiter User Manual, Developer Manual and Technical Reference (`Doc/`). Built with GCC 14; the build scripts are in `packaging/linux`.
+Qt 6.12 and the other libraries that differ between distributions (`lib/`), the Orbiter User Manual, Developer Manual and Technical Reference (`Doc/`). Built with GCC 14, hardened; the build scripts are in `packaging/linux`.
+
+## Checking the download
+`@NAME@.tar.xz.sig` is an SSH signature with the release key in `packaging/linux/allowed_signers`: `ssh-keygen -Y verify -f allowed_signers -I orbiter-2027-linux-release -n file -s @NAME@.tar.xz.sig < @NAME@.tar.xz` prints "Good" (README-LINUX.txt).
 
 Not covered: glibc older than 2.34 (Ubuntu 20.04, Debian 11, openSUSE Leap 15), ARM.

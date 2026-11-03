@@ -8,12 +8,14 @@
 #include "VkTexFile.h"
 #include "VkGltfImage.h"
 #include "Log.h"
+#include "OrbiterAPI.h" // not upstream: oapiGltfImageRef
 #include <QImage>
 #include <QImageReader>
 #include <QFile>
 #include <algorithm>
 #include <cstring>
 #include <cmath>
+#include <memory>
 
 typedef float RGBAf[4];
 
@@ -363,54 +365,115 @@ static void DecodeLevel (const BYTE *src, VkFormat fmt, VkSwz swz, UINT w, UINT 
 	for (size_t i = 0; i < (size_t)w * h; i++) DecodePixel (src + i*bs, fmt, swz, &out[i*4]);
 }
 
-static void EncodeLevel (const std::vector<float> &in, UINT w, UINT h, VkFormat fmt, VkSwz swz, std::vector<BYTE> &out)
-{
-	out.assign (VkLevelSize (fmt, w, h), 0);
-	if (IsBC (fmt)) {
-		UINT bs = VkFormatBlockSize (fmt);
-		UINT bx = (w + 3) / 4, by = (h + 3) / 4;
-		RGBAf blk[16];
-		for (UINT y = 0; y < by; y++)
-			for (UINT x = 0; x < bx; x++) {
-				for (UINT j = 0; j < 4; j++)
-					for (UINT i = 0; i < 4; i++) {
-						UINT px = std::min (x*4 + i, w - 1), py = std::min (y*4 + j, h - 1); // edge blocks repeat the border
-						memcpy (blk[j*4 + i], &in[((size_t)py*w + px)*4], 16);
-					}
-				EncodeBlock (blk, fmt, &out[(y*bx + x)*bs]);
-			}
-		return;
-	}
-	UINT bs = VkFormatBlockSize (fmt);
-	for (size_t i = 0; i < (size_t)w * h; i++) EncodePixel (&in[i*4], fmt, swz, &out[i*bs]);
-}
+// not upstream (design-security-fixes C11): the levels are made in bands, a few rows of each at a time; a whole level as floats
+// took 16 bytes a texel (more than 4 GB for a 16384 DXT1). The results are the same as the whole-level box average and bilinear
+// resample: the same sums in the same order
 
-// bilinear resampling (box average when halving)
-static void Resample (const std::vector<float> &in, UINT w, UINT h, std::vector<float> &out, UINT nw, UINT nh)
+// one level's rows as they come in order: encoded into its bytes (unless out is NULL) and passed on to make the next level
+struct MipSink {
+	UINT w, h;
+	VkFormat fmt;
+	VkSwz swz;
+	std::vector<BYTE> *out;  // NULL: not encoded (copied verbatim, or a step to the wanted size)
+	MipSink *next = nullptr; // the level made from this one
+	std::vector<float> blk, rp, rl, row; // the encoder's block row (4 rows), the last two rows, a made row
+	int ip = -1, il = -1;    // the last two rows' indices
+	UINT made = 0;           // the next level's rows made (emit is Qt's macro)
+
+	MipSink (UINT _w, UINT _h, VkFormat _fmt, VkSwz _swz, std::vector<BYTE> *_out) : w (_w), h (_h), fmt (_fmt), swz (_swz), out (_out)
+	{
+		if (out) out->assign (VkLevelSize (fmt, w, h), 0);
+	}
+
+	void Encode (const float *r, UINT y)
+	{
+		if (!IsBC (fmt)) {
+			UINT bs = VkFormatBlockSize (fmt);
+			for (UINT x = 0; x < w; x++) EncodePixel (&r[x*4], fmt, swz, &(*out)[((size_t)y*w + x)*bs]);
+			return;
+		}
+		blk.resize ((size_t)w * 16);
+		memcpy (&blk[(size_t)(y % 4) * w * 4], r, (size_t)w * 16);
+		if (y % 4 != 3 && y != h - 1) return;
+		UINT bs = VkFormatBlockSize (fmt);
+		UINT bx = (w + 3) / 4, by = y / 4;
+		RGBAf b[16];
+		for (UINT x = 0; x < bx; x++) {
+			for (UINT j = 0; j < 4; j++)
+				for (UINT i = 0; i < 4; i++) {
+					UINT px = std::min (x*4 + i, w - 1), py = std::min (by*4 + j, h - 1); // edge blocks repeat the border
+					memcpy (b[j*4 + i], &blk[((size_t)(py % 4) * w + px)*4], 16);
+				}
+			EncodeBlock (b, fmt, &(*out)[((size_t)by*bx + x)*bs]);
+		}
+	}
+
+	// the next level's rows that this row completes: a box average when it halves, else bilinear
+	void Push (const float *r, UINT y)
+	{
+		if (out) Encode (r, y);
+		if (!next) return;
+		rp.swap (rl);
+		ip = il;
+		rl.assign (r, r + (size_t)w * 4);
+		il = (int)y;
+		const UINT nw = next->w, nh = next->h;
+		const bool half = nw * 2 == w && nh * 2 == h;
+		row.resize ((size_t)nw * 4);
+		for (; made < nh; made++) {
+			UINT e = made;
+			if (half) {
+				if ((int)(2*e + 1) > il) break;
+				const float *a = rp.data (), *b = rl.data (); // rows 2e and 2e+1
+				for (UINT x = 0; x < nw; x++)
+					for (int k = 0; k < 4; k++)
+						row[(size_t)x*4 + k] = 0.25f * (a[(size_t)(2*x)*4 + k] + a[(size_t)(2*x+1)*4 + k] + b[(size_t)(2*x)*4 + k] + b[(size_t)(2*x+1)*4 + k]);
+			}
+			else {
+				float fy = std::clamp ((e + 0.5f) * h / nh - 0.5f, 0.0f, (float)(h - 1));
+				UINT y0 = (UINT)fy, y1 = std::min (y0 + 1, h - 1);
+				if ((int)y1 > il) break;
+				float ty = fy - y0;
+				const float *a = ((int)y0 == il) ? rl.data () : rp.data (), *b = ((int)y1 == il) ? rl.data () : rp.data ();
+				for (UINT x = 0; x < nw; x++) {
+					float fx = std::clamp ((x + 0.5f) * w / nw - 0.5f, 0.0f, (float)(w - 1));
+					UINT x0 = (UINT)fx, x1 = std::min (x0 + 1, w - 1);
+					float tx = fx - x0;
+					for (int k = 0; k < 4; k++) {
+						float s0 = a[(size_t)x0*4 + k] * (1-tx) + a[(size_t)x1*4 + k] * tx;
+						float s1 = b[(size_t)x0*4 + k] * (1-tx) + b[(size_t)x1*4 + k] * tx;
+						row[(size_t)x*4 + k] = s0 * (1-ty) + s1 * ty;
+					}
+				}
+			}
+			next->Push (row.data (), e);
+		}
+	}
+};
+
+// a stored level's rows, decoded in order into sink (as DecodeLevel)
+static void DecodeRows (const BYTE *src, VkFormat fmt, VkSwz swz, UINT w, UINT h, MipSink *sink)
 {
-	out.assign ((size_t)nw * nh * 4, 0.0f);
-	if (nw * 2 == w && nh * 2 == h) {
-		for (UINT y = 0; y < nh; y++)
-			for (UINT x = 0; x < nw; x++)
-				for (int k = 0; k < 4; k++)
-					out[((size_t)y*nw + x)*4 + k] = 0.25f * (in[((size_t)(2*y)*w + 2*x)*4 + k] + in[((size_t)(2*y)*w + 2*x+1)*4 + k] +
-						in[((size_t)(2*y+1)*w + 2*x)*4 + k] + in[((size_t)(2*y+1)*w + 2*x+1)*4 + k]);
+	UINT bs = VkFormatBlockSize (fmt);
+	if (IsBC (fmt)) {
+		UINT bx = (w + 3) / 4, by = (h + 3) / 4;
+		std::vector<float> rows ((size_t)w * 16, 0.0f);
+		RGBAf blk[16];
+		for (UINT y = 0; y < by; y++) {
+			for (UINT x = 0; x < bx; x++) {
+				DecodeBlock (src + ((size_t)y*bx + x)*bs, fmt, blk);
+				for (UINT j = 0; j < 4; j++)
+					for (UINT i = 0; i < 4; i++)
+						if (x*4 + i < w) memcpy (&rows[((size_t)j*w + x*4 + i)*4], blk[j*4 + i], 16);
+			}
+			for (UINT j = 0; j < 4 && y*4 + j < h; j++) sink->Push (&rows[(size_t)j*w*4], y*4 + j);
+		}
 		return;
 	}
-	for (UINT y = 0; y < nh; y++) {
-		float fy = std::clamp ((y + 0.5f) * h / nh - 0.5f, 0.0f, (float)(h - 1));
-		UINT y0 = (UINT)fy, y1 = std::min (y0 + 1, h - 1);
-		float ty = fy - y0;
-		for (UINT x = 0; x < nw; x++) {
-			float fx = std::clamp ((x + 0.5f) * w / nw - 0.5f, 0.0f, (float)(w - 1));
-			UINT x0 = (UINT)fx, x1 = std::min (x0 + 1, w - 1);
-			float tx = fx - x0;
-			for (int k = 0; k < 4; k++) {
-				float a = in[((size_t)y0*w + x0)*4 + k] * (1-tx) + in[((size_t)y0*w + x1)*4 + k] * tx;
-				float b = in[((size_t)y1*w + x0)*4 + k] * (1-tx) + in[((size_t)y1*w + x1)*4 + k] * tx;
-				out[((size_t)y*nw + x)*4 + k] = a * (1-ty) + b * ty;
-			}
-		}
+	std::vector<float> row ((size_t)w * 4);
+	for (UINT y = 0; y < h; y++) {
+		for (UINT x = 0; x < w; x++) DecodePixel (src + ((size_t)y*w + x)*bs, fmt, swz, &row[(size_t)x*4]);
+		sink->Push (row.data (), y);
 	}
 }
 
@@ -659,7 +722,7 @@ bool VkIsGltfImage (const char *name)
 bool VkLoadGltfImage (const char *name, VkPixels &px)
 {
 	VkGltfRef r;
-	if (!VkParseGltfRef (name, r)) return false;
+	if (!oapiGltfImageRef (name) || !VkParseGltfRef (name, r)) return false; // not upstream: only a reference the loader made (a texture name could name any file)
 	QFile f (QString::fromUtf8 (r.file));
 	if (!f.open (QIODevice::ReadOnly) || (unsigned long long)f.size() < r.off + r.len || !f.seek ((qint64)r.off)) return false;
 	QByteArray b = f.read ((qint64)r.len);
@@ -733,8 +796,12 @@ bool VkConvertPixels (const VkPixels &in, VkPixels &out, VkFormat fmt, VkSwz swz
 	out.w = w; out.h = h; out.depth = 1; out.levels = levels; out.layers = in.layers;
 	out.fmt = fmt; out.swz = swz;
 	out.data.assign (out.layers * levels, std::vector<BYTE>());
-	std::vector<float> cur, next;
 	for (UINT f = 0; f < in.layers; f++) {
+		// not upstream (C11): each level a sink; a stored level starts a chain decoded from it, a made level hangs on the one above
+		std::vector<std::unique_ptr<MipSink>> sinks;
+		struct Root { const BYTE *src; UINT w, h; MipSink *sink; };
+		std::vector<Root> roots;
+		MipSink *tail = nullptr;
 		UINT lw = w, lh = h;
 		for (UINT l = 0; l < levels; l++) {
 			UINT iw = std::max (1u, in.w >> l), ih = std::max (1u, in.h >> l);
@@ -743,26 +810,25 @@ bool VkConvertPixels (const VkPixels &in, VkPixels &out, VkFormat fmt, VkSwz swz
 			const bool nextStored = (l + 1 < in.levels) && std::max (1u, iw >> 1) == std::max (1u, lw >> 1) && std::max (1u, ih >> 1) == std::max (1u, lh >> 1);
 			if (verbatim && !(l + 1 < levels && !nextStored)) { // nothing is generated from it
 				out.Level (l, f) = in.Level (l, f);
-				lw = std::max (1u, lw >> 1);
-				lh = std::max (1u, lh >> 1);
-				continue;
+				tail = nullptr;
 			}
-			if (stored) DecodeLevel (in.Level (l, f).data(), in.fmt, in.swz, lw, lh, cur); // stored level
-			else if (l == 0) {
-				std::vector<float> src;
-				DecodeLevel (in.Level (0, f).data(), in.fmt, in.swz, in.w, in.h, src);
-				Resample (src, in.w, in.h, cur, lw, lh);
+			else {
+				if (verbatim) out.Level (l, f) = in.Level (l, f); // decoded only for the level generated from it
+				sinks.push_back (std::make_unique<MipSink> (lw, lh, fmt, swz, verbatim ? nullptr : &out.Level (l, f)));
+				MipSink *s = sinks.back ().get ();
+				if (stored) roots.push_back ({ in.Level (l, f).data (), lw, lh, s }); // stored level
+				else if (l == 0) { // resampled from the stored level 0
+					sinks.push_back (std::make_unique<MipSink> (in.w, in.h, in.fmt, in.swz, nullptr));
+					sinks.back ()->next = s;
+					roots.push_back ({ in.Level (0, f).data (), in.w, in.h, sinks.back ().get () });
+				}
+				else tail->next = s; // generated from the level above (D3DX_FILTER_BOX)
+				tail = s;
 			}
-			else { // generated from the level above (D3DX_FILTER_BOX)
-				UINT pw = std::max (1u, w >> (l-1)), ph = std::max (1u, h >> (l-1));
-				Resample (next, pw, ph, cur, lw, lh);
-			}
-			if (verbatim) out.Level (l, f) = in.Level (l, f); // decoded only for the level generated from it
-			else EncodeLevel (cur, lw, lh, fmt, swz, out.Level (l, f));
-			next.swap (cur);
 			lw = std::max (1u, lw >> 1);
 			lh = std::max (1u, lh >> 1);
 		}
+		for (const Root &r : roots) DecodeRows (r.src, in.fmt, in.swz, r.w, r.h, r.sink);
 	}
 	return true;
 }
@@ -784,6 +850,10 @@ bool VkUploadPixels (VkTex *t, const VkPixels &px)
 {
 	// one staging buffer and one copy for all levels and faces (in the open frame on the render thread, else one submit)
 	VkDev *dev = t->Device ();
+	if (!t->img || px.w != t->w || px.h != t->h || px.depth != t->depth || px.layers > t->layers || ((px.depth > 1) ? 1 : px.levels) > t->levels) { // not upstream: a copy never reaches past the image
+		LogErr("VkUploadPixels: %ux%ux%u, %u levels, %u layers don't fit the %ux%ux%u texture (%u levels, %u layers)", px.w, px.h, px.depth, px.levels, px.layers, t->w, t->h, t->depth, t->levels, t->layers);
+		return false;
+	}
 	VkDeviceSize total = 0;
 	for (auto &d : px.data) total += (d.size() + 15) & ~15ull;
 	VkBuf staging (dev, std::max (total, (VkDeviceSize)16), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true);

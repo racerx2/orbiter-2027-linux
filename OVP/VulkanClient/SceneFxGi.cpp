@@ -388,7 +388,11 @@ bool SceneFx::GiRt (VkSurf *target, vPlanet *vp, ConstParams *cp, const DdgiGiPS
 DdgiPass *SceneFx::InPlacePass (VkSurf *target) const
 {
 	if (!gi || !target || !target->tex) return NULL;
-	return target->tex->samples == VK_SAMPLE_COUNT_1_BIT ? gi->pComp : gi->pCompMS;
+	if (!(target->tex->usage & VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)) return NULL; // not upstream: only a target made for it
+	DdgiPass *p = target->tex->samples == VK_SAMPLE_COUNT_1_BIT ? gi->pComp : gi->pCompMS;
+	static bool logged;
+	if (p && !logged) { logged = true; LogAlw("SceneFx: GI composite reads its target in place (%s)", target->tex->samples == VK_SAMPLE_COUNT_1_BIT ? "single-sampled" : "multisampled"); }
+	return p;
 }
 
 bool SceneFx::InPlace (VkSurf *target) const { return InPlacePass(target) != NULL; }

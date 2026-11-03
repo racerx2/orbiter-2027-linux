@@ -35,7 +35,7 @@ struct WaterTile {
 	std::vector<uint64_t> bits;      // Raster x Raster from the north-west, water set
 	std::vector<float> shore;        // segments as unit vectors on the sphere: x0, y0, z0, x1, y1, z1
 	std::vector<float> mid;          // each segment's middle in the tile, 0 to 1: x, y
-	void Build (int z, int x, int y, const std::vector<Feature> &water, uint32_t extent);
+	bool Build (int z, int x, int y, const std::vector<Feature> &water, uint32_t extent); // false: past the work caps, no mask
 	bool Water (double fx, double fy) const; // fx, fy: the place in the tile, 0 to 1
 	bool Bit (int px, int py) const { return (bits[((size_t)py * Raster + px) >> 6] >> (((size_t)py * Raster + px) & 63)) & 1; }
 };

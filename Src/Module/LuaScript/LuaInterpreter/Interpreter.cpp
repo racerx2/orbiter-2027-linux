@@ -8,6 +8,8 @@
 #include "MFDAPI.h"
 #include "DrawAPI.h"
 #include "gcCoreAPI.h"
+#include "Confine.h" // not upstream: content scripts kept to the Orbiter folder
+#include <Lua/lua_handles.h> // not upstream
 #include <list>
 #include <cstring> // windows.h brought the C string functions
 #include <iterator>
@@ -17,6 +19,7 @@
 #include <chrono>
 #include <strings.h>
 #include <string>
+#include <vector>
 #include <algorithm>
 
 using std::min;
@@ -77,7 +80,6 @@ typedef struct {
 
 
 
-std::list<NOTEHANDLE *> g_notehandles;
 
 int OpenHelp (void *context);
 
@@ -118,6 +120,9 @@ Interpreter::Interpreter ()
 	hExecMutex = new ExecMutex (true);  // CreateMutex, owned by the creating thread
 	hWaitMutex = new ExecMutex (false); // CreateMutex
 
+	std::lock_guard<std::mutex> lock (liveLock); // not upstream
+	liveInterps.insert (this);
+
 }
 
 void Interpreter::LazyInitGCCore() {
@@ -135,6 +140,13 @@ static int traceback(lua_State *L) {
     return 1;
 }
 
+// not upstream: a non-string error object (error({}), error()) as text, never NULL
+static const char *ErrorText (lua_State *L, int idx)
+{
+	if (const char *s = lua_tostring (L, idx)) return s;
+	return lua_pushfstring (L, "(error object is a %s value)", luaL_typename (L, idx));
+}
+
 int Interpreter::LuaCall(lua_State *L, int narg, int nres)
 {
 	int base = lua_gettop(L) - narg;
@@ -143,7 +155,7 @@ int Interpreter::LuaCall(lua_State *L, int narg, int nres)
 	int res = lua_pcall(L, narg, nres, base);
 	lua_remove(L, base);
 	if(res != 0) {
-		const char *msg = lua_tostring(L, -1);
+		const char *msg = ErrorText(L, -1); // not upstream: never NULL
 		// Lua "threads" that are terminated when the scenario ends generate "Lua thread terminated" errors
 		// This is expected and should not generate logs/notifications
 		// Warning: the string must match with the one in oapi_init.lua: proc.skip ()
@@ -158,6 +170,10 @@ int Interpreter::LuaCall(lua_State *L, int narg, int nres)
 
 Interpreter::~Interpreter ()
 {
+	{
+		std::lock_guard<std::mutex> lock (liveLock); // not upstream
+		liveInterps.erase (this);
+	}
 	lua_close (L);
 
 	if (hExecMutex) delete hExecMutex; // CloseHandle
@@ -183,6 +199,10 @@ static int resolved_searcher (lua_State *L)
 	const char *pname = lua_tostring (L, lua_upvalueindex (2)); // "path" or "cpath"
 	luaL_checkstring (L, 1);
 	lua_settop (L, 1);
+	if (strpbrk (lua_tostring (L, 1), ";?")) { // not upstream: they would make template entries of their own (a path of the name's choosing)
+		lua_pushfstring (L, "\n\tmodule name '%s' has ';' or '?'", lua_tostring (L, 1));
+		return 1;
+	}
 	lua_getfenv (L, lua_upvalueindex (1)); // 2: the package table (the searcher's environment)
 	lua_getfield (L, 2, pname);            // 3: template list as set
 	if (lua_type (L, 3) == LUA_TSTRING) {
@@ -255,11 +275,27 @@ static void SetPackagePaths (lua_State *L)
 	lua_pop (L, 1);
 }
 
+// not upstream: once its interpreter is terminated, a script ends at its next instructions, also in a loop that never yields; coroutines
+// inherit the hook (design-security-fixes B7)
+static void TermHook (lua_State *L, lua_Debug *)
+{
+	lua_getfield (L, LUA_REGISTRYINDEX, "interp"); // GetInterpreter
+	Interpreter *interp = (Interpreter *)lua_touserdata (L, -1);
+	lua_pop (L, 1);
+	if (interp && interp->Status () == 1) {
+		lua_sethook (L, TermHook, LUA_MASKCOUNT, 1); // every instruction from now: a pcall in a loop can't catch them all
+		luaL_error (L, "Lua thread terminated");
+	}
+}
+
 void Interpreter::Initialise ()
 {
 	luaL_openlibs (L);    // load the default libraries
-	ResolveScriptPaths (L); // not upstream: see above
+	bool confined = !is_term && !oapiScriptFullAccess (); // not upstream: content scripts are kept to the Orbiter folder (design-security-fixes B1)
+	if (!confined) ResolveScriptPaths (L); // not upstream: see above; confine::Apply resolves names itself
 	SetPackagePaths (L);    // not upstream: see above
+	if (confined) confine::Apply (L);
+	lua_sethook (L, TermHook, LUA_MASKCOUNT, 1000); // not upstream
 	LoadAPI ();           // load default set of API interface functions
 	LoadVesselAPI ();     // load vessel-specific part of API
 	LoadLightEmitterMethods (); // load light source methods
@@ -285,7 +321,7 @@ void Interpreter::LoadXRSoundAPI ()
 
 int Interpreter::Status () const
 {
-	return status;
+	return __atomic_load_n (&status, __ATOMIC_ACQUIRE); // not upstream: read by the script's thread, set by Orbiter's
 }
 
 bool Interpreter::IsBusy () const
@@ -295,7 +331,7 @@ bool Interpreter::IsBusy () const
 
 void Interpreter::Terminate ()
 {
-	status = 1;
+	__atomic_store_n (&status, 1, __ATOMIC_RELEASE); // not upstream: see Status
 }
 
 void Interpreter::PostStep (double simt, double simdt, double mjd)
@@ -477,27 +513,28 @@ VECTOR3 Interpreter::luamtd_field_tovector_safe (lua_State *L, int idx, const ch
 
 const char *Interpreter::lua_tostringex (lua_State *L, int idx, char *cbuf)
 {
-	static char cbuf_loc[256];
+	static thread_local char cbuf_loc[256]; // not upstream: per thread (each interpreter has its own); a caller's cbuf takes 256 bytes too
 	if (!cbuf) cbuf = cbuf_loc;
+	const size_t CB = sizeof cbuf_loc;
 	const char *str = lua_tostring (L,idx);
 	if (str) {
 		return str;
 	} else if (lua_isvector (L,idx)) {
 		VECTOR3 v = lua_tovector (L,idx);
-		sprintf (cbuf, "[%g %g %g]", v.x, v.y, v.z);
+		snprintf (cbuf, CB, "[%g %g %g]", v.x, v.y, v.z);
 		return cbuf;
 	} else if (lua_ismatrix (L,idx)) {
 		MATRIX3 m = lua_tomatrix(L,idx);
 		int i, len[9], lmax[3];
 		for (i = 0; i < 9; i++) {
-			sprintf (cbuf, "%g", m.data[i]);
+			snprintf (cbuf, CB, "%g", m.data[i]);
 			len[i] = strlen(cbuf);
 		}
 		lmax[0] = max(len[0], max(len[3], len[6]));
 		lmax[1] = max(len[1], max(len[4], len[7]));
 		lmax[2] = max(len[2], max(len[5], len[8]));
 
-		sprintf (cbuf, "[%*g %*g %*g]\n[%*g %*g %*g]\n[%*g %*g %*g]",
+		snprintf (cbuf, CB, "[%*g %*g %*g]\n[%*g %*g %*g]\n[%*g %*g %*g]",
 			lmax[0], m.m11, lmax[1], m.m12, lmax[2], m.m13,
 			lmax[0], m.m21, lmax[1], m.m22, lmax[2], m.m23,
 			lmax[0], m.m31, lmax[1], m.m32, lmax[2], m.m33);
@@ -505,7 +542,7 @@ const char *Interpreter::lua_tostringex (lua_State *L, int idx, char *cbuf)
 	}
 	else if (lua_istouchdownvtx (L,idx)) {
 		TOUCHDOWNVTX tdvx = lua_totouchdownvtx (L,idx);
-		sprintf (cbuf, "{pos=[%g %g %g] stiffness=%g damping=%g mu=%g mu_lng=%g}",
+		snprintf (cbuf, CB, "{pos=[%g %g %g] stiffness=%g damping=%g mu=%g mu_lng=%g}",
 			tdvx.pos.x, tdvx.pos.y, tdvx.pos.z,
 			tdvx.stiffness, tdvx.damping, tdvx.mu, tdvx.mu_lng);
 		return cbuf;
@@ -518,30 +555,37 @@ const char *Interpreter::lua_tostringex (lua_State *L, int idx, char *cbuf)
 		return cbuf;
 	} else if (lua_islightuserdata (L,idx)) {
 		void *p = lua_touserdata(L,idx);
-		sprintf (cbuf, "%p [data]", p); // glibc's %p writes the 0x itself
+		snprintf (cbuf, CB, "%p [data]", p); // glibc's %p writes the 0x itself
 		return cbuf;
 	} else if (lua_isuserdata (L,idx)) {
 		void *p = lua_touserdata(L,idx);
-		sprintf (cbuf, "%p [object]", p); // glibc's %p writes the 0x itself
+		snprintf (cbuf, CB, "%p [object]", p); // glibc's %p writes the 0x itself
 		return cbuf;
 	} else if (lua_istable (L, idx)) {
 		if (idx < 0) idx--;
 		lua_pushnil(L);  /* first key */
-		static char tbuf[1024]; tbuf[0] = '\0';
+		static thread_local char tbuf[1024]; tbuf[0] = '\0'; // not upstream: per thread; each line and the whole cut to their buffers
+		size_t n = 0;
 		while (lua_next(L, idx) != 0) {
 			/* uses 'key' (at index -2) and 'value' (at index -1) */
 			char fieldstr[256] = "\0";
-			if (lua_isstring(L,-2)) sprintf (fieldstr, "%s=", lua_tostring(L,-2));
+			if (lua_type(L,-2) == LUA_TSTRING || lua_type(L,-2) == LUA_TNUMBER) { // not upstream: a copy of the key, so lua_next still finds it
+				lua_pushvalue (L, -2);
+				snprintf (fieldstr, sizeof fieldstr, "%s=", lua_tostring(L,-1));
+				lua_pop (L, 1);
+			}
+			size_t f = strlen (fieldstr);
 			if(lua_istable(L, -1)) // cut the tree to prevent stack overflow with recursive table
-				strcat (fieldstr, "[table]");
+				snprintf (fieldstr + f, sizeof fieldstr - f, "[table]");
 			else
-				strcat (fieldstr, lua_tostringex (L,-1));
-			strcat (tbuf, fieldstr); strcat (tbuf, "\n");
+				snprintf (fieldstr + f, sizeof fieldstr - f, "%s", lua_tostringex (L,-1));
+			if (n < sizeof tbuf - 1) n += (size_t)snprintf (tbuf + n, sizeof tbuf - n, "%s\n", fieldstr);
+			if (n > sizeof tbuf - 1) n = sizeof tbuf - 1;
 			lua_pop(L, 1);
 		}
 		return tbuf;
 	} else if (lua_isfunction (L, idx)) {
-		strcpy (cbuf, "[function]");
+		snprintf (cbuf, CB, "[function]");
 		return cbuf;
 	} else {
 		cbuf[0] = '\0';
@@ -706,8 +750,8 @@ void Interpreter::lua_pushmfd (lua_State *L, MFD2 *mfd)
 
 MFD2 *Interpreter::lua_tomfd (lua_State *L, int idx)
 {
-	MFD2 **pmfd = (MFD2**)lua_touserdata(L,idx);
-	return *pmfd;
+	MFD2 **pmfd = (MFD2**)luaL_tryudata(L, idx, "MFD.vtable"); // not upstream: only an MFD object (anything else, nil included, is NULL)
+	return pmfd ? *pmfd : NULL;
 }
 
 #ifdef UNDEF
@@ -794,8 +838,8 @@ int Interpreter::lua_pushnumberref(lua_State* L)
 
 LightEmitter *Interpreter::lua_tolightemitter (lua_State *L, int idx)
 {
-	LightEmitter **le = (LightEmitter**)lua_touserdata (L, idx);
-	return *le;
+	LightEmitter **le = (LightEmitter**)luaL_tryudata (L, idx, "LightEmitter.vtable"); // not upstream: only a light object
+	return le ? *le : NULL;
 }
 
 void Interpreter::lua_pushsketchpad (lua_State *L, oapi::Sketchpad *skp)
@@ -1850,7 +1894,29 @@ void Interpreter::DeleteVessel (OBJHANDLE hVessel)
 {
 	VESSEL *v = oapiGetVesselInterface(hVessel);
 	knownVessels.erase(v);
+	std::lock_guard<std::mutex> lock (liveLock); // not upstream: the vessel's handles (airfoils, streams, ...) go from every state; their threads wait meanwhile
+	for (Interpreter *i : liveInterps) if (i->Status () != 1) luahandle::DropOwned (i->L, hVessel); // a terminated one may still run on its own
 }
+
+// not upstream: the registry's object for p (lua_pushsketchpad, lua_pushmfd) no longer reaches it: methods see NULL and refuse
+static void ReleaseObject (lua_State *L, const void *p, const char *mt)
+{
+	if (!p) return;
+	lua_pushlightuserdata (L, const_cast<void *> (p));
+	lua_rawget (L, LUA_REGISTRYINDEX);
+	if (lua_type (L, -1) == LUA_TUSERDATA && lua_getmetatable (L, -1)) { // luaL_tryudata
+		luaL_getmetatable (L, mt);
+		if (lua_rawequal (L, -1, -2)) *(void **)lua_touserdata (L, -3) = NULL;
+		lua_pop (L, 2);
+	}
+	lua_pop (L, 1);
+	lua_pushlightuserdata (L, const_cast<void *> (p));
+	lua_pushnil (L);
+	lua_rawset (L, LUA_REGISTRYINDEX);
+}
+
+void Interpreter::lua_releasesketchpad (lua_State *L, oapi::Sketchpad *skp) { ReleaseObject (L, skp, "SKP.vtable"); } // not upstream
+void Interpreter::lua_releasemfd (lua_State *L, MFD2 *mfd) { ReleaseObject (L, mfd, "MFD.vtable"); } // not upstream
 
 Interpreter *Interpreter::GetInterpreter (lua_State *L)
 {
@@ -2073,24 +2139,20 @@ int Interpreter::help (lua_State *L)
 		}
 	} else if (lua_isstring (L,1)) {
 		// call a help page from the main Orbiter help file
-		char topic[256];
-		strncpy (topic, lua_tostring (L, 1), 255); lua_pop (L, 1);
+		std::string topic = lua_tostring (L, 1); lua_pop (L, 1); // not upstream: a copy of any length
 		lua_pushstring (L, "html/orbiter.chm");
-		lua_pushstring (L, topic);
+		lua_pushstring (L, topic.c_str());
 		interp->oapiOpenHelp (L);
 	} else if (lua_istable (L,1)) {
 		// call a help page from an external help file
-		char file[256], topic[256];
 		lua_getfield (L, 1, "file");
 		lua_getfield (L, 1, "topic");
-		strcpy (file, lua_tostring(L,-2));
-		if (!lua_isnil(L,-1))
-			strcpy (topic, lua_tostring(L,-1));
-		else topic[0] = '\0';
+		ASSERT_SYNTAX (lua_isstring (L, -2), "help: table needs a 'file' string"); // not upstream: copies of any length, a missing file refused
+		std::string file = lua_tostring(L,-2), topic = lua_isstring(L,-1) ? lua_tostring(L,-1) : "";
 		lua_settop (L, 0);
-		lua_pushstring (L, file);
-		if (topic[0])
-			lua_pushstring (L, topic);
+		lua_pushstring (L, file.c_str());
+		if (!topic.empty())
+			lua_pushstring (L, topic.c_str());
 		interp->oapiOpenHelp (L);
 	}
 
@@ -3078,7 +3140,8 @@ int Interpreter::oapi_create_vessel(lua_State* L)
 {
 	const char* name = lua_tostring(L, 1);
 	const char* classname = lua_tostring(L, 2);
-	VESSELSTATUS *vs = (VESSELSTATUS*)lua_touserdata(L, 3);
+	VESSELSTATUS *vs = (VESSELSTATUS*)luaL_tryudata(L, 3, "VESSELSTATUS.table"); // not upstream: only a status object
+	ASSERT_SYNTAX(name && classname && vs, "create_vessel: needs a name, a class and a VESSELSTATUS");
 	OBJHANDLE hObj = oapiCreateVessel(name, classname, *vs);
 	if (hObj) lua_pushlightuserdata(L, hObj);
 	else lua_pushnil(L);
@@ -3250,7 +3313,8 @@ Release a texture.
 */
 int Interpreter::oapi_release_texture(lua_State* L)
 {
-	SURFHANDLE surf = (SURFHANDLE)lua_touserdata(L, 1);
+	SURFHANDLE surf = lua_tosurface(L, 1);
+	ASSERT_SYNTAX(surf, "Argument 1: invalid surface"); // not upstream: checked, nil or a surface;
 	oapiReleaseTexture(surf);
 	return 0;
 }
@@ -3290,7 +3354,8 @@ Destroy a surface.
 */
 int Interpreter::oapi_destroy_surface(lua_State* L)
 {
-	SURFHANDLE surf = (SURFHANDLE)lua_touserdata(L, 1);
+	SURFHANDLE surf = lua_tosurface(L, 1);
+	ASSERT_SYNTAX(surf, "Argument 1: invalid surface"); // not upstream: checked, nil or a surface;
 	oapiDestroySurface(surf);
 	return 0;
 }
@@ -3302,7 +3367,8 @@ Clear a surface.
 */
 int Interpreter::oapi_clear_surface(lua_State* L)
 {
-	SURFHANDLE surf = (SURFHANDLE)lua_touserdata(L, 1);
+	SURFHANDLE surf = lua_tosurface(L, 1);
+	ASSERT_SYNTAX(surf, "Argument 1: invalid surface"); // not upstream: checked, nil or a surface;
 	oapiClearSurface(surf);
 	return 0;
 }
@@ -3319,7 +3385,7 @@ Save a surface to a file.
 int Interpreter::oapi_save_surface(lua_State* L)
 {
 	const char *name = luaL_checkstring(L, 1);
-	SURFHANDLE surf = (SURFHANDLE)lua_touserdata(L, 2);
+	SURFHANDLE surf = lua_tosurface(L, 2); // not upstream: checked
 	oapi::ImageFileFormat format = (oapi::ImageFileFormat)luaL_checkinteger(L, 3);
 	float quality = 0.7;
 	if(lua_gettop(L)>=4)
@@ -3341,7 +3407,7 @@ Replace a mesh texture.
 int Interpreter::oapi_set_texture(lua_State* L)
 {
 	DWORD texid = luaL_checknumber(L, 2);
-	SURFHANDLE surf = (SURFHANDLE)lua_touserdata(L, 3);
+	SURFHANDLE surf = lua_tosurface(L, 3); // not upstream: checked
 	MESHHANDLE *hMesh = (MESHHANDLE *)luaL_tryudata(L, 1, "MESHHANDLE");
 	if(hMesh) {
 		bool ret = oapiSetTexture(*hMesh, texid, surf);
@@ -3614,7 +3680,7 @@ int Interpreter::oapi_VC_register_area(lua_State* L)
 		int draw_event = (int)lua_tointeger(L, 3);
 		int mouse_event = (int)lua_tointeger(L, 4);
 		int bkmode = (int)lua_tointeger(L, 5);
-		SURFHANDLE tgt = (SURFHANDLE)lua_touserdata(L, 6);
+		SURFHANDLE tgt = lua_tosurface(L, 6); // not upstream: checked
 		oapiVCRegisterArea(id, tgtrect, draw_event, mouse_event, bkmode, tgt);
 	}
 	return 0;
@@ -3785,7 +3851,7 @@ int Interpreter::oapi_render_hud(lua_State* L)
 		if ( lua_isnil(L,-1) ) {
 			return luaL_error(L, "Error iterating over surfaces array");
 		}
-		hSurf[i-1] = (SURFHANDLE)lua_touserdata(L, -1);
+		hSurf[i-1] = lua_tosurface(L, -1); // not upstream: checked
 		lua_pop(L,1);
 	}
 
@@ -3935,21 +4001,40 @@ int Interpreter::oapiCreateAnnotation (lua_State *L)
 	*pnote = ::oapiCreateAnnotation (true, 1.0, _V(1,0.8,0.6));
 	oapiAnnotationSetPos (*pnote, 0.03, 0.2, 0.4, 0.4);
 
-	g_notehandles.push_back(pnote);
-
 	luaL_getmetatable (L, "NOTE.table");   // push metatable
 	lua_setmetatable (L, -2);              // set metatable for annotation objects
+
+	// not upstream: this state's annotations, kept until deleted (a list shared by all states held their addresses after they were freed)
+	lua_getfield (L, LUA_REGISTRYINDEX, "orbiter.notes");
+	if (!lua_istable (L, -1)) {
+		lua_pop (L, 1);
+		lua_newtable (L);
+		lua_pushvalue (L, -1);
+		lua_setfield (L, LUA_REGISTRYINDEX, "orbiter.notes");
+	}
+	lua_pushlightuserdata (L, pnote);
+	lua_pushvalue (L, -3);
+	lua_rawset (L, -3);
+	lua_pop (L, 1);
 	return 1;
 }
 
 int Interpreter::oapiGetAnnotations (lua_State *L)
 {
-	for (auto it = g_notehandles.begin(); it != g_notehandles.end(); ++it) {
-		lua_pushlightuserdata(L, *it);
-		luaL_getmetatable (L, "NOTE.table");   // push metatable
-		lua_setmetatable (L, -2);              // set metatable for annotation objects
+	int n = 0; // not upstream: this state's annotation objects themselves (a light userdata can't have a metatable of its own)
+	lua_getfield (L, LUA_REGISTRYINDEX, "orbiter.notes");
+	int t = lua_gettop (L);
+	if (lua_istable (L, t)) {
+		lua_pushnil (L);
+		while (lua_next (L, t)) {
+			lua_checkstack (L, 2);
+			lua_insert (L, t); // the value below the table, the key on top
+			t++;
+			n++;
+		}
 	}
-	return g_notehandles.size();
+	lua_remove (L, t);
+	return n;
 }
 
 /***
@@ -3960,10 +4045,17 @@ Delete an annotation.
 */
 int Interpreter::oapiDelAnnotation (lua_State *L)
 {
-	NOTEHANDLE *pnote = (NOTEHANDLE*)lua_touserdata (L, 1);
+	NOTEHANDLE *pnote = lua_tonote (L, 1); // not upstream: only a live annotation
+	ASSERT_SYNTAX (pnote, "Argument 1: invalid annotation");
 	::oapiDelAnnotation (*pnote);
 
-	g_notehandles.remove(pnote);
+	lua_getfield (L, LUA_REGISTRYINDEX, "orbiter.notes"); // not upstream
+	if (lua_istable (L, -1)) {
+		lua_pushlightuserdata (L, pnote);
+		lua_pushnil (L);
+		lua_rawset (L, -3);
+	}
+	lua_pop (L, 1);
 
 	*pnote = NULL;
 	return 0;
@@ -3984,7 +4076,7 @@ module or by multiple modules) the last state before rendering will be displayed
 int Interpreter::oapiDbgOut (lua_State *L)
 {
 	const char *str = lua_tostringex (L, 1);
-	strcpy (oapiDebugString(), str);
+	snprintf (oapiDebugString(), 256, "%s", str); // not upstream: the core's buffer is 256 bytes (DBG_MSG)
 	return 0;
 }
 
@@ -5113,7 +5205,7 @@ Return the current fuel mass [kg] of a propellant resource.
 int Interpreter::oapi_get_propellantmass (lua_State *L)
 {
 	ASSERT_SYNTAX (lua_islightuserdata (L,1), "Argument 1: invalid type (expected handle)");
-	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)lua_touserdata (L, 1);
+	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)lua_tohandle (L, 1, luahandle::PROPELLANT, NULL); // not upstream: a vessel's resource now
 	ASSERT_SYNTAX(hp, "Argument 1: invalid object");
 	lua_pushnumber (L, oapiGetPropellantMass (hp));
 	return 1;
@@ -5130,7 +5222,7 @@ Return the maximum capacity [kg] of a propellant resource.
 int Interpreter::oapi_get_propellantmaxmass (lua_State *L)
 {
 	ASSERT_SYNTAX (lua_islightuserdata (L,1), "Argument 1: invalid type (expected handle)");
-	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)lua_touserdata (L, 1);
+	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)lua_tohandle (L, 1, luahandle::PROPELLANT, NULL); // not upstream: a vessel's resource now
 	ASSERT_SYNTAX(hp, "Argument 1: invalid object");
 	lua_pushnumber (L, oapiGetPropellantMaxMass (hp));
 	return 1;
@@ -5551,10 +5643,13 @@ int Interpreter::oapi_particle_getlevelref(lua_State* L)
 {
 	static const char* funcname = "particle_getlevelref";
 	ASSERT_SYNTAX (lua_islightuserdata (L,1), "Argument 1: invalid type (expected handle)");
-	PSTREAM_HANDLE ph = (PSTREAM_HANDLE)lua_touserdata (L, 1);
+	PSTREAM_HANDLE ph = (PSTREAM_HANDLE)lua_tohandle (L, 1, luahandle::PSTREAM, NULL); // not upstream: a stream still attached to a vessel
 	ASSERT_SYNTAX(ph, "Argument 1: invalid object");
 	lua_pushnumberref(L);
 	double *lvl = (double *)lua_touserdata(L, -1);
+	lua_pushlightuserdata(L, ph); // not upstream: kept while the stream reads it (as add_particlestream does; del_exhauststream drops it)
+	lua_pushvalue(L, -2);
+	lua_settable(L, LUA_REGISTRYINDEX);
 
 	oapiParticleSetLevelRef(ph, lvl);
 	return 1;
@@ -5746,7 +5841,7 @@ Return the handle of a vessel docked at a port.
 */
 int Interpreter::oapi_get_dockstatus(lua_State* L)
 {
-	DOCKHANDLE hDock = (DOCKHANDLE)lua_tolightuserdata_safe(L, 1, "get_dockstatus");
+	DOCKHANDLE hDock = (DOCKHANDLE)lua_tohandle_safe(L, 1, luahandle::DOCK, NULL, "get_dockstatus"); // not upstream: a vessel's port now
 	OBJHANDLE hDockedVessel = oapiGetDockStatus(hDock);
 	if (hDockedVessel) {
 		lua_pushlightuserdata(L, hDockedVessel);
@@ -5767,7 +5862,7 @@ Auto capture is enabled by default.
 */
 int Interpreter::oapi_set_autocapture(lua_State* L)
 {
-	DOCKHANDLE hDock = (DOCKHANDLE)lua_tolightuserdata_safe(L, 1, "set_autocapture");
+	DOCKHANDLE hDock = (DOCKHANDLE)lua_tohandle_safe(L, 1, luahandle::DOCK, NULL, "set_autocapture"); // not upstream: a vessel's port now
 	if(!lua_isboolean(L, 2)) {
 		return luaL_error(L, "Argument 2: set_autocapture expects a boolean");
 	}
@@ -5785,7 +5880,7 @@ Get the vessel a docking port belongs to.
 */
 int Interpreter::oapi_get_dockowner(lua_State* L)
 {
-	DOCKHANDLE hDock = (DOCKHANDLE)lua_tolightuserdata_safe(L, 1, "get_dockowner");
+	DOCKHANDLE hDock = (DOCKHANDLE)lua_tohandle_safe(L, 1, luahandle::DOCK, NULL, "get_dockowner"); // not upstream: a vessel's port now
 	OBJHANDLE hOwner = oapiGetDockOwner(hDock);
 	if (hOwner) {
 		lua_pushlightuserdata(L, hOwner);
@@ -5814,7 +5909,7 @@ int Interpreter::oapi_get_navpos (lua_State *L)
 	VECTOR3 pos;
 	ASSERT_SYNTAX (lua_gettop(L) >= 1, "Too few arguments");
 	ASSERT_SYNTAX (lua_islightuserdata (L,1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX (hNav = (NAVHANDLE)lua_touserdata (L,1), "Argument 1: invalid object");
+	ASSERT_SYNTAX (hNav = (NAVHANDLE)lua_tohandle (L, 1, luahandle::NAV, NULL), "Argument 1: invalid object"); // not upstream: a transmitter now
 	oapiGetNavPos (hNav, &pos);
 	lua_pushvector (L, pos);
 	return 1;
@@ -5837,7 +5932,7 @@ int Interpreter::oapi_get_navchannel (lua_State *L)
 	NAVHANDLE hNav;
 	ASSERT_SYNTAX (lua_gettop(L) >= 1, "Too few arguments");
 	ASSERT_SYNTAX (lua_islightuserdata (L,1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX (hNav = (NAVHANDLE)lua_touserdata (L,1), "Argument 1: invalid object");
+	ASSERT_SYNTAX (hNav = (NAVHANDLE)lua_tohandle (L, 1, luahandle::NAV, NULL), "Argument 1: invalid object"); // not upstream: a transmitter now
 	DWORD ch = oapiGetNavChannel (hNav);
 	lua_pushnumber (L, ch);
 	return 1;
@@ -5867,7 +5962,7 @@ int Interpreter::oapi_get_navrange (lua_State *L)
 	NAVHANDLE hNav;
 	ASSERT_SYNTAX (lua_gettop(L) >= 1, "Too few arguments");
 	ASSERT_SYNTAX (lua_islightuserdata (L,1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX (hNav = (NAVHANDLE)lua_touserdata (L,1), "Argument 1: invalid object");
+	ASSERT_SYNTAX (hNav = (NAVHANDLE)lua_tohandle (L, 1, luahandle::NAV, NULL), "Argument 1: invalid object"); // not upstream: a transmitter now
 	float range = oapiGetNavRange (hNav);
 	lua_pushnumber (L, range);
 	return 1;
@@ -5921,7 +6016,7 @@ int Interpreter::oapi_get_navdata (lua_State *L)
 	NAVHANDLE hNav;
 	ASSERT_SYNTAX (lua_gettop(L) >= 1, "Too few arguments");
 	ASSERT_SYNTAX (lua_islightuserdata (L,1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX (hNav = (NAVHANDLE)lua_touserdata (L,1), "Argument 1: invalid object");
+	ASSERT_SYNTAX (hNav = (NAVHANDLE)lua_tohandle (L, 1, luahandle::NAV, NULL), "Argument 1: invalid object"); // not upstream: a transmitter now
 	NAVDATA ndata;
 	oapiGetNavData (hNav, &ndata);
 	lua_newtable (L);
@@ -5987,7 +6082,7 @@ int Interpreter::oapi_get_navsignal (lua_State *L)
 	NAVHANDLE hNav;
 	ASSERT_SYNTAX (lua_gettop(L) >= 1, "Too few arguments");
 	ASSERT_SYNTAX (lua_islightuserdata (L,1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX (hNav = (NAVHANDLE)lua_touserdata (L,1), "Argument 1: invalid object");
+	ASSERT_SYNTAX (hNav = (NAVHANDLE)lua_tohandle (L, 1, luahandle::NAV, NULL), "Argument 1: invalid object"); // not upstream: a transmitter now
 	ASSERT_SYNTAX (lua_isvector (L, 2), "Argument 2: invalid type (expected vector)");
 	VECTOR3 gpos = lua_tovector(L,2);
 	double sig = oapiGetNavSignal (hNav, gpos);
@@ -6015,7 +6110,7 @@ int Interpreter::oapi_get_navtype (lua_State *L)
 	NAVHANDLE hNav;
 	ASSERT_SYNTAX (lua_gettop(L) >= 1, "Too few arguments");
 	ASSERT_SYNTAX (lua_islightuserdata (L,1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX (hNav = (NAVHANDLE)lua_touserdata (L,1), "Argument 1: invalid object");
+	ASSERT_SYNTAX (hNav = (NAVHANDLE)lua_tohandle (L, 1, luahandle::NAV, NULL), "Argument 1: invalid object"); // not upstream: a transmitter now
 	DWORD ntype = oapiGetNavType (hNav);
 	lua_pushnumber (L, ntype);
 	return 1;
@@ -6063,7 +6158,7 @@ int Interpreter::oapi_set_cameratarget (lua_State *L)
 	OBJHANDLE hObj;
 	int mode = 2;
 	ASSERT_SYNTAX (lua_islightuserdata (L,1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX (hObj = (OBJHANDLE)lua_touserdata (L,1), "Argument 1: invalid object");
+	ASSERT_SYNTAX (hObj = lua_toObject (L,1), "Argument 1: invalid object"); // not upstream: checked
 	if (lua_gettop(L) > 1) {
 		ASSERT_SYNTAX (lua_isnumber (L,2), "Argument 2: invalid type (expected number)");
 		mode = (int)lua_tonumber (L,2);
@@ -6179,20 +6274,21 @@ Additional fields by mode :
 */
 int Interpreter::oapi_set_cameramode (lua_State *L)
 {
-	char initstr[1024], modestr[256];
+	std::string initstr, modestr; // not upstream: strings of any length (strcpy into 1024 and 256 bytes overflowed)
+	char num[96];
 	double lng, lat, alt, phi=0.0, tht=0.0;
 	CameraMode *cm = 0;
 	ASSERT_TABLE(L,1);
 
 	lua_getfield(L,1,"mode");
 	ASSERT_STRING(L,-1);
-	strcpy(modestr, lua_tostring(L,-1));
+	modestr = lua_tostring(L,-1);
 	lua_pop(L,1);
-	if (!strcasecmp(modestr, "ground")) {
+	if (!strcasecmp(modestr.c_str(), "ground")) {
 
 		lua_getfield(L,1,"ref");
 		ASSERT_STRING(L,-1);
-		strcpy (initstr,lua_tostring(L,-1));
+		initstr = lua_tostring(L,-1);
 		lua_pop(L,1);
 		lua_getfield(L,1,"lng");
 		ASSERT_NUMBER(L,-1);
@@ -6206,10 +6302,11 @@ int Interpreter::oapi_set_cameramode (lua_State *L)
 		ASSERT_NUMBER(L,-1);
 		alt = lua_tonumber(L,-1);
 		lua_pop(L,1);
-		sprintf (initstr + strlen(initstr), " %lf %lf %lf", lng, lat, alt);
+		snprintf (num, sizeof num, " %lf %lf %lf", lng, lat, alt);
+		initstr += num;
 		lua_getfield(L,1,"alt_above_ground");
 		if (lua_isnumber(L,-1) && lua_tonumber(L,-1) == 0)
-			strcat(initstr, "M");
+			initstr += "M";
 		lua_pop(L,1);
 		lua_getfield(L,1,"phi");
 		if (lua_isnumber(L,-1)) {
@@ -6217,18 +6314,19 @@ int Interpreter::oapi_set_cameramode (lua_State *L)
 			lua_getfield(L,1,"tht");
 			if (lua_isnumber(L,-1)) {
 				tht = lua_tonumber(L,-1);
-				sprintf (initstr+strlen(initstr), " %lf %lf", phi, tht);
+				snprintf (num, sizeof num, " %lf %lf", phi, tht);
+				initstr += num;
 			}
 			lua_pop(L,1);
 		}
 		lua_pop(L,1);
 		cm = new CameraMode_Ground();
 
-	} else if (!strcasecmp(modestr, "track")) {
+	} else if (!strcasecmp(modestr.c_str(), "track")) {
 
 		lua_getfield(L,1,"trackmode");
 		ASSERT_STRING(L,-1);
-		strcpy (initstr, lua_tostring(L,-1));
+		initstr = lua_tostring(L,-1);
 		lua_pop(L,1);
 		lua_getfield(L,1,"reldist");
 		ASSERT_NUMBER(L,-1);
@@ -6242,30 +6340,34 @@ int Interpreter::oapi_set_cameramode (lua_State *L)
 		if (lua_isnumber(L,-1))
 			tht = lua_tonumber(L,-1);
 		lua_pop(L,1);
-		sprintf (initstr+strlen(initstr), " %lf %lf %lf", reldist, phi, tht);
+		snprintf (num, sizeof num, " %lf %lf %lf", reldist, phi, tht);
+		initstr += num;
 		lua_getfield(L,1,"ref");
 		if (lua_isstring(L,-1)) {
-			strcat(initstr, " ");
-			strcat(initstr, lua_tostring(L,-1));
+			initstr += " ";
+			initstr += lua_tostring(L,-1);
 		}
 		lua_pop(L,1);
 		cm = new CameraMode_Track();
 
-	} else if (!strcasecmp(modestr, "cockpit")) {
+	} else if (!strcasecmp(modestr.c_str(), "cockpit")) {
 
 		lua_getfield(L,1,"cockpitmode");
 		if (lua_isstring(L,-1)) {
-			strcpy (initstr, lua_tostring(L,-1));
+			initstr = lua_tostring(L,-1);
 			lua_getfield(L,1,"pos");
 			if (lua_isnumber(L,-1)) {
-				sprintf (initstr+strlen(initstr), ":%d", (int)lua_tonumber(L,-1));
+				snprintf (num, sizeof num, ":%d", (int)lua_tonumber(L,-1));
+				initstr += num;
 				lua_getfield(L,1,"lean");
 				if (lua_isnumber(L,-1)) {
-					sprintf (initstr+strlen(initstr), ":%d", (int)lua_tonumber(L,-1));
+					snprintf (num, sizeof num, ":%d", (int)lua_tonumber(L,-1));
+					initstr += num;
 				} else {
 					lua_getfield(L,1,"lean_smooth");
 					if (lua_isnumber(L,-1)) {
-						sprintf (initstr+strlen(initstr), ":%dS", (int)lua_tonumber(L,-1));
+						snprintf (num, sizeof num, ":%dS", (int)lua_tonumber(L,-1));
+						initstr += num;
 					}
 					lua_pop(L,1);
 				}
@@ -6274,14 +6376,16 @@ int Interpreter::oapi_set_cameramode (lua_State *L)
 			lua_pop(L,1);
 
 		} else
-			initstr[0] = '\0';
+			initstr.clear();
 		lua_pop(L,1);
 		cm = new CameraMode_Cockpit();
 
 	}
 
 	if (cm) {
-		cm->Init(initstr);
+		std::vector<char> init (initstr.begin(), initstr.end()); // Init takes a char *
+		init.push_back ('\0');
+		cm->Init(init.data());
 		oapiSetCameraMode (*cm);
 		delete cm;
 	}
@@ -6425,7 +6529,7 @@ int Interpreter::oapi_setup_customcamera(lua_State *L)
 		VECTOR3 dir = lua_tovector(L, 4);
 		VECTOR3 up = lua_tovector(L, 5);
 		double fov = luaL_checknumber(L, 6);
-		SURFHANDLE hSurf = (SURFHANDLE)lua_touserdata(L,7);
+		SURFHANDLE hSurf = lua_tosurface(L,7); // not upstream: checked
 		DWORD flags = 255;
 		if(lua_gettop(L)>=8) {
 			flags = luaL_checkinteger(L, 8);
@@ -6497,6 +6601,7 @@ void Interpreter::customcamera_clbk(oapi::Sketchpad *skp, void *pParam)
 		lua_rawgeti(cc->L, LUA_REGISTRYINDEX, cc->clbk); // push the callback function
 		lua_pushsketchpad(cc->L, skp);
 		LuaCall (cc->L, 1, 0);
+		lua_releasesketchpad(cc->L, skp); // not upstream: skp lasts this call only
 	}
 }
 
@@ -6632,7 +6737,7 @@ int Interpreter::oapi_create_animationcomponent (lua_State *L)
 	lua_getfield(L,1,"type");
 	ASSERT_STRING(L,-1);
 	char typestr[128];
-	strcpy (typestr,lua_tostring(L,-1));
+	snprintf (typestr, sizeof typestr, "%s", lua_tostring(L,-1)); // not upstream: bounded (a longer type matches none)
 	lua_pop(L,1);
 	lua_getfield(L,1,"mesh");
 	ASSERT_NUMBER(L,-1);
@@ -6695,7 +6800,7 @@ int Interpreter::oapi_create_animationcomponent (lua_State *L)
 	} else {
 		ASSERT_SYNTAX(0,"Invalid animation type");
 	}
-	lua_pushlightuserdata(L,trans);
+	luahandle::Push(L, trans, luahandle::TRANSFORM); // not upstream: kept, so only it can be deleted or used
 	return 1;
 }
 
@@ -6708,7 +6813,9 @@ Delete an animation component object.
 int Interpreter::oapi_del_animationcomponent (lua_State *L)
 {
 	ASSERT_LIGHTUSERDATA(L,1);
-	MGROUP_TRANSFORM *trans = (MGROUP_TRANSFORM*)lua_touserdata(L,1);
+	MGROUP_TRANSFORM *trans = (MGROUP_TRANSFORM*)lua_tohandle(L, 1, luahandle::TRANSFORM, NULL); // not upstream: one the bindings made, once
+	ASSERT_SYNTAX(trans, "Argument 1: invalid animation component");
+	luahandle::Drop(L, trans);
 	delete[] trans->grp;
 	delete trans;
 	return 0;
@@ -7168,7 +7275,8 @@ end
 int Interpreter::oapi_keydown (lua_State *L)
 {
 	ASSERT_LIGHTUSERDATA(L,1);
-	char *kstate = (char*)lua_touserdata(L,1);
+	char *kstate = (char*)lua_tohandle(L, 1, luahandle::KEYSTATE, NULL); // not upstream: a key state the callback gave
+	ASSERT_SYNTAX(kstate, "Argument 1: invalid key state");
 	ASSERT_NUMBER(L,2);
 	unsigned int key = lua_tointeger(L, 2);
 	ASSERT_SYNTAX(key < 256, "Invalid key code");
@@ -7186,7 +7294,8 @@ Clear a key from a key state.
 int Interpreter::oapi_resetkey (lua_State *L)
 {
 	ASSERT_LIGHTUSERDATA(L,1);
-	char *kstate = (char*)lua_touserdata(L,1);
+	char *kstate = (char*)lua_tohandle(L, 1, luahandle::KEYSTATE, NULL); // not upstream: a key state the callback gave
+	ASSERT_SYNTAX(kstate, "Argument 1: invalid key state");
 	ASSERT_NUMBER(L,2);
 	unsigned int key = lua_tointeger(L, 2);
 	ASSERT_SYNTAX(key < 256, "Invalid key code");
@@ -7301,7 +7410,7 @@ end
 */
 int Interpreter::oapi_get_keystate (lua_State *L)
 {
-	lua_pushlightuserdata(L, (void *)oapiGetKeyState());
+	luahandle::Push(L, (void *)oapiGetKeyState(), luahandle::KEYSTATE); // not upstream: kept
 	return 1;
 }
 
@@ -7362,10 +7471,13 @@ int Interpreter::oapi_openfile (lua_State* L)
 		ASSERT_NUMBER(L, 3);
 		root = (PathRoot)lua_tointeger(L, 3);
 	}
+	if (confine::Active (L) && !confine::Relative (fname)) // not upstream: a confined script stays in the root folder it names
+		return luaL_error (L, "openfile: %s leaves its folder%s", fname, confine::Hint);
 
 	FILEHANDLE f = oapiOpenFile(fname, mode, root);
 
 	if (f) {
+		luahandle::Add (L, f, luahandle::FILE); // not upstream: closefile and the item functions take only such files
 		lua_pushlightuserdata(L, f);
 	} else {
 		lua_pushnil(L);
@@ -7391,11 +7503,12 @@ int Interpreter::oapi_closefile (lua_State* L)
 	}
 	FILEHANDLE file;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle or nil)");
-	ASSERT_SYNTAX(file = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(file = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 
 	ASSERT_NUMBER(L, 2);
 	FileAccessMode mode = (FileAccessMode)lua_tointeger(L, 2);
 
+	luahandle::Drop(L, file); // not upstream
 	oapiCloseFile(file, mode);
 	return 0;
 }
@@ -7423,6 +7536,8 @@ int Interpreter::oapi_savescenario (lua_State* L)
 	ASSERT_STRING(L, 2);
 	const char* fname = lua_tostringex(L, 1);
 	const char* desc = lua_tostringex(L, 2);
+	if (confine::Active (L) && !confine::Relative (fname)) // not upstream: a confined script stays in Scenarios
+		return luaL_error (L, "savescenario: %s leaves the Scenarios folder%s", fname, confine::Hint);
 	lua_pushboolean(L, oapiSaveScenario(fname, desc));
 	return 1;
 }
@@ -7438,7 +7553,7 @@ int Interpreter::oapi_writeline (lua_State* L)
 {
 	FILEHANDLE file;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(file = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(file = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 	ASSERT_STRING(L, 2);
 	const char* line = lua_tostringex(L, 2);
 	oapiWriteLine(file, const_cast<char*>(line));
@@ -7462,7 +7577,7 @@ int Interpreter::oapi_writescenario_string (lua_State* L)
 {
 	FILEHANDLE scn;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(scn = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(scn = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 	ASSERT_STRING(L, 2);
 	const char* item = lua_tostringex(L, 2);
 	ASSERT_STRING(L, 3);
@@ -7483,7 +7598,7 @@ int Interpreter::oapi_writescenario_int (lua_State* L)
 {
 	FILEHANDLE scn;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(scn = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(scn = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 	ASSERT_STRING(L, 2);
 	const char* item = lua_tostringex(L, 2);
 	ASSERT_NUMBER(L, 3);
@@ -7504,7 +7619,7 @@ int Interpreter::oapi_writescenario_float (lua_State* L)
 {
 	FILEHANDLE scn;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(scn = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(scn = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 	ASSERT_STRING(L, 2);
 	const char* item = lua_tostringex(L, 2);
 	ASSERT_NUMBER(L, 3);
@@ -7525,7 +7640,7 @@ int Interpreter::oapi_writescenario_vec (lua_State* L)
 {
 	FILEHANDLE scn;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(scn = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(scn = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 	ASSERT_STRING(L, 2);
 	const char* item = lua_tostringex(L, 2);
 	ASSERT_VECTOR(L, 3);
@@ -7555,7 +7670,7 @@ int Interpreter::oapi_readscenario_nextline (lua_State* L)
 {
 	FILEHANDLE scn;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(scn = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(scn = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 
 	char* line;
 	bool ok = oapiReadScenario_nextline(scn, line);
@@ -7585,7 +7700,7 @@ int Interpreter::oapi_readitem_string (lua_State* L)
 {
 	FILEHANDLE f;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(f = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(f = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 
 	ASSERT_STRING(L, 2);
 	const char* item = lua_tostringex(L, 2);
@@ -7613,7 +7728,7 @@ int Interpreter::oapi_readitem_float (lua_State* L)
 {
 	FILEHANDLE f;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(f = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(f = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 
 	ASSERT_STRING(L, 2);
 	const char* item = lua_tostringex(L, 2);
@@ -7641,7 +7756,7 @@ int Interpreter::oapi_readitem_int (lua_State* L)
 {
 	FILEHANDLE f;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(f = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(f = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 
 	ASSERT_STRING(L, 2);
 	const char* item = lua_tostringex(L, 2);
@@ -7671,7 +7786,7 @@ int Interpreter::oapi_readitem_bool (lua_State* L)
 {
 	FILEHANDLE f;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(f = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(f = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 
 	ASSERT_STRING(L, 2);
 	const char* item = lua_tostringex(L, 2);
@@ -7701,7 +7816,7 @@ int Interpreter::oapi_readitem_vec (lua_State* L)
 {
 	FILEHANDLE f;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(f = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(f = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 
 	ASSERT_STRING(L, 2);
 	const char* item = lua_tostringex(L, 2);
@@ -7735,7 +7850,7 @@ int Interpreter::oapi_writeitem_string (lua_State* L)
 {
 	FILEHANDLE f;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(f = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(f = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 	ASSERT_STRING(L, 2);
 	ASSERT_STRING(L, 3);
 
@@ -7759,7 +7874,7 @@ int Interpreter::oapi_writeitem_float (lua_State* L)
 {
 	FILEHANDLE f;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(f = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(f = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 	ASSERT_STRING(L, 2);
 	ASSERT_NUMBER(L, 3);
 
@@ -7783,7 +7898,7 @@ int Interpreter::oapi_writeitem_int (lua_State* L)
 {
 	FILEHANDLE f;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(f = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(f = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 	ASSERT_STRING(L, 2);
 	ASSERT_NUMBER(L, 3);
 
@@ -7809,7 +7924,7 @@ int Interpreter::oapi_writeitem_bool (lua_State* L)
 {
 	FILEHANDLE f;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(f = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(f = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 	ASSERT_STRING(L, 2);
 	ASSERT_BOOLEAN(L, 3);
 
@@ -7835,7 +7950,7 @@ int Interpreter::oapi_writeitem_vec (lua_State* L)
 {
 	FILEHANDLE f;
 	ASSERT_SYNTAX(lua_islightuserdata(L, 1), "Argument 1: invalid type (expected handle)");
-	ASSERT_SYNTAX(f = lua_toObject(L, 1), "Argument 1: invalid object");
+	ASSERT_SYNTAX(f = (FILEHANDLE)lua_tohandle(L, 1, luahandle::FILE, NULL), "Argument 1: invalid object");
 	ASSERT_STRING(L, 2);
 	ASSERT_VECTOR(L, 3);
 
@@ -8275,7 +8390,8 @@ be avoided.
 int Interpreter::oapi_get_sketchpad(lua_State* L)
 {
 	ASSERT_LIGHTUSERDATA(L, 1);
-	SURFHANDLE surf = (SURFHANDLE)lua_touserdata(L, 1);
+	SURFHANDLE surf = lua_tosurface(L, 1); // not upstream: checked
+	ASSERT_SYNTAX(surf, "Argument 1: invalid surface");
 	oapi::Sketchpad *skp = oapiGetSketchpad(surf);
 	lua_pushsketchpad(L, skp);
 	return 1;
@@ -8291,6 +8407,7 @@ int Interpreter::oapi_release_sketchpad(lua_State* L)
 {
 	oapi::Sketchpad* skp = lua_tosketchpad(L, 1);
 	ASSERT_SYNTAX(skp, "Invalid sketchpad object");
+	lua_releasesketchpad(L, skp); // not upstream: the object no longer reaches the released sketchpad
 	oapiReleaseSketchpad(skp);
 	return 0;
 }
@@ -8335,7 +8452,7 @@ int Interpreter::oapi_create_font(lua_State* L)
 
 	oapi::Font* font = oapiCreateFont(height, prop, const_cast<char*>(face), style);
 
-	if (font) lua_pushlightuserdata(L, font);
+	if (font) luahandle::Push(L, font, luahandle::FONT); // not upstream: kept
 	else     lua_pushnil(L);
 	return 1;
 }
@@ -8349,7 +8466,9 @@ Release a font resource.
 int Interpreter::oapi_release_font(lua_State* L)
 {
 	ASSERT_LIGHTUSERDATA(L, 1);
-	oapi::Font* font = (oapi::Font*)lua_touserdata(L, 1);
+	oapi::Font* font = (oapi::Font*)lua_tohandle(L, 1, luahandle::FONT, NULL); // not upstream: one the bindings gave, released once
+	ASSERT_SYNTAX(font, "Argument 1: invalid font");
+	luahandle::Drop(L, font);
 
 	oapiReleaseFont(font);
 
@@ -8375,7 +8494,7 @@ int Interpreter::oapi_create_pen(lua_State* L)
 	DWORD col = lua_tonumber(L, 3);
 
 	oapi::Pen* pen = oapiCreatePen(style, width, col);
-	if (pen) lua_pushlightuserdata(L, pen);
+	if (pen) luahandle::Push(L, pen, luahandle::PEN); // not upstream: kept
 	else     lua_pushnil(L);
 	return 1;
 }
@@ -8389,7 +8508,9 @@ Release a pen resource.
 int Interpreter::oapi_release_pen(lua_State* L)
 {
 	ASSERT_LIGHTUSERDATA(L, 1);
-	oapi::Pen* pen = (oapi::Pen*)lua_touserdata(L, 1);
+	oapi::Pen* pen = (oapi::Pen*)lua_tohandle(L, 1, luahandle::PEN, NULL); // not upstream: one the bindings gave, released once
+	ASSERT_SYNTAX(pen, "Argument 1: invalid pen");
+	luahandle::Drop(L, pen);
 
 	oapiReleasePen(pen);
 
@@ -8412,7 +8533,7 @@ int Interpreter::oapi_create_brush(lua_State* L)
 	DWORD col = lua_tonumber(L, 1);
 
 	oapi::Brush* brush = oapiCreateBrush(col);
-	if (brush) lua_pushlightuserdata(L, brush);
+	if (brush) luahandle::Push(L, brush, luahandle::BRUSH); // not upstream: kept
 	else     lua_pushnil(L);
 	return 1;
 }
@@ -8426,7 +8547,9 @@ Release a pen resource.
 int Interpreter::oapi_release_brush(lua_State* L)
 {
 	ASSERT_LIGHTUSERDATA(L, 1);
-	oapi::Brush* brush = (oapi::Brush*)lua_touserdata(L, 1);
+	oapi::Brush* brush = (oapi::Brush*)lua_tohandle(L, 1, luahandle::BRUSH, NULL); // not upstream: one the bindings gave, released once
+	ASSERT_SYNTAX(brush, "Argument 1: invalid brush");
+	luahandle::Drop(L, brush);
 
 	oapiReleaseBrush(brush);
 
@@ -8457,8 +8580,9 @@ target surface (i.e. between oapi.get_sketchpad() and oapi.release_sketchpad cal
 */
 int Interpreter::oapi_blt(lua_State* L)
 {
-	SURFHANDLE tgt = (SURFHANDLE)lua_touserdata(L, 1);
-	SURFHANDLE src = (SURFHANDLE)lua_touserdata(L, 2);
+	SURFHANDLE tgt = lua_tosurface(L, 1); // not upstream: checked
+	SURFHANDLE src = lua_tosurface(L, 2);
+	ASSERT_SYNTAX(tgt && src, "invalid surface");
 	int tgtx = lua_tonumber(L, 3);
 	int tgty = lua_tonumber(L, 4);
 	int srcx = lua_tonumber(L, 5);
@@ -8497,7 +8621,7 @@ areas which are updated at each time step.
 int Interpreter::oapi_blt_panelareabackground(lua_State* L)
 {
 	int area_id = luaL_checkinteger(L, 1);
-	SURFHANDLE surf = (SURFHANDLE)lua_touserdata(L, 2);
+	SURFHANDLE surf = lua_tosurface(L, 2); // not upstream: checked
 	bool ret = oapiBltPanelAreaBackground(area_id, surf);
 	lua_pushboolean(L, ret);
 	return 1;
@@ -8949,7 +9073,8 @@ If note is nil, the annotation text is cleared.
 */
 int Interpreter::noteSetText (lua_State *L)
 {
-	NOTEHANDLE *pnote = (NOTEHANDLE*)lua_touserdata (L, 1);
+	NOTEHANDLE *pnote = lua_tonote (L, 1); // not upstream: only a live annotation
+	ASSERT_SYNTAX (pnote, "Invalid annotation object");
 	char *str = nullptr;
 	if(!lua_isnil(L, 2)) {
 		str = const_cast<char *>(lua_tostringex (L, 2));
@@ -8975,7 +9100,8 @@ visible.
 */
 int Interpreter::noteSetPos (lua_State *L)
 {
-	NOTEHANDLE *pnote = (NOTEHANDLE*)lua_touserdata (L, 1);
+	NOTEHANDLE *pnote = lua_tonote (L, 1); // not upstream: only a live annotation
+	ASSERT_SYNTAX (pnote, "Invalid annotation object");
 	double x1 = lua_tonumber (L, 2);
 	double y1 = lua_tonumber (L, 3);
 	double x2 = lua_tonumber (L, 4);
@@ -8995,7 +9121,8 @@ the default annotation size.
 */
 int Interpreter::noteSetSize (lua_State *L)
 {
-	NOTEHANDLE *pnote = (NOTEHANDLE*)lua_touserdata (L, 1);
+	NOTEHANDLE *pnote = lua_tonote (L, 1); // not upstream: only a live annotation
+	ASSERT_SYNTAX (pnote, "Invalid annotation object");
 	double size = lua_tonumber (L, 2);
 	oapiAnnotationSetSize (*pnote, size);
 	return 0;
@@ -9011,7 +9138,8 @@ col must be a table with r, g and b number fields in the range [0-1].
 */
 int Interpreter::noteSetColour (lua_State *L)
 {
-	NOTEHANDLE *pnote = (NOTEHANDLE*)lua_touserdata (L, 1);
+	NOTEHANDLE *pnote = lua_tonote (L, 1); // not upstream: only a live annotation
+	ASSERT_SYNTAX (pnote, "Invalid annotation object");
 	VECTOR3 col;
 	lua_getfield (L, 2, "r");
 	col.x = lua_tonumber (L, -1);  lua_pop (L, 1);
@@ -9041,15 +9169,83 @@ RECT Interpreter::lua_torect(lua_State* L, int idx)
 // ============================================================================
 // vessel library functions
 
+NOTEHANDLE *Interpreter::lua_tonote (lua_State *L, int idx) // not upstream: an annotation object, not yet deleted
+{
+	NOTEHANDLE *p = (NOTEHANDLE*)luaL_tryudata (L, idx, "NOTE.table");
+	return p && *p ? p : NULL;
+}
+
 OBJHANDLE Interpreter::lua_toObject (lua_State *L, int idx)
 {
-	return (OBJHANDLE)lua_touserdata (L, idx); 
+	if (!lua_islightuserdata (L, idx)) return NULL; // not upstream: a handle of an object the core has now (design-security-fixes B5)
+	OBJHANDLE h = (OBJHANDLE)lua_touserdata (L, idx);
+	return oapiIsObject (h) ? h : NULL;
+}
+
+// not upstream: a light userdata handle the core knows as kind k now (of vessel v where it belongs to one), else NULL
+void *Interpreter::lua_tohandle (lua_State *L, int idx, int k, VESSEL *v)
+{
+	if (!lua_islightuserdata (L, idx)) return NULL;
+	void *h = lua_touserdata (L, idx);
+	if (!h) return NULL;
+	switch (k) {
+	case luahandle::OBJECT: return oapiIsObject ((OBJHANDLE)h) ? h : NULL;
+	case luahandle::PROPELLANT:
+		if (!v) return oapiIsPropellant ((PROPELLANT_HANDLE)h) ? h : NULL;
+		for (DWORD i = 0; i < v->GetPropellantCount (); i++) if (v->GetPropellantHandleByIndex (i) == h) return h;
+		return NULL;
+	case luahandle::THRUSTER:
+		if (v) for (DWORD i = 0; i < v->GetThrusterCount (); i++) if (v->GetThrusterHandleByIndex (i) == h) return h;
+		return NULL;
+	case luahandle::THGROUP:
+		if (!v) return NULL;
+		for (int t = THGROUP_MAIN; t <= THGROUP_ATT_BACK; t++) if (v->GetThrusterGroupHandle ((THGROUP_TYPE)t) == h) return h;
+		for (DWORD i = 0; i < v->GetUserThrusterGroupCount (); i++) if (v->GetUserThrusterGroupHandleByIndex (i) == h) return h;
+		return NULL;
+	case luahandle::DOCK:
+		if (!v) return oapiIsDock ((DOCKHANDLE)h) ? h : NULL;
+		for (DWORD i = 0; i < v->DockCount (); i++) if (v->GetDockHandle (i) == h) return h;
+		return NULL;
+	case luahandle::ATTACHMENT:
+		if (v) for (int p = 0; p < 2; p++) for (DWORD i = 0; i < v->AttachmentCount (p != 0); i++) if (v->GetAttachmentHandle (p != 0, i) == h) return h;
+		return NULL;
+	case luahandle::NAV: return oapiIsNav ((NAVHANDLE)h) ? h : NULL;
+	case luahandle::SURFACE: return oapiIsSurface ((SURFHANDLE)h) ? h : NULL;
+	case luahandle::PSTREAM: return oapiIsParticleStream (h) ? h : NULL; // the core detaches a thruster's streams with it
+	case luahandle::ANIMCOMP: // del_animation drops an animation's components in the core
+		if (v) {
+			ANIMATION *anim;
+			UINT na = v->GetAnimPtr (&anim);
+			for (UINT i = 0; i < na; i++) for (UINT j = 0; j < anim[i].ncomp; j++) if (anim[i].comp[j] == h) return h;
+		}
+		return NULL;
+	default:
+		if (!luahandle::Known (L, h, k)) return NULL;
+		if (v && luahandle::Owner (L, h) && luahandle::Owner (L, h) != v->GetHandle ()) return NULL; // another vessel's
+		return h;
+	}
+}
+
+void *Interpreter::lua_tohandle_safe (lua_State *L, int idx, int k, VESSEL *v, const char *funcname)
+{
+	void *h = lua_tohandle (L, idx, k, v);
+	if (!h) luaL_error (L, "%s: argument %d: not a valid handle of its kind", funcname, idx);
+	return h;
+}
+
+// not upstream: nil, or a surface the graphics client holds (design-security-fixes B5)
+SURFHANDLE Interpreter::lua_tosurface (lua_State *L, int idx)
+{
+	if (lua_isnoneornil (L, idx)) return NULL;
+	SURFHANDLE h = (SURFHANDLE)lua_tohandle (L, idx, luahandle::SURFACE, NULL);
+	if (!h) luaL_error (L, "argument %d: not a surface", idx);
+	return h;
 }
 
 oapi::Sketchpad *Interpreter::lua_tosketchpad (lua_State *L, int idx)
 {
-	oapi::Sketchpad **skp = (oapi::Sketchpad**)lua_touserdata (L, idx);
-	return *skp;
+	oapi::Sketchpad **skp = (oapi::Sketchpad**)luaL_tryudata (L, idx, "SKP.vtable"); // not upstream: only a sketchpad, and NULL once its callback ended
+	return skp ? *skp : NULL;
 	//oapi::Sketchpad *skp = (oapi::Sketchpad*)lua_touserdata(L,idx);
 	//return skp;
 }
@@ -10052,10 +10248,11 @@ int Interpreter::skp_set_pen(lua_State* L)
 	
 	if (!lua_isnil(L, 2)) {
 		ASSERT_MTDLIGHTUSERDATA(L, 2);
-		pen = (oapi::Pen*)lua_touserdata(L, 2);
+		pen = (oapi::Pen*)lua_tohandle(L, 2, luahandle::PEN, NULL); // not upstream: checked
+		ASSERT_SYNTAX(pen, "Argument 1: invalid pen");
 	}
 	oapi::Pen* ppen = skp->SetPen(pen);
-	if (ppen) lua_pushlightuserdata(L, ppen);
+	if (ppen) luahandle::Push(L, ppen, luahandle::PEN);
 	else      lua_pushnil(L);
 	return 1;
 }
@@ -10076,11 +10273,12 @@ int Interpreter::skp_set_brush(lua_State* L)
 	
 	if (!lua_isnil(L, 2)) {
 		ASSERT_MTDLIGHTUSERDATA(L, 2);
-		brush = (oapi::Brush*)lua_touserdata(L, 2);
+		brush = (oapi::Brush*)lua_tohandle(L, 2, luahandle::BRUSH, NULL); // not upstream: checked
+		ASSERT_SYNTAX(brush, "Argument 1: invalid brush");
 	}
 
 	oapi::Brush* pbrush = skp->SetBrush(brush);
-	if (pbrush) lua_pushlightuserdata(L, pbrush);
+	if (pbrush) luahandle::Push(L, pbrush, luahandle::BRUSH);
 	else      lua_pushnil(L);
 	return 1;
 }
@@ -10097,9 +10295,10 @@ int Interpreter::skp_set_font (lua_State *L)
 	oapi::Sketchpad *skp = lua_tosketchpad (L,1);
 	ASSERT_SYNTAX(skp, "Invalid sketchpad object");
 	ASSERT_MTDLIGHTUSERDATA(L,2);
-	oapi::Font *font = (oapi::Font*)lua_touserdata(L,2);
+	oapi::Font *font = (oapi::Font*)lua_tohandle(L, 2, luahandle::FONT, NULL); // not upstream: checked
+	ASSERT_SYNTAX(font, "Argument 1: invalid font");
 	oapi::Font *pfont = skp->SetFont (font);
-	if (pfont) lua_pushlightuserdata(L,pfont);
+	if (pfont) luahandle::Push(L, pfont, luahandle::FONT);
 	else       lua_pushnil(L);
 	return 1;
 }
@@ -10154,7 +10353,8 @@ int Interpreter::skp_copy_rect (lua_State *L)
 {
 	oapi::Sketchpad *skp = lua_tosketchpad (L,1);
 	ASSERT_SYNTAX(skp, "Invalid sketchpad object");
-	SURFHANDLE hSrc = (SURFHANDLE)lua_touserdata(L, 2);
+	SURFHANDLE hSrc = lua_tosurface(L, 2); // not upstream: checked
+	ASSERT_SYNTAX(hSrc, "Argument 1: invalid surface");
 	RECT *src = nullptr;
 	RECT r;
 	if(!lua_isnil(L, 3)) {
@@ -10182,7 +10382,8 @@ int Interpreter::skp_stretch_rect (lua_State *L)
 {
 	oapi::Sketchpad *skp = lua_tosketchpad (L,1);
 	ASSERT_SYNTAX(skp, "Invalid sketchpad object");
-	SURFHANDLE hSrc = (SURFHANDLE)lua_touserdata(L, 2);
+	SURFHANDLE hSrc = lua_tosurface(L, 2); // not upstream: checked
+	ASSERT_SYNTAX(hSrc, "Argument 1: invalid surface");
 	RECT *src = nullptr;
 	RECT r;
 	if(!lua_isnil(L, 3)) {
@@ -10219,7 +10420,8 @@ int Interpreter::skp_rotate_rect (lua_State *L)
 {
 	oapi::Sketchpad *skp = lua_tosketchpad (L,1);
 	ASSERT_SYNTAX(skp, "Invalid sketchpad object");
-	SURFHANDLE hSrc = (SURFHANDLE)lua_touserdata(L, 2);
+	SURFHANDLE hSrc = lua_tosurface(L, 2); // not upstream: checked
+	ASSERT_SYNTAX(hSrc, "Argument 1: invalid surface");
 	RECT *src = nullptr;
 	RECT r;
 	if(!lua_isnil(L, 3)) {

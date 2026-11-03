@@ -227,6 +227,7 @@ void DdgiVolume::Schedule (const DdgiScene &scene)
 
 	list.clear();
 	std::vector<uint32_t> clears;
+	std::vector<char> started(NPROBE, 0); // not upstream: taken by starts this frame, so turns doesn't take them again
 	float cs = std::cos(2.0f * float(CPI) / 180.0f);
 	auto take = [&](int p, uint32_t flags) {
 		const VECTOR3 &sn = Cascade(p) == VCASC ? sunV : sunNow; // the cockpit volume's light turns with the vessel
@@ -239,7 +240,7 @@ void DdgiVolume::Schedule (const DdgiScene &scene)
 	auto starts = [&](int p0, int p1) { // fresh probes start over, or are cleared while they wait
 		for (int p = p0; p < p1; p++) {
 			if (!fresh[p]) continue;
-			if ((int)list.size() < budget) { take(p, E_RESET); fresh[p] = 0; }
+			if ((int)list.size() < budget) { take(p, E_RESET); fresh[p] = 0; started[p] = 1; }
 			else if (fresh[p] == 1) { clears.push_back(uint32_t(p) | E_CLEAR); fresh[p] = 2; }
 		}
 	};
@@ -248,7 +249,7 @@ void DdgiVolume::Schedule (const DdgiScene &scene)
 			int s = cursor[c];
 			if (++cursor[c] >= size) { cursor[c] = 0; cycle[c]++; }
 			int p = first + s;
-			if (fresh[p]) continue;
+			if (fresh[p] || started[p]) continue;
 			take(p, (cycle[c] % 8 == 0) ? E_RECHECK : 0u);
 		}
 	};
@@ -261,7 +262,12 @@ void DdgiVolume::Schedule (const DdgiScene &scene)
 		left -= n;
 	}
 	for (int c = 0; c < NCASC; c++) wsum += Weight(c);
-	for (int c = 0; c < NCASC && left > 0; c++) turns(c, c * NPC, NPC, std::min(NPC, std::max(1, left * Weight(c) / wsum)));
+	for (int c = 0; c < NCASC && left > 0; c++) {
+		int n = std::min({ NPC, std::max(1, left * Weight(c) / wsum), budget - (int)list.size() }); // not upstream: never past the budget (max 1 per cascade went over it)
+		if (n <= 0) break;
+		turns(c, c * NPC, NPC, n);
+	}
+	if ((int)list.size() > NMAX) list.resize(NMAX); // not upstream: the ray rows hold NMAX
 	nSched = (int)list.size();
 	nClear = (int)clears.size();
 	list.insert(list.end(), clears.begin(), clears.end());

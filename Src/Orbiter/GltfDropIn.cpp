@@ -136,9 +136,11 @@ void Hash (const RtFile &f, const std::vector<int> &imgs)
 	for (int t = 0; t < nt; t++)
 		pool.emplace_back ([&]() {
 			for (size_t k; (k = next++) < todo.size();) {
-				std::vector<unsigned char> b;
-				const std::string &ref = f.scene.images[todo[k]];
-				if (!ref.empty() && GltfImageBytes (ref, b)) out[k] = RtImageHash (b);
+				try { // not upstream: an exception in a worker ended Orbiter (std::terminate); the image gets no hash
+					std::vector<unsigned char> b;
+					const std::string &ref = f.scene.images[todo[k]];
+					if (!ref.empty() && GltfImageBytes (ref, b)) out[k] = RtImageHash (b);
+				} catch (...) { out[k].clear (); }
 			}
 		});
 	for (auto &t : pool) t.join ();
@@ -181,7 +183,9 @@ Built Build (const std::string &name, std::shared_ptr<RtFile> file, int e)
 	}
 	DWORD nBase = m->nGroup ();
 	if (base && (int)nBase != M.groups) LOGOUT_WARN ("Mesh %s: the .msh has %d groups, the file recorded %d; matched by index", name.c_str(), (int)nBase, M.groups);
-	int total = std::max ((int)nBase, M.groups);
+	int cap = (int)nBase + (int)P.outs.size (); // not upstream: the groups a file can name, its plan's outputs past the base (a few bytes asked for billions)
+	if (M.groups > cap) LOGOUT_WARN ("Mesh %s: the file records %d groups, more than the .msh's %d and its %d parts; %d used", name.c_str(), M.groups, (int)nBase, (int)P.outs.size (), cap);
+	int total = std::max ((int)nBase, std::min (M.groups, cap));
 	std::set<int> skipped (M.skipped.begin(), M.skipped.end());
 
 	// which groups change
@@ -357,7 +361,8 @@ const Built *Get (const char *meshname)
 	int e = -1;
 	for (size_t i = 0; i < f->rec.meshes.size(); i++) if (RtSameMeshName (f->rec.meshes[i].name, name)) e = (int)i;
 	if (e < 0) return nullptr;
-	b = Build (name, f, e);
+	try { b = Build (name, f, e); } // not upstream: a file that asks for too much fails its load, not Orbiter
+	catch (const std::exception &x) { LOGOUT_ERR ("Mesh %s from %s: %s", name.c_str(), fi->path.c_str(), x.what ()); b = Built (); return nullptr; }
 	return &b;
 }
 

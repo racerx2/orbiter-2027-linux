@@ -112,7 +112,7 @@ bool ScriptMFD::Input (const char *line)
 	InterpreterList::Environment *env = vi->env[pg];
 	env->interp->AddLine (line, 0xFFFFFF);
 	if (env->cmd[0]) return false;
-	strncpy (env->cmd, line, 1024);
+	snprintf (env->cmd, 1024, "%s", line); // not upstream: terminated (strncpy left a 1024-byte line without its end)
 	return true;
 }
 
@@ -229,6 +229,11 @@ DLLCLBK void opcPostStep (double simt, double simdt, double mjd)
 	if (g_IList) {
 		g_IList->Update (simt, simdt, mjd);
 	}
+}
+
+DLLCLBK void opcDeleteVessel (OBJHANDLE hVessel) // not upstream: the terminals' interpreters forget the vessel too, LuaInline may not be loaded
+{
+	Interpreter::DeleteVessel (hVessel);
 }
 
 DLLCLBK void opcOpenRenderViewport (QWindow *hWnd, DWORD w, DWORD h, BOOL bFullscreen)

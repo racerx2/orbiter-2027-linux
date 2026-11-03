@@ -2,22 +2,25 @@ project(lua)
 
 Include(FetchContent)
 
+# not upstream: Lua 5.1.5, the last 5.1 release (the repository's v5.1 tag is 5.1.0), pinned by its hash
 FetchContent_Declare(
-  lua
-  GIT_REPOSITORY https://github.com/lua/lua.git
-  GIT_TAG v5.1
+  lua515 # not upstream: its own name, so a build tree that fetched the repository gets the release afresh
+  URL https://www.lua.org/ftp/lua-5.1.5.tar.gz
+  URL_HASH SHA256=2640fc56a795f29d28ef15e13c34a47e223960b0240e8cb0a82d9b0738695333
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
-FetchContent_MakeAvailable(lua)
+FetchContent_MakeAvailable(lua515)
+set(LUA_SRC_DIR ${lua515_SOURCE_DIR}/src) # not upstream: the release's sources
 
-file(GLOB LUA_SRC_FILES "${lua_SOURCE_DIR}/*.c")
-file(GLOB LUA_HDR_FILES "${lua_SOURCE_DIR}/*.h")
+file(GLOB LUA_SRC_FILES "${LUA_SRC_DIR}/*.c")
+file(GLOB LUA_HDR_FILES "${LUA_SRC_DIR}/*.h")
 
-list(REMOVE_ITEM LUA_SRC_FILES "${lua_SOURCE_DIR}/lua.c")
-list(REMOVE_ITEM LUA_SRC_FILES "${lua_SOURCE_DIR}/luac.c")
-list(REMOVE_ITEM LUA_SRC_FILES "${lua_SOURCE_DIR}/print.c")
+list(REMOVE_ITEM LUA_SRC_FILES "${LUA_SRC_DIR}/lua.c")
+list(REMOVE_ITEM LUA_SRC_FILES "${LUA_SRC_DIR}/luac.c")
+list(REMOVE_ITEM LUA_SRC_FILES "${LUA_SRC_DIR}/print.c")
 
 # Executable - lua
-add_executable(lua-exe ${LUA_SRC_FILES} "${lua_SOURCE_DIR}/lua.c")
+add_executable(lua-exe ${LUA_SRC_FILES} "${LUA_SRC_DIR}/lua.c")
 set_target_properties(lua-exe PROPERTIES OUTPUT_NAME lua)
 
 set_target_properties(lua-exe PROPERTIES
@@ -47,7 +50,7 @@ foreach(path ${LUA_SRC_FILES})
 	endif()
 endforeach()
 add_library(lua SHARED ${LUA_SO_SRC})
-target_include_directories(lua PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${lua_SOURCE_DIR} ${ORBITER_SOURCE_SDK_INCLUDE_DIR}/Lua)
+target_include_directories(lua PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${LUA_SRC_DIR} ${ORBITER_SOURCE_SDK_INCLUDE_DIR}/Lua)
 
 # LUA_BUILD_AS_DLL is the MSVC side; POSIX + dlopen give require() the C-module loader it gets from LoadLibrary
 target_compile_definitions(lua-exe PRIVATE LUA_USE_POSIX LUA_USE_DLOPEN)

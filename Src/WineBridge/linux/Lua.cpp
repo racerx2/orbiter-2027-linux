@@ -6,6 +6,8 @@
 #include "Bridge.h"
 #include "Manual.h"
 #include "lua.hpp"
+#include "Checks.h"
+#include <cstring>
 #include <initializer_list>
 #include <mutex>
 #include <string>
@@ -15,6 +17,10 @@
 using Guard = std::lock_guard<std::recursive_mutex>;
 
 namespace {
+
+using wbcheck::Valid;
+using wbcheck::CiValid;
+using wbcheck::SameUniverse;
 
 // the bridge's table in a Lua universe's registry, at &g_key
 enum { WB_PROT = 1, WB_ERR, WB_UD, WB_SENT, WB_HOOKS, WB_PANIC, WB_N = WB_PANIC };
@@ -178,7 +184,7 @@ void PutFn (lua_CFunction f, uint32_t module, WbWriter &w)
 {
 	if (!f) { w.i32 (LF_NONE); w.u32 (0); }
 	else if (module) { w.i32 (LF_MODULE); w.u32 (module); }
-	else { w.i32 (LF_LINUX); w.u32 (WbBridge::Get ().Id (reinterpret_cast<void *> (f))); }
+	else { w.i32 (LF_LINUX); w.u32 (WbBridge::Get ().Id (reinterpret_cast<void *> (f), WK_FN)); } // not upstream (F1): WK_FN
 }
 
 uint32_t ModuleFn (lua_State *L, int i) // the module's function of a Tramp closure; 0 if not one
@@ -358,7 +364,7 @@ int ProtFn (lua_State *L)
 	switch (q.op) {
 	case LO_pushlstring: lua_pushlstring (L, q.s.data (), q.s.size ()); return 1;
 	case LO_pushcclosure: // the upvalues are the arguments
-		if (q.kind == LF_LINUX) { lua_pushcclosure (L, (lua_CFunction)WbBridge::Get ().Ptr (q.fn), q.a); return 1; }
+		if (q.kind == LF_LINUX) { lua_pushcclosure (L, (lua_CFunction)WbBridge::Get ().Fn (q.fn), q.a); return 1; }
 		lua_pushlightuserdata (L, (void *)(uintptr_t)q.fn);
 		lua_insert (L, 1);
 		lua_pushcclosure (L, Tramp, q.a + 1);
@@ -398,7 +404,7 @@ int ProtFn (lua_State *L)
 // runs q with copies of the operands (absolute indices); its nres results land at the top. False: Lua raised (the error is pending)
 bool Run (lua_State *L, Prot &q, const int *idx, int nidx, int nres)
 {
-	lua_checkstack (L, nidx + 3);
+	if (!lua_checkstack (L, nidx + 3)) return false; // not upstream (F3): no room, as an error
 	if (!PushWb (L, WB_PROT)) { lua_pushliteral (L, "not enough memory"); SetPending (L); return false; }
 	lua_pushlightuserdata (L, &q);
 	for (int i = 0; i < nidx; i++) lua_pushvalue (L, idx[i]);
@@ -516,13 +522,20 @@ void Serve (lua_State *L, int op, WbReader &r, WbWriter &w)
 	WbBridge &b = WbBridge::Get ();
 	Prot q;
 	q.op = op;
-	lua_checkstack (L, 8);
+	if (!lua_checkstack (L, 8) && op != LO_gettop && op != LO_settop && op != LO_remove && op != LO_checkstack) { r.bad = true; return; } // not upstream (F3)
 	switch (op) {
 	case LO_gettop: w.i32 (lua_gettop (L)); break;
-	case LO_settop: { int i = r.i32 (); if (!r.bad) lua_settop (L, i); break; }
+	case LO_settop: { // not upstream (F3): down to empty, or up with room made
+		int i = r.i32 (), top = lua_gettop (L);
+		if (r.bad || (i < 0 && -i > top + 1) || (i > top && (i > LUAI_MAXCSTACK || !lua_checkstack (L, i - top)))) { r.bad = true; break; }
+		lua_settop (L, i);
+		break; }
 	case LO_pushvalue: case LO_remove: case LO_insert: case LO_replace: {
 		int i = Ix (r.i32 ());
-		if (r.bad) break;
+		bool bad = r.bad || !Valid (L, i, op != LO_pushvalue) || (op == LO_replace && lua_gettop (L) < 1); // not upstream (F3)
+		if (!bad && op != LO_pushvalue && i <= LUA_REGISTRYINDEX) // a pseudo-index: replaced only, the globals and the environment by a table
+			bad = op != LO_replace || ((i == LUA_GLOBALSINDEX || i == LUA_ENVIRONINDEX) && !lua_istable (L, -1));
+		if (bad) { r.bad = true; break; }
 		if (op == LO_pushvalue) lua_pushvalue (L, i);
 		else if (op == LO_remove) lua_remove (L, i);
 		else if (op == LO_insert) lua_insert (L, i);
@@ -533,30 +546,34 @@ void Serve (lua_State *L, int op, WbReader &r, WbWriter &w)
 		uint32_t to = r.u32 ();
 		int n = r.i32 ();
 		lua_State *T = StateOf (to);
-		if (!r.bad && T) lua_xmove (L, T, n);
+		if (r.bad || !T || n < 0 || n > lua_gettop (L) || !SameUniverse (L, T) || !lua_checkstack (T, n)) { r.bad = true; break; } // not upstream (F3)
+		lua_xmove (L, T, n);
 		break; }
 	case LO_isnumber: case LO_isstring: case LO_iscfunction: case LO_isuserdata: case LO_type: case LO_toboolean: case LO_getmetatable:
 	case LO_setmetatable: case LO_setfenv: {
 		int i = Ix (r.i32 ());
-		if (r.bad) break;
+		bool sets = op == LO_setmetatable || op == LO_setfenv;
+		if (r.bad || !Valid (L, i) || (sets && (lua_gettop (L) < 1 || (!lua_istable (L, -1) && (op == LO_setfenv || !lua_isnil (L, -1)))))) { r.bad = true; break; } // not upstream (F3)
 		int v = op == LO_isnumber ? lua_isnumber (L, i) : op == LO_isstring ? lua_isstring (L, i) : op == LO_iscfunction ? lua_iscfunction (L, i)
 			: op == LO_isuserdata ? lua_isuserdata (L, i) : op == LO_type ? lua_type (L, i) : op == LO_toboolean ? lua_toboolean (L, i)
 			: op == LO_getmetatable ? lua_getmetatable (L, i) : op == LO_setmetatable ? lua_setmetatable (L, i) : lua_setfenv (L, i);
 		w.i32 (v);
 		break; }
 	case LO_equal: case LO_lessthan: {
-		int i1 = Abs (L, Ix (r.i32 ())), i2 = Abs (L, Ix (r.i32 ()));
-		if (r.bad) break;
+		int j1 = Ix (r.i32 ()), j2 = Ix (r.i32 ());
+		if (r.bad || !Valid (L, j1) || !Valid (L, j2)) { r.bad = true; break; } // not upstream (F3)
+		int i1 = Abs (L, j1), i2 = Abs (L, j2);
 		bool ok = true;
 		if (lua_type (L, i1) != LUA_TNONE && lua_type (L, i2) != LUA_TNONE) ok = Run (L, q, {i1, i2}, 0); // an index not valid: 0
 		w.b (!ok);
 		w.i32 (ok ? q.r : 0);
 		break; }
-	case LO_rawequal: { int i1 = Ix (r.i32 ()), i2 = Ix (r.i32 ()); if (!r.bad) w.i32 (lua_rawequal (L, i1, i2)); break; }
-	case LO_tonumber: { int i = Ix (r.i32 ()); if (!r.bad) w.f64 (lua_tonumber (L, i)); break; }
+	case LO_rawequal: { int i1 = Ix (r.i32 ()), i2 = Ix (r.i32 ()); if (r.bad || !Valid (L, i1) || !Valid (L, i2)) { r.bad = true; break; } w.i32 (lua_rawequal (L, i1, i2)); break; }
+	case LO_tonumber: { int i = Ix (r.i32 ()); if (r.bad || !Valid (L, i)) { r.bad = true; break; } w.f64 (lua_tonumber (L, i)); break; }
 	case LO_tolstring: { // a number becomes a string in its slot, as Lua does
-		int i = Abs (L, Ix (r.i32 ()));
-		if (r.bad) break;
+		int j = Ix (r.i32 ());
+		if (r.bad || !Valid (L, j)) { r.bad = true; break; } // not upstream (F3)
+		int i = Abs (L, j);
 		int t = lua_type (L, i);
 		bool ok = true;
 		if (t == LUA_TNUMBER && (ok = Run (L, q, {i}, 1))) lua_replace (L, i);
@@ -565,27 +582,29 @@ void Serve (lua_State *L, int op, WbReader &r, WbWriter &w)
 		w.b (!ok);
 		PutStr (w, s, n);
 		break; }
-	case LO_objlen: { int i = Ix (r.i32 ()); if (!r.bad) w.u32 ((uint32_t)lua_objlen (L, i)); break; }
+	case LO_objlen: { int i = Ix (r.i32 ()); if (r.bad || !Valid (L, i)) { r.bad = true; break; } w.u32 ((uint32_t)lua_objlen (L, i)); break; }
 	case LO_tocfunction: {
-		int i = Abs (L, Ix (r.i32 ()));
-		if (r.bad) break;
+		int j = Ix (r.i32 ());
+		if (r.bad || !Valid (L, j)) { r.bad = true; break; } // not upstream (F3)
+		int i = Abs (L, j);
 		lua_CFunction f = lua_tocfunction (L, i);
 		PutFn (f, f ? ModuleFn (L, i) : 0, w);
 		break; }
-	case LO_touserdata: { int i = Abs (L, Ix (r.i32 ())); if (!r.bad) PutUd (L, i, w); break; }
+	case LO_touserdata: { int j = Ix (r.i32 ()); if (r.bad || !Valid (L, j)) { r.bad = true; break; } PutUd (L, Abs (L, j), w); break; }
 	case LO_tothread: {
 		int i = Ix (r.i32 ());
-		if (r.bad) break;
+		if (r.bad || !Valid (L, i)) { r.bad = true; break; } // not upstream (F3)
 		lua_State *T = lua_tothread (L, i);
 		w.u32 (T ? StateId (T) : 0);
 		break; }
 	case LO_topointer: {
-		int i = Abs (L, Ix (r.i32 ()));
-		if (r.bad) break;
+		int j = Ix (r.i32 ());
+		if (r.bad || !Valid (L, j)) { r.bad = true; break; } // not upstream (F3)
+		int i = Abs (L, j);
 		int t = lua_type (L, i);
 		w.i32 (t);
 		if (t == LUA_TUSERDATA || t == LUA_TLIGHTUSERDATA) PutUd (L, i, w);
-		else { const void *p = lua_topointer (L, i); w.u32 (p ? b.Id (p) : 0); }
+		else { const void *p = lua_topointer (L, i); w.u32 (p ? b.Id (p, WK_LUA) : 0); } // not upstream (F1): never a handle or a function
 		break; }
 	case LO_pushnil: lua_pushnil (L); break;
 	case LO_pushnumber: { double v = r.f64 (); if (!r.bad) lua_pushnumber (L, v); break; }
@@ -604,23 +623,28 @@ void Serve (lua_State *L, int op, WbReader &r, WbWriter &w)
 		q.kind = r.i32 ();
 		q.fn = r.u32 ();
 		q.a = r.i32 ();
-		if (r.bad || q.a < 0 || q.a > lua_gettop (L)) break;
+		if (r.bad || q.a < 0 || q.a > lua_gettop (L) || q.a > 254 || (q.kind == LF_LINUX && !b.Fn (q.fn))) { r.bad = true; break; } // not upstream (F1, F3)
 		bool ok = RunTop (L, q, q.a, 1);
 		if (ok) Collapse (L, q.a);
 		w.b (!ok);
 		break; }
 	case LO_gettable: case LO_getfield: {
-		int t = Abs (L, Ix (r.i32 ()));
+		int j = Ix (r.i32 ());
 		if (op == LO_getfield) q.s = Str (r);
-		if (r.bad) break;
+		if (r.bad || !Valid (L, j) || (op == LO_gettable && lua_gettop (L) < 1)) { r.bad = true; break; } // not upstream (F3)
+		int t = Abs (L, j);
 		bool ok = op == LO_gettable ? Run (L, q, {t, lua_gettop (L)}, 1) : Run (L, q, {t}, 1);
 		if (ok && op == LO_gettable) lua_remove (L, -2);
 		w.b (!ok);
 		break; }
-	case LO_rawget: case LO_getfenv: { int i = Ix (r.i32 ()); if (r.bad) break; if (op == LO_rawget) lua_rawget (L, i); else lua_getfenv (L, i); break; }
+	case LO_rawget: case LO_getfenv: { // not upstream (F3): rawget on a table with its key
+		int i = Ix (r.i32 ());
+		if (r.bad || !Valid (L, i) || (op == LO_rawget && (lua_gettop (L) < 1 || !lua_istable (L, i)))) { r.bad = true; break; }
+		if (op == LO_rawget) lua_rawget (L, i); else lua_getfenv (L, i);
+		break; }
 	case LO_rawgeti: case LO_rawseti: {
 		int i = Ix (r.i32 ()), n = r.i32 ();
-		if (r.bad) break;
+		if (r.bad || !Valid (L, i) || !lua_istable (L, i) || (op == LO_rawseti && lua_gettop (L) < 1)) { r.bad = true; break; } // not upstream (F3)
 		if (op == LO_rawgeti) lua_rawgeti (L, i, n);
 		else lua_rawseti (L, i, n);
 		break; }
@@ -635,9 +659,10 @@ void Serve (lua_State *L, int op, WbReader &r, WbWriter &w)
 		if (!r.bad) w.b (!Run (L, q, {}, 1));
 		break; }
 	case LO_settable: case LO_setfield: case LO_rawset: {
-		int t = Abs (L, Ix (r.i32 ()));
+		int j = Ix (r.i32 ());
 		if (op == LO_setfield) q.s = Str (r);
-		if (r.bad) break;
+		if (r.bad || !Valid (L, j) || lua_gettop (L) < (op == LO_setfield ? 1 : 2) || (op == LO_rawset && !lua_istable (L, j))) { r.bad = true; break; } // not upstream (F3)
+		int t = Abs (L, j);
 		int top = lua_gettop (L);
 		bool ok = op == LO_setfield ? Run (L, q, {t, top}, 0) : Run (L, q, {t, top - 1, top}, 0);
 		if (ok) lua_pop (L, op == LO_setfield ? 1 : 2);
@@ -645,14 +670,17 @@ void Serve (lua_State *L, int op, WbReader &r, WbWriter &w)
 		break; }
 	case LO_call: {
 		int na = r.i32 (), nr = r.i32 ();
-		if (r.bad) break;
+		if (r.bad || na < 0 || na >= lua_gettop (L) || nr < LUA_MULTRET || nr > LUAI_MAXCSTACK || (nr > na && !lua_checkstack (L, nr - na))) { r.bad = true; break; } // not upstream (F3)
 		bool ok = lua_pcall (L, na, nr, 0) == 0;
 		if (!ok) SetPending (L);
 		w.b (!ok);
 		break; }
 	case LO_pcall: {
 		int na = r.i32 (), nr = r.i32 (), ef = r.i32 ();
-		if (!r.bad) w.i32 (lua_pcall (L, na, nr, ef ? Ix (ef) : 0));
+		int e = ef ? Ix (ef) : 0;
+		if (r.bad || na < 0 || na >= lua_gettop (L) || nr < LUA_MULTRET || nr > LUAI_MAXCSTACK || (nr > na && !lua_checkstack (L, nr - na))
+			|| (e && (e <= LUA_REGISTRYINDEX || !Valid (L, e, true) || Abs (L, e) >= lua_gettop (L) - na))) { r.bad = true; break; } // not upstream (F3): below the function
+		w.i32 (lua_pcall (L, na, nr, e));
 		break; }
 	case LO_cpcall: {
 		int kind = r.i32 ();
@@ -660,7 +688,8 @@ void Serve (lua_State *L, int op, WbReader &r, WbWriter &w)
 		bool mapped = r.b ();
 		if (r.bad) break;
 		CpReq c {f, ud, mapped};
-		w.i32 (kind == LF_LINUX ? lua_cpcall (L, (lua_CFunction)b.Ptr (f), LightIn (ud, mapped)) : lua_cpcall (L, CpTramp, &c));
+		if (kind == LF_LINUX && !b.Fn (f)) { r.bad = true; break; } // not upstream (F1)
+		w.i32 (kind == LF_LINUX ? lua_cpcall (L, (lua_CFunction)b.Fn (f), LightIn (ud, mapped)) : lua_cpcall (L, CpTramp, &c));
 		break; }
 	case LO_load: {
 		std::string chunk = Str (r), name = Str (r);
@@ -676,7 +705,7 @@ void Serve (lua_State *L, int op, WbReader &r, WbWriter &w)
 		w.i32 (st);
 		PutStr (w, out.data (), out.size ());
 		break; }
-	case LO_resume: { int n = r.i32 (); if (!r.bad) w.i32 (lua_resume (L, n)); break; }
+	case LO_resume: { int n = r.i32 (); if (r.bad || n < 0 || n > lua_gettop (L)) { r.bad = true; break; } w.i32 (lua_resume (L, n)); break; } // not upstream (F3)
 	case LO_status: w.i32 (lua_status (L)); break;
 	case LO_gc: {
 		q.a = r.i32 ();
@@ -688,8 +717,9 @@ void Serve (lua_State *L, int op, WbReader &r, WbWriter &w)
 		break; }
 	case LO_error: SetPending (L); break;
 	case LO_next: {
-		int t = Abs (L, Ix (r.i32 ()));
-		if (r.bad) break;
+		int j = Ix (r.i32 ());
+		if (r.bad || !Valid (L, j) || lua_gettop (L) < 1 || !lua_istable (L, j)) { r.bad = true; break; } // not upstream (F3)
+		int t = Abs (L, j);
 		bool ok = Run (L, q, {t, lua_gettop (L)}, LUA_MULTRET);
 		if (ok && q.r) lua_remove (L, -3);
 		else if (ok) lua_pop (L, 1);
@@ -698,7 +728,7 @@ void Serve (lua_State *L, int op, WbReader &r, WbWriter &w)
 		break; }
 	case LO_concat: {
 		q.a = r.i32 ();
-		if (r.bad || q.a < 0 || q.a > lua_gettop (L)) break;
+		if (r.bad || q.a < 0 || q.a > lua_gettop (L)) { r.bad = true; break; }
 		bool ok = RunTop (L, q, q.a, 1);
 		if (ok) Collapse (L, q.a);
 		w.b (!ok);
@@ -720,6 +750,7 @@ void Serve (lua_State *L, int op, WbReader &r, WbWriter &w)
 		std::string what = Str (r);
 		int ci = r.i32 ();
 		if (r.bad || what.empty ()) break;
+		if (what[0] == '>' ? lua_gettop (L) < 1 || !lua_isfunction (L, -1) : !CiValid (L, ci)) { r.bad = true; break; } // not upstream (F3)
 		lua_Debug ar {};
 		ar.i_ci = ci;
 		bool top = what[0] == '>', u = what.find ('u') != std::string::npos, f = what.find ('f') != std::string::npos;
@@ -741,12 +772,13 @@ void Serve (lua_State *L, int op, WbReader &r, WbWriter &w)
 		lua_Debug ar {};
 		ar.i_ci = r.i32 ();
 		int n = r.i32 ();
-		if (r.bad) break;
+		if (r.bad || !CiValid (L, ar.i_ci) || (op == LO_setlocal && lua_gettop (L) < 1)) { r.bad = true; break; } // not upstream (F3)
 		w.str (op == LO_getlocal ? lua_getlocal (L, &ar, n) : lua_setlocal (L, &ar, n));
 		break; }
 	case LO_getupvalue: case LO_setupvalue: {
-		int f = Abs (L, Ix (r.i32 ())), n = r.i32 ();
-		if (r.bad) break;
+		int j = Ix (r.i32 ()), n = r.i32 ();
+		if (r.bad || !Valid (L, j) || (op == LO_setupvalue && lua_gettop (L) < 1)) { r.bad = true; break; } // not upstream (F3)
+		int f = Abs (L, j);
 		if (n >= 1 && lua_tocfunction (L, f) == Tramp) n++;
 		w.str (n < 1 ? nullptr : op == LO_getupvalue ? lua_getupvalue (L, f, n) : lua_setupvalue (L, f, n));
 		break; }
@@ -755,30 +787,31 @@ void Serve (lua_State *L, int op, WbReader &r, WbWriter &w)
 		uint32_t f = r.u32 ();
 		int mask = r.i32 (), count = r.i32 ();
 		if (r.bad) break;
+		if (kind == LF_LINUX && f && !b.Fn (f)) { r.bad = true; break; } // not upstream (F1)
 		SetHook (L, kind == LF_MODULE ? f : 0);
-		lua_Hook h = !f || !mask ? nullptr : kind == LF_LINUX ? (lua_Hook)b.Ptr (f) : HookTramp;
+		lua_Hook h = !f || !mask ? nullptr : kind == LF_LINUX ? (lua_Hook)b.Fn (f) : HookTramp;
 		w.i32 (lua_sethook (L, h, mask, count));
 		break; }
 	case LO_gethook: {
 		lua_Hook h = lua_gethook (L);
 		if (!h) { w.i32 (LF_NONE); w.u32 (0); }
 		else if (h == HookTramp) { w.i32 (LF_MODULE); w.u32 (Slot (L, WB_HOOKS, true)); }
-		else { w.i32 (LF_LINUX); w.u32 (b.Id (reinterpret_cast<void *> (h))); }
+		else { w.i32 (LF_LINUX); w.u32 (b.Id (reinterpret_cast<void *> (h), WK_FN)); } // not upstream (F1): WK_FN
 		break; }
 	case LO_gethookmask: w.i32 (lua_gethookmask (L)); break;
 	case LO_gethookcount: w.i32 (lua_gethookcount (L)); break;
 	case LO_atpanic: {
 		int kind = r.i32 ();
 		uint32_t f = r.u32 ();
-		if (r.bad) break;
+		if (r.bad || (kind == LF_LINUX && f && !b.Fn (f))) { r.bad = true; break; } // not upstream (F1)
 		uint32_t before = Slot (L, WB_PANIC, false);
 		if (kind == LF_MODULE) SetPanic (L, f);
-		lua_CFunction old = lua_atpanic (L, kind == LF_MODULE && f ? PanicTramp : kind == LF_LINUX ? (lua_CFunction)b.Ptr (f) : nullptr);
+		lua_CFunction old = lua_atpanic (L, kind == LF_MODULE && f ? PanicTramp : kind == LF_LINUX ? (lua_CFunction)b.Fn (f) : nullptr);
 		PutFn (old, old == PanicTramp ? before : 0, w);
 		break; }
 	case LO_callc: {
-		q.cf = (lua_CFunction)b.Ptr (r.u32 ());
-		if (r.bad || !q.cf) break;
+		q.cf = (lua_CFunction)b.Fn (r.u32 ()); // not upstream (F1): Fn
+		if (r.bad || !q.cf) { r.bad = true; break; }
 		int n = lua_gettop (L);
 		bool ok = RunTop (L, q, n, LUA_MULTRET);
 		if (ok) for (int i = 0; i < n; i++) lua_remove (L, 1);
@@ -786,11 +819,11 @@ void Serve (lua_State *L, int op, WbReader &r, WbWriter &w)
 		w.i32 (ok ? q.r : 0);
 		break; }
 	case LO_callhook: {
-		q.hook = (lua_Hook)b.Ptr (r.u32 ());
+		q.hook = (lua_Hook)b.Fn (r.u32 ()); // not upstream (F1): Fn
 		q.ar.event = r.i32 ();
 		q.ar.currentline = r.i32 ();
 		q.ar.i_ci = r.i32 ();
-		if (r.bad || !q.hook) break;
+		if (r.bad || !q.hook || !CiValid (L, q.ar.i_ci)) { r.bad = true; break; } // not upstream (F1, F3)
 		w.b (!Run (L, q, {}, 0));
 		break; }
 	default:

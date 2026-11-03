@@ -97,6 +97,7 @@ BEACONLIGHTSPEC *WbLiveBeacon (uint32_t id);                 // ... a beacon ite
 void WbPutVS (WbWriter &w, const VESSELSTATUS &s);           // a VESSELSTATUS on the wire, handles as ids
 void WbGetVS (WbReader &r, VESSELSTATUS &s);
 bool WbMeshCopies ();                                        // the helper holds mesh copies: H_FRAME once a frame
+void WbMeshGone (const void *h);                             // not upstream (F2): oapiDeleteMesh took it
 void WbManualClear ();                                       // the session's end
 
 // VESSELSTATUS2 on the wire (vs2 in wb_proto.h); lists read in are allocated with new[], as Orbiter's own

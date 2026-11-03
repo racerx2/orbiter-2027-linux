@@ -178,6 +178,94 @@ DLLEXPORT bool oapiIsVessel (OBJHANDLE hVessel)
 	return (g_psys ? g_psys->isVessel ((const Vessel*)hVessel) : false);
 }
 
+// not upstream: handle checks for script bindings (design-security-fixes B5)
+DLLEXPORT bool oapiIsObject (OBJHANDLE hObj)
+{
+	if (!g_psys || !hObj) return false;
+	if (g_psys->isObject ((const Body*)hObj)) return true;
+	for (size_t i = 0; i < g_psys->nPlanet(); i++) {
+		const Planet *p = g_psys->GetPlanet ((int)i);
+		for (DWORD j = 0; j < p->nBase(); j++)
+			if ((OBJHANDLE)p->GetBase (j) == hObj) return true;
+	}
+	return false;
+}
+
+DLLEXPORT bool oapiIsPropellant (PROPELLANT_HANDLE hp)
+{
+	if (!g_psys || !hp) return false;
+	for (size_t i = 0; i < g_psys->nVessel(); i++) {
+		const Vessel *v = g_psys->GetVessel ((DWORD)i);
+		for (DWORD j = 0; v->PropellantHandle (j); j++)
+			if (v->PropellantHandle (j) == hp) return true;
+	}
+	return false;
+}
+
+static bool NavListed (const NavManager &m, NAVHANDLE h)
+{
+	for (DWORD i = 0; i < m.nNav(); i++)
+		if (m.GetNav (i) == h) return true;
+	return false;
+}
+
+DLLEXPORT bool oapiIsNav (NAVHANDLE hNav)
+{
+	if (!g_psys || !hNav) return false;
+	for (size_t i = 0; i < g_psys->nPlanet(); i++) {
+		const Planet *p = g_psys->GetPlanet ((int)i);
+		if (NavListed (p->NavMgr(), hNav)) return true;
+		for (DWORD j = 0; j < p->nBase(); j++) {
+			const Base *b = p->GetBase (j);
+			if (NavListed (b->NavMgr(), hNav)) return true;
+			for (DWORD k = 0; k < b->nPad(); k++)
+				if ((NAVHANDLE)b->PadStatus (k)->nav == hNav) return true;
+		}
+	}
+	for (size_t i = 0; i < g_psys->nVessel(); i++) {
+		const Vessel *v = g_psys->GetVessel ((DWORD)i);
+		if ((NAVHANDLE)v->GetXPDR() == hNav) return true;
+		for (DWORD d = 0; d < v->nDock(); d++)
+			if ((NAVHANDLE)v->GetDockParams (d)->ids == hNav) return true;
+	}
+	return false;
+}
+
+DLLEXPORT bool oapiIsDock (DOCKHANDLE hDock)
+{
+	if (!g_psys || !hDock) return false;
+	for (size_t i = 0; i < g_psys->nVessel(); i++) {
+		const Vessel *v = g_psys->GetVessel ((DWORD)i);
+		for (DWORD d = 0; d < v->nDock(); d++)
+			if ((DOCKHANDLE)v->GetDockParams (d) == hDock) return true;
+	}
+	return false;
+}
+
+DLLEXPORT bool oapiIsParticleStream (PSTREAM_HANDLE ph)
+{
+	if (!g_psys || !ph) return false;
+	for (size_t i = 0; i < g_psys->nVessel(); i++)
+		if (g_psys->GetVessel ((DWORD)i)->HasParticleStream (ph)) return true;
+	return false;
+}
+
+DLLEXPORT bool oapiGltfImageRef (const char *name)
+{
+	return GltfImageRefMade (name);
+}
+
+DLLEXPORT bool oapiIsSurface (SURFHANDLE surf)
+{
+	oapi::GraphicsClient *gc = g_pOrbiter ? g_pOrbiter->GetGraphicsClient() : NULL;
+	return surf && gc && gc->clbkIsSurface (surf);
+}
+
+DLLEXPORT bool oapiScriptFullAccess ()
+{
+	return g_pOrbiter && g_pOrbiter->Cfg()->CfgUIPrm.bScriptFullAccess;
+}
+
 DLLEXPORT void oapiSetVesselControlLock (OBJHANDLE hVessel, bool lock) // not upstream
 {
 	if (oapiIsVessel (hVessel)) ((Vessel*)hVessel)->SetCtrlLock (lock);

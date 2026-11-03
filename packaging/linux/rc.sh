@@ -1,5 +1,5 @@
 #!/bin/bash
-# not upstream: release candidates in one command (packaging/linux/README.md): rc.sh build | package [rcN] | release [rcN]
+# not upstream: release candidates in one command (packaging/linux/README.md): rc.sh setup | build | package [rcN] | release [rcN]
 set -euo pipefail
 H=$(dirname "$(readlink -f "$0")"); SRC=$(readlink -f "$H/../.."); cd "$SRC"
 ROOT=${ORBITER_RELEASE_ROOT:-$HOME/Projects/orbiter-collision/out/pkg/alma9} # AlmaLinux 9 root with the Dockerfile's packages, no Docker needed
@@ -10,24 +10,37 @@ OUT=$SRC/out/portable; W=/work/$(basename "$SRC") # the repo inside the root
 die() { echo "rc: STOP: $*" >&2; exit 1; }
 say() { echo "rc: $*" >&2; }
 
-inroot() { # fake root in the AlmaLinux folder (user namespace, no privileges); the repo's parent is /work
-	nice -n 10 bwrap --unshare-user --uid 0 --gid 0 --cap-add ALL --bind "$ROOT" / --dev /dev --proc /proc --tmpfs /tmp \
+QTV=$(sed -n 's/^QV=//p' "$H/qt.sh") # the Qt qt.sh builds into the root
+KEY=${ORBITER_RELEASE_KEY:-$HOME/.config/orbiter-release/release_ed25519} # the release signing key, never in the repository
+SIGNER=orbiter-2027-linux-release # its name in allowed_signers
+ENVPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+inroot() { # the AlmaLinux folder as a read-only / (user namespace, no privileges, a clean environment); only the repo's parent (/work) and /tmp are writable
+	nice -n 10 bwrap --unshare-user --uid 0 --gid 0 --clearenv --ro-bind "$ROOT" / --dev /dev --proc /proc --tmpfs /tmp \
 		--ro-bind /etc/resolv.conf /etc/resolv.conf --share-net --bind "$(dirname "$SRC")" /work \
-		--setenv HOME /root --setenv PATH /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin --setenv LANG C.UTF-8 \
-		--chdir / "$@"
+		--setenv HOME /tmp --setenv PATH "$ENVPATH" --setenv LANG C.UTF-8 --chdir / "$@"
 }
 
-portable() { # $1 version, $2 PACK (0: compile only)
-	[ -d "$ROOT/opt/deps" ] || die "no release root at $ROOT (set ORBITER_RELEASE_ROOT)"
-	local qt; qt=$(ls "$ROOT/opt/Qt" | grep -m1 '^6\.') || die "no Qt in $ROOT/opt/Qt"
+setup() { # the root's contents (setup.sh: packages, build tools, Vulkan pieces, Qt): read-write, with the capabilities dnf needs; QT_SRC: a folder with Qt's source archives
+	[ -d "$ROOT/etc/dnf" ] || die "no AlmaLinux 9 root at $ROOT (packaging/linux/README.md: making one)"
+	mkdir -p "$ROOT/work"
+	nice -n 10 bwrap --unshare-user --uid 0 --gid 0 --cap-add ALL --clearenv --bind "$ROOT" / --dev /dev --proc /proc --tmpfs /tmp \
+		--ro-bind /etc/resolv.conf /etc/resolv.conf --share-net --ro-bind "$H" /setup ${QT_SRC:+--ro-bind "$QT_SRC" /qtsrc} \
+		--setenv HOME /root --setenv PATH "$ENVPATH" --setenv LANG C.UTF-8 ${QT_SRC:+--setenv QT_SRC /qtsrc} --setenv JOBS "$(( $(nproc) > 3 ? $(nproc) - 2 : 1 ))" \
+		--chdir / bash /setup/setup.sh
+}
+
+portable() { # $1 version, $2 PACK (0: compile only; 1: the package, built from the commit's files)
+	[ -d "$ROOT/opt/deps" ] || die "no release root at $ROOT (set ORBITER_RELEASE_ROOT, rc.sh setup)"
+	[ -d "$ROOT/opt/Qt/$QTV" ] || die "no Qt $QTV in the root: rc.sh setup"
 	mkdir -p "$OUT"
-	rootbuild "$1" 0 "" "$qt" > "$OUT/build-$1.log" 2>&1 || { tail -15 "$OUT/build-$1.log" >&2; die "release build failed: $OUT/build-$1.log"; }
+	rootbuild "$1" 0 "" "$2" > "$OUT/build-$1.log" 2>&1 || { tail -15 "$OUT/build-$1.log" >&2; die "release build failed: $OUT/build-$1.log"; }
 	wbhelper "$1"
-	rootbuild "$1" "$2" "$W/out/portable/wbhost" "$qt" >> "$OUT/build-$1.log" 2>&1 || { tail -15 "$OUT/build-$1.log" >&2; die "release build failed: $OUT/build-$1.log"; }
+	rootbuild "$1" "$2" "$W/out/portable/wbhost" "$2" >> "$OUT/build-$1.log" 2>&1 || { tail -15 "$OUT/build-$1.log" >&2; die "release build failed: $OUT/build-$1.log"; }
 }
 
-rootbuild() { # $1 version, $2 PACK, $3 the Wine bridge's helper build ("": none yet), $4 Qt version: build.sh in the root
-	inroot env QTDIR=/opt/Qt/$4/gcc_64 DEPS=/opt/deps JOBS=$(( $(nproc) > 3 ? $(nproc) - 2 : 1 )) PACK="$2" WB_FROM="$3" \
+rootbuild() { # $1 version, $2 PACK, $3 the Wine bridge's helper build ("": none yet), $4 1: sources from git archive: build.sh in the root
+	inroot env QTDIR=/opt/Qt/$QTV/gcc_64 DEPS=/opt/deps JOBS=$(( $(nproc) > 3 ? $(nproc) - 2 : 1 )) PACK="$2" WB_FROM="$3" FROM_GIT="$4" \
 		bash "$W/packaging/linux/build.sh" "$W" "$W/out/portable" "$1" "$W/out/portable/man"
 }
 
@@ -41,10 +54,26 @@ wbhelper() { # $1 version: the Wine bridge's Windows files and generated calls o
 
 clean() { [ -z "$(git status --porcelain --untracked-files=no)" ] || die "uncommitted changes"; }
 
-token() { GH_TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill 2>/dev/null | awk -F= '/^password=/{print $2}'); export GH_TOKEN; [ -n "$GH_TOKEN" ] || die "no GitHub token in git's credential store"; }
+GHT=""
+token() { GHT=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill 2>/dev/null | awk -F= '/^password=/{print $2}'); [ -n "$GHT" ] || die "no GitHub token in git's credential store"; } # not exported: only gh_ passes it on
+gh_() { GH_TOKEN=$GHT gh "$@"; }
+
+sign() { # $1 package name: an SSH signature of the tarball (README-LINUX.txt: checking it), with a key made on first use
+	if [ ! -f "$KEY" ]; then
+		mkdir -p -m 700 "$(dirname "$KEY")"
+		ssh-keygen -q -t ed25519 -N '' -C "$SIGNER" -f "$KEY" || die "making the release key $KEY"
+		say "new release key $KEY: put this line in packaging/linux/allowed_signers and commit it:"
+		echo "$SIGNER namespaces=\"file\" $(cut -d' ' -f1,2 "$KEY.pub")" >&2
+	fi
+	rm -f "$OUT/$1.tar.xz.sig"
+	ssh-keygen -q -Y sign -f "$KEY" -n file "$OUT/$1.tar.xz" 2> /dev/null || die "signing $1.tar.xz"
+	verify "$1" || die "the signature doesn't verify with packaging/linux/allowed_signers (a new key: commit its line)"
+}
+
+verify() { ssh-keygen -q -Y verify -f "$H/allowed_signers" -I "$SIGNER" -n file -s "$OUT/$1.tar.xz.sig" < "$OUT/$1.tar.xz" > /dev/null 2>&1; } # $1 package name
 
 nextver() { # one more than the highest 2027-rcN on the first repo
-	local n; n=$(gh release list -R "${REPOS%% *}" -L 100 --json tagName -q '.[].tagName' | sed -n "s/^${TAGP}rc\([0-9][0-9]*\)$/\1/p" | sort -n | tail -1) || die "cannot list the releases of ${REPOS%% *}"
+	local n; n=$(gh_ release list -R "${REPOS%% *}" -L 100 --json tagName -q '.[].tagName' | sed -n "s/^${TAGP}rc\([0-9][0-9]*\)$/\1/p" | sort -n | tail -1) || die "cannot list the releases of ${REPOS%% *}"
 	echo "rc$(( ${n:-0} + 1 ))"
 }
 
@@ -67,6 +96,8 @@ check() { # $1 package name: unpacked with a temp HOME, so nothing lands in the 
 	export HOME=$T/home XDG_DATA_HOME=$T/home/.local/share XDG_CONFIG_HOME=$T/home/.config XDG_CACHE_HOME=$T/home/.cache
 	local l; l=$(OB_LAUNCHER_NO_EXEC=1 OB_LAUNCHER_DRY_RUN=1 ./OpenOrbiter < /dev/null 2>&1 | tail -1)
 	[ "$l" = "Orbiter is ready to start." ] || die "launcher: $l"
+	local B; B=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import collect; print("\n".join(collect.runpath_outside(sys.argv[2]) + collect.unhardened(sys.argv[2])))' "$H" "$T/$1") || die "checking the package's binaries"
+	[ -z "$B" ] || die "binaries: $(echo "$B" | head -5)"
 	QT_QPA_PLATFORM=offscreen timeout 120 ./Orbiter "--scenariox=Delta-glider/Smack!" --fixedstep=0.02 --maxframes=200 > "$T/headless.out" 2>&1 || die "headless flight failed: $T/headless.out"
 	cp Orbiter.log "$T/headless.log"
 	if pgrep -x Orbiter > /dev/null; then
@@ -79,7 +110,7 @@ check() { # $1 package name: unpacked with a temp HOME, so nothing lands in the 
 	fi
 	export HOME=$H0; unset XDG_DATA_HOME XDG_CONFIG_HOME XDG_CACHE_HOME
 	cd "$SRC"
-	say "checks pass: sha256, no archives, launcher ready, headless flight"
+	say "checks pass: sha256, no archives, RUNPATHs inside, hardened binaries, launcher ready, headless flight"
 }
 
 package() { # $1 version
@@ -90,6 +121,7 @@ package() { # $1 version
 	rm -f "$OUT/$N.commit"
 	portable "$1" 1
 	check "$N"
+	sign "$N"
 	echo "$(git rev-parse HEAD) $(git rev-parse 'HEAD^{tree}')" > "$OUT/$N.commit"
 	say "package: $OUT/$N.tar.xz ($(stat -c %s "$OUT/$N.tar.xz") bytes)"
 }
@@ -133,29 +165,31 @@ release() { # $1 version
 	clean
 	[ "$(cat "$OUT/$N.commit" 2>/dev/null)" = "$(git rev-parse HEAD) $(git rev-parse 'HEAD^{tree}')" ] || package "$V"
 	(cd "$OUT" && sha256sum -c "$N.tar.xz.sha256" > /dev/null) || die "sha256 of $N.tar.xz"
+	verify "$N" || die "signature of $N.tar.xz"
 	local SUM; SUM=$(cut -d' ' -f1 "$OUT/$N.tar.xz.sha256")
 	n=${V#rc}; PREV=""; [ "$n" -gt 1 ] 2> /dev/null && PREV=${TAGP}rc$(( n - 1 ))
 	notes "$V" "$PREV" "$NOTES"
 	for r in $REPOS; do
 		C=$(sync_repo "$r")
-		if gh release view "$TAG" -R "$r" > /dev/null 2>&1; then # a re-run: same files on a commit with our tree
+		if gh_ release view "$TAG" -R "$r" > /dev/null 2>&1; then # a re-run: same files on a commit with our tree
 			TC=$(git ls-remote "https://github.com/$r.git" "refs/tags/$TAG" | cut -f1)
 			git fetch -q "https://github.com/$r.git" "refs/tags/$TAG"
 			[ "$(git rev-parse 'FETCH_HEAD^{tree}')" = "$(git rev-parse 'HEAD^{tree}')" ] || die "$r: $TAG exists on ${TC:0:8}, other files"
-			gh release upload "$TAG" -R "$r" --clobber "$OUT/$N.tar.xz" "$OUT/$N.tar.xz.sha256"
+			gh_ release upload "$TAG" -R "$r" --clobber "$OUT/$N.tar.xz" "$OUT/$N.tar.xz.sha256" "$OUT/$N.tar.xz.sig"
 		else
-			gh release create "$TAG" -R "$r" --target "$C" --prerelease --title "Orbiter 2027 ${V^^} for Linux (x86-64)" \
-				--notes-file "$NOTES" "$OUT/$N.tar.xz" "$OUT/$N.tar.xz.sha256" > /dev/null
+			gh_ release create "$TAG" -R "$r" --target "$C" --prerelease --title "Orbiter 2027 ${V^^} for Linux (x86-64)" \
+				--notes-file "$NOTES" "$OUT/$N.tar.xz" "$OUT/$N.tar.xz.sha256" "$OUT/$N.tar.xz.sig" > /dev/null
 		fi
-		local D; D=$(gh api "repos/$r/releases/tags/$TAG" --jq ".assets[] | select(.name == \"$N.tar.xz\") | .digest // \"\"")
+		local D; D=$(gh_ api "repos/$r/releases/tags/$TAG" --jq ".assets[] | select(.name == \"$N.tar.xz\") | .digest // \"\"")
 		[ -z "$D" ] || [ "$D" = "sha256:$SUM" ] || die "$r: GitHub's digest $D is not our sha256"
 		say "$r: https://github.com/$r/releases/tag/$TAG (${C:0:8})"
 	done
 }
 
 case "${1:-}" in
+	setup) setup; say "release root ready: $ROOT";;
 	build) portable dev 0; say "release build compiles (out/portable/build)";;
 	package) token; package "${2:-$(nextver)}";;
 	release) token; release "${2:-$(nextver)}";;
-	*) echo "usage: rc.sh build | package [rcN] | release [rcN]" >&2; exit 2;;
+	*) echo "usage: rc.sh setup | build | package [rcN] | release [rcN]" >&2; exit 2;;
 esac

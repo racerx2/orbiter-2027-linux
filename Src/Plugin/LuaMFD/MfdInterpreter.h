@@ -5,6 +5,7 @@
 #define __MFDINTERPRETER_H
 
 #include "Interpreter.h"
+#include <memory>
 #include <thread>
 #include <future>
 
@@ -50,14 +51,20 @@ private:
 class InterpreterList {
 public:
 	struct Environment {
+		struct Run { // not upstream: what the thread uses, kept by it for as long as it runs (it frees the interpreter last)
+			MFDInterpreter *interp = nullptr;
+			char cmd[1024] = "";
+			~Run () { delete interp; }
+		};
 		Environment (OBJHANDLE hV);
 		~Environment();
 		MFDInterpreter *CreateInterpreter (OBJHANDLE hV);
+		std::shared_ptr<Run> run; // not upstream
 		MFDInterpreter *interp;
 		std::thread *hThread;
 		std::future<unsigned int> thExit; // not upstream: thread end, for the timed wait on the thread
-		char cmd[1024];
-		static unsigned int InterpreterThreadProc (void *context);
+		char *cmd; // not upstream: run's buffer, 1024 bytes
+		static unsigned int InterpreterThreadProc (std::shared_ptr<Run> run);
 	};
 	struct VesselInterp {
 		OBJHANDLE hVessel;

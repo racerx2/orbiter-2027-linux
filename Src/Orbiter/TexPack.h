@@ -9,13 +9,13 @@
 #include <vector>
 
 struct TexPart {
-	std::string name, md5;
+	std::string name, sha256; // not upstream (design-security-fixes E7): SHA-256, GitHub's asset digest
 	uint64_t size = 0;
 };
 
 // a zip of Textures/<Body>/<Layer>/, or with parts an archive <Body>/Archive/<Layer>.tree
 struct TexPack {
-	std::string zip, body, layer, md5;
+	std::string zip, body, layer, sha256;
 	uint64_t zipsize = 0, rawsize = 0, files = 0; // archive: download size, file size, part count
 	std::vector<TexPart> parts;
 };
@@ -38,9 +38,9 @@ uint64_t TexPackSpare (const TexPack &p); // temporary disk space while installi
 std::string TexPackWorkDir (const std::string &texdir);
 // partial archives of packs no longer listed, and what an earlier install left in the work folder; returns what went
 std::vector<std::string> TexPackClean (const TexPackList &list, const std::string &texdir);
-bool TexPackMd5 (const std::string &file, std::string &md5);
+bool TexPackSha256 (const std::string &file, std::string &hex, uint64_t off = 0, uint64_t len = UINT64_MAX); // len bytes from off, all of them there
 bool TexPackUnzip (const std::string &zipfile, const TexPack &p, const std::string &texdir, const TexPackProgress &progress, std::string &err);
-bool TexPackDownload (const std::string &url, const std::string &file, const TexPackProgress &progress, std::string &err);
+bool TexPackDownload (const std::string &url, const std::string &file, uint64_t size, const TexPackProgress &progress, std::string &err); // size: exactly, or stopped
 bool TexPackInstall (const TexPackList &list, const TexPack &p, const std::string &texdir,
 	const TexPackProgress &download, const TexPackProgress &unpack, std::string &err);
 // parts joined into target through partial (resumable, whole parts only); work holds the part being downloaded (also the SPICE kernels)

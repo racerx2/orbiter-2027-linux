@@ -65,9 +65,9 @@ bool WbServePanel (uint32_t fn, WbReader &r, WbWriter &w)
 		if (r.bad) { b.BadArgs (fn); w.b (false); return true; }
 		w.b (h && oapiAddMeshGroupBlock (h, grp, hv ? vtx.data () : nullptr, nv, hi ? idx.data () : nullptr, ni));
 		return true; }
-	case L_DeleteMesh: {
-		MESHHANDLE h = (MESHHANDLE)b.Ptr (r.u32 ());
-		if (h && !r.bad) oapiDeleteMesh (h);
+	case L_DeleteMesh: { // not upstream (F2): a mesh only, its id retired
+		MESHHANDLE h = (MESHHANDLE)b.Ptr (r.u32 (), WK_MESHHANDLE);
+		if (h && !r.bad) { oapiDeleteMesh (h); WbMeshGone (h); b.Retire (h); }
 		return true; }
 	case L_MeshTexCount: { // the entries clbkRender2DPanel reads: hSurf[TexIdx] for the groups it draws with one
 		MESHHANDLE h = (MESHHANDLE)b.Ptr (r.u32 ());

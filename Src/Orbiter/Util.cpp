@@ -7,6 +7,8 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <unistd.h>
+#include <cctype>
+#include <cstring>
 #include <QWidget>
 #include <QWindow>
 #include <QCursor>
@@ -328,6 +330,7 @@ void *ModuleProc (void *hModule, const char *name)
 }
 
 static std::map<void*, int> &g_moduleRefs = *new std::map<void*, int>; // not upstream: ModuleLoad opens per handle, 0 once freed; never destroyed
+static std::vector<void*> &g_moduleOrder = *new std::vector<void*>; // not upstream: each new mapping in load order, for ModuleDetachAll; never destroyed
 static const char *g_winFailed; // not upstream (dll-modules): the last ModuleLoad was a Windows module that failed
 
 const char *ModuleError () // not upstream
@@ -353,7 +356,10 @@ void *ModuleLoad (const char *path, bool windows) // not upstream: LoadLibrary c
 	if (mapped) dlclose (mapped);
 	if (!hModule) return 0;
 	auto it = g_moduleRefs.find (hModule);
-	if (it == g_moduleRefs.end () || !mapped) g_moduleRefs[hModule] = 1; // a new mapping (a freed handle may be reused): its constructors ran
+	if (it == g_moduleRefs.end () || !mapped) { // a new mapping (a freed handle may be reused): its constructors ran
+		g_moduleRefs[hModule] = 1;
+		g_moduleOrder.push_back (hModule); // not upstream: see ModuleDetachAll
+	}
 	else if (!it->second++) { // freed before and kept loaded (unique symbols): DLL_PROCESS_ATTACH again
 		void (*attach)() = (void(*)())ModuleProc (hModule, "ModuleAttach");
 		if (attach) attach ();
@@ -373,6 +379,18 @@ void ModuleFree (void *hModule)
 		if (detach) detach ();
 	} // not upstream: as above
 	dlclose (hModule);
+}
+
+// not upstream: DLL_PROCESS_DETACH for the modules still loaded at a fast exit, newest first, before exit (0) destroys their statics (Windows detaches a DLL before its statics go)
+void ModuleDetachAll ()
+{
+	for (auto o = g_moduleOrder.rbegin (); o != g_moduleOrder.rend (); ++o) {
+		auto it = g_moduleRefs.find (*o);
+		if (it == g_moduleRefs.end () || !it->second) continue; // freed, or detached here already
+		it->second = 0; // a later ModuleFree is ignored: the process is ending
+		void (*detach)() = (void(*)())ModuleProc (*o, "ModuleDetach");
+		if (detach) detach ();
+	}
 }
 
 const char *ModuleFileName (void *hModule)
@@ -417,4 +435,23 @@ std::vector<std::string> ConfigFragments (const char *cfgpath)
 		if (!strcasecmp (e.path ().extension ().string ().c_str (), ".cfg") && e.is_regular_file (fe)) v.push_back (e.path ().string ());
 	}
 	return v;
+}
+
+std::string SafeFileName (const char *name)
+{
+	std::string s (name ? name : "");
+	for (char &c : s) if (c == '/' || c == '\\' || (unsigned char)c < 32 || c == 127) c = '_';
+	if (s.empty () || s == "." || s == "..") s = "_";
+	return s;
+}
+
+bool SafeRelName (const char *name)
+{
+	if (!name || !*name || name[0] == '/' || name[0] == '\\' || (isalpha ((unsigned char)name[0]) && name[1] == ':')) return false;
+	for (const char *p = name; *p; ) {
+		const char *e = p + strcspn (p, "/\\");
+		if (e - p == 2 && p[0] == '.' && p[1] == '.') return false;
+		p = *e ? e + 1 : e;
+	}
+	return true;
 }

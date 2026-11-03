@@ -9,6 +9,7 @@
 #include "OrbiterAPI.h"
 #include "Orbiter.h"
 #include <filesystem> // not upstream: SortedEntries
+#include <string>     // not upstream: SafeFileName
 #include <vector>     // not upstream: SortedEntries
 
 extern Orbiter *g_pOrbiter;
@@ -106,8 +107,17 @@ const char *ModuleError ();
 // not upstream: FreeLibrary counterpart; the last free detaches, as dlclose may keep a module (unique symbols) to exit
 DLLEXPORT void ModuleFree (void *hModule);
 
+// not upstream: each module ModuleLoad opened and ModuleFree didn't free gets its ModuleDetach, newest first (a fast exit, before exit (0))
+void ModuleDetachAll ();
+
 // not upstream: GetModuleFileName counterpart; the path the module was loaded from
 const char *ModuleFileName (void *hModule);
+
+// not upstream: a name from data (module, class) that stays in its folder: not empty or absolute, no ".." part (design-security-fixes B12)
+bool SafeRelName (const char *name);
+
+// not upstream: a name from data (vessel, record) as one file name: '/', '\' and control characters become '_', and "", "." and ".." are "_"
+std::string SafeFileName (const char *name);
 
 // not upstream: a folder's entries in FindFirstFile's NTFS order; directory_iterator lists them unsorted on Linux
 std::vector<std::filesystem::directory_entry> SortedEntries (std::filesystem::directory_iterator it);

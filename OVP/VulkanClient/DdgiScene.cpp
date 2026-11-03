@@ -616,7 +616,7 @@ bool DdgiScene::Build (Scene *scn, vPlanet *vp, double range)
 			if (refit && pt.refits >= 1024) rebuild = true, refit = false; // refit for long: rebuilt to its full quality
 			else if (!refit && pt.refits > 0 && frame - pt.moved >= 30) rebuild = true; // settled after refits: the same
 			bool queued = pt.queued == frame; // a mesh drawn twice is built once
-			if (!queued && ((rebuild && tri + ntri[k] <= TRI_FRAME) || refit)) {
+			if (!queued && ((rebuild && (tri + ntri[k] <= TRI_FRAME || tri == 0)) || refit)) { // not upstream: the frame's first build may be bigger (a part over the budget was never built)
 				if (rebuild) FreeBlas(pt.b);
 				Job j = { &pt.b, refit, false, 0, geos.size(), gp[k].size(), VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_DATA_ACCESS_BIT_KHR };
 				tfRanges.push_back({ geos.size(), tfs.size() });
@@ -664,14 +664,16 @@ bool DdgiScene::Build (Scene *scn, vPlanet *vp, double range)
 		void *p;
 		VkBuffer tb;
 		VkDeviceSize ofs = dev->AllocTransient(tfs.size() * sizeof(VkTransformMatrixKHR), 16, &p, &tb);
-		memcpy(p, tfs.data(), tfs.size() * sizeof(VkTransformMatrixKHR));
-		tfAddr = Address(dev, tb) + ofs;
+		if (p) { // not upstream: without memory the groups are built untransformed this frame (no transform data)
+			memcpy(p, tfs.data(), tfs.size() * sizeof(VkTransformMatrixKHR));
+			tfAddr = Address(dev, tb) + ofs;
+		}
 	}
 	size_t ti = 0;
 	for (Job &j : jobs) {
 		if (j.compact) continue;
 		size_t t0 = tfRanges[ti++].second;
-		for (size_t k = 0; k < j.ng; k++) geos[j.g0 + k].geometry.triangles.transformData.deviceAddress = tfAddr + (t0 + k) * sizeof(VkTransformMatrixKHR);
+		for (size_t k = 0; k < j.ng; k++) geos[j.g0 + k].geometry.triangles.transformData.deviceAddress = tfAddr ? tfAddr + (t0 + k) * sizeof(VkTransformMatrixKHR) : 0;
 	}
 
 	// sizes, structures and scratch
@@ -763,6 +765,7 @@ bool DdgiScene::Build (Scene *scn, vPlanet *vp, double range)
 	void *ip;
 	VkBuffer ib;
 	VkDeviceSize iofs = dev->AllocTransient(inst.size() * sizeof(VkAccelerationStructureInstanceKHR), 16, &ip, &ib);
+	if (!ip) { lastInst.clear(); return false; } // not upstream: no memory, no structure this frame; the next one builds it
 	memcpy(ip, inst.data(), inst.size() * sizeof(VkAccelerationStructureInstanceKHR));
 	VkAccelerationStructureGeometryKHR g = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
 	g.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
@@ -779,6 +782,8 @@ bool DdgiScene::Build (Scene *scn, vPlanet *vp, double range)
 	tb.scratchData.deviceAddress = sbase + tlasOfs;
 	VkAccelerationStructureBuildRangeInfoKHR tr = { (UINT)nInst, 0, 0, 0 };
 	const VkAccelerationStructureBuildRangeInfoKHR *ptr = &tr;
+	Barrier(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT, // not upstream: always, also with no jobs (the last frame's ray queries, the scratch's last write)
+		VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT);
 	vkrt.CmdBuildAccelerationStructuresKHR(cmd, 1, &tb, &ptr);
 	Barrier(cmd, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
 		VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT);

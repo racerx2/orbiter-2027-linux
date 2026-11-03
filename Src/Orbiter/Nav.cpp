@@ -264,7 +264,7 @@ void NavManager::Clear ()
 {
 	if (nbuf) {
 		for (DWORD i = 0; i < nnav; i++) {
-			delete []nav[i];
+			delete nav[i]; // not upstream: each made with new, not new[]
 			nav[i] = NULL;
 		}
 		delete []nav;

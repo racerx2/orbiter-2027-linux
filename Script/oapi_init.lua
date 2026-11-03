@@ -25,6 +25,9 @@ ktable = {Q=0x10, W=0x11, E=0x12, R=0x13, T=0x14, Y=0x15, U=0x16, I=0x17,
 
 -- execute a script in the 'Script' folder (.lua extension is assumed)
 function run (script)
+  if type(script) ~= 'string' or script:find('^[/\\]') or ('/'..script:gsub('\\','/')..'/'):find('/%.%./') then -- not upstream: the name stays in Script
+    error('run: '..tostring(script)..' is not a name inside the Script folder', 2)
+  end
   dofile('./Script/'..script..'.lua')
 end
 

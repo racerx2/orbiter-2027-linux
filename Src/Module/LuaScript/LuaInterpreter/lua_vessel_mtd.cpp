@@ -8,6 +8,8 @@
 #include "MFDAPI.h"
 #include <cstring> // windows.h brought the C string functions
 #include <strings.h>
+#include <vector>
+#include <Lua/lua_handles.h>
 
 
 /*
@@ -45,18 +47,15 @@ VESSEL *vfocus = (VESSEL*)0x1;
 
 VESSEL *Interpreter::lua_tovessel (lua_State *L, int idx)
 {
-	VESSEL **pv = (VESSEL**)lua_touserdata (L, idx);
-	if(pv) {
-		if (*pv == vfocus) { // returns current focused vessel when using the pseudo vessel "focus"
-			VESSEL *v = oapiGetFocusInterface();
-			knownVessels.insert(v);
-			return v;
-		} else if(knownVessels.find(*pv) == knownVessels.end()) {
-			return NULL;
-		}
-		return *pv;
+	if (lua_islightuserdata (L, idx) && lua_touserdata (L, idx) == &vfocus) { // returns current focused vessel when using the pseudo vessel "focus"
+		VESSEL *v = oapiGetFocusInterface();
+		knownVessels.insert(v);
+		return v;
 	}
-	return NULL;
+	if (lua_type (L, idx) != LUA_TUSERDATA || lua_objlen (L, idx) < sizeof (VESSEL*)) return NULL; // not upstream: else only a vessel object (a light userdata is a handle, never read through)
+	VESSEL **pv = (VESSEL**)lua_touserdata (L, idx);
+	if (knownVessels.find(*pv) == knownVessels.end()) return NULL;
+	return *pv;
 }
 
 VESSEL *Interpreter::lua_tovessel_safe(lua_State *L, int idx, const char *funcname)
@@ -1745,7 +1744,7 @@ int Interpreter::v_get_relativepos (lua_State *L)
 	static const char *funcname = "get_relativepos";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	OBJHANDLE hRef = (OBJHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	OBJHANDLE hRef = (OBJHANDLE)lua_tohandle_safe(L, 2, luahandle::OBJECT, NULL, funcname);
 	VECTOR3 pos;
 	v->GetRelativePos (hRef, pos);
 	lua_pushvector (L, pos);
@@ -1770,7 +1769,7 @@ int Interpreter::v_get_relativevel (lua_State *L)
 	static const char *funcname = "get_relativevel";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	OBJHANDLE hRef = (OBJHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	OBJHANDLE hRef = (OBJHANDLE)lua_tohandle_safe(L, 2, luahandle::OBJECT, NULL, funcname);
 	VECTOR3 vel;
 	v->GetRelativeVel (hRef, vel);
 	lua_pushvector (L, vel);
@@ -1851,10 +1850,9 @@ int Interpreter::v_get_status(lua_State* L)
 		v->GetStatusEx(&status);
 		lua_push_vessel_status(L, status);
 
-		// Who frees these resources?
-		//if (status.fuel) delete[] status.fuel;
-		//if (status.thruster) delete[] status.thruster;
-		//if (status.dockinfo) delete[] status.dockinfo;
+		delete[] status.fuel; // not upstream: the lists GetStatusEx made, copied into the table above
+		delete[] status.thruster;
+		delete[] status.dockinfo;
 		return 1;
 	}
 	return 0;
@@ -1915,7 +1913,7 @@ int Interpreter::vsget(lua_State* L)
 {
 	static const char* funcname = "vsget";
 	AssertMtdMinPrmCount(L, 1, funcname);
-	VESSELSTATUS* vs = (VESSELSTATUS*)lua_touserdata(L, 1);
+	VESSELSTATUS* vs = (VESSELSTATUS*)luaL_checkudata(L, 1, "VESSELSTATUS.table"); // not upstream: only a status object
 	lua_push_vessel_status(L, *vs);
 	return 1;
 }
@@ -1924,7 +1922,7 @@ int Interpreter::vs2get(lua_State* L)
 {
 	static const char* funcname = "vs2get";
 	AssertMtdMinPrmCount(L, 1, funcname);
-	VESSELSTATUS2* vs = (VESSELSTATUS2*)lua_touserdata(L, 1);
+	VESSELSTATUS2* vs = (VESSELSTATUS2*)luaL_checkudata(L, 1, "VESSELSTATUS2.table"); // not upstream: only a status object
 	lua_push_vessel_status(L, *vs);
 	return 1;
 }
@@ -1933,7 +1931,7 @@ int Interpreter::vsset(lua_State* L)
 {
 	static const char* funcname = "vsset";
 	AssertMtdMinPrmCount(L, 2, funcname);
-	VESSELSTATUS* vs = (VESSELSTATUS*)lua_touserdata(L, 1);
+	VESSELSTATUS* vs = (VESSELSTATUS*)luaL_checkudata(L, 1, "VESSELSTATUS.table"); // not upstream: only a status object
 	// Extract known values from table
 	lua_getfield(L, 2, "rpos");
 
@@ -1985,7 +1983,7 @@ int Interpreter::vs2set(lua_State* L)
 {
 	static const char* funcname = "vs2set";
 	AssertMtdMinPrmCount(L, 2, funcname);
-	VESSELSTATUS2* vs = (VESSELSTATUS2*)lua_touserdata(L, 1);
+	VESSELSTATUS2* vs = (VESSELSTATUS2*)luaL_checkudata(L, 1, "VESSELSTATUS2.table"); // not upstream: only a status object
 
 	// Extract known values from table
 	lua_getfield(L, 2, "flags");
@@ -2033,13 +2031,14 @@ int Interpreter::vs2set(lua_State* L)
 		int n = lua_objlen(L, -1);
 		if (n) {
 			vs->fuel = new VESSELSTATUS2::FUELSPEC[n]();
+			vs->nfuel = 0; // not upstream: the count of this array, entries in table order (each carries its idx), never past n
 
 			lua_pushnil(L);
 			while (lua_next(L, -2)) {
 				// stack now contains: -1 => value; -2 => key; -3 => table (value is FUELSPEC)
-				if (lua_istable(L, -1)) // is_fuelspec() ?
+				if (lua_istable(L, -1) && vs->nfuel < (DWORD)n) // is_fuelspec() ?
 				{
-					size_t i = lua_tointeger(L, -2) - 1; //lua_next() does not always iteerate in order :(
+					size_t i = vs->nfuel;
 					lua_getfield(L, -1, "idx");
 					vs->fuel[i].idx = lua_tointeger(L, -1);
 					lua_pop(L, 1);
@@ -2059,10 +2058,11 @@ int Interpreter::vs2set(lua_State* L)
 		int n = lua_objlen(L, -1);
 		if (n) {
 			vs->thruster = new VESSELSTATUS2::THRUSTSPEC[n]();
+			vs->nthruster = 0; // not upstream: the count of this array, entries in table order (each carries its idx), never past n
 			lua_pushnil(L);
 			while (lua_next(L, -2)) {
-				if (lua_istable(L, -1)) { // is_thrustspec()
-					size_t i = lua_tointeger(L, -2) - 1;
+				if (lua_istable(L, -1) && vs->nthruster < (DWORD)n) { // is_thrustspec()
+					size_t i = vs->nthruster;
 					lua_getfield(L, -1, "idx");
 					vs->thruster[i].idx = lua_tointeger(L, -1);
 					lua_pop(L, 1);
@@ -2082,10 +2082,11 @@ int Interpreter::vs2set(lua_State* L)
 		int n = lua_objlen(L, -1);
 		if (n) {
 			vs->dockinfo = new VESSELSTATUS2::DOCKINFOSPEC[n]();
+			vs->ndockinfo = 0; // not upstream: the count of this array, entries in table order (each carries its idx), never past n
 			lua_pushnil(L);
 			while (lua_next(L, -2)) {
-				if (lua_istable(L, -1)) { // is_dockinfospec()
-					size_t i = lua_tointeger(L, -2) - 1;
+				if (lua_istable(L, -1) && vs->ndockinfo < (DWORD)n) { // is_dockinfospec()
+					size_t i = vs->ndockinfo;
 					lua_getfield(L, -1, "idx");
 					vs->dockinfo[i].idx = lua_tointeger(L, -1);
 					lua_pop(L, 1);
@@ -2093,7 +2094,7 @@ int Interpreter::vs2set(lua_State* L)
 					vs->dockinfo[i].ridx = lua_tointeger(L, -1);
 					lua_pop(L, 1);
 					lua_getfield(L, -1, "rvessel");
-					vs->dockinfo[i].rvessel = lua_touserdata(L, -1);
+					vs->dockinfo[i].rvessel = lua_toObject(L, -1); // not upstream: an object alive now, else NULL
 					lua_pop(L, 1);
 					vs->ndockinfo++;
 				}
@@ -2228,13 +2229,14 @@ int Interpreter::v_defset_status (lua_State *L)
 			int n = lua_objlen(L, -1);
 			if (n) {
 				status.fuel = new VESSELSTATUS2::FUELSPEC[n]();
+				status.nfuel = 0; // not upstream: the count of this array, entries in table order (each carries its idx), never past n
 
 				lua_pushnil(L);
 				while (lua_next(L, -2)) {
 					// stack now contains: -1 => value; -2 => key; -3 => table (value is FUELSPEC)
-					if (lua_istable(L, -1)) // is_fuelspec() ?
+					if (lua_istable(L, -1) && status.nfuel < (DWORD)n) // is_fuelspec() ?
 					{
-						size_t i = lua_tointeger(L, -2) - 1; //lua_next() does not always iteerate in order :(
+						size_t i = status.nfuel;
 						lua_getfield(L, -1, "idx");
 						status.fuel[i].idx = lua_tointeger(L, -1);
 						lua_pop(L, 1);
@@ -2254,10 +2256,11 @@ int Interpreter::v_defset_status (lua_State *L)
 			int n = lua_objlen(L, -1);
 			if (n) {
 				status.thruster = new VESSELSTATUS2::THRUSTSPEC[n]();
+				status.nthruster = 0; // not upstream: the count of this array, entries in table order (each carries its idx), never past n
 				lua_pushnil(L);
 				while (lua_next(L, -2)) {
-					if (lua_istable(L, -1)) { // is_thrustspec()
-						size_t i = lua_tointeger(L, -2) - 1;
+					if (lua_istable(L, -1) && status.nthruster < (DWORD)n) { // is_thrustspec()
+						size_t i = status.nthruster;
 						lua_getfield(L, -1, "idx");
 						status.thruster[i].idx = lua_tointeger(L, -1);
 						lua_pop(L, 1);
@@ -2277,10 +2280,11 @@ int Interpreter::v_defset_status (lua_State *L)
 			int n = lua_objlen(L, -1);
 			if (n) {
 				status.dockinfo = new VESSELSTATUS2::DOCKINFOSPEC[n]();
+				status.ndockinfo = 0; // not upstream: the count of this array, entries in table order (each carries its idx), never past n
 				lua_pushnil(L);
 				while (lua_next(L, -2)) {
-					if (lua_istable(L, -1)) { // is_dockinfospec()
-						size_t i = lua_tointeger(L, -2) - 1;
+					if (lua_istable(L, -1) && status.ndockinfo < (DWORD)n) { // is_dockinfospec()
+						size_t i = status.ndockinfo;
 						lua_getfield(L, -1, "idx");
 						status.dockinfo[i].idx = lua_tointeger(L, -1);
 						lua_pop(L, 1);
@@ -2288,7 +2292,7 @@ int Interpreter::v_defset_status (lua_State *L)
 						status.dockinfo[i].ridx = lua_tointeger(L, -1);
 						lua_pop(L, 1);
 						lua_getfield(L, -1, "rvessel");
-						status.dockinfo[i].rvessel = lua_touserdata(L, -1);
+						status.dockinfo[i].rvessel = lua_toObject(L, -1); // not upstream: an object alive now, else NULL
 						lua_pop(L, 1);
 						status.ndockinfo++;
 					}
@@ -2301,10 +2305,9 @@ int Interpreter::v_defset_status (lua_State *L)
 		// Apply changes
 		v->DefSetStateEx(&status);
 
-		// Who frees these resources?
-		//if (status.fuel) delete[] status.fuel;
-		//if (status.thruster) delete[] status.thruster;
-		//if (status.dockinfo) delete[] status.dockinfo;
+		delete[] status.fuel; // not upstream: the lists made from the table above, applied
+		delete[] status.thruster;
+		delete[] status.dockinfo;
 	}
 	return 0;
 }
@@ -2824,7 +2827,7 @@ int Interpreter::v_set_elements (lua_State *L)
 	if (lua_gettop (L) >= 3) {
 		AssertMtdPrmType(L, 3, PRMTP_TABLE, funcname);
 		lua_getfield (L, 3, "href");
-		if (lua_islightuserdata (L, -1)) hRef = (OBJHANDLE)lua_touserdata (L, -1);
+		if (lua_islightuserdata (L, -1)) hRef = (OBJHANDLE)lua_tohandle_safe (L, -1, luahandle::OBJECT, NULL, funcname); // not upstream: an object alive now
 		lua_pop (L, 1);
 		lua_getfield (L, 3, "mjd_ref");
 		if (lua_isnumber (L, -1)) mjd_ref = (double)lua_tonumber (L, -1);
@@ -3633,7 +3636,7 @@ int Interpreter::v_create_airfoil (lua_State *L)
 	ac->funcref = funcref;
 
 	AIRFOILHANDLE ha = v->CreateAirfoil3 (ao, ref, AirfoilFunc, ac, c, S, A);
-	lua_pushlightuserdata (L, ha);
+	luahandle::Push (L, ha, luahandle::AIRFOIL, v->GetHandle ()); // not upstream: known until del_airfoil or the vessel goes
 	return 1;
 }
 
@@ -3669,7 +3672,7 @@ int Interpreter::v_edit_airfoil (lua_State *L)
 
 	// @todo: better check for nil ... (optionals) ... and build 'flag' based on that
 
-	AIRFOILHANDLE hAirfoil = (AIRFOILHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	AIRFOILHANDLE hAirfoil = (AIRFOILHANDLE)lua_tohandle_safe(L, 2, luahandle::AIRFOIL, v, funcname);
 	DWORD flag = luamtd_tointeger_safe(L, 3, funcname);
 	VECTOR3 ref = luamtd_tovector_safe(L, 4, funcname);
 	double c = luamtd_tonumber_safe(L, 6, funcname),
@@ -3722,7 +3725,7 @@ int Interpreter::v_del_airfoil (lua_State *L)
 	static const char *funcname = "del_airfoil";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	AIRFOILHANDLE ha = (AIRFOILHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	AIRFOILHANDLE ha = (AIRFOILHANDLE)lua_tohandle_safe(L, 2, luahandle::AIRFOIL, v, funcname);
 	AirfoilContext *ac;
 	if (v->GetAirfoilParam (ha, 0, 0, (void**)&ac, 0, 0, 0)) {
 		if (ac) {
@@ -3731,6 +3734,7 @@ int Interpreter::v_del_airfoil (lua_State *L)
 		}
 	}
 	bool ok = v->DelAirfoil (ha);
+	luahandle::Drop (L, ha); // not upstream
 	lua_pushboolean (L, ok?1:0);
 	return 1;
 }
@@ -3801,7 +3805,7 @@ int Interpreter::v_create_controlsurface (lua_State *L)
 		}
 	}
 	CTRLSURFHANDLE hctrl = v->CreateControlSurface3 (type, area, dCl, ref, axis, delay, anim);
-	lua_pushlightuserdata (L, hctrl);
+	luahandle::Push (L, hctrl, luahandle::CTRLSURF, v->GetHandle ()); // not upstream: known until del_controlsurface or the vessel goes
 	return 1;
 }
 
@@ -3820,8 +3824,9 @@ int Interpreter::v_del_controlsurface (lua_State *L)
 	static const char *funcname = "del_controlsurface";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	CTRLSURFHANDLE hCtrl = (CTRLSURFHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	CTRLSURFHANDLE hCtrl = (CTRLSURFHANDLE)lua_tohandle_safe(L, 2, luahandle::CTRLSURF, v, funcname);
 	bool ret = v->DelControlSurface(hCtrl);
+	luahandle::Drop(L, hCtrl); // not upstream
 	lua_pushboolean(L, ret);
 	return 1;
 }
@@ -4688,7 +4693,7 @@ int Interpreter::v_del_propellantresource(lua_State* L)
 	static const char* funcname = "del_propellantresource";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL* v = lua_tovessel_safe(L, 1, funcname);
-	PROPELLANT_HANDLE hPrp = (PROPELLANT_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	PROPELLANT_HANDLE hPrp = (PROPELLANT_HANDLE)lua_tohandle_safe(L, 2, luahandle::PROPELLANT, v, funcname);
 	v->DelPropellantResource(hPrp);
 	return 0;
 }
@@ -4711,7 +4716,7 @@ int Interpreter::v_set_default_propellantresource(lua_State* L)
 	static const char* funcname = "set_default_propellantresource";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL* v = lua_tovessel_safe(L, 1, funcname);
-	PROPELLANT_HANDLE hPrp = (PROPELLANT_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	PROPELLANT_HANDLE hPrp = (PROPELLANT_HANDLE)lua_tohandle_safe(L, 2, luahandle::PROPELLANT, v, funcname);
 	v->SetDefaultPropellantResource(hPrp);
 	return 0;
 }
@@ -4792,7 +4797,7 @@ int Interpreter::v_get_propellantmaxmass (lua_State *L)
 	static const char *funcname = "get_propellantmaxmass";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)lua_tohandle_safe(L, 2, luahandle::PROPELLANT, v, funcname);
 	lua_pushnumber (L, v->GetPropellantMaxMass (hp));
 	return 1;
 }
@@ -4814,7 +4819,7 @@ int Interpreter::v_set_propellantmaxmass (lua_State *L)
 	static const char *funcname = "set_propellantmaxmass";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)lua_tohandle_safe(L, 2, luahandle::PROPELLANT, v, funcname);
 	double maxmass = (double)luamtd_tonumber_safe(L, 3, funcname);
 	if (hp && maxmass >= 0) {
 		v->SetPropellantMaxMass (hp, maxmass);
@@ -4835,7 +4840,7 @@ int Interpreter::v_get_propellantmass (lua_State *L)
 	static const char *funcname = "get_propellantmass";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	PROPELLANT_HANDLE hProp = (PROPELLANT_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	PROPELLANT_HANDLE hProp = (PROPELLANT_HANDLE)lua_tohandle_safe(L, 2, luahandle::PROPELLANT, v, funcname);
 	lua_pushnumber (L, v->GetPropellantMass (hProp));
 	return 1;
 }
@@ -4860,7 +4865,7 @@ int Interpreter::v_set_propellantmass (lua_State *L)
 	static const char *funcname = "set_propellantmass";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)lua_tohandle_safe(L, 2, luahandle::PROPELLANT, v, funcname);
 	double mass = luamtd_tonumber_safe(L, 3, funcname);
 	ASSERT_SYNTAX(mass >= 0, "Argument 2: expected value >= 0");
 	v->SetPropellantMass (hp, mass);
@@ -4900,7 +4905,7 @@ int Interpreter::v_get_propellantefficiency (lua_State *L)
 	static const char *funcname = "get_propellantefficiency";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)lua_tohandle_safe(L, 2, luahandle::PROPELLANT, v, funcname);
 	lua_pushnumber (L, v->GetPropellantEfficiency(hp));
 	return 1;
 }
@@ -4922,7 +4927,7 @@ int Interpreter::v_set_propellantefficiency (lua_State *L)
 	static const char *funcname = "set_propellantefficiency";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)lua_tohandle_safe(L, 2, luahandle::PROPELLANT, v, funcname);
 	double eff = (double)luamtd_tonumber_safe(L, 3, funcname);
 	v->SetPropellantEfficiency (hp,eff);
 	return 0;
@@ -4945,7 +4950,7 @@ int Interpreter::v_get_propellantflowrate (lua_State *L)
 	static const char *funcname = "get_propellantflowrate";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	PROPELLANT_HANDLE hp = (PROPELLANT_HANDLE)lua_tohandle_safe(L, 2, luahandle::PROPELLANT, v, funcname);
 	double rate = v->GetPropellantFlowrate (hp);
 	lua_pushnumber(L,rate);
 	return 1;
@@ -5032,7 +5037,7 @@ int Interpreter::v_create_thruster (lua_State *L)
 
 	PROPELLANT_HANDLE hp = NULL;
 	lua_getfield(L,2,"hprop");
-	if (lua_islightuserdata(L,-1)) hp = (PROPELLANT_HANDLE)lua_touserdata(L,-1);
+	if (lua_islightuserdata(L,-1)) hp = (PROPELLANT_HANDLE)lua_tohandle_safe(L, -1, luahandle::PROPELLANT, NULL, funcname); // not upstream: a tank alive now
 	lua_pop(L,1);
 
 	double isp0 = 0.0;
@@ -5073,7 +5078,7 @@ int Interpreter::v_del_thruster (lua_State *L)
 	static const char *funcname = "del_thruster";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	bool ok = v->DelThruster (ht);
 	lua_pushboolean (L, ok);
 	return 1;
@@ -5156,7 +5161,7 @@ int Interpreter::v_get_thrusterresource (lua_State *L)
 	static const char *funcname = "get_thrusterresource";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	PROPELLANT_HANDLE hp = v->GetThrusterResource(ht);
 	if (hp) lua_pushlightuserdata (L, hp);
 	else    lua_pushnil (L);
@@ -5181,9 +5186,9 @@ int Interpreter::v_set_thrusterresource (lua_State *L)
 	static const char *funcname = "set_thrusterresource";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	AssertMtdPrmType(L, 3, PRMTP_LIGHTUSERDATA | PRMTP_NIL, funcname);
-	PROPELLANT_HANDLE hp = (lua_isnil(L,3) ? NULL:(PROPELLANT_HANDLE)lua_touserdata(L,3));
+	PROPELLANT_HANDLE hp = (lua_isnil(L,3) ? NULL:(PROPELLANT_HANDLE)lua_tohandle_safe(L, 3, luahandle::PROPELLANT, NULL, funcname)); // not upstream: a tank alive now
 	v->SetThrusterResource (ht, hp);
 	return 0;
 }
@@ -5204,7 +5209,7 @@ int Interpreter::v_get_thrusterpos (lua_State *L)
 	static const char *funcname = "get_thrusterpos";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	VECTOR3 pos;
 	v->GetThrusterRef (ht, pos);
 	lua_pushvector(L, pos);
@@ -5235,7 +5240,7 @@ int Interpreter::v_set_thrusterpos (lua_State *L)
 	static const char *funcname = "set_thrusterpos";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	VECTOR3 pos = luamtd_tovector_safe(L, 3, funcname);
 	v->SetThrusterRef (ht, pos);
 	return 0;
@@ -5254,7 +5259,7 @@ int Interpreter::v_get_thrusterdir (lua_State *L)
 	static const char *funcname = "get_thrusterdir";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	VECTOR3 dir;
 	v->GetThrusterDir (ht, dir);
 	lua_pushvector(L, dir);
@@ -5277,7 +5282,7 @@ int Interpreter::v_set_thrusterdir (lua_State *L)
 	static const char *funcname = "set_thrusterdir";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	VECTOR3 dir = luamtd_tovector_safe(L, 3, funcname);
 	v->SetThrusterDir (ht, dir);
 	return 0;
@@ -5299,7 +5304,7 @@ int Interpreter::v_get_thrustermax0 (lua_State *L)
 	static const char *funcname = "get_thrustermax0";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	double max0 = v->GetThrusterMax0 (ht);
 	lua_pushnumber(L, max0);
 	return 1;
@@ -5321,7 +5326,7 @@ int Interpreter::v_set_thrustermax0 (lua_State *L)
 	static const char *funcname = "set_thrustermax0";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	double max0 = luamtd_tonumber_safe(L, 3, funcname);
 	v->SetThrusterMax0 (ht, max0);
 	return 0;
@@ -5347,7 +5352,7 @@ int Interpreter::v_get_thrustermax (lua_State *L)
 	static const char *funcname = "get_thrustermax";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	double thmax;
 	if (lua_gettop(L) >= 3) {
 		double pr = luamtd_tonumber_safe(L, 3, funcname);
@@ -5373,7 +5378,7 @@ int Interpreter::v_get_thrusterisp0 (lua_State *L)
 	static const char *funcname = "get_thrusterisp0";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	lua_pushnumber (L, v->GetThrusterIsp0 (ht));
 	return 1;
 }
@@ -5399,7 +5404,7 @@ int Interpreter::v_get_thrusterisp (lua_State *L)
 	static const char *funcname = "get_thrusterisp";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	double isp;
 	if (lua_gettop(L) >= 3) {
 		double pr = luamtd_tonumber_safe(L, 3, funcname);
@@ -5442,7 +5447,7 @@ int Interpreter::v_set_thrusterisp (lua_State *L)
 	static const char *funcname = "set_thrusterisp";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	double isp0 = (double)luamtd_tonumber_safe(L, 3, funcname);
 	if (lua_gettop(L) >= 4) {
 		double ispr = (double)luamtd_tonumber_safe(L, 4, funcname);
@@ -5473,7 +5478,7 @@ int Interpreter::v_get_thrusterlevel (lua_State *L)
 	static const char *funcname = "get_thrusterlevel";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	lua_pushnumber (L, v->GetThrusterLevel (ht));
 	return 1;
 }
@@ -5496,7 +5501,7 @@ int Interpreter::v_set_thrusterlevel (lua_State *L)
 	static const char *funcname = "set_thrusterlevel";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	double level = (double)luamtd_tonumber_safe(L, 3, funcname);
 	ASSERT_SYNTAX(level>=0 && level<=1, "Argument 2: value out of range (expected 0..1)");
 	v->SetThrusterLevel (ht, level);
@@ -5519,7 +5524,7 @@ int Interpreter::v_inc_thrusterlevel (lua_State *L)
 	static const char *funcname = "inc_thrusterlevel";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	double dlevel = (double)luamtd_tonumber_safe(L, 3, funcname);
 	v->IncThrusterLevel (ht, dlevel);
 	return 0;
@@ -5545,7 +5550,7 @@ int Interpreter::v_set_thrusterlevel_singlestep (lua_State *L)
 	static const char *funcname = "set_thrusterlevel_singlestep";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE th = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE th = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	double level = luamtd_tonumber_safe(L, 3, funcname);
 	v->SetThrusterLevel_SingleStep(th, level);
 	return 0;
@@ -5571,7 +5576,7 @@ int Interpreter::v_inc_thrusterlevel_singlestep (lua_State *L)
 	static const char *funcname = "inc_thrusterlevel_singlestep";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	double dlevel = (double)luamtd_tonumber_safe(L, 3, funcname);
 	v->IncThrusterLevel_SingleStep (ht, dlevel);
 	return 0;
@@ -5614,25 +5619,21 @@ int Interpreter::v_create_thrustergroup (lua_State *L)
 	}
 
 	// traverse the thruster array
-	static int nht = 1;
-	static THRUSTER_HANDLE *ht = new THRUSTER_HANDLE[nht];
-
-	lua_pushnil(L);
-	int i = 0;
-	while (lua_next(L,2)) {
-		if (i >= nht) {
-			THRUSTER_HANDLE *tmp = new THRUSTER_HANDLE[i+1];
-			memcpy(tmp, ht, nht*sizeof(THRUSTER_HANDLE));
-			delete []ht;
-			ht = tmp;
-			nht = i+1;
+	THGROUP_HANDLE htg = NULL;
+	bool bad = false;
+	{
+		std::vector<THRUSTER_HANDLE> ht; // not upstream: per call (a static array was shared by every interpreter's thread), freed before an error leaves
+		lua_pushnil(L);
+		while (lua_next(L,2)) {
+			THRUSTER_HANDLE h = (THRUSTER_HANDLE)lua_tohandle(L, -1, luahandle::THRUSTER, v); // not upstream: the vessel's own thrusters only
+			if (h) ht.push_back(h); else bad = true;
+			lua_pop(L,1);
 		}
-		ht[i++] = (THRUSTER_HANDLE)lua_touserdata(L,-1);
 		lua_pop(L,1);
+		if (!bad) htg = v->CreateThrusterGroup (ht.data(), (int)ht.size(), thgt);
 	}
-	lua_pop(L,1);
-	THGROUP_HANDLE htg = v->CreateThrusterGroup (ht, i, thgt);
-	lua_pushlightuserdata(L,htg);
+	if (bad) return luaL_error(L, "%s: the list holds something that is not one of the vessel's thrusters", funcname);
+	if (htg) lua_pushlightuserdata(L,htg); else lua_pushnil(L); // not upstream: nil for a type the core refuses
 	return 1;
 }
 
@@ -5670,7 +5671,7 @@ int Interpreter::v_del_thrustergroup (lua_State *L)
 		THGROUP_TYPE thgt = (THGROUP_TYPE)lua_tointeger(L,2);
 		v->DelThrusterGroup (thgt);
 	} else {
-		THGROUP_HANDLE htg = (THGROUP_HANDLE)lua_touserdata(L,2);
+		THGROUP_HANDLE htg = (THGROUP_HANDLE)lua_tohandle_safe(L, 2, luahandle::THGROUP, v, funcname);
 		v->DelThrusterGroup (htg);
 	}
 	return 0;
@@ -5746,7 +5747,7 @@ int Interpreter::v_get_groupthrustercount (lua_State *L)
 	int count;
 	AssertMtdPrmType(L, 2, PRMTP_NUMBER | PRMTP_LIGHTUSERDATA, funcname);
 	if (lua_islightuserdata (L,2)) { // identify by handle
-		THGROUP_HANDLE htg = (THGROUP_HANDLE)lua_touserdata (L,2);
+		THGROUP_HANDLE htg = (THGROUP_HANDLE)lua_tohandle_safe(L, 2, luahandle::THGROUP, v, funcname);
 		count = v->GetGroupThrusterCount (htg);
 	} else { // identify by type
 		THGROUP_TYPE thgt = (THGROUP_TYPE)lua_tointeger (L,2);
@@ -5777,7 +5778,7 @@ int Interpreter::v_get_groupthruster (lua_State *L)
 	THRUSTER_HANDLE ht;
 	AssertMtdPrmType(L, 2, PRMTP_NUMBER | PRMTP_LIGHTUSERDATA, funcname);
 	if (lua_islightuserdata (L,2)) { // identify by handle
-		THGROUP_HANDLE htg = (THGROUP_HANDLE)lua_touserdata (L,2);
+		THGROUP_HANDLE htg = (THGROUP_HANDLE)lua_tohandle_safe(L, 2, luahandle::THGROUP, v, funcname);
 		ht = v->GetGroupThruster (htg, idx);
 	} else { // identify by type
 		THGROUP_TYPE thgt = (THGROUP_TYPE)lua_tointeger (L,2);
@@ -5811,7 +5812,7 @@ int Interpreter::v_get_thrustergrouplevel (lua_State *L)
 	double level;
 	AssertMtdPrmType(L, 2, PRMTP_NUMBER | PRMTP_LIGHTUSERDATA, funcname);
 	if (lua_islightuserdata(L, 2)) { // identified by handle
-		THGROUP_HANDLE htg = (THGROUP_HANDLE)lua_touserdata (L,2);
+		THGROUP_HANDLE htg = (THGROUP_HANDLE)lua_tohandle_safe(L, 2, luahandle::THGROUP, v, funcname);
 		level = v->GetThrusterGroupLevel (htg);
 	} else {                        // identified by type
 		THGROUP_TYPE thgt = (THGROUP_TYPE)lua_tointeger (L,2);
@@ -5837,7 +5838,7 @@ int Interpreter::v_set_thrustergrouplevel (lua_State *L)
 	double level = luamtd_tonumber_safe(L, 3, funcname);
 	AssertMtdPrmType(L, 2, PRMTP_NUMBER | PRMTP_LIGHTUSERDATA, funcname);
 	if (lua_islightuserdata(L, 2)) { // identified by handle
-		THGROUP_HANDLE htg = (THGROUP_HANDLE)lua_touserdata(L,2);
+		THGROUP_HANDLE htg = (THGROUP_HANDLE)lua_tohandle_safe(L, 2, luahandle::THGROUP, v, funcname);
 		v->SetThrusterGroupLevel(htg, level);
 	} else { // identified by type
 		THGROUP_TYPE thgt = (THGROUP_TYPE)(int)lua_tonumber (L,2);
@@ -5865,7 +5866,7 @@ int Interpreter::v_inc_thrustergrouplevel (lua_State *L)
 	double dlevel = luamtd_tonumber_safe(L, 3, funcname);
 	AssertMtdPrmType(L, 2, PRMTP_NUMBER | PRMTP_LIGHTUSERDATA, funcname);
 	if (lua_islightuserdata (L, 2)) { // identify by handle
-		THGROUP_HANDLE htg = (THGROUP_HANDLE)lua_touserdata (L,2);
+		THGROUP_HANDLE htg = (THGROUP_HANDLE)lua_tohandle_safe(L, 2, luahandle::THGROUP, v, funcname);
 		v->IncThrusterGroupLevel (htg, dlevel);
 	} else { // identify by type
 		THGROUP_TYPE thgt = (THGROUP_TYPE)lua_tointeger (L,2);
@@ -5895,7 +5896,7 @@ int Interpreter::v_inc_thrustergrouplevel_singlestep (lua_State *L)
 	double dlevel = luamtd_tonumber_safe(L, 3, funcname);
 	AssertMtdPrmType(L, 2, PRMTP_NUMBER | PRMTP_LIGHTUSERDATA, funcname);
 	if (lua_islightuserdata (L, 2)) { // identify by handle
-		THGROUP_HANDLE htg = (THGROUP_HANDLE)lua_touserdata (L,2);
+		THGROUP_HANDLE htg = (THGROUP_HANDLE)lua_tohandle_safe(L, 2, luahandle::THGROUP, v, funcname);
 		v->IncThrusterGroupLevel_SingleStep (htg, dlevel);
 	} else { // identify by type
 		THGROUP_TYPE thgt = (THGROUP_TYPE)lua_tointeger (L,2);
@@ -6126,7 +6127,7 @@ int Interpreter::v_del_dock (lua_State *L)
 	static const char *funcname = "del_dock";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	DOCKHANDLE hDock = (DOCKHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	DOCKHANDLE hDock = (DOCKHANDLE)lua_tohandle_safe(L, 2, luahandle::DOCK, v, funcname);
 	lua_pushboolean (L, v->DelDock (hDock));
 	return 1;
 }
@@ -6175,7 +6176,7 @@ int Interpreter::v_set_dockparams (lua_State *L)
 	int idx = 2;
 	if (lua_islightuserdata(L,2)) {
 		AssertMtdMinPrmCount(L, 5, funcname);
-		hDock = (DOCKHANDLE)lua_touserdata(L,2);
+		hDock = (DOCKHANDLE)lua_tohandle_safe(L, 2, luahandle::DOCK, v, funcname);
 		idx++;
 	}
 	VECTOR3 pos = luamtd_tovector_safe(L, idx++, funcname);
@@ -6203,7 +6204,7 @@ int Interpreter::v_get_dockparams (lua_State *L)
 	static const char *funcname = "get_dockparams";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	DOCKHANDLE hDock = (DOCKHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	DOCKHANDLE hDock = (DOCKHANDLE)lua_tohandle_safe(L, 2, luahandle::DOCK, v, funcname);
 	VECTOR3 pos, dir, rot;
 	v->GetDockParams (hDock, pos, dir, rot);
 	lua_pushvector(L,pos);
@@ -6263,7 +6264,7 @@ int Interpreter::v_get_dockstatus (lua_State *L)
 	static const char *funcname = "get_dockstatus";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	DOCKHANDLE hDock = (DOCKHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	DOCKHANDLE hDock = (DOCKHANDLE)lua_tohandle_safe(L, 2, luahandle::DOCK, v, funcname);
 	OBJHANDLE hObj = v->GetDockStatus (hDock);
 	if (hObj) lua_pushlightuserdata (L, hObj);
 	else lua_pushnil (L);
@@ -6389,14 +6390,15 @@ following settings are supported:
 	VESSEL* v = lua_tovessel_safe(L, 1, funcname);
 	int ret;
 	if(lua_isnumber(L, 3)) {
-		OBJHANDLE target = (OBJHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+		OBJHANDLE target = (OBJHANDLE)lua_tohandle_safe(L, 2, luahandle::OBJECT, NULL, funcname);
+		if (!oapiIsVessel(target)) return luaL_error(L, "%s: argument 2: not a vessel", funcname); // not upstream: the core takes it as one
 		UINT n = (UINT)luamtd_tointeger_safe(L, 3, funcname);
 		UINT tgtn = (UINT)luamtd_tointeger_safe(L, 4, funcname);
 		UINT mode = (UINT)luamtd_tointeger_safe(L, 5, funcname);
 		ret = v->Dock(target, n, tgtn, mode);
 	} else {
-		DOCKHANDLE source = (DOCKHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
-		DOCKHANDLE target = (DOCKHANDLE)luamtd_tolightuserdata_safe(L, 3, funcname);
+		DOCKHANDLE source = (DOCKHANDLE)lua_tohandle_safe(L, 2, luahandle::DOCK, v, funcname);
+		DOCKHANDLE target = (DOCKHANDLE)lua_tohandle_safe(L, 3, luahandle::DOCK, NULL, funcname); // not upstream: another vessel's
 		UINT mode = (UINT)luamtd_tointeger_safe(L, 4, funcname);
 		ret = v->Dock(source, target, mode);
 	}
@@ -6416,7 +6418,7 @@ int Interpreter::v_get_proxydock(lua_State* L)
 	static const char *funcname = "get_proxydock";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	DOCKHANDLE hDock = (DOCKHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	DOCKHANDLE hDock = (DOCKHANDLE)lua_tohandle_safe(L, 2, luahandle::DOCK, v, funcname);
 
 	DOCKHANDLE hProxy = v->GetProxyDock(hDock);
 
@@ -6439,7 +6441,7 @@ int Interpreter::v_get_dockindex(lua_State* L)
 	static const char *funcname = "get_dockindex";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	DOCKHANDLE hDock = (DOCKHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	DOCKHANDLE hDock = (DOCKHANDLE)lua_tohandle_safe(L, 2, luahandle::DOCK, v, funcname);
 
 	int idx = v->GetDockIndex(hDock);
 
@@ -6465,8 +6467,8 @@ int Interpreter::v_get_targetdockalignment(lua_State* L)
 	static const char *funcname = "get_targetdockalignment";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	DOCKHANDLE hDock = (DOCKHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
-	DOCKHANDLE hTgt = (DOCKHANDLE)luamtd_tolightuserdata_safe(L, 3, funcname);
+	DOCKHANDLE hDock = (DOCKHANDLE)lua_tohandle_safe(L, 2, luahandle::DOCK, v, funcname);
+	DOCKHANDLE hTgt = (DOCKHANDLE)lua_tohandle_safe(L, 3, luahandle::DOCK, NULL, funcname); // not upstream: another vessel's
 
 	VECTOR3 ref, dir, rot, vel;
 
@@ -6498,7 +6500,7 @@ int Interpreter::v_move_dock(lua_State* L)
 	static const char *funcname = "move_dock";
 	AssertMtdMinPrmCount(L, 5, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	DOCKHANDLE hDock = (DOCKHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	DOCKHANDLE hDock = (DOCKHANDLE)lua_tohandle_safe(L, 2, luahandle::DOCK, v, funcname);
 
 	VECTOR3 pos = luamtd_tovector_safe(L, 3, funcname);
 	VECTOR3 dir = luamtd_tovector_safe(L, 4, funcname);
@@ -6582,7 +6584,7 @@ int Interpreter::v_del_attachment (lua_State *L)
 	static const char *funcname = "del_attachment";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	ATTACHMENTHANDLE hAttachment = (ATTACHMENTHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	ATTACHMENTHANDLE hAttachment = (ATTACHMENTHANDLE)lua_tohandle_safe(L, 2, luahandle::ATTACHMENT, v, funcname);
 	lua_pushboolean (L, v->DelAttachment (hAttachment));
 	return 1;
 }
@@ -6628,7 +6630,7 @@ int Interpreter::v_set_attachmentparams (lua_State *L)
 	static const char *funcname = "set_attachmentparams";
 	AssertMtdMinPrmCount(L, 5, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	ATTACHMENTHANDLE hAttachment = (ATTACHMENTHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	ATTACHMENTHANDLE hAttachment = (ATTACHMENTHANDLE)lua_tohandle_safe(L, 2, luahandle::ATTACHMENT, v, funcname);
 	VECTOR3 pos = luamtd_tovector_safe(L, 3, funcname);
 	VECTOR3 dir = luamtd_tovector_safe(L, 4, funcname);
 	VECTOR3 rot = luamtd_tovector_safe(L, 5, funcname);
@@ -6651,7 +6653,7 @@ int Interpreter::v_get_attachmentparams (lua_State *L)
 	static const char *funcname = "get_attachmentparams";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	ATTACHMENTHANDLE hAttachment = (ATTACHMENTHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	ATTACHMENTHANDLE hAttachment = (ATTACHMENTHANDLE)lua_tohandle_safe(L, 2, luahandle::ATTACHMENT, v, funcname);
 	VECTOR3 pos, dir, rot;
 	v->GetAttachmentParams (hAttachment, pos, dir, rot);
 	lua_pushvector(L,pos);
@@ -6673,7 +6675,7 @@ int Interpreter::v_get_attachmentid (lua_State *L)
 	static const char *funcname = "get_attachmentid";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	ATTACHMENTHANDLE hAttachment = (ATTACHMENTHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	ATTACHMENTHANDLE hAttachment = (ATTACHMENTHANDLE)lua_tohandle_safe(L, 2, luahandle::ATTACHMENT, v, funcname);
 	const char *id = v->GetAttachmentId (hAttachment);
 	lua_pushstring (L, id);
 	return 1;
@@ -6695,7 +6697,7 @@ int Interpreter::v_get_attachmentstatus (lua_State *L)
 	static const char *funcname = "get_attachmentstatus";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	ATTACHMENTHANDLE hAttachment = (ATTACHMENTHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	ATTACHMENTHANDLE hAttachment = (ATTACHMENTHANDLE)lua_tohandle_safe(L, 2, luahandle::ATTACHMENT, v, funcname);
 	OBJHANDLE hVessel = v->GetAttachmentStatus (hAttachment);
 	if (hVessel) lua_pushlightuserdata (L, hVessel);
 	else         lua_pushnil (L);
@@ -6740,7 +6742,7 @@ int Interpreter::v_get_attachmentindex (lua_State *L)
 	static const char *funcname = "get_attachmentindex";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	ATTACHMENTHANDLE hAttachment = (ATTACHMENTHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	ATTACHMENTHANDLE hAttachment = (ATTACHMENTHANDLE)lua_tohandle_safe(L, 2, luahandle::ATTACHMENT, v, funcname);
 	lua_pushinteger(L,v->GetAttachmentIndex(hAttachment));
 	return 1;
 }
@@ -6794,9 +6796,10 @@ int Interpreter::v_attach_child (lua_State *L)
 	static const char *funcname = "attach_child";
 	AssertMtdMinPrmCount(L, 4, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	OBJHANDLE hChild = (OBJHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
-	ATTACHMENTHANDLE hAttach = (ATTACHMENTHANDLE)luamtd_tolightuserdata_safe(L, 3, funcname);
-	ATTACHMENTHANDLE hChildAttach = (ATTACHMENTHANDLE)luamtd_tolightuserdata_safe(L, 4, funcname);
+	OBJHANDLE hChild = (OBJHANDLE)lua_tohandle_safe(L, 2, luahandle::OBJECT, NULL, funcname);
+	if (!oapiIsVessel(hChild)) return luaL_error(L, "%s: argument 2: not a vessel", funcname); // not upstream: the core takes it as one
+	ATTACHMENTHANDLE hAttach = (ATTACHMENTHANDLE)lua_tohandle_safe(L, 3, luahandle::ATTACHMENT, v, funcname);
+	ATTACHMENTHANDLE hChildAttach = (ATTACHMENTHANDLE)lua_tohandle_safe(L, 4, luahandle::ATTACHMENT, oapiGetVesselInterface(hChild), funcname); // the child's
 	bool ok = v->AttachChild (hChild, hAttach, hChildAttach);
 	lua_pushboolean (L, ok ? 1:0);
 	return 1;
@@ -6816,7 +6819,7 @@ int Interpreter::v_detach_child (lua_State *L)
 	static const char *funcname = "detach_child";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	ATTACHMENTHANDLE hAttachment = (ATTACHMENTHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	ATTACHMENTHANDLE hAttachment = (ATTACHMENTHANDLE)lua_tohandle_safe(L, 2, luahandle::ATTACHMENT, v, funcname);
 	double vel = 0.0;
 	if (lua_gettop(L) >= 3) {
 		vel = luamtd_tonumber_safe(L, 3, funcname);
@@ -6927,7 +6930,7 @@ int Interpreter::v_enable_ids (lua_State *L)
 	static const char *funcname = "enable_ids";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	DOCKHANDLE hDock = (DOCKHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	DOCKHANDLE hDock = (DOCKHANDLE)lua_tohandle_safe(L, 2, luahandle::DOCK, v, funcname);
 	int enable = luamtd_toboolean_safe(L, 3, funcname);
 	v->EnableIDS (hDock, enable!=0);
 	return 0;
@@ -6956,7 +6959,7 @@ int Interpreter::v_get_ids (lua_State *L)
 	static const char *funcname = "get_ids";
 	AssertMtdMinPrmCount(L, 2, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	DOCKHANDLE hDock = (DOCKHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	DOCKHANDLE hDock = (DOCKHANDLE)lua_tohandle_safe(L, 2, luahandle::DOCK, v, funcname);
 	NAVHANDLE hIDS = v->GetIDS(hDock);
 	if (hIDS) lua_pushlightuserdata (L, hIDS);
 	else      lua_pushnil (L);
@@ -6985,7 +6988,7 @@ int Interpreter::v_set_idschannel (lua_State *L)
 	static const char *funcname = "set_idschannel";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	DOCKHANDLE hDock = (DOCKHANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	DOCKHANDLE hDock = (DOCKHANDLE)lua_tohandle_safe(L, 2, luahandle::DOCK, v, funcname);
 	DWORD ch = (DWORD)luamtd_tointeger_safe(L, 3, funcname);
 	ASSERT_SYNTAX(ch < 640, "Argument 2: out of range");
 	v->SetIDSChannel (hDock, ch);
@@ -7742,7 +7745,7 @@ int Interpreter::v_get_devmesh(lua_State* L)
 	static const char* funcname = "get_devmesh";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL* v = lua_tovessel_safe(L, 1, funcname);
-	VISHANDLE h = (VISHANDLE)lua_tolightuserdata_safe(L, 2, funcname);
+	VISHANDLE h = (VISHANDLE)lua_tohandle_safe(L, 2, luahandle::VISUAL, v, funcname); // not upstream: a visual of this vessel, alive (clbk_visualcreated)
 	UINT idx = (UINT)luamtd_tointeger_safe(L, 3, funcname);
 	DEVMESHHANDLE hDM = v->GetDevMesh(h, idx);
 	if (hDM) lua_pushdevmeshhandle(L, hDM);
@@ -7931,10 +7934,10 @@ int Interpreter::v_add_animationcomponent (lua_State *L)
 	UINT anim = (UINT)luamtd_tointeger_safe(L, 2, funcname);
 	double state0 = luamtd_tonumber_safe(L, 3, funcname);
 	double state1 = luamtd_tonumber_safe(L, 4, funcname);
-	MGROUP_TRANSFORM *trans = (MGROUP_TRANSFORM*)luamtd_tolightuserdata_safe(L, 5, funcname);
+	MGROUP_TRANSFORM *trans = (MGROUP_TRANSFORM*)lua_tohandle_safe(L, 5, luahandle::TRANSFORM, v, funcname);
 	ANIMATIONCOMPONENT_HANDLE hparent = NULL;
 	if (lua_gettop(L) >= 6)
-		hparent = (ANIMATIONCOMPONENT_HANDLE)luamtd_tolightuserdata_safe(L, 6, funcname);
+		hparent = (ANIMATIONCOMPONENT_HANDLE)lua_tohandle_safe(L, 6, luahandle::ANIMCOMP, v, funcname);
 	ANIMATIONCOMPONENT_HANDLE hanimcomp =
 		v->AddAnimationComponent (anim, state0, state1, trans, hparent);
 	if(hanimcomp)
@@ -7966,7 +7969,7 @@ int Interpreter::v_del_animationcomponent (lua_State *L)
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
 	UINT anim = luamtd_tointeger_safe(L, 2, funcname);
-	ANIMATIONCOMPONENT_HANDLE hAC = (ANIMATIONCOMPONENT_HANDLE)luamtd_tolightuserdata_safe(L, 3, funcname);
+	ANIMATIONCOMPONENT_HANDLE hAC = (ANIMATIONCOMPONENT_HANDLE)lua_tohandle_safe(L, 3, luahandle::ANIMCOMP, v, funcname);
 	lua_pushboolean(L, v->DelAnimationComponent(anim, hAC));
 	return 1;
 }
@@ -8372,7 +8375,7 @@ int Interpreter::v_parse_scenario_line_ex(lua_State* L)
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL* v = lua_tovessel_safe(L, 1, funcname);
 	const char* line = lua_tostring_safe(L, 2, funcname);
-	void* status = lua_touserdata(L, 3);
+	void* status = luaL_checkudata(L, 3, "VESSELSTATUS2.table"); // not upstream: only a status object (clbk_loadstateex's)
 	v->ParseScenarioLineEx(const_cast<char*>(line), status);
 	return 0;
 }
@@ -8457,7 +8460,7 @@ int Interpreter::v_set_panelscaling(lua_State* L)
 	}
 	VESSEL3* v3 = (VESSEL3*)v;
 
-	PANELHANDLE hPanel = lua_touserdata(L, 2);
+	PANELHANDLE hPanel = lua_tohandle_safe(L, 2, luahandle::PANEL, NULL, funcname); // not upstream: the panel of the running clbk_loadpanel2d
 	double defscale = luaL_checknumber(L, 3);
 	double extscale = luaL_checknumber(L, 4);
 	
@@ -8509,7 +8512,7 @@ int Interpreter::v_set_panelbackground(lua_State* L)
 		lua_pushstring(L, "Invalid vessel version in set_panelbackground");
 		return 2;
 	}
-	PANELHANDLE hPanel = lua_touserdata(L, 2);
+	PANELHANDLE hPanel = lua_tohandle_safe(L, 2, luahandle::PANEL, NULL, funcname); // not upstream: the panel of the running clbk_loadpanel2d
 	SURFHANDLE *hSurf = NULL;  //FIXME: implement textures
 	int nsurf = 0;
 	if(!lua_isnil(L, 3)) {
@@ -8632,7 +8635,7 @@ int Interpreter::v_register_panelarea(lua_State* L)
 	}
 	VESSEL4* v4 = (VESSEL4*)v;
 
-	PANELHANDLE hPanel = lua_touserdata(L, 2);
+	PANELHANDLE hPanel = lua_tohandle_safe(L, 2, luahandle::PANEL, NULL, funcname); // not upstream: the panel of the running clbk_loadpanel2d
 	int id = luaL_checkinteger(L, 3);
 	RECT pos = lua_torect(L, 4);
 
@@ -8659,7 +8662,7 @@ int Interpreter::v_register_panelarea(lua_State* L)
 
 			SURFHANDLE surf = NULL;
 			if(lua_gettop(L) >= 7) {
-				surf = lua_touserdata(L, 7);
+				surf = lua_tosurface(L, 7); // not upstream: a surface the client holds, or nil
 			}
 			
 			void *context = NULL;
@@ -8707,7 +8710,7 @@ int Interpreter::v_register_panelmfdgeometry (lua_State *L)
 	}
 	VESSEL3* v3 = (VESSEL3*)v;
 
-	PANELHANDLE hPanel = lua_touserdata(L, 2);
+	PANELHANDLE hPanel = lua_tohandle_safe(L, 2, luahandle::PANEL, NULL, funcname); // not upstream: the panel of the running clbk_loadpanel2d
 	int id = luaL_checkinteger(L, 3);
 	int nmesh = luaL_checkinteger(L, 4);
 	int ngroup = luaL_checkinteger(L, 5);
@@ -8767,7 +8770,7 @@ int Interpreter::v_add_exhaust (lua_State *L)
 	static const char *funcname = "add_exhaust";
 	AssertMtdMinPrmCount(L, 4, funcname);
 	VESSEL *v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	double lscale = luamtd_tonumber_safe(L, 3, funcname);
 	double wscale = luamtd_tonumber_safe(L, 4, funcname);
 	int idx = 5;
@@ -8787,7 +8790,7 @@ int Interpreter::v_add_exhaust (lua_State *L)
 		do_lofs = true;
 	}
 	if (lua_gettop(L) >= idx)
-		tex = (SURFHANDLE)luamtd_tolightuserdata_safe(L, idx++, funcname);
+		tex = lua_tosurface(L, idx++); // not upstream: a surface the client holds, or nil
 
 	UINT exh;
 	if (do_posdir)
@@ -8868,7 +8871,7 @@ int Interpreter::v_add_exhauststream(lua_State* L)
 	static const char* funcname = "add_exhauststream";
 	AssertMtdMinPrmCount(L, 3, funcname);
 	VESSEL* v = lua_tovessel_safe(L, 1, funcname);
-	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)luamtd_tolightuserdata_safe(L, 2, funcname);
+	THRUSTER_HANDLE ht = (THRUSTER_HANDLE)lua_tohandle_safe(L, 2, luahandle::THRUSTER, v, funcname);
 	PARTICLESTREAMSPEC pss;  memset(&pss, 0, sizeof(PARTICLESTREAMSPEC));
 	VECTOR3 pos;
 	bool do_pos = false;
@@ -8941,7 +8944,7 @@ int Interpreter::v_add_exhauststream(lua_State* L)
 	lua_pop(L, 1);
 
 	lua_getfield(L, idx, "tex");
-	pss.tex = (lua_islightuserdata(L, -1) ? (SURFHANDLE)lua_touserdata(L, -1) : NULL);
+	pss.tex = (lua_islightuserdata(L, -1) ? lua_tosurface(L, -1) : NULL); // not upstream: a surface the client holds
 	lua_pop(L, 1);
 
 	PSTREAM_HANDLE hp;
@@ -9064,7 +9067,7 @@ int Interpreter::v_add_reentrystream(lua_State* L)
 	lua_pop(L, 1);
 
 	lua_getfield(L, idx, "tex");
-	pss.tex = (lua_islightuserdata(L, -1) ? (SURFHANDLE)lua_touserdata(L, -1) : NULL);
+	pss.tex = (lua_islightuserdata(L, -1) ? lua_tosurface(L, -1) : NULL); // not upstream: a surface the client holds
 	lua_pop(L, 1);
 
 	PSTREAM_HANDLE hp;
@@ -9172,7 +9175,7 @@ int Interpreter::v_add_particlestream(lua_State* L)
 	lua_pop(L, 1);
 
 	lua_getfield(L, idx, "tex");
-	pss.tex = (lua_islightuserdata(L, -1) ? (SURFHANDLE)lua_touserdata(L, -1) : NULL);
+	pss.tex = (lua_islightuserdata(L, -1) ? lua_tosurface(L, -1) : NULL); // not upstream: a surface the client holds
 	lua_pop(L, 1);
 
 	VECTOR3 pos = lua_tovector_safe(L, 3, "add_particlestream");
@@ -9778,12 +9781,16 @@ VesselMFD::VesselMFD(DWORD w, DWORD h, VESSEL* vessel, VesselMFDContext* ctx) : 
 }
 
 VesselMFD::~VesselMFD() {
+	int top = lua_gettop(L); // not upstream: the stack as it was (the table and the field stayed on it)
 	lua_rawgeti(L, LUA_REGISTRYINDEX, mfd_ref);
 	lua_getfield(L, -1, "destroy");
 	if (lua_isfunction(L, -1)) {
 		lua_pushvalue(L, -2); //self
 		Interpreter::LuaCall(L, 1, 0);
 	}
+	lua_settop(L, top);
+	luaL_unref(L, LUA_REGISTRYINDEX, mfd_ref); // not upstream: the script's table goes with the MFD
+	Interpreter::lua_releasemfd(L, this); // not upstream: and its mfd object no longer reaches it
 }
 
 bool VesselMFD::ConsumeButton(int bt, int event) {
@@ -9931,6 +9938,7 @@ bool VesselMFD::Update(oapi::Sketchpad* skp) {
 		lua_pushvalue(L, -2); //self
 		Interpreter::lua_pushsketchpad(L, skp);
 		Interpreter::LuaCall(L, 2, 1);
+		Interpreter::lua_releasesketchpad(L, skp); // not upstream: skp lasts this call only
 		bool consumed = (lua_toboolean(L, -1) ? true : false);
 		lua_pop(L, 1);
 		return true; //consumed;

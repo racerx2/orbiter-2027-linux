@@ -68,7 +68,7 @@ public:
 	void GetValue (VkConstHandle h, void *data, UINT bytes) const;
 	void SetTexture (int binding, VkTex *tex, const VkSamplerDesc &s);
 	void ClearTextures ();
-	void Push (const std::vector<VkSamplerSlot> &samplers); // pushes the blocks and the listed sampler bindings
+	bool Push (const std::vector<VkSamplerSlot> &samplers); // pushes the blocks and the listed sampler bindings; not upstream: false, a block got no memory (it stays dirty)
 	VkTex *GetTexture (int binding) const;
 	void DropTexture (const VkTex *t);                 // VkDev::ForgetTexture, under ConstLock
 	void Invalidate () { dirty = true; }

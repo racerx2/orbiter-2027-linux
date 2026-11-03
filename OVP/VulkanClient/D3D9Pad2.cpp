@@ -436,7 +436,8 @@ bool D3D9Pad::TextW (int x, int y, const LPWSTR str, int len)
 	// No "Setup" here, done in PrintSkp()
 
 	if (!cfont) return false;
-	if (len == -1) len = int(wcslen(str));
+	if (!str || len < -1) return false; // not upstream: other negatives are none
+	len = (len == -1) ? int(wcslen(str)) : int(wcsnlen(str, len)); // not upstream: never past the string's end
 	if (!len) return true;
 
 	D3D9TextPtr pText = static_cast<const D3D9PadFont *>(cfont)->pFont;
@@ -841,12 +842,26 @@ RECT D3D9Pad::GetFullRectNative(VkTex *hSrc)
 
 D3D9PolyLine::D3D9PolyLine(VkDev *pDev, const FVECTOR2 *pt, int npt, bool bConnect) : D3D9PolyBase(0)
 {
+	this->pDev = pDev; // not upstream: kept for Update
+	pVB = pIB = NULL;
+	vI = 0;
+	bLoop = bConnect;
+	Alloc(npt);
+	if (pt) Update(pt, npt, bConnect);
+}
+
+
+// ===============================================================================================
+// not upstream: the buffers for npt points (the constructor's, again when Update gets more); 16-bit indices hold 10920 points
+void D3D9PolyLine::Alloc(int npt)
+{
+	npt = std::clamp(npt, 0, MAXPT);
 	nPt = npt + 2;
 	nVtx = 2 * nPt;
 	nIdx = 6 * nPt;
 
-	this->pDev = pDev; // not upstream: kept for Update
-
+	SAFE_DELETE(pVB);
+	SAFE_DELETE(pIB);
 	pVB = new VkBuf(pDev, nVtx * sizeof(SkpVtx), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true); // D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY: host visible
 	pIB = new VkBuf(pDev, nIdx * sizeof(WORD), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, true); // D3DFMT_INDEX16
 
@@ -867,8 +882,6 @@ D3D9PolyLine::D3D9PolyLine(VkDev *pDev, const FVECTOR2 *pt, int npt, bool bConne
 	}
 
 	// Unlock left out: host buffers stay mapped
-
-	if (pt) Update(pt, npt, bConnect);
 }
 
 
@@ -896,6 +909,7 @@ void D3D9PolyLine::Draw(D3D9Pad *pSkp, VkDev *pDev)
 	pDev->SetStreamSource(0, pVB, 0, sizeof(SkpVtx));
 	pDev->SetIndices(pIB);
 	pDev->SetCullMode(VK_CULL_MODE_NONE);
+	if (vI < 4) return; // not upstream: no line (fewer than two points)
 	pDev->DrawIndexedPrimitive(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 0, 0, VkPrimVerts(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, vI-2));
 }
 
@@ -906,6 +920,9 @@ void D3D9PolyLine::Update(const FVECTOR2 *_pt, int _npt, bool bConnect)
 {
 	SkpVtx *Vtx = NULL;
 	D3DXVECTOR2 *pt = (D3DXVECTOR2 *)_pt;
+
+	if (!_pt || _npt < 2 || _npt > MAXPT) { vI = 0; return; } // not upstream: a line has two points; more than the indices reach are refused
+	if (_npt + 2 > nPt) Alloc(_npt); // not upstream: more points than the buffers were made for
 
 	SAFE_DELETE(pVB); // Lock (D3DLOCK_DISCARD): a new buffer, the old one goes when the GPU is done with it
 	pVB = new VkBuf(pDev, nVtx * sizeof(SkpVtx), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
@@ -979,7 +996,7 @@ void D3D9PolyLine::Update(const FVECTOR2 *_pt, int _npt, bool bConnect)
 
 D3D9Triangle::D3D9Triangle(VkDev *pDev, const gcCore::clrVtx *pt, int npt, int _style) : D3D9PolyBase(1)
 {
-	nPt = npt;
+	nPt = WORD(std::clamp(npt, 0, 65535)); // not upstream: no negative count, none past the 16-bit count
 	style = _style;
 	this->pDev = pDev; // not upstream: kept for Update
 	pVB = new VkBuf(pDev, nPt * sizeof(SkpVtx), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true); // D3DUSAGE_DYNAMIC | D3DUSAGE_WRITEONLY: host visible
@@ -1019,8 +1036,11 @@ void D3D9Triangle::Draw(D3D9Pad* pSkp, VkDev *pDev)
 void D3D9Triangle::Update(const gcCore::clrVtx *pt, int npt)
 {
 	SkpVtx *Vtx = NULL;
+	if (!pt || npt < 0) return; // not upstream
+	npt = std::min(npt, 65535); // not upstream: the 16-bit count
+	nPt = WORD(npt); // not upstream: the buffer and the draws take the new count (more points overran the old buffer)
 	SAFE_DELETE(pVB); // Lock (D3DLOCK_DISCARD): a new buffer, the old one goes when the GPU is done with it
-	pVB = new VkBuf(pDev, nPt * sizeof(SkpVtx), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
+	pVB = new VkBuf(pDev, std::max<size_t>(nPt, 1) * sizeof(SkpVtx), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true);
 	Vtx = (SkpVtx *)pVB->Map();
 
 	memset(Vtx, 0, sizeof(SkpVtx)*npt);

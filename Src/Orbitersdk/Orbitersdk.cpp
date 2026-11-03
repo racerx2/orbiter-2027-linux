@@ -42,13 +42,19 @@ __attribute__((constructor)) static void DllMain_ProcessAttach ()
 	if (!DLLExit) DLLExit = (DLLEXIT)OwnProc (hThisModule, "opcDLLExit", self.dli_fbase);
 }
 
-// not upstream: DLL_PROCESS_DETACH as FreeLibrary sends it; the core calls this before dlclose, which may keep the module loaded until exit
-DLLCLBK void ModuleDetach ()
+// not upstream: this module's own detach; a call to the exported ModuleDetach from its destructor could bind to another module's in its load group
+static void Detach ()
 {
 	DLLEXIT f = DLLExit;
 	DLLExit = 0;
 	bDetached = true; // not upstream: see ModuleAttach
 	if (f) (*f)(hThisModule);
+}
+
+// not upstream: DLL_PROCESS_DETACH as FreeLibrary sends it; the core calls this before dlclose, which may keep the module loaded until exit
+DLLCLBK void ModuleDetach ()
+{
+	Detach ();
 }
 
 // not upstream: DLL_PROCESS_ATTACH again, as after the last FreeLibrary; the core calls it when it reopens a module dlclose kept
@@ -61,7 +67,7 @@ DLLCLBK void ModuleAttach ()
 
 __attribute__((destructor)) static void DllMain_ProcessDetach ()
 {
-	ModuleDetach ();
+	Detach (); // not upstream: the library's own (a needed library like Satsat bound Titan's ModuleDetach, and its ExitModule never ran)
 }
 
 int oapiGetModuleVersion ()

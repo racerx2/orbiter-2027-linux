@@ -41,11 +41,22 @@
     },
     {
       "name": "linux-x64-asan",
-      "displayName": "x64 ASan",
+      "displayName": "x64 ASan and UBSan",
       "inherits": "linux-x64-release",
       "cacheVariables": {
         "ORBITER_SANITIZER": true,
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "linux-x64-tsan",
+      "displayName": "x64 TSan",
+      "inherits": "linux-x64-release",
+      "cacheVariables": {
+        "ORBITER_SANITIZER": true,
+        "ORBITER_SANITIZERS": "thread",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "ORBITER_WINEBRIDGE": false
       }
     },
     {
@@ -71,8 +82,13 @@
     },
     {
       "name": "linux-x64-asan",
-      "displayName": "x64 ASan",
+      "displayName": "x64 ASan and UBSan",
       "configurePreset": "linux-x64-asan"
+    },
+    {
+      "name": "linux-x64-tsan",
+      "displayName": "x64 TSan",
+      "configurePreset": "linux-x64-tsan"
     },
     {
       "name": "linux-x64-tracy",
@@ -103,7 +119,20 @@
     {
       "name": "linux-x64-asan",
       "configurePreset": "linux-x64-asan",
-      "inherits": "test-base"
+      "inherits": "test-base",
+      "environment": {
+        "LSAN_OPTIONS": "suppressions=${sourceDir}/Tests/lsan.supp"
+      }
+    },
+    {
+      "name": "linux-x64-tsan",
+      "configurePreset": "linux-x64-tsan",
+      "inherits": "test-base",
+      "filter": {
+        "include": {
+          "name": "^(GltfLoader|GltfRoundTrip|PathResolve|CollGeom|CollAnim|CollShape|CollDetect|CollSolve|CollSolveFrame|DentMath|CollLoop|CollCfg)\\.Test"
+        }
+      }
     }
   ]
 }

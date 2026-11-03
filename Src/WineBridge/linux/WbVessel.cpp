@@ -32,6 +32,8 @@ WbVessel::~WbVessel ()
 	}
 	WbSoundVesselGone (GetHandle ()); // after the module's ovcExit, which may still stop its waves
 	if (m_id) b.DropVessel (m_id);
+	b.Retire (GetHandle ()); // not upstream (F2): its id names nothing now
+	b.Retire (this);
 	if (m_module) b.Free (m_module); // the vessel's open of its module
 }
 

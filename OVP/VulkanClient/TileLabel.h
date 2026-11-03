@@ -12,6 +12,10 @@
 #include "Surfmgr2.h"
 #include "ZTreeMgr.h"
 #include "D3D9Pad.h"
+#include <functional>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 class TileLabel {
 public:
@@ -52,6 +56,14 @@ private:
 	TLABEL **label;                 ///< the list read from file
 	DWORD nrenderlabel, nrenderbuf; ///< number of allocated render-labels and render-label buffer size
 	TLABEL **renderlabel;           ///< the list to be rendered, extracted from an ancestor label list
+
+	// not upstream: Read finds a place's label through a hash (a scan of all was quadratic) and joins its names once at the end
+	struct LabelKey { double lat, lng; char type; bool operator== (const LabelKey &o) const { return lat == o.lat && lng == o.lng && type == o.type; } };
+	struct LabelKeyHash { size_t operator() (const LabelKey &k) const { return std::hash<double>()(k.lat) * 31 ^ std::hash<double>()(k.lng) * 7 ^ size_t(k.type); } };
+	std::unordered_map<LabelKey, DWORD, LabelKeyHash> where;
+	std::vector<std::string> names;
+	void JoinNames ();
+	static const DWORD MAXLABEL = 65536; // a tile's labels at most
 };
 
 #endif // !__TILELABEL_H

@@ -217,22 +217,22 @@ BOOL SplitterCtrl::OnMouseMove (QWidget *hWnd, short x, short y)
 
 bool SplitterCtrl::WndProc (QWidget *hWnd, QEvent *event)
 {
-	QMouseEvent *me = static_cast<QMouseEvent*> (event);
+	auto me = [event] { return static_cast<QMouseEvent*> (event); }; // not upstream: cast once the type is known to be a mouse event
 	switch (event->type()) {
 	case QEvent::Resize: {
 		QSize s = static_cast<QResizeEvent*> (event)->size();
 		OnSize (hWnd, s.width(), s.height());
 		} return false;
 	case QEvent::MouseButtonPress:
-		if (me->button() != Qt::LeftButton) break;
-		OnLButtonDown (hWnd, me->modifiers(), (short)me->position().x(), (short)me->position().y());
+		if (me()->button() != Qt::LeftButton) break;
+		OnLButtonDown (hWnd, me()->modifiers(), (short)me()->position().x(), (short)me()->position().y());
 		return true;
 	case QEvent::MouseButtonRelease:
-		if (me->button() != Qt::LeftButton) break;
-		OnLButtonUp (hWnd, me->modifiers(), (short)me->position().x(), (short)me->position().y());
+		if (me()->button() != Qt::LeftButton) break;
+		OnLButtonUp (hWnd, me()->modifiers(), (short)me()->position().x(), (short)me()->position().y());
 		return true;
 	case QEvent::MouseMove:
-		OnMouseMove (hWnd, (short)me->position().x(), (short)me->position().y());
+		OnMouseMove (hWnd, (short)me()->position().x(), (short)me()->position().y());
 		return true;
 	default:
 		break;

@@ -116,6 +116,25 @@ TEST_CASE ("E3-U2 block write and read")
 	CHECK (again == vl);
 }
 
+// not upstream (design-security-fixes D): the record id names a side file, letters, digits, '_' and '-' only
+TEST_CASE ("A RECID that isn't a plain name is skipped")
+{
+	for (const char *id : {"../../.ssh/x", "a/b", "a\\b", ".", "..", "x y", "\xc3\xa9"}) {
+		std::vector<std::string> body = { "COLLA 1", std::string ("RECID ") + id + " 1.5", "END" };
+		CollStoreBlock b;
+		REQUIRE (CollStore::Parse (Reader (body), b));
+		CHECK (b.recId.empty ());
+		CHECK (b.skipped == 1);
+	}
+	std::vector<std::string> body = { "COLLA 1", "RECID " + std::string (65, 'a') + " 1.5", "END" };
+	CollStoreBlock b;
+	REQUIRE (CollStore::Parse (Reader (body), b));
+	CHECK (b.recId.empty ());
+	body[1] = "RECID " + std::string (64, 'a') + " 1.5";
+	REQUIRE (CollStore::Parse (Reader (body), b));
+	CHECK (b.recId == std::string (64, 'a'));
+}
+
 TEST_CASE ("E3-U3 prefix scan")
 {
 	std::vector<std::string> f = { "SOMETHING 1", "END", "BEGIN_Collision", "COLLA 1", "VESSEL 0 A B", "XDMG 1 7 0", "END_VESSEL", "END" };

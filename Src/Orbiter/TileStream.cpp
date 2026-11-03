@@ -7,6 +7,10 @@
 #include <QColor>
 #include <QFile>
 #include <QImageReader>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QUrl>
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -93,6 +97,52 @@ std::string CleanDir (std::string dir)
 	std::replace (dir.begin(), dir.end(), '\\', '/');
 	while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
 	return dir;
+}
+
+// not upstream (design-security-fixes E10): all of n bytes to fd, synced
+bool WriteSync (int fd, const char *data, size_t n)
+{
+	while (n) {
+		ssize_t w = write (fd, data, n);
+		if (w < 0 && errno == EINTR) continue;
+		if (w <= 0) return false;
+		data += w, n -= (size_t)w;
+	}
+	return fdatasync (fd) == 0;
+}
+
+// not upstream (E10): a new file at a name of ours, never through a link or into a file there (a leftover or a link is removed first)
+bool PutNew (const std::string &f, const char *data, size_t n)
+{
+	unlink (f.c_str());
+	int fd = open (f.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666);
+	if (fd < 0) return false;
+	bool ok = WriteSync (fd, data, n);
+	if (close (fd) != 0) ok = false;
+	if (!ok) unlink (f.c_str());
+	return ok;
+}
+
+// not upstream (E10): a new file beside f under a name no one could have made (mkstemp); its name, "" if not written
+std::string PutTemp (const std::string &f, const char *data, size_t n)
+{
+	std::string t = f + ".XXXXXX";
+	int fd = mkostemp (&t[0], O_CLOEXEC);
+	if (fd < 0) return "";
+	bool ok = fchmod (fd, 0644) == 0 && WriteSync (fd, data, n);
+	if (close (fd) != 0) ok = false;
+	if (!ok) unlink (t.c_str());
+	return ok ? t : "";
+}
+
+// not upstream (E10): a rename into the folder of f made lasting
+void SyncDir (const std::string &f)
+{
+	std::string d = fs::path (f).parent_path().string();
+	int fd = open (d.empty() ? "." : d.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (fd < 0) return;
+	fsync (fd);
+	close (fd);
 }
 
 // the table of contents of an installed Archive/<Layer>.tree, as ZTreeMgr reads it; no tile data
@@ -293,6 +343,18 @@ void TouchFile (const std::string &p)
 
 int MarkAll (const std::string &dir); // the mark on every file the indexes list: 0, -1 no sub-second times, -2 TileStream/marked not written
 
+}
+
+// not upstream (design-security-fixes E6)
+std::string TsTileJsonUrl (const QByteArray &json, const std::string &from, const std::string &configured)
+{
+	QJsonArray tiles = QJsonDocument::fromJson (json).object ().value ("tiles").toArray ();
+	std::string t = tiles.isEmpty () ? std::string () : tiles.at (0).toString ().toStdString ();
+	QUrl tu (QString::fromStdString (t));
+	auto same = [&tu] (const QUrl &u) { return u.isValid () && tu.scheme () == u.scheme () && !tu.host ().compare (u.host (), Qt::CaseInsensitive) && tu.port () == u.port (); };
+	bool ok = tu.isValid () && tu.userInfo ().isEmpty () && (tu.scheme () == "https" || tu.scheme () == "file") // https, or a local file named by a local file
+		&& (same (QUrl (QString::fromStdString (from))) || same (QUrl (QString::fromStdString (configured))));
+	return ok && t.find ("{z}") != std::string::npos && t.find ("{x}") != std::string::npos && t.find ("{y}") != std::string::npos ? t : std::string ();
 }
 
 struct TileStream::Impl {
@@ -1214,7 +1276,7 @@ void TileStream::Impl::Dispatch (Clock::time_point now)
 			long long off = -1, len = 0;
 			if ((h == WC || h == USGS) && r != std::string::npos && sscanf (url.c_str() + r, "#%lld+%lld", &off, &len) == 2)
 				net->Get (url.substr (0, r), back, off, len); // url#off+len: a byte range
-			else net->Get (url, back, -1, 0, 0, TsNet::TileStallMs); // not upstream (design-preload): a stalled tile request fails in 8 s
+			else net->Get (url, back, -1, 0, 0, TsNet::TileStallMs, (h == WC || h == USGS) ? 0 : (int64_t)4 << 20); // not upstream (design-preload): a stalled tile request fails in 8 s; a tile or TileJSON 4 MB at most (the cloud image's 96 MB held 22 of them)
 		}
 	}
 }
@@ -1270,6 +1332,7 @@ void TileStream::Impl::CacheDrop (const std::string &url)
 void TileStream::Impl::CachePut (const std::string &url, const std::shared_ptr<const QByteArray> &d)
 {
 	CacheDrop (url);
+	if (d->size () > (16 << 20)) return; // not upstream: one entry never takes the memory cache's 64 MB
 	lru.emplace_front (url, d);
 	lruIdx[url] = lru.begin();
 	lruBytes += (size_t)d->size();
@@ -1453,6 +1516,7 @@ void TileStream::Impl::FetchAll (std::vector<TsCog::Req> &rq, int h, int sec)
 	std::unique_lock<std::mutex> lk (mx);
 	std::vector<std::string> keys;
 	for (TsCog::Req &r : rq) {
+		if (r.len && (r.len > (uint64_t)INT64_MAX || r.off > (uint64_t)INT64_MAX - r.len)) { keys.push_back (std::string ()); r.status = 0; continue; } // not upstream: a range past the number type (a file's own offsets) fails
 		keys.push_back (r.len ? r.url + "#" + std::to_string (r.off) + "+" + std::to_string (r.len) : r.url); // stream-rwyflat: a whole file under its URL
 		const std::string &k = keys.back();
 		if ((r.data = CacheGet (k))) { r.status = 200; continue; }
@@ -1656,18 +1720,13 @@ bool TileStream::Impl::Write (const Body &B, const std::string &path, const std:
 		cross = crossDirs.count (layer) > 0;
 	}
 	std::string tmp = B.dir + "/TileStream/tmp/" + std::to_string (getpid()) + "." + std::to_string (seq) + ".tmp";
-	auto put = [&bytes] (const std::string &f) {
-		std::ofstream o (f, std::ios::binary | std::ios::trunc);
-		o.write (bytes.data(), (std::streamsize)bytes.size());
-		o.close();
-		return !o.fail();
-	};
+	auto put = [&bytes] (const std::string &f) { return PutNew (f, bytes.data(), bytes.size()); }; // not upstream: E10
 	std::error_code rc;
 	if (cross) ec = std::make_error_code (std::errc::cross_device_link); // known to be on another disk: straight to .part
 	else if (!put (tmp)) ec = std::make_error_code (std::errc::io_error);
 	else if (opt.crossDisk) ec = std::make_error_code (std::errc::cross_device_link);
 	else fs::rename (tmp, path, ec);
-	if (!ec) return placed ();
+	if (!ec) { SyncDir (path); return placed (); }
 	if (!cross) fs::remove (tmp, rc);
 	if (!cross && ec == std::errc::cross_device_link) {
 		std::lock_guard<std::mutex> lk (imx);
@@ -1677,7 +1736,7 @@ bool TileStream::Impl::Write (const Body &B, const std::string &path, const std:
 	std::error_code pc;
 	if (put (part)) {
 		fs::rename (part, path, pc);
-		if (!pc) return placed ();
+		if (!pc) { SyncDir (path); return placed (); }
 	} else pc = std::make_error_code (std::errc::io_error);
 	fs::remove (part, rc);
 	if (!writeLogged.exchange (true)) Log ("TileStream: cannot write " + path + " (" + ec.message() + ", then " + pc.message() + ")");
@@ -1737,22 +1796,17 @@ void TileStream::Impl::Append (const Body &B, const char *name, uint64_t k, int6
 bool TileStream::Impl::WriteText (const std::string &p, const std::string &text)
 {
 	if (ro) return false;
-	std::string tmp = p + ".new";
-	bool ok;
-	{
-		std::ofstream f (tmp, std::ios::trunc);
-		f << text;
-		f.close();
-		ok = !f.fail();
-	}
+	std::string tmp = PutTemp (p, text.data(), text.size()); // not upstream: E10
+	bool ok = !tmp.empty();
 	std::error_code ec;
 	if (ok) fs::rename (tmp, p, ec);
 	if (!ok || ec) {
 		std::error_code rc;
-		fs::remove (tmp, rc);
+		if (ok) fs::remove (tmp, rc);
 		Log ("TileStream: cannot rewrite " + p);
 		return false;
 	}
+	SyncDir (p);
 	return true;
 }
 
@@ -2236,12 +2290,10 @@ void TileStream::Impl::BldgDeliver (const std::string &url, int status, const st
 		Body &B = *bodies[js->second];
 		bjson.erase (js);
 		B.bldgUrl = B.cfg.bldgUrl;
-		if (status == 200 && data) {
-			std::string s = data->toStdString();
-			size_t a = s.find ("\"tiles\""), q0 = a == std::string::npos ? a : s.find ('"', s.find ('[', a) + 1);
-			size_t q1 = q0 == std::string::npos ? q0 : s.find ('"', q0 + 1);
-			std::string t = q1 == std::string::npos ? std::string() : s.substr (q0 + 1, q1 - q0 - 1);
-			if (t.find ("://") != std::string::npos && t.find ("{x}") != std::string::npos && t.find ("{y}") != std::string::npos) B.bldgUrl = t;
+		if (status == 200 && data) { // not upstream: parsed as JSON (TsTileJsonUrl); any "://" was taken: http, file://, the LAN
+			std::string t = TsTileJsonUrl (*data, url, B.cfg.bldgUrl);
+			if (!t.empty ()) B.bldgUrl = t;
+			else Log ("TileStream: the TileJSON has no https tiles URL on its host, the configured one is used");
 		}
 		Log ("TileStream: " + B.cfg.name + " buildings from " + B.bldgUrl);
 		B.bldgState = 2;
@@ -3499,22 +3551,18 @@ int MarkAll (const std::string &dir)
 	return f.fail() ? -2 : 0;
 }
 
-// to <file>.new, then renamed over it
+// to a temp file beside it (mkstemp), then renamed over it
 bool WriteIdx (const std::string &file, const std::vector<uint64_t> &v)
 {
-	std::string tmp = file + ".new";
+	std::string text; // not upstream: E10, PutTemp
+	for (uint64_t k : v) text += std::to_string (KL (k)) + ' ' + std::to_string (KLat (k)) + ' ' + std::to_string (KLng (k)) + '\n';
+	std::string tmp = PutTemp (file, text.data(), text.size());
+	if (tmp.empty()) return false;
 	std::error_code ec;
-	{
-		std::ofstream f (tmp, std::ios::trunc);
-		for (uint64_t k : v) f << KL (k) << ' ' << KLat (k) << ' ' << KLng (k) << '\n';
-		f.close();
-		if (f.fail()) {
-			fs::remove (tmp, ec);
-			return false;
-		}
-	}
 	fs::rename (tmp, file, ec);
-	return !ec;
+	if (ec) { std::error_code rc; fs::remove (tmp, rc); return false; }
+	SyncDir (file);
+	return true;
 }
 
 // a file and its leftover .part (a write across disks cut short)

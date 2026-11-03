@@ -4,6 +4,8 @@
 #include "TexPack.h"
 #include <QCoreApplication>
 #include <QUrl>
+#include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -109,7 +111,7 @@ TEST_CASE ("The package list reads the URL and one pack per line", "[TexPack]")
 	TexPackList list;
 	std::string err;
 
-	Write (cfg, "; comment\nURL = file:///x/y/\n; zip body layer\nA_Surf.zip A Surf 10 20 3 0123456789abcdef0123456789abcdef ; note\n\n");
+	Write (cfg, "; comment\nURL = file:///x/y/\n; zip body layer\nA_Surf.zip A Surf 10 20 3 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef ; note\n\n");
 	REQUIRE (TexPackRead (cfg, list, err));
 	CHECK (list.url == "file:///x/y");
 	REQUIRE (list.pack.size() == 1);
@@ -123,11 +125,11 @@ TEST_CASE ("The package list reads the URL and one pack per line", "[TexPack]")
 	Write (cfg, "URL = u\nA_Surf.zip A Surf 10 20\n");
 	CHECK_FALSE (TexPackRead (cfg, list, err));
 	CHECK (err == "line 2: bad pack");
-	Write (cfg, "URL = u\nA_Surf.zip A Surf 10 20 3 0123456789abcdef0123456789abcdef extra\n");
+	Write (cfg, "URL = u\nA_Surf.zip A Surf 10 20 3 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef extra\n");
 	CHECK_FALSE (TexPackRead (cfg, list, err));
-	Write (cfg, "URL = u\nA_Surf.zip ../A Surf 10 20 3 0123456789abcdef0123456789abcdef\n");
+	Write (cfg, "URL = u\nA_Surf.zip ../A Surf 10 20 3 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n");
 	CHECK_FALSE (TexPackRead (cfg, list, err));
-	Write (cfg, "A_Surf.zip A Surf 10 20 3 0123456789abcdef0123456789abcdef\n");
+	Write (cfg, "A_Surf.zip A Surf 10 20 3 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n");
 	CHECK_FALSE (TexPackRead (cfg, list, err));
 	CHECK (err.find ("no URL") == 0);
 	CHECK_FALSE (TexPackRead ((t.root / "none.cfg").string(), list, err));
@@ -242,14 +244,18 @@ TEST_CASE ("A bad pack installs nothing", "[TexPack]")
 	CHECK_FALSE (fs::exists (t.tex / "Moon" / "Surf" / "a.dds"));
 }
 
-TEST_CASE ("md5 of a file", "[TexPack]")
+TEST_CASE ("SHA-256 of a file and of a range of it", "[TexPack]")
 {
 	Tmp t;
+	Write (t.root / "abc", "xabcy");
+	std::string sha;
+	REQUIRE (TexPackSha256 ((t.root / "abc").string(), sha, 1, 3));
+	CHECK (sha == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 	Write (t.root / "abc", "abc");
-	std::string md5;
-	REQUIRE (TexPackMd5 ((t.root / "abc").string(), md5));
-	CHECK (md5 == "900150983cd24fb0d6963f7d28e17f72");
-	CHECK_FALSE (TexPackMd5 ((t.root / "none").string(), md5));
+	REQUIRE (TexPackSha256 ((t.root / "abc").string(), sha));
+	CHECK (sha == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+	CHECK_FALSE (TexPackSha256 ((t.root / "abc").string(), sha, 1, 3)); // past the end
+	CHECK_FALSE (TexPackSha256 ((t.root / "none").string(), sha));
 }
 
 TEST_CASE ("A pack downloads, is checked and installs", "[TexPack]")
@@ -268,16 +274,29 @@ TEST_CASE ("A pack downloads, is checked and installs", "[TexPack]")
 	TexPack p = Pack ("Io", "Surf");
 	p.zipsize = fs::file_size (srv / "Io_Surf.zip");
 	p.rawsize = data.size();
-	REQUIRE (TexPackMd5 ((srv / "Io_Surf.zip").string(), p.md5));
+	REQUIRE (TexPackSha256 ((srv / "Io_Surf.zip").string(), p.sha256));
 	list.pack = {p};
 	std::string err;
 
 	TexPack bad = p;
-	bad.md5 = std::string (32, '0');
+	bad.sha256 = std::string (64, '0');
 	CHECK_FALSE (TexPackInstall (list, bad, t.texdir, nullptr, nullptr, err));
-	CHECK (err == "Io_Surf.zip: md5 mismatch");
+	CHECK (err == "Io_Surf.zip: sha256 mismatch");
 	CHECK_FALSE (fs::exists (t.tex / "Io" / "Surf"));
 	CHECK_FALSE (fs::exists (t.tex / ".texinstall"));
+
+	for (uint64_t n : {p.zipsize - 1, p.zipsize + 1}) { // not upstream (E7): served bigger or smaller than listed, stopped
+		TexPack size = p;
+		size.zipsize = n;
+		uint64_t most = 0;
+		CHECK_FALSE (TexPackInstall (list, size, t.texdir, [&](uint64_t d) { most = std::max (most, d); return true; }, nullptr, err));
+		CHECK (err == "Io_Surf.zip: wrong size");
+		CHECK (most <= n);
+		CHECK_FALSE (fs::exists (t.tex / "Io" / "Surf"));
+	}
+	fs::create_directories (t.tex / ".texinstall");
+	fs::create_symlink (t.root / "victim", t.tex / ".texinstall" / "Io_Surf.zip.part"); // a link where the download goes: removed, not followed
+	Write (t.root / "victim", "keep");
 
 	TexPack gone = Pack ("Ganymede", "Surf");
 	CHECK_FALSE (TexPackInstall (list, gone, t.texdir, nullptr, nullptr, err));
@@ -290,12 +309,13 @@ TEST_CASE ("A pack downloads, is checked and installs", "[TexPack]")
 	CHECK (put == p.rawsize);
 	CHECK_FALSE (fs::exists (t.tex / ".texinstall")); // zip and work folder gone
 	CHECK (TexPackMissing (list, t.texdir).empty());
+	CHECK (Read (t.root / "victim") == "keep");
 }
 
 TEST_CASE ("Archive parts in the package list form one pack", "[TexPack]")
 {
 	Tmp t;
-	std::string cfg = (t.root / "packs.cfg").string(), m (32, 'a');
+	std::string cfg = (t.root / "packs.cfg").string(), m (64, 'a');
 	TexPackList list;
 	std::string err;
 
@@ -343,7 +363,7 @@ static TexPack Archive (const fs::path &srv, const std::string &body, const std:
 		t.name = p.zip + (i < 9 ? ".0" : ".") + std::to_string (i + 1);
 		t.size = sizes[i];
 		Write (srv / t.name, data.substr (ofs, sizes[i]));
-		REQUIRE (TexPackMd5 ((srv / t.name).string(), t.md5));
+		REQUIRE (TexPackSha256 ((srv / t.name).string(), t.sha256));
 		p.parts.push_back (t);
 		ofs += sizes[i];
 	}
@@ -369,11 +389,12 @@ TEST_CASE ("An archive pack downloads in parts into <Body>/Archive/<Layer>.tree 
 	CHECK (TexPackMissing (list, t.texdir).size() == 1);
 
 	TexPack bad = p;
-	bad.parts[1].md5 = std::string (32, '0');
+	bad.parts[1].sha256 = std::string (64, '0');
 	CHECK_FALSE (TexPackInstall (list, bad, t.texdir, nullptr, nullptr, err));
-	CHECK (err == "Earth_Surf.tree.02: md5 mismatch");
+	CHECK (err == "Earth_Surf.tree.02: sha256 mismatch");
 	CHECK_FALSE (fs::exists (tree));
-	CHECK (TexPackResume (t.texdir, p) == 300000); // part 1 kept
+	CHECK (TexPackResume (t.texdir, bad) == 300000); // part 1 kept
+	CHECK (TexPackResume (t.texdir, p) == 0); // not upstream (E7): another parts list, another partial
 	CHECK_FALSE (fs::exists (t.tex / ".texinstall"));
 
 	CHECK_FALSE (TexPackInstall (list, p, t.texdir, [](uint64_t d) { return d < 450000; }, nullptr, err));
@@ -423,8 +444,15 @@ TEST_CASE ("A part cut off midway is dropped from the partial archive", "[TexPac
 	for (auto &e : fs::directory_iterator (t.tex / "Moon" / "Archive"))
 		std::ofstream (e.path(), std::ios::binary | std::ios::app) << std::string (5000, 'x'); // half a part, as after a crash
 	CHECK (TexPackResume (t.texdir, p) == 200000);
-	REQUIRE (TexPackInstall (list, p, t.texdir, nullptr, nullptr, err));
+	for (auto &e : fs::directory_iterator (t.tex / "Moon" / "Archive")) { // not upstream (E7): a kept part changed on disk is fetched again
+		std::fstream f (e.path(), std::ios::binary | std::ios::in | std::ios::out);
+		f.seekp (10);
+		f.put ('!');
+	}
+	uint64_t first = UINT64_MAX;
+	REQUIRE (TexPackInstall (list, p, t.texdir, [&](uint64_t d) { first = std::min (first, d); return true; }, nullptr, err));
 	CHECK (Read (t.tex / "Moon" / "Archive" / "Elev.tree") == data);
+	CHECK (first <= 200000); // from part 1 on
 }
 
 TEST_CASE ("Partial archives of packs no longer listed and the work folder are removed", "[TexPack]")
@@ -432,7 +460,7 @@ TEST_CASE ("Partial archives of packs no longer listed and the work folder are r
 	Tmp t;
 	TexPackList list;
 	TexPack moon = Pack ("Moon", "Elev");
-	moon.parts.push_back ({"Moon_Elev.tree.01", "0123456789abcdef0123456789abcdef", 1});
+	moon.parts.push_back ({"Moon_Elev.tree.01", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", 1});
 	list.pack.push_back (moon);
 	Write (t.tex / "Earth" / "Archive" / ".Surf.tree.a8890486.partial", "x");
 	Write (t.tex / "Earth" / "Archive" / "Surf.tree", "x");
@@ -449,7 +477,7 @@ TEST_CASE ("Partial archives of packs no longer listed and the work folder are r
 TEST_CASE ("The kernel list groups the parts of each kernel", "[TexPack]")
 {
 	Tmp t;
-	std::string cfg = (t.root / "kernels.cfg").string(), m (32, 'a');
+	std::string cfg = (t.root / "kernels.cfg").string(), m (64, 'a');
 	KernelPackList list;
 	std::string err;
 
@@ -513,7 +541,7 @@ TEST_CASE ("A kernel downloads in parts into the kernel folder and resumes", "[T
 		p.name = "a.bsp.0" + std::to_string (k.parts.size() + 1);
 		p.size = n;
 		Write (srv / p.name, data.substr (ofs, n));
-		REQUIRE (TexPackMd5 ((srv / p.name).string(), p.md5));
+		REQUIRE (TexPackSha256 ((srv / p.name).string(), p.sha256));
 		k.parts.push_back (p);
 		ofs += n;
 	}
@@ -524,11 +552,11 @@ TEST_CASE ("A kernel downloads in parts into the kernel folder and resumes", "[T
 	CHECK_FALSE (KernelPackPresent (kd, k));
 
 	TexPack bad = k;
-	bad.parts[1].md5 = std::string (32, '0');
+	bad.parts[1].sha256 = std::string (64, '0');
 	CHECK_FALSE (KernelPackInstall (list, bad, kd, nullptr, err));
-	CHECK (err == "a.bsp.02: md5 mismatch");
+	CHECK (err == "a.bsp.02: sha256 mismatch");
 	CHECK_FALSE (fs::exists (file));
-	CHECK (KernelPackResume (kd, k) == 300000);
+	CHECK (KernelPackResume (kd, bad) == 300000);
 	CHECK_FALSE (fs::exists (kdir / ".kernelinstall"));
 
 	CHECK_FALSE (KernelPackInstall (list, k, kd, [](uint64_t d) { return d < 450000; }, err));

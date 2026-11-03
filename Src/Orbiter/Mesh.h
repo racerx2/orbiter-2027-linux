@@ -218,9 +218,11 @@ protected:
 private:
 	DWORD nGrp;         // number of groups
 	GroupSpec *Grp;     // list of group specs	
+	DWORD nGrpBuf = 0;  // not upstream: room in Grp, GrpCnt, GrpRad and GrpVis (AddGroup grows them by doubling)
 
 	DWORD nMtrl;        // number of materials
 	MATERIAL *Mtrl;     // list of materials used by the mesh
+	DWORD nMtrlBuf = 0; // not upstream: room in Mtrl (AddMaterial grows it by doubling)
 	std::vector<std::string> pbr; // not upstream: PBR config lines by material index (glTF meshes)
 
 	DWORD nTex;         // number of textures

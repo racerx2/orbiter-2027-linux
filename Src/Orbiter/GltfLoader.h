@@ -40,6 +40,7 @@ struct GltfImageRef {
 };
 bool GltfParseImageRef (const char *name, GltfImageRef &ref);
 std::string GltfMakeImageRef (const GltfImageRef &ref);
+bool GltfImageRefMade (const char *name); // not upstream: a reference GltfMakeImageRef made (the only ones read)
 bool GltfBase64 (const char *s, size_t n, std::vector<unsigned char> &out); // skips '\' and whitespace
 bool GltfImageBytes (const std::string &ref, std::vector<unsigned char> &out); // the bytes an image reference points to
 

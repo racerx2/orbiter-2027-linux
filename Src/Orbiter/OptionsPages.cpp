@@ -22,6 +22,8 @@
 #include <QAbstractButton>
 #include <QComboBox>
 #include <QListWidget>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QTreeWidget>
@@ -1067,6 +1069,7 @@ void OptionsPage_UI::UpdateControls(QWidget *hPage)
 {
 	DWORD mode = Cfg()->CfgUIPrm.MouseFocusMode;
 	DlgItem<QComboBox>(hPage, IDC_OPT_UI_MOUSEFOCUSMODE)->setCurrentIndex(mode);
+	SetCheck(hPage, IDC_OPT_UI_SCRIPTFULL, Cfg()->CfgUIPrm.bScriptFullAccess); // not upstream
 }
 
 // ----------------------------------------------------------------------
@@ -1092,6 +1095,27 @@ BOOL OptionsPage_UI::OnCommand(QWidget *hPage, WORD ctrlId, WORD notification, Q
 		if (notification == RESN_SELCHANGE) {
 			DWORD mode = DlgItem<QComboBox>(hPage, IDC_OPT_UI_MOUSEFOCUSMODE)->currentIndex();
 			Cfg()->CfgUIPrm.MouseFocusMode = mode;
+			return FALSE;
+		}
+		break;
+	case IDC_OPT_UI_SCRIPTFULL: // not upstream: scripts started after this see it; turning it on needs the user's agreement
+		if (notification == RESN_CLICKED) {
+			bool on = IsChecked(hPage, IDC_OPT_UI_SCRIPTFULL);
+			if (on && !Cfg()->CfgUIPrm.bScriptFullAccess) {
+				QMessageBox box (QMessageBox::Warning, "Orbiter: full system access for scripts",
+					"With this on, the Lua scripts that scenarios, vessels and MFDs bring can run any program on this computer "
+					"and read, change or delete any of your files, as you could yourself.\n\n"
+					"Turn it on only for add-ons you trust, and only while you need it. With it off, scripts are kept to the Orbiter folder.\n\n"
+					"Do you understand the risk and want to allow it?", QMessageBox::Yes | QMessageBox::No, hPage);
+				box.setDefaultButton (QMessageBox::No);
+				box.button (QMessageBox::Yes)->setText ("I understand, allow it");
+				box.button (QMessageBox::No)->setText ("Keep scripts confined");
+				if (box.exec () != QMessageBox::Yes) {
+					SetCheck(hPage, IDC_OPT_UI_SCRIPTFULL, false);
+					on = false;
+				}
+			}
+			Cfg()->CfgUIPrm.bScriptFullAccess = on;
 			return FALSE;
 		}
 		break;

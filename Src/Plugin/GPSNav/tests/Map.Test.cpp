@@ -217,6 +217,41 @@ TEST_CASE("shores: not the tile's cut, not between two water features", "[map]")
 	for (float m : t.mid) REQUIRE((m > 0.0f && m < 0.25f));
 }
 
+TEST_CASE("hostile water tiles: small extents, far points, too many points, too much work", "[map]")
+{
+	std::vector<Feature> w;
+	uint32_t extent = 0;
+	std::string small = Layer ("water", {Feat (3, Geom ({Box (0, 0, 100, 100)}))}, 255);
+	REQUIRE_FALSE(DecodeLayer ((const uint8_t *)small.data (), small.size (), w, extent));
+
+	// points far out: clamped to the tile and a tile each way, the fill as before
+	std::string far = Layer ("water", {Feat (3, Geom ({Box (-500000000, -100, 500000000, 5000)}))});
+	REQUIRE(DecodeLayer ((const uint8_t *)far.data (), far.size (), w, extent));
+	REQUIRE(w.size () == 1);
+	REQUIRE(w[0].rings[0] == std::vector<int32_t> {-4096, -100, 8192, -100, 8192, 5000, -4096, 5000});
+	WaterTile t;
+	REQUIRE(t.Build (10, 300, 400, w, extent));
+	REQUIRE(t.Water (0.5, 0.5));
+	REQUIRE(t.Water (0.0, 0.99));
+
+	// past 200k points: refused
+	Ring big;
+	for (int i = 0; i < 200001; i++) big.push_back ({i % 4000, i / 4000});
+	std::string many = Layer ("water", {Feat (3, Geom ({big}))});
+	REQUIRE_FALSE(DecodeLayer ((const uint8_t *)many.data (), many.size (), w, extent));
+
+	// features that fill the tile over and over: the build gives up, no mask
+	std::vector<Feature> fill (200);
+	for (Feature &f : fill) f.rings.push_back ({0, 0, 4096, 2048, 0, 4096});
+	WaterTile m;
+	REQUIRE_FALSE(m.Build (10, 300, 400, fill, 4096));
+	REQUIRE(m.bits.empty ());
+	REQUIRE_FALSE(m.Water (0.1, 0.5));
+	fill.resize (20);
+	REQUIRE(m.Build (10, 300, 400, fill, 4096)); // a few: built
+	REQUIRE(m.Water (0.1, 0.5));
+}
+
 TEST_CASE("Web Mercator tiles", "[map]")
 {
 	double tx, ty;

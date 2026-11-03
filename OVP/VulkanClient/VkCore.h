@@ -320,6 +320,7 @@ public:
 	void BindLocalRead (bool on);                    // the next draws read colour target 0 at their pixel; false: back
 	bool LocalReadActive () const { return lrActive; }
 	VkImageView LocalReadView () const { return rtColor ? rtColor->view : VK_NULL_HANDLE; }
+	VkImageUsageFlags LocalReadUsage () const { return localRead ? VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT : 0; } // not upstream: for a target a pass may read in place (back buffer, offscreen target)
 
 	// identity
 	VkInstance instance;
@@ -389,7 +390,7 @@ private:
 
 	State st;
 
-	void PreDraw (bool indexed);
+	bool PreDraw (bool indexed); // not upstream: false, the draw is skipped
 	std::vector<VkTex*> resolveTemps, scaleTemps;   // StretchRect's temporaries, a few sizes kept (a frame often alternates two)
 	VkTex *Temp (std::vector<VkTex*> &pool, UINT w, UINT h, VkFormat fmt, VkImageUsageFlags usage);
 

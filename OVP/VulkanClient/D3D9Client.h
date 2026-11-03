@@ -713,6 +713,7 @@ public:
 	 * \sa clbkCreateSurface, clbkIncrSurfaceRef
 	 */
 	bool clbkReleaseSurface (SURFHANDLE surf);
+	bool clbkIsSurface (SURFHANDLE surf); // not upstream: oapiIsSurface
 
 	/**
 	 * \brief Return the width and height of a surface

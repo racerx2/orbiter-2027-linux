@@ -30,6 +30,8 @@ using namespace oapi;
 
 static std::string UTF8ToCP1252(const char *utf8, int ulen)
 {
+	if (!utf8 || ulen < -1) return std::string(); // not upstream: -1 is up to the terminating zero, other negatives are none
+	ulen = ulen < 0 ? int(strlen(utf8)) : int(strnlen(utf8, ulen)); // not upstream: never past the string's end
 	// Convert UTF-8 to Windows-1252
 	QString utf16 = QString::fromUtf8(utf8, ulen); // MultiByteToWideChar(CP_UTF8); upstream converted all ulen wide slots (NULs after multibyte text)
 
@@ -242,7 +244,8 @@ bool GDIPad::Text (int x, int y, const char *utf8, int len)
 //
 bool GDIPad::TextW (int x, int y, const LPWSTR str, int len)
 {
-	return (TextOut (x, y, QString::fromWCharArray (str, len)) != FALSE); // TextOutW
+	if (!str || len < -1) return false; // not upstream: as Text
+	return (TextOut (x, y, QString::fromWCharArray (str, len < 0 ? -1 : int(wcsnlen (str, len)))) != FALSE); // TextOutW
 }
 
 // ===============================================================================================

@@ -12,6 +12,7 @@
 #include <QUrl>
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -30,6 +31,14 @@ static std::string Join (const std::string &dir, const std::string &name)
 static std::string Resolve (const std::string &path)
 {
 	return oapiResolvePath (path.c_str());
+}
+
+// not upstream (E7): 64 lowercase hex digits
+static bool Sha256Hex (const std::string &s)
+{
+	if (s.size() != 64) return false;
+	for (char c : s) if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+	return true;
 }
 
 // one path component: no separators, control characters, "." or ".."
@@ -70,8 +79,8 @@ bool TexPackRead (const std::string &cfgfile, TexPackList &list, std::string &er
 		TexPack p;
 		p.zip = w;
 		std::string extra;
-		if (!(is >> p.body >> p.layer >> p.zipsize >> p.rawsize >> p.files >> p.md5) || (is >> extra) ||
-			!Plain (p.zip) || !Plain (p.body) || !Plain (p.layer) || p.md5.size() != 32) {
+		if (!(is >> p.body >> p.layer >> p.zipsize >> p.rawsize >> p.files >> p.sha256) || (is >> extra) ||
+			!Plain (p.zip) || !Plain (p.body) || !Plain (p.layer) || !Sha256Hex (p.sha256) || !p.zipsize) {
 			err = "line " + std::to_string (ln) + ": bad pack";
 			return false;
 		}
@@ -94,7 +103,7 @@ bool TexPackRead (const std::string &cfgfile, TexPackList &list, std::string &er
 				err = "line " + std::to_string (ln) + ": bad part";
 				return false;
 			}
-			a->parts.push_back ({p.zip, p.md5, p.zipsize});
+			a->parts.push_back ({p.zip, p.sha256, p.zipsize});
 			a->zipsize += p.zipsize;
 			continue;
 		}
@@ -124,10 +133,18 @@ static std::string TreeFile (const std::string &texdir, const TexPack &p)
 	return ArchiveFile (texdir, p, p.layer + ".tree");
 }
 
-// hidden, named by the first part's md5 so a different release starts over
+// not upstream (E7): the whole parts list hashed, so any change to it starts over
+static std::string PartsId (const std::vector<TexPart> &parts)
+{
+	QCryptographicHash h (QCryptographicHash::Sha256);
+	for (const TexPart &t : parts) h.addData (QByteArray::fromStdString (t.name + ' ' + std::to_string (t.size) + ' ' + t.sha256 + '\n'));
+	return h.result().toHex().left (16).toStdString();
+}
+
+// hidden, named by its parts list so a different release starts over
 static std::string PartialFile (const std::string &texdir, const TexPack &p)
 {
-	return ArchiveFile (texdir, p, "." + p.layer + ".tree." + p.parts[0].md5.substr (0, 8) + ".partial");
+	return ArchiveFile (texdir, p, "." + p.layer + ".tree." + PartsId (p.parts) + ".partial");
 }
 
 bool TexPackPresent (const std::string &texdir, const TexPack &p)
@@ -191,7 +208,7 @@ std::vector<std::string> TexPackClean (const TexPackList &list, const std::strin
 		std::string body = Lower (b->path().filename().string());
 		std::string arch = Resolve (Join (Join (texdir, b->path().filename().string()), "Archive"));
 		for (fs::directory_iterator f (arch, e), fend; !e && f != fend; f.increment (e)) {
-			std::string n = f->path().filename().string(); // .<Layer>.tree.<md5>.partial
+			std::string n = f->path().filename().string(); // .<Layer>.tree.<parts id>.partial
 			size_t t = n.find (".tree.");
 			if (n.size() < 9 || n[0] != '.' || n.compare (n.size() - 8, 8, ".partial") || t == std::string::npos || t < 2) continue;
 			std::string layer = Lower (n.substr (1, t - 1));
@@ -208,13 +225,20 @@ std::vector<std::string> TexPackClean (const TexPackList &list, const std::strin
 	return gone;
 }
 
-bool TexPackMd5 (const std::string &file, std::string &md5)
+bool TexPackSha256 (const std::string &file, std::string &hex, uint64_t off, uint64_t len)
 {
 	QFile f (QFile::decodeName (file.c_str()));
-	if (!f.open (QIODevice::ReadOnly)) return false;
-	QCryptographicHash h (QCryptographicHash::Md5);
-	if (!h.addData (&f)) return false;
-	md5 = h.result().toHex().toStdString();
+	if (!f.open (QIODevice::ReadOnly) || off > (uint64_t)f.size() || !f.seek ((qint64)off)) return false;
+	uint64_t left = len == UINT64_MAX ? (uint64_t)f.size() - off : len;
+	QCryptographicHash h (QCryptographicHash::Sha256);
+	std::vector<char> buf (1 << 20);
+	while (left) {
+		qint64 n = f.read (buf.data(), (qint64)std::min<uint64_t> (left, buf.size()));
+		if (n <= 0) return false;
+		h.addData (QByteArrayView (buf.data(), n));
+		left -= (uint64_t)n;
+	}
+	hex = h.result().toHex().toStdString();
 	return true;
 }
 
@@ -394,21 +418,23 @@ bool TexPackUnzip (const std::string &zipfile, const TexPack &p, const std::stri
 	return ok;
 }
 
-bool TexPackDownload (const std::string &url, const std::string &file, const TexPackProgress &progress, std::string &err)
+bool TexPackDownload (const std::string &url, const std::string &file, uint64_t size, const TexPackProgress &progress, std::string &err)
 {
 	QFile out (QFile::decodeName (file.c_str()));
-	if (!out.open (QIODevice::WriteOnly | QIODevice::Truncate)) { err = "cannot write " + file; return false; }
+	QFile::remove (out.fileName()); // not upstream (E7): a leftover or a link goes, a new file is made
+	if (!out.open (QIODevice::WriteOnly | QIODevice::NewOnly)) { err = "cannot write " + file; return false; }
 	QNetworkAccessManager nam;
 	QNetworkRequest req {QUrl (QString::fromStdString (url))};
 	req.setAttribute (QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
 	req.setHeader (QNetworkRequest::UserAgentHeader, "Orbiter-2027-Linux");
 	req.setTransferTimeout (60000); // no data for a minute
 	QNetworkReply *r = nam.get (req);
-	bool cancelled = false, werr = false;
+	bool cancelled = false, werr = false, wrong = false;
 	uint64_t done = 0;
 	auto take = [&]() {
 		QByteArray b = r->readAll();
-		if (b.isEmpty()) return;
+		if (b.isEmpty() || wrong) return;
+		if (done + (uint64_t)b.size() > size) { wrong = true; r->abort(); return; } // not upstream (E7): never past the listed size
 		if (out.write (b) != b.size()) { werr = true; r->abort(); return; }
 		done += b.size();
 	};
@@ -420,6 +446,12 @@ bool TexPackDownload (const std::string &url, const std::string &file, const Tex
 	tick.setInterval (200);
 	QObject::connect (&tick, &QTimer::timeout, poll);
 	QObject::connect (r, &QNetworkReply::readyRead, [&]() { take(); poll(); });
+	QObject::connect (r, &QNetworkReply::downloadProgress, [&] (qint64, qint64 total) { // not upstream (E7): a different Content-Length stops it
+		QVariant st = r->attribute (QNetworkRequest::HttpStatusCodeAttribute);
+		if (wrong || total < 0 || (st.isValid() && st.toInt() != 200) || (uint64_t)total == size) return;
+		wrong = true;
+		r->abort();
+	});
 	QObject::connect (r, &QNetworkReply::finished, &loop, &QEventLoop::quit);
 	tick.start();
 	if (!r->isFinished()) loop.exec();
@@ -428,9 +460,11 @@ bool TexPackDownload (const std::string &url, const std::string &file, const Tex
 	int status = r->attribute (QNetworkRequest::HttpStatusCodeAttribute).toInt();
 	bool ok = false;
 	if (cancelled) err = "cancelled";
+	else if (wrong) err = "wrong size";
 	else if (werr) err = "cannot write " + file;
 	else if (r->error() != QNetworkReply::NoError) err = r->errorString().toStdString();
 	else if (status && status != 200) err = "HTTP " + std::to_string (status);
+	else if (done != size) err = "wrong size";
 	else ok = true;
 	out.close();
 	if (ok && out.error() != QFileDevice::NoError) { err = "cannot write " + file; ok = false; }
@@ -453,15 +487,18 @@ static bool Append (const std::string &from, const std::string &to, std::string 
 	return ok;
 }
 
-// parts download one at a time, md5-checked, onto the partial file, renamed to target after the last; a failed try keeps the whole parts
+// parts download one at a time, SHA-256-checked, onto the partial file, renamed to target after the last; a failed try keeps the whole parts
 bool TexPackInstallParts (const std::string &url, const std::vector<TexPart> &parts, const std::string &target, const std::string &partial,
 	const std::string &work, const TexPackProgress &download, std::string &err)
 {
 	std::error_code ec;
 	if (fs::exists (fs::symlink_status (target, ec))) { err = target + " is in the way"; return false; }
-	uint64_t ofs = TexPackPartsKept (partial, parts);
+	uint64_t kept = TexPackPartsKept (partial, parts), ofs = 0;
 	size_t k = 0;
-	for (uint64_t s = 0; k < parts.size() && s < ofs; k++) s += parts[k].size;
+	for (std::string sha; k < parts.size() && ofs + parts[k].size <= kept; k++) { // not upstream (E7): kept parts checked again, from the first bad one on fetched again
+		if (!TexPackSha256 (partial, sha, ofs, parts[k].size) || sha != parts[k].sha256) break;
+		ofs += parts[k].size;
+	}
 	if (fs::exists (partial, ec)) fs::resize_file (partial, ofs, ec); // a part cut off midway is dropped
 	else std::ofstream (partial, std::ios::binary);
 	if (ec || !fs::exists (partial, ec)) { err = "cannot write " + partial; return false; }
@@ -470,11 +507,12 @@ bool TexPackInstallParts (const std::string &url, const std::vector<TexPart> &pa
 	bool ok = true;
 	for (; ok && k < parts.size(); k++) {
 		const TexPart &t = parts[k];
-		std::string part = Join (work, t.name + ".part"), md5;
+		std::string part = Join (work, t.name + ".part"), sha;
 		uint64_t base = ofs;
-		ok = TexPackDownload (url + "/" + t.name, part, [&](uint64_t d) { return !download || download (base + d); }, err);
+		ok = TexPackDownload (url + "/" + t.name, part, t.size, [&](uint64_t d) { return !download || download (base + d); }, err);
+		if (!ok && err == "wrong size") err = t.name + ": wrong size";
 		if (ok && fs::file_size (part, ec) != t.size) { err = t.name + ": wrong size"; ok = false; }
-		if (ok && (!TexPackMd5 (part, md5) || md5 != t.md5)) { err = t.name + ": md5 mismatch"; ok = false; }
+		if (ok && (!TexPackSha256 (part, sha) || sha != t.sha256)) { err = t.name + ": sha256 mismatch"; ok = false; }
 		if (ok) ok = Append (part, partial, err);
 		fs::remove (part, ec);
 		if (ok) ofs += t.size;
@@ -517,17 +555,18 @@ bool TexPackInstall (const TexPackList &list, const TexPack &p, const std::strin
 	fs::create_directories (work, ec);
 	if (ec) { err = "cannot create " + work + ": " + ec.message(); return false; }
 	std::string zip = Join (work, p.zip + ".part");
-	std::string md5;
-	bool ok = TexPackDownload (list.url + "/" + p.zip, zip, download, err);
+	std::string sha;
+	bool ok = TexPackDownload (list.url + "/" + p.zip, zip, p.zipsize, download, err);
+	if (!ok && err == "wrong size") err = p.zip + ": wrong size";
 	if (ok && fs::file_size (zip, ec) != p.zipsize) { err = p.zip + ": wrong size"; ok = false; }
-	if (ok && (!TexPackMd5 (zip, md5) || md5 != p.md5)) { err = p.zip + ": md5 mismatch"; ok = false; }
+	if (ok && (!TexPackSha256 (zip, sha) || sha != p.sha256)) { err = p.zip + ": sha256 mismatch"; ok = false; }
 	if (ok) ok = TexPackUnzip (zip, p, texdir, unpack, err);
 	fs::remove (zip, ec);
 	fs::remove (work, ec); // only when empty
 	return ok;
 }
 
-// URL = <release>, then lines "<file>.NN <file> <part bytes> <file bytes> <parts> <md5>"
+// URL = <release>, then lines "<file>.NN <file> <part bytes> <file bytes> <parts> <sha256>"
 bool KernelPackRead (const std::string &cfgfile, KernelPackList &list, std::string &err)
 {
 	list = KernelPackList();
@@ -550,8 +589,8 @@ bool KernelPackRead (const std::string &cfgfile, KernelPackList &list, std::stri
 		std::string name;
 		uint64_t fsize = 0, nparts = 0;
 		t.name = w;
-		if (!(is >> name >> t.size >> fsize >> nparts >> t.md5) || (is >> extra) || !Plain (t.name) || !Plain (name) || name[0] == '.' ||
-			t.md5.size() != 32 || !t.size || t.name.compare (0, name.size() + 1, name + ".")) {
+		if (!(is >> name >> t.size >> fsize >> nparts >> t.sha256) || (is >> extra) || !Plain (t.name) || !Plain (name) || name[0] == '.' ||
+			!Sha256Hex (t.sha256) || !t.size || t.name.compare (0, name.size() + 1, name + ".")) {
 			err = "line " + std::to_string (ln) + ": bad part";
 			return false;
 		}
@@ -581,10 +620,10 @@ std::string KernelPackFile (const std::string &kerneldir, const std::string &nam
 	return Resolve (Join (kerneldir, name));
 }
 
-// hidden, named by the first part's md5 so a different release starts over
+// hidden, named by its parts list so a different release starts over
 static std::string KernelPartial (const std::string &kerneldir, const TexPack &k)
 {
-	return KernelPackFile (kerneldir, "." + k.zip + "." + k.parts[0].md5.substr (0, 8) + ".partial");
+	return KernelPackFile (kerneldir, "." + k.zip + "." + PartsId (k.parts) + ".partial");
 }
 
 uint64_t KernelPackResume (const std::string &kerneldir, const TexPack &k)

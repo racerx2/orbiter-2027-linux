@@ -128,7 +128,13 @@ bool Tile::LoadTextureFromMemory(void *data, DWORD ndata, VkPixels **pPre)
 bool Tile::CreateTexture(VkDev *pDev, VkPixels *pPre, VkTex **pTex)
 {
 	if (pPre) {
+		if (pPre->w != pPre->h || pPre->w < 1 || pPre->w > 8192 || (pPre->w & (pPre->w - 1)) || pPre->depth > 1 || pPre->layers > 1) { // not upstream: the pool's textures are square, a power of two
+			static bool logged;
+			if (!logged) { logged = true; LogErr("Tile::CreateTexture: a %ux%u tile is not square or not a power of two up to 8192, dropped (logged once)", pPre->w, pPre->h); }
+			return false;
+		}
 		*pTex = g_pTexmgr_tt->New(pPre->w, pPre->fmt); // GetLevelDesc(0)
+		if (!*pTex) return false; // not upstream: no texture (out of video memory)
 		VkPixels cv; // UpdateTexture: the pool texture's format and levels (missing levels box-filtered)
 		if (VkConvertPixels(*pPre, cv, (*pTex)->fmt, SWZ_NONE, 0, 0, (*pTex)->levels)) {
 			VkUploadPixels(*pTex, cv); // not upstream: UpdateTexture, every level in one submit

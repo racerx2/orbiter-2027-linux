@@ -12,6 +12,7 @@
 #include <sstream>
 #include <cstring>
 #include <chrono> // process.h: threads are std::thread (LuaConsole.h)
+#include <dlfcn.h>
 
 using std::min;
 using std::max;
@@ -207,6 +208,8 @@ LuaConsole::LuaConsole (void *hDLL): Module (hDLL)
 	hThread = NULL;
 	interp = NULL;
 	cConsoleCmd[0]=0;
+	link = std::make_shared<ConsoleLink> (); // not upstream
+	link->console = this;
 
 	// Register a custom command for opening the console window
 	dwCmd = oapiRegisterCustomCmd ((char*)"Lua console window",
@@ -222,6 +225,8 @@ LuaConsole::LuaConsole (void *hDLL): Module (hDLL)
 
 LuaConsole::~LuaConsole ()
 {
+	Unlink (); // not upstream: a thread still running can no longer reach this object
+
 	// Unregister the custom function in Orbiter
 	oapiUnregisterCustomCmd (dwCmd);
 
@@ -247,19 +252,21 @@ void LuaConsole::clbkSimulationEnd ()
 	// Kill the interpreter thread
 	if (interp) {
 		if (hThread) {
-			termInterp = true;
+			run->termInterp = true;
 			interp->Terminate();
 			interp->EndExec(); // give the thread opportunity to close
 			if (thExit.wait_for (std::chrono::milliseconds(1000)) != std::future_status::ready) {
 				oapiWriteLog ((char*)"LuaConsole: timeout while waiting for interpreter thread");
-				hThread->detach(); // TerminateThread left out: a std::thread can't be killed; it keeps its interpreter
-				interp = NULL;
+				hThread->detach(); // TerminateThread left out: a std::thread can't be killed; not upstream: it keeps run, its interpreter freed when it ends
+				Unlink ();
+				Dl_info di; // not upstream: and this library's code stays loaded for it
+				if (dladdr ((void *)&LuaConsole::InterpreterThreadProc, &di) && di.dli_fname) dlopen (di.dli_fname, RTLD_NOW | RTLD_NODELETE);
 			} else hThread->join();
 			delete hThread;
 			hThread = NULL;
 		}
-		delete interp;
 		interp = NULL;
+		run.reset (); // not upstream: the interpreter goes with the last reference (Run)
 	}
 }
 
@@ -268,7 +275,11 @@ void LuaConsole::clbkSimulationEnd ()
 void LuaConsole::clbkPreStep (double simt, double simdt, double mjd)
 {
 	if (interp) {
-		if (interp->IsBusy() || cConsoleCmd[0] || interp->nJobs()) { // let the interpreter do some work
+		if (cConsoleCmd[0] && !run->cmd[0]) { // not upstream: the typed line handed to the thread's buffer, so a new line can't overwrite one that runs
+			memcpy (run->cmd, cConsoleCmd, sizeof run->cmd);
+			cConsoleCmd[0] = '\0';
+		}
+		if (interp->IsBusy() || run->cmd[0] || interp->nJobs()) { // let the interpreter do some work
 			interp->EndExec();        // orbiter hands over control
 			// At this point the interpreter is performing one cycle
 			interp->WaitExec();   // orbiter waits to get back control
@@ -319,6 +330,12 @@ void LuaConsole::Clear()
 	hDlg->Clear();
 }
 
+void LuaConsole::Unlink ()
+{
+	std::lock_guard<std::mutex> lock (link->m);
+	link->console = nullptr;
+}
+
 // ==============================================================
 // DLL entry and exit points
 
@@ -338,28 +355,28 @@ DLLCLBK void ExitModule (void *hDLL)
 
 Interpreter *LuaConsole::CreateInterpreter ()
 {
-	termInterp = false;
-	interp = new ConsoleInterpreter (this);
+	run = std::make_shared<Run> (); // not upstream: what the thread keeps
+	interp = run->interp = new ConsoleInterpreter (link);
 	interp->Initialise();
-	std::packaged_task<unsigned int(void*)> task (&InterpreterThreadProc); // _beginthreadex; stack size left to the system
+	std::packaged_task<unsigned int(std::shared_ptr<Run>)> task (&InterpreterThreadProc); // _beginthreadex; stack size left to the system
 	thExit = task.get_future();
-	hThread = new std::thread (std::move (task), this);
+	hThread = new std::thread (std::move (task), run); // not upstream: the thread holds run, not the console
 	return interp;
 }
 // Interpreter thread function
-unsigned int LuaConsole::InterpreterThreadProc (void *context)
+unsigned int LuaConsole::InterpreterThreadProc (std::shared_ptr<Run> run)
 {
 	int res;
-	LuaConsole *console = (LuaConsole*)context;
-	ConsoleInterpreter *interp = (ConsoleInterpreter*)console->interp;
+	Run *console = run.get(); // not upstream: run, which outlives a console that stops waiting
+	ConsoleInterpreter *interp = (ConsoleInterpreter*)run->interp;
 
 	// interpreter loop
 	for (;;) {
 		interp->WaitExec(); // wait for execution permission
 		if (console->termInterp) break; // close thread requested
-		res = interp->RunChunk (console->cConsoleCmd, strlen (console->cConsoleCmd)); // run command from buffer
+		res = interp->RunChunk (console->cmd, strlen (console->cmd)); // run command from buffer
 		if (interp->Status() == 1) break; // close thread requested
-		console->cConsoleCmd[0] = '\0';    // free buffer
+		console->cmd[0] = '\0';    // free buffer
 		interp->EndExec();        // return control
 	}
 	interp->EndExec();  // release mutex (is this necessary?)

@@ -756,6 +756,10 @@ void CelestialBody::RegisterModule (char *dllname)
 	module = 0;                              // reset new interface
 	memset (&modIntf, 0, sizeof (modIntf));  // reset old interface
 	hMod = 0; // not upstream: stays 0 when a module path doesn't fit
+	if (!SafeRelName (dllname)) { // not upstream: a module name from a cfg stays in Modules
+		LOGOUT_WARN ("Celestial body %s: module name leaves the Modules folder: %s", name.c_str(), dllname);
+		return;
+	}
 	bool legacy = snprintf (cbuf, sizeof cbuf, "Modules/%s.so", dllname) < (int)sizeof cbuf && !access (oapiResolvePath (cbuf).c_str(), F_OK); // not upstream (dll-modules): a native module there comes before a Windows one in the new location
 	if (snprintf (cbuf, sizeof cbuf, "Modules/Celbody/%s.so", dllname) < (int)sizeof cbuf) // try new module location; not upstream: bounded, a path that doesn't fit is not tried
 		hMod = ModuleLoad (oapiResolvePath (cbuf).c_str(), !legacy); // not upstream: only when the path fit; counted, ModuleFree detaches on the last free

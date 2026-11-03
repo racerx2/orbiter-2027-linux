@@ -178,9 +178,21 @@ int calclon (double dj, const SeriesData *sd, double *dlo)
 // ==========================================================
 // Read perturbation terms
 
+void FreeData () // not upstream: the series tables ReadData made
+{
+    for (int i = 0; i < 8; i++) {
+	for (int j = 0; j < 4; j++) {
+	    delete []sdata[i].term[j]; sdata[i].term[j] = nullptr;
+	    delete []sdata[i].iks[j]; sdata[i].iks[j] = nullptr;
+	}
+	memset (sdata[i].ntr, 0, sizeof(sdata[i].ntr));
+    }
+}
+
 int ReadData (const char *fname, int res) // not upstream: returns -1 for a missing or bad file
 {
     SeriesData *sd = sdata;
+    FreeData (); // not upstream: a second read doesn't leak the first one's tables
 
     double gk, tas, tam[9], am[9];
     int i, j, k, n, m, is, ieq, nt1, nt2, nt;
@@ -233,7 +245,7 @@ int ReadData (const char *fname, int res) // not upstream: returns -1 for a miss
 
 bad: // not upstream: a short or bad file leaves no terms, as a missing one does
     fclose (f);
-    for (i = 0; i < 8; i++) memset (sd[i].ntr, 0, sizeof(sd[i].ntr));
+    FreeData (); // not upstream: the tables read so far are freed, no terms left
     serhyp.nbtp = serhyp.nbtq = serhyp.nbtz = serhyp.nbtzt = 0;
     return -1;
 }

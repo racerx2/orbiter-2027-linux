@@ -106,10 +106,11 @@ endif()
 # ---------------------------------------------------------------------
 # the helper, Orbiter.exe: its exports are the Windows SDK's names, so the DLLs' Orbiter.exe imports bind to it
 include(FetchContent)
-FetchContent_Declare(wb_zlib GIT_REPOSITORY https://github.com/madler/zlib.git GIT_TAG v1.2.11 GIT_SHALLOW TRUE SOURCE_SUBDIR none) # Orbiter's (Extern/zlib)
-FetchContent_MakeAvailable(wb_zlib)
+FetchContent_Declare(wb_zlib131 URL https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz # zlib 1.3.1, pinned by its hash
+	URL_HASH SHA256=9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23 DOWNLOAD_EXTRACT_TIMESTAMP TRUE SOURCE_SUBDIR none)
+FetchContent_MakeAvailable(wb_zlib131)
 set(WB_FLAGS --target=i686-windows -fms-extensions -fms-compatibility -Xclang -fno-dllexport-inlines -fno-threadsafe-statics
-	-nostdinc -isystem ${WB_CLANG_RES}/include -isystem ${WB_WINE_INCLUDE}/msvcrt -isystem ${WB_WINE_INCLUDE}/windows -isystem ${wb_zlib_SOURCE_DIR}
+	-nostdinc -isystem ${WB_CLANG_RES}/include -isystem ${WB_WINE_INCLUDE}/msvcrt -isystem ${WB_WINE_INCLUDE}/windows -isystem ${wb_zlib131_SOURCE_DIR}
 	-isystem ${CMAKE_SOURCE_DIR}/helper/shim -isystem ${WB_WIN_SDK} -I${CMAKE_SOURCE_DIR}/helper -I${WB_GEN}
 	-DSTRICT -DNDEBUG -O2 -fno-exceptions -fno-rtti -Wall -Wno-microsoft-cast) # NDEBUG: released Orbiter.exe is a Release build (the SDK headers assert)
 set(WB_HDR ${CMAKE_SOURCE_DIR}/proto/wb_proto.h ${CMAKE_SOURCE_DIR}/helper/wb_helper.h ${CMAKE_SOURCE_DIR}/lua/wb_luaapi.h ${CMAKE_SOURCE_DIR}/helper/osound.h ${CMAKE_SOURCE_DIR}/helper/xrsound.h ${CMAKE_SOURCE_DIR}/helper/compat2010.h ${WB_GEN}/gen_calls.h)
@@ -137,14 +138,14 @@ foreach(src ${WB_HELPER_SRC} gen_helper.cpp)
 		COMMENT "helper: ${src}" VERBATIM)
 	list(APPEND WB_OBJS ${obj})
 endforeach()
-# zlib in the helper, as in Orbiter.exe (oapiInflate, oapiDeflate): Orbiter's zlib (Extern/zlib), built for i686-windows
+# zlib in the helper, as in Orbiter.exe (oapiInflate, oapiDeflate), built for i686-windows
 foreach(src adler32.c compress.c crc32.c deflate.c inffast.c inflate.c inftrees.c trees.c uncompr.c zutil.c)
 	set(obj ${CMAKE_BINARY_DIR}/helper/zlib_${src}.obj)
 	add_custom_command(OUTPUT ${obj}
 		COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/helper
 		COMMAND ${WB_CLANG} --target=i686-windows -fms-extensions -nostdinc -isystem ${WB_CLANG_RES}/include -isystem ${WB_WINE_INCLUDE}/msvcrt
-			-isystem ${WB_WINE_INCLUDE}/windows -DNDEBUG -O2 -w -c ${wb_zlib_SOURCE_DIR}/${src} -o ${obj}
-		DEPENDS ${wb_zlib_SOURCE_DIR}/${src}
+			-isystem ${WB_WINE_INCLUDE}/windows -DNDEBUG -O2 -w -c ${wb_zlib131_SOURCE_DIR}/${src} -o ${obj}
+		DEPENDS ${wb_zlib131_SOURCE_DIR}/${src}
 		COMMENT "helper: zlib ${src}" VERBATIM)
 	list(APPEND WB_OBJS ${obj})
 endforeach()
@@ -192,15 +193,17 @@ add_custom_command(OUTPUT ${WB_XRS_DLL}
 	DEPENDS ${WB_XRS_OBJ} ${WB_IMPLIB}
 	COMMENT "helper: XRSound.dll" VERBATIM)
 # ---------------------------------------------------------------------
-# the script interpreter of Windows modules, as Orbiter.exe's: Orbiter's Lua (Extern/Lua's repository and tag) as lua.dll, and lua5.1.dll
+# the script interpreter of Windows modules, as Orbiter.exe's: Orbiter's Lua (Extern/Lua's release and hash) as lua.dll, and lua5.1.dll
 # forwarding to it (one Lua for both names); Orbiter's interpreter (lua/: the upstream Windows source, the bridge's changes marked) as
 # LuaInterpreter.dll and LuaInline.dll
-FetchContent_Declare(wb_lua GIT_REPOSITORY https://github.com/lua/lua.git GIT_TAG v5.1 GIT_SHALLOW TRUE SOURCE_SUBDIR none)
-FetchContent_MakeAvailable(wb_lua)
+FetchContent_Declare(wb_lua515 URL https://www.lua.org/ftp/lua-5.1.5.tar.gz URL_HASH SHA256=2640fc56a795f29d28ef15e13c34a47e223960b0240e8cb0a82d9b0738695333
+	DOWNLOAD_EXTRACT_TIMESTAMP TRUE SOURCE_SUBDIR none)
+FetchContent_MakeAvailable(wb_lua515)
+set(WB_LUA_SRC_DIR ${wb_lua515_SOURCE_DIR}/src)
 set(WB_LUA ${CMAKE_BINARY_DIR}/lua)
 set(WB_CRT_OBJ ${CMAKE_BINARY_DIR}/helper/crt.c.obj)
-file(GLOB WB_LUA_SRC ${wb_lua_SOURCE_DIR}/*.c)
-list(REMOVE_ITEM WB_LUA_SRC ${wb_lua_SOURCE_DIR}/lua.c ${wb_lua_SOURCE_DIR}/luac.c ${wb_lua_SOURCE_DIR}/print.c)
+file(GLOB WB_LUA_SRC ${WB_LUA_SRC_DIR}/*.c)
+list(REMOVE_ITEM WB_LUA_SRC ${WB_LUA_SRC_DIR}/lua.c ${WB_LUA_SRC_DIR}/luac.c ${WB_LUA_SRC_DIR}/print.c)
 # lua.dll's API is lua/wb_luaapi.c's: a Linux state's calls go to the helper (Orbiter.exe), a real one's to Lua's core, whose API is
 # renamed (lua/wb_rename.h). Numbers convert to integers rounded, as MSVC's build does (luaconf.h: no __SSE2__ there)
 set(WB_LUA_LIBS lauxlib.c lbaselib.c ldblib.c liolib.c lmathlib.c loslib.c lstrlib.c ltablib.c loadlib.c linit.c)
@@ -223,7 +226,7 @@ foreach(path ${WB_LUA_SRC})
 endforeach()
 set(obj ${WB_LUA}/wb_luaapi.c.obj)
 add_custom_command(OUTPUT ${obj}
-	COMMAND ${WB_LUA_CC} -DLUA_BUILD_AS_DLL -I${wb_lua_SOURCE_DIR} -Wall -c ${CMAKE_SOURCE_DIR}/lua/wb_luaapi.c -o ${obj}
+	COMMAND ${WB_LUA_CC} -DLUA_BUILD_AS_DLL -I${WB_LUA_SRC_DIR} -Wall -c ${CMAKE_SOURCE_DIR}/lua/wb_luaapi.c -o ${obj}
 	DEPENDS ${CMAKE_SOURCE_DIR}/lua/wb_luaapi.c ${CMAKE_SOURCE_DIR}/lua/wb_luaapi.h
 	COMMENT "lua: wb_luaapi.c" VERBATIM)
 list(APPEND WB_LUA_OBJS ${obj})

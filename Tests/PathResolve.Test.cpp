@@ -106,3 +106,16 @@ TEST_CASE("A folder that can be entered but not listed resolves by its exact nam
 	fs::permissions ("Locked", fs::perms::owner_all, fs::perm_options::replace);
 	REQUIRE(r == "Locked/Inner/f.cfg");
 }
+
+// not upstream: names with few letters (tiles) find their other spellings by stat, the same ones a listing finds
+TEST_CASE("A tile name finds its other spellings", "[resolve]")
+{
+	TmpTree t;
+	fs::create_directories ("Surf/14/012345");
+	std::ofstream ("Surf/14/012345/012346.DDS") << "x\n";
+	std::ofstream ("Surf/14/012345/012347.dDs") << "x\n";
+	std::ofstream ("Surf/14/012345/012347.Dds") << "x\n";
+	REQUIRE(oapiResolvePath ("surf\\14\\012345\\012346.dds") == "Surf/14/012345/012346.DDS");
+	REQUIRE(oapiResolvePath ("Surf\\14\\012345\\012347.dds") == "Surf/14/012345/012347.Dds"); // byte order: 'D' before 'd'
+	REQUIRE(oapiResolvePath ("Surf\\14\\012345\\012348.dds") == "Surf/14/012345/012348.dds"); // missing: kept as asked
+}

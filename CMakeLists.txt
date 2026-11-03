@@ -101,9 +101,18 @@ find_package(Qt6 QUIET COMPONENTS GuiPrivate) # not upstream (detach-windows): Q
 
 # /we4311 left out: g++ already rejects pointer-to-smaller-int casts; NOMINMAX has no counterpart
 add_compile_options(-Wformat) # not upstream: printf format checks (GCC turns them on by default only on some distributions)
+# not upstream: hardened binaries (stack canaries and clash checks, CET, fortified libc calls, PIE, full RELRO, no executable stack)
+include(CheckPIESupported)
+check_pie_supported()
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+add_compile_options(-fstack-protector-strong -fstack-clash-protection "$<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE;-D_FORTIFY_SOURCE=3>")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i.86")
+	add_compile_options(-fcf-protection)
+endif()
+add_link_options(LINKER:-z,relro LINKER:-z,now LINKER:-z,noexecstack)
 set(CMAKE_BUILD_WITH_INSTALL_RPATH true)
-# Windows finds DLLs next to the exe and in Modules (Orbiter adds it to PATH); $ORIGIN/.. reaches Modules from Modules/<sub>, $ORIGIN/../.. the exe folder
-set(CMAKE_INSTALL_RPATH "$ORIGIN" "$ORIGIN/.." "$ORIGIN/../..")
+# Windows finds DLLs next to the exe and in Modules (Orbiter adds it to PATH): orbiter_runpaths at the end gives each binary those folders, none above Orbiter's
+set(CMAKE_INSTALL_RPATH "$ORIGIN")
 # DLL naming: modules are <name>.so, as upstream loads <name>.dll
 set(CMAKE_SHARED_LIBRARY_PREFIX "")
 set(CMAKE_SHARED_MODULE_PREFIX "")
@@ -205,6 +214,7 @@ option(ORBITER_SANITIZER
 	"Build binaries with Address Sanitizer"
 	OFF
 )
+set(ORBITER_SANITIZERS "address;undefined" CACHE STRING "not upstream: the sanitizers ORBITER_SANITIZER turns on (thread on its own)")
 
 option(ORBITER_TRACY_PROFILER
 	"Build orbiter with profiler support"
@@ -238,7 +248,11 @@ include(cmake/rcresources.cmake)
 include(cmake/sanitizer.cmake)
 # the option is ON/OFF, so the sanitizer name is passed here
 if (ORBITER_SANITIZER)
-	enable_sanitizer(address)
+	string(REPLACE ";" "," ORBITER_SANITIZER_LIST "${ORBITER_SANITIZERS}") # not upstream: ORBITER_SANITIZERS (address and undefined by default)
+	enable_sanitizer(${ORBITER_SANITIZER_LIST})
+	if ("undefined" IN_LIST ORBITER_SANITIZERS)
+		add_compile_options(-fno-sanitize-recover=undefined) # not upstream: undefined behaviour fails the test
+	endif()
 endif()
 
 
@@ -375,3 +389,43 @@ if (ORBITER_MAKE_TESTS)
       enable_testing()
       add_subdirectory(Tests)
 endif()
+
+# not upstream: each binary's RUNPATH holds its own folder, the Orbiter folder and Modules (as Windows' search for DLLs), never a folder above Orbiter's
+function(orbiter_runpaths dir)
+	string(TOUPPER "${CMAKE_BUILD_TYPE}" cfg)
+	get_property(targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
+	foreach(t IN LISTS targets)
+		get_target_property(type ${t} TYPE)
+		if(type STREQUAL "EXECUTABLE")
+			set(kind RUNTIME)
+		elseif(type MATCHES "^(SHARED|MODULE)_LIBRARY$")
+			set(kind LIBRARY)
+		else()
+			continue()
+		endif()
+		get_target_property(out ${t} ${kind}_OUTPUT_DIRECTORY_${cfg})
+		if(NOT out)
+			get_target_property(out ${t} ${kind}_OUTPUT_DIRECTORY)
+		endif()
+		if(NOT out)
+			get_target_property(out ${t} BINARY_DIR)
+		endif()
+		set(rp "$ORIGIN")
+		cmake_path(IS_PREFIX ORBITER_BINARY_ROOT_DIR "${out}" NORMALIZE inside)
+		if(inside)
+			foreach(to IN ITEMS "${ORBITER_BINARY_ROOT_DIR}" "${ORBITER_BINARY_MODULE_DIR}")
+				file(RELATIVE_PATH rel "${out}" "${to}")
+				string(REGEX REPLACE "/$" "" rel "${rel}")
+				if(rel AND NOT rel STREQUAL ".")
+					list(APPEND rp "$ORIGIN/${rel}")
+				endif()
+			endforeach()
+		endif()
+		set_target_properties(${t} PROPERTIES INSTALL_RPATH "${rp}")
+	endforeach()
+	get_property(subs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
+	foreach(s IN LISTS subs)
+		orbiter_runpaths("${s}")
+	endforeach()
+endfunction()
+orbiter_runpaths("${CMAKE_SOURCE_DIR}")

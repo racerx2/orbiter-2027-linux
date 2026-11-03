@@ -13,6 +13,8 @@ extern "C" {
 #include "OrbiterAPI.h"
 #include "VesselAPI.h" // for TOUCHDOWNVTX
 #include <unordered_set>
+#include <set>
+#include <mutex>
 
 class gcCore;
 class ExecMutex; // not upstream: Win32 mutex counterpart (Interpreter.cpp)
@@ -236,6 +238,8 @@ public:
 	 * \param skp pointer to Sketchpad object
 	 */
 	static void lua_pushsketchpad (lua_State *L, oapi::Sketchpad *skp);
+	static void lua_releasesketchpad (lua_State *L, oapi::Sketchpad *skp); // not upstream: the script's object no longer reaches skp (its callback ended, or it was released)
+	static void lua_releasemfd (lua_State *L, MFD2 *mfd); // not upstream: the script's object no longer reaches mfd (it is destroyed)
 
 	static int lua_pushnumberref(lua_State* L);
 
@@ -304,6 +308,10 @@ protected:
 
 	// pops an OBJHANDLE from the stack
 	static OBJHANDLE lua_toObject (lua_State *L, int idx=-1);
+	static void *lua_tohandle (lua_State *L, int idx, int kind, VESSEL *v); // not upstream: a handle of kind (Lua/lua_handles.h) the core or the bindings know now (of v where it belongs to one), else NULL
+	static void *lua_tohandle_safe (lua_State *L, int idx, int kind, VESSEL *v, const char *funcname); // not upstream: as lua_tohandle, a Lua error if not
+	static SURFHANDLE lua_tosurface (lua_State *L, int idx); // not upstream: nil, or a surface the client holds (a Lua error otherwise)
+	static NOTEHANDLE *lua_tonote (lua_State *L, int idx); // not upstream: a live annotation object, else NULL
 
 	static RECT lua_torect(lua_State* L, int idx);
 
@@ -1175,6 +1183,8 @@ private:
 	void *postcontext;
 
 	static inline std::unordered_set<VESSEL *>knownVessels; // for lua_isvessel
+	static inline std::set<Interpreter *> liveInterps; // not upstream: DeleteVessel drops a deleted vessel's handles from each one's state
+	static inline std::mutex liveLock;
 
 
 	static int lua_tointeger_safe (lua_State *L, int idx, int prmno, const char *funcname);

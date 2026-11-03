@@ -335,7 +335,7 @@ Scene::Scene(D3D9Client *_gc, DWORD w, DWORD h)
 
 		if (pLightBlur) {
 			// Construct an offscreen backbuffer with custom pixel format
-			pOffscreenTarget = new VkSurf(pDevice, viewW, viewH, BackBuffer, RTUsage, pBB->tex->samples); // CreateRenderTarget
+			pOffscreenTarget = new VkSurf(pDevice, viewW, viewH, BackBuffer, RTUsage | pDevice->LocalReadUsage(), pBB->tex->samples); // CreateRenderTarget; not upstream: the GI composite may read it in place
 			if (!pOffscreenTarget->tex->img) {
 				SAFE_DELETE(pOffscreenTarget);
 				LogErr("Creation of Offscreen render target failed");

@@ -250,6 +250,10 @@ Vessel::~Vessel ()
 bool Vessel::OpenConfigFile (ifstream &cfgfile) const
 {
 	char cbuf[256];
+	if (!SafeRelName (classname ? classname : name.c_str())) { // not upstream: a class name from a scenario stays in Config
+		LOGOUT_WARN ("Vessel class name leaves the Config folder: %s", classname ? classname : name.c_str());
+		return false;
+	}
 	if ((size_t)snprintf (cbuf, sizeof cbuf, "Vessels\\%s", classname ? classname : name.c_str()) >= sizeof cbuf) { // not upstream: a class name that doesn't fit counts as no cfg file
 		LOGOUT_WARN ("Vessel class name too long: %s", classname ? classname : name.c_str());
 		return false;
@@ -1483,8 +1487,12 @@ void Vessel::ClearExhaustDefinitions ()
 
 	// delete exhaust definitions
 	if (nexhaust) {
-		for (i = 0; i < nexhaust; i++)
+		for (i = 0; i < nexhaust; i++) {
+			if (exhaust[i]->level && (exhaust[i]->flags & EXHAUST_CONSTANTLEVEL)) delete exhaust[i]->level; // not upstream: the copies AddExhaust made, as DelExhaust frees them
+			if (exhaust[i]->lpos && (exhaust[i]->flags & EXHAUST_CONSTANTPOS)) delete exhaust[i]->lpos;
+			if (exhaust[i]->ldir && (exhaust[i]->flags & EXHAUST_CONSTANTDIR)) delete exhaust[i]->ldir;
 			delete exhaust[i];
+		}
 		delete []exhaust;
 		exhaust = NULL;
 		nexhaust = 0;
@@ -1542,13 +1550,14 @@ ThrustGroupSpec *Vessel::CreateThrusterGroup (ThrustSpec **ts, DWORD nts, THGROU
 {
 	DWORD i;
 	ThrustGroupSpec* tgs = GetThrusterGroup(thgt);
-	if (!tgs && thgt >= THGROUP_USER) { // new user-defined group requested
+	if (!tgs && thgt >= THGROUP_USER && thgt <= THGROUP_USER_LAST) { // new user-defined group requested; not upstream: within the user range (a huge type resized the list to it)
 		i = thgt - THGROUP_USER;
 		if (i >= m_thrusterGroupUsr.size())
 			m_thrusterGroupUsr.resize(i + 1);
 		tgs = m_thrusterGroupUsr[i] = new ThrustGroupSpec;
 	}
 	dCHECK(tgs, "Invalid THGROUP_TYPE")
+	if (!tgs) return nullptr; // not upstream: dCHECK is gone in a release build
 
 	tgs->ts.resize(nts);
 	tgs->maxth_sum = 0.0;
@@ -1621,9 +1630,9 @@ bool Vessel::DeleteThrusterGroup (THGROUP_TYPE thgt, bool delth)
 ThrustGroupSpec* Vessel::GetThrusterGroup(THGROUP_TYPE thgt)
 {
 	ThrustGroupSpec* tgs = nullptr;
-	if (thgt < THGROUP_USER)
+	if ((int)thgt >= 0 && (size_t)thgt < m_thrusterGroupDef.size()) // not upstream: a type between the defaults and THGROUP_USER, or negative, is none (a script's number reached past the array)
 		tgs = &m_thrusterGroupDef[thgt];
-	else if (thgt - THGROUP_USER < m_thrusterGroupUsr.size())
+	else if (thgt >= THGROUP_USER && (size_t)(thgt - THGROUP_USER) < m_thrusterGroupUsr.size())
 		tgs = m_thrusterGroupUsr[thgt - THGROUP_USER];
 	return tgs;
 }
@@ -1633,9 +1642,9 @@ ThrustGroupSpec* Vessel::GetThrusterGroup(THGROUP_TYPE thgt)
 const ThrustGroupSpec* Vessel::GetThrusterGroup(THGROUP_TYPE thgt) const
 {
 	const ThrustGroupSpec* tgs = nullptr;
-	if (thgt < THGROUP_USER)
+	if ((int)thgt >= 0 && (size_t)thgt < m_thrusterGroupDef.size()) // not upstream: a type between the defaults and THGROUP_USER, or negative, is none (a script's number reached past the array)
 		tgs = &m_thrusterGroupDef[thgt];
-	else if (thgt - THGROUP_USER < m_thrusterGroupUsr.size())
+	else if (thgt >= THGROUP_USER && (size_t)(thgt - THGROUP_USER) < m_thrusterGroupUsr.size())
 		tgs = m_thrusterGroupUsr[thgt - THGROUP_USER];
 	return tgs;
 }
@@ -2317,6 +2326,13 @@ bool Vessel::DelParticleStream (oapi::ParticleStream *ps)
 	return DelExhaustStream (ps) || DelReentryStream (ps);
 }
 
+bool Vessel::HasParticleStream (const void *ps) const // not upstream (oapiIsParticleStream)
+{
+	for (DWORD i = 0; i < ncontrail; i++) if (contrail[i] == ps) return true;
+	for (DWORD i = 0; i < nreentrystream; i++) if (reentrystream[i] == ps) return true;
+	return false;
+}
+
 // ==============================================================
 
 bool Vessel::DelExhaustStream (oapi::ParticleStream *ep)
@@ -2448,11 +2464,21 @@ LightEmitter *Vessel::AddSpotLight (const VECTOR3 &pos, const VECTOR3 &dir, doub
 
 // ==============================================================
 
+// not upstream: a light deleted as the class it was made as (LightEmitter has no virtual destructor, and the SDK layout stays)
+static void DeleteLight (LightEmitter *le)
+{
+	switch (le->GetType ()) {
+	case LightEmitter::LT_SPOT:  delete static_cast<SpotLight*> (le); break;
+	case LightEmitter::LT_POINT: delete static_cast<PointLight*> (le); break;
+	default:                     delete le; break;
+	}
+}
+
 void Vessel::ClearLightEmitters ()
 {
 	if (!nemitter) return; // nothing to do
 	for (DWORD i = 0; i < nemitter; i++) {
-		if (emitter[i]) delete emitter[i];
+		if (emitter[i]) DeleteLight (emitter[i]); // not upstream: see DeleteLight
 	}
 	delete []emitter;
 	nemitter = 0;
@@ -2473,7 +2499,7 @@ bool Vessel::DelLightEmitter (LightEmitter *le)
 			} else tmp = NULL;
 			delete []emitter;
 			emitter = tmp;
-			delete le;
+			DeleteLight (le); // not upstream: see DeleteLight
 			nemitter--;
 			return true;
 		}
@@ -6040,7 +6066,7 @@ ANIMATIONCOMP *Vessel::AddAnimationComponent (UINT an, double state0, double sta
 	ANIMATIONCOMP **tmp = new ANIMATIONCOMP*[ncomp+1]; TRACENEW
 	if (ncomp) {
 		memcpy (tmp, A->comp, ncomp*sizeof(ANIMATIONCOMP*));
-		delete A->comp;
+		delete []A->comp; // not upstream: made with new[]
 	}
 	A->comp = tmp;
 	ANIMATIONCOMP *ac = new ANIMATIONCOMP; TRACENEW
@@ -6234,6 +6260,11 @@ VESSEL *Vessel::ClbkIntf () const // not upstream (vessel-hooks)
 bool Vessel::RegisterModule (const char *dllname)
 {
 	char cbuf[256];
+	if (!SafeRelName (dllname)) { // not upstream: a module name from a cfg stays in Modules
+		LOGOUT_WARN ("Vessel module name leaves the Modules folder: %s", dllname);
+		dlerror ();
+		return false;
+	}
 	if ((size_t)snprintf (cbuf, sizeof cbuf, "Modules/%s.so", dllname) >= sizeof cbuf) { // not upstream: a module name that doesn't fit isn't loaded
 		LOGOUT_WARN ("Vessel module name too long: %s", dllname);
 		dlerror (); // not upstream: clears a stale error, so LoadModule logs none
@@ -6327,6 +6358,8 @@ bool Vessel::Read (ifstream &scn)
 		delete []vs.thruster;
 		vs.thruster = NULL;
 	}
+	delete []vs.dockinfo; // not upstream: the DOCKINFO line's list was never freed
+	vs.dockinfo = NULL;
 	return res;
 }
 

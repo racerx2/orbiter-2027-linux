@@ -63,6 +63,8 @@ bool Place (const std::vector<double> &scl, const std::vector<double> &tie, cons
 	if (!g.deg && !(g.R > 0.0 && g.Rx > 0.0)) return false;
 	g.dx = scl[0];
 	g.dy = scl[1];
+	double pxd = g.deg ? g.dx : g.dx / g.Rx * 180.0 / M_PI, pyd = g.deg ? g.dy : g.dy / g.R * 180.0 / M_PI; // not upstream: a pixel from 360/2^24 to 10 degrees (1e-9 made a gigabyte of taps)
+	if (!(pxd >= 360.0 / (1 << 24) && pxd <= 10.0 && pyd >= 360.0 / (1 << 24) && pyd <= 10.0)) return false;
 	g.x0 = tie[3] - tie[0] * g.dx - (g.deg ? 0.0 : K (3082, 0.0));
 	g.y0 = tie[4] + tie[1] * g.dy - (g.deg ? 0.0 : K (3083, 0.0));
 	if (K (1025, 1) == 2) { g.x0 -= 0.5 * g.dx; g.y0 += 0.5 * g.dy; } // the tie point on a pixel's centre
@@ -222,6 +224,7 @@ int64_t Parse (const QByteArray &head, std::vector<Ifd> &ifds, Geo *geo)
 	std::vector<double> scl, tie, gdbl; // not upstream (mars-stream): the first level's GeoTIFF tags
 	std::vector<uint64_t> gkey;
 	std::string gmeta, gnod;
+	uint64_t tableBytes = 0; // not upstream: the offset and count tables a parse keeps, 64 MB at most (64 IFDs of 2^24 entries reached 16 GB)
 	for (int guard = 0; off && guard < 64; guard++) {
 		uint64_t cnt = big ? rd (off, 8) : rd (off, 2);
 		uint64_t es = big ? 20 : 12, base = off + (big ? 8 : 2);
@@ -255,6 +258,7 @@ int64_t Parse (const QByteArray &head, std::vector<Ifd> &ifds, Geo *geo)
 			case 323: f.th = (uint32_t)val (0); break;
 			case 339: f.sfmt = (uint32_t)val (0); break;
 			case 324: case 325: {
+				if (count > (1u << 20)) return -1; // not upstream: 2^20 tiles a level at most
 				uint64_t len = count * sz;
 				if (at > n || len > n - at) {
 					if (geo && sz >= 2) { // not upstream (mars-stream): a big file's table, read by range when needed
@@ -267,6 +271,7 @@ int64_t Parse (const QByteArray &head, std::vector<Ifd> &ifds, Geo *geo)
 					break;
 				}
 				std::vector<uint64_t> &v = tag == 324 ? f.off : f.cnt;
+				if ((tableBytes += count * sizeof (uint64_t)) > (64u << 20)) return -1; // not upstream: before the resize
 				v.resize (count);
 				for (uint64_t k = 0; k < count; k++) v[k] = val (k);
 				break;
@@ -483,6 +488,9 @@ bool Sample (const std::string &url, const Pts &p, const Fetch &fetch, std::vect
 		}
 	};
 	double hx = std::max (0.5, 0.5 * std::fabs (p.dlng) / pxd * sx), hy = std::max (0.5, 0.5 * std::fabs (p.dlat) / pyd * sy);
+	hx = std::min (hx, (double)f.w); // not upstream: the tap window inside the level, and the taps within the window's cap
+	hy = std::min (hy, (double)f.h);
+	if ((2.0 * hx + 2.0) * p.nx > (double)(16 << 20) || (2.0 * hy + 2.0) * p.ny > (double)(16 << 20)) return false;
 	std::vector<std::vector<Tap>> tx (p.nx), ty (p.ny);
 	int64_t i0 = INT64_MAX, i1 = INT64_MIN, j0 = INT64_MAX, j1 = INT64_MIN;
 	for (int ix = 0; ix < p.nx; ix++) {
@@ -513,7 +521,7 @@ bool Sample (const std::string &url, const Pts &p, const Fetch &fetch, std::vect
 	for (int64_t r = j0 / f.th; r <= j1 / f.th; r++)
 		for (uint32_t c : cols) ts.push_back ((uint64_t)r * A + c);
 	if (!Entries (url, *h, lv, ts, fetch, to, tc)) return false;
-	auto key = [&] (uint64_t t) { return "g|" + url + "|" + std::to_string (lv) + "|" + std::to_string (t); };
+	auto key = [&] (uint64_t t) { return "g|" + url + "|" + std::to_string (lv) + "|" + std::to_string (t) + "|" + std::to_string (f.tw) + "x" + std::to_string (f.th) + "x" + std::to_string (S) + "x" + std::to_string (f.bps); }; // not upstream: with the tile's size, as above
 	std::map<uint64_t, std::shared_ptr<const std::vector<float>>> tl;
 	std::vector<Req> rq;
 	std::vector<uint64_t> rt;
@@ -544,7 +552,7 @@ bool Sample (const std::string &url, const Pts &p, const Fetch &fetch, std::vect
 			if (t != last) {
 				last = t;
 				auto it = tl.find (t);
-				src = it != tl.end() && it->second ? it->second->data() : nullptr;
+				src = it != tl.end() && it->second && it->second->size () >= (size_t)f.tw * f.th * S ? it->second->data() : nullptr; // not upstream: a tile of this size only
 			}
 			if (!src) continue;
 			const float *s = src + (ly * f.tw + colL[c]) * S;
@@ -658,7 +666,10 @@ bool Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const F
 			if (3.0 / v[i].w <= pix * 1.0001) best = i;
 		lev[c.first] = best;
 	}
-	auto tileKey = [&] (const std::pair<int, int> &c, size_t t) { return url (c) + "|" + std::to_string (lev[c]) + "|" + std::to_string (t); };
+	auto tileKey = [&] (const std::pair<int, int> &c, size_t t) { // not upstream: with the tile's size and samples, a header read again with bigger tiles never meets an older, smaller one
+		const Ifd &f = hd[c]->ifd[lev[c]];
+		return url (c) + "|" + std::to_string (lev[c]) + "|" + std::to_string (t) + "|" + std::to_string (f.tw) + "x" + std::to_string (f.th) + "x" + std::to_string (f.spp) + "x" + std::to_string (f.bps);
+	};
 	auto locate = [&] (int py, int px, std::pair<int, int> &c, size_t &t, size_t &o) {
 		double a = lat (py), g = lng (px);
 		c = {cellOf (a), cellOf (g)};
@@ -721,7 +732,7 @@ bool Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const F
 			if (r == 1) d = 0;
 			else if (r == 2) {
 				if (!lv || c != lc || t != lt) { lv = tl[tileKey (c, t)].get(); lc = c; lt = t; }
-				d = (*lv)[o];
+				d = lv && o < lv->size () ? (*lv)[o] : 0; // not upstream: checked
 			}
 		}
 	return true;

@@ -80,7 +80,7 @@ install(DIRECTORY DESTINATION ${GPSNAV_DEST}/GPSNav/User)
 if(GPSNAV_MAKE_TESTS)
 	if(GPSNAV_STANDALONE)
 		include(FetchContent)
-		FetchContent_Declare(Catch2 GIT_REPOSITORY https://github.com/catchorg/Catch2.git GIT_TAG v3.7.1 GIT_SHALLOW TRUE)
+		FetchContent_Declare(Catch2 GIT_REPOSITORY https://github.com/catchorg/Catch2.git GIT_TAG 2b60af89e23d28eefc081bc930831ee9d45ea58b) # v3.8.1, as Tests/CMakeLists.txt
 		set(BUILD_SHARED_LIBS OFF)
 		FetchContent_MakeAvailable(Catch2)
 	endif()

@@ -643,7 +643,8 @@ TEST_CASE("Atmosphere modules give physical densities", "[celbody]")
 		void (*destroy)(ATMOSPHERE*) = (void(*)(ATMOSPHERE*))OwnProc (hAtm, "DeleteAtmosphere");
 		REQUIRE(create);
 		REQUIRE(destroy);
-		ATMOSPHERE *atm = create ((CELBODY2*)m.body);
+		CELBODY2 host (nullptr); // the legacy Pluto and Triton are CELBODY, and Orbiter loads atmosphere modules for CELBODY2 only
+		ATMOSPHERE *atm = create (m.body->Version () >= 2 ? (CELBODY2*)m.body : &host);
 		ATMOSPHERE::PRM_IN in;
 		memset (&in, 0, sizeof(in));
 		in.alt = c.alt;
@@ -725,7 +726,8 @@ TEST_CASE("Layered atmosphere modules fall smoothly to their limit", "[celbody]"
 		void (*destroy)(ATMOSPHERE*) = (void(*)(ATMOSPHERE*))OwnProc (hAtm, "DeleteAtmosphere");
 		REQUIRE(create);
 		REQUIRE(destroy);
-		ATMOSPHERE *atm = create ((CELBODY2*)m.body);
+		CELBODY2 host (nullptr); // the legacy Pluto and Triton are CELBODY, and Orbiter loads atmosphere modules for CELBODY2 only
+		ATMOSPHERE *atm = create (m.body->Version () >= 2 ? (CELBODY2*)m.body : &host);
 		ATMCONST ac;
 		memset (&ac, 0, sizeof(ac));
 		REQUIRE(atm->clbkConstants (&ac));
@@ -764,7 +766,8 @@ TEST_CASE("The Pluto and Triton atmosphere modules equal the ephemeris modules' 
 		void (*destroy)(ATMOSPHERE*) = (void(*)(ATMOSPHERE*))OwnProc (hAtm, "DeleteAtmosphere");
 		REQUIRE(create);
 		REQUIRE(destroy);
-		ATMOSPHERE *atm = create ((CELBODY2*)m.body);
+		CELBODY2 host (nullptr); // the legacy Pluto and Triton are CELBODY, and Orbiter loads atmosphere modules for CELBODY2 only
+		ATMOSPHERE *atm = create (m.body->Version () >= 2 ? (CELBODY2*)m.body : &host);
 		ATMOSPHERE::PRM_IN in;
 		memset (&in, 0, sizeof(in));
 		in.flag = ATMOSPHERE::PRM_ALT;

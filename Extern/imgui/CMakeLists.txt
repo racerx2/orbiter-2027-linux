@@ -5,7 +5,7 @@ Include(FetchContent)
 FetchContent_Declare(
   imgui
   GIT_REPOSITORY https://github.com/ocornut/imgui.git
-  GIT_TAG v1.92.5-docking
+  GIT_TAG 3912b3d9a9c1b3f17431aebafd86d2f40ee6e59c # v1.92.5-docking; not upstream: the commit, as a tag can move
   PATCH_COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/imconfig.h .
   UPDATE_DISCONNECTED 1
 )
@@ -32,7 +32,7 @@ target_include_directories(imgui INTERFACE ${IMGUI_INCLUDE_DIR})
 FetchContent_Declare(
   implot
   GIT_REPOSITORY https://github.com/epezent/implot.git
-  GIT_TAG 3da8bd3
+  GIT_TAG 3da8bd34299965d3b0ab124df743fe3e076fa222 # not upstream: the full commit (a short one can name a branch or tag)
 #  UPDATE_DISCONNECTED 1
 )
 FetchContent_MakeAvailable(implot)

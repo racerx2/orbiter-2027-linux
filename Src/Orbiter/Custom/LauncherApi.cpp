@@ -320,6 +320,7 @@ void custom::LauncherApi::BuildSetup ()
 	s["radiationPressure"] = c->CfgPhysicsPrm.bRadiationPressure;
 	s["distributedMass"] = c->CfgPhysicsPrm.bDistributedMass;
 	s["atmWind"] = c->CfgPhysicsPrm.bAtmWind;
+	s["scriptFullAccess"] = c->CfgUIPrm.bScriptFullAccess; // design-security-fixes B1
 	setupCache = s;
 	haveSetup = true;
 }

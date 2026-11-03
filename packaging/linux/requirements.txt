@@ -1,0 +1,6 @@
+# not upstream: the build tools pip installs in the portable build environment (setup.sh), pinned by hash
+cmake==3.31.10 \
+    --hash=sha256:2f766bb46367e5e0559fa33184653754bce044583a06014dcaebf8e6dff8a1f1 \
+    --hash=sha256:3c17bb24dba15f8ecc3fd706afe04264410ef88796f4115c119327c961d5dc57
+ninja==1.13.2 \
+    --hash=sha256:65a24341b5ac09fcadcc37082660be40a94174e51a937fabf6e2cae26225fa2c

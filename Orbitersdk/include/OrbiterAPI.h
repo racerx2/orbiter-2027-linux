@@ -2669,6 +2669,16 @@ OAPIFUNC DWORD oapiGetVesselCount ();
  */
 OAPIFUNC bool oapiIsVessel (OBJHANDLE hVessel);
 
+// not upstream: checks of handles from a less trusted caller (a script), against what the core holds now
+OAPIFUNC bool oapiIsObject (OBJHANDLE hObj);            // a celestial body, vessel or surface base
+OAPIFUNC bool oapiIsPropellant (PROPELLANT_HANDLE hp);  // a vessel's propellant resource
+OAPIFUNC bool oapiIsNav (NAVHANDLE hNav);               // a NAV transmitter (planet, base, pad, vessel transponder or docking aid)
+OAPIFUNC bool oapiIsDock (DOCKHANDLE hDock);            // a vessel's docking port
+OAPIFUNC bool oapiIsParticleStream (PSTREAM_HANDLE ph); // a vessel's exhaust or reentry stream, still attached
+OAPIFUNC bool oapiGltfImageRef (const char *name);      // an "@gltf:" image reference the glTF loader made (none parsed from another name is read)
+OAPIFUNC bool oapiIsSurface (SURFHANDLE surf);          // a surface the graphics client holds
+OAPIFUNC bool oapiScriptFullAccess ();                  // Launchpad > Options > User interface: "Scripts: full system access"
+
 /**
  * \brief Returns the handle of a celestial body (sun, planet or moon) identified
  *   by its name.

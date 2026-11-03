@@ -88,3 +88,23 @@ TEST_CASE("A short material list stops at the end of the file", "[mesh]")
 		"MATERIAL a\n1 1 1 1\n1 1 1 1\n0 0 0 1 0\n0 0 0 1\n");
 	REQUIRE(mesh.nMaterial () == 1);
 }
+
+// not upstream: many groups and materials load in linear time (AddGroup and AddMaterial copied all of them for each new one)
+TEST_CASE("A mesh with many groups and materials loads", "[mesh]")
+{
+	const int n = 100000;
+	std::string body = "GROUPS " + std::to_string (n) + "\n";
+	for (int g = 0; g < n; g++) body += std::string ("MATERIAL ") + std::to_string (g % 1000 + 1) + "\nGEOM 3 1\n" + tri3 + "0 1 2\n";
+	body += "MATERIALS 1000\n";
+	for (int m = 0; m < 1000; m++) body += "m" + std::to_string (m) + "\n";
+	for (int m = 0; m < 1000; m++) body += "MATERIAL m" + std::to_string (m) + "\n1 1 1 1\n1 1 1 1\n0 0 0 1 0\n0 0 0 1\n";
+	Mesh mesh;
+	Load (mesh, body);
+	REQUIRE (mesh.nGroup () == (DWORD)n);
+	CHECK (mesh.nMaterial () == 1000);
+	CHECK (mesh.GetGroup (n - 1)->nVtx == 3);
+	CHECK (mesh.GetGroup (n - 1)->MtrlIdx == 999);
+	Mesh copy (mesh);
+	CHECK (copy.nGroup () == (DWORD)n);
+	CHECK (copy.GetGroup (12345)->nIdx == 3);
+}

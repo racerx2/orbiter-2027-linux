@@ -48,5 +48,6 @@ DLLEXPORT void SaturnFastEphemeris (double simt, double *ret);
 int posired (double dj, int is, double *xyz, double *vxyz);
 int nterm (int is);
 int ReadData (const char *fname, int res); // not upstream: returns -1 for a missing or bad file
+void FreeData (); // not upstream: frees what ReadData made
 
 #endif // !__SATSAT_H

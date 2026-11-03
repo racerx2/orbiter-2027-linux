@@ -1,12 +1,13 @@
 # Linux build and tests in the distributions COMPILE.md names (GitHub's own Ubuntu image has Qt 6.4)
+# not upstream: main and Custom (the released branch); the sanitizer builds; actions and images pinned (a tag can move)
 name: Linux build
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, Custom ]
     paths-ignore: [ 'Doc/**', '**.md' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, Custom ]
     paths-ignore: [ 'Doc/**', '**.md' ]
   workflow_dispatch:
 
@@ -17,6 +18,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PACKAGES: >-
+    ca-certificates git cmake ninja-build g++ pkg-config python3 libvulkan-dev glslang-dev glslang-tools qt6-base-dev
+    libwayland-dev wayland-protocols libpipewire-0.3-dev libpng-dev libgl-dev libglu1-mesa-dev fonts-dejavu-core spirv-tools zlib1g-dev
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -24,19 +30,55 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [ "ubuntu:26.04", "debian:13" ]
+        image:
+          - "ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c"
+          - "debian:13@sha256:2dc419c6d7fe3dad0a2f9fd469c34cc90b0f9ba642d8fde837fe3d7d34a0e7f1"
     container: ${{ matrix.image }}
     steps:
       - name: Install packages
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ca-certificates git cmake ninja-build g++ pkg-config python3 libvulkan-dev glslang-dev glslang-tools qt6-base-dev \
-            libwayland-dev wayland-protocols libpipewire-0.3-dev libpng-dev libgl-dev libglu1-mesa-dev fonts-dejavu-core spirv-tools zlib1g-dev # not upstream: the system zlib, named, not only through libpng-dev
-      - uses: actions/checkout@v6
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $PACKAGES
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Configure
         run: cmake --preset linux-x64-release
       - name: Build
         run: cmake --build --preset linux-x64-release -j 4
       - name: Test
         run: ctest --preset linux-x64-release
+
+  asan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    container: "ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c"
+    steps:
+      - name: Install packages
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $PACKAGES
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Configure (AddressSanitizer and UndefinedBehaviorSanitizer)
+        run: cmake --preset linux-x64-asan -DORBITER_WINEBRIDGE=OFF
+      - name: Build
+        run: cmake --build --preset linux-x64-asan -j 4
+      - name: Test (the slow and fuzz cases too)
+        run: ctest --preset linux-x64-asan
+
+  tsan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    container: "ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c"
+    steps:
+      - name: Install packages
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $PACKAGES
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Configure (ThreadSanitizer)
+        run: cmake --preset linux-x64-tsan
+      - name: Build the std::thread tests (TileStreamCore starts a QThread, which TSan can't follow with a system Qt: it runs under ASan and UBSan)
+        run: >-
+          cmake --build --preset linux-x64-tsan -j 4 --target GltfLoader.Test GltfRoundTrip.Test PathResolve.Test
+          CollGeom.Test CollAnim.Test CollShape.Test CollDetect.Test CollSolve.Test CollSolveFrame.Test DentMath.Test CollLoop.Test CollCfg.Test
+      - name: Test
+        run: ctest --preset linux-x64-tsan

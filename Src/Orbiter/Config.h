@@ -244,6 +244,7 @@ struct CFG_UIPRM {              // user interface options
 	int    SelVesselTab;        // tab to open in vessel selection dialog
  	int    SelVesselRange;      // "nearby" range for vessel selection dialog
 	bool   bSelVesselFlat;      // flat assemblies for vessel selection dialog
+	bool   bScriptFullAccess;   // not upstream: scripts may run programs and use files anywhere (otherwise kept to the Orbiter folder)
 };
 
 struct CFG_DEMOPRM {

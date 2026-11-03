@@ -79,11 +79,11 @@ orbiter::ConsoleNG::~ConsoleNG()
 
 bool orbiter::ConsoleNG::ParseCmd()
 {
-	if (!cConsoleCmd[0]) return false;
 	char cmd[1024], cbuf[256], * pc, * ppc;
 
 	{
 		std::lock_guard<std::mutex> lock(hMutex);
+		if (!cConsoleCmd[0]) return false; // not upstream: read under the lock too (the input thread writes it)
 		strcpy(cmd, cConsoleCmd + 1);
 		cConsoleCmd[0] = '\0';
 	}

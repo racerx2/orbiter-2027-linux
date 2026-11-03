@@ -2,9 +2,9 @@
 # irrKlang left out: a closed-source Windows library; XRSound plays through its own mixer on PipeWire (src/Audio)
 # not upstream: the mixer's decoders, public-domain single-file libraries (OGG stb_vorbis, MP3 dr_mp3, FLAC dr_flac), pinned
 include(FetchContent)
-FetchContent_Declare(stb_vorbis
-	URL https://raw.githubusercontent.com/nothings/stb/2c980bb59875b0d32144a71867fbdebb2f77cd20/stb_vorbis.c
-	URL_HASH SHA256=4c7cb2ff1f7011e9d67950446b7eb9ca044f2e464d76bfbb0b84dd2e23e65636
+FetchContent_Declare(stb_vorbis_sezero # sezero's maintained stb_vorbis (as SDL_sound's and libxmp's): the fixes for CVE-2023-45675 to 45682 and later decoder fixes
+	URL https://raw.githubusercontent.com/sezero/stb/dd0c5eccaf092012b531d69d595fb587ece79571/stb_vorbis.c
+	URL_HASH SHA256=6f4805310469cd087e771c30866d5259a0725905a8eff06cfcb406c0ce41e68c
 	DOWNLOAD_NO_EXTRACT TRUE
 )
 FetchContent_Declare(dr_mp3
@@ -27,9 +27,9 @@ set(CMAKE_POLICY_DEFAULT_CMP0077 NEW) # its options take the values below
 set(BUILD_STATIC ON)
 set(BUILD_SHARED OFF)
 set(LIBXMP_PIC ON)
-FetchContent_MakeAvailable(stb_vorbis dr_mp3 dr_flac libxmp_lite)
+FetchContent_MakeAvailable(stb_vorbis_sezero dr_mp3 dr_flac libxmp_lite)
 set_property(DIRECTORY ${libxmp_lite_SOURCE_DIR} PROPERTY EXCLUDE_FROM_ALL TRUE) # not upstream: its install rules stay out of Orbiter's install; linked, so still built
-set(AUDIO_DECODER_INCLUDE_DIRS ${stb_vorbis_SOURCE_DIR} ${dr_mp3_SOURCE_DIR} ${dr_flac_SOURCE_DIR})
+set(AUDIO_DECODER_INCLUDE_DIRS ${stb_vorbis_sezero_SOURCE_DIR} ${dr_mp3_SOURCE_DIR} ${dr_flac_SOURCE_DIR})
 set(AUDIO_DECODER_LIBS libxmp-lite::xmp_lite_static)
 
 ## XRSound

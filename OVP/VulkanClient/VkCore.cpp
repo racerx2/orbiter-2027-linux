@@ -1208,9 +1208,13 @@ VkDeviceSize VkDev::AllocTransient (VkDeviceSize n, VkDeviceSize align, void **p
 			delete f.transient;
 			f.transient = grown;
 			LogAlw("VkDev: per-frame transient buffer grown to %llu bytes", (unsigned long long)size);
-		} else { // out of memory: keep the old buffer and wrap, as before
+		} else { // out of memory: keep the old buffer; not upstream: no memory for this one (a rewind overwrote the frame's earlier data, a bigger n ran past the end)
 			delete grown;
-			LogErr("VkDev: per-frame transient buffer could not grow to %llu bytes", (unsigned long long)size);
+			static bool logged;
+			if (!logged) { logged = true; LogErr("VkDev: per-frame transient buffer could not grow to %llu bytes, draws skipped (logged once)", (unsigned long long)size); }
+			*ptr = nullptr;
+			*buf = VK_NULL_HANDLE;
+			return 0;
 		}
 		ofs = 0;
 	}
@@ -1297,7 +1301,7 @@ void VkDev::BeginRendering ()
 		VkSurf *c[4] = { rtColor, rtExtra[0], rtExtra[1], rtExtra[2] };
 		UINT n = 0;
 		for (; n < 4 && c[n]; n++) {
-			VkImageLayout l = (n == 0 && lrActive) ? VkLocalReadLayout : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // not upstream: read in place by local read draws
+			VkImageLayout l = (n == 0 && lrActive && (c[n]->tex->usage & VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)) ? VkLocalReadLayout : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // not upstream: read in place by local read draws, a target made for it
 			c[n]->tex->Transition (cmd, l);
 			c[n]->tex->Written (c[n]->level);
 			ca[n] = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
@@ -1705,17 +1709,18 @@ void VkDev::SetConstantSource (VkConstBuffer *cb, const std::vector<VkSamplerSlo
 	if (cb) cb->Invalidate ();
 }
 
-void VkDev::PreDraw (bool indexed)
+bool VkDev::PreDraw (bool indexed)
 {
-	if (cbActive && cbSlots && cbActive->IsDirty ()) cbActive->Push (*cbSlots); // may end rendering to change a texture's layout
+	if (cbActive && cbSlots && cbActive->IsDirty () && !cbActive->Push (*cbSlots)) return false; // may end rendering to change a texture's layout; not upstream: false, a block got no memory
 	if (st.decl) for (const auto &b : st.decl->bind) // D3D9 keeps the streams across a Flush; only those the declaration reads are bound again
 		if (b.binding < 2 && !streamBound[b.binding] && streamBuf[b.binding]) SetStreamSource (b.binding, streamBuf[b.binding], streamOffset[b.binding], streamStride[b.binding]);
 	if (indexed && !indexBound && indexBuf) SetIndices (indexBuf, indexOffset, indexType);
+	return true;
 }
 
 void VkDev::DrawPrimitive (VkPrimitiveTopology t, UINT startVertex, UINT vertexCount)
 {
-	PreDraw (false);
+	if (!PreDraw (false)) return; // not upstream: skipped without its constants
 	BeginRendering ();
 	if (!rendering || !vertexCount) return;
 	SetTopology (t);
@@ -1724,7 +1729,7 @@ void VkDev::DrawPrimitive (VkPrimitiveTopology t, UINT startVertex, UINT vertexC
 
 void VkDev::DrawIndexedPrimitive (VkPrimitiveTopology t, int baseVertex, UINT startIndex, UINT indexCount)
 {
-	PreDraw (true);
+	if (!PreDraw (true)) return; // not upstream: skipped without its constants
 	BeginRendering ();
 	if (!rendering || !indexCount) return;
 	SetTopology (t);
@@ -1733,7 +1738,7 @@ void VkDev::DrawIndexedPrimitive (VkPrimitiveTopology t, int baseVertex, UINT st
 
 void VkDev::DrawIndexedPrimitiveInstanced (VkPrimitiveTopology t, int baseVertex, UINT startIndex, UINT indexCount, UINT instances, UINT firstInstance)
 {
-	PreDraw (true);
+	if (!PreDraw (true)) return; // not upstream: skipped without its constants
 	BeginRendering ();
 	if (!rendering || !indexCount || !instances) return;
 	SetTopology (t);
@@ -1745,6 +1750,7 @@ void VkDev::DrawPrimitiveUP (VkPrimitiveTopology t, UINT vertexCount, const void
 	void *p;
 	VkBuffer vb;
 	VkDeviceSize ofs = AllocTransient (vertexCount * stride, 16, &p, &vb);
+	if (!p) return; // not upstream: no memory, no draw
 	memcpy (p, vtx, vertexCount * stride);
 	SetStreamSource (0, vb, ofs, stride);
 	DrawPrimitive (t, 0, vertexCount);
@@ -1758,8 +1764,10 @@ void VkDev::DrawIndexedPrimitiveUP (VkPrimitiveTopology t, UINT vertexCount, UIN
 	UINT isz = indexCount * (it == VK_INDEX_TYPE_UINT32 ? 4 : 2);
 	VkBuffer vb, ib;
 	VkDeviceSize vo = AllocTransient (vertexCount * stride, 16, &pv, &vb);
+	if (!pv) return; // not upstream: no memory, no draw
 	memcpy (pv, vtx, vertexCount * stride);
 	VkDeviceSize io = AllocTransient (isz, 16, &pi, &ib);
+	if (!pi) return;
 	memcpy (pi, idx, isz);
 	SetStreamSource (0, vb, vo, stride);
 	SetIndices (ib, io, it);
@@ -1949,9 +1957,17 @@ void VkDev::DrawCopy (VkTex *src, VkSurf *dst, const RECT &d)
 void VkDev::CopySurface (VkSurf *src, const RECT *sr, VkSurf *dst, const POINT *dp)
 {
 	if (!recording || !src || !dst || !src->tex->img || !dst->tex->img) return;
+	RECT s = sr ? *sr : RECT{ 0, 0, (LONG)src->w, (LONG)src->h };
+	LONG dx = dp ? dp->x : 0, dy = dp ? dp->y : 0;
+	if (s.left < 0) { dx -= s.left; s.left = 0; } // not upstream: the region inside both surfaces, nothing when none is left
+	if (s.top < 0) { dy -= s.top; s.top = 0; }
+	if (dx < 0) { s.left -= dx; dx = 0; }
+	if (dy < 0) { s.top -= dy; dy = 0; }
+	s.right = std::min (std::min (s.right, (LONG)src->w), s.left + (LONG)dst->w - dx);
+	s.bottom = std::min (std::min (s.bottom, (LONG)src->h), s.top + (LONG)dst->h - dy);
+	if (s.right <= s.left || s.bottom <= s.top) return;
 	EndRendering ();
 	VkCommandBuffer cmd = Cmd ();
-	RECT s = sr ? *sr : RECT{ 0, 0, (LONG)src->w, (LONG)src->h };
 	bool same = (src->tex == dst->tex);
 	VkImageLayout sl = same ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 	VkImageLayout dl = same ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -1961,7 +1977,7 @@ void VkDev::CopySurface (VkSurf *src, const RECT *sr, VkSurf *dst, const POINT *
 	c.srcSubresource = { src->tex->Aspect(), src->level, src->layer, 1 };
 	c.srcOffset = { s.left, s.top, 0 };
 	c.dstSubresource = { dst->tex->Aspect(), dst->level, dst->layer, 1 };
-	c.dstOffset = { dp ? dp->x : 0, dp ? dp->y : 0, 0 };
+	c.dstOffset = { dx, dy, 0 };
 	c.extent = { (UINT)(s.right - s.left), (UINT)(s.bottom - s.top), 1 };
 	VkCopyImageInfo2 ci = { VK_STRUCTURE_TYPE_COPY_IMAGE_INFO_2 };
 	ci.srcImage = src->tex->img;

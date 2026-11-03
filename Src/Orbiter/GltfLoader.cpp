@@ -17,6 +17,7 @@
 #include <limits>
 #include <map>
 #include <new>
+#include <mutex>
 #include <set>
 #include <strings.h>
 
@@ -32,11 +33,24 @@ bool GltfIsName (const char *name)
 // ----------------------------------------------------------------------------------------------
 // image references and base64
 
+// not upstream: the references the loader made; one parsed from any other name (a mesh's texture line) reads nothing
+static std::mutex refLock;
+static std::set<std::string> refsMade;
+
+bool GltfImageRefMade (const char *name)
+{
+	std::lock_guard<std::mutex> l (refLock);
+	return name && refsMade.count (name);
+}
+
 std::string GltfMakeImageRef (const GltfImageRef &r)
 {
 	char buf[160];
 	snprintf (buf, sizeof buf, "@gltf:%llu:%llu:%d:%llu:%llu:", r.off, r.len, r.b64 ? 1 : 0, r.sliceOff, r.sliceLen);
-	return std::string (buf) + r.file;
+	std::string ref = std::string (buf) + r.file;
+	std::lock_guard<std::mutex> l (refLock);
+	refsMade.insert (ref);
+	return ref;
 }
 
 bool GltfParseImageRef (const char *name, GltfImageRef &r)
@@ -148,6 +162,8 @@ namespace {
 
 bool ReadFile (const std::string &p, std::vector<char> &d)
 {
+	std::error_code ec;
+	if (!fs::is_regular_file (p, ec)) return false; // not upstream: a FIFO or device blocked the loader
 	std::ifstream f (p, std::ios::binary);
 	if (!f) return false;
 	f.seekg (0, std::ios::end);
@@ -230,7 +246,16 @@ std::string UriPath (Ctx &c, const std::string &uri)
 		if (uri[i] == '%' && i + 2 < uri.size()) { u += (char)strtol (uri.substr (i + 1, 2).c_str(), NULL, 16); i += 2; }
 		else u += uri[i];
 	}
-	return (fs::path (c.dir) / u).lexically_normal().string();
+	fs::path p = (fs::path (c.dir) / u).lexically_normal();
+	std::error_code e1; // not upstream: under the Orbiter root or the model's folder, symlinks resolved; "" if not
+	fs::path full = fs::weakly_canonical (p, e1);
+	if (e1) return "";
+	for (const fs::path &top : {fs::current_path (e1), fs::path (c.dir)}) {
+		std::error_code e2;
+		fs::path rel = full.lexically_relative (fs::weakly_canonical (top, e2));
+		if (!e2 && !top.empty () && !rel.empty () && *rel.begin () != "..") return p.string();
+	}
+	return "";
 }
 
 bool LoadBuffers (Ctx &c)
@@ -250,6 +275,7 @@ bool LoadBuffers (Ctx &c)
 			if (!uri.compare (0, 5, "data:")) { if (!DataUri (c, uri, buf.data, buf.src)) return false; }
 			else {
 				std::string p = UriPath (c, uri);
+				if (p.empty ()) return c.Fail ("buffer " + std::to_string (i) + ": its file is outside the Orbiter folder"); // not upstream
 				std::vector<char> d;
 				if (!ReadFile (p, d)) return c.Fail ("can't read buffer file " + p);
 				buf.data.assign (d.begin(), d.end());
@@ -410,6 +436,7 @@ std::string ImageRef (Ctx &c, int ii)
 			if (!DataUri (c, uri, d, r) || r.file.empty()) { c.err = e; c.Warn ("image " + std::to_string (ii) + ": bad data URI"); return ""; }
 		} else {
 			r.file = UriPath (c, uri);
+			if (r.file.empty ()) { c.Warn ("image " + std::to_string (ii) + ": its file is outside the Orbiter folder"); return ""; } // not upstream
 			std::error_code ec;
 			auto sz = fs::file_size (r.file, ec);
 			if (ec) { c.Warn ("image file not found: " + r.file); return ""; }
@@ -1014,7 +1041,10 @@ bool GltfImageBytes (const std::string &ref, std::vector<unsigned char> &out)
 {
 	out.clear ();
 	GltfImageRef r;
-	if (!GltfParseImageRef (ref.c_str(), r)) return false;
+	if (!GltfImageRefMade (ref.c_str()) || !GltfParseImageRef (ref.c_str(), r)) return false; // not upstream: only the loader's own
+	std::error_code ec;
+	auto size = fs::file_size (r.file, ec); // not upstream: a regular file, the range inside it (r.len sized the buffer)
+	if (ec || r.off > size || r.len > size - r.off) return false;
 	std::ifstream f (r.file, std::ios::binary);
 	if (!f) return false;
 	std::vector<char> raw ((size_t)r.len);

@@ -186,7 +186,7 @@ bool MatMgr::LoadConfiguration(bool bAppend)
 	char cbuf[256];
 	char path[MAX_PATH]; // not upstream: was 256, ConfigDir (< 512) + class name (< 256) always fit
 	char classname[256];
-	char meshname[64];
+	char meshname[64] = ""; // not upstream: a line before any MESH is ignored (it read an uninitialised name)
 	char shadername[64];
 
 	OBJHANDLE hObj = vObj->GetObject();
@@ -220,7 +220,7 @@ bool MatMgr::LoadConfiguration(bool bAppend)
 		// --------------------------------------------------------------------------------------------
 		if (!strncmp(cbuf, "MESH", 4)) {
 			mat_idx = -1;
-			if (sscanf(cbuf, "MESH %63s", meshname)!=1) LogErr("Invalid Line in (%s): %s", path, cbuf);
+			if (sscanf(cbuf, "MESH %63s", meshname)!=1) { LogErr("Invalid Line in (%s): %s", path, cbuf); meshname[0] = 0; } // not upstream: no name, none kept
 			if (strncmp(meshname, "???", 3) == 0) meshname[0] = 0;
 			if (HasMesh(meshname) && bAppend) meshname[0] = 0; // Mesh is loaded already skip all entries related to it.
 			continue;

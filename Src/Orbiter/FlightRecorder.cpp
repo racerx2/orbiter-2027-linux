@@ -12,6 +12,7 @@
 #include "Vecmat.h"
 #include "PlaybackEd.h"
 #include "Log.h"
+#include "Util.h" // not upstream: SafeFileName
 #include "Pane.h"
 #include "State.h"
 #include "MenuInfoBar.h"
@@ -118,7 +119,7 @@ void Vessel::FRecorder_Activate (bool active, const char *fname, bool append)
 		char cbuf[256];
 		Tofs = td.SimT0; // not upstream: moved before the length check, the system recorder's events use it even when no vessel is recorded
 		MJDofs = td.MJD0; // not upstream: as above
-		int len = snprintf (cbuf, sizeof cbuf, "Flights/%s/%s.pos", fname, name.c_str()); // not upstream: bounded
+		int len = snprintf (cbuf, sizeof cbuf, "Flights/%s/%s.pos", SafeFileName (fname).c_str(), SafeFileName (name.c_str()).c_str()); // not upstream: bounded; names as one file name each (a vessel "..\\x" wrote outside Flights)
 		if (!ResolveInPlace (cbuf, sizeof cbuf, len)) { // not upstream: case-insensitive path, resolved once for all streams; N: the .att/.atc names are built from it in 256 bytes
 			LOGOUT_WARN ("Flight recorder: file name too long for record %s, vessel %s; the vessel isn't recorded", fname, name.c_str());
 			bFRrecord = false;
@@ -392,7 +393,7 @@ bool Vessel::FRecorder_Read (const char *scname)
 
 	for (i = strlen(scname)-1; i > 0; i--)
 		if (scname[i-1] == '\\' || scname[i-1] == '/') break;
-	int len = snprintf (fname, sizeof fname, "Flights/%s/%s.pos", scname+i, name.c_str()); // not upstream: bounded
+	int len = snprintf (fname, sizeof fname, "Flights/%s/%s.pos", SafeFileName (scname+i).c_str(), SafeFileName (name.c_str()).c_str()); // not upstream: bounded; the names as they were written
 	if (!ResolveInPlace (fname, sizeof fname, len)) // not upstream: case-insensitive path, resolved once for the .pos/.att/.atc streams; P: "" fails the open below
 		LOGOUT_WARN ("Flight recorder: playback file name too long for record %s, vessel %s", scname+i, name.c_str()); // not upstream: one warning
 
@@ -824,16 +825,19 @@ void Orbiter::FRecorder_Reset ()
 
 bool Orbiter::FRecorder_PrepareDir (const char *fname, bool force)
 {
-	fs::path dir = fs::path(oapiResolvePath((std::string("Flights/") + fname).c_str()));
+	fs::path dir = fs::path(oapiResolvePath((std::string("Flights/") + SafeFileName (fname)).c_str())); // not upstream: one file name ("..": remove_all took the install)
 	std::error_code ec;
 	auto status = fs::status(dir, ec);
 
 	// don't overwrite existing recording
 	if (!ec) {
 		if(fs::is_directory(status) && !force) return false;
-		fs::remove_all(dir);
+		std::error_code e1, e2; // not upstream: only a folder right in Flights, symlinks resolved
+		fs::path canon = fs::canonical (dir, e1), flights = fs::canonical (fs::path (oapiResolvePath ("Flights")), e2);
+		if (e1 || e2 || canon.parent_path () != flights) { LOGOUT_ERR ("Flight recorder: %s is not a folder in Flights, not overwritten", dir.string ().c_str ()); return false; }
+		fs::remove_all(canon, ec);
 	}
-	fs::create_directory(dir);
+	fs::create_directory(dir, ec);
 
 	return true;
 }
@@ -845,7 +849,7 @@ void Orbiter::FRecorder_Activate (bool active, const char *fname, bool append)
 		if (!append) FRecorder_Reset();
 		bRecord = true;
 		char cbuf[256];
-		int len = snprintf (cbuf, sizeof cbuf, "Flights\\%s\\system.dat", fname); // not upstream: bounded
+		int len = snprintf (cbuf, sizeof cbuf, "Flights\\%s\\system.dat", SafeFileName (fname).c_str()); // not upstream: bounded; one file name
 		if (!ResolveInPlace (cbuf, sizeof cbuf, len)) { // not upstream: '\' separators and case resolved once; N: a record name that doesn't fit isn't recorded
 			LOGOUT_WARN ("Flight recorder: record name too long, not recorded: %s", fname);
 			bRecord = false;
@@ -876,7 +880,7 @@ void Orbiter::FRecorder_OpenPlayback (const char *scname)
 
 	for (i = strlen(scname)-1; i > 0; i--)
 		if (scname[i-1] == '\\' || scname[i-1] == '/') break;
-	int len = snprintf (cbuf, sizeof cbuf, "Flights\\%s\\system.dat", scname+i); // not upstream: bounded
+	int len = snprintf (cbuf, sizeof cbuf, "Flights\\%s\\system.dat", SafeFileName (scname+i).c_str()); // not upstream: bounded; one file name
 	if (!ResolveInPlace (cbuf, sizeof cbuf, len)) // not upstream: '\' separators and case resolved once; P: "" fails the open below
 		LOGOUT_WARN ("Flight recorder: playback record name too long: %s", scname+i); // not upstream: one warning
 	if (FRsysname) delete []FRsysname;

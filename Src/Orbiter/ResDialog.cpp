@@ -100,7 +100,7 @@ struct CtrlClass { void *hModule; RESCTRLFACTORY create; };
 
 static std::map<std::string, std::vector<CtrlClass>> &CtrlClasses ()
 {
-	static std::map<std::string, std::vector<CtrlClass>> classes;
+	static auto &classes = *new std::map<std::string, std::vector<CtrlClass>>; // not upstream: never destroyed, ExitModule may unregister from _dl_fini
 	return classes;
 }
 

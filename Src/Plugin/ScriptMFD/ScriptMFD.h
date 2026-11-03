@@ -66,6 +66,7 @@ protected:
 
 	bool bclbk[NCLBK];
 	int persist; // 0=delete with MFD object, 1=attach to vessel
+	char label[64]; // not upstream: ButtonLabel's copy of the script's string
 };
 
 #endif // !__SCRIPTMFD_H

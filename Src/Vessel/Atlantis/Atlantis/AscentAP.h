@@ -70,6 +70,7 @@ protected:
 	double SSMEThrustProfile(double met);
 
 private:
+	void SetTargetPlane (double lng, double lat); // not upstream: tgt from a launch site and launch_azimuth
 	double CalcTargetAzimuth () const;
 	double CalcTargetPitch () const;
 	double GetTargetPitchRate (double dpitch, double vpitch) const;

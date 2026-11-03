@@ -27,8 +27,14 @@ extern "C" {
 #include <Lua/lualib.h>
 #include <Lua/lauxlib.h>
 }
+#include <Lua/lua_handles.h>
+#include <Lua/lua_quote.h>
 #include "Orbitersdk.h"
+#include <algorithm>
 #include <filesystem>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 namespace fs = std::filesystem;
 
 enum {
@@ -214,6 +220,10 @@ protected:
 	int fmodel;
 };
 
+// not upstream: the ScriptVessels alive, so a cross-call reaches only one of them
+static std::mutex g_liveLock;
+static std::unordered_map<const VESSEL *, ScriptVessel *> g_live;
+
 // ==============================================================
 // Constructor/destructor
 // ==============================================================
@@ -222,19 +232,28 @@ ScriptVessel::ScriptVessel (OBJHANDLE hVessel, int flightmodel): VESSEL4 (hVesse
 	// create the interpreter instance to run the vessel script
 	hInterp = oapiCreateInterpreter();
 	L = oapiGetLua (hInterp);
+	std::fill (bclbk, bclbk + NCLBK, false); // not upstream: no callbacks before the script is loaded
+	if (!L) oapiWriteLogV ("ScriptVessel: %s: no Lua interpreter, the vessel runs without its script", GetName ()); // not upstream
 
 	strcpy (func, "clbk_");
 	fmodel = flightmodel;
+	std::lock_guard<std::mutex> lock (g_liveLock);
+	g_live[this] = this;
 }
 
 ScriptVessel::~ScriptVessel ()
 {
-	// Call pseudo destructor if the script needs to do some cleanup
-	lua_getfield (L, LUA_GLOBALSINDEX, "clbk_destroy");
-	if(lua_isfunction (L,-1)) {
-		LuaCall (L, 0, 0);
+	{
+		std::lock_guard<std::mutex> lock (g_liveLock);
+		g_live.erase (this);
 	}
-	lua_pop(L,1);
+	// Call pseudo destructor if the script needs to do some cleanup
+	if (L) { // not upstream: only with an interpreter
+		lua_getfield (L, LUA_GLOBALSINDEX, "clbk_destroy");
+		if(lua_isfunction (L,-1)) {
+			LuaCall (L, 0, 0);
+		} else lua_pop(L,1); // not upstream: LuaCall takes the function off the stack
+	}
 
 	// delete the interpreter instance
 	oapiDelInterpreter (hInterp);
@@ -257,8 +276,12 @@ int ScriptVessel::LuaCall(lua_State *L, int narg, int nres)
 	int res = lua_pcall(L, narg, nres, base);
 	lua_remove(L, base);
 	if(res != 0) {
-		oapiWriteLogError("%s", lua_tostring(L, -1));
-		oapiAddNotification(OAPINOTIF_ERROR, "Lua vessel error", lua_tostring(L, -1));
+		const char *msg = lua_tostring(L, -1);
+		if (!msg) msg = "(error object is not a string)"; // not upstream: error({}) gives no text
+		oapiWriteLogError("%s", msg);
+		oapiAddNotification(OAPINOTIF_ERROR, "Lua vessel error", msg);
+		lua_pop(L, 1); // not upstream: nres nils in place of the message, so every caller's stack stays balanced
+		for (int i = 0; i < nres; i++) lua_pushnil(L);
 	}
 	return res;
 }
@@ -279,7 +302,7 @@ static std::set<std::string> GetGlobalFunctions(lua_State* L)
 	lua_pushglobaltable(L);
 	lua_pushnil(L);
 	while (lua_next(L, -2) != 0) {
-		if (lua_isfunction(L, -1))
+		if (lua_type(L, -2) == LUA_TSTRING && lua_isfunction(L, -1)) // not upstream: string keys only (tostring on a number key breaks lua_next, others give NULL)
 			ret.insert(lua_tostring(L, -2));
 		lua_pop(L, 1);
 	}
@@ -289,8 +312,9 @@ static std::set<std::string> GetGlobalFunctions(lua_State* L)
 
 void ScriptVessel::clbkSetClassCaps (FILEHANDLE cfg)
 {
-	char script[256] = "", cmd[256], tmp[512]; // not upstream: script "" when the cfg has no Script; tmp takes the 511 bytes oapiReadItem_string may write
+	char script[256] = "", tmp[512]; // not upstream: script "" when the cfg has no Script; tmp takes the 511 bytes oapiReadItem_string may write
 	int i;
+	if (!L) return; // not upstream: no interpreter, no script
 
 	// Save global functions provided by lua
 	auto globals = GetGlobalFunctions(L);
@@ -303,27 +327,27 @@ void ScriptVessel::clbkSetClassCaps (FILEHANDLE cfg)
 	fs::path script_path(script);
 	std::string parent_path = script_path.parent_path().string(); // u8string() is std::u8string in C++20; string() is UTF-8 here
 	// Add the script path to the package path so that we can "require" additional files
-	bool fits = snprintf(cmd, sizeof cmd, "package.path = package.path .. ';Config/Vessels/%s/?.lua'", parent_path.c_str()) < (int)sizeof cmd; // not upstream: a command that doesn't fit isn't run, the script counts as missing
-	if (fits) oapiExecScriptCmd(hInterp, cmd); // not upstream: only when it fits
+	if (parent_path.find_first_of (";?") == std::string::npos) { // not upstream: the names go in as Lua strings, and ';' or '?' would add package.path entries
+		std::string pp = ";Config/Vessels/" + parent_path + "/?.lua";
+		oapiExecScriptCmd (hInterp, ("package.path = package.path .. " + LuaQuoted (pp.c_str ())).c_str ());
+	} else oapiWriteLogV ("ScriptVessel: %s: ';' or '?' in the script folder, require can't search it", GetClassName ());
 
 	bool strictmode = false;
 	oapiReadItem_bool (cfg, (char*)"StrictMode", strictmode);
 	if(strictmode) {
 		// Load the 'strict' module
-		sprintf (cmd, "run_global('Script/strict.lua')");
-		oapiExecScriptCmd (hInterp, cmd);
+		oapiExecScriptCmd (hInterp, "run_global('Script/strict.lua')");
 	}
 
 	// Load the vessel script
-	if (fits && snprintf (cmd, sizeof cmd, "run_global('Config/Vessels/%s')", script) < (int)sizeof cmd) // not upstream: a command that doesn't fit isn't run
-		oapiExecScriptCmd (hInterp, cmd);
-	else oapiWriteLogV ("ScriptVessel: script path too long, not loaded: %s", script); // not upstream: the script counts as missing
+	std::string sp = std::string ("Config/Vessels/") + script;
+	oapiExecScriptCmd (hInterp, ("run_global(" + LuaQuoted (sp.c_str ()) + ")").c_str ());
 
 	// find new global functions provided by the module
 	lua_pushglobaltable(L);
 	lua_pushnil(L);
 	while (lua_next(L, -2) != 0) {
-		if(lua_isfunction(L, -1) && globals.count(lua_tostring(L, -2)) == 0 && strncmp(lua_tostring(L, -2), "clbk_", 5)) {
+		if(lua_type(L, -2) == LUA_TSTRING && lua_isfunction(L, -1) && globals.count(lua_tostring(L, -2)) == 0 && strncmp(lua_tostring(L, -2), "clbk_", 5)) { // not upstream: string keys only
 			exports.push_back(lua_tostring(L, -2));
 		}
 		lua_pop(L, 1);
@@ -333,8 +357,7 @@ void ScriptVessel::clbkSetClassCaps (FILEHANDLE cfg)
 	// Define the vessel instance
 	lua_pushlightuserdata(L, GetHandle());  // push vessel handle
 	lua_setfield(L, LUA_GLOBALSINDEX, "hVessel");
-	strcpy(cmd, "vi = vessel.get_interface(hVessel)");
-	oapiExecScriptCmd(hInterp, cmd);
+	oapiExecScriptCmd(hInterp, "vi = vessel.get_interface(hVessel)");
 
 	// check for defined callback functions in script
 	for (i = 0; i < NCLBK; i++) {
@@ -357,8 +380,9 @@ void ScriptVessel::clbkSetClassCaps (FILEHANDLE cfg)
 	if (bclbk[SETCLASSCAPS]) {
 		strcpy (func+5, "setclasscaps");
 		lua_getfield (L, LUA_GLOBALSINDEX, func);
-		lua_pushlightuserdata (L, cfg);
+		luahandle::Push (L, cfg, luahandle::FILE); // not upstream: the bindings take it during this call only
 		LuaCall (L, 1, 0);
+		luahandle::Drop (L, cfg);
 	}
 }
 
@@ -402,8 +426,9 @@ void ScriptVessel::clbkSaveState(FILEHANDLE scn)
 	if (bclbk[SAVESTATE]) {
 		strcpy(func + 5, "savestate");
 		lua_getfield(L, LUA_GLOBALSINDEX, func);
-		lua_pushlightuserdata(L, scn);
+		luahandle::Push(L, scn, luahandle::FILE); // not upstream: the bindings take it during this call only
 		LuaCall(L, 1, 0);
+		luahandle::Drop(L, scn);
 	}
 }
 
@@ -412,12 +437,14 @@ void ScriptVessel::clbkLoadStateEx(FILEHANDLE scn, void* vs)
 	if (bclbk[LOADSTATEEX]) {
 		strcpy(func + 5, "loadstateex");
 		lua_getfield(L, LUA_GLOBALSINDEX, func);
-		lua_pushlightuserdata(L, scn);
+		luahandle::Push(L, scn, luahandle::FILE); // not upstream: the bindings take it during this call only
 		VESSELSTATUS2* status = (VESSELSTATUS2*)lua_newuserdata(L, sizeof(VESSELSTATUS2));
 		luaL_getmetatable(L, "VESSELSTATUS2.table");   // push metatable
 		lua_setmetatable(L, -2);              // set metatable for VESSELSTATUS2
 		*status = *(VESSELSTATUS2*)vs;
-		if(LuaCall(L, 2, 0) !=0) {
+		int res = LuaCall(L, 2, 0);
+		luahandle::Drop(L, scn);
+		if(res !=0) {
 			// If the call fails, odds are that the scn file parsing was stopped before reaching the END token
 			// We try to finish it anyway to prevent fatal errors later 
 			char *line;
@@ -436,8 +463,9 @@ int ScriptVessel::clbkConsumeDirectKey(char* kstate)
 	if (bclbk[CONSUMEDIRECTKEY]) {
 		strcpy(func + 5, "consumedirectkey");
 		lua_getfield(L, LUA_GLOBALSINDEX, func);
-		lua_pushlightuserdata(L, kstate);
+		luahandle::Push(L, kstate, luahandle::KEYSTATE); // not upstream: the bindings take it during this call only
 		LuaCall(L, 1, 1);
+		luahandle::Drop(L, kstate);
 		bool consumed = (lua_toboolean(L, -1) ? true : false);
 		lua_pop(L, 1);
 		return consumed ? 1 : 0;
@@ -452,8 +480,9 @@ int ScriptVessel::clbkConsumeBufferedKey(DWORD key, bool down, char* kstate)
 		lua_getfield(L, LUA_GLOBALSINDEX, func);
 		lua_pushnumber(L, key);
 		lua_pushboolean(L, down);
-		lua_pushlightuserdata(L, kstate);
+		luahandle::Push(L, kstate, luahandle::KEYSTATE); // not upstream: the bindings take it during this call only
 		LuaCall(L, 3, 1);
+		luahandle::Drop(L, kstate);
 		bool consumed = lua_toboolean(L, -1) ? true : false;
 		lua_pop(L, 1);
 		return consumed ? 1 : 0;
@@ -645,7 +674,7 @@ void ScriptVessel::clbkVisualCreated(VISHANDLE vis, int refcount)
 	if (bclbk[VISUALCREATED]) {
 		strcpy(func + 5, "visualcreated");
 		lua_getfield(L, LUA_GLOBALSINDEX, func);
-		lua_pushlightuserdata(L, vis);
+		luahandle::Push(L, vis, luahandle::VISUAL, GetHandle()); // not upstream: known until the visual goes
 		lua_pushnumber(L, refcount);
 		LuaCall(L, 2, 0);
 	}
@@ -659,6 +688,7 @@ void ScriptVessel::clbkVisualDestroyed(VISHANDLE vis, int refcount)
 		lua_pushnumber(L, refcount);
 		LuaCall(L, 2, 0);
 	}
+	if (L) luahandle::Drop(L, vis); // not upstream
 }
 
 bool ScriptVessel::clbkVCMouseEvent(int id, int event, VECTOR3& p)
@@ -700,10 +730,11 @@ bool ScriptVessel::clbkLoadPanel2D (int id, PANELHANDLE hPanel, DWORD viewW, DWO
 		strcpy(func + 5, "loadpanel2d");
 		lua_getfield(L, LUA_GLOBALSINDEX, func);
 		lua_pushnumber(L, id);
-		lua_pushlightuserdata(L, hPanel);
+		luahandle::Push(L, hPanel, luahandle::PANEL); // not upstream: the bindings take it during this call only
 		lua_pushnumber(L, viewW);
 		lua_pushnumber(L, viewH);
 		LuaCall(L, 4, 1);
+		luahandle::Drop(L, hPanel);
 
 		bool processed = (lua_toboolean(L, -1) ? true : false);
 		lua_pop(L, 1);
@@ -715,11 +746,11 @@ bool ScriptVessel::clbkLoadPanel2D (int id, PANELHANDLE hPanel, DWORD viewW, DWO
 
 static ScriptVessel* lua_toScriptVessel(lua_State* L, int idx)
 {
-	VESSEL** pv = (VESSEL**)lua_touserdata(L, idx);
-	if(pv)
-		return (ScriptVessel*)*pv;
-
-	return nullptr;
+	if (lua_type(L, idx) != LUA_TUSERDATA || lua_objlen(L, idx) < sizeof(VESSEL*)) return nullptr; // not upstream: a vessel object, of a ScriptVessel alive now
+	const VESSEL* v = *(VESSEL**)lua_touserdata(L, idx);
+	std::lock_guard<std::mutex> lock(g_liveLock);
+	auto it = g_live.find(v);
+	return it == g_live.end() ? nullptr : it->second;
 }
 
 
@@ -727,22 +758,26 @@ static ScriptVessel* lua_toScriptVessel(lua_State* L, int idx)
 // push them into the target lua state and call the method
 // then finally push back the result fro; the target state to the original state
 static int lua_crosscall(lua_State* L) {
-	ScriptVessel* sh = lua_toScriptVessel(L, 1);
-	if (!sh)
-		return 0;
-	lua_State* Ltgt = sh->GetState();
-
 	// Recover method name for the target interpreter
 	const char* method = lua_tostring(L, lua_upvalueindex(1));
+
+	ScriptVessel* sh = lua_toScriptVessel(L, 1);
+	if (!sh)
+		return luaL_error(L, "%s: self is not a script vessel", method); // not upstream
+	lua_State* Ltgt = sh->GetState();
+	if (!Ltgt || Ltgt == L)
+		return luaL_error(L, "%s: the vessel has no other script state", method); // not upstream
+
+	// Number of arguments pushed in the original lua_State
+	int nargs = lua_gettop(L);
+	if (!lua_checkstack(Ltgt, nargs + LUA_MINSTACK))
+		return luaL_error(L, "%s: too many arguments", method); // not upstream
 
 	// Save target interpreter stacksize (used later to compute the number of results)
 	int stacksize = lua_gettop(Ltgt);
 
 	// Push the function to be called in the target
 	lua_getfield(Ltgt, LUA_GLOBALSINDEX, method);
-
-	// Number of arguments pushed in the original lua_State
-	int nargs = lua_gettop(L);
 
 	// "Forward" arguments to the target lua_State (Lto)
 	// Warning : only basic types and vectors are supported (no tables/userdata)
@@ -782,8 +817,9 @@ static int lua_crosscall(lua_State* L) {
 		}
 		case LUA_TSTRING:
 		{
-			const char *str = lua_tostring(L, i);
-			lua_pushstring(Ltgt, str);
+			size_t len;
+			const char *str = lua_tolstring(L, i, &len);
+			lua_pushlstring(Ltgt, str, len); // not upstream: with its length, a string may hold zeros
 			break;
 		}
 		default:
@@ -801,6 +837,10 @@ static int lua_crosscall(lua_State* L) {
 		printf("Error cross-calling %s: %s\n", method, lua_tostring(Ltgt, -1));
 	}
 	int nret = lua_gettop(Ltgt) - stacksize; // number of results
+	if (!lua_checkstack(L, nret + LUA_MINSTACK)) { // not upstream
+		lua_settop(Ltgt, stacksize);
+		return luaL_error(L, "%s: too many results", method);
+	}
 
 	// "Forward" results to the original lua_State *in reverse order*
 	// Warning : only basic types are supported (no tables/userdata)
@@ -838,8 +878,9 @@ static int lua_crosscall(lua_State* L) {
 		}
 		case LUA_TSTRING:
 		{
-			const char* str = lua_tostring(Ltgt, -i);
-			lua_pushstring(L, str);
+			size_t len;
+			const char* str = lua_tolstring(Ltgt, -i, &len);
+			lua_pushlstring(L, str, len); // not upstream: with its length
 			break;
 		}
 		default:
@@ -869,7 +910,7 @@ int ScriptVessel::Lua_InitInstance(void* context)
 	lua_State* Linto = (lua_State*)context;
 
 	char metatablename[256];
-	snprintf(metatablename, 255, "VESSEL.SCRIPT.%s.vtable", GetClassName());
+	snprintf(metatablename, 255, Linto == L ? "VESSEL.SCRIPT.%s.self" : "VESSEL.SCRIPT.%s.vtable", GetClassName()); // not upstream: its own state's methods apart, a second vessel of the class reaches its own through the cross-call
 
 	// check if interpreter has metatable table available already
 	luaL_getmetatable(Linto, metatablename);
@@ -952,6 +993,22 @@ static void lua_pushsketchpad(lua_State* L, oapi::Sketchpad* skp)
 	}
 }
 
+// not upstream: the HUD's sketchpad lasts the callback, its object no longer reaches it afterwards (the interpreter's lua_releasesketchpad)
+static void lua_releasesketchpad(lua_State* L, oapi::Sketchpad* skp)
+{
+	lua_pushlightuserdata(L, skp);
+	lua_rawget(L, LUA_REGISTRYINDEX);
+	if (lua_type(L, -1) == LUA_TUSERDATA && lua_getmetatable(L, -1)) {
+		luaL_getmetatable(L, "SKP.vtable");
+		if (lua_rawequal(L, -1, -2)) *(oapi::Sketchpad**)lua_touserdata(L, -3) = nullptr;
+		lua_pop(L, 2);
+	}
+	lua_pop(L, 1);
+	lua_pushlightuserdata(L, skp);
+	lua_pushnil(L);
+	lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
 bool ScriptVessel::clbkDrawHUD(int mode, const HUDPAINTSPEC* hps, oapi::Sketchpad* skp)
 {
 	// draw the default HUD
@@ -981,6 +1038,7 @@ bool ScriptVessel::clbkDrawHUD(int mode, const HUDPAINTSPEC* hps, oapi::Sketchpa
 
 		bool supported = (lua_toboolean(L, -1) ? true : false);
 		lua_pop(L, 1);
+		lua_releasesketchpad(L, skp);
 		return supported;
 	}
 	return false;
@@ -1019,7 +1077,7 @@ void ScriptVessel::clbkGetRadiationForce (const VECTOR3 &mflux, VECTOR3 &F, VECT
 		lua_getfield(L, LUA_GLOBALSINDEX, func);
 		lua_pushvector(L, mflux);
 		if(LuaCall(L, 1, 2) != 0) {
-			lua_settop(L, 0);
+			lua_pop(L, 2); // not upstream: LuaCall's nils (settop 0 dropped a caller's values too)
 			F={0,0,0};
 			pos={0,0,0};
 		} else {
@@ -1041,7 +1099,7 @@ int ScriptVessel::clbkNavProcess(int mode)
 		lua_pushnumber(L, mode);
 		if(LuaCall(L, 1, 1) != 0) {
 			// If the callback failed, return the original mode so the default autopilots can take over
-			lua_settop(L, 0);
+			lua_pop(L, 1); // not upstream: LuaCall's nil
 			return mode;
 		} else {
 			int retmode = (lua_tonumber(L, -1));

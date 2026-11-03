@@ -11,14 +11,19 @@
 #include <QUrl>
 #include "Orbitersdk.h"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <list>
+#include <new>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 using namespace gps::map;
@@ -35,12 +40,16 @@ const int StallMs = 20000, TotalMs = 60000;
 
 std::shared_ptr<WaterTile> Make (uint64_t k, const std::string &layer)
 {
-	std::vector<Feature> w;
-	uint32_t extent;
-	if (!DecodeLayer ((const uint8_t *)layer.data (), layer.size (), w, extent)) return nullptr;
-	auto t = std::make_shared<WaterTile> ();
-	t->Build (KeyZ (k), KeyX (k), KeyY (k), w, extent);
-	return t;
+	try { // not upstream: a tile too big for memory is a tile that failed
+		std::vector<Feature> w;
+		uint32_t extent;
+		if (!DecodeLayer ((const uint8_t *)layer.data (), layer.size (), w, extent)) return nullptr;
+		auto t = std::make_shared<WaterTile> ();
+		if (!t->Build (KeyZ (k), KeyX (k), KeyY (k), w, extent)) return nullptr;
+		return t;
+	} catch (const std::bad_alloc &) {
+		return nullptr;
+	}
 }
 
 bool UrlOk (const std::string &u)
@@ -60,19 +69,29 @@ bool ReadFile (const std::string &path, std::string &out, size_t most)
 	return f.read (out.data (), n) || n == 0;
 }
 
-// written whole or not at all: a tmp file renamed over the old
+// written whole or not at all: a temp file beside it (mkstemp, synced) renamed over the old, the folder synced
 bool WriteFile (const std::string &path, const std::string &data)
 {
 	std::error_code ec;
-	fs::create_directories (fs::path (path).parent_path (), ec);
-	std::string tmp = path + ".tmp";
-	{
-		std::ofstream f (tmp, std::ios::binary | std::ios::trunc);
-		if (!f || !f.write (data.data (), (std::streamsize)data.size ()) || !f.flush ()) { f.close (), fs::remove (tmp, ec); return false; }
+	fs::path dir = fs::path (path).parent_path ();
+	fs::create_directories (dir, ec);
+	std::string tmp = path + ".XXXXXX";
+	int fd = mkostemp (tmp.data (), O_CLOEXEC);
+	if (fd < 0) return false;
+	bool ok = fchmod (fd, 0644) == 0;
+	for (size_t at = 0; ok && at < data.size (); ) {
+		ssize_t w = write (fd, data.data () + at, data.size () - at);
+		if (w < 0 && errno == EINTR) continue;
+		if (w <= 0) ok = false;
+		else at += (size_t)w;
 	}
-	fs::rename (tmp, path, ec);
-	if (ec) fs::remove (tmp, ec);
-	return !ec;
+	ok = ok && fdatasync (fd) == 0;
+	if (close (fd) != 0) ok = false;
+	if (ok) fs::rename (tmp, path, ec);
+	if (!ok || ec) { fs::remove (tmp, ec); return false; }
+	int dfd = open (dir.empty () ? "." : dir.c_str (), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (dfd >= 0) fsync (dfd), close (dfd);
+	return true;
 }
 
 // the HTTP status of a finished reply (0: failed or cut off)

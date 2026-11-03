@@ -220,7 +220,8 @@ CFG_UIPRM CfgUIPrm_default = {
 	10,         // MenuScrollspeed (1-20)
 	0,          // SelVesselTab: tab to open in vessel selection dialog
 	4,          // SelVesselRange "nearby" range for vessel selection dialog (100km)
-	false       // bSelVesselFlat (no flat assemblies) in vessel selection dialog)
+	false,      // bSelVesselFlat (no flat assemblies) in vessel selection dialog)
+	false       // bScriptFullAccess (not upstream: scripts kept to the Orbiter folder)
 };
 
 CFG_DEMOPRM CfgDemoPrm_default = {
@@ -749,6 +750,7 @@ bool Config::Load(const char *fname)
 	GetInt (ifs, "SelVesselTab", CfgUIPrm.SelVesselTab);
 	GetInt (ifs, "SelVesselRange", CfgUIPrm.SelVesselRange);
 	GetBool (ifs, "SelVesselFlat", CfgUIPrm.bSelVesselFlat);
+	GetBool (ifs, "ScriptFullAccess", CfgUIPrm.bScriptFullAccess); // not upstream
 
 	// demo parameters
 	GetBool (ifs, "DemoMode", CfgDemoPrm.bDemo);
@@ -1342,6 +1344,8 @@ BOOL Config::Write (const char *fname) const
 			ofs << "SelVesselRange = " << CfgUIPrm.SelVesselRange << '\n';
 		if (CfgUIPrm.bSelVesselFlat != CfgUIPrm_default.bSelVesselFlat || bEchoAll)
 			ofs << "SelVesselFlat = " << BoolStr (CfgUIPrm.bSelVesselFlat) << '\n';
+		if (CfgUIPrm.bScriptFullAccess != CfgUIPrm_default.bScriptFullAccess || bEchoAll) // not upstream
+			ofs << "ScriptFullAccess = " << BoolStr (CfgUIPrm.bScriptFullAccess) << '\n';
 	}
 
 	if (memcmp (&CfgDemoPrm, &CfgDemoPrm_default, sizeof(CFG_DEMOPRM)) || bEchoAll) {

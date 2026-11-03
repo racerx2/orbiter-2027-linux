@@ -751,6 +751,7 @@ DocksealCtrl::DocksealCtrl (DockingCtrlSubsystem *_subsys)
 : DGSubsystem (_subsys)
 {
 	isDocked = false;
+	isSealing = false; // not upstream: read by clbkPostStep before any dock event
 	dockTime = -1e10;
 
 	ELID_INDICATOR = AddElement (indicator = new DocksealIndicator (this));

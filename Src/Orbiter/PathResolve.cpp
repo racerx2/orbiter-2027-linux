@@ -44,28 +44,53 @@ static std::vector<std::string> Variants (const std::string &dir, const std::str
 	const char *d = (dir.empty() ? "." : dir.c_str());
 	struct stat st;
 	if (stat (d, &st) || !S_ISDIR (st.st_mode)) return v;
-	std::lock_guard<std::mutex> lock (dirLock);
 	auto key = std::make_pair (st.st_dev, st.st_ino);
-	auto it = dirCache.find (key);
-	// a listing serves while the directory is unchanged and was not changed within 2 s of it (coarse file times, FAT's 2 s steps)
-	if (it == dirCache.end() || it->second.mtime.tv_sec != st.st_mtim.tv_sec || it->second.mtime.tv_nsec != st.st_mtim.tv_nsec ||
-		st.st_mtim.tv_sec + 2 > it->second.listed) {
-		if (dirCache.size() >= 1024) dirCache.clear();
-		timespec now;
-		clock_gettime (CLOCK_REALTIME_COARSE, &now);
-		DirList l = { st.st_mtim, now.tv_sec, {} };
-		if (DIR *dp = opendir (d)) {
-			while (struct dirent *e = readdir (dp)) l.names.push_back ({Lower (e->d_name), e->d_name});
-			closedir (dp);
+	std::string lname = Lower (name);
+	auto pick = [&](const DirList &l) {
+		auto r = std::equal_range (l.names.begin(), l.names.end(), std::make_pair (lname, std::string()),
+			[](const auto &a, const auto &b) { return a.first < b.first; });
+		for (auto i = r.first; i != r.second; ++i)
+			if (i->second != name) v.push_back (i->second);
+	};
+	{
+		std::lock_guard<std::mutex> lock (dirLock);
+		auto it = dirCache.find (key);
+		// a listing serves while the directory is unchanged and was not changed within 2 s of it (coarse file times, FAT's 2 s steps)
+		if (it != dirCache.end() && it->second.mtime.tv_sec == st.st_mtim.tv_sec && it->second.mtime.tv_nsec == st.st_mtim.tv_nsec &&
+			st.st_mtim.tv_sec + 2 <= it->second.listed) {
+			pick (it->second);
+			return v;
 		}
-		std::sort (l.names.begin(), l.names.end());
-		it = dirCache.insert_or_assign (key, std::move (l)).first;
 	}
-	const auto &names = it->second.names;
-	auto r = std::equal_range (names.begin(), names.end(), std::make_pair (Lower (name), std::string()),
-		[](const auto &a, const auto &b) { return a.first < b.first; });
-	for (auto i = r.first; i != r.second; ++i)
-		if (i->second != name) v.push_back (i->second);
+	timespec now;
+	clock_gettime (CLOCK_REALTIME_COARSE, &now);
+	DirList l = { st.st_mtim, now.tv_sec, {} };
+	if (DIR *dp = opendir (d)) { // not upstream: read outside the lock, the other loader threads go on meanwhile
+		while (struct dirent *e = readdir (dp)) l.names.push_back ({Lower (e->d_name), e->d_name});
+		closedir (dp);
+	}
+	std::sort (l.names.begin(), l.names.end());
+	pick (l);
+	std::lock_guard<std::mutex> lock (dirLock);
+	if (dirCache.size() >= 1024) dirCache.clear();
+	dirCache.insert_or_assign (key, std::move (l));
+	return v;
+}
+
+// not upstream: a name with few letters (a tile's digits and extension) has its other spellings tried by stat, in byte order as a listing
+// gives them: a missing tile in a folder a tile stream writes to cost a new listing each time (17 ms)
+static std::vector<std::string> FewVariants (const std::string &dir, const std::string &name)
+{
+	std::vector<size_t> at;
+	for (size_t i = 0; i < name.size(); i++) if ((name[i] >= 'a' && name[i] <= 'z') || (name[i] >= 'A' && name[i] <= 'Z')) at.push_back (i);
+	std::vector<std::string> all, v;
+	for (unsigned m = 0; m < (1u << at.size()); m++) {
+		std::string s (name);
+		for (size_t b = 0; b < at.size(); b++) s[at[b]] = (m >> b & 1) ? (char)(s[at[b]] & ~0x20) : (char)(s[at[b]] | 0x20);
+		all.push_back (s);
+	}
+	std::sort (all.begin(), all.end());
+	for (const std::string &s : all) if (s != name && Exists (Join (dir, s))) v.push_back (s);
 	return v;
 }
 
@@ -77,7 +102,8 @@ static bool Walk (const std::string &cur, const std::vector<std::string> &comp, 
 	std::string exact = Join (cur, comp[k]);
 	if (comp[k] == "." || comp[k] == "..") return Walk (exact, comp, k+1, out, bestk, best);
 	if (Exists (exact) && Walk (exact, comp, k+1, out, bestk, best)) return true;
-	for (const std::string &v : Variants (cur, comp[k]))
+	size_t letters = std::count_if (comp[k].begin(), comp[k].end(), [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); });
+	for (const std::string &v : letters <= 4 ? FewVariants (cur, comp[k]) : Variants (cur, comp[k])) // not upstream: FewVariants
 		if (Walk (Join (cur, v), comp, k+1, out, bestk, best)) return true;
 	return false;
 }

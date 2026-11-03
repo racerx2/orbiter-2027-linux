@@ -64,6 +64,9 @@ set_target_properties(XRSound_lib
 target_include_directories(XRSound_lib PUBLIC
 	${ORBITER_SOURCE_SDK_INCLUDE_DIR}
 )
+if (ORBITER_SANITIZER AND NOT MSVC) # not upstream: the engine it calls is in XRSound.so, loaded at run time with its typeinfo hidden, so no vptr check here
+	target_compile_options(XRSound_lib PRIVATE -fno-sanitize=vptr)
+endif ()
 
 install(TARGETS XRSound_lib
 	ARCHIVE DESTINATION ${ORBITER_INSTALL_SDK_DIR}/XRSound

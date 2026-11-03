@@ -122,18 +122,19 @@ static void appendName (char **buffer, int *len, const std::string &name)
 void TileLabel::StoreLabel (TLABEL *l, const std::string &name)
 {
 	// Check if we've already a location..
-	for (DWORD i = 0; i < nlabel; ++i) {
-		if (l->lat == label[i]->lat && l->lng == label[i]->lng && l->labeltype == label[i]->labeltype) {
-			appendName(&label[i]->label, &label[i]->len, name);
-			++label[i]->nLines;
-			delete l;
-			return;
-		}
+	auto it = where.find({ l->lat, l->lng, l->labeltype }); // not upstream: by hash, the names joined in JoinNames
+	if (it != where.end()) {
+		names[it->second] += '\n';
+		names[it->second] += name;
+		++label[it->second]->nLines;
+		delete l;
+		return;
 	}
+	if (nlabel >= MAXLABEL) { delete l; return; } // not upstream
 
 	// Grow buffer?
 	if (nlabel == nbuf) {
-		TLABEL **tmp = new TLABEL*[nbuf += 16];
+		TLABEL **tmp = new TLABEL*[nbuf = std::max<DWORD>(16, nbuf * 2)]; // not upstream: doubled (16 more each time copied quadratically)
 		if (nlabel) {
 			memcpy(tmp, label, nlabel * sizeof(TLABEL*));
 			delete[]label;
@@ -142,8 +143,18 @@ void TileLabel::StoreLabel (TLABEL *l, const std::string &name)
 	}
 
 	// new loation
-	appendName(&l->label, &l->len, name);
+	where[{ l->lat, l->lng, l->labeltype }] = nlabel; // not upstream
+	names.push_back(name);
 	label[nlabel++] = l;
+}
+
+// not upstream: each label's names, joined with '\n' as appendName did, in one buffer
+void TileLabel::JoinNames ()
+{
+	for (DWORD i = 0; i < nlabel && i < names.size(); i++) appendName(&label[i]->label, &label[i]->len, names[i]);
+	where.clear();
+	names.clear();
+	names.shrink_to_fit();
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +219,7 @@ bool TileLabel::Read ()
 			tile->smgr->ZTreeManager(4)->ReleaseData(buf);
 		}
 	}
+	JoinNames(); // not upstream
 	return (nlabel > 0);
 }
 

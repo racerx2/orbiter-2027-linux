@@ -177,12 +177,12 @@ private:
 
     NV_FORCE_INLINE Element* data()
     {
-        return (Element*)((char*)this + sizeof(FixedPriorityQueue<Element, Comparator>));
+        return (Element*)((char*)this + align16(sizeof(FixedPriorityQueue<Element, Comparator>))); // not upstream: the elements where requiredMemorySize puts them, aligned (8-byte QueueElement after a 4-byte header)
     }
 
     NV_FORCE_INLINE Element* data() const
     {
-        return (Element*)((char*)this + sizeof(FixedPriorityQueue<Element, Comparator>));
+        return (Element*)((char*)this + align16(sizeof(FixedPriorityQueue<Element, Comparator>))); // not upstream: the elements where requiredMemorySize puts them, aligned (8-byte QueueElement after a 4-byte header)
     }
 
     bool compare(const Element& a, const Element& b) const

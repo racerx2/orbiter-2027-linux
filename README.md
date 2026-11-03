@@ -326,6 +326,11 @@ Arch Linux, Manjaro and SteamOS. Unpack it into a folder you own and start `Open
 libraries Orbiter uses and offers to install any that are missing. Qt and the other libraries that differ between
 distributions come with the download. How it is built: [packaging/linux](./packaging/linux/README.md).
 
+Each release is signed: the `.sig` next to the download is an SSH signature with the release key in
+[packaging/linux/allowed_signers](./packaging/linux/allowed_signers). Save that file, then
+`ssh-keygen -Y verify -f allowed_signers -I orbiter-2027-linux-release -n file -s <download>.sig < <download>`
+prints "Good" for an untouched download.
+
 ### Build from source
 
 Get the port repository from github

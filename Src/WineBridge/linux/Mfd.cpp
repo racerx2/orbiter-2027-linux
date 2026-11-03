@@ -390,12 +390,13 @@ namespace {
 			Guard g (b.Lock ());
 			if (!Fw (c)) {
 				if (c == O_NewVessel) oapi::Module::clbkNewVessel (h);
-				else if (c == O_DeleteVessel) oapi::Module::clbkDeleteVessel (h);
+				else if (c == O_DeleteVessel) { oapi::Module::clbkDeleteVessel (h); b.Retire (oapiGetVesselInterface (h)); b.Retire (h); } // not upstream (F2)
 				else oapi::Module::clbkVesselJump (h);
 				return;
 			}
 			Begin (c).u32 (b.Id (h));
 			b.Call ();
+			if (c == O_DeleteVessel) { b.Retire (oapiGetVesselInterface (h)); b.Retire (h); } // not upstream (F2): after the module's own
 		}
 		bool Keys (char *kstate)
 		{

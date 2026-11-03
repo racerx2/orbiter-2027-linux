@@ -3,6 +3,7 @@
 
 #define __LOG_CPP
 
+#include <mutex>
 #include <string.h>
 #include <fstream>
 #include <cstdarg>
@@ -23,10 +24,21 @@ static bool finelog = false;
 static std::chrono::steady_clock::time_point t0; // timeGetTime() counterpart
 
 static LogOutFunc logOut = 0;
+static FILE *logFile = nullptr; // not upstream: one stream, line-buffered (each line opened and closed the file, unchecked)
+
+static std::mutex logOpen; // not upstream: the stream opened once, whatever thread logs first
+
+static FILE *LogFile ()
+{
+	std::lock_guard<std::mutex> lk (logOpen);
+	if (!logFile && (logFile = fopen (logname, "a"))) setvbuf (logFile, nullptr, _IOLBF, 0);
+	return logFile;
+}
 
 void InitLog (const char *logfile, bool append)
 {
-	strcpy (logname, logfile);
+	{ std::lock_guard<std::mutex> lk (logOpen); if (logFile) { fclose (logFile); logFile = nullptr; } } // not upstream
+	snprintf (logname, sizeof logname, "%s", logfile); // not upstream: bounded
 	ofstream ofs (logname, append ? ios::app : ios::out);
 	ofs << "**** " << logname << endl;
 	t0 = std::chrono::steady_clock::now();
@@ -52,14 +64,16 @@ void LogOut (const char *msg, ...)
 
 void LogOutVA(const char *format, va_list ap)
 {
-	FILE *f = fopen(logname, "a+"); // "t" (MS text mode) left out: Linux streams have no text mode
-	fprintf(f, "%010.3f: ", std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
-	va_list ap2;
-	va_copy(ap2, ap); // a va_list can't be read twice on x86-64 Linux (it can on Windows)
-	vfprintf(f, format, ap2);
-	va_end(ap2);
-	fputc('\n', f);
-	fclose(f);
+	if (FILE *f = LogFile ()) { // "t" (MS text mode) left out: Linux streams have no text mode; not upstream: none if it can't be opened, a line at a time from any thread
+		flockfile (f);
+		fprintf(f, "%010.3f: ", std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+		va_list ap2;
+		va_copy(ap2, ap); // a va_list can't be read twice on x86-64 Linux (it can on Windows)
+		vfprintf(f, format, ap2);
+		va_end(ap2);
+		fputc('\n', f);
+		funlockfile (f);
+	}
 	if (logOut) {
 		vsnprintf(logs, 255, format, ap);
 		(*logOut)(logs);
@@ -71,14 +85,16 @@ void LogOutFine (const char *msg, ...)
 	if (finelog) {
 		va_list ap;
 		va_start (ap, msg);
-		FILE *f = fopen (logname, "a+"); // "t" left out, see LogOutVA
-		fprintf (f, "%010.3f: ", std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
-		va_list ap2;
-		va_copy (ap2, ap); // see LogOutVA
-		vfprintf (f, msg, ap2);
-		va_end (ap2);
-		fputc ('\n', f);
-		fclose (f);
+		if (FILE *f = LogFile ()) { // "t" left out, see LogOutVA; not upstream: as there
+			flockfile (f);
+			fprintf (f, "%010.3f: ", std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+			va_list ap2;
+			va_copy (ap2, ap); // see LogOutVA
+			vfprintf (f, msg, ap2);
+			va_end (ap2);
+			fputc ('\n', f);
+			funlockfile (f);
+		}
 		if (logOut) {
 			vsnprintf (logs, 255, msg, ap);
 			(*logOut)(logs);

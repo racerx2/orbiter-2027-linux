@@ -4,6 +4,7 @@
 #include "PlaybackEd.h"
 #include "Camera.h"
 #include "Log.h"
+#include "Util.h" // not upstream: SafeFileName
 #include "imgui_extras.h"
 
 using namespace std;
@@ -190,7 +191,7 @@ void DlgPlaybackEditor::Load(const char *ScnName) {
 	int i;
 	for (i = strlen(ScnName)-1; i > 0; i--)
 		if (ScnName[i-1] == '/' || ScnName[i-1] == '\\') break;
-	sprintf (fname, "Flights/%s/system.dat", ScnName+i);
+	snprintf (fname, sizeof fname, "Flights/%s/system.dat", SafeFileName (ScnName+i).c_str()); // not upstream: bounded, one file name (as the recorder's)
 
 	if(m_sysfname) free(m_sysfname);
 	m_sysfname = strdup(fname);

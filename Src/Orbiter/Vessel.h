@@ -724,6 +724,8 @@ public:
 	bool DelParticleStream (oapi::ParticleStream *ps);
 	// Detach a particle stream (exhaust or reentry) from the vessel
 
+	bool HasParticleStream (const void *ps) const; // not upstream: ps is one of this vessel's exhaust or reentry streams
+
 	bool DelExhaustStream (oapi::ParticleStream *ep);
 	// removes a contrail specification from the list and invalidates it
 

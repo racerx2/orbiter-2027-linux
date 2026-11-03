@@ -99,3 +99,72 @@ TEST_CASE("ModuleLoad doesn't attach a module unmapped by its last free", "[util
 	REQUIRE((nAttach && *nAttach == 0));
 	ModuleFree (g);
 }
+
+static int depExits = 0;
+extern "C" __attribute__((visibility("default"))) void UtilDepExited () { depExits++; }
+__attribute__((visibility("default"))) void InitLib (void *) {} // the core's, which Orbitersdk's attach calls
+__attribute__((visibility("default"))) int Date2Int (char *) { return 0; } // the core's, which Orbitersdk links to
+
+// the destructor of a library a module needs runs that library's ExitModule, not the module's detach again
+TEST_CASE("A needed library's ExitModule runs when it unloads", "[util]")
+{
+	depExits = 0;
+	void *h = ModuleLoad (UTIL_NEEDS);
+	REQUIRE(h);
+	int (*value)() = (int(*)())ModuleProc (h, "UtilNeedsValue");
+	REQUIRE(value);
+	REQUIRE(value () == 7);
+	ModuleFree (h);
+	REQUIRE(dlopen (UTIL_NEEDS, RTLD_NOW | RTLD_NOLOAD) == nullptr); // unmapped, with the library it needs
+	REQUIRE(depExits == 1);
+}
+
+// a fast exit detaches the modules still loaded and keeps them mapped; a free after it does nothing
+TEST_CASE("ModuleDetachAll detaches each loaded module once", "[util]")
+{
+	void *h = ModuleLoad (UTIL_MODULE);
+	REQUIRE(h);
+	int *nDetach = (int*)dlsym (h, "nDetach");
+	REQUIRE(nDetach);
+	int n0 = *nDetach;
+	ModuleDetachAll ();
+	REQUIRE(*nDetach == n0 + 1);
+	ModuleDetachAll ();
+	REQUIRE(*nDetach == n0 + 1); // once
+	REQUIRE(dlopen (UTIL_MODULE, RTLD_NOW | RTLD_NOLOAD) == h); // still mapped
+	dlclose (h); // the NOLOAD reference
+	ModuleFree (h);
+	REQUIRE(*nDetach == n0 + 1); // freed after the detach: ignored
+	REQUIRE(dlopen (UTIL_MODULE, RTLD_NOW | RTLD_NOLOAD) == h); // and still mapped, as at exit
+	dlclose (h); // the NOLOAD reference
+	dlclose (h); // ModuleLoad's, so later cases start unmapped
+}
+
+// not upstream: module and class names from data stay in their folder (design-security-fixes B12)
+TEST_CASE("SafeRelName keeps a name in its folder", "[util]")
+{
+	for (const char *n : {"DeltaGlider", "XR/XR2", "Celbody\\Earth", "a..b", ".hidden", "a/./b"}) {
+		INFO(n);
+		CHECK(SafeRelName (n));
+	}
+	for (const char *n : {"", "../x", "a/../b", "a\\..\\b", "/etc/x", "\\x", "C:x", "..", "x/.."}) {
+		INFO(n);
+		CHECK_FALSE(SafeRelName (n));
+	}
+	CHECK_FALSE(SafeRelName (nullptr));
+}
+
+// not upstream: vessel and record names as one file name in the Flights folder (design-security-fixes D)
+TEST_CASE("SafeFileName makes one file name of a vessel or record name", "[util]")
+{
+	CHECK(SafeFileName ("GL-01") == "GL-01");
+	CHECK(SafeFileName ("Delta Glider (2)") == "Delta Glider (2)");
+	CHECK(SafeFileName ("../../.ssh/x") == ".._.._.ssh_x");
+	CHECK(SafeFileName ("a\\b") == "a_b");
+	CHECK(SafeFileName ("a\nb\x7f") == "a_b_");
+	CHECK(SafeFileName ("..") == "_");
+	CHECK(SafeFileName (".") == "_");
+	CHECK(SafeFileName ("") == "_");
+	CHECK(SafeFileName (nullptr) == "_");
+	CHECK(SafeFileName ("/") == "_");
+}

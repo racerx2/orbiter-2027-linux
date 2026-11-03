@@ -16,13 +16,18 @@ set(TRACY_ONLY_LOCALHOST ON)
 set(TRACY_ON_DEMAND ON)
 set(TRACY_ONLY_IPV4 ON)
 
+# not upstream: Tracy is fetched only for profiler builds, pinned by its commit; others take its macros as no-ops
+if(NOT ORBITER_TRACY_PROFILER)
+	set(TRACY_CLIENT_INCLUDE ${CMAKE_CURRENT_LIST_DIR}/tracy-off CACHE PATH "Tracy public include path" FORCE)
+	return()
+endif()
+
 Include(FetchContent)
 include(ExternalProject)
 
 FetchContent_Declare(tracy
 	GIT_REPOSITORY https://github.com/wolfpld/tracy.git
-	GIT_TAG v0.12.2
-	GIT_SHALLOW TRUE
+	GIT_TAG c556831ddc6fe26d2fce01c14c97205a9dad46d5 # v0.12.2
 	EXCLUDE_FROM_ALL # prevents installation of lib and include directories in ${ORBITER_INSTALL_ROOT_DIR}
 )
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW) # not upstream: Tracy's option() keeps the TRACY_* values set above
@@ -32,7 +37,7 @@ FetchContent_MakeAvailable(tracy)
 set(CMAKE_MESSAGE_LOG_LEVEL ${tracy_log_level})
 unset(CMAKE_POLICY_DEFAULT_CMP0077) # not upstream
 
-set(TRACY_CLIENT_INCLUDE ${tracy_SOURCE_DIR}/public/tracy CACHE PATH "Tracy public include path")
+set(TRACY_CLIENT_INCLUDE ${tracy_SOURCE_DIR}/public/tracy CACHE PATH "Tracy public include path" FORCE)
 
 # Build the server and client library only if profiling is enabled.
 if(ORBITER_TRACY_PROFILER)

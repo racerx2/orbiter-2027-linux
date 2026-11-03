@@ -1,0 +1,9 @@
+# not upstream: LeakSanitizer suppressions for the linux-x64-asan test preset; Qt's and fontconfig's font caches, kept until exit, not Orbiter's
+# Qt's FreeType faces and font engines (per thread, never freed on the main thread) and what they hold
+leak:QFreetypeFace::getFace
+leak:QFontEngineFT::
+leak:QFontconfigDatabase::fontEngine
+leak:QFontCache::
+leak:QFontDatabasePrivate::
+# fontconfig's configuration and pattern caches
+leak:libfontconfig.so

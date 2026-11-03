@@ -79,9 +79,9 @@ void Mesh::Set (const Mesh &mesh)
 		memcpy (Grp, mesh.Grp, nGrp*sizeof(GroupSpec));
 		for (i = 0; i < nGrp; i++) {
 			Grp[i].Vtx = new NTVERTEX[Grp[i].nVtx];
-			memcpy (Grp[i].Vtx, mesh.Grp[i].Vtx, Grp[i].nVtx*sizeof(NTVERTEX));
+			if (Grp[i].nVtx) memcpy (Grp[i].Vtx, mesh.Grp[i].Vtx, Grp[i].nVtx*sizeof(NTVERTEX)); // not upstream: no null source for an empty list
 			Grp[i].Idx = new WORD[Grp[i].nIdx];
-			memcpy (Grp[i].Idx, mesh.Grp[i].Idx, Grp[i].nIdx*sizeof(WORD)); 
+			if (Grp[i].nIdx) memcpy (Grp[i].Idx, mesh.Grp[i].Idx, Grp[i].nIdx*sizeof(WORD)); // not upstream: as Vtx
 			if (mesh.Grp[i].Comment) {
 				Grp[i].Comment = new char[strlen(mesh.Grp[i].Comment)+1];
 				strcpy (Grp[i].Comment, mesh.Grp[i].Comment);
@@ -171,7 +171,7 @@ int Mesh::AddGroup (NTVERTEX *vtx, DWORD nvtx, WORD *idx, DWORD nidx,
 	DWORD mtrl_idx, DWORD tex_idx, WORD zbias)
 {
 	GroupSpec *tmp_Grp = new GroupSpec[nGrp+1];
-	memcpy (tmp_Grp, Grp, sizeof(GroupSpec)*nGrp);
+	if (nGrp) memcpy (tmp_Grp, Grp, sizeof(GroupSpec)*nGrp); // not upstream: Grp is null before the first group
 	if (nGrp) delete []Grp;
 	Grp = tmp_Grp;
 	Grp[nGrp].Vtx = vtx;  Grp[nGrp].nVtx = nvtx;
@@ -215,8 +215,8 @@ void Mesh::AddMesh (Mesh &mesh)
 		DWORD nvtx, nidx;
 		mesh.GetGroup (i, vtx, nvtx, idx, nidx);
 		// need to copy the vertex and index lists
-		vtx2 = new NTVERTEX[nvtx];  memcpy (vtx2, vtx, nvtx*sizeof(NTVERTEX));
-		idx2 = new WORD[nidx];       memcpy (idx2, idx, nidx*sizeof(WORD));
+		vtx2 = new NTVERTEX[nvtx];  if (nvtx) memcpy (vtx2, vtx, nvtx*sizeof(NTVERTEX)); // not upstream: no null source for an empty list
+		idx2 = new WORD[nidx];       if (nidx) memcpy (idx2, idx, nidx*sizeof(WORD));
 		AddGroup (vtx2, nvtx, idx2, nidx);
 	}
 }
@@ -224,7 +224,7 @@ void Mesh::AddMesh (Mesh &mesh)
 int Mesh::AddMaterial (MATERIAL &mtrl)
 {
 	MATERIAL *tmp_Mtrl = new MATERIAL[nMtrl+1];
-	memcpy (tmp_Mtrl, Mtrl, sizeof(MATERIAL)*nMtrl);
+	if (nMtrl) memcpy (tmp_Mtrl, Mtrl, sizeof(MATERIAL)*nMtrl); // not upstream: Mtrl is null before the first material
 	memcpy (tmp_Mtrl+nMtrl, &mtrl, sizeof(MATERIAL));
 	if (nMtrl) delete []Mtrl;
 	Mtrl = tmp_Mtrl;

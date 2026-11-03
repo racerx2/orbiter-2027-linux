@@ -176,7 +176,8 @@ void CollStore::ParseBody (const std::vector<std::string> &lines, CollStoreBlock
 		if (Kw (t[0], "COLLA")) continue;
 		if (Kw (t[0], "RECID")) {
 			double t0;
-			if (t.size () >= 3 && Real (t[2], t0)) out.recId = t[1], out.recT0 = t0;
+			if (t.size () >= 3 && Real (t[2], t0) && !t[1].empty () && t[1].size () <= 64 && t[1].find_first_not_of ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-") == std::string::npos) // the id names a side file: letters, digits, '_' and '-' only
+				out.recId = t[1], out.recT0 = t0;
 			else out.skipped++;
 			continue;
 		}

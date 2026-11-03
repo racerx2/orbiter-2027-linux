@@ -13,6 +13,56 @@
 class VESSEL;
 class WbVessel;
 
+// not upstream (design-security-fixes F1, F2): what an id was given as; a typed request takes ANY or its own kind, a C function or hook FN only
+enum WbKind : uint8_t { WK_ANY, WK_FN, WK_LUA, WK_OBJHANDLE, WK_VISHANDLE, WK_MESHHANDLE, WK_DEVMESHHANDLE, WK_SURFHANDLE, WK_FILEHANDLE,
+	WK_NOTEHANDLE, WK_NAVHANDLE, WK_PSTREAM_HANDLE, WK_CTRLSURFHANDLE, WK_AIRFOILHANDLE, WK_THRUSTER_HANDLE, WK_THGROUP_HANDLE,
+	WK_PROPELLANT_HANDLE, WK_DOCKHANDLE, WK_ATTACHMENTHANDLE, WK_ANIMATIONCOMPONENT_HANDLE, WK_PANELHANDLE, WK_LAUNCHPADITEM_HANDLE,
+	WK_BLOCK }; // WK_BLOCK: a native module's userdata block, freed when the helper's Lua collects it
+
+// not upstream (F1, F2): the ids, their pointers and kinds; a retired id names nothing again (never given anew)
+class WbIds {
+public:
+	uint32_t Id (const void *p, uint8_t kind = WK_ANY);
+	void *Ptr (uint32_t id) const { return id < m_ptr.size () ? (void *)m_ptr[id] : nullptr; }
+	void *Ptr (uint32_t id, uint8_t kind) const { return id < m_ptr.size () && (m_kind[id] == WK_ANY || m_kind[id] == kind) && kind != WK_FN ? (void *)m_ptr[id] : nullptr; }
+	void *Is (uint32_t id, uint8_t kind) const { return id < m_ptr.size () && m_kind[id] == kind ? (void *)m_ptr[id] : nullptr; } // that kind only
+	uint32_t IdIf (const void *p) const { auto it = m_id.find (p); return p && it != m_id.end () ? it->second : 0; }
+	uint32_t Ids () const { return (uint32_t)m_ptr.size (); }
+	uint8_t Kind (uint32_t id) const { return id < m_kind.size () ? m_kind[id] : (uint8_t)WK_ANY; }
+	void Retire (const void *p);
+	void Clear () { m_ptr.assign (1, nullptr); m_kind.assign (1, WK_ANY); m_id.clear (); }
+private:
+	std::vector<const void *> m_ptr {nullptr};
+	std::vector<uint8_t> m_kind {WK_ANY};
+	std::unordered_map<const void *, uint32_t> m_id;
+};
+
+inline uint32_t WbIds::Id (const void *p, uint8_t kind)
+{
+	if (!p) return 0;
+	auto it = m_id.find (p);
+	if (it != m_id.end ()) {
+		uint8_t &k = m_kind[it->second];
+		if (k == WK_ANY) k = kind;
+		else if (kind != WK_ANY && kind != k) k = WK_ANY; // given as two kinds: either, never a function
+		return it->second;
+	}
+	uint32_t id = (uint32_t)m_ptr.size ();
+	m_ptr.push_back (p);
+	m_kind.push_back (kind);
+	m_id[p] = id;
+	return id;
+}
+
+inline void WbIds::Retire (const void *p)
+{
+	auto it = m_id.find (p);
+	if (!p || it == m_id.end ()) return;
+	m_ptr[it->second] = nullptr;
+	m_kind[it->second] = WK_ANY;
+	m_id.erase (it);
+}
+
 class WbBridge {
 public:
 	static WbBridge &Get ();
@@ -28,11 +78,15 @@ public:
 	WbWriter &Begin (uint32_t fn);
 	WbReader Call ();
 
-	// handles crossing as ids (0 is null); the same pointer keeps its id for the session
-	uint32_t Id (const void *p);
-	void *Ptr (uint32_t id) const { return id < m_ptr.size () ? (void *)m_ptr[id] : nullptr; }
-	uint32_t IdIf (const void *p) const { auto it = m_id.find (p); return p && it != m_id.end () ? it->second : 0; } // 0: none given
-	uint32_t Ids () const { return (uint32_t)m_ptr.size (); } // the ids given are below
+	// handles crossing as ids (0 is null); the same pointer keeps its id for the session, until a deletion the bridge sees retires it
+	uint32_t Id (const void *p, uint8_t kind = WK_ANY) { return m_ids.Id (p, kind); }
+	void *Ptr (uint32_t id) const { return m_ids.Ptr (id); }
+	void *Ptr (uint32_t id, uint8_t kind) const { return m_ids.Ptr (id, kind); } // not upstream (F2): ANY or that kind
+	void *Fn (uint32_t id) const { return m_ids.Is (id, WK_FN); }                // not upstream (F1): given as a C function or hook
+	void *Is (uint32_t id, uint8_t kind) const { return m_ids.Is (id, kind); }   // not upstream (F1): given as that kind only
+	uint32_t IdIf (const void *p) const { return m_ids.IdIf (p); } // 0: none given
+	uint32_t Ids () const { return m_ids.Ids (); } // the ids given are below
+	void Retire (const void *p) { m_ids.Retire (p); } // not upstream (F2): the object is gone
 	uint32_t LuaFreeCount () const { return H ? __atomic_load_n (&H->lfree, __ATOMIC_SEQ_CST) : 0; } // the helper's, H_LUAFREE
 
 	// bridged vessels by their id, and any vessel by id
@@ -60,7 +114,7 @@ private:
 	bool Start ();
 	bool Wait ();
 	void Pass ();
-	void ServeOne ();
+	void ServeOne (uint32_t fn, uint32_t len); // not upstream (F5): the header as read once
 	void Dead (const char *why);
 	void Hooks (); // a module patched a vessel vtable: what is hooked now (H_HOOKS)
 
@@ -74,8 +128,8 @@ private:
 	uint32_t m_hooks = 0; // the helper's count of vtable changes Linux has asked about
 	int m_sound = -1; // XRSound was there at the last load (-1: no load yet)
 	std::string m_shm;
-	std::vector<const void *> m_ptr {nullptr};
-	std::unordered_map<const void *, uint32_t> m_id;
+	std::string m_dir; // not upstream (F8): the private folder made for the channel when there is no XDG_RUNTIME_DIR
+	WbIds m_ids;
 	std::unordered_map<uint32_t, WbVessel *> m_vessels;
 	std::map<std::string, Module> m_modules; // by path; a failure stays as number 0 until the helper stops
 

@@ -28,6 +28,8 @@
 #include <QMessageBox>
 #include <QSignalBlocker>
 #include <QTreeWidget>
+#include <cctype>
+#include <cstring>
 #include <dlfcn.h>
 #include <functional>
 #include <stdio.h>
@@ -49,6 +51,18 @@ void EditorProc (QWidget*, void*);
 
 // not upstream: Qt counterparts of the list box, combo box, tree view and dialog messages used below
 const int LB_ERR = -1; // winuser.h list/combo box error value
+
+// not upstream: a name from data that stays in its folder: not empty or absolute, no ".." part (the core's SafeRelName)
+static bool SafeRelName (const char *name)
+{
+	if (!name || !*name || name[0] == '/' || name[0] == '\\' || (isalpha ((unsigned char)name[0]) && name[1] == ':')) return false;
+	for (const char *p = name; *p; ) {
+		const char *e = p + strcspn (p, "/\\");
+		if (e - p == 2 && p[0] == '.' && p[1] == '.') return false;
+		p = *e ? e + 1 : e;
+	}
+	return true;
+}
 
 static int ListGetCurSel (QListWidget *lb) // LB_GETCURSEL; in an LBS_NOSEL list the item last clicked
 {
@@ -420,6 +434,10 @@ void *ScnEditor::LoadVesselLibrary (const VESSEL *vessel)
 	bool found = vessel->GetEditorModule (tmp); // not upstream: via tmp
 	if (found && strlen (tmp) >= sizeof cbuf) { // not upstream: a name that doesn't fit counts as no editor module
 		oapiWriteLogV ("ScnEditor: %s: EditorModule too long, ignored", vessel->GetClassName ());
+		found = false;
+	}
+	if (found && !SafeRelName (tmp)) { // not upstream: a name from a cfg stays in Modules
+		oapiWriteLogV ("ScnEditor: %s: EditorModule leaves the Modules folder, ignored", vessel->GetClassName ());
 		found = false;
 	}
 	if (found) { // not upstream: the copy fits

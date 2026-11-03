@@ -144,7 +144,7 @@ vec4 PSDgTrace(ivec2 px)
 	rayQueryEXT q;
 	rayQueryInitializeEXT(q, tTlas, gl_RayFlagsOpaqueEXT, mask, o, 0.0, d, Dg.prm.y);
 	while (rayQueryProceedEXT(q)) {}
-	if (rayQueryGetIntersectionTypeEXT(q, true) != gl_RayQueryCommittedIntersectionTriangleEXT) return vec4(Fin(DgMiss(o, d)), Dg.prm.z);
+	if (rayQueryGetIntersectionTypeEXT(q, true) != gl_RayQueryCommittedIntersectionTriangleEXT) return vec4(min(Fin(DgMiss(o, d)), vec3(6e4)), Dg.prm.z);	// not upstream: below RGBA16F's largest, where it turns Inf
 	float t = rayQueryGetIntersectionTEXT(q, true);
 	float dc = min(t / s, Dg.prm.z);
 	if (!rayQueryGetIntersectionFrontFaceEXT(q, true)) return vec4(0.0, 0.0, 0.0, -max(dc, 1e-3));
@@ -156,8 +156,10 @@ vec4 PSDgTrace(ivec2 px)
 	if (dot(n, d) > 0.0) n = -n;
 	int row = rayQueryGetIntersectionInstanceCustomIndexEXT(q, true);
 	int geo = rayQueryGetIntersectionGeometryIndexEXT(q, true);
-	return vec4(Fin(DgShade(o + d * t, n, -d, row, geo, mask)), dc);
+	return vec4(min(Fin(DgShade(o + d * t, n, -d, row, geo, mask)), vec3(6e4)), dc);	// not upstream: as above
 }
+
+bool DgFinite(vec4 x) { return !any(isinf(x)) && !any(isnan(x)); }	// not upstream: a ray that isn't is no sample
 
 // the blend weight of each scheduled probe: 1 - hysteresis, lower hysteresis where the light changed (Majercik 2021)
 float PSDgAlpha(ivec2 px)
@@ -169,8 +171,9 @@ float PSDgAlpha(ivec2 px)
 	int p = int(e & 0xFFFFu);
 	if ((e & DG_RESET) != 0u || texelFetch(tStateD, DgBlock(p), 0).w < 0.5) return 1.0;
 	vec3 now = vec3(0.0);
-	for (int r = 0; r < DG_RAYS; r++) now += texelFetch(tRayD, DgRayTexel(i, r), 0).rgb;
-	now /= float(DG_RAYS);
+	int nf = 0;
+	for (int r = 0; r < DG_RAYS; r++) { vec4 x = texelFetch(tRayD, DgRayTexel(i, r), 0); if (DgFinite(x)) { now += x.rgb; nf++; } }
+	now /= float(max(nf, 1));
 	vec3 was = vec3(0.0);
 	ivec2 b = DgBlock(p) * DG_IRR;
 	for (int j = 0; j < DG_IRR; j++)
@@ -226,6 +229,7 @@ vec4 PSDgUpdate(int i, bool dist, ivec2 px)
 	int nb = 0;
 	for (int r = 0; r < DG_RAYS; r++) {
 		vec4 x = texelFetch(tRayD, DgRayTexel(i, r), 0);
+		if (!DgFinite(x)) continue;
 		if (x.a < 0.0) nb++;
 		float c = max(dot(dir, DgRayDir(r)), 0.0);
 		if (dist) {

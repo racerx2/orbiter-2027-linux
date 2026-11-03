@@ -13,6 +13,15 @@ Graphics:
   VK_EXT_shader_object (Intel, older AMD Mesa) use the Khronos shader-object layer that comes with
   this package (lib/vulkan).
 
+Checking the download (optional):
+  Each release has a .sha256 and a .sig next to the tarball. The .sig is an SSH signature made with
+  the Orbiter 2027 Linux release key; packaging/linux/allowed_signers in the repository holds it:
+    orbiter-2027-linux-release namespaces="file" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAUwkXGNb2FzTQDYA2U7lYfRyEW+I9C7hivqAyhr6KKg
+  Save that line as allowed_signers, then:
+    ssh-keygen -Y verify -f allowed_signers -I orbiter-2027-linux-release -n file \
+      -s Orbiter2027-Linux-x86_64-<version>.tar.xz.sig < Orbiter2027-Linux-x86_64-<version>.tar.xz
+  It prints "Good" for an untouched file.
+
 Start:
   1. Unpack into a folder you own, for example your home folder (not /opt): Orbiter writes its
      settings, logs and downloads next to itself.
@@ -28,7 +37,7 @@ Windows add-ons:
   that runs 32-bit programs: on Linux Mint the Software Manager's "Wine" (sudo apt install
   wine-installer). Doc/WineBridge/README.txt has the other distributions.
 
-Included: Qt 6.8 and the other libraries Orbiter needs that differ between distributions (lib/).
+Included: Qt 6.12 (built for this package) and the other libraries Orbiter needs that differ between distributions (lib/).
 Taken from the system: the C library, graphics drivers (Vulkan, OpenGL), X11/Wayland, fonts,
 D-Bus, GLib, OpenSSL, PipeWire (sound).
 

@@ -292,9 +292,9 @@ void VkConstBuffer::ClearTextures ()
 	dirty = true;
 }
 
-void VkConstBuffer::Push (const std::vector<VkSamplerSlot> &samplers)
+bool VkConstBuffer::Push (const std::vector<VkSamplerSlot> &samplers)
 {
-	if (!dev->IsRecording ()) return;
+	if (!dev->IsRecording ()) return true;
 	dirty = false;
 	VkWriteDescriptorSet w[VkDev::MAXBINDINGS];
 	VkDescriptorBufferInfo bi[VkDev::NUBOS];
@@ -305,6 +305,7 @@ void VkConstBuffer::Push (const std::vector<VkSamplerSlot> &samplers)
 		void *p;
 		VkBuffer tb;
 		VkDeviceSize ofs = dev->AllocTransient (d.second.size(), 16, &p, &tb);
+		if (!p) { dirty = true; return false; } // not upstream: no memory, the draw is skipped
 		memcpy (p, d.second.data(), d.second.size());
 		bi[nb] = { tb, ofs, d.second.size() };
 		w[n] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
@@ -344,6 +345,7 @@ void VkConstBuffer::Push (const std::vector<VkSamplerSlot> &samplers)
 		n++;
 	}
 	if (n) vkx.CmdPushDescriptorSet (dev->Cmd (), VK_PIPELINE_BIND_POINT_GRAPHICS, dev->PipelineLayout (), 0, n, w);
+	return true;
 }
 
 // effect declarations

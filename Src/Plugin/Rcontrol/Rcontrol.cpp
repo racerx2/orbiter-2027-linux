@@ -31,6 +31,7 @@ namespace oapi {
 		static void hookOpenDlg(void* context);
 
 		void clbkSimulationStart (RenderMode mode) override;
+		void clbkDeleteVessel (OBJHANDLE hVessel) override; // not upstream
 
 		void OnDraw();
 
@@ -47,6 +48,7 @@ namespace oapi {
 		int m_dwMenuCmd;
 
 		VESSEL* m_pVessel;     ///> vessel pointer
+		OBJHANDLE m_hVessel;   // not upstream: checked before each use, the pointer of a deleted vessel dangles
 		std::string m_vesselName;
 		float m_RCSlevel;
 	};
@@ -94,6 +96,7 @@ oapi::RControl::RControl(void *hDLL)
 	m_dwMenuCmd = oapiRegisterCustomMenuCmd ("Rcontrol", "MenuInfoBar/Rcontrol.png", hookOpenDlg, this);
 
 	m_pVessel = nullptr;
+	m_hVessel = nullptr;
 	m_RCSlevel = 1.0f;
 }
 
@@ -110,7 +113,13 @@ oapi::RControl::~RControl()
 void oapi::RControl::SetVessel(VESSEL *vessel)
 {
 	m_pVessel = vessel;
-	m_vesselName = vessel->GetName();
+	m_hVessel = vessel ? vessel->GetHandle() : nullptr; // not upstream: none without a focus vessel
+	m_vesselName = vessel ? vessel->GetName() : "";
+}
+
+void oapi::RControl::clbkDeleteVessel (OBJHANDLE hVessel)
+{
+	if (hVessel == m_hVessel) SetVessel(nullptr); // the next draw takes the focus vessel
 }
 
 void oapi::RControl::clbkSimulationStart (RenderMode mode)
@@ -127,6 +136,7 @@ bool ButtonPressed(const char *label, const ImVec2 &size)
 void oapi::RControl::OnDraw()
 {
 	char cbuf[128];
+	if (!m_hVessel || !oapiIsVessel(m_hVessel)) SetVessel(oapiGetFocusInterface()); // not upstream
 	ImGui::SeparatorText("Vessel");
 	ImGui::SetNextItemWidth(160.0f);
 	if(ImGui::BeginAnimatedCombo("##Vessel", m_vesselName.c_str(), ImGuiComboFlags_HeightLargest)) {
@@ -145,6 +155,7 @@ void oapi::RControl::OnDraw()
 		}
 		ImGui::EndAnimatedCombo();
 	}
+	if (!m_pVessel) return; // not upstream: no vessel to control
 	ImGui::SameLine();
 	if(ImGui::Button("Set focus")) {
 		oapiSetFocusObject(m_pVessel->GetHandle());

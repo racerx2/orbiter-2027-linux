@@ -121,18 +121,52 @@ TEST_CASE ("TIFF levels past the limits are refused before any allocation", "[de
 
 TEST_CASE ("A TIFF offset table bigger than the bytes in hand asks for more instead of allocating", "[decode]")
 {
-	std::vector<E> e = Level ();
-	e[8] = {324, 4, 1u << 24, 1000};
+	std::vector<E> e = Level (16384);
+	e[8] = {324, 4, 1u << 20, 1000}; // 1024 x 1024 tiles
 	auto t0 = std::chrono::steady_clock::now();
 	std::vector<TsCog::Ifd> ifd;
 	int64_t need = TsCog::Parse (Tiff (e), ifd);
-	CHECK (need >= 1000 + 4 * (int64_t)(1 << 24));
+	CHECK (need >= 1000 + 4 * (int64_t)(1 << 20));
 	CHECK (Secs (t0) < 0.5);
+	e = Level ();
+	e[8] = {324, 4, 1u << 24, 1000}; // not upstream: past 2^20 tiles, refused before any read or allocation
+	CHECK (TsCog::Parse (Tiff (e), ifd) == -1);
 	uint64_t max;
 	int reads;
-	CHECK_FALSE (ClassesOf (Tiff (e), max, reads)); // over 8 MB of header: not fetched again
+	CHECK_FALSE (ClassesOf (Tiff (e), max, reads));
 	CHECK (reads == 2); // the tile spans two cells: one header read each
 	CHECK (max <= 65536);
+	CHECK (Secs (t0) < 0.5);
+}
+
+// not upstream: the tables a parse keeps, 64 MB at most over all its levels
+TEST_CASE ("TIFF tables over 64 MB in all are refused", "[decode]")
+{
+	const uint32_t n = 1u << 20, at = 4096; // 2^20 entries of 4 bytes each, then 8 bytes kept per entry: 8 MB a table
+	auto t0 = std::chrono::steady_clock::now();
+	std::vector<E> lv = {{256, 4, 1, 16384}, {257, 4, 1, 16384}, {258, 3, 1, 8}, {259, 3, 1, 8}, {277, 3, 1, 1}, {322, 4, 1, 16}, {323, 4, 1, 16}, {324, 4, n, at}, {325, 4, n, at}};
+	QByteArray one = Tiff (lv);
+	one.resize (at + 4 * n);
+	std::vector<TsCog::Ifd> ifd;
+	CHECK (TsCog::Parse (one, ifd) == 0); // 16 MB of tables: kept
+	REQUIRE (ifd.size() == 1);
+	CHECK (ifd[0].off.size() == n);
+	QByteArray many ((qsizetype)(at + 4 * n), 0); // 5 levels chained, each pointing at the same tables: 80 MB
+	auto p16 = [&many] (int a, uint32_t v) { many[a] = (char)(v & 255); many[a + 1] = (char)((v >> 8) & 255); };
+	auto p32 = [&many] (int a, uint32_t v) { for (int i = 0; i < 4; i++) many[a + i] = (char)((v >> (8 * i)) & 255); };
+	many[0] = 'I'; many[1] = 'I'; p16 (2, 42); p32 (4, 8);
+	int ifdAt = 8, size = 2 + 12 * (int)lv.size() + 4;
+	for (int k = 0; k < 5; k++, ifdAt += size) {
+		p16 (ifdAt, (uint16_t)lv.size());
+		for (size_t i = 0; i < lv.size(); i++) {
+			int a = ifdAt + 2 + 12 * (int)i;
+			p16 (a, lv[i].tag); p16 (a + 2, lv[i].type); p32 (a + 4, lv[i].count);
+			if (lv[i].type == 3 && lv[i].count == 1) p16 (a + 8, lv[i].val); else p32 (a + 8, lv[i].val);
+		}
+		p32 (ifdAt + size - 4, k < 4 ? ifdAt + size : 0);
+	}
+	CHECK (TsCog::Parse (many, ifd) == -1);
+	CHECK (Secs (t0) < 5.0);
 }
 
 TEST_CASE ("A TIFF tile body over 8 MB is never asked for", "[decode]")
@@ -197,6 +231,26 @@ std::string Elv (const double b[4], int32_t dt = -16, int32_t nx = 259, double m
 	for (size_t at = 100; at + 2 <= size; at += 2) memcpy (&e[at], &q, 2);
 	return e;
 }
+}
+
+// not upstream (design-security-fixes E6)
+TEST_CASE ("A TileJSON's tiles URL is taken only as https (or a local file) on its own or the configured host", "[decode]")
+{
+	const std::string from = "https://tiles.openfreemap.org/planet", cfg = "https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf";
+	auto J = [] (const std::string &t) { return QByteArray::fromStdString ("{\"tiles\":[\"" + t + "\"],\"minzoom\":0}"); };
+	CHECK (TsTileJsonUrl (J ("https://tiles.openfreemap.org/planet/20250101_001001_pt/{z}/{x}/{y}.pbf"), from, cfg) == "https://tiles.openfreemap.org/planet/20250101_001001_pt/{z}/{x}/{y}.pbf");
+	CHECK (TsTileJsonUrl (J ("https://TILES.openfreemap.org/p/{z}/{x}/{y}.pbf"), from, cfg) != "");
+	CHECK (TsTileJsonUrl (J ("https://cdn.example.org/{z}/{x}/{y}.pbf"), from, "https://cdn.example.org/a/{z}/{x}/{y}") != ""); // the configured host
+	for (const char *bad : {"http://tiles.openfreemap.org/{z}/{x}/{y}.pbf", "file:///etc/{z}/{x}/{y}", "https://192.168.1.1/{z}/{x}/{y}.pbf",
+		"https://evil.example/{z}/{x}/{y}.pbf", "https://tiles.openfreemap.org.evil.example/{z}/{x}/{y}.pbf", "https://user@tiles.openfreemap.org/{z}/{x}/{y}.pbf",
+		"https://tiles.openfreemap.org:8443/{z}/{x}/{y}.pbf", "https://tiles.openfreemap.org/{x}/{y}.pbf", "", "\"tiles\""})
+		CHECK (TsTileJsonUrl (J (bad), from, cfg) == "");
+	CHECK (TsTileJsonUrl ("{\"tiles\": \"https://tiles.openfreemap.org/{z}/{x}/{y}\"}", from, cfg) == ""); // not an array
+	CHECK (TsTileJsonUrl ("{\"x\":\"\\\"tiles\\\":[\\\"https://tiles.openfreemap.org/{z}/{x}/{y}\\\"]\"}", from, cfg) == ""); // the word in a string, not a key
+	CHECK (TsTileJsonUrl ("not json", from, cfg) == "");
+	CHECK (TsTileJsonUrl (J ("file:///data/bldg/{z}/{x}/{y}.pbf"), "file:///data/tiles.json", "file:///none/{z}/{x}/{y}.pbf") != ""); // local, from a local file
+	CHECK (TsTileJsonUrl (J ("file:///data/bldg/{z}/{x}/{y}.pbf"), from, "https://a.example/{z}/{x}/{y}") == ""); // a remote one can't name a file
+	CHECK (TsTileJsonUrl (J ("https://t.example:8443/{z}/{x}/{y}.pbf"), "https://t.example:8443/tiles.json", cfg) != ""); // its own port
 }
 
 TEST_CASE ("ElvAt refuses degenerate, non-finite and short .elv headers", "[decode]")
@@ -370,6 +424,68 @@ TEST_CASE ("Building heights: non-finite skipped, clamped to 1000 m, min not abo
 	REQUIRE (mi.b.size() == 1);
 	CHECK (mi.b[0].hmax == 5.0f);
 	CHECK (mi.b[0].hmin == 0.0f);
+}
+
+namespace {
+// not upstream: a layer of one feature whose geometry is a MoveTo and n zero LineTos, type 2 or 3
+std::string PointBomb (const std::string &name, int type, uint32_t n, const std::string &cls = "")
+{
+	std::string l, g, ft, t;
+	Mvt::Bytes (l, 1, name);
+	Mvt::Var (g, 1 | 1 << 3); Mvt::Var (g, 0); Mvt::Var (g, 0);
+	Mvt::Var (g, 2 | (uint64_t)n << 3);
+	g.append (2 * (size_t)n, '\0');
+	if (!cls.empty()) { Mvt::Var (t, 0); Mvt::Var (t, 0); Mvt::Bytes (ft, 2, t); }
+	Mvt::Key (ft, 3, 0); Mvt::Var (ft, type);
+	Mvt::Bytes (ft, 4, g);
+	Mvt::Bytes (l, 2, ft);
+	if (!cls.empty()) {
+		Mvt::Bytes (l, 3, "class");
+		std::string v;
+		Mvt::Bytes (v, 1, cls);
+		Mvt::Bytes (l, 4, v);
+	}
+	Mvt::Key (l, 5, 0); Mvt::Var (l, 4096);
+	std::string out;
+	Mvt::Bytes (out, 3, l);
+	return out;
+}
+}
+
+TEST_CASE ("MVT point bombs stop at the tile's point cap; inflate stops at 16 MB", "[decode]")
+{
+	auto t0 = std::chrono::steady_clock::now();
+	std::vector<TsBldg::Feature> f;
+	uint32_t ext = 0;
+	Mvt ok;
+	ok.Layer ("building", 4096, {{1000, 1000, 1400, 1400, {{"render_height", "d:10"}}}});
+	std::string bomb = ok.out + PointBomb ("building", 3, 5000000);
+	REQUIRE (TsBldg::Decode (bomb, f, ext));
+	REQUIRE (f.size() == 1); // the feature before the bomb kept, the bomb left out
+	CHECK (f[0].rings[0].size() == 4);
+	TsWay::Tile w;
+	w.z = 14; w.x = 8000; w.y = 6000;
+	REQUIRE (TsWay::Decode (PointBomb ("transportation", 2, 5000000, "primary"), w));
+	CHECK (w.f.empty());
+	size_t pts = 0;
+	TsWay::Tile w2;
+	REQUIRE (TsWay::Decode (PointBomb ("transportation", 2, 1000, "primary"), w2));
+	for (auto &F : w2.f) for (auto &p : F.parts) pts += p.size() / 2;
+	CHECK (pts == 1001); // under the cap: all of it
+	CHECK (Secs (t0) < 5.0);
+	std::string zeros ((size_t)20 << 20, '\0'), gz, out;
+	gz.resize (compressBound (zeros.size()));
+	uLongf n = gz.size();
+	REQUIRE (compress ((Bytef*)&gz[0], &n, (const Bytef*)zeros.data(), zeros.size()) == Z_OK);
+	gz.resize (n);
+	CHECK_FALSE (TsBldg::Inflate (gz, out)); // 20 MB out of 20 kB
+	std::string small (1 << 20, 'a');
+	gz.resize (compressBound (small.size()));
+	n = gz.size();
+	REQUIRE (compress ((Bytef*)&gz[0], &n, (const Bytef*)small.data(), small.size()) == Z_OK);
+	gz.resize (n);
+	REQUIRE (TsBldg::Inflate (gz, out));
+	CHECK (out == small);
 }
 
 TEST_CASE ("An empty building mesh round-trips", "[decode]")

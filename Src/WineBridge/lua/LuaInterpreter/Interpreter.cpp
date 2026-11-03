@@ -97,8 +97,10 @@ int Interpreter::LuaCall(lua_State *L, int narg, int nres)
 	int res = lua_pcall(L, narg, nres, base);
 	lua_remove(L, base);
 	if(res != 0) {
-		oapiWriteLogError("%s", lua_tostring(L, -1));
-		oapiAnnotationSetText(errorbox, const_cast<char *>(lua_tostring(L, -1)));
+		const char *msg = lua_tostring(L, -1);
+		if (!msg) msg = "(error object is not a string)"; // not upstream: error({}) gives no text
+		oapiWriteLogError("%s", msg);
+		oapiAnnotationSetText(errorbox, const_cast<char *>(msg));
 	}
 	return res;
 }
@@ -331,27 +333,28 @@ VECTOR3 Interpreter::luamtd_field_tovector_safe (lua_State *L, int idx, const ch
 
 const char *Interpreter::lua_tostringex (lua_State *L, int idx, char *cbuf)
 {
-	static char cbuf_loc[256];
+	static char cbuf_loc[256]; // static as upstream (the helper's CRT has no thread-local storage); a caller's cbuf takes 256 bytes too
 	if (!cbuf) cbuf = cbuf_loc;
+	const size_t CB = sizeof cbuf_loc;
 	const char *str = lua_tostring (L,idx);
 	if (str) {
 		return str;
 	} else if (lua_isvector (L,idx)) {
 		VECTOR3 v = lua_tovector (L,idx);
-		sprintf (cbuf, "[%g %g %g]", v.x, v.y, v.z);
+		snprintf (cbuf, CB, "[%g %g %g]", v.x, v.y, v.z);
 		return cbuf;
 	} else if (lua_ismatrix (L,idx)) {
 		MATRIX3 m = lua_tomatrix(L,idx);
 		int i, len[9], lmax[3];
 		for (i = 0; i < 9; i++) {
-			sprintf (cbuf, "%g", m.data[i]);
+			snprintf (cbuf, CB, "%g", m.data[i]);
 			len[i] = strlen(cbuf);
 		}
 		lmax[0] = max(len[0], max(len[3], len[6]));
 		lmax[1] = max(len[1], max(len[4], len[7]));
 		lmax[2] = max(len[2], max(len[5], len[8]));
 
-		sprintf (cbuf, "[%*g %*g %*g]\n[%*g %*g %*g]\n[%*g %*g %*g]",
+		snprintf (cbuf, CB, "[%*g %*g %*g]\n[%*g %*g %*g]\n[%*g %*g %*g]",
 			lmax[0], m.m11, lmax[1], m.m12, lmax[2], m.m13,
 			lmax[0], m.m21, lmax[1], m.m22, lmax[2], m.m23,
 			lmax[0], m.m31, lmax[1], m.m32, lmax[2], m.m33);
@@ -359,7 +362,7 @@ const char *Interpreter::lua_tostringex (lua_State *L, int idx, char *cbuf)
 	}
 	else if (lua_istouchdownvtx (L,idx)) {
 		TOUCHDOWNVTX tdvx = lua_totouchdownvtx (L,idx);
-		sprintf (cbuf, "{pos=[%g %g %g] stiffness=%g damping=%g mu=%g mu_lng=%g}",
+		snprintf (cbuf, CB, "{pos=[%g %g %g] stiffness=%g damping=%g mu=%g mu_lng=%g}",
 			tdvx.pos.x, tdvx.pos.y, tdvx.pos.z,
 			tdvx.stiffness, tdvx.damping, tdvx.mu, tdvx.mu_lng);
 		return cbuf;
@@ -372,30 +375,37 @@ const char *Interpreter::lua_tostringex (lua_State *L, int idx, char *cbuf)
 		return cbuf;
 	} else if (lua_islightuserdata (L,idx)) {
 		void *p = lua_touserdata(L,idx);
-		sprintf (cbuf, "0x%08p [data]", p);
+		snprintf (cbuf, CB, "0x%08p [data]", p);
 		return cbuf;
 	} else if (lua_isuserdata (L,idx)) {
 		void *p = lua_touserdata(L,idx);
-		sprintf (cbuf, "0x%08p [object]", p);
+		snprintf (cbuf, CB, "0x%08p [object]", p);
 		return cbuf;
 	} else if (lua_istable (L, idx)) {
 		if (idx < 0) idx--;
 		lua_pushnil(L);  /* first key */
-		static char tbuf[1024]; tbuf[0] = '\0';
+		static char tbuf[1024]; tbuf[0] = '\0'; // not upstream: each line and the whole cut to their buffers
+		size_t n = 0;
 		while (lua_next(L, idx) != 0) {
 			/* uses 'key' (at index -2) and 'value' (at index -1) */
 			char fieldstr[256] = "\0";
-			if (lua_isstring(L,-2)) sprintf (fieldstr, "%s=", lua_tostring(L,-2));
+			if (lua_type(L,-2) == LUA_TSTRING || lua_type(L,-2) == LUA_TNUMBER) { // not upstream: a copy of the key, so lua_next still finds it
+				lua_pushvalue (L, -2);
+				snprintf (fieldstr, sizeof fieldstr, "%s=", lua_tostring(L,-1));
+				lua_pop (L, 1);
+			}
+			size_t f = strlen (fieldstr);
 			if(lua_istable(L, -1)) // cut the tree to prevent stack overflow with recursive table
-				strcat (fieldstr, "[table]");
+				snprintf (fieldstr + f, sizeof fieldstr - f, "[table]");
 			else
-				strcat (fieldstr, lua_tostringex (L,-1));
-			strcat (tbuf, fieldstr); strcat (tbuf, "\n");
+				snprintf (fieldstr + f, sizeof fieldstr - f, "%s", lua_tostringex (L,-1));
+			if (n < sizeof tbuf - 1) n += (size_t)snprintf (tbuf + n, sizeof tbuf - n, "%s\n", fieldstr);
+			if (n > sizeof tbuf - 1) n = sizeof tbuf - 1;
 			lua_pop(L, 1);
 		}
 		return tbuf;
 	} else if (lua_isfunction (L, idx)) {
-		strcpy (cbuf, "[function]");
+		snprintf (cbuf, CB, "[function]");
 		return cbuf;
 	} else {
 		cbuf[0] = '\0';
@@ -560,8 +570,8 @@ void Interpreter::lua_pushmfd (lua_State *L, MFD2 *mfd)
 
 MFD2 *Interpreter::lua_tomfd (lua_State *L, int idx)
 {
-	MFD2 **pmfd = (MFD2**)lua_touserdata(L,idx);
-	return *pmfd;
+	MFD2 **pmfd = (MFD2**)luaL_tryudata(L, idx, "MFD.vtable"); // not upstream: only an MFD object (anything else, nil included, is NULL)
+	return pmfd ? *pmfd : NULL;
 }
 
 #ifdef UNDEF
@@ -648,8 +658,8 @@ int Interpreter::lua_pushnumberref(lua_State* L)
 
 LightEmitter *Interpreter::lua_tolightemitter (lua_State *L, int idx)
 {
-	LightEmitter **le = (LightEmitter**)lua_touserdata (L, idx);
-	return *le;
+	LightEmitter **le = (LightEmitter**)luaL_tryudata (L, idx, "LightEmitter.vtable"); // not upstream: only a light object
+	return le ? *le : NULL;
 }
 
 void Interpreter::lua_pushsketchpad (lua_State *L, oapi::Sketchpad *skp)
@@ -1887,19 +1897,18 @@ int Interpreter::help (lua_State *L)
 	} else if (lua_isstring (L,1)) {
 		// call a help page from the main Orbiter help file
 		char topic[256];
-		strncpy (topic, lua_tostring (L, 1), 255); lua_pop (L, 1);
+		snprintf (topic, sizeof topic, "%s", lua_tostring (L, 1)); lua_pop (L, 1); // not upstream: a copy cut at the buffer's end
 		lua_pushstring (L, "html/orbiter.chm");
 		lua_pushstring (L, topic);
 		interp->oapiOpenHelp (L);
 	} else if (lua_istable (L,1)) {
 		// call a help page from an external help file
-		char file[256], topic[256];
 		lua_getfield (L, 1, "file");
 		lua_getfield (L, 1, "topic");
-		strcpy (file, lua_tostring(L,-2));
-		if (!lua_isnil(L,-1))
-			strcpy (topic, lua_tostring(L,-1));
-		else topic[0] = '\0';
+		ASSERT_SYNTAX (lua_isstring (L, -2), "help: table needs a 'file' string"); // not upstream: copies cut at the buffers' ends, a missing file refused
+		char file[256], topic[256];
+		snprintf (file, sizeof file, "%s", lua_tostring(L,-2));
+		snprintf (topic, sizeof topic, "%s", lua_isstring(L,-1) ? lua_tostring(L,-1) : "");
 		lua_settop (L, 0);
 		lua_pushstring (L, file);
 		if (topic[0])
@@ -3797,7 +3806,7 @@ module or by multiple modules) the last state before rendering will be displayed
 int Interpreter::oapiDbgOut (lua_State *L)
 {
 	const char *str = lua_tostringex (L, 1);
-	strcpy (oapiDebugString(), str);
+	snprintf (oapiDebugString(), 256, "%s", str); // not upstream: the core's buffer is 256 bytes (DBG_MSG)
 	return 0;
 }
 
@@ -5888,22 +5897,30 @@ Additional fields by mode :
 @function set_cameramode
 @tparam table camera mode
 */
+// not upstream (WineBridge): s appended to buf, cut at its end
+static void Cat (char *buf, size_t n, const char *s)
+{
+	size_t l = strlen (buf);
+	if (s && l + 1 < n) snprintf (buf + l, n - l, "%s", s);
+}
+
 int Interpreter::oapi_set_cameramode (lua_State *L)
 {
-	char initstr[1024], modestr[256];
+	char initstr[1024] = "", modestr[256] = ""; // not upstream (WineBridge): copies cut at the buffers' ends (strcpy overflowed them); the helper has no C++ string library
+	char num[96];
 	double lng, lat, alt, phi=0.0, tht=0.0;
 	CameraMode *cm = 0;
 	ASSERT_TABLE(L,1);
 
 	lua_getfield(L,1,"mode");
 	ASSERT_STRING(L,-1);
-	strcpy(modestr, lua_tostring(L,-1));
+	snprintf (modestr, sizeof modestr, "%s", lua_tostring(L,-1));
 	lua_pop(L,1);
 	if (!_stricmp(modestr, "ground")) {
 
 		lua_getfield(L,1,"ref");
 		ASSERT_STRING(L,-1);
-		strcpy (initstr,lua_tostring(L,-1));
+		snprintf (initstr, sizeof initstr, "%s", lua_tostring(L,-1));
 		lua_pop(L,1);
 		lua_getfield(L,1,"lng");
 		ASSERT_NUMBER(L,-1);
@@ -5917,10 +5934,11 @@ int Interpreter::oapi_set_cameramode (lua_State *L)
 		ASSERT_NUMBER(L,-1);
 		alt = lua_tonumber(L,-1);
 		lua_pop(L,1);
-		sprintf (initstr + strlen(initstr), " %lf %lf %lf", lng, lat, alt);
+		snprintf (num, sizeof num, " %lf %lf %lf", lng, lat, alt);
+		Cat (initstr, sizeof initstr, num);
 		lua_getfield(L,1,"alt_above_ground");
 		if (lua_isnumber(L,-1) && lua_tonumber(L,-1) == 0)
-			strcat(initstr, "M");
+			Cat (initstr, sizeof initstr, "M");
 		lua_pop(L,1);
 		lua_getfield(L,1,"phi");
 		if (lua_isnumber(L,-1)) {
@@ -5928,7 +5946,8 @@ int Interpreter::oapi_set_cameramode (lua_State *L)
 			lua_getfield(L,1,"tht");
 			if (lua_isnumber(L,-1)) {
 				tht = lua_tonumber(L,-1);
-				sprintf (initstr+strlen(initstr), " %lf %lf", phi, tht);
+				snprintf (num, sizeof num, " %lf %lf", phi, tht);
+				Cat (initstr, sizeof initstr, num);
 			}
 			lua_pop(L,1);
 		}
@@ -5939,7 +5958,7 @@ int Interpreter::oapi_set_cameramode (lua_State *L)
 
 		lua_getfield(L,1,"trackmode");
 		ASSERT_STRING(L,-1);
-		strcpy (initstr, lua_tostring(L,-1));
+		snprintf (initstr, sizeof initstr, "%s", lua_tostring(L,-1));
 		lua_pop(L,1);
 		lua_getfield(L,1,"reldist");
 		ASSERT_NUMBER(L,-1);
@@ -5953,11 +5972,12 @@ int Interpreter::oapi_set_cameramode (lua_State *L)
 		if (lua_isnumber(L,-1))
 			tht = lua_tonumber(L,-1);
 		lua_pop(L,1);
-		sprintf (initstr+strlen(initstr), " %lf %lf %lf", reldist, phi, tht);
+		snprintf (num, sizeof num, " %lf %lf %lf", reldist, phi, tht);
+		Cat (initstr, sizeof initstr, num);
 		lua_getfield(L,1,"ref");
 		if (lua_isstring(L,-1)) {
-			strcat(initstr, " ");
-			strcat(initstr, lua_tostring(L,-1));
+			Cat (initstr, sizeof initstr, " ");
+			Cat (initstr, sizeof initstr, lua_tostring(L,-1));
 		}
 		lua_pop(L,1);
 		cm = new CameraMode_Track();
@@ -5966,17 +5986,20 @@ int Interpreter::oapi_set_cameramode (lua_State *L)
 
 		lua_getfield(L,1,"cockpitmode");
 		if (lua_isstring(L,-1)) {
-			strcpy (initstr, lua_tostring(L,-1));
+			snprintf (initstr, sizeof initstr, "%s", lua_tostring(L,-1));
 			lua_getfield(L,1,"pos");
 			if (lua_isnumber(L,-1)) {
-				sprintf (initstr+strlen(initstr), ":%d", (int)lua_tonumber(L,-1));
+				snprintf (num, sizeof num, ":%d", (int)lua_tonumber(L,-1));
+				Cat (initstr, sizeof initstr, num);
 				lua_getfield(L,1,"lean");
 				if (lua_isnumber(L,-1)) {
-					sprintf (initstr+strlen(initstr), ":%d", (int)lua_tonumber(L,-1));
+					snprintf (num, sizeof num, ":%d", (int)lua_tonumber(L,-1));
+					Cat (initstr, sizeof initstr, num);
 				} else {
 					lua_getfield(L,1,"lean_smooth");
 					if (lua_isnumber(L,-1)) {
-						sprintf (initstr+strlen(initstr), ":%dS", (int)lua_tonumber(L,-1));
+						snprintf (num, sizeof num, ":%dS", (int)lua_tonumber(L,-1));
+						Cat (initstr, sizeof initstr, num);
 					}
 					lua_pop(L,1);
 				}
@@ -6284,7 +6307,7 @@ int Interpreter::oapi_create_animationcomponent (lua_State *L)
 	lua_getfield(L,1,"type");
 	ASSERT_STRING(L,-1);
 	char typestr[128];
-	strcpy (typestr,lua_tostring(L,-1));
+	snprintf (typestr, sizeof typestr, "%s", lua_tostring(L,-1)); // not upstream: bounded (a longer type matches none)
 	lua_pop(L,1);
 	lua_getfield(L,1,"mesh");
 	ASSERT_NUMBER(L,-1);
@@ -8670,8 +8693,8 @@ OBJHANDLE Interpreter::lua_toObject (lua_State *L, int idx)
 
 oapi::Sketchpad *Interpreter::lua_tosketchpad (lua_State *L, int idx)
 {
-	oapi::Sketchpad **skp = (oapi::Sketchpad**)lua_touserdata (L, idx);
-	return *skp;
+	oapi::Sketchpad **skp = (oapi::Sketchpad**)luaL_tryudata (L, idx, "SKP.vtable"); // not upstream: only a sketchpad, and NULL once its callback ended
+	return skp ? *skp : NULL;
 	//oapi::Sketchpad *skp = (oapi::Sketchpad*)lua_touserdata(L,idx);
 	//return skp;
 }

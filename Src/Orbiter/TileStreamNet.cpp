@@ -18,12 +18,13 @@ namespace {
 // a 206's Content-Range "bytes a-b/total": the asked start, no more than asked, as many bytes as it says
 bool RangeOk (const QByteArray &cr, int64_t off, int64_t len, int64_t got)
 {
-	long long a, b;
+	unsigned long long a, b, total = 0; // not upstream: unsigned, the range checked before any sum (no overflow)
 	char tot[32] = "";
-	if (sscanf (cr.constData(), "bytes %lld-%lld/%31s", &a, &b, tot) < 2) return false;
-	long long total = tot[0] && tot[0] != '*' ? atoll (tot) : -1;
-	if (a != off || b < a || b > off + len - 1 || got != b - a + 1) return false;
-	return b == off + len - 1 || (total > 0 && b == total - 1); // all of it, or up to the end of the file
+	if (off < 0 || len <= 0 || got < 0 || sscanf (cr.constData(), "bytes %llu-%llu/%31s", &a, &b, tot) < 2) return false;
+	if (tot[0] && tot[0] != '*') total = strtoull (tot, nullptr, 10);
+	unsigned long long last = (unsigned long long)off + (unsigned long long)len - 1;
+	if (a != (unsigned long long)off || b < a || b > last || (unsigned long long)got != b - a + 1) return false;
+	return b == last || (total > 0 && b == total - 1); // all of it, or up to the end of the file
 }
 
 }
@@ -48,9 +49,9 @@ TsNet::~TsNet ()
 	delete thread;
 }
 
-void TsNet::Get (const std::string &url, Reply done, int64_t off, int64_t len, int ownMs, int stallMs)
+void TsNet::Get (const std::string &url, Reply done, int64_t off, int64_t len, int ownMs, int stallMs, int64_t ownCap)
 {
-	int64_t most = off >= 0 ? rangeCap : cap;
+	int64_t most = ownCap > 0 ? ownCap : off >= 0 ? rangeCap : cap; // not upstream: ownCap
 	int maxMs = ownMs > 0 ? ownMs : totalMs;
 	int stall = stallMs > 0 ? stallMs : StallMs;
 	QMetaObject::invokeMethod (ctx, [this, url, done, off, len, most, maxMs, stall] {
@@ -58,9 +59,9 @@ void TsNet::Get (const std::string &url, Reply done, int64_t off, int64_t len, i
 		auto reply = [&] (int st, QByteArray body) { called = true; done (st, std::move (body), 0); };
 		try {
 			if (!nam) return;
+			if (off >= 0 && (len <= 0 || len > most || off > INT64_MAX - len)) { reply (0, QByteArray()); return; } // not upstream: a range that fits the cap and the number type
 			QUrl qu (QString::fromStdString (url));
 			if (off >= 0 && qu.isLocalFile()) { // a range of a local file, read here
-				if (len < 0 || len > most) { reply (0, QByteArray()); return; }
 				QFile f (qu.toLocalFile());
 				if (!f.open (QIODevice::ReadOnly)) { reply (404, QByteArray()); return; }
 				if (off >= f.size() || !f.seek (off)) { reply (416, QByteArray()); return; }

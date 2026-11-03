@@ -38,7 +38,7 @@ case $PM in # the system libraries deps.list names, as the launcher asks for the
 esac
 nf=$(find . -type f \( -name '*.so*' -o -perm -u+x \) -exec sh -c 'head -c4 "$1" | grep -q ELF && LC_ALL=C ldd "$1" 2>&1 | sed "s|^|$1: |"' _ {} \; | awk '/not found/' | sort -u)
 [ -z "$nf" ] && ok "every library resolves" || bad "unresolved: $(echo "$nf" | head -5)"
-LC_ALL=C OB_LAUNCHER_NO_EXEC=1 ./OpenOrbiter </dev/null 2>&1 | tail -2 | awk '/ready to start/ { f = 1 } END { exit !f }' && ok "OpenOrbiter checks pass" || bad "OpenOrbiter check: $(OB_LAUNCHER_NO_EXEC=1 ./OpenOrbiter </dev/null 2>&1 | tail -3)"
+LC_ALL=C OB_LAUNCHER_AS_ROOT=1 OB_LAUNCHER_NO_EXEC=1 ./OpenOrbiter </dev/null 2>&1 | tail -2 | awk '/ready to start/ { f = 1 } END { exit !f }' && ok "OpenOrbiter checks pass" || bad "OpenOrbiter check: $(OB_LAUNCHER_AS_ROOT=1 OB_LAUNCHER_NO_EXEC=1 ./OpenOrbiter </dev/null 2>&1 | tail -3)"
 rm -f Orbiter.cfg # headless: a fresh package has no Orbiter.cfg, so no graphics client is active
 export QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/tmp/xdg; mkdir -p -m 700 /tmp/xdg
 timeout 120 ./Orbiter "--scenariox=Delta-glider/Smack!" --fixedstep=0.02 --maxframes=200 >/tmp/h.out 2>&1; rc=$?

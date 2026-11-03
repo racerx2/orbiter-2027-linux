@@ -28,6 +28,9 @@ target_link_libraries(${VESSEL_NAME}
 	${ORBITER_SDK_LIB}
 	Atlantis_SRB # not upstream: by target name, CMake turns a path to a prefix-less .so into -l<name>
 )
+if (ORBITER_SANITIZER AND NOT MSVC) # not upstream: its cast to Atlantis needs the orbiter's typeinfo, in Atlantis.so, which links this module (no link back)
+	target_compile_options(${VESSEL_NAME} PRIVATE -fno-sanitize=vptr)
+endif ()
 
 add_custom_command(
 	TARGET ${VESSEL_NAME} PRE_BUILD

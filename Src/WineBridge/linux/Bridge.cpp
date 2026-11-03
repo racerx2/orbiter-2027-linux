@@ -16,6 +16,7 @@
 #include <poll.h>
 #include <spawn.h>
 #include <sys/mman.h>
+#include <sys/random.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -94,9 +95,22 @@ bool WbBridge::Start ()
 		&& unlink ((prefix + "/.update-timestamp").c_str ()) == 0)
 		oapiWriteLog ((char *)"WineBridge: the Wine prefix has no 32-bit part: Wine updates it");
 
-	m_shm = "/dev/shm/orbiter-wb-" + std::to_string (getpid ());
+	// not upstream (F8): the channel's files in XDG_RUNTIME_DIR (the user's own, 0700), else in a private 0700 folder in /tmp; 64 random bits in the name
+	std::string dir;
+	const char *xdg = getenv ("XDG_RUNTIME_DIR");
+	struct stat st;
+	if (xdg && xdg[0] == '/' && !lstat (xdg, &st) && S_ISDIR (st.st_mode) && st.st_uid == geteuid () && !(st.st_mode & 077)) dir = xdg;
+	else {
+		char tmpl[] = "/tmp/orbiter-wb-XXXXXX";
+		if (!mkdtemp (tmpl)) { oapiWriteLogV ("WineBridge: can't make a folder in /tmp: %s", strerror (errno)); return false; }
+		dir = m_dir = tmpl;
+	}
+	uint64_t rnd = 0;
+	if (getrandom (&rnd, sizeof rnd, 0) != (ssize_t)sizeof rnd) { oapiWriteLogV ("WineBridge: no random bytes: %s", strerror (errno)); Stop (); return false; }
+	char tag[40];
+	snprintf (tag, sizeof tag, "%d-%016llx", (int)getpid (), (unsigned long long)rnd);
+	m_shm = dir + "/orbiter-wb-" + tag;
 	std::string hf = m_shm + ".h", lf = m_shm + ".l";
-	unlink (m_shm.c_str ()); unlink (hf.c_str ()); unlink (lf.c_str ());
 	int fd = open (m_shm.c_str (), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
 	if (fd < 0 || ftruncate (fd, WB_SIZE)) { oapiWriteLogV ("WineBridge: can't make %s: %s", m_shm.c_str (), strerror (errno)); if (fd >= 0) close (fd); return false; }
 	void *m = mmap (nullptr, WB_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
@@ -141,7 +155,8 @@ bool WbBridge::Start ()
 	posix_spawnattr_t at;
 	posix_spawn_file_actions_init (&fa);
 	posix_spawn_file_actions_addopen (&fa, 0, "/dev/null", O_RDONLY, 0);
-	posix_spawn_file_actions_addopen (&fa, 1, log.c_str (), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	unlink (log.c_str ()); // not upstream (F11): a new file of ours, never through a link
+	posix_spawn_file_actions_addopen (&fa, 1, log.c_str (), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
 	posix_spawn_file_actions_adddup2 (&fa, 1, 2);
 	posix_spawnattr_init (&at);
 	posix_spawnattr_setflags (&at, POSIX_SPAWN_SETSID);
@@ -175,7 +190,8 @@ bool WbBridge::Start ()
 		if (early) WineSaid (log);
 		return false;
 	}
-	unlink (m_shm.c_str ()); unlink (hf.c_str ()); unlink (lf.c_str ()); // both sides have them open: nothing stays in /dev/shm
+	unlink (m_shm.c_str ()); unlink (hf.c_str ()); unlink (lf.c_str ()); // both sides have them open: nothing stays behind
+	if (!m_dir.empty ()) { rmdir (m_dir.c_str ()); m_dir.clear (); }
 	m_lastReport = Clock::now ();
 	const char *prof = getenv ("ORBITER_WB_PROFILE");
 	m_profile = prof && *prof && strcmp (prof, "0");
@@ -272,7 +288,7 @@ bool WbBridge::Wait ()
 			Dead (why);
 			return false;
 		}
-		if (m_deadline != Clock::time_point () && Clock::now () > m_deadline) { Dead ("no answer within 120 s"); return false; }
+		if (m_deadline != Clock::time_point () && Clock::now () > m_deadline) { Dead ("no answer in time"); return false; }
 	}
 }
 
@@ -301,10 +317,11 @@ WbReader WbBridge::Call ()
 	Pass ();
 	WbReader res;
 	while (Wait ()) {
-		if (H->len > WB_MSG_MAX || H->slen > WB_MSG_MAX - H->len) { Dead ("a message larger than the channel"); break; }
-		WbApplySync (WbMsg (H) + H->len, H->slen); // the modules' memory Orbiter reads, as it is now
-		if (H->kind == WB_RET) { res = WbReader (WbMsg (H), H->len); break; }
-		ServeOne ();
+		uint32_t kind = H->kind, fn = H->fn, len = H->len, slen = H->slen; // not upstream (F5): read once, checked, passed on
+		if (len > WB_MSG_MAX || slen > WB_MSG_MAX - len || (kind != WB_RET && kind != WB_CALL)) { Dead ("a message the channel can't hold"); break; }
+		WbApplySync (WbMsg (H) + len, slen); // the modules' memory Orbiter reads, as it is now
+		if (kind == WB_RET) { res = WbReader (WbMsg (H), len); break; }
+		ServeOne (fn, len);
 		if (!m_alive) break;
 	}
 	m_depth--;
@@ -334,10 +351,9 @@ void WbBridge::Hooks ()
 	if (m_alive) WbHooksApply (r);
 }
 
-void WbBridge::ServeOne ()
+void WbBridge::ServeOne (uint32_t fn, uint32_t len)
 {
-	uint32_t fn = H->fn;
-	WbReader r (WbMsg (H), H->len);
+	WbReader r (WbMsg (H), len);
 	WbWriter w (WbMsg (H), WB_MSG_MAX);
 	m_fromHelper++;
 	auto t0 = m_profile ? Clock::now () : Clock::time_point ();
@@ -365,8 +381,10 @@ void WbBridge::Stop ()
 	std::lock_guard<std::recursive_mutex> g (m_lock);
 	if (m_frames || m_toHelper) Report (true);
 	if (m_alive) {
+		m_deadline = Clock::now () + std::chrono::seconds (5); // not upstream (F9): then its process group is killed
 		Begin (H_QUIT);
 		Call ();
+		m_deadline = {};
 		m_alive = false;
 	}
 	if (m_pid > 0) {
@@ -385,6 +403,7 @@ void WbBridge::Stop ()
 	if (m_hout >= 0) close (m_hout);
 	m_lin = m_hout = -1;
 	if (!m_shm.empty ()) { unlink (m_shm.c_str ()); unlink ((m_shm + ".h").c_str ()); unlink ((m_shm + ".l").c_str ()); }
+	if (!m_dir.empty ()) { rmdir (m_dir.c_str ()); m_dir.clear (); }
 	m_tried = false; // a new session may start it again
 	m_modules.clear ();
 	m_vessels.clear ();
@@ -393,23 +412,11 @@ void WbBridge::Stop ()
 	WbManualClear ();
 	WbDrawClear ();
 	WbSoundClear ();
-	m_ptr.assign (1, nullptr);
-	m_id.clear ();
+	m_ids.Clear ();
 	m_toHelper = m_fromHelper = m_slept = m_frames = m_frames0 = m_pumps = 0;
 	m_busy = 0;
 	m_setup = m_mark = {};
 	m_lastSimt = -1e300;
-}
-
-uint32_t WbBridge::Id (const void *p)
-{
-	if (!p) return 0;
-	auto it = m_id.find (p);
-	if (it != m_id.end ()) return it->second;
-	uint32_t id = (uint32_t)m_ptr.size ();
-	m_ptr.push_back (p);
-	m_id[p] = id;
-	return id;
 }
 
 WbVessel *WbBridge::Bridged (uint32_t id) const

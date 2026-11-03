@@ -23,7 +23,15 @@ static int *g_objmod;  // ... and the module that made it
 static uint32_t g_nobj;
 static HMODULE g_initLib;           // the module being loaded, when its DllMain called InitLib
 static int g_loading;               // the number of the module being loaded, during its load
-static char g_loadPath[MAX_PATH];   // ... its full path
+static wchar_t g_loadPath[MAX_PATH]; // ... its full path (not upstream (F10): UTF-16, as the W calls take it)
+
+// not upstream (design-security-fixes F10): a UTF-8 path from Linux as UTF-16 for the W calls; false if it doesn't fit
+static bool Wide (const char *s, wchar_t *w, int n)
+{
+	int k = MultiByteToWideChar (CP_UTF8, MB_ERR_INVALID_CHARS, s, -1, w, n);
+	if (k <= 0) { w[0] = 0; return false; }
+	return true;
+}
 
 VESSEL *wb::Obj (uint32_t vid) { return vid < g_nobj ? g_obj[vid] : 0; }
 
@@ -36,14 +44,13 @@ uint32_t wb::VesselIdOf (const void *v)
 // h is the module being loaded (not a library its DllMain or InitModule loads)
 static bool Loading (HMODULE h)
 {
-	char f[MAX_PATH];
-	DWORD n = g_loading && h ? GetModuleFileNameA (h, f, sizeof f) : 0;
-	if (!n || n >= sizeof f) return false;
-	const char *a = f, *b = g_loadPath;
-	for (; *a && *b; a++, b++) {
-		char x = *a == '/' ? '\\' : (char)tolower ((unsigned char)*a), y = *b == '/' ? '\\' : (char)tolower ((unsigned char)*b);
-		if (x != y) return false;
-	}
+	wchar_t f[MAX_PATH];
+	DWORD n = g_loading && h ? GetModuleFileNameW (h, f, MAX_PATH) : 0;
+	if (!n || n >= MAX_PATH) return false;
+	const wchar_t *a = f, *b = g_loadPath;
+	auto low = [] (wchar_t c) { return c == L'/' ? L'\\' : c >= L'A' && c <= L'Z' ? (wchar_t)(c + 32) : c; };
+	for (; *a && *b; a++, b++)
+		if (low (*a) != low (*b)) return false;
 	return !*a && !*b;
 }
 
@@ -243,10 +250,11 @@ void wb::ObjMasks (void **vt, WbWriter &w, uint32_t *n)
 
 // ---------------------------------------------------------------------
 // The DLL's imports from Orbiter.exe that this helper doesn't export, before it is loaded for real
-static void MissingImports (const char *path, char *out, size_t outlen)
+static __attribute__ ((noinline)) void MissingImports (const char *path, char *out, size_t outlen) // not upstream: noinline, Load's frame stays under a page
 {
 	out[0] = 0;
-	HMODULE m = LoadLibraryExA (path, 0, DONT_RESOLVE_DLL_REFERENCES);
+	wchar_t wp[MAX_PATH];
+	HMODULE m = Wide (path, wp, MAX_PATH) ? LoadLibraryExW (wp, 0, DONT_RESOLVE_DLL_REFERENCES) : 0; // not upstream (F10)
 	if (!m) return;
 	const BYTE *base = (const BYTE *)m;
 	const IMAGE_NT_HEADERS32 *nt = (const IMAGE_NT_HEADERS32 *)(base + ((const IMAGE_DOS_HEADER *)base)->e_lfanew);
@@ -304,6 +312,23 @@ static const char *const g_standIn[] = {"OrbiterSound.dll", "XRSound.dll"};
 
 static void LoadSoundDlls ();
 
+// not upstream (design-security-fixes F10): LoadLibraryW of a UTF-8 path, its full path in g_loadPath meanwhile (an outer load's kept); a frame of its own
+static __attribute__ ((noinline)) HMODULE LoadWide (const char *path, int slot, bool &sdkMain, bool &wide)
+{
+	wchar_t outerPath[MAX_PATH], wpath[MAX_PATH];
+	if (!(wide = Wide (path, wpath, MAX_PATH))) return 0;
+	HMODULE outerInit = g_initLib;
+	int outerLoading = g_loading;
+	memcpy (outerPath, g_loadPath, sizeof outerPath);
+	g_initLib = 0;
+	DWORD fl = GetFullPathNameW (wpath, MAX_PATH, g_loadPath, 0);
+	g_loading = fl && fl < MAX_PATH ? slot + 1 : 0;
+	HMODULE h = LoadLibraryW (wpath);
+	sdkMain = h && g_initLib == h;
+	g_initLib = outerInit; g_loading = outerLoading; memcpy (g_loadPath, outerPath, sizeof g_loadPath);
+	return h;
+}
+
 static void Load (WbReader &r, WbWriter &w)
 {
 	uint32_t n;
@@ -325,18 +350,11 @@ static void Load (WbReader &r, WbWriter &w)
 	if (slot == (int)(sizeof g_mod / sizeof *g_mod)) { LoadReply (w, 0, "too many modules"); return; }
 	MissingImports (path, err, sizeof err);
 	if (err[0]) { LoadReply (w, 0, err); return; }
-	HMODULE outerInit = g_initLib;
-	int outerLoading = g_loading;
-	char outerPath[MAX_PATH];
-	strcpy (outerPath, g_loadPath);
-	g_initLib = 0;
-	DWORD fl = GetFullPathNameA (path, sizeof g_loadPath, g_loadPath, 0);
-	g_loading = fl && fl < sizeof g_loadPath ? slot + 1 : 0;
+	bool sdkMain = false, wide = true;
 	busy[slot] = true;
-	HMODULE h = LoadLibraryA (path);
+	HMODULE h = LoadWide (path, slot, sdkMain, wide);
 	busy[slot] = false;
-	bool sdkMain = h && g_initLib == h;
-	g_initLib = outerInit; g_loading = outerLoading; strcpy (g_loadPath, outerPath);
+	if (!wide) { LoadReply (w, 0, "the path isn't UTF-8 or is too long"); return; }
 	if (!h) { _snprintf (err, sizeof err, "LoadLibrary failed, Windows error %lu", GetLastError ()); LoadReply (w, 0, err); return; }
 	Module &m = g_mod[slot];
 	memset (&m, 0, sizeof m);
@@ -462,17 +480,18 @@ static void LoadSoundDlls ()
 	static bool tried;
 	if (tried) return;
 	tried = true;
-	char path[MAX_PATH];
-	DWORD n = GetModuleFileNameA (NULL, path, sizeof path);
-	char *slash = path;
-	for (char *c = path; n && n < sizeof path && *c; c++) if (*c == '\\' || *c == '/') slash = c + 1;
+	wchar_t path[MAX_PATH]; // not upstream (F10): the W calls, a folder named in any script
+	DWORD n = GetModuleFileNameW (NULL, path, MAX_PATH);
+	wchar_t *slash = path;
+	for (wchar_t *c = path; n && n < MAX_PATH && *c; c++) if (*c == L'\\' || *c == L'/') slash = c + 1;
 	for (const char *si : g_standIn) {
-		if (!n || n >= sizeof path || (size_t)(slash - path) + strlen (si) + 1 > sizeof path) {
+		size_t sl = strlen (si);
+		if (!n || n >= MAX_PATH || (size_t)(slash - path) + sl + 1 > MAX_PATH) {
 			wb::Log ("%s not loaded: the helper's path is too long; the modules have no sound", si);
 			continue;
 		}
-		strcpy (slash, si);
-		if (!LoadLibraryA (path)) wb::Log ("%s not loaded (Windows error %lu): the modules have no sound", si, GetLastError ());
+		for (size_t i = 0; i <= sl; i++) slash[i] = (wchar_t)(unsigned char)si[i];
+		if (!LoadLibraryW (path)) wb::Log ("%s not loaded (Windows error %lu): the modules have no sound", si, GetLastError ());
 	}
 }
 

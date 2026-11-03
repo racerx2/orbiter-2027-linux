@@ -26,6 +26,23 @@
 #include "LuaInline.h"
 #include <direct.h>
 #include <process.h>
+#include <stdio.h>
+#include <string.h>
+
+// not upstream (WineBridge): a C string as a Lua string literal (Orbitersdk/include/Lua/lua_quote.h), nothing in it can end the string
+static char *LuaQuotedRun (const char *s)
+{
+	size_t n = strlen (s);
+	char *q = new char[n*4 + 8], *o = q;
+	o += sprintf (o, "run(\"");
+	for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+		if (*p == '"' || *p == '\\') { *o++ = '\\'; *o++ = (char)*p; }
+		else if (*p < 32 || *p == 127) o += sprintf (o, "\\%03u", *p);
+		else *o++ = (char)*p;
+	}
+	strcpy (o, "\")");
+	return q;
+}
 
 // ==============================================================
 // class InterpreterList::Environment: implementation
@@ -212,10 +229,9 @@ DLLCLBK int opcDelInterpreter (INTERPRETERHANDLE hInterp)
 
 DLLCLBK INTERPRETERHANDLE opcRunInterpreter (const char *cmd)
 {
-	if (g_IList) {
+	if (g_IList && cmd) { // not upstream: no name, no script
 		InterpreterList::Environment *env = g_IList->AddInterpreter();
-		env->cmd = new char[strlen(cmd)+10];
-		sprintf (env->cmd, "run('%s')", cmd);
+		env->cmd = LuaQuotedRun (cmd); // not upstream (WineBridge): the name as a Lua string
 		return (INTERPRETERHANDLE)env;
 	} else {
 		return NULL;

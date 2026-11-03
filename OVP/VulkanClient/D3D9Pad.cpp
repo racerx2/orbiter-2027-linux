@@ -56,6 +56,8 @@ oapi::Pen * defpen = 0;
 
 static std::string UTF8ToCP1252(const char *utf8, int ulen)
 {
+	if (!utf8 || ulen < -1) return std::string(); // not upstream: -1 is up to the terminating zero, other negatives are none
+	ulen = ulen < 0 ? int(strlen(utf8)) : int(strnlen(utf8, ulen)); // not upstream: never past the string's end
 	// Convert UTF-8 to Windows-1252
 	// Get the required length to convert from UTF-8 to UTF-16
 	// Use MB_ERR_INVALID_CHARS to have the call fail if the string
@@ -117,8 +119,8 @@ void D3D9Pad::D3D9TechInit(D3D9Client *_gc, VkDev *pDevice)
 #endif // SKPDBG
 
 
-	Idx = new WORD[3 * nQueueMax + 3];
-	Vtx = new SkpVtx[3 * nQueueMax + 3];
+	Idx = new WORD[nQueueCap];
+	Vtx = new SkpVtx[nQueueCap];
 
 	SinCos(8, 0);
 	SinCos(16, 1);
@@ -607,6 +609,15 @@ bool D3D9Pad::Topology(Topo tRequest)
 
 
 // ===============================================================================================
+// not upstream: after Topology, so a flush draws in the state the queue was filled with
+bool D3D9Pad::Room(int nv, int ni)
+{
+	if (vI + nv > nQueueCap || iI + ni > nQueueCap) Flush();
+	return vI + nv <= nQueueCap && iI + ni <= nQueueCap;
+}
+
+
+// ===============================================================================================
 //
 void D3D9Pad::SetupDevice(Topo tNew)
 {
@@ -616,7 +627,7 @@ void D3D9Pad::SetupDevice(Topo tNew)
 
 	// If the queue is filling up, Flush it
 	//
-	if (iI > (nQueueMax >> 1)) Flush();
+	if (iI > (nQueueMax >> 1) || vI > (nQueueMax >> 1)) Flush(); // not upstream: the vertices too
 
 
 	// Has something changed ?
@@ -1089,6 +1100,8 @@ bool D3D9Pad::TextBox (int x1, int y1, int x2, int y2, const char *utf8, int ule
 	bool result = true;
 	int lineSpace = static_cast<D3D9PadFont *>(cfont)->pFont->GetLineSpace();
 
+	if (!utf8 || ulen < -1) return false; // not upstream: -1 is up to the terminating zero, other negatives are none
+	ulen = ulen < 0 ? int(strlen(utf8)) : int(strnlen(utf8, ulen)); // not upstream: the buffer and its end from the string's real length
 	ToSaveBuffer(utf8, ulen);
 
 	char *pch, *pEnd =_saveBuffer+ulen; // <= point to terminating zero
@@ -1424,7 +1437,8 @@ void D3D9Pad::Lines(const FVECTOR2 *pt, int nlines)
 // Copy string to internal 'save' buffer, so it can be changed (adding terminating zeroes, etc.)
 void D3D9Pad::ToSaveBuffer (const char *str, int len)
 {
-	if (_saveBufferSize < len)
+	if (len < 0) len = 0; // not upstream
+	if (!_saveBuffer || _saveBufferSize < len) // not upstream: a buffer also for an empty string
 	{ // re-allloc bigger space
 		if (_saveBuffer) { delete[] _saveBuffer; }
 		_saveBuffer = new char[len + 1];
@@ -1588,6 +1602,8 @@ void D3D9Pad::AppendLineVertexList(const Type *pt, int _npt, bool bLoop)
 
 	if (Topology(LINE)) {
 
+		if (!Room(_npt, 2 * _npt)) { AppendLineRuns(pt, _npt, bLoop, false); return; } // not upstream: one that doesn't fit goes in runs
+
 		WORD npt = WORD(_npt);
 		WORD wL = vI;
 		WORD li = WORD(npt - 1);
@@ -1635,6 +1651,8 @@ void D3D9Pad::AppendLineVertexList(const Type *pt, int _npt, bool bLoop)
 	// ----------------------------------------------------------------------
 
 	if (Topology(TRIANGLE)) {
+
+		if (!Room(2 * _npt, 6 * _npt)) { AppendLineRuns(pt, _npt, bLoop, true); return; } // not upstream: one that doesn't fit goes in runs
 
 		WORD npt = WORD(_npt);
 		WORD wL = vI;
@@ -1700,6 +1718,61 @@ void D3D9Pad::AppendLineVertexList(const Type *pt, int _npt, bool bLoop)
 			Idx[iI++] = wL + 1;	Idx[iI++] = wL + 1;
 			Idx[iI++] = aV;		Idx[iI++] = bV;
 		}
+	}
+}
+
+
+// ===============================================================================================
+// not upstream: a line the queues can't hold at once, drawn in runs that share their end points. Every point keeps its real
+// neighbours for the joints and the dash length runs on; a loop's last run ends with its first point again
+template <typename Type>
+void D3D9Pad::AppendLineRuns(const Type *pt, int npt, bool bLoop, bool wide)
+{
+	const int last = bLoop ? npt : npt - 1; // the final point's index: npt is pt[0] again
+	auto P = [&](int i) { return _DXV2(pt[i % npt]); };
+	auto Prev = [&](int i) { return i > 0 ? P(i - 1) : (bLoop ? P(npt - 1) : P(0) * 2.0 - P(1)); };
+	auto Next = [&](int i) { return i < last ? P(i + 1) : (bLoop ? P(1) : P(last) * 2.0 - P(last - 1)); };
+	const int run = wide ? nQueueCap / 6 : nQueueCap / 2; // points per run
+	float length = 0.0f;
+	for (int s = 0; s < last; ) {
+		int e = std::min(last, s + run - 1);
+		if (!Room(wide ? 2 * (e - s + 1) : e - s + 1, wide ? 6 * (e - s) : 2 * (e - s))) return;
+		WORD cV = 0, dV = 0;
+		for (int i = s; i <= e; i++) {
+			D3DXVECTOR2 p = P(i);
+			if (!wide) {
+				Vtx[vI].x = p.x;
+				Vtx[vI].y = p.y;
+				Vtx[vI].l = length;
+				Vtx[vI].fnc = SKPSW_CENTER | SKPSW_FRAGMENT;
+				Vtx[vI].clr = pencolor.dclr;
+				if (i > s) { Idx[iI++] = vI - 1; Idx[iI++] = vI; }
+				vI++;
+			} else {
+				D3DXVECTOR2 pp = Prev(i), np = Next(i);
+				WORD aV = vI, bV = vI + 1;
+				Vtx[aV].x = Vtx[bV].x = p.x;
+				Vtx[aV].y = Vtx[bV].y = p.y;
+				Vtx[aV].nx = Vtx[bV].nx = np.x;
+				Vtx[aV].ny = Vtx[bV].ny = np.y;
+				Vtx[aV].px = Vtx[bV].px = pp.x;
+				Vtx[aV].py = Vtx[bV].py = pp.y;
+				Vtx[aV].l = Vtx[bV].l = length;
+				Vtx[aV].clr = Vtx[bV].clr = pencolor.dclr;
+				Vtx[aV].fnc = SKPSW_WIDEPEN_L | SKPSW_FRAGMENT;
+				Vtx[bV].fnc = SKPSW_WIDEPEN_R | SKPSW_FRAGMENT;
+				vI += 2;
+				if (i > s) {
+					Idx[iI++] = cV;	Idx[iI++] = aV;
+					Idx[iI++] = dV;	Idx[iI++] = dV;
+					Idx[iI++] = aV;	Idx[iI++] = bV;
+				}
+				cV = aV;
+				dV = bV;
+			}
+			if (IsDashed() && i < e) length += D3DXVec2Length(ptr(P(i + 1) - p));
+		}
+		s = e;
 	}
 }
 

@@ -6,7 +6,9 @@
 #   OB_LAUNCHER_DRY_RUN=1                  shows the install command instead of running it
 #   OB_LAUNCHER_PM=apt|dnf|zypper|pacman   picks the package manager
 #   OB_LAUNCHER_NO_EXEC=1                  checks and fixes, then stops before starting Orbiter
+#   OB_LAUNCHER_AS_ROOT=1                  runs as root (containers, the release tests); otherwise root is refused
 set -u
+set -f # no file name expansion of unquoted words: deps.list's names stay words
 for t in awk find; do command -v $t >/dev/null || { echo "OpenOrbiter needs '$t': install gawk and findutils from your distribution" >&2; exit 1; }; done # minimal systems (openSUSE images) lack them
 
 DIR=$(dirname "$(readlink -f "$0")")
@@ -22,6 +24,10 @@ NO_MENU="$CACHE/no-menu"
 # rc1 named both orbiter64-linux: its no-menu marker (at this launcher's first start) and its menu entry move to the new names
 OLD_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/orbiter64-linux"
 OLD_MENU="${XDG_DATA_HOME:-$HOME/.local/share}/applications/orbiter64-linux.desktop"
+if [ "$(id -u)" = 0 ] && [ -z "${OB_LAUNCHER_AS_ROOT:-}" ]; then # Orbiter, its downloads, scripts and add-ons would run as root and leave root's files here
+    echo "OpenOrbiter: start Orbiter as your own user, not as root; it asks for the password when it installs packages." >&2
+    exit 1
+fi
 if [ "$(id -u)" != 0 ]; then
     [ ! -d "$CACHE" ] && [ -e "$OLD_CACHE/no-menu" ] && mkdir -p "$CACHE" && mv -f "$OLD_CACHE/no-menu" "$NO_MENU"
     if [ -f "$OLD_MENU" ] && awk '/^Exec=".*\/OpenOrbiter"$/ { e = 1 } $0 == "StartupWMClass=Orbiter" { w = 1 } END { exit !(e && w) }' "$OLD_MENU"; then
@@ -93,33 +99,37 @@ open_terminal() {
         command -v "$t" >/dev/null || continue
         export OB_LAUNCHER_IN_TERM=1
         if [ "$t" = gnome-terminal ]; then exec "$t" -- "$0" "$@"; fi
+        if [ "$t" = xfce4-terminal ]; then exec "$t" -x "$0" "$@"; fi # its -e takes one string
         # shellcheck disable=SC2093
         exec "$t" -e "$0" "$@"
     done
     return 1
 }
 
+# runs its arguments as root: an argument list, never a command string built from names
 as_root() {
+    local shown
+    shown=$(printf '%q ' "$@")
     if [ -n "${OB_LAUNCHER_DRY_RUN:-}" ]; then
-        printf 'dry run, as root: %s\n' "$1" >&2
+        printf 'dry run, as root: %s\n' "$shown" >&2
         return 0
     fi
-    if [ "$(id -u)" = 0 ]; then sh -c "$1"; return; fi
+    if [ "$(id -u)" = 0 ]; then "$@"; return; fi
     if [ "$UI" = tty ]; then
-        if ! command -v sudo >/dev/null; then info "sudo isn't installed. As root, run: $1"; return 1; fi
-        sudo sh -c "$1"
+        if ! command -v sudo >/dev/null; then info "sudo isn't installed. As root, run: $shown"; return 1; fi
+        sudo "$@"
         return
     fi
-    if ! command -v pkexec >/dev/null; then info "pkexec isn't installed. As root, run: $1"; return 1; fi
+    if ! command -v pkexec >/dev/null; then info "pkexec isn't installed. As root, run: $shown"; return 1; fi
     mkdir -p "$CACHE"
     if [ "$UI" = zenity ]; then
         # the bar pulses until the install ends and closes the pipe
-        (pkexec sh -c "$1" >"$LOG" 2>&1; echo $? >"$CACHE/launcher.rc") |
+        (pkexec "$@" >"$LOG" 2>&1; echo $? >"$CACHE/launcher.rc") |
             zenity --progress --pulsate --auto-close --no-cancel --title="$TITLE" \
                 --text="Installing what Orbiter needs…" 2>/dev/null
         return "$(cat "$CACHE/launcher.rc" 2>/dev/null || echo 1)"
     fi
-    pkexec sh -c "$1" >"$LOG" 2>&1
+    pkexec "$@" >"$LOG" 2>&1
 }
 
 PM="${OB_LAUNCHER_PM:-}"
@@ -163,14 +173,20 @@ missing_packages() {
     esac
 }
 
-install_command() {
-    local quoted
-    quoted=$(printf "'%s' " "$@")
+# a package name as the package managers write them (rpm capabilities included); nothing else reaches the install
+valid_name() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9.+_:()-]*$ ]]; }
+
+# the install as root, the names as arguments: apt's update and install in one fixed script that takes them as "$@"
+install_packages() {
+    local n
+    for n in "$@"; do
+        valid_name "$n" || { info "deps.list names \"$n\", which is not a package name. Unpack the whole download again."; exit 1; }
+    done
     case $PM in
-        apt) echo "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y $quoted" ;;
-        dnf) echo "dnf install -y $quoted" ;;
-        zypper) echo "zypper --non-interactive install $quoted" ;;
-        pacman) echo "pacman -S --needed --noconfirm $quoted" ;;
+        apt) as_root env DEBIAN_FRONTEND=noninteractive sh -c 'apt-get update && exec apt-get install -y --no-remove "$@"' sh "$@" ;;
+        dnf) as_root dnf install -y "$@" ;;
+        zypper) as_root zypper --non-interactive install "$@" ;;
+        pacman) as_root pacman -S --needed --noconfirm "$@" ;;
     esac
 }
 
@@ -328,7 +344,7 @@ $(words $MISSING)
 They come from your distribution's own repositories ($PM) and need your password to install." || exit 1
 
 # shellcheck disable=SC2086
-if ! as_root "$(install_command $MISSING)"; then
+if ! install_packages $MISSING; then
     info "Installing didn't finish, so Orbiter can't start yet.$([ "$UI" != tty ] && printf ' The details are in %s.' "$LOG")"
     exit 1
 fi

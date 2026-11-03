@@ -214,7 +214,12 @@ bool WbServeWatched (uint32_t fn, WbReader &r)
 		ReadComp (r, it != g_compOf.end () ? *it->second : tmp);
 	} else {
 		ANIMATIONCOMP *c = (ANIMATIONCOMP *)b.Ptr (id);
-		ReadTransform (r, c && b.Vessel (vid) ? c->trans : nullptr);
+		VESSEL *v = c ? b.Vessel (vid) : nullptr;
+		ANIMATION *a = nullptr;
+		bool live = false; // not upstream (F2): one of the vessel's components now, before its transform's virtual call
+		for (UINT i = 0, n = v ? v->GetAnimPtr (&a) : 0; i < n && !live; i++)
+			for (UINT j = 0; j < a[i].ncomp && !live; j++) live = a[i].comp[j] == c;
+		ReadTransform (r, live ? c->trans : nullptr);
 	}
 	if (r.bad) b.BadArgs (fn);
 	return true;

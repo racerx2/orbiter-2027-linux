@@ -569,6 +569,48 @@ TEST_CASE ("Sample reads only the tiles under the points, their table entries by
 	CHECK_FALSE (TsCog::Sample ("d", {0, 0, 0, 0, 5000, 1, 0}, m.Fn(), out, ok)); // too many points
 }
 
+// not upstream (design-security-fixes E1, E2)
+TEST_CASE ("A COG's pixel is 360/2^24 to 10 degrees; a file read again with other tiles never meets its older ones", "[TileStreamMars]")
+{
+	std::vector<TsCog::Ifd> ifd;
+	TsCog::Geo g;
+	Lv lv = Fill (32, 32, 1, [] (uint32_t x, uint32_t, int) { return (int)x; });
+	for (double dx : {1e-9, 360.0 / (1 << 25), 10.5}) {
+		Spec s;
+		s.dx = dx;
+		CHECK (TsCog::Parse (QByteArray::fromStdString (Cog (s, {lv})), ifd, &g) == -1);
+	}
+	Spec mm;
+	mm.metres = true;
+	mm.dx = 1e-3; // a millimetre on Mars
+	CHECK (TsCog::Parse (QByteArray::fromStdString (Cog (mm, {lv})), ifd, &g) == -1);
+	Spec a;
+	REQUIRE (TsCog::Parse (QByteArray::fromStdString (Cog (a, {lv})), ifd, &g) == 0);
+
+	Mem m;
+	m.files["stale"] = Cog (a, {lv}); // 16 px tiles
+	TsCog::Pts p {90.0 - 4.5, 4.5, -1.0, 1.0, 4, 4, 1.0}; // in the first tile of either file
+	std::vector<float> out;
+	std::vector<uint8_t> ok;
+	REQUIRE (TsCog::Sample ("stale", p, m.Fn(), out, ok));
+	REQUIRE (out.size() == 16);
+	for (int i = 0; i < 16; i++) CHECK (out[i] == 4.0f + i % 4);
+	for (int i = 0; i < 70; i++) { // missing files push its head out, its tiles stay
+		std::vector<float> o;
+		std::vector<uint8_t> v;
+		REQUIRE (TsCog::Sample ("gone" + std::to_string (i), p, m.Fn(), o, v));
+	}
+	Spec b;
+	b.tile = 32;
+	m.files["stale"] = Cog (b, {Fill (32, 32, 1, [] (uint32_t x, uint32_t, int) { return 100 + (int)x; })});
+	REQUIRE (TsCog::Sample ("stale", p, m.Fn(), out, ok));
+	REQUIRE (out.size() == 16);
+	for (int i = 0; i < 16; i++) {
+		CHECK (ok[i] == 1);
+		CHECK (out[i] == 104.0f + i % 4);
+	}
+}
+
 TEST_CASE ("A file round the planet wraps across its seam; its pixel and the level for a footprint", "[TileStreamMars]")
 {
 	Spec s; // degrees, 0 to 360, 64 x 32 px of 5.625 degrees, RGB

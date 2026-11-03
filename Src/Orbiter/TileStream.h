@@ -163,6 +163,7 @@ namespace TsRwy {
 
 bool TsReadCfg (const std::string &file, std::vector<TsBodyCfg> &bodies, std::string &err);
 int TsCfgElev (const std::string &file, const std::string &body); // the last level of the body's ELEV source, 0 for none
+std::string TsTileJsonUrl (const QByteArray &json, const std::string &from, const std::string &configured); // not upstream: its tiles URL with {z} {x} {y}, https or file:// on the scheme, host and port of the TileJSON or the configured URL; else ""
 int TsSessionElev (const std::string &body); // TileStreamApi.cpp: TsCfgElev when this session streams; Elev archive tiles under the stream's files are not read
 class Body;
 void TsGroundWaitBegin (double sec); // not upstream (ground-first): TileStreamApi.cpp; a session starts: placements wait, sec for all of them

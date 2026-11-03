@@ -418,7 +418,7 @@ TEST_CASE("a Windows module's strings come from its string table", "[resdialog]"
 	for (const char16_t *t : text) {
 		size_t n = t ? std::char_traits<char16_t>::length (t) : 0;
 		u16 (p, (uint16_t)n);
-		memcpy (pe.data () + p + 2, t, 2 * n);
+		if (n) memcpy (pe.data () + p + 2, t, 2 * n); // no null source for an empty string
 		p += 2 + 2 * n;
 	}
 	char path[] = "/tmp/WinStrings.Test.XXXXXX";

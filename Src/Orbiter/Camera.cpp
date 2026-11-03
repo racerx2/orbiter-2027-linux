@@ -58,6 +58,8 @@ Camera::Camera (double _nearplane, double _farplane)
 	ephi = etheta = 0.0;
 	dphi = dtht = 0.0;
 	eyeofs0. Set (0,0.1,0.08);
+	external_view = true; // not upstream: SetDefaultCockpitDir reads it (set again below as upstream)
+	rot_smooth = false; // not upstream: read by the cockpit rotation before any Rotate call
 	SetDefaultCockpitDir (Vector (0,0,1));
 	SetCockpitDir (0,0);
 	SetCatchAngle (RAD*5.0);

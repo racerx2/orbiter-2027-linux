@@ -232,6 +232,10 @@ void ImageProcessing::SetMesh(const MESHHANDLE hMesh, const char *tex, gcIPInter
 			return;
 		}
 		mesh_tex_idx = hVar->binding - VkDev::NUBOS; // GetSamplerIndex
+		if (mesh_tex_idx < 0 || mesh_tex_idx >= (int)std::size(pTextures)) { // not upstream: a constant's name has no sampler slot
+			LogErr("IPInterface::SetSketchMesh() [%s] is not a sampler", tex);
+			mesh_tex_idx = -1;
+		}
 	}
 	else mesh_tex_idx = -1;
 }
@@ -595,6 +599,10 @@ void ImageProcessing::SetTexture(const char *var, SURFHANDLE hTex, DWORD flags)
 	}
 
 	DWORD idx = hVar->binding - VkDev::NUBOS; // GetSamplerIndex
+	if (hVar->binding < (int)VkDev::NUBOS || idx >= std::size(pTextures)) { // not upstream: a constant's name has no sampler slot
+		LogErr("IPInterface::SetTexture() [%s] is not a sampler. File[%s], Entrypoint[%s]", var, file, entry);
+		return;
+	}
 
 	if (!hTex) {
 		pTextures[idx].hTex = NULL;
@@ -619,6 +627,10 @@ void ImageProcessing::SetTextureNative(const char *var, VkTex *hTex, DWORD flags
 	}
 
 	DWORD idx = hVar->binding - VkDev::NUBOS; // GetSamplerIndex
+	if (hVar->binding < (int)VkDev::NUBOS || idx >= std::size(pTextures)) { // not upstream: a constant's name has no sampler slot
+		LogErr("IPInterface::SetTexture() [%s] is not a sampler. File[%s], Entrypoint[%s]", var, file, entry);
+		return;
+	}
 
 	if (!hTex) {
 		pTextures[idx].hTex = NULL;

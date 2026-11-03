@@ -51,7 +51,9 @@ struct Pb {
 	}
 };
 
-const size_t MaxPoints = 4000000; // a tile's water, past any real one: a hostile tile stops here
+const size_t MaxPoints = 200000; // a tile's water, past any real one: a hostile tile stops here
+const size_t MaxWork = (size_t)1 << 24;  // a build's row and texel steps, past any real tile
+const size_t MaxScan = (size_t)1 << 26;  // its shore tests' edge visits; past them the shores so far are kept
 
 // a polygon's geometry (MoveTo, LineTo, ClosePath with zig-zag deltas) as its rings
 bool Polygon (Pb g, Feature &f, size_t &points)
@@ -135,7 +137,7 @@ bool DecodeLayer (const uint8_t *d, size_t n, std::vector<Feature> &water, uint3
 		if (!l.Key (f, wt)) return false;
 		if (f == 5 && wt == 0) {
 			uint64_t e;
-			if (!l.Var (e) || !e || e > (1u << 20)) return false;
+			if (!l.Var (e) || e < 256 || e > (1u << 20)) return false; // not upstream: 256, a texel at most 2 units
 			extent = (uint32_t)e;
 		} else if (f == 2 && wt == 2) {
 			Pb feat, geom {};
@@ -154,14 +156,21 @@ bool DecodeLayer (const uint8_t *d, size_t n, std::vector<Feature> &water, uint3
 			if (!p.rings.empty ()) water.push_back (std::move (p));
 		} else if (!l.Skip (wt)) return false;
 	}
+	const int32_t lo = -(int32_t)extent, hi = 2 * (int32_t)extent; // not upstream: the tile and a tile each way, past any real buffer
+	for (Feature &p : water)
+		for (auto &r : p.rings)
+			for (int32_t &v : r) v = std::clamp (v, lo, hi);
 	return true;
 }
 
-void WaterTile::Build (int tz, int tx, int ty, const std::vector<Feature> &water, uint32_t extent)
+bool WaterTile::Build (int tz, int tx, int ty, const std::vector<Feature> &water, uint32_t extent)
 {
 	z = tz, x = tx, y = ty;
 	bits.assign ((size_t)Raster * Raster / 64, 0);
 	shore.clear (), mid.clear ();
+	if (extent < 256) return false; // not upstream: as DecodeLayer
+	size_t work = 0, scan = 0;
+	auto Over = [&] (size_t n) { work += n; if (work <= MaxWork) return false; bits.clear (), shore.clear (), mid.clear (); return true; };
 	const double s = (double)Raster / extent;
 	// the mask: each feature's rings even-odd, row by row at the texel centres
 	std::vector<std::vector<double>> rowx (Raster);
@@ -175,6 +184,7 @@ void WaterTile::Build (int tz, int tx, int ty, const std::vector<Feature> &water
 				if (y0 == y1) continue;
 				double lo = std::min (y0, y1), hi = std::max (y0, y1);
 				int r0 = std::max (0, (int)std::ceil (lo - 0.5)), r1 = std::min (Raster - 1, (int)std::ceil (hi - 0.5) - 1);
+				if (r1 >= r0 && Over ((size_t)(r1 - r0 + 1))) return false;
 				for (int row = r0; row <= r1; row++) {
 					double yc = row + 0.5;
 					if (rowx[row].empty ()) touched.push_back (row);
@@ -187,6 +197,7 @@ void WaterTile::Build (int tz, int tx, int ty, const std::vector<Feature> &water
 			std::sort (xs.begin (), xs.end ());
 			for (size_t k = 0; k + 1 < xs.size (); k += 2) {
 				int c0 = std::max (0, (int)std::ceil (xs[k] - 0.5)), c1 = std::min (Raster - 1, (int)std::ceil (xs[k + 1] - 0.5) - 1);
+				if (c1 >= c0 && Over ((size_t)(c1 - c0 + 1))) return false;
 				for (int c = c0; c <= c1; c++) {
 					size_t at = (size_t)row * Raster + c;
 					bits[at >> 6] |= (uint64_t)1 << (at & 63);
@@ -210,6 +221,7 @@ void WaterTile::Build (int tz, int tx, int ty, const std::vector<Feature> &water
 				if (e.y0 == e.y1) continue; // never crosses a test's row (half open)
 				int b0 = std::max (0, (int)std::floor (std::min (e.y0, e.y1)) + B), b1 = std::min (NB - 1, (int)std::floor (std::max (e.y0, e.y1)) + B);
 				if (b0 > b1) continue;
+				if (Over ((size_t)(b1 - b0 + 1))) return false;
 				for (int b = b0; b <= b1; b++) bin[b].push_back ((uint32_t)edges.size ());
 				edges.push_back (e);
 			}
@@ -219,6 +231,7 @@ void WaterTile::Build (int tz, int tx, int ty, const std::vector<Feature> &water
 	auto Wet = [&] (double px, double py) { // in raster units: 1 water, 0 land, -1 past the rows kept
 		int b = (int)std::floor (py) + B;
 		if (b < 0 || b >= NB) return -1;
+		scan += bin[b].size ();
 		for (uint32_t i : bin[b]) {
 			const Edge &e = edges[i];
 			if (py < std::min (e.y0, e.y1) || py >= std::max (e.y0, e.y1)) continue;
@@ -260,6 +273,7 @@ void WaterTile::Build (int tz, int tx, int ty, const std::vector<Feature> &water
 				if (len <= 0.0) continue;
 				double mx = 0.5 * (px0 + px1) * Raster, my = 0.5 * (py0 + py1) * Raster, ox = off * nx / len, oy = off * ny / len;
 				int w1 = Wet (mx + ox, my + oy), w2 = Wet (mx - ox, my - oy);
+				if (scan > MaxScan) return true; // not upstream: the shores so far
 				if (w1 >= 0 && w2 >= 0 && w1 == w2) continue; // water or land on both sides: not a shore
 				double u[3];
 				Local::Unit (TileLatLon (z, x + px0, y + py0), u);
@@ -269,6 +283,7 @@ void WaterTile::Build (int tz, int tx, int ty, const std::vector<Feature> &water
 				mid.insert (mid.end (), {(float)(0.5 * (px0 + px1)), (float)(0.5 * (py0 + py1))});
 			}
 		}
+	return true;
 }
 
 bool WaterTile::Water (double fx, double fy) const

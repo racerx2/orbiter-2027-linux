@@ -102,8 +102,8 @@ double Area (const std::vector<TsBldg::Pt> &r)
 	return 0.5 * a;
 }
 
-// geometry commands to rings: MoveTo, LineTo, ClosePath with zigzag deltas
-bool Rings (const std::vector<uint32_t> &g, std::vector<std::vector<TsBldg::Pt>> &rings)
+// geometry commands to rings: MoveTo, LineTo, ClosePath with zigzag deltas; left: the tile's points still to decode, 0 and no rings once spent
+bool Rings (const std::vector<uint32_t> &g, std::vector<std::vector<TsBldg::Pt>> &rings, size_t &left)
 {
 	int64_t x = 0, y = 0;
 	std::vector<TsBldg::Pt> cur;
@@ -118,6 +118,8 @@ bool Rings (const std::vector<uint32_t> &g, std::vector<std::vector<TsBldg::Pt>>
 		if (id != 1 && id != 2) return false;
 		if (i + 2 * (size_t)n > g.size()) return false;
 		for (uint32_t k = 0; k < n; k++) {
+			if (!left) { rings.clear(); return true; } // not upstream: the tile's point budget is spent
+			left--;
 			x += Zz (g[i++]);
 			y += Zz (g[i++]);
 			if (id == 1) cur.clear();
@@ -166,7 +168,7 @@ bool TsBldg::Inflate (const std::string &in, std::string &out)
 		r = inflate (&s, Z_NO_FLUSH);
 		if (r != Z_OK && r != Z_STREAM_END) { inflateEnd (&s); return false; }
 		out.append (buf, sizeof buf - s.avail_out);
-		if (out.size() > ((size_t)256 << 20)) { inflateEnd (&s); return false; }
+		if (out.size() > ((size_t)16 << 20)) { inflateEnd (&s); return false; } // not upstream: 16 MB, the largest real tile x4
 	} while (r != Z_STREAM_END && (s.avail_in || !s.avail_out));
 	inflateEnd (&s);
 	return r == Z_STREAM_END;
@@ -177,6 +179,7 @@ bool TsBldg::Decode (const std::string &pbf, std::vector<Feature> &out, uint32_t
 	out.clear();
 	extent = 4096;
 	bool seen = false;
+	size_t left = MaxTile; // not upstream: points decoded per tile, the build's cap
 	Pb tile (pbf.data(), pbf.size());
 	int f, wt;
 	while (tile.More()) {
@@ -228,11 +231,12 @@ bool TsBldg::Decode (const std::string &pbf, std::vector<Feature> &out, uint32_t
 				else if (k == "render_min_height") F.minHeight = num;
 				else if (k == "hide_3d") F.hide = v.kind == 3 ? v.num != 0.0 : (v.kind == 2 ? v.str == "true" : v.num != 0.0);
 			}
-			if (!Rings (geom, F.rings)) return false;
+			if (!Rings (geom, F.rings, left)) return false;
 			if (to != 1.0)
 				for (auto &r : F.rings)
 					for (Pt &p : r) { p.x *= to; p.y *= to; }
 			if (!F.rings.empty()) out.push_back (std::move (F));
+			if (!left) return true; // not upstream: the rest of the tile left out
 		}
 	}
 	return true;
@@ -620,8 +624,8 @@ uint8_t WayKind (const std::string &layer, const std::string &cls, const std::st
 	return NONE;
 }
 
-// LineString commands to parts: MoveTo starts one
-bool Lines (const std::vector<uint32_t> &g, std::vector<std::vector<TsBldg::Pt>> &parts)
+// LineString commands to parts: MoveTo starts one; left as for Rings
+bool Lines (const std::vector<uint32_t> &g, std::vector<std::vector<TsBldg::Pt>> &parts, size_t &left)
 {
 	int64_t x = 0, y = 0;
 	std::vector<TsBldg::Pt> cur;
@@ -631,6 +635,8 @@ bool Lines (const std::vector<uint32_t> &g, std::vector<std::vector<TsBldg::Pt>>
 		if (id != 1 && id != 2) return false;
 		if (i + 2 * (size_t)n > g.size()) return false;
 		for (uint32_t k = 0; k < n; k++) {
+			if (!left) { parts.clear(); return true; } // not upstream: the tile's point budget is spent
+			left--;
 			x += Zz (g[i++]);
 			y += Zz (g[i++]);
 			if (id == 1) {
@@ -649,7 +655,7 @@ bool Lines (const std::vector<uint32_t> &g, std::vector<std::vector<TsBldg::Pt>>
 bool TsWay::Decode (const std::string &pbf, Tile &t)
 {
 	t.f.clear();
-	size_t pts = 0;
+	size_t pts = 0, left = WayMaxPts; // not upstream: left, the points decoded per tile
 	Pb tile (pbf.data(), pbf.size());
 	int f, wt;
 	while (tile.More()) {
@@ -712,7 +718,7 @@ bool TsWay::Decode (const std::string &pbf, Tile &t)
 			if (!area && (F.kind == APRON || F.kind == HELIPAD)) continue;
 			if (area) F.flags |= AREA;
 			std::vector<std::vector<TsBldg::Pt>> parts;
-			if (!(area ? Rings (geom, parts) : Lines (geom, parts))) return false;
+			if (!(area ? Rings (geom, parts, left) : Lines (geom, parts, left))) return false;
 			if (parts.size() > WayMaxParts) parts.resize (WayMaxParts);
 			for (const auto &p : parts) {
 				if (pts + p.size() > WayMaxPts) break; // the tile's budget is spent
@@ -724,6 +730,7 @@ bool TsWay::Decode (const std::string &pbf, Tile &t)
 				F.parts.push_back (std::move (q));
 			}
 			if (!F.parts.empty()) t.f.push_back (std::move (F));
+			if (!left) return true; // not upstream: the rest of the tile left out
 		}
 	}
 	return true;

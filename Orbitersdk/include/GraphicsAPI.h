@@ -1835,6 +1835,8 @@ public:
 	DWORD GetSurfaceMarkerLegend (OBJHANDLE hObj, const LABELTYPE **lspec) const;
 	// @}
 
+	virtual bool clbkIsSurface (SURFHANDLE surf) { return false; } ///< not upstream: surf is a surface this client holds now (oapiIsSurface); false for a client that can't tell
+
 	QWidget *hVid;          ///< Window handle of Launchpad video tab, if available
 
 protected:

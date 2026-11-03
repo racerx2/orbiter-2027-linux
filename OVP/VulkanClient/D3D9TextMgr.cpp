@@ -460,6 +460,14 @@ float D3D9Text::PrintSkp(D3D9Pad *pSkp, float xpos, float ypos, const char *_str
 
 		while (c && (idx <= len || len <= 0)) {
 
+			if (iI + 6 > nQueueCap || vI + 4 > nQueueCap) { // not upstream: the queues full, flushed between characters
+				pSkp->vI = vI;
+				pSkp->iI = iI;
+				pSkp->Room(4, 6);
+				vI = pSkp->vI;
+				iI = pSkp->iI;
+			}
+
 			D3D9FontData *pData = Data(c);
 
 			pIdx[iI++] = vI;

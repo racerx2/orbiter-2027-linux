@@ -1,9 +1,19 @@
 Include(FetchContent)
 
+# not upstream: a test's own AddressSanitizer (ARGN: more compile options), unless the build has its sanitizers (ORBITER_SANITIZERS): address and thread don't mix
+function(test_asan t)
+	if(NOT ORBITER_SANITIZER)
+		target_compile_options(${t} PRIVATE ${ARGN} -fsanitize=address -fno-omit-frame-pointer)
+		target_link_options(${t} PRIVATE -fsanitize=address)
+	elseif(ARGN)
+		target_compile_options(${t} PRIVATE ${ARGN})
+	endif()
+endfunction()
+
 FetchContent_Declare(
   Catch2
   GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-  GIT_TAG        v3.8.1 # not upstream: v3.0.0-preview3 sizes a static array with MINSIGSTKSZ (sysconf since glibc 2.34)
+  GIT_TAG        2b60af89e23d28eefc081bc930831ee9d45ea58b # v3.8.1, the commit (a tag can move); not upstream: v3.0.0-preview3 sizes a static array with MINSIGSTKSZ (sysconf since glibc 2.34)
 )
 
 set(BUILD_SHARED_LIBS OFF) # not upstream: static Catch2; tracy.cmake turns shared libs on
@@ -72,6 +82,20 @@ add_test_file(Lua.Interpreter)
 target_sources(Lua.Interpreter PRIVATE Lua.Interpreter.Exe.cpp)
 set_target_properties(Lua.Interpreter PROPERTIES ENABLE_EXPORTS ON)
 target_link_options(Lua.Interpreter PRIVATE -Wl,--unresolved-symbols=ignore-in-shared-libs)
+# not upstream: the release links with -z now, so every exe-side symbol binds at load: doubles for those the test exe doesn't define (exe_stubs.py)
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/LuaInterpreterStubs.c
+	COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/exe_stubs.py $<TARGET_FILE:LuaInterpreter> ${CMAKE_CURRENT_BINARY_DIR}/LuaInterpreterStubs.c
+	DEPENDS LuaInterpreter ${CMAKE_CURRENT_SOURCE_DIR}/exe_stubs.py VERBATIM)
+add_library(LuaInterpreterStubs SHARED ${CMAKE_CURRENT_BINARY_DIR}/LuaInterpreterStubs.c)
+set_target_properties(LuaInterpreterStubs PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${ORBITER_BINARY_ROOT_DIR}) # beside the test exe: its RUNPATH is $ORIGIN, never installed
+target_link_libraries(Lua.Interpreter LuaInterpreterStubs)
+target_link_options(Lua.Interpreter PRIVATE LINKER:--no-as-needed) # the exe uses none of the doubles itself
+
+# not upstream: WineBridge's checks of what its helper sends (design-security-fixes F)
+add_unit_test(WineBridgeWire.Test)
+target_include_directories(WineBridgeWire.Test PRIVATE ${ORBITER_SOURCE_ROOT_DIR}/Src/WineBridge/linux ${ORBITER_SOURCE_SDK_INCLUDE_DIR}/Lua)
+target_link_libraries(WineBridgeWire.Test lua::lib)
+test_asan(WineBridgeWire.Test)
 
 # not upstream: proves the Catch2/ctest harness builds and runs
 add_unit_test(Port.Harness)
@@ -120,17 +144,24 @@ add_library(Util.Module MODULE Util.Module.cpp) # not upstream: ModuleLoad/Modul
 set_target_properties(Util.Module PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${ORBITER_BINARY_ROOT_DIR}/Tests") # not upstream: as above
 target_compile_definitions(Util.Test PRIVATE UTIL_MODULE="$<TARGET_FILE:Util.Module>") # not upstream: as above
 add_dependencies(Util.Test Util.Module) # not upstream: as above
+add_library(Util.Dep SHARED Util.Dep.cpp) # not upstream: a needed library's ExitModule runs when it unloads
+target_link_libraries(Util.Dep Orbitersdk)
+add_library(Util.Needs MODULE Util.Needs.cpp) # not upstream: as above, the module that needs it
+target_link_libraries(Util.Needs Util.Dep Orbitersdk)
+set_target_properties(Util.Dep Util.Needs PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${ORBITER_BINARY_ROOT_DIR}/Tests") # side by side: the RUNPATH $ORIGIN finds the library
+set_target_properties(Util.Test PROPERTIES ENABLE_EXPORTS ON) # not upstream: InitLib and UtilDepExited for the libraries
+target_compile_definitions(Util.Test PRIVATE UTIL_NEEDS="$<TARGET_FILE:Util.Needs>")
+add_dependencies(Util.Test Util.Needs)
 # not upstream: the .msh reader on malformed files, built with ASan
 add_unit_test(Mesh.Test ${ORBITER_SOURCE_DIR}/Mesh.cpp ${ORBITER_SOURCE_DIR}/PathResolve.cpp ${ORBITER_SOURCE_DIR}/GltfLoader.cpp)
 target_link_libraries(Mesh.Test Qt6::Core)
 target_compile_definitions(Mesh.Test PRIVATE NOGRAPHICS)
-target_compile_options(Mesh.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-target_link_options(Mesh.Test PRIVATE -fsanitize=address)
+target_compile_options(Mesh.Test PRIVATE -fno-sanitize=vptr) # not upstream: GraphicsClient isn't linked here, so no typeinfo for UBSan's vptr check
+test_asan(Mesh.Test)
 # not upstream: missing planet textures: package list, check, zip installer, file:// download; built with ASan
 add_unit_test(TexPack.Test ${ORBITER_SOURCE_DIR}/TexPack.cpp ${ORBITER_SOURCE_DIR}/PathResolve.cpp)
 target_link_libraries(TexPack.Test Qt6::Network zlib)
-target_compile_options(TexPack.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-target_link_options(TexPack.Test PRIVATE -fsanitize=address)
+test_asan(TexPack.Test)
 # custom: launcher skins; the parsers, and the classic-control hider and reset key on IDD_MAIN offscreen
 add_unit_test(LauncherFacts.Test ${ORBITER_SOURCE_DIR}/Custom/LauncherFacts.cpp)
 target_compile_definitions(LauncherFacts.Test PRIVATE SCN_DIR="${CMAKE_SOURCE_DIR}/Scenarios")
@@ -166,6 +197,14 @@ if (TARGET LauncherFormsCore)
 	target_link_libraries(FormsPreview LauncherFormsCore)
 	set_target_properties(FormsPreview PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${ORBITER_BINARY_ROOT_DIR}/Tests" EXCLUDE_FROM_ALL ON)
 endif()
+# not upstream: under ASan the Qt GUI tests unwind fully on malloc, so Tests/lsan.supp sees Qt's font cache in a leak's stack (a system Qt has no frame pointers)
+if(ORBITER_SANITIZER)
+	foreach(t ChmHelp.Test ResDialog.Test ClassicHider.Test LayoutApply.Test FormsRuntime.Test FormsSkins.Test)
+		if(TEST ${t})
+			set_property(TEST ${t} APPEND PROPERTY ENVIRONMENT ASAN_OPTIONS=fast_unwind_on_malloc=0)
+		endif()
+	endforeach()
+endif()
 # custom: launcher skins; the QML view module and the Launcher object a QML skin sees, offscreen
 if (TARGET LauncherQml)
 	find_package(Qt6 REQUIRED COMPONENTS Quick QuickWidgets Qml Network)
@@ -189,22 +228,18 @@ target_link_libraries(PbrMaterial.Test Qt6::Core) # VkGltfImage.h
 # not upstream: the planet tile stream: grids, pixels, DDS, config, size cap, and the service on file:// sources
 add_unit_test(TileStream.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamRwy.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp)
 target_link_libraries(TileStream.Test Qt6::Network Qt6::Gui stb_dxt zlib)
-target_compile_options(TileStream.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-target_link_options(TileStream.Test PRIVATE -fsanitize=address)
+test_asan(TileStream.Test)
 set_tests_properties(TileStream.Test PROPERTIES TIMEOUT 120) # room for a slow machine: the binary runs in seconds
 add_unit_test(TileStreamDecode.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamRwy.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream: the tile stream's decoders on hostile input, ASan
 target_link_libraries(TileStreamDecode.Test Qt6::Network Qt6::Gui stb_dxt zlib)
-target_compile_options(TileStreamDecode.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-target_link_options(TileStreamDecode.Test PRIVATE -fsanitize=address)
+test_asan(TileStreamDecode.Test)
 add_unit_test(TileStreamCore.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamRwy.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream: the core's lock, holds, ownership, indexes, archives, disks and caps
 target_link_libraries(TileStreamCore.Test Qt6::Network Qt6::Gui stb_dxt zlib)
-target_compile_options(TileStreamCore.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-target_link_options(TileStreamCore.Test PRIVATE -fsanitize=address)
+test_asan(TileStreamCore.Test)
 # not upstream: the Launchpad Earth streaming page: base list, when Clear and Download are refused, how they end
 add_unit_test(TileStreamMars.Test ${ORBITER_SOURCE_DIR}/TileStream.cpp ${ORBITER_SOURCE_DIR}/TileStreamCfg.cpp ${ORBITER_SOURCE_DIR}/TileStreamImg.cpp ${ORBITER_SOURCE_DIR}/TileStreamNet.cpp ${ORBITER_SOURCE_DIR}/TileStreamSky.cpp ${ORBITER_SOURCE_DIR}/TileStreamRwy.cpp ${ORBITER_SOURCE_DIR}/TileStreamCog.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream (mars-stream): COGs read in the job, a cog body's tiles, ASan
 target_link_libraries(TileStreamMars.Test Qt6::Network Qt6::Gui stb_dxt zlib)
-target_compile_options(TileStreamMars.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-target_link_options(TileStreamMars.Test PRIVATE -fsanitize=address)
+test_asan(TileStreamMars.Test)
 set_tests_properties(TileStreamMars.Test PROPERTIES TIMEOUT 300) # the planet to L7 under ASan
 add_unit_test(TileStreamLaunchpad.Test ${ORBITER_SOURCE_DIR}/StreamBases.cpp)
 # not upstream: a base file's clear zones (BEGIN_CLEARZONES)
@@ -215,43 +250,35 @@ target_include_directories(BldgGeom.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanC
 target_link_libraries(BldgGeom.Test Qt6::Gui zlib)
 target_compile_definitions(BldgGeom.Test PRIVATE BLDGTEX_DIR="${ORBITER_BINARY_TEXTURES_DIR}/Bldg")
 add_dependencies(BldgGeom.Test BldgTextures)
-target_compile_options(BldgGeom.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-target_link_options(BldgGeom.Test PRIVATE -fsanitize=address)
+test_asan(BldgGeom.Test)
 add_unit_test(WayGeom.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/WayGeom.cpp ${ORBITER_SOURCE_DIR}/TileStreamMvt.cpp) # not upstream (design-ways)
 target_include_directories(WayGeom.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
 target_link_libraries(WayGeom.Test Qt6::Gui zlib)
-target_compile_options(WayGeom.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-target_link_options(WayGeom.Test PRIVATE -fsanitize=address)
+test_asan(WayGeom.Test)
 # not upstream: terrain horizon maps (design-ground-graphics 2)
 add_unit_test(HorizonMap.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/HorizonMap.cpp)
 target_include_directories(HorizonMap.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
-target_compile_options(HorizonMap.Test PRIVATE -O2 -fsanitize=address -fno-omit-frame-pointer)
-target_link_options(HorizonMap.Test PRIVATE -fsanitize=address)
+test_asan(HorizonMap.Test -O2)
 # not upstream: auto-exposure controller (design-ground-graphics 6)
 add_unit_test(AutoExpo.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/AutoExpo.cpp)
 target_include_directories(AutoExpo.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
-target_compile_options(AutoExpo.Test PRIVATE -O2 -fsanitize=address -fno-omit-frame-pointer) # -O2: the night look's Monte Carlo cases
-target_link_options(AutoExpo.Test PRIVATE -fsanitize=address)
+test_asan(AutoExpo.Test -O2) # -O2: the night look's Monte Carlo cases
 # not upstream: volumetric cloud coverage map and noise (design-ground-graphics 4)
 add_unit_test(VolCloudMap.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/VolCloudMap.cpp)
 target_include_directories(VolCloudMap.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
-target_compile_options(VolCloudMap.Test PRIVATE -O2 -fsanitize=address -fno-omit-frame-pointer)
-target_link_options(VolCloudMap.Test PRIVATE -fsanitize=address)
+test_asan(VolCloudMap.Test -O2)
 # not upstream: tree placement and meshes (design-ground-graphics 5)
 add_unit_test(TreeGeom.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/TreeGeom.cpp)
 target_include_directories(TreeGeom.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
-target_compile_options(TreeGeom.Test PRIVATE -O2 -fsanitize=address -fno-omit-frame-pointer)
-target_link_options(TreeGeom.Test PRIVATE -fsanitize=address)
+test_asan(TreeGeom.Test -O2)
 # not upstream: the ground materials' maths (design-ground-detail 1)
 add_unit_test(GroundGeom.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/GroundGeom.cpp ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/TreeGeom.cpp)
 target_include_directories(GroundGeom.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
-target_compile_options(GroundGeom.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-target_link_options(GroundGeom.Test PRIVATE -fsanitize=address)
+test_asan(GroundGeom.Test)
 # not upstream: seamless far cloud layer (design-cloud-seams)
 add_unit_test(CloudAtlas.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/CloudAtlas.cpp)
 target_include_directories(CloudAtlas.Test PRIVATE ${CMAKE_SOURCE_DIR}/OVP/VulkanClient)
-target_compile_options(CloudAtlas.Test PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-target_link_options(CloudAtlas.Test PRIVATE -fsanitize=address)
+test_asan(CloudAtlas.Test)
 
 # not upstream: visual batch maths (design-visual-batch 13)
 add_unit_test(PostMath.Test ${CMAKE_SOURCE_DIR}/OVP/VulkanClient/PostMath.cpp)

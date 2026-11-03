@@ -7,7 +7,7 @@ FetchContent_MakeAvailable(imgui)
 # Vulkan Memory Allocator replaces the D3DPOOL resource management (header only)
 FetchContent_Declare(vma
 	GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
-	GIT_TAG v3.4.0
+	GIT_TAG 3aa921224c154a0d2c43912bc88e1c42ce1f7607 # v3.4.0, the commit, as a tag can move
 )
 FetchContent_MakeAvailable(vma)
 install(FILES ${vma_SOURCE_DIR}/LICENSE.txt DESTINATION ${ORBITER_INSTALL_DOC_DIR}/Licenses RENAME VulkanMemoryAllocator.txt) # not upstream: licence text (Doc/Licenses/README.txt)
@@ -246,6 +246,9 @@ target_link_libraries(D3D9Client
 	glslang::SPIRV
 	glslang::glslang-default-resource-limits
 )
+if (ORBITER_SANITIZER AND NOT MSVC) # not upstream: a system glslang doesn't export its classes' typeinfo, which the vptr check needs
+	set_source_files_properties(VkShader.cpp PROPERTIES COMPILE_OPTIONS -fno-sanitize=vptr)
+endif ()
 
 set_target_properties(D3D9Client
 	PROPERTIES

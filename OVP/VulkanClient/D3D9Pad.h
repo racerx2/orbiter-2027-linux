@@ -84,6 +84,7 @@ extern oapi::Pen  *defpen;
 #define nHigh 65
 #define nQueueMax 2048
 #define nIndexMax (nQueueMax * 3)
+#define nQueueCap (3 * nQueueMax + 3) // not upstream: the vertex and index queues' size
 
 typedef std::shared_ptr<D3D9Text> D3D9TextPtr;
 
@@ -583,6 +584,8 @@ public:
 private:
 
 	bool Topology(Topo tRequest);
+	bool Room(int nv, int ni); // not upstream: the queues take nv more vertices and ni indices, flushed first when they can't; false: more than they hold
+	template <typename Type> void AppendLineRuns(const Type *pt, int npt, bool bLoop, bool wide); // not upstream: a line too long for the queues, in runs
 	void SetEnable(DWORD config);
 	void ClearEnable(DWORD config);
 
@@ -876,6 +879,8 @@ public:
 	void Release();
 
 private:
+	void Alloc(int npt); // not upstream
+	static const int MAXPT = 10920 - 2; // not upstream: 6 * (npt + 2) indices fit in 16 bits
 	bool bLoop;
 	WORD nVtx, nPt, nIdx, iI, vI;
 	VkBuf *pVB; ///< (Local) Vertex buffer pointer

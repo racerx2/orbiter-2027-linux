@@ -7,7 +7,7 @@ if (TARGET Coll_CollDamageA)
 		target_sources(CollDamageA.Test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../Orbiter/BaseDent.cpp)
 		target_compile_definitions(CollDamageA.Test PRIVATE COLL_HAVE_BASEDENT=1)
 	endif ()
-	coll_unit_test(CollFxA.Test 60 UNITS CollFxA CollSdk DentMath CollCfg Vecmat)
+	coll_unit_test(CollFxA.Test 60 UNITS CollFxA CollSdk CollAnim DentMath CollCfg Vecmat) # not upstream: CollAnim for CollFakeSdk.h
 endif ()
 if (TARGET Coll_CollGroundA) # ground impacts (design CA-ground 3)
 	coll_unit_test(CollGroundA.Test 60 UNITS CollGroundA CollShape CollAnim CollGeom CollSdk DentMath Vecmat)

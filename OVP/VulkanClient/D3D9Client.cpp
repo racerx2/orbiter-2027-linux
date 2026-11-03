@@ -2411,6 +2411,11 @@ void D3D9Client::clbkIncrSurfaceRef(SURFHANDLE surf)
 
 // =======================================================================
 
+bool D3D9Client::clbkIsSurface (SURFHANDLE surf) // not upstream: a surface in the catalog (a script's handle is checked before use)
+{
+	return surf && SurfaceCatalog.count(SURFACE(surf)) != 0;
+}
+
 bool D3D9Client::clbkReleaseSurface(SURFHANDLE surf)
 {
 	_TRACE;
@@ -2625,7 +2630,7 @@ bool D3D9Client::clbkScaleBlt (SURFHANDLE tgt, DWORD tgtx, DWORD tgty, DWORD tgt
 		// 
 		if (td->SysMem && sd->RenderTarget)
 		{
-			pDevice->CopySurface(pss, NULL, pts, NULL); // GetRenderTargetData
+			pDevice->CopySurface(pss, &rs, pts, &tp); // GetRenderTargetData; not upstream: the blit's rectangles (the whole source overran a smaller target)
 			SURFACE(tgt)->Flags |= OAPISURFACE_CAPTURE;
 			return true;
 		}

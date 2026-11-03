@@ -7,6 +7,7 @@
 #include <cstring>
 #include <deque>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -141,7 +142,8 @@ namespace {
 	};
 	// the state here is never destroyed: Orbiter's fast shutdown calls ExitModule after static objects are gone
 	std::deque<Live> &g_live = *new std::deque<Live>;     // Orbiter keeps pointers into these: never moved, kept for the session
-	std::vector<Live *> &g_byId = *new std::vector<Live *>; // by the helper's id
+	std::unordered_map<uint32_t, Live *> &g_byId = *new std::unordered_map<uint32_t, Live *>; // by the helper's id (not upstream (F11): a map, only the ids given)
+	std::vector<Live *> &g_spare = *new std::vector<Live *>; // not upstream (F11): byte items whose proxy is gone, used again
 	const uint32_t BEACON_BYTES = 4 + 24 + 24 + 40 + 1;
 
 	void SetValue (Live &l, const uint8_t *p, uint32_t n)
@@ -184,9 +186,21 @@ namespace {
 		l.kind = kind;
 		if (kind == WB_LIVE_BEACON) { l.beacon.pos = &l.bpos; l.beacon.col = &l.bcol; }
 		if (kind != WB_LIVE_STRING) SetValue (l, buf, n); // as Orbiter's: asking for the debug buffer doesn't change it
-		if (id >= g_byId.size ()) g_byId.resize (id + 1, nullptr);
 		g_byId[id] = &l;
 		return &l;
+	}
+}
+
+// not upstream (F7): beacons, exhausts and particle streams the bridge put on vessels, taken off again when it stops
+namespace {
+	enum { PL_BEACON, PL_EXHAUST, PL_STREAM };
+	struct Placed { OBJHANDLE h; int what; void *p; UINT idx; };
+	std::vector<Placed> &g_placed = *new std::vector<Placed>;
+	void Place (VESSEL *v, int what, void *p, UINT idx = 0) { if (v && (p || what == PL_EXHAUST)) g_placed.push_back ({v->GetHandle (), what, p, idx}); }
+	void Unplace (VESSEL *v, int what, void *p, UINT idx = 0) // the module took it off: an exhaust's id or a stream's address may be another's later
+	{
+		for (size_t i = 0; v && i < g_placed.size (); i++)
+			if (g_placed[i].h == v->GetHandle () && g_placed[i].what == what && g_placed[i].p == p && g_placed[i].idx == idx) { g_placed.erase (g_placed.begin () + i); return; }
 	}
 }
 
@@ -198,12 +212,13 @@ uint32_t WbLiveBytes (WbReader &r, void *dst, uint32_t n)
 	uint8_t buf[256];
 	r.raw (buf, n);
 	if (r.bad) return 0;
-	Live &l = g_live.emplace_back ();
+	Live *sp = nullptr; // not upstream (F11): a released byte item first
+	if (!g_spare.empty ()) { sp = g_spare.back (); g_spare.pop_back (); *sp = Live (); }
+	Live &l = sp ? *sp : g_live.emplace_back ();
 	l.kind = WB_LIVE_BYTES;
 	l.dst = dst;
 	l.n = n;
 	SetValue (l, buf, n);
-	if (id >= g_byId.size ()) g_byId.resize (id + 1, nullptr);
 	g_byId[id] = &l;
 	return id;
 }
@@ -212,16 +227,17 @@ uint32_t WbLiveBytes (WbReader &r, void *dst, uint32_t n)
 uint32_t WbLiveIdOf (const void *p)
 {
 	if (!p) return 0;
-	for (size_t i = 0; i < g_byId.size (); i++) {
-		const Live *l = g_byId[i];
-		if (l && (p == &l->d || p == &l->v || p == &l->beacon)) return (uint32_t)i;
+	for (const auto &e : g_byId) {
+		const Live *l = e.second;
+		if (l && (p == &l->d || p == &l->v || p == &l->beacon)) return e.first;
 	}
 	return 0;
 }
 
 BEACONLIGHTSPEC *WbLiveBeacon (uint32_t id)
 {
-	Live *l = id < g_byId.size () ? g_byId[id] : nullptr;
+	auto it = g_byId.find (id);
+	Live *l = it != g_byId.end () ? it->second : nullptr;
 	return l && l->kind == WB_LIVE_BEACON ? &l->beacon : nullptr;
 }
 
@@ -236,7 +252,10 @@ const void *WbLiveRef (WbReader &r, int kind)
 // the proxy is gone: its items write nowhere
 void WbLiveRelease (uint32_t id)
 {
-	if (id < g_byId.size () && g_byId[id]) g_byId[id]->dst = nullptr;
+	auto it = g_byId.find (id);
+	if (it == g_byId.end () || !it->second) return;
+	it->second->dst = nullptr;
+	if (it->second->kind == WB_LIVE_BYTES) { g_spare.push_back (it->second); g_byId.erase (it); } // not upstream (F11): Orbiter reads it no more
 }
 
 void WbApplySync (const uint8_t *p, uint32_t n)
@@ -246,7 +265,8 @@ void WbApplySync (const uint8_t *p, uint32_t n)
 		memcpy (&s, p, sizeof s);
 		p += sizeof s; n -= sizeof s;
 		if (s.len > n) return;
-		if (s.id < g_byId.size () && g_byId[s.id]) SetValue (*g_byId[s.id], p, s.len);
+		auto it = g_byId.find (s.id);
+		if (it != g_byId.end () && it->second) SetValue (*it->second, p, s.len);
 		p += s.len; n -= s.len;
 	}
 }
@@ -352,7 +372,7 @@ namespace {
 // input boxes: the module's callback through a context
 
 namespace {
-	struct InputBox { uint32_t fn, usr, cancel = 0; }; // cancel: oapiOpenInputBoxEx's
+	struct InputBox { uint32_t fn, usr, cancel = 0; uint64_t session = 0; }; // cancel: oapiOpenInputBoxEx's; not upstream (F7): its helper's start
 	std::deque<InputBox> &g_boxes = *new std::deque<InputBox>;
 
 	bool InputClbk (void *id, char *str, void *usrdata)
@@ -360,7 +380,7 @@ namespace {
 		const InputBox *ib = (const InputBox *)usrdata;
 		WbBridge &b = WbBridge::Get ();
 		Guard g (b.Lock ());
-		if (!b.Alive ()) return false;
+		if (!b.Alive () || ib->session != b.Session ()) return false; // not upstream (F7): a box of a stopped helper is closed to it
 		WbWriter &w = b.Begin (H_INPUTBOX);
 		w.u32 (ib->fn); w.u32 (b.Id (id)); w.str (str); w.u32 (ib->usr);
 		WbReader r = b.Call ();
@@ -578,7 +598,7 @@ bool WbServeManual (uint32_t fn, WbReader &r, WbWriter &w)
 		int vislen = r.i32 ();
 		uint32_t usr = r.u32 ();
 		if (r.bad) { b.BadArgs (fn); return true; }
-		InputBox &ib = g_boxes.emplace_back (InputBox {f, usr});
+		InputBox &ib = g_boxes.emplace_back (InputBox {f, usr, 0, b.Session ()});
 		oapiOpenInputBox (title.c_str (), f ? InputClbk : nullptr, s ? buf.data () : nullptr, vislen, &ib);
 		return true; }
 	case L_OpenInputBoxEx: {
@@ -591,7 +611,7 @@ bool WbServeManual (uint32_t fn, WbReader &r, WbWriter &w)
 		int vislen = r.i32 ();
 		uint32_t usr = r.u32 (), flags = r.u32 ();
 		if (r.bad) { b.BadArgs (fn); return true; }
-		InputBox &ib = g_boxes.emplace_back (InputBox {f, usr, c});
+		InputBox &ib = g_boxes.emplace_back (InputBox {f, usr, c, b.Session ()});
 		oapiOpenInputBoxEx (title.c_str (), f ? InputClbk : nullptr, c ? InputCancel : nullptr, s ? buf.data () : nullptr, vislen, &ib, flags);
 		return true; }
 	case L_MeshGroup: {
@@ -667,7 +687,7 @@ bool WbServeManual (uint32_t fn, WbReader &r, WbWriter &w)
 		if (r.bad) { b.BadArgs (fn); return true; }
 		MESHHANDLE m = fn == L_LoadMeshGlobal ? oapiLoadMeshGlobal (name.c_str ()) : oapiLoadMesh (name.c_str ());
 		if (m) g_globalMeshes.insert (m);
-		w.u32 (b.Id (m));
+		w.u32 (b.Id (m, WK_MESHHANDLE)); // not upstream (F2): a mesh
 		return true; }
 	default:
 		break;
@@ -744,34 +764,38 @@ bool WbServeManual (uint32_t fn, WbReader &r, WbWriter &w)
 		break; }
 	case L_AddBeacon: {
 		Live *l = ReadLive (r, WB_LIVE_BEACON);
-		if (v && l && !r.bad) { v->AddBeacon (&l->beacon); w.b (true); }
+		if (v && l && !r.bad) { v->AddBeacon (&l->beacon); Place (v, PL_BEACON, &l->beacon); w.b (true); }
 		break; }
 	case L_AddExhaustSpec: {
 		EXHAUSTSPEC es {};
 		double d0 = 0;
 		VECTOR3 p0 {}, p1 {};
-		es.th = (THRUSTER_HANDLE)b.Ptr (r.u32 ());
+		es.th = (THRUSTER_HANDLE)b.Ptr (r.u32 (), WK_THRUSTER_HANDLE);
 		es.lsize = r.f64 (); es.wsize = r.f64 (); es.lofs = r.f64 (); es.modulate = r.f64 ();
-		es.tex = (SURFHANDLE)b.Ptr (r.u32 ()); es.flags = r.u32 ();
+		es.tex = (SURFHANDLE)b.Ptr (r.u32 (), WK_SURFHANDLE); es.flags = r.u32 ();
 		es.level = (double *)ExhaustRef (r, WB_LIVE_DOUBLE, d0, p0);
 		es.lpos = (VECTOR3 *)ExhaustRef (r, WB_LIVE_VECTOR3, d0, p0);
 		es.ldir = (VECTOR3 *)ExhaustRef (r, WB_LIVE_VECTOR3, d0, p1);
-		if (v && !r.bad) w.u32 (v->AddExhaust (&es));
+		es.flags &= ~(DWORD)(EXHAUST_CONSTANTLEVEL | EXHAUST_CONSTANTPOS | EXHAUST_CONSTANTDIR); // not upstream: a constant is Orbiter's copy, a live item never
+		if (es.level == &d0) es.flags |= EXHAUST_CONSTANTLEVEL;
+		if (es.lpos == &p0) es.flags |= EXHAUST_CONSTANTPOS;
+		if (es.ldir == &p1) es.flags |= EXHAUST_CONSTANTDIR;
+		if (v && !r.bad) { UINT x = v->AddExhaust (&es); Place (v, PL_EXHAUST, nullptr, x); w.u32 (x); }
 		break; }
 	case L_AddParticleStream: {
 		PARTICLESTREAMSPEC *pss = ReadPSS (r);
 		VECTOR3 pos = V3 (r), dir = V3 (r);
 		Live *l = r.b () ? ReadLive (r, WB_LIVE_DOUBLE) : nullptr;
-		if (v && !r.bad) w.u32 (b.Id (v->AddParticleStream (pss, pos, dir, l ? &l->d : nullptr)));
+		if (v && !r.bad) { PSTREAM_HANDLE ps = v->AddParticleStream (pss, pos, dir, l ? &l->d : nullptr); Place (v, PL_STREAM, ps); w.u32 (b.Id (ps, WK_PSTREAM_HANDLE)); }
 		break; }
 	case L_AddReentryStream: {
 		PARTICLESTREAMSPEC *pss = ReadPSS (r);
-		if (v && !r.bad) w.u32 (b.Id (v->AddReentryStream (pss)));
+		if (v && !r.bad) { PSTREAM_HANDLE ps = v->AddReentryStream (pss); Place (v, PL_STREAM, ps); w.u32 (b.Id (ps, WK_PSTREAM_HANDLE)); }
 		break; }
 	case L_AddExhaustStream1: {
-		THRUSTER_HANDLE th = (THRUSTER_HANDLE)b.Ptr (r.u32 ());
+		THRUSTER_HANDLE th = (THRUSTER_HANDLE)b.Ptr (r.u32 (), WK_THRUSTER_HANDLE);
 		PARTICLESTREAMSPEC *pss = ReadPSS (r);
-		if (v && !r.bad) w.u32 (b.Id (v->AddExhaustStream (th, pss)));
+		if (v && !r.bad) { PSTREAM_HANDLE ps = v->AddExhaustStream (th, pss); Place (v, PL_STREAM, ps); w.u32 (b.Id (ps, WK_PSTREAM_HANDLE)); }
 		break; }
 	case L_CreateVariableDragElement: {
 		Live *l = ReadLive (r, WB_LIVE_DOUBLE);
@@ -781,11 +805,13 @@ bool WbServeManual (uint32_t fn, WbReader &r, WbWriter &w)
 		break; }
 	case L_DelExhaust: {
 		UINT idx = r.u32 ();
-		if (v && !r.bad) w.b (v->DelExhaust (idx));
+		if (v && !r.bad) { Unplace (v, PL_EXHAUST, nullptr, idx); w.b (v->DelExhaust (idx)); }
 		break; }
 	case L_DelExhaustStream: {
-		PSTREAM_HANDLE h = (PSTREAM_HANDLE)b.Ptr (r.u32 ());
-		if (v && !r.bad) w.b (v->DelExhaustStream (h));
+		PSTREAM_HANDLE h = (PSTREAM_HANDLE)b.Ptr (r.u32 (), WK_PSTREAM_HANDLE);
+		bool ok = v && !r.bad && v->DelExhaustStream (h);
+		if (ok) { Unplace (v, PL_STREAM, h); b.Retire (h); } // not upstream (F2, F7)
+		w.b (ok);
 		break; }
 	case L_CreateAirfoil: {
 		bridgedOnly = true; // the function's context lives in the bridged vessel
@@ -820,6 +846,12 @@ bool WbServeManual (uint32_t fn, WbReader &r, WbWriter &w)
 	return true;
 }
 
+// not upstream (F2): oapiDeleteMesh: no longer one Orbiter keeps
+void WbMeshGone (const void *h)
+{
+	g_globalMeshes.erase (h);
+}
+
 // with a module's callback, which Orbiter calls through the pool
 MESHHANDLE WbLoadMeshGlobal (const char *name, uint32_t fn)
 {
@@ -837,11 +869,18 @@ MESHHANDLE WbLoadMeshGlobal (const char *name, uint32_t fn)
 
 void WbManualClear ()
 {
-	g_live.clear ();
-	g_byId.clear ();
-	g_pss.clear ();
+	for (const Placed &p : g_placed) { // not upstream (F7): off the vessels that still are, before what they point to goes
+		if (!oapiIsVessel (p.h)) continue;
+		VESSEL *v = oapiGetVesselInterface (p.h);
+		if (!v) continue;
+		if (p.what == PL_BEACON) v->DelBeacon ((BEACONLIGHTSPEC *)p.p);
+		else if (p.what == PL_EXHAUST) v->DelExhaust (p.idx);
+		else v->DelExhaustStream ((PSTREAM_HANDLE)p.p);
+	}
+	g_placed.clear ();
+	g_byId.clear (); // not upstream (F7): the items and specs stay, a drag element may still read one
+	g_spare.clear ();
 	g_nlift = 0;
-	g_boxes.clear ();
 	g_globalMeshes.clear ();
 	g_meshCopies = false;
 }

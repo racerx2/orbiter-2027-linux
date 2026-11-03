@@ -27,6 +27,7 @@ class Nav {
 	friend class NavManager;
 public:
 	Nav (float _freq = 100.0, float _range = 500e3);
+	virtual ~Nav () {} // not upstream: NavManager deletes the transmitters through Nav pointers
 	virtual DWORD Type() const { return TRANSMITTER_NONE; }
 	void SetFreq (float _freq);
 	void SetStep (DWORD _step);

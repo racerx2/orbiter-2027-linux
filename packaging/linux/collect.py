@@ -14,7 +14,7 @@ SYSTEM = re.compile(r'^(' + '|'.join([
 ]) + r')\.so(\.|$)')
 NEVER_BUNDLE = re.compile(r'^lib(ssl|crypto|vulkan|stdc\+\+|gcc_s|c|GL|EGL)\.so')
 PLUGINS = {  # Qt plugin types and files the package needs (no sql drivers, print support, egl device integrations, gtk theme)
-    'platforms': ['libqxcb.so', 'libqwayland-egl.so', 'libqwayland-generic.so', 'libqoffscreen.so', 'libqminimal.so'],
+    'platforms': ['libqxcb.so', 'libqwayland.so', 'libqoffscreen.so', 'libqminimal.so'],  # Qt 6.12: one Wayland platform plugin
     'xcbglintegrations': None, 'wayland-decoration-client': None, 'wayland-graphics-integration-client': None,
     'wayland-shell-integration': None, 'platforminputcontexts': None, 'imageformats': None, 'iconengines': None, 'tls': None,
     'networkinformation': None, 'platformthemes': ['libqxdgdesktopportal.so'],
@@ -96,6 +96,36 @@ def qml_modules(qml):
     return out
 
 
+def runpath_outside(root):  # RUNPATH or RPATH entries that leave the package (a planted library next to it would load first)
+    out = []
+    for p in elfs(root):
+        for x in re.findall(r'\((?:RUNPATH|RPATH)\)\s+Library (?:runpath|rpath): \[([^\]]*)\]', run('readelf', '-dW', p)):
+            for e in x.split(':'):
+                rel = re.match(r'^\$(?:ORIGIN|\{ORIGIN\})(/.*)?$', e)
+                f = os.path.normpath(os.path.dirname(p) + (rel.group(1) or '')) if rel else None
+                if f is None or os.path.commonpath([f, root]) != root:  # an absolute or empty entry (the working folder) counts as outside
+                    out.append('%s: RUNPATH "%s" leaves the package' % (os.path.relpath(p, root), e))
+    return out
+
+
+def unhardened(root):  # every ELF: position independent, no executable stack, full RELRO with immediate binding
+    out = []
+    for p in elfs(root):
+        n = os.path.relpath(p, root)
+        if not re.search(r'Type:\s+DYN', run('readelf', '-hW', p)):
+            out.append('%s: not position independent' % n)
+        seg = run('readelf', '-lW', p)
+        st = re.search(r'GNU_STACK\s+(?:\S+\s+){5}(\S+)', seg)
+        if not st or 'E' in st.group(1):
+            out.append('%s: executable stack' % n)
+        if 'GNU_RELRO' not in seg:
+            out.append('%s: no RELRO' % n)
+        dyn = run('readelf', '-dW', p)
+        if not re.search(r'\(FLAGS\)\s+.*BIND_NOW|\(FLAGS_1\)\s+.*\bNOW\b|\(BIND_NOW\)', dyn):
+            out.append('%s: no immediate binding (-z now)' % n)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--root', required=True)
@@ -170,16 +200,21 @@ def main():
             todo.append(dst)
     if bad:
         sys.exit('collect:\n  ' + '\n  '.join(sorted(set(bad))))
-    for p in elfs(R):  # RUNPATH: the project's own entries, then lib/ relative to the file
-        rel, top = os.path.relpath(LIB, os.path.dirname(p)), os.path.relpath(R, os.path.dirname(p))
-        mine = ':'.join('$ORIGIN' if x == '.' else '$ORIGIN/' + x for x in ([rel] if p in fromqt or os.path.dirname(p) == LIB else [rel, top]))  # the package root too: lua.so for the SDK's Lua modules
+    mods_dir = os.path.join(R, 'Modules')
+    for p in elfs(R):  # RUNPATH: own folder, the package root, Modules and lib/ for our files; lib/ for bundled ones; nothing outside the package
+        d = os.path.dirname(p)
+        third = p in fromqt or os.path.commonpath([d, LIB]) == LIB
+        to = [LIB] if third else [d, R, mods_dir, LIB]
+        new = ':'.join(dict.fromkeys('$ORIGIN' if os.path.relpath(x, d) == '.' else '$ORIGIN/' + os.path.relpath(x, d) for x in to))
         old = run('patchelf', '--print-rpath', p).strip()
-        keep = [] if p in fromqt or os.path.dirname(p) == LIB else [x for x in old.split(':') if x.startswith('$ORIGIN')]
-        new = ':'.join(dict.fromkeys(keep + [mine]))
         if new != old:
             r = subprocess.run(['patchelf', '--set-rpath', new, p], capture_output=True, text=True)
             if r.returncode:
                 sys.exit('collect: patchelf %s: %s' % (p, r.stderr))
+    bad += runpath_outside(R)
+    bad += unhardened(R)
+    if bad:
+        sys.exit('collect:\n  ' + '\n  '.join(sorted(set(bad))[:40]))
     conf = '[Paths]\nPrefix=%s\nLibraries=%s\nPlugins=plugins\nQmlImports=qml\n'
     for p in elfs(R):  # qt.conf next to every program that links Qt
         if os.access(p, os.X_OK) and not p.endswith('.so') and '.so.' not in os.path.basename(p) and any(n.startswith('libQt6') for n in needed(p)):
@@ -216,4 +251,5 @@ def main():
         ', '.join('%s_%s' % (k, '.'.join(map(str, v))) for k, v in sorted(worst.items()))))
 
 
-main()
+if __name__ == '__main__':
+    main()

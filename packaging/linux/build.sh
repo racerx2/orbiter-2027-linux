@@ -1,13 +1,17 @@
 #!/bin/bash
 # not upstream: builds the portable Linux package inside the AlmaLinux 9 environment (Dockerfile); build.sh <src> <out> <version> [manuals dir]
-# WB_FROM: the Wine bridge's helper build (rc.sh builds it on the PC), so the root builds the bridge's Linux module
+# WB_FROM: the Wine bridge's helper build (rc.sh builds it on the PC), so the root builds the bridge's Linux module; FROM_GIT=1: sources from git archive HEAD
 set -euo pipefail
 SRC=$(readlink -f "$1"); OUT=$(readlink -f "$2"); VER=$3; MAN=${4:-}
 source /opt/rh/gcc-toolset-14/enable
 B=$OUT/build; STAGE=$OUT/stage; NAME=Orbiter2027-Linux-x86_64-$VER
 rm -rf "$STAGE" "$OUT/src"; mkdir -p "$B" "$OUT/src"
 # a copy next to the build tree: the Html help step writes into the source tree and renames across
-tar -C "$SRC" --exclude=./out --exclude=./.git --exclude="./Textures/*/Archive" -cf - . | tar -C "$OUT/src" -xf -
+if [ "${FROM_GIT:-0}" = 1 ]; then # the package: the commit's files only, never ignored or untracked ones
+	git -C "$SRC" -c safe.directory='*' archive --format=tar HEAD | tar -C "$OUT/src" -xf -
+else # compile check: the working tree as it is
+	tar -C "$SRC" --exclude=./out --exclude=./.git --exclude="./Textures/*/Archive" -cf - . | tar -C "$OUT/src" -xf -
+fi
 SRC=$OUT/src
 cmake -S "$SRC" -B "$B" -G Ninja -DCMAKE_BUILD_TYPE=Release -DORBITER_MAKE_DOC=OFF -DORBITER_MAKE_TESTS=OFF \
 	-DCMAKE_PREFIX_PATH="$QTDIR;$DEPS" -DVulkan_INCLUDE_DIR="$DEPS/include" -DCMAKE_INSTALL_PREFIX="$STAGE/inst" -DORBITER_WB_HELPER_FROM="${WB_FROM:-}"

@@ -35,7 +35,8 @@ void WbLuaRemoteFreed (WbReader &r)
 	for (uint32_t &id : ids) id = r.u32 ();
 	if (r.bad) return;
 	WbBridge &b = WbBridge::Get ();
-	for (uint32_t id : ids) free (b.Ptr (id));
+	for (uint32_t id : ids) // not upstream (F1): blocks only, each once
+		if (void *p = b.Is (id, WK_BLOCK)) { b.Retire (p); free (p); }
 }
 
 #ifdef WB_LUA_REMOTE
@@ -127,14 +128,14 @@ template <class F> void PutFn (WbWriter &w, F f, const uint32_t *ids, int k)
 {
 	if (!f) { w.i32 (LF_NONE); w.u32 (0); }
 	else if (k >= 0) { w.i32 (LF_MODULE); w.u32 (ids[k]); }
-	else { void *p = reinterpret_cast<void *> (f); g_given.insert (p); w.i32 (LF_LINUX); w.u32 (WbBridge::Get ().Id (p)); }
+	else { void *p = reinterpret_cast<void *> (f); g_given.insert (p); w.i32 (LF_LINUX); w.u32 (WbBridge::Get ().Id (p, WK_FN)); }
 }
 void PutFn (WbWriter &w, lua_CFunction f) { PutFn (w, f, g_stubId, StubOf (f, g_stub)); }
 void PutHook (WbWriter &w, lua_Hook f) { PutFn (w, f, g_hookId, StubOf (f, g_hook)); }
 
 void *Given (uint32_t id) // a native function given to the helper, by its id; null if not one
 {
-	void *p = WbBridge::Get ().Ptr (id);
+	void *p = WbBridge::Get ().Fn (id); // not upstream (F1): Fn
 	return p && g_given.count (p) ? p : nullptr;
 }
 
@@ -211,7 +212,7 @@ void *UdOf (WbReader &r)
 		if (lnx) return b.Ptr (v);
 		g_hlud.insert (v);
 		return (void *)(uintptr_t)v; }
-	case LU_BLOCK: return b.Ptr (r.u32 ());
+	case LU_BLOCK: return b.Is (r.u32 (), WK_BLOCK); // not upstream (F1): a block only
 	case LU_VESSEL: {
 		uint32_t vid = r.u32 (), ud = r.u32 ();
 		if (r.bad) return nullptr;
@@ -412,9 +413,9 @@ void r_createtable (lua_State *L, int narr, int nrec) { Checked (Op2 (L, LO_crea
 void *r_newuserdata (lua_State *L, size_t sz)
 {
 	void *b = malloc (sz ? sz : 1);
-	uint32_t id = WbBridge::Get ().Id (b);
+	uint32_t id = WbBridge::Get ().Id (b, WK_BLOCK);
 	WbReader r = OpF (L, LO_newuserdata, [sz, id] (WbWriter &w) { w.u32 ((uint32_t)sz); w.u32 (id); });
-	if (r.b () || r.bad) { free (b); Raise (); return nullptr; }
+	if (r.b () || r.bad) { WbBridge::Get ().Retire (b); free (b); Raise (); return nullptr; }
 	return b;
 }
 

@@ -94,6 +94,9 @@ coll_bldg_units () # COLL_HAVE_BLDGGEOM and BldgGeom.h for CollBaseA and CollBld
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 	target_compile_options(Coll_DentMath PRIVATE -ffp-contract=off) # dent geometry must not depend on FMA contraction
 endif ()
+if (ORBITER_SANITIZER AND NOT MSVC AND TARGET Coll_CollSdkOrbiter)
+	target_compile_options(Coll_CollSdkOrbiter PRIVATE -fno-sanitize=vptr) # the lifecycle host's vessels stand in for VESSEL objects; the rest keeps the vptr check
+endif ()
 
 add_library(Collision SHARED CollPlugin.cpp CollSession.cpp)
 foreach (u ${COLL_UNITS})
@@ -194,7 +197,7 @@ if (COLL_MAKE_TESTS)
 		find_package(Catch2 3 CONFIG QUIET)
 		if (NOT Catch2_FOUND)
 			include(FetchContent)
-			FetchContent_Declare(Catch2 GIT_REPOSITORY https://github.com/catchorg/Catch2.git GIT_TAG v3.8.1) # as Tests/CMakeLists.txt; FETCHCONTENT_SOURCE_DIR_CATCH2 reuses a local copy
+			FetchContent_Declare(Catch2 GIT_REPOSITORY https://github.com/catchorg/Catch2.git GIT_TAG 2b60af89e23d28eefc081bc930831ee9d45ea58b) # v3.8.1, as Tests/CMakeLists.txt; FETCHCONTENT_SOURCE_DIR_CATCH2 reuses a local copy
 			set(BUILD_SHARED_LIBS OFF)
 			FetchContent_MakeAvailable(Catch2)
 		endif ()

@@ -21,7 +21,7 @@ public:
 	// cap: largest answer (cloud TIFF 36 MB); rangeCap: largest range answer; totalMs: longest a request may take
 	explicit TsNet (const std::string &userAgent, int64_t cap = (int64_t)96 << 20, int64_t rangeCap = (int64_t)8 << 20, int totalMs = TotalMs);
 	~TsNet ();
-	void Get (const std::string &url, Reply done, int64_t off = -1, int64_t len = 0, int maxMs = 0, int stallMs = 0); // off >= 0: those bytes only; maxMs > 0: own total cap; stallMs > 0: own stall time (design-preload)
+	void Get (const std::string &url, Reply done, int64_t off = -1, int64_t len = 0, int maxMs = 0, int stallMs = 0, int64_t ownCap = 0); // off >= 0: those bytes only; maxMs > 0: own total cap; stallMs > 0: own stall time (design-preload); ownCap > 0: own size cap (not upstream)
 
 	static const int StallMs = 30000;        // no byte for this long: the request fails
 	static const int TileStallMs = 8000;     // not upstream (design-preload): the same for a tile request

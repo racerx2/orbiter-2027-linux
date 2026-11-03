@@ -37,10 +37,17 @@ AscentAP::AscentAP (Atlantis *atlantis):ImGuiDialog("Atlantis Ascent Autopilot")
 	met_active = false;
 	do_oms2 = true;
 	met = met_meco = met_oms_start = met_oms_end = 0.0;
+	met_oms1_start = schedule_oms1 = schedule_oms = -1.0; // not upstream: set only by Launch, read when a scenario resumes
+	ecc_min = 1e10; // not upstream: as Launch
+	t_launch = 0.0; // not upstream: a scenario without MET
 	SetDefaultProfiles();
 	launch_lat = launch_lng = 0.0;
 	pt = -1.0; pspd = acc = 0.0;
+	pacc = dacc_dt = 0.0; // not upstream: dacc_dt is read when two steps share a time
 	pacc_valid = false;
+	tgt.inc = tgt.lan = 0.0; // not upstream: the equator plane until a launch plane is set
+	tgt.az = tgt.pitch = PI05;
+	tgt.R = identity();
 
 	m_historyAlt.resize(NDATA, NAN);
 	m_historySSME.resize(NDATA, NAN);
@@ -286,17 +293,24 @@ void AscentAP::SetLaunchAzimuth (double azimuth)
 	launch_azimuth = azimuth;
 
 	// current launch location in local planet frame
-	VECTOR3 pos, equ, dir, nml, ne, nd;
+	VECTOR3 pos, equ;
 	double lng, lat, rad;
-	double slng, clng, slat, clat;
-	double saz = sin(azimuth), caz = cos(azimuth);
 	OBJHANDLE hRef = vessel->GetGravityRef();
 	vessel->GetGlobalPos(pos);
 	oapiGlobalToLocal (hRef, &pos, &equ);
 	oapiLocalToEqu (hRef, equ, &lng, &lat, &rad);
-	slng = sin(lng), clng = cos(lng), slat = sin(lat), clat = cos(lat);
-	normalise(equ); // unit radius vector
-	
+	SetTargetPlane (lng, lat); // not upstream: the plane math below, shared with a resumed scenario
+}
+
+// --------------------------------------------------------------
+
+void AscentAP::SetTargetPlane (double lng, double lat)
+{
+	VECTOR3 equ, dir, nml, ne, nd;
+	double slng = sin(lng), clng = cos(lng), slat = sin(lat), clat = cos(lat);
+	double saz = sin(launch_azimuth), caz = cos(launch_azimuth);
+	equ = _V(clat*clng, slat, clat*slng); // unit radius vector
+
 	// launch direction in local planet frame
 	dir = _V(-clng*slat*caz - slng*saz, clat*caz, -slng*slat*caz + clng*saz);
 
@@ -546,6 +560,7 @@ bool AscentAP::ParseScenarioLine (const char *line)
 		active = (bool)i1;
 		met_active = (bool)i2;
 		do_oms2 = (bool)i3;
+		if (launch_lng || launch_lat) SetTargetPlane (launch_lng, launch_lat); // not upstream: a resumed ascent steers in its launch plane
 		return true;
 	}
 	return false;

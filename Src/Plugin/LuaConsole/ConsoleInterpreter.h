@@ -5,9 +5,16 @@
 #define __CONSOLEINTERPRETER_H
 
 #include "Interpreter.h"
-#include "LuaConsole.h"
+#include <memory>
+#include <mutex>
 
 class LuaConsole; // g++ doesn't take the friend declaration below as a declaration (MSVC does)
+
+// not upstream: the console as the interpreter's thread reaches it; the console clears it under the lock before it goes
+struct ConsoleLink {
+	std::mutex m;
+	LuaConsole *console;
+};
 
 // ==============================================================
 // class ConsoleInterpreter
@@ -15,7 +22,7 @@ class LuaConsole; // g++ doesn't take the friend declaration below as a declarat
 class ConsoleInterpreter: public Interpreter {
 	friend class LuaConsole;
 public:
-	ConsoleInterpreter (LuaConsole *_console);
+	ConsoleInterpreter (std::shared_ptr<ConsoleLink> _link); // not upstream: the link, not the console itself
 	void LoadAPI();
 	void term_strout (const char *str, bool iserr=false);
 	void term_clear ();
@@ -27,7 +34,7 @@ protected:
 	static int termClear (lua_State *L);
 
 private:
-	LuaConsole *console;
+	std::shared_ptr<ConsoleLink> link; // not upstream
 };
 
 #endif // !__CONSOLEINTERPRETER_H

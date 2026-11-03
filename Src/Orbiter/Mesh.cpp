@@ -92,7 +92,7 @@ void Mesh::DropGroups (DWORD usrflag) // not upstream
 		if (GrpSetup) { GrpCnt[j] = GrpCnt[i]; GrpRad[j] = GrpRad[i]; GrpVis[j] = GrpVis[i]; }
 		Grp[j++] = Grp[i];
 	}
-	if (!j && nGrp) { delete []Grp; Grp = NULL; } // Clear frees the arrays only while groups are left
+	if (!j && nGrp) { delete []Grp; Grp = NULL; nGrpBuf = 0; } // Clear frees the arrays only while groups are left
 	nGrp = j;
 }
 
@@ -102,7 +102,7 @@ void Mesh::Set (const Mesh &mesh)
 
 	Clear ();
 	if (nGrp = mesh.nGrp) {
-		Grp = new GroupSpec[nGrp]; TRACENEW
+		Grp = new GroupSpec[nGrpBuf = nGrp]; TRACENEW
 		memcpy (Grp, mesh.Grp, nGrp*sizeof(GroupSpec));
 		for (i = 0; i < nGrp; i++) {
 			Grp[i].Vtx = new NTVERTEX[Grp[i].nVtx]; TRACENEW
@@ -113,7 +113,7 @@ void Mesh::Set (const Mesh &mesh)
 		}
 	}
 	if (nMtrl = mesh.nMtrl) {
-		Mtrl = new MATERIAL[nMtrl]; TRACENEW
+		Mtrl = new MATERIAL[nMtrlBuf = nMtrl]; TRACENEW
 		memcpy (Mtrl, mesh.Mtrl, nMtrl*sizeof(MATERIAL));
 	}
 	if (nTex = mesh.nTex) {
@@ -121,11 +121,11 @@ void Mesh::Set (const Mesh &mesh)
 		memcpy (Tex, mesh.Tex, nTex*sizeof(SURFHANDLE));
 	}
 	if (GrpSetup = mesh.GrpSetup) {
-		GrpCnt = new oapi::FVECTOR3[nGrp]; TRACENEW
+		GrpCnt = new oapi::FVECTOR3[nGrpBuf]; TRACENEW // not upstream: the room of Grp
 		memcpy (GrpCnt, mesh.GrpCnt, nGrp*sizeof(oapi::FVECTOR3));
-		GrpRad = new float[nGrp]; TRACENEW
+		GrpRad = new float[nGrpBuf]; TRACENEW
 		memcpy (GrpRad, mesh.GrpRad, nGrp*sizeof(float));
-		GrpVis = new DWORD[nGrp]; TRACENEW
+		GrpVis = new DWORD[nGrpBuf]; TRACENEW
 		memcpy (GrpVis, mesh.GrpVis, nGrp*sizeof(DWORD));
 	} else {
 		GrpVis = 0;
@@ -151,9 +151,9 @@ void Mesh::Setup ()
 		delete []GrpVis;
 		GrpVis = 0;
 	}
-	GrpCnt  = new oapi::FVECTOR3[nGrp]; TRACENEW
-	GrpRad  = new float[nGrp]; TRACENEW
-	GrpVis  = new DWORD[nGrp]; TRACENEW
+	GrpCnt  = new oapi::FVECTOR3[std::max (nGrp, nGrpBuf)]; TRACENEW // not upstream: the room of Grp
+	GrpRad  = new float[std::max (nGrp, nGrpBuf)]; TRACENEW
+	GrpVis  = new DWORD[std::max (nGrp, nGrpBuf)]; TRACENEW
 	GrpSetup = true;
 	for (g = 0; g < nGrp; g++) {
 		SetupGroup (g);
@@ -192,28 +192,37 @@ int Mesh::AddGroup (NTVERTEX *vtx, DWORD nvtx, WORD *idx, DWORD nidx,
 	DWORD mtrl_idx, DWORD tex_idx, WORD zbias, DWORD flag, bool deepcopy)
 {
 	DWORD n;
-	GroupSpec *g, *tmp_Grp = new GroupSpec[nGrp+1]; TRACENEW
-	oapi::FVECTOR3 *tmp_Cnt = new oapi::FVECTOR3[nGrp+1]; TRACENEW
-	float *tmp_Rad = new float[nGrp+1]; TRACENEW
-	DWORD *tmp_Vis = new DWORD[nGrp+1]; TRACENEW
-	if (nGrp) {
-		memcpy (tmp_Grp, Grp, nGrp*sizeof(GroupSpec));
-		memcpy (tmp_Cnt, GrpCnt, nGrp*sizeof(oapi::FVECTOR3));
-		memcpy (tmp_Rad, GrpRad, nGrp*sizeof(float));
-		memcpy (tmp_Vis, GrpVis, nGrp*sizeof(DWORD));
-		delete []Grp;
-		Grp = NULL;
-		delete []GrpCnt;
-		GrpCnt = NULL;
-		delete []GrpRad;
-		GrpRad = NULL;
-		delete []GrpVis;
-		GrpVis = 0;
+	GroupSpec *g;
+	if (!nGrp || nGrp >= nGrpBuf) { // not upstream: room for twice as many (one more each time copied them all, quadratic in the groups)
+		DWORD cap = std::max<DWORD> (16, nGrp * 2);
+		GroupSpec *tmp_Grp = new GroupSpec[cap]; TRACENEW
+		oapi::FVECTOR3 *tmp_Cnt = new oapi::FVECTOR3[cap]; TRACENEW
+		float *tmp_Rad = new float[cap]; TRACENEW
+		DWORD *tmp_Vis = new DWORD[cap]; TRACENEW
+		if (nGrp) {
+			memcpy (tmp_Grp, Grp, nGrp*sizeof(GroupSpec));
+			delete []Grp;
+			Grp = NULL;
+		}
+		if (GrpVis) { // not upstream: only arrays that are there (a mesh copied before its setup has none)
+			if (nGrp) {
+				memcpy (tmp_Cnt, GrpCnt, nGrp*sizeof(oapi::FVECTOR3));
+				memcpy (tmp_Rad, GrpRad, nGrp*sizeof(float));
+				memcpy (tmp_Vis, GrpVis, nGrp*sizeof(DWORD));
+			}
+			delete []GrpCnt;
+			GrpCnt = NULL;
+			delete []GrpRad;
+			GrpRad = NULL;
+			delete []GrpVis;
+			GrpVis = 0;
+		}
+		Grp = tmp_Grp;
+		GrpCnt = tmp_Cnt;
+		GrpRad = tmp_Rad;
+		GrpVis = tmp_Vis;
+		nGrpBuf = cap;
 	}
-	Grp = tmp_Grp;
-	GrpCnt = tmp_Cnt;
-	GrpRad = tmp_Rad;
-	GrpVis = tmp_Vis;
 	g = Grp+nGrp;
 	if (deepcopy) {
 		g->Vtx = new NTVERTEX[nvtx]; 
@@ -304,6 +313,7 @@ bool Mesh::DeleteGroup (DWORD grp)
 		delete []Grp;
 		Grp = NULL;
 		nGrp = 0;
+		nGrpBuf = 0; // not upstream
 	} else if (grp < nGrp && grp > 0) { // delete selected group
 		if (Grp[grp].Vtx) { delete []Grp[grp].Vtx; Grp[grp].Vtx = NULL; }
 		if (Grp[grp].Idx) { delete []Grp[grp].Idx; Grp[grp].Idx = NULL; }
@@ -316,6 +326,7 @@ bool Mesh::DeleteGroup (DWORD grp)
 		delete []Grp;
 		Grp = tmp_Grp;
 		nGrp--;
+		nGrpBuf = nGrp; // not upstream: GrpCnt, GrpRad and GrpVis keep more room
 	} else {
 		return false;
 	}
@@ -414,14 +425,18 @@ int Mesh::EditGroup (DWORD grp, GROUPEDITSPEC *ges)
 
 int Mesh::AddMaterial (MATERIAL &mtrl)
 {
-	MATERIAL *tmp_Mtrl = new MATERIAL[nMtrl+1]; TRACENEW
-	memcpy (tmp_Mtrl, Mtrl, sizeof(MATERIAL)*nMtrl);
-	memcpy (tmp_Mtrl+nMtrl, &mtrl, sizeof(MATERIAL));
-	if (nMtrl) {
-		delete []Mtrl;
-		Mtrl = NULL;
+	if (!nMtrl || nMtrl >= nMtrlBuf) { // not upstream: room for twice as many (one more each time was quadratic)
+		DWORD cap = std::max<DWORD> (8, nMtrl * 2);
+		MATERIAL *tmp_Mtrl = new MATERIAL[cap]; TRACENEW
+		if (nMtrl) {
+			memcpy (tmp_Mtrl, Mtrl, sizeof(MATERIAL)*nMtrl);
+			delete []Mtrl;
+			Mtrl = NULL;
+		}
+		Mtrl = tmp_Mtrl;
+		nMtrlBuf = cap;
 	}
-	Mtrl = tmp_Mtrl;
+	memcpy (Mtrl+nMtrl, &mtrl, sizeof(MATERIAL));
 	return nMtrl++;
 }
 
@@ -449,6 +464,7 @@ bool Mesh::DeleteMaterial (DWORD matidx)
 	delete []Mtrl;
 	Mtrl = tmp_Mtrl;
 	nMtrl--;
+	nMtrlBuf = nMtrl; // not upstream
 	if (matidx < pbr.size()) pbr.erase (pbr.begin() + matidx); // not upstream
 	return true;
 }
@@ -479,11 +495,13 @@ void Mesh::Clear ()
 		Grp = NULL;
 		nGrp = 0;
 	}
+	nGrpBuf = 0; // not upstream
 	if (nMtrl) {
 		delete []Mtrl;
 		Mtrl = NULL;
 		nMtrl = 0;
 	}
+	nMtrlBuf = 0; // not upstream
 	pbr.clear (); // not upstream
 	if (GrpVis) {
 		delete []GrpCnt;

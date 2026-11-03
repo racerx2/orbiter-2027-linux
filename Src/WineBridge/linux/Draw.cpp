@@ -4,6 +4,7 @@
 #include "Bridge.h"
 #include "WbVessel.h"
 #include "Manual.h"
+#include "Checks.h"
 #include <QImage>
 #include <QPainter>
 #include <cstring>
@@ -72,18 +73,18 @@ namespace {
 		case S_SetBackgroundColor: { DWORD c = r.u32 (); if (s && !r.bad) w.u32 (s->SetBackgroundColor (c)); break; }
 		case S_SetBackgroundMode: { int b = r.i32 (); if (s && !r.bad) s->SetBackgroundMode ((oapi::Sketchpad::BkgMode)b); break; }
 		case S_GetCharSize: if (s) w.u32 (s->GetCharSize ()); break;
-		case S_GetTextWidth: { int len = r.i32 (); std::string t = Str (r); if (s && !r.bad) w.u32 (s->GetTextWidth (t.c_str (), len)); break; }
+		case S_GetTextWidth: { int len = r.i32 (); std::string t = Str (r); if (s && !r.bad) w.u32 (s->GetTextWidth (t.c_str (), wbcheck::TextLen (len, t))); break; }
 		case S_SetOrigin: { int x = r.i32 (), y = r.i32 (); if (s && !r.bad) s->SetOrigin (x, y); break; }
 		case S_GetOrigin: { int x = 0, y = 0; if (s) s->GetOrigin (&x, &y); w.i32 (x); w.i32 (y); break; }
 		case S_Text: {
 			int x = r.i32 (), y = r.i32 (), len = r.i32 ();
 			std::string t = Str (r); // the whole string for a length of 0 or less, as the module passed it
-			if (s && !r.bad) w.b (s->Text (x, y, t.c_str (), len));
+			if (s && !r.bad) w.b (s->Text (x, y, t.c_str (), wbcheck::TextLen (len, t)));
 			break; }
 		case S_TextBox: {
 			int x1 = r.i32 (), y1 = r.i32 (), x2 = r.i32 (), y2 = r.i32 (), len = r.i32 ();
 			std::string t = Str (r);
-			if (s && !r.bad) w.b (s->TextBox (x1, y1, x2, y2, t.c_str (), len));
+			if (s && !r.bad) w.b (s->TextBox (x1, y1, x2, y2, t.c_str (), wbcheck::TextLen (len, t)));
 			break; }
 		case S_Pixel: { int x = r.i32 (), y = r.i32 (); DWORD c = r.u32 (); if (s && !r.bad) s->Pixel (x, y, c); break; }
 		case S_MoveTo: { int x = r.i32 (), y = r.i32 (); if (s && !r.bad) s->MoveTo (x, y); break; }
@@ -105,9 +106,10 @@ namespace {
 			int nline = r.i32 ();
 			if (nline < 0 || (uint64_t)nline * 4 > WB_MSG_MAX) { r.bad = true; break; }
 			std::vector<int> npt (nline);
-			int total = 0;
-			for (int &k : npt) { k = r.i32 (); total += k; }
-			std::vector<oapi::IVECTOR2> pt = Points (r, total);
+			for (int &k : npt) k = r.i32 ();
+			int64_t total = wbcheck::PolyTotal (npt, WB_MSG_MAX / 8); // not upstream (F4): each count 0 or more, summed in 64 bits against the cap
+			if (r.bad || total < 0) { r.bad = true; break; }
+			std::vector<oapi::IVECTOR2> pt = Points (r, (int)total);
 			if (!s || r.bad) break;
 			if (m == S_PolyPolygon) s->PolyPolygon (pt.data (), npt.data (), nline); else s->PolyPolyline (pt.data (), npt.data (), nline);
 			break; }
@@ -243,7 +245,7 @@ bool WbServeDraw (uint32_t fn, WbReader &r, WbWriter &w)
 		break; }
 	case L_ReleaseSketchpad: {
 		const void *p = b.Ptr (r.u32 ());
-		if (!r.bad && p && g_skps.erase (p)) oapiReleaseSketchpad ((oapi::Sketchpad *)p);
+		if (!r.bad && p && g_skps.erase (p)) { oapiReleaseSketchpad ((oapi::Sketchpad *)p); b.Retire (p); } // not upstream (F2): retired
 		break; }
 	case L_Skp: {
 		oapi::Sketchpad *s = Skp (r.u32 ());

@@ -22,6 +22,9 @@
 #undef DLLEXPORT
 #define DLLEXPORT  // hack - this could be solved a bit more elegantly
 #include "Interpreter.h"
+#include <Lua/lua_handles.h>
+#include <Lua/lua_quote.h>
+#include <string>
 
 using namespace std;
 
@@ -74,8 +77,12 @@ int LuaCall(lua_State *L, int narg, int nres)
 	int res = lua_pcall(L, narg, nres, base);
 	lua_remove(L, base);
 	if(res != 0) {
-		oapiWriteLogError("%s", lua_tostring(L, -1));
-		oapiAddNotification(OAPINOTIF_ERROR, "Lua MFD error", lua_tostring(L, -1));
+		const char *msg = lua_tostring(L, -1);
+		if (!msg) msg = "(error object is not a string)"; // not upstream: error({}) gives no text
+		oapiWriteLogError("%s", msg);
+		oapiAddNotification(OAPINOTIF_ERROR, "Lua MFD error", msg);
+		lua_pop(L, 1); // not upstream: nres nils in place of the message, so every caller's stack stays balanced
+		for (int i = 0; i < nres; i++) lua_pushnil(L);
 	}
 	return res;
 }
@@ -162,6 +169,17 @@ DLLCLBK void opcCloseRenderViewport ()
 	ClearVinterpList();
 }
 
+// not upstream: a deleted vessel's kept interpreters run no more and no new MFD finds them (an open MFD may still hold one; the list is cleared at the end)
+DLLCLBK void opcDeleteVessel (OBJHANDLE hVessel)
+{
+	VESSEL *v = oapiGetVesselInterface (hVessel);
+	for (int i = 0; i < nvinterp; i++)
+		if (v && vinterp[i]->vessel == v) {
+			vinterp[i]->vessel = NULL;
+			vinterp[i]->bprestep = vinterp[i]->bpoststep = false;
+		}
+}
+
 DLLCLBK void opcPreStep (double simt, double simdt, double mjd)
 {
 	int i;
@@ -202,6 +220,7 @@ ScriptMFD::ScriptMFD (DWORD w, DWORD h, VESSEL *vessel, const SCRIPTMFDMODESPEC 
 	int i;
 	char cmd[256];
 	hInterp = 0;
+	label[0] = '\0';
 
 	if (persist = spec->persist) { // link to vessel-based interpreter
 		for (i = 0; i < nvinterp; i++) {
@@ -222,15 +241,20 @@ ScriptMFD::ScriptMFD (DWORD w, DWORD h, VESSEL *vessel, const SCRIPTMFDMODESPEC 
 		// create the interpreter instance
 		hInterp = oapiCreateInterpreter();
 		L = oapiGetLua (hInterp);
+		if (!L) { // not upstream: no interpreter, an empty MFD
+			oapiWriteLog ((char*)"ScriptMFD: no Lua interpreter");
+			for (i = 0; i < NCLBK; i++) bclbk[i] = false;
+			persist = 0;
+			return;
+		}
 
 		// define the MFD instance
 		Interpreter::lua_pushmfd (L, this);
 		lua_setfield (L, LUA_GLOBALSINDEX, "mfd");
 
 		// run the MFD script
-		if (snprintf (cmd, sizeof cmd, "run_global('Config/MFD/%s')", spec->script) < (int)sizeof cmd) // not upstream: a command that doesn't fit isn't run, the script counts as missing
-			oapiExecScriptCmd (hInterp, cmd);
-		else oapiWriteLogV ("ScriptMFD: script path too long, not loaded: %s", spec->script); // not upstream: one warning
+		std::string sp = std::string ("Config/MFD/") + spec->script;
+		oapiExecScriptCmd (hInterp, ("run_global(" + LuaQuoted (sp.c_str ()) + ")").c_str ()); // not upstream: the name as a Lua string, nothing in it can end the string
 
 		if (persist) {
 			VINTERP **tmp = new VINTERP*[nvinterp+1];
@@ -279,6 +303,8 @@ ScriptMFD::~ScriptMFD ()
 {
 	if (!persist)
 		oapiDelInterpreter (hInterp);
+	else
+		Interpreter::lua_releasemfd (L, this); // not upstream: the kept interpreter's mfd object no longer reaches this MFD
 }
 
 // React to a button press
@@ -314,8 +340,9 @@ bool ScriptMFD::ConsumeKeyImmediate (char *kstate)
 {
 	if (bclbk[CONSUMEKEYIMMEDIATE]) {
 		lua_getfield (L, LUA_GLOBALSINDEX, CLBKNAME[CONSUMEKEYIMMEDIATE]);
-		lua_pushlightuserdata (L, kstate);
+		luahandle::Push (L, kstate, luahandle::KEYSTATE); // not upstream: the bindings take it during this call only
 		LuaCall (L, 1, 1);
+		luahandle::Drop (L, kstate);
 		bool consumed = (lua_toboolean (L, -1) ? true : false);
 		lua_pop (L, 1);
 		return consumed;
@@ -326,18 +353,19 @@ bool ScriptMFD::ConsumeKeyImmediate (char *kstate)
 // Return button labels
 char *ScriptMFD::ButtonLabel (int bt)
 {
-	char *label = 0;
+	char *lbl = 0;
 
 	if (bclbk[BUTTONLABEL]) {
 		lua_getfield (L, LUA_GLOBALSINDEX, CLBKNAME[BUTTONLABEL]);
 		lua_pushnumber (L, bt);
 		LuaCall (L, 1, 1);
 		if (lua_isstring (L, -1)) {
-			label = (char*)lua_tostring (L,-1);
+			snprintf (label, sizeof label, "%s", lua_tostring (L,-1)); // not upstream: a copy, the Lua string may be collected once popped
+			lbl = label;
 		}
 		lua_pop(L,1);
 	}
-	return label;
+	return lbl;
 }
 
 // Return button menus
@@ -416,6 +444,7 @@ bool ScriptMFD::Update (oapi::Sketchpad *skp)
 		lua_getfield (L, LUA_GLOBALSINDEX, CLBKNAME[UPDATE]);
 		Interpreter::lua_pushsketchpad (L, skp);
 		LuaCall (L, 1, 1);
+		Interpreter::lua_releasesketchpad (L, skp); // not upstream: skp lasts this call only
 		bool consumed = (lua_toboolean (L, -1) ? true : false);
 		lua_pop (L, 1);
 		return true; //consumed;
@@ -446,8 +475,9 @@ void ScriptMFD::WriteStatus (FILEHANDLE scn) const
 {
 	if (bclbk[WRITESTATUS]) {
 		lua_getfield (L, LUA_GLOBALSINDEX, CLBKNAME[WRITESTATUS]);
-		lua_pushlightuserdata (L, scn);
+		luahandle::Push (L, scn, luahandle::FILE); // not upstream: the bindings take it during this call only
 		LuaCall (L, 1, 0);
+		luahandle::Drop (L, scn);
 	}
 }
 
@@ -456,8 +486,9 @@ void ScriptMFD::ReadStatus (FILEHANDLE scn)
 {
 	if (bclbk[READSTATUS]) {
 		lua_getfield (L, LUA_GLOBALSINDEX, CLBKNAME[READSTATUS]);
-		lua_pushlightuserdata (L, scn);
+		luahandle::Push (L, scn, luahandle::FILE); // not upstream: the bindings take it during this call only
 		LuaCall (L, 1, 0);
+		luahandle::Drop (L, scn);
 	}
 }
 

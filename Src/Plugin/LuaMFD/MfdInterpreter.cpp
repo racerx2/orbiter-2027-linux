@@ -4,6 +4,14 @@
 #include "MfdInterpreter.h"
 #include <cstring>
 #include <chrono> // process.h: threads are std::thread (MfdInterpreter.h)
+#include <dlfcn.h>
+
+// not upstream: a thread that outlived its wait still runs this library's code, so the library is never unloaded
+static void KeepLoaded ()
+{
+	Dl_info di;
+	if (dladdr ((void *)&KeepLoaded, &di) && di.dli_fname) dlopen (di.dli_fname, RTLD_NOW | RTLD_NODELETE);
+}
 
 // ==============================================================
 // MFD interpreter class implementation
@@ -122,8 +130,9 @@ void MFDInterpreter::AddLine (const char *line, COLORREF col)
 // class InterpreterList::Environment: implementation
 
 InterpreterList::Environment::Environment (OBJHANDLE hV)
+: run (std::make_shared<Run> ())
 {
-	cmd[0] = '\0';
+	cmd = run->cmd;
 	interp = CreateInterpreter (hV);
 }
 
@@ -136,31 +145,31 @@ InterpreterList::Environment::~Environment()
 			interp->EndExec();
 			if (thExit.wait_for (std::chrono::milliseconds(1000)) != std::future_status::ready) {
 				oapiWriteLog ((char*)"LuaMFD: timeout while waiting for interpreter thread"); // not upstream
-				hThread->detach(); // the stuck thread keeps its interpreter
-				interp = NULL;
+				hThread->detach(); // the stuck thread keeps run, its interpreter freed when it ends
+				KeepLoaded ();
 			} else hThread->join();
 			delete hThread;
 		}
-		delete interp;
+		interp = NULL;
 	}
+	run.reset (); // not upstream: the interpreter goes with the last reference (Run)
 }
 
 MFDInterpreter *InterpreterList::Environment::CreateInterpreter (OBJHANDLE hV)
 {
-	interp = new MFDInterpreter ();
+	interp = run->interp = new MFDInterpreter ();
 	interp->Initialise();
 	interp->SetSelf (hV);
-	std::packaged_task<unsigned int(void*)> task (&InterpreterThreadProc); // _beginthreadex; stack size left to the system
+	std::packaged_task<unsigned int(std::shared_ptr<Run>)> task (&InterpreterThreadProc); // _beginthreadex; stack size left to the system
 	thExit = task.get_future();
-	hThread = new std::thread (std::move (task), this);
+	hThread = new std::thread (std::move (task), run); // not upstream: the thread holds run, not this environment
 	return interp;
 }
 
 // Interpreter thread function
-unsigned int InterpreterList::Environment::InterpreterThreadProc (void *context)
+unsigned int InterpreterList::Environment::InterpreterThreadProc (std::shared_ptr<Run> env) // not upstream: run, which outlives an environment that stops waiting
 {
-	InterpreterList::Environment *env = (InterpreterList::Environment*)context;
-	MFDInterpreter *interp = (MFDInterpreter*)env->interp;
+	MFDInterpreter *interp = env->interp;
 
 	// interpreter loop
 	for (;;) {

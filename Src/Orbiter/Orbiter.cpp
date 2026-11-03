@@ -187,8 +187,20 @@ extern "C" __attribute__((visibility("default"))) double acos (double x) noexcep
 // Application entry containing message loop
 
 
+// not upstream: started outside an Orbiter folder, Orbiter's folder is the executable's (two up from Modules/Server) (design-security-fixes B11)
+static void ToOrbiterFolder ()
+{
+	std::error_code ec;
+	if (fs::is_directory ("Config", ec) && fs::is_directory ("Modules", ec)) return; // already an Orbiter folder (a test's or another install's): kept
+	fs::path d = fs::read_symlink ("/proc/self/exe", ec).parent_path ();
+	if (ec || d.empty ()) return;
+	if (!strcasecmp (d.filename ().c_str (), "Server") && !strcasecmp (d.parent_path ().filename ().c_str (), "Modules")) d = d.parent_path ().parent_path ();
+	fs::current_path (d, ec);
+}
+
 int main (int argc, char *argv[])
 {
+	ToOrbiterFolder (); // not upstream: before anything opens a file
 	FontResourceInit (); // not upstream: its atexit handler, registered before Qt's
 	QApplication app (argc, argv); // the Launchpad and the dialogs are Qt widgets
 	UseVisibleIndicators (); // not upstream: the bundled Qt draws with Fusion
@@ -627,6 +639,10 @@ void Orbiter::LoadStartupModules()
 void *Orbiter::LoadModule (const char *path, const char *name)
 {
 	register_module = NULL; // Clear the module. The loaded library may optionally populate it on LoadLibrary() call below.
+	if (!SafeRelName (name)) { // not upstream: a name from a config stays in the module folder
+		LOGOUT_ERR ("Module name leaves its folder, not loaded: %s", name ? name : "");
+		return NULL;
+	}
 
 	// Load the module DLL
 	void *hDLL = NULL;
@@ -1045,6 +1061,7 @@ void Orbiter::CloseSession ()
 		CloseApp (true);
 		if (pConfig->CfgDebugPrm.ShutdownMode == 2 || bFastExit) {
 			LOGOUT("**** Fast process shutdown\r\n");
+			ModuleDetachAll (); // not upstream: the modules still loaded get ExitModule now, while their statics and the core's live
 			FontResourceExit (); // not upstream: module statics and Qt's are destroyed in exit
 			exit (0); // just kill the process
 		} else {
@@ -1670,7 +1687,7 @@ bool Orbiter::ToggleRecorder (bool force, bool append)
 	if (bStartRecorder && !bRecord) { // not upstream: the record name didn't fit (FRecorder_Activate warned); no vessel starts, or it would record unstoppably
 		if (!append) { // not upstream: PrepareDir's empty Flights/<name> goes again, or the next REC would find it "already exists"
 			std::error_code ec; // not upstream: as above, nothing throws into the dialog's draw code
-			fs::remove (fs::path (oapiResolvePath ((std::string ("Flights/") + sname).c_str())), ec); // not upstream: as above, the path as PrepareDir resolves it; removes only an empty directory
+			fs::remove (fs::path (oapiResolvePath ((std::string ("Flights/") + SafeFileName (sname)).c_str())), ec); // not upstream: as above, the path as PrepareDir resolves it; removes only an empty directory
 		}
 		return true;
 	}
@@ -2228,6 +2245,7 @@ bool Orbiter::UnregisterCustomCmd (int cmdId)
 	for (i = 0; i < ncustomcmd; i++)
 		if (customcmd[i].id == cmdId) break;
 	if (i == ncustomcmd) return false;
+	delete []customcmd[i].label; // not upstream: the copy RegisterCustomCmd made
 
 	if (ncustomcmd > 1) {
 		tmp = new CUSTOMCMD[ncustomcmd-1]; TRACENEW

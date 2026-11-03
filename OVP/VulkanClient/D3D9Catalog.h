@@ -7,6 +7,7 @@
 #ifndef __D3D9CATALOG_H
 #define __D3D9CATALOG_H
 
+#include <algorithm>
 #include <set>
 #include <map>
 #include <list>
@@ -193,7 +194,7 @@ public:
 			}
 		}
 		auto x = Alloc(size);
-		Rsv[x] = size;					// List it as used
+		if (x) Rsv[x] = size;			// List it as used; not upstream: none when Alloc failed
 		mm.unlock();
 		return x;
 	}
@@ -299,6 +300,9 @@ protected:
 		UINT size = prm & 0xFFFF;
 		UINT frmt = prm >> 16;
 		UINT Mips = (Config->TileMipmaps == 1) ? 6 : 1;
+		UINT full = 1; // not upstream: no more levels than the size has
+		for (UINT d = size; d > 1; d >>= 1) full++;
+		Mips = std::min (Mips, full);
 
 		if (frmt == 2) Format = VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
 		if (frmt == 3) Format = VK_FORMAT_BC2_UNORM_BLOCK;
@@ -308,7 +312,8 @@ protected:
 		if (pT->img == VK_NULL_HANDLE)
 		{
 			oapiWriteLog("Failed to create texture for surface tile. Likely [Out of Video Memory]");
-			abort();
+			delete pT; // not upstream: the tile goes without, no abort
+			return nullptr;
 		}
 		return (T)pT;
 	}

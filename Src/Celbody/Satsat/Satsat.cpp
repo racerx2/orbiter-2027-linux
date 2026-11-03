@@ -302,3 +302,9 @@ DLLCLBK void InitModule (void *hModule)
 		sample[i][0].t = sample[i][1].t = -1e20; // invalidate
 	}
 }
+
+DLLCLBK void ExitModule (void *hModule) // not upstream: the TASS17 tables go with the library (they were left on every unload)
+{
+	FreeData ();
+	bData = false;
+}

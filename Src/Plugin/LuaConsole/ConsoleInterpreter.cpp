@@ -2,15 +2,16 @@
 // Licensed under the MIT License
 
 #include "ConsoleInterpreter.h"
+#include "LuaConsole.h"
 #include <cstring> // windows.h brought the C string functions
 
 // ==============================================================
 // Console interpreter class implementation
 
-ConsoleInterpreter::ConsoleInterpreter (LuaConsole *_console): Interpreter ()
+ConsoleInterpreter::ConsoleInterpreter (std::shared_ptr<ConsoleLink> _link): Interpreter ()
 {
 	is_term = true;
-	console = _console;
+	link = _link;
 }
 
 void ConsoleInterpreter::LoadAPI ()
@@ -37,6 +38,9 @@ void ConsoleInterpreter::LoadAPI ()
 
 void ConsoleInterpreter::term_strout (const char *str, bool iserr)
 {
+	std::lock_guard<std::mutex> lock (link->m); // not upstream: the console may be gone
+	LuaConsole *console = link->console;
+	if (!console) return;
 	if (strchr (str, '\n')) {
 		char *cbuf = new char[strlen(str)+1];
 		strcpy (cbuf, str);
@@ -50,7 +54,8 @@ void ConsoleInterpreter::term_strout (const char *str, bool iserr)
 }
 
 void ConsoleInterpreter::term_clear() {
-	console->Clear();
+	std::lock_guard<std::mutex> lock (link->m); // not upstream: the console may be gone
+	if (link->console) link->console->Clear();
 }
 
 int ConsoleInterpreter::termOut (lua_State *L)

@@ -113,7 +113,7 @@ Basic usage:
 5. Every frame: Call update() for actual solver to process.
 6. If getOverstressedBondCount() > 0 use generateFractureCommands() functions to get FractureCommands with bonds fractured
 */
-class NV_DLL_EXPORT ExtStressSolver
+class ExtStressSolver // not upstream: no NV_DLL_EXPORT, the class is linked into the collision module, not exported from it
 {
 public:
     //////// creation ////////

@@ -470,9 +470,8 @@ int CD3DFramework9::Initialize(QWindow *_hWnd, GraphicsClient::VIDEODATA *vData)
 	if (sc & VK_SAMPLE_COUNT_4_BIT) aamax=4;
 	if (sc & VK_SAMPLE_COUNT_8_BIT) aamax=8;
 
-	MultiSample = std::min(aamax, DWORD(Config->SceneAntialias));
-
-	if (MultiSample==1) MultiSample = 0;
+	MultiSample = 0; // not upstream: the largest count the device has, up to the setting (3, 5, 6 or 7 isn't a sample count)
+	for (DWORD s = 2; s <= aamax; s <<= 1) if ((DWORD)std::max(0, Config->SceneAntialias) >= s && (sc & s)) MultiSample = s;
 
 	// D3D9-only caps left out (blend stages, repeat, volume address, blend matrices, instruction count, decl/misc/dev caps)
 	LogOapi("MaxTextureWidth......... : %u",caps.MaxTextureWidth);
@@ -665,6 +664,7 @@ int CD3DFramework9::CreateFullscreenMode()
 
 	// Get Backbuffer
 	VkImageUsageFlags u = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+	u |= pDevice->LocalReadUsage(); // not upstream: the GI composite reads it in place
 	pRenderTarget = new VkSurf(pDevice, dwRenderWidth, dwRenderHeight, VK_FORMAT_B8G8R8A8_UNORM, u);
 	pDepthStencil = new VkSurf(pDevice, dwRenderWidth, dwRenderHeight, dwZBufferBitDepth == 24 ? VK_FORMAT_D24_UNORM_S8_UINT : VK_FORMAT_D32_SFLOAT_S8_UINT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
 	pBackBuffer = (SURFHANDLE) new SurfNative(pRenderTarget, OAPISURFACE_BACKBUFFER | OAPISURFACE_RENDER3D | OAPISURFACE_RENDERTARGET, pDepthStencil);
@@ -712,6 +712,7 @@ int CD3DFramework9::CreateWindowedMode()
 	VkSampleCountFlagBits s = MultiSample ? (VkSampleCountFlagBits)MultiSample : VK_SAMPLE_COUNT_1_BIT;
 	VkImageUsageFlags u = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	if (!MultiSample) u |= VK_IMAGE_USAGE_SAMPLED_BIT;
+	u |= pDevice->LocalReadUsage(); // not upstream: the GI composite reads it in place (multisampled too)
 	pRenderTarget = new VkSurf(pDevice, dwRenderWidth, dwRenderHeight, VK_FORMAT_B8G8R8A8_UNORM, u, s);
 	pRenderTarget->tex->SetSwizzle(VkSwizzleMap(SWZ_NOALPHA)); // D3DFMT_X8R8G8B8: same meaning as the surfaces clbkCreateSurfaceEx makes without alpha
 	pDepthStencil = new VkSurf(pDevice, dwRenderWidth, dwRenderHeight, dwZBufferBitDepth == 24 ? VK_FORMAT_D24_UNORM_S8_UINT : VK_FORMAT_D32_SFLOAT_S8_UINT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, s);
