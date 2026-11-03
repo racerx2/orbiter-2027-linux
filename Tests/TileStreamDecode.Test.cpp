@@ -72,7 +72,7 @@ QByteArray Deflate (const std::string &raw)
 }
 
 // WorldCover classes over one L12 tile (one 3 degree cell) from a fake host serving this header; max: the longest range asked
-bool ClassesOf (const QByteArray &tif, uint64_t &max, int &reads)
+TsCog::Cls ClassesOf (const QByteArray &tif, uint64_t &max, int &reads)
 {
 	max = 0;
 	reads = 0;
@@ -99,10 +99,10 @@ TEST_CASE ("TIFF levels past the limits are refused before any allocation", "[de
 	CHECK (ifd[0].off.size() == 1);
 	QByteArray wrap = Tiff ({{256, 4, 1, 0xFFFFFFFFu}, {257, 4, 1, 16}, {258, 3, 1, 8}, {259, 3, 1, 1}, {322, 4, 1, 2}, {323, 4, 1, 16}}); // tiles across wrapped to 0
 	CHECK (TsCog::Parse (wrap, ifd) == -1);
-	CHECK_FALSE (ClassesOf (wrap, max, reads));
+	CHECK (ClassesOf (wrap, max, reads) == TsCog::Cls::BAD);
 	QByteArray huge = Tiff ({{256, 4, 1, 1u << 20}, {257, 4, 1, 1u << 20}, {258, 3, 1, 8}, {259, 3, 1, 8}, {322, 4, 1, 1u << 20}, {323, 4, 1, 1u << 20}, {324, 4, 1, 0}, {325, 4, 1, 0}});
 	CHECK (TsCog::Parse (huge, ifd) == -1); // one sparse 2^20 x 2^20 tile: no bad_alloc
-	CHECK_FALSE (ClassesOf (huge, max, reads));
+	CHECK (ClassesOf (huge, max, reads) == TsCog::Cls::BAD);
 	CHECK (TsCog::Parse (Tiff (Level ((1u << 20) + 16)), ifd) == -1);
 	CHECK (TsCog::Parse (Tiff (Level (64, 8)), ifd) == -1);    // not a multiple of 16
 	CHECK (TsCog::Parse (Tiff (Level (8192, 4112)), ifd) == -1); // over 4096
@@ -133,7 +133,7 @@ TEST_CASE ("A TIFF offset table bigger than the bytes in hand asks for more inst
 	CHECK (TsCog::Parse (Tiff (e), ifd) == -1);
 	uint64_t max;
 	int reads;
-	CHECK_FALSE (ClassesOf (Tiff (e), max, reads));
+	CHECK (ClassesOf (Tiff (e), max, reads) == TsCog::Cls::BAD);
 	CHECK (reads == 2); // the tile spans two cells: one header read each
 	CHECK (max <= 65536);
 	CHECK (Secs (t0) < 0.5);
@@ -175,7 +175,7 @@ TEST_CASE ("A TIFF tile body over 8 MB is never asked for", "[decode]")
 	int reads;
 	std::vector<TsCog::Ifd> ifd;
 	REQUIRE (TsCog::Parse (Tiff (Level (16, 16, 8, 1, 0x7FFFFFFFu)), ifd) == 0);
-	CHECK_FALSE (ClassesOf (Tiff (Level (16, 16, 8, 1, 0x7FFFFFFFu)), max, reads));
+	CHECK (ClassesOf (Tiff (Level (16, 16, 8, 1, 0x7FFFFFFFu)), max, reads) == TsCog::Cls::BAD);
 	CHECK (reads == 2); // the headers only
 	CHECK (max <= 65536);
 }

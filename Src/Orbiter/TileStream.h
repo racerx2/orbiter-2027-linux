@@ -230,8 +230,9 @@ namespace TsCog {
 	bool ColX (const Geo &g, uint32_t w, double lng, double &x);
 	bool RowY (const Geo &g, uint32_t h, double lat, double &y);
 	std::string CellName (int lat0, int lng0);                        // N27W081
-	// class per pixel over an Orbiter tile, n x n: 0 open sea, 255 outside WorldCover; false when a read failed
-	bool Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const Fetch &fetch, std::vector<uint8_t> &out);
+	enum class Cls { OK, RETRY, BAD }; // not upstream (cover-refetch): read, a network failure worth another try, a cell it can't read
+	// class per pixel over an Orbiter tile, n x n: 0 open sea, 255 outside WorldCover
+	Cls Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const Fetch &fetch, std::vector<uint8_t> &out);
 	bool IsWater (uint8_t c);
 	QImage Water (const std::vector<uint8_t> &cls, int n, const QImage &gibs); // grey 255 water; gibs where outside
 	QImage ClassImage (const std::vector<uint8_t> &cls, int n, int size);      // RGB weights for the client's micro detail

@@ -1271,7 +1271,7 @@ TEST_CASE ("WorldCover classes over an Orbiter tile: water bit, open sea, class 
 	};
 	// L12 row 86 col 142: lat 28.83..29.53, lng -80.16..-79.45; the cell's half line at -79.5
 	std::vector<uint8_t> c;
-	REQUIRE (TsCog::Classes (tmpl, 12, 86, 142, 512, fetch, c));
+	REQUIRE (TsCog::Classes (tmpl, 12, 86, 142, 512, fetch, c) == TsCog::Cls::OK);
 	REQUIRE (c.size() == 512 * 512);
 	CHECK (c[100 * 512 + 10] == 80);
 	CHECK (c[100 * 512 + 470] == 80);
@@ -1279,16 +1279,16 @@ TEST_CASE ("WorldCover classes over an Orbiter tile: water bit, open sea, class 
 	CHECK (c[100 * 512 + 511] == 10);
 	CHECK (reads == 3); // a header and the two full-size tiles of its row
 	int again = reads;
-	REQUIRE (TsCog::Classes (tmpl, 12, 86, 142, 512, fetch, c));
+	REQUIRE (TsCog::Classes (tmpl, 12, 86, 142, 512, fetch, c) == TsCog::Cls::OK);
 	CHECK (reads == again); // headers and decoded tiles kept in memory
 	// col 145: lng -78.05..-77.34, east of -78 the N27W078 cell is missing: open sea
-	REQUIRE (TsCog::Classes (tmpl, 12, 86, 145, 512, fetch, c));
+	REQUIRE (TsCog::Classes (tmpl, 12, 86, 145, 512, fetch, c) == TsCog::Cls::OK);
 	CHECK (c[200 * 512 + 10] == 10);
 	CHECK (c[200 * 512 + 300] == 0);
 	CHECK (TsCog::IsWater (c[200 * 512 + 300]));
 	// outside WorldCover (Antarctica): 255, the GIBS water stays
 	std::vector<uint8_t> s;
-	REQUIRE (TsCog::Classes (tmpl, 12, 240, 10, 512, fetch, s));
+	REQUIRE (TsCog::Classes (tmpl, 12, 240, 10, 512, fetch, s) == TsCog::Cls::OK);
 	CHECK (s[0] == 255);
 	QImage gibs (512, 512, QImage::Format_RGB888);
 	gibs.fill (QColor (30, 30, 30));
@@ -1311,7 +1311,105 @@ TEST_CASE ("WorldCover classes over an Orbiter tile: water bit, open sea, class 
 	CHECK (d.size() == 43832); // 256 px DXT1 with nine mips
 	// a read that fails: no classes
 	TsCog::Fetch bad = [] (std::vector<TsCog::Req> &rq) { for (TsCog::Req &r : rq) r.status = 0; };
-	CHECK_FALSE (TsCog::Classes ("file:///nowhere/{tile}.tif", 12, 86, 142, 512, bad, c));
+	CHECK (TsCog::Classes ("file:///nowhere/{tile}.tif", 12, 86, 142, 512, bad, c) == TsCog::Cls::RETRY);
+	// a cell that isn't a TIFF: unreadable, not worth another try
+	fs::path junk = t.root / "junk" / "c_N27W081.tif";
+	fs::create_directories (junk.parent_path());
+	std::ofstream (junk, std::ios::binary) << std::string (4096, 'x');
+	CHECK (TsCog::Classes ("file://" + (t.root / "junk").string() + "/c_{tile}.tif", 12, 86, 142, 512, fetch, c) == TsCog::Cls::BAD);
+}
+
+// not upstream (cover-refetch): Earth with WorldCover from level 12 at the given cell folder
+static std::string CoverCfg (const Srv &s, const fs::path &file, const std::string &wc)
+{
+	std::ofstream (file) << "BODY Earth\n"
+		"SURF eox " << s.url << "/eox/{z}/{row}/{col}.png 1 16\n"
+		"LIGHTS gibs " << s.url << "/lights/{n}/{row}/{col}.png 7\n"
+		"WATER gibs " << s.url << "/water/{n}/{row}/{col}.png 8\n"
+		"COVER worldcover " << wc << "/c_{tile}.tif 12\nEND\n";
+	return file.string();
+}
+
+TEST_CASE ("A tile made while WorldCover failed is listed for a refetch and made again with its Class", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	s.Required (true);
+	s.Masks (12, 86, 142);
+	s.EoxTile (12, 86, 142, QColor (90, 80, 70));
+	WcCell (t.root / "wc" / "c_N27W081.tif");
+	fs::path tex = t.root / "Earth";
+	fs::path surf = tex / "Surf" / "12" / "000086" / "000142.dds", cls = tex / "Class" / "12" / "000086" / "000142.dds";
+	auto listed = [&] { return Read (tex / "TileStream" / "refetch.idx").find ("12 86 142") != std::string::npos; };
+	{
+		TileStream::Options o;
+		o.cfgfile = CoverCfg (s, t.root / "ts.cfg", "bogus://wc"); // WorldCover not answering
+		o.bodyDir = [&] (const std::string &) { return tex.string(); };
+		o.bodies = {"Earth"};
+		TileStream ts (o);
+		REQUIRE (WaitFor ([&] { ts.Want ("Earth", 12, 86, 142, 0); return fs::exists (surf); }, 25.0));
+		CHECK_FALSE (fs::exists (cls));
+		REQUIRE (WaitFor (listed, 5.0));
+	}
+	{
+		TileStream::Options o;
+		o.cfgfile = CoverCfg (s, t.root / "ts.cfg", "file://" + (t.root / "wc").string());
+		o.bodyDir = [&] (const std::string &) { return tex.string(); };
+		o.bodies = {"Earth"};
+		TileStream ts (o);
+		REQUIRE (WaitFor ([&] { return fs::exists (cls); }, 25.0)); // queued at the start, made when nothing else waits
+		CHECK (WaitFor ([&] { return !listed (); }, 5.0));
+	}
+}
+
+TEST_CASE ("An old tile with no Class at a WorldCover level is listed on its first want and made again", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	s.Required (true);
+	s.Masks (12, 86, 142);
+	s.EoxTile (12, 86, 142, QColor (90, 80, 70));
+	WcCell (t.root / "wc" / "c_N27W081.tif");
+	fs::path tex = t.root / "Earth";
+	fs::path cls = tex / "Class" / "12" / "000086" / "000142.dds";
+	TileStream::Options o;
+	o.cfgfile = CoverCfg (s, t.root / "ts.cfg", "file://" + (t.root / "wc").string());
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	{
+		TileStream ts (o);
+		REQUIRE (WaitFor ([&] { ts.Want ("Earth", 12, 86, 142, 0); return fs::exists (cls); }, 25.0));
+	}
+	fs::remove (cls); // as a tile from before WorldCover, or one made in an old release while it failed
+	TileStream ts (o);
+	CHECK (ts.Want ("Earth", 12, 86, 142, 2) == 1);
+	CHECK (WaitFor ([&] { return Read (tex / "TileStream" / "refetch.idx").find ("12 86 142") != std::string::npos; }, 5.0));
+	CHECK (WaitFor ([&] { return fs::exists (cls); }, 25.0));
+}
+
+TEST_CASE ("A tile over an unreadable WorldCover cell is written and not listed for a refetch", "[TileStream]")
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	s.Required (true);
+	s.Masks (12, 86, 142);
+	s.EoxTile (12, 86, 142, QColor (90, 80, 70));
+	fs::path junk = t.root / "junk" / "c_N27W081.tif";
+	fs::create_directories (junk.parent_path());
+	std::ofstream (junk, std::ios::binary) << std::string (4096, 'x');
+	fs::path tex = t.root / "Earth";
+	fs::path surf = tex / "Surf" / "12" / "000086" / "000142.dds";
+	TileStream::Options o;
+	o.cfgfile = CoverCfg (s, t.root / "ts.cfg", "file://" + (t.root / "junk").string());
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	TileStream ts (o);
+	REQUIRE (WaitFor ([&] { ts.Want ("Earth", 12, 86, 142, 0); return fs::exists (surf); }, 25.0));
+	CHECK_FALSE (fs::exists (tex / "Class" / "12" / "000086" / "000142.dds"));
+	CHECK (Read (tex / "TileStream" / "refetch.idx").find ("12 86 142") == std::string::npos);
 }
 
 // ---- buildings (TileStreamMvt.cpp) ----

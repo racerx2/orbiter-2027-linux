@@ -367,6 +367,9 @@ struct TileStream::Impl {
 		std::vector<uint64_t> hits;
 		std::deque<uint64_t> refetchQueue; // fed in slowly when nothing else waits
 		std::unordered_set<uint64_t> elevSeen, noElev; // this session: checked for an Elev file, Elev failed
+		std::unordered_set<uint64_t> classSeen;         // not upstream (cover-refetch): this session, checked for its Class file
+		std::unordered_map<uint64_t, int> coverTries;   // not upstream (cover-refetch): this session's rebuilds after a WorldCover failure
+		bool CoverLevel (int L) const { return !cfg.cover.kind.empty() && L >= cfg.cover.lmin && L <= cfg.cover.lmax; }
 		std::unordered_set<uint64_t> cloud, mod;        // earth-sky: Cloud and Elev_mod files this stream wrote
 		std::vector<TsBase> bases;
 		std::vector<double> baseH;                      // flat height per base, NaN until known
@@ -782,6 +785,18 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 	if (stop) return -1;
 	if (flags & 2) {
 		if (ro || !B.written.count (k)) return 1;
+		if (B.CoverLevel (L) && !B.refetch.count (k) && B.classSeen.insert (k).second) { // not upstream (cover-refetch): a tile made without WorldCover
+			lk.unlock();
+			std::error_code ec;
+			bool have = fs::exists (Tile (B.dir, "Class", k), ec) || ec;
+			lk.lock();
+			if (stop) return -1;
+			if (!have && B.written.count (k) && B.refetch.insert (k).second) {
+				Append (B, "refetch", k, -1);
+				B.refetchQueue.push_back (k);
+			}
+			if (!B.written.count (k)) return 1;
+		}
 		B.hits.push_back (k);
 		if (RwyOn (B, L) && B.elev.count (k) && !B.rwyChk.count (k) && !B.noCheck.count (k) && !jobs.count (id) && B.checkSeen.insert (k).second) { // not upstream (stream-rwyflat)
 			Job &J = NewJob (b, k, opt.now());
@@ -1165,6 +1180,7 @@ bool TileStream::Impl::AddLow (Clock::time_point now)
 	for (auto &p : jobs) if (p.second.low) return false;
 	for (int b = 0; b < (int)bodies.size(); b++) {
 		Body &B = *bodies[b];
+		if (!B.cfg.cover.kind.empty() && Paused (WC, now)) continue; // not upstream (cover-refetch): a rebuild now would miss WorldCover again
 		while (!B.refetchQueue.empty()) {
 			uint64_t k = B.refetchQueue.front();
 			B.refetchQueue.pop_front();
@@ -1415,7 +1431,7 @@ void TileStream::Impl::Build (Job J)
 		Failed (J);
 		return;
 	}
-	bool ocean = false, ok = true, theirs = false;
+	bool ocean = false, ok = true, theirs = false, coverRetry = false;
 	uint64_t made = 0; // bytes written, for the size cap's total
 	{
 		bool over;
@@ -1463,15 +1479,17 @@ void TileStream::Impl::Build (Job J)
 		QImage lights = TsImg::Build (C.lights, L, la, ln, TsImg::SrcGrid (C.lights, L, la, ln), lt);
 		QImage water = TsImg::Build (C.water, L, la, ln, TsImg::SrcGrid (C.water, L, la, ln), wt);
 		QImage cls; // WorldCover: the water bit and the class tile, else GIBS water as before
-		if (!C.cover.kind.empty() && L >= C.cover.lmin && L <= C.cover.lmax && net) {
+		if (B.CoverLevel (L) && net) {
 			std::vector<uint8_t> cv;
 			int n = water.width();
-			if (TsCog::Classes (C.cover.url, L, la, ln, n, [this] (std::vector<TsCog::Req> &r) { FetchAll (r, WC); }, cv)) {
+			TsCog::Cls got = TsCog::Classes (C.cover.url, L, la, ln, n, [this] (std::vector<TsCog::Req> &r) { FetchAll (r, WC); }, cv);
+			if (got == TsCog::Cls::OK) {
 				water = TsCog::Water (cv, n, water);
 				cls = TsCog::ClassImage (cv, n, 256);
 			} else {
+				coverRetry = got == TsCog::Cls::RETRY; // not upstream (cover-refetch): made again once WorldCover answers
 				std::lock_guard<std::mutex> lk (mx);
-				if (coverFails++ % 50 == 0) Log ("TileStream: WorldCover read failed, GIBS water for " + Tile (B.dir, "Mask", J.key));
+				if (coverFails++ % 50 == 0) Log (std::string ("TileStream: WorldCover ") + (coverRetry ? "read failed" : "cell unreadable") + ", GIBS water for " + Tile (B.dir, "Mask", J.key));
 			}
 		}
 		QImage mask = TsImg::Mask (lights, water, C.black, C.waterGrey);
@@ -1499,8 +1517,9 @@ void TileStream::Impl::Build (Job J)
 		B.bytes += made;
 		B.done.push_back (J.key);
 		if (B.done.size() > 1024) B.done.pop_front();
-		if (J.fallback) {
+		if (J.fallback || coverRetry) {
 			if (B.refetch.insert (J.key).second) Append (B, "refetch", J.key, -1);
+			if (coverRetry && ++B.coverTries[J.key] <= 3) B.refetchQueue.push_back (J.key); // not upstream (cover-refetch): later starts queue it again
 		} else if (B.refetch.erase (J.key)) Rewrite (B, "refetch", B.refetch);
 	} else hold[J.id] = opt.now() + std::chrono::seconds (60); // Write logged the first failure
 	jobs.erase (J.id);

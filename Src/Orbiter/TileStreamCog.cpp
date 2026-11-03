@@ -605,10 +605,10 @@ std::string CellName (int lat0, int lng0)
 	return b;
 }
 
-bool Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const Fetch &fetch, std::vector<uint8_t> &out)
+Cls Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const Fetch &fetch, std::vector<uint8_t> &out)
 {
 	out.assign ((size_t)n * n, 255);
-	if (L < 4 || n <= 0) return false;
+	if (L < 4 || n <= 0) return Cls::BAD;
 	double dh = 180.0 / (1 << (L - 4)), dw = 360.0 / (1 << (L - 3));
 	double north = 90.0 - ilat * dh, west = -180.0 + ilng * dw, pix = dh / n;
 	auto lat = [&] (int py) { return north - (py + 0.5) * dh / n; };
@@ -639,12 +639,12 @@ bool Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const F
 		for (size_t i = 0; i < rq.size(); i++) {
 			auto h = std::make_shared<Head>();
 			if (rq[i].status == 404) h->missing = true;
-			else if (rq[i].status != 200 || !rq[i].data) return false;
+			else if (rq[i].status != 200 || !rq[i].data) return Cls::RETRY;
 			else {
 				int64_t r = Parse (*rq[i].data, h->ifd);
-				if (r < 0) return false;
+				if (r < 0) return Cls::BAD;
 				if (r > 0) {
-					if (round || r > (8 << 20) || (uint64_t)rq[i].data->size() >= (uint64_t)r) return false;
+					if (round || r > (8 << 20) || (uint64_t)rq[i].data->size() >= (uint64_t)r) return Cls::BAD;
 					again.push_back ({rq[i].url, 0, (uint64_t)r + 65536});
 					ac.push_back (rc[i]);
 					continue;
@@ -656,7 +656,7 @@ bool Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const F
 		rq.swap (again);
 		rc.swap (ac);
 	}
-	if (!rq.empty()) return false;
+	if (!rq.empty()) return Cls::BAD;
 	std::map<std::pair<int, int>, int> lev; // overview per cell: the coarsest one still at least as fine as an output pixel
 	for (auto &c : hd) {
 		if (c.second->missing) continue;
@@ -700,7 +700,7 @@ bool Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const F
 			if (tl.count (k)) continue;
 			if ((tl[k] = Find (dec, k))) continue;
 			const Ifd &f = hd[c]->ifd[lev[c]];
-			if (f.cnt[t] > MaxBody) return false;
+			if (f.cnt[t] > MaxBody) return Cls::BAD;
 			rq.push_back ({url (c), f.off[t], f.cnt[t]});
 			want.push_back ({c, t});
 		}
@@ -712,11 +712,11 @@ bool Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const F
 		QByteArray body;
 		if (rq[i].len) {
 			const Req &r = net[j++];
-			if (r.status != 200 || !r.data || (uint64_t)r.data->size() < r.len) return false;
+			if (r.status != 200 || !r.data || (uint64_t)r.data->size() < r.len) return Cls::RETRY;
 			body = *r.data;
 		}
 		auto v = std::make_shared<std::vector<uint8_t>>();
-		if (!Decode (f, body, *v)) return false;
+		if (!Decode (f, body, *v)) return Cls::BAD;
 		std::string k = tileKey (want[i].first, want[i].second);
 		Put<std::vector<uint8_t>> (dec, k, v, 12);
 		tl[k] = v;
@@ -735,7 +735,7 @@ bool Classes (const std::string &tmpl, int L, int ilat, int ilng, int n, const F
 				d = lv && o < lv->size () ? (*lv)[o] : 0; // not upstream: checked
 			}
 		}
-	return true;
+	return Cls::OK;
 }
 
 bool IsWater (uint8_t c) { return c == 0 || c == 80; }
