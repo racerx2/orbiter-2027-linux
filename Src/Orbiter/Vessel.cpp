@@ -41,6 +41,7 @@
 #include "HullPoints.h" // not upstream (terrain-contact)
 #include "NoseWheel.h" // not upstream (nose-wheel)
 #include "WinModule.h" // not upstream (vessel-hooks)
+#include <algorithm> // not upstream
 #include <fstream>
 #include <iomanip>
 #include <stdio.h>
@@ -79,9 +80,22 @@ static Vector DefAttExhaustDir[12] = {
 // class Vessel
 // ==============================================================
 
+// not upstream: the vessels inside their constructors, where their modules' clbkSetClassCaps and clbkLoadStateEx run (the simulation's thread)
+static std::vector<const Vessel*> g_building;
+const std::vector<const Vessel*> &Vessel::Building () { return g_building; }
+
+namespace {
+struct BuildMark {
+	const Vessel *v;
+	explicit BuildMark (const Vessel *p) : v (p) { g_building.push_back (p); }
+	~BuildMark () { g_building.erase (std::find (g_building.begin (), g_building.end (), v)); }
+};
+}
+
 Vessel::Vessel (const PlanetarySystem *psys, const char *_name, const char *_classname, const VESSELSTATUS &status)
 : VesselBase()
 {
+	BuildMark mark (this); // not upstream: a vessel to the core's checks until it is added
 	name = _name;
 
 	if (!_classname) _classname = _name;
@@ -119,6 +133,7 @@ Vessel::Vessel (const PlanetarySystem *psys, const char *_name, const char *_cla
 Vessel::Vessel (const PlanetarySystem *psys, const char *_name, const char *_classname, const void *status)
 : VesselBase()
 {
+	BuildMark mark (this); // not upstream: a vessel to the core's checks until it is added
 	name = _name;
 
 	if (!_classname) _classname = _name;
@@ -159,6 +174,7 @@ Vessel::Vessel (const PlanetarySystem *psys, const char *_name, const char *_cla
 Vessel::Vessel (const PlanetarySystem *psys, const char *_name, const char *_classname, ifstream &ifs)
 : VesselBase()
 {
+	BuildMark mark (this); // not upstream: a vessel to the core's checks until it is added
 	char cbuf[256];
 
 	snprintf (cbuf, sizeof cbuf, "%s (%s)", _classname ? _classname : _name, _name); // not upstream: status text cut to cbuf

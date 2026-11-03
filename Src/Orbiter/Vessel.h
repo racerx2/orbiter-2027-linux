@@ -224,6 +224,8 @@ class Vessel: public VesselBase {
 	friend class GltfVesselAnim; // not upstream
 
 public:
+	static const std::vector<const Vessel*> &Building (); // not upstream: vessels inside their constructors, not yet in the system (design-lua-status)
+
 	Vessel (const PlanetarySystem *psys, const char *_name, const char *_classname, const VESSELSTATUS &status);
 	// Constructs a vessel instance from parameters in 'status' - uses VESSELSTATUS interface (version 1)
 

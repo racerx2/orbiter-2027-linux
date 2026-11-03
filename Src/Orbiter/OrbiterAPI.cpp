@@ -29,6 +29,7 @@
 #include <QImage>
 #include <QCoreApplication>
 #include <QThread>
+#include <algorithm> // not upstream
 
 #include "Orbitersdk.h"
 
@@ -173,16 +174,31 @@ DLLEXPORT DWORD oapiGetVesselCount ()
 	return (g_psys ? g_psys->nVessel() : 0);
 }
 
+// not upstream: a vessel inside its constructor (its module's clbkSetClassCaps, clbkLoadStateEx) is one already (design-lua-status)
+static bool Building (const void *h)
+{
+	const std::vector<const Vessel*> &b = Vessel::Building ();
+	return h && std::find (b.begin (), b.end (), (const Vessel*)h) != b.end ();
+}
+
+// not upstream: the vessels the handle checks look at, the system's and those being built; true when f holds for one
+template <class F> static bool AnyVessel (F f)
+{
+	for (size_t i = 0; i < g_psys->nVessel(); i++) if (f (g_psys->GetVessel ((DWORD)i))) return true;
+	for (const Vessel *v : Vessel::Building ()) if (f (v)) return true;
+	return false;
+}
+
 DLLEXPORT bool oapiIsVessel (OBJHANDLE hVessel)
 {
-	return (g_psys ? g_psys->isVessel ((const Vessel*)hVessel) : false);
+	return (g_psys ? g_psys->isVessel ((const Vessel*)hVessel) || Building (hVessel) : false); // not upstream: or one being built
 }
 
 // not upstream: handle checks for script bindings (design-security-fixes B5)
 DLLEXPORT bool oapiIsObject (OBJHANDLE hObj)
 {
 	if (!g_psys || !hObj) return false;
-	if (g_psys->isObject ((const Body*)hObj)) return true;
+	if (g_psys->isObject ((const Body*)hObj) || Building (hObj)) return true;
 	for (size_t i = 0; i < g_psys->nPlanet(); i++) {
 		const Planet *p = g_psys->GetPlanet ((int)i);
 		for (DWORD j = 0; j < p->nBase(); j++)
@@ -194,12 +210,11 @@ DLLEXPORT bool oapiIsObject (OBJHANDLE hObj)
 DLLEXPORT bool oapiIsPropellant (PROPELLANT_HANDLE hp)
 {
 	if (!g_psys || !hp) return false;
-	for (size_t i = 0; i < g_psys->nVessel(); i++) {
-		const Vessel *v = g_psys->GetVessel ((DWORD)i);
+	return AnyVessel ([hp] (const Vessel *v) {
 		for (DWORD j = 0; v->PropellantHandle (j); j++)
 			if (v->PropellantHandle (j) == hp) return true;
-	}
-	return false;
+		return false;
+	});
 }
 
 static bool NavListed (const NavManager &m, NAVHANDLE h)
@@ -222,32 +237,28 @@ DLLEXPORT bool oapiIsNav (NAVHANDLE hNav)
 				if ((NAVHANDLE)b->PadStatus (k)->nav == hNav) return true;
 		}
 	}
-	for (size_t i = 0; i < g_psys->nVessel(); i++) {
-		const Vessel *v = g_psys->GetVessel ((DWORD)i);
+	return AnyVessel ([hNav] (const Vessel *v) {
 		if ((NAVHANDLE)v->GetXPDR() == hNav) return true;
 		for (DWORD d = 0; d < v->nDock(); d++)
 			if ((NAVHANDLE)v->GetDockParams (d)->ids == hNav) return true;
-	}
-	return false;
+		return false;
+	});
 }
 
 DLLEXPORT bool oapiIsDock (DOCKHANDLE hDock)
 {
 	if (!g_psys || !hDock) return false;
-	for (size_t i = 0; i < g_psys->nVessel(); i++) {
-		const Vessel *v = g_psys->GetVessel ((DWORD)i);
+	return AnyVessel ([hDock] (const Vessel *v) {
 		for (DWORD d = 0; d < v->nDock(); d++)
 			if ((DOCKHANDLE)v->GetDockParams (d) == hDock) return true;
-	}
-	return false;
+		return false;
+	});
 }
 
 DLLEXPORT bool oapiIsParticleStream (PSTREAM_HANDLE ph)
 {
 	if (!g_psys || !ph) return false;
-	for (size_t i = 0; i < g_psys->nVessel(); i++)
-		if (g_psys->GetVessel ((DWORD)i)->HasParticleStream (ph)) return true;
-	return false;
+	return AnyVessel ([ph] (const Vessel *v) { return v->HasParticleStream (ph); });
 }
 
 DLLEXPORT bool oapiGltfImageRef (const char *name)
