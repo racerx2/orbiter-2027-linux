@@ -1625,6 +1625,16 @@ void Interpreter::LoadAnnotationAPI ()
 	luaL_openlib (L, NULL, noteMtd, 0);
 }
 
+// not upstream: a status the script owns (get_rawstatus): its lists go with it (design-lua-status)
+static int vs2own_gc (lua_State *L)
+{
+	VESSELSTATUS2 *vs = (VESSELSTATUS2 *)luaL_checkudata (L, 1, "VESSELSTATUS2.own");
+	delete[] vs->fuel; delete[] vs->thruster; delete[] vs->dockinfo;
+	vs->fuel = NULL, vs->thruster = NULL, vs->dockinfo = NULL;
+	vs->nfuel = vs->nthruster = vs->ndockinfo = 0;
+	return 0;
+}
+
 void Interpreter::LoadVesselStatusAPI()
 {
 	static const struct luaL_reg vs[] = {
@@ -1648,6 +1658,13 @@ void Interpreter::LoadVesselStatusAPI()
 	lua_pushvalue(L, -2); // push metatable
 	lua_settable(L, -3);  // metatable.__index = metatable
 	luaL_openlib(L, NULL, vs2, 0);
+
+	luaL_newmetatable(L, "VESSELSTATUS2.own"); // not upstream: the same methods, and its lists freed with it
+	lua_pushvalue(L, -2);
+	lua_setfield(L, -2, "__index");
+	lua_pushcfunction(L, vs2own_gc);
+	lua_setfield(L, -2, "__gc");
+	lua_pop(L, 1);
 }
 
 void Interpreter::LoadStartupScript ()

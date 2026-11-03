@@ -1,6 +1,7 @@
 #include "Interpreter.h"
 #include <Lua/lua_handles.h>
 
+#include <cstring>
 #include <memory>
 
 // these collide with std::min/max
@@ -85,5 +86,49 @@ TEST_CASE("Handle registry", "[LuaInterpreter]")
 	CHECK_FALSE(luahandle::Known(L, &b, luahandle::AIRFOIL));
 	luahandle::Drop(L, &a);
 	CHECK_FALSE(luahandle::Known(L, &a, luahandle::FILE));
+	CHECK(lua_gettop(L) == top);
+}
+
+// not upstream: a status the script owns frees its lists, and set frees the ones it replaces; the own __gc takes no other status (design-lua-status)
+TEST_CASE("A script's own vessel status frees its lists", "[LuaInterpreter]")
+{
+	auto interp = make_unique<Interpreter>();
+	interp->Initialise();
+	auto L = interp->GetState();
+	int top = lua_gettop(L);
+	auto *own = (VESSELSTATUS2 *)lua_newuserdata(L, sizeof(VESSELSTATUS2));
+	memset(own, 0, sizeof *own);
+	own->version = 2;
+	luaL_getmetatable(L, "VESSELSTATUS2.own");
+	REQUIRE(lua_istable(L, -1));
+	lua_setmetatable(L, -2);
+	lua_setglobal(L, "own");
+	auto *orb = (VESSELSTATUS2 *)lua_newuserdata(L, sizeof(VESSELSTATUS2));
+	memset(orb, 0, sizeof *orb);
+	orb->version = 2;
+	luaL_getmetatable(L, "VESSELSTATUS2.table");
+	lua_setmetatable(L, -2);
+	lua_setglobal(L, "orb");
+	string script =
+		"own:set{fuel={{idx=0,level=0.5},{idx=1,level=1}}, thruster={{idx=2,level=0.25}}, dockinfo={{idx=0,ridx=1}}}\n"
+		"own:set{fuel={{idx=3,level=0.75}}, thruster={5}}\n"
+		"local t = own:get()\n"
+		"r_get = #t.fuel == 1 and t.fuel[1].idx == 3 and t.fuel[1].level == 0.75 and #t.thruster == 0 and #t.dockinfo == 1\n"
+		"r_other = not pcall(getmetatable(own).__gc, orb)\n"
+		"orb:set{fuel={{idx=0,level=1}}} orb:set{fuel={{idx=1,level=1}}}\n"
+		"getmetatable(own).__gc(own)\n";
+	interp->RunChunk(script.data(), script.size());
+	for (const char *r : {"r_get", "r_other"}) {
+		lua_getglobal(L, r);
+		INFO(r);
+		CHECK(lua_toboolean(L, -1));
+		lua_pop(L, 1);
+	}
+	CHECK((own->fuel == nullptr && own->thruster == nullptr && own->dockinfo == nullptr));
+	CHECK((own->nfuel == 0 && own->nthruster == 0 && own->ndockinfo == 0));
+	REQUIRE(orb->nfuel == 1);
+	CHECK(orb->fuel[0].idx == 1);
+	delete[] orb->fuel; // a borrowed status's lists are its owner's
+	orb->fuel = nullptr, orb->nfuel = 0;
 	CHECK(lua_gettop(L) == top);
 }

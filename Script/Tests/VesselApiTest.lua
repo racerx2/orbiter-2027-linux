@@ -273,35 +273,35 @@ tdc = v:get_touchdownpointcount()
 assert(tdc == 13)
 pass()
 
-exp = {} -- expected "gear up" results
-exp[ 0] = {pos={x=0, y=-1.5, z=9}, stiffness=1e7, damping=1e5, mu=3.5445e-08, mu_lng=3}
-exp[ 1] = {pos={x=-6, y=-0.8, z=-5}, stiffness=1e7, damping=1e5, mu=2.21197e-08, mu_lng=3}
-exp[ 2] = {pos={x=3, y=-1.2, z=-5}, stiffness=1e7, damping=1e5, mu=4.24352e-08, mu_lng=3}
-exp[ 3] = {pos={x=-8.5, y=-0.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=-9.12894e+306, mu_lng=3}
-exp[ 4] = {pos={x=8.5, y=-0.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=-1.63524e-206, mu_lng=3}
-exp[ 5] = {pos={x=-8.5, y=-0.4, z=-3}, stiffness=1e7, damping=1e5, mu=2.00016, mu_lng=3}
-exp[ 6] = {pos={x=8.5, y=-0.4, z=-3}, stiffness=1e7, damping=1e5, mu=1.03171e+26, mu_lng=3}
-exp[ 7] = {pos={x=-8.85, y=2.3, z=-5.05}, stiffness=1e7, damping=1e5, mu=1.42505e+103, mu_lng=3}
-exp[ 8] = {pos={x=8.85, y=2.3, z=-5.05}, stiffness=1e7, damping=1e5, mu=9.53414e-130, mu_lng=3}
-exp[ 9] = {pos={x=-8.85, y=2.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=5.50352e-53, mu_lng=3}
-exp[10] = {pos={x=8.85, y=2.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=5.88118e-308, mu_lng=3}
-exp[11] = {pos={x=0,y=2, z=6.2}, stiffness=1e7, damping=1e5, mu=2.93186e-308, mu_lng=3}
-exp[12] = {pos={x=0,y=-0.6, z=10.65}, stiffness=1e7, damping=1e5, mu=1.42005e-306, mu_lng=3}
+exp = {} -- expected "gear up" results; not upstream: the DG's own values (GetTouchdownPoint field by field, upstream's memcpy shifted mu and mu_lng)
+exp[ 0] = {pos={x=0, y=-1.5, z=9}, stiffness=1e7, damping=1e5, mu=3, mu_lng=3}
+exp[ 1] = {pos={x=-6, y=-0.8, z=-5}, stiffness=1e7, damping=1e5, mu=3, mu_lng=3}
+exp[ 2] = {pos={x=3, y=-1.2, z=-5}, stiffness=1e7, damping=1e5, mu=3, mu_lng=3}
+exp[ 3] = {pos={x=-8.5, y=-0.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp[ 4] = {pos={x=8.5, y=-0.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp[ 5] = {pos={x=-8.5, y=-0.4, z=-3}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp[ 6] = {pos={x=8.5, y=-0.4, z=-3}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp[ 7] = {pos={x=-8.85, y=2.3, z=-5.05}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp[ 8] = {pos={x=8.85, y=2.3, z=-5.05}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp[ 9] = {pos={x=-8.85, y=2.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp[10] = {pos={x=8.85, y=2.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp[11] = {pos={x=0,y=2, z=6.2}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp[12] = {pos={x=0,y=-0.6, z=10.65}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
 
 exp2 = {} -- expected "gear down" results
-exp2[0] = {pos={x=0, y=-2.57, z=10}, stiffness=1e6, damping=1e5, mu=9.09091e-08, mu_lng=1.6}
-exp2[1] = {pos={x=-3.5, y=-2.57, z=-1}, stiffness=1e6, damping=1e5, mu=4.54545e-07, mu_lng=3}
-exp2[2] = {pos={x=3.5, y=-2.57, z=-1}, stiffness=1e6, damping=1e5, mu=4.54545e-07, mu_lng=3}
-exp2[3] = {pos={x=-8.5, y=-0.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=-5.10637e-310, mu_lng=3}
-exp2[4] = {pos={x=8.5, y=-0.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=3.11088e-302, mu_lng=3}
-exp2[5] = {pos={x=-8.5, y=-0.4, z=-3}, stiffness=1e7, damping=1e5, mu=0, mu_lng=3}
-exp2[6] = {pos={x=8.5, y=-0.4, z=-3}, stiffness=1e7, damping=1e5, mu=0, mu_lng=3}
-exp2[7] = {pos={x=-8.85, y=2.3, z=-5.05}, stiffness=1e7, damping=1e5, mu=0, mu_lng=3}
-exp2[8] = {pos={x=8.85, y=2.3, z=-5.05}, stiffness=1e7, damping=1e5, mu=0, mu_lng=3}
-exp2[9] = {pos={x=-8.85, y=2.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=nil, mu_lng=3}
-exp2[10] = {pos={x=8.85, y=2.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=-3.53744e-310, mu_lng=3}
-exp2[11] = {pos={x=0, y=2, z=6.2}, stiffness=1e7, damping=1e5, mu=2.76101e-309, mu_lng=3}
-exp2[12] = {pos={x=0, y=-0.6, z=10.65}, stiffness=1e7, damping=1e5, mu=0, mu_lng=3}
+exp2[0] = {pos={x=0, y=-2.57, z=10}, stiffness=1e6, damping=1e5, mu=1.6, mu_lng=0.1}
+exp2[1] = {pos={x=-3.5, y=-2.57, z=-1}, stiffness=1e6, damping=1e5, mu=3, mu_lng=0.2}
+exp2[2] = {pos={x=3.5, y=-2.57, z=-1}, stiffness=1e6, damping=1e5, mu=3, mu_lng=0.2}
+exp2[3] = {pos={x=-8.5, y=-0.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp2[4] = {pos={x=8.5, y=-0.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp2[5] = {pos={x=-8.5, y=-0.4, z=-3}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp2[6] = {pos={x=8.5, y=-0.4, z=-3}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp2[7] = {pos={x=-8.85, y=2.3, z=-5.05}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp2[8] = {pos={x=8.85, y=2.3, z=-5.05}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp2[9] = {pos={x=-8.85, y=2.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp2[10] = {pos={x=8.85, y=2.3, z=-7.05}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp2[11] = {pos={x=0, y=2, z=6.2}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
+exp2[12] = {pos={x=0, y=-0.6, z=10.65}, stiffness=1e7, damping=1e5, mu=3, mu_lng=0}
 
 add_line("Test: vessel:get_touchdownpoints(GEARUP \"NewAPI\")")
 v = vessel.get_interface("GL-01")
@@ -314,7 +314,7 @@ for i=0,tdc-1 do
   assert(tdp.pos.x == exp[i].pos.x and tdp.pos.y == exp[i].pos.y and tdp.pos.z == exp[i].pos.z
      and tdp.stiffness == exp[i].stiffness
      and tdp.damping == exp[i].damping
-     -- and tdp.mu == exp[i].mu
+     and tdp.mu == exp[i].mu
      and tdp.mu_lng == exp[i].mu_lng
   )
 end
@@ -328,7 +328,7 @@ for i=0,tdc-1 do
   assert(tdp.pos.x == exp2[i].pos.x and tdp.pos.y == exp2[i].pos.y and tdp.pos.z == exp2[i].pos.z
      and tdp.stiffness == exp2[i].stiffness
      and tdp.damping == exp2[i].damping
-     -- and tdp.mu == exp2[i].mu
+     and tdp.mu == exp2[i].mu
      and tdp.mu_lng == exp2[i].mu_lng
   )
 end
@@ -341,7 +341,7 @@ for i=0,tdc-1 do
   assert(tdp.pos.x == exp[i].pos.x and tdp.pos.y == exp[i].pos.y and tdp.pos.z == exp[i].pos.z
      and tdp.stiffness == exp[i].stiffness
      and tdp.damping == exp[i].damping
-     -- and tdp.mu == exp[i].mu
+     and tdp.mu == exp[i].mu
      and tdp.mu_lng == exp[i].mu_lng
   )
 end

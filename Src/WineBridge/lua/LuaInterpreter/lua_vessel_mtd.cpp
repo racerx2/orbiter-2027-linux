@@ -129,6 +129,14 @@ int Interpreter::lua_get_vesselstatus_version (lua_State *L, int idx) // Returns
 	return (version > 0 && version <= 2) ? version : 0;
 }
 
+// not upstream: a list with no records is no list, as Orbiter's parser keeps it (an owner frees only a counted one)
+static void DropEmptyLists (VESSELSTATUS2 *vs)
+{
+	if (!vs->nfuel) { delete[] vs->fuel; vs->fuel = NULL; }
+	if (!vs->nthruster) { delete[] vs->thruster; vs->thruster = NULL; }
+	if (!vs->ndockinfo) { delete[] vs->dockinfo; vs->dockinfo = NULL; }
+}
+
 void Interpreter::lua_push_vessel_status (lua_State *L, const VESSELSTATUS &vs)
 {
 	lua_createtable(L, 0, 14);
@@ -1849,10 +1857,9 @@ int Interpreter::v_get_status(lua_State* L)
 		v->GetStatusEx(&status);
 		lua_push_vessel_status(L, status);
 
-		// Who frees these resources?
-		//if (status.fuel) delete[] status.fuel;
-		//if (status.thruster) delete[] status.thruster;
-		//if (status.dockinfo) delete[] status.dockinfo;
+		delete[] status.fuel; // not upstream: the lists GetStatusEx made, copied into the table above
+		delete[] status.thruster;
+		delete[] status.dockinfo;
 		return 1;
 	}
 	return 0;
@@ -1891,7 +1898,7 @@ int Interpreter::v_get_rawstatus(lua_State* L)
 	{
 		VESSELSTATUS2* status = (VESSELSTATUS2*)lua_newuserdata(L, sizeof(VESSELSTATUS2));
 		memset(status, 0, sizeof(VESSELSTATUS2));
-		luaL_getmetatable(L, "VESSELSTATUS2.table");   // push metatable
+		luaL_getmetatable(L, "VESSELSTATUS2.own");   // not upstream: the script's own, its lists freed with it (design-lua-status)
 		lua_setmetatable(L, -2);              // set metatable for annotation objects
 		status->version = 2;
 		// check additional flags...(currently not implemented)
@@ -1899,11 +1906,7 @@ int Interpreter::v_get_rawstatus(lua_State* L)
 		//status.fuel = new VESSELSTATUS2::FUELSPEC[256]();
 
 		v->GetStatusEx(status);
-
-		// Who frees these resources?
-		//if (status.fuel) delete[] status.fuel;
-		//if (status.thruster) delete[] status.thruster;
-		//if (status.dockinfo) delete[] status.dockinfo;
+		DropEmptyLists(status);
 		return 1;
 	}
 	return 0;
@@ -2030,14 +2033,16 @@ int Interpreter::vs2set(lua_State* L)
 	if (lua_istable(L, -1)) {
 		int n = lua_objlen(L, -1);
 		if (n) {
+			if (vs->nfuel) delete[] vs->fuel; // not upstream: the list it replaces, freed as Orbiter's parser does
 			vs->fuel = new VESSELSTATUS2::FUELSPEC[n]();
+			vs->nfuel = 0; // not upstream: the count of this array, entries in table order (each carries its idx), never past n
 
 			lua_pushnil(L);
 			while (lua_next(L, -2)) {
 				// stack now contains: -1 => value; -2 => key; -3 => table (value is FUELSPEC)
-				if (lua_istable(L, -1)) // is_fuelspec() ?
+				if (lua_istable(L, -1) && vs->nfuel < (DWORD)n) // is_fuelspec() ?
 				{
-					size_t i = lua_tointeger(L, -2) - 1; //lua_next() does not always iteerate in order :(
+					size_t i = vs->nfuel;
 					lua_getfield(L, -1, "idx");
 					vs->fuel[i].idx = lua_tointeger(L, -1);
 					lua_pop(L, 1);
@@ -2048,6 +2053,7 @@ int Interpreter::vs2set(lua_State* L)
 				}
 				lua_pop(L, 1);
 			}
+			if (!vs->nfuel) { delete[] vs->fuel; vs->fuel = NULL; } // not upstream: no record kept, no list
 		}
 	}
 	lua_pop(L, 1);
@@ -2056,11 +2062,13 @@ int Interpreter::vs2set(lua_State* L)
 	if (lua_istable(L, -1)) {
 		int n = lua_objlen(L, -1);
 		if (n) {
+			if (vs->nthruster) delete[] vs->thruster; // not upstream: the list it replaces, freed as Orbiter's parser does
 			vs->thruster = new VESSELSTATUS2::THRUSTSPEC[n]();
+			vs->nthruster = 0; // not upstream: the count of this array, entries in table order (each carries its idx), never past n
 			lua_pushnil(L);
 			while (lua_next(L, -2)) {
-				if (lua_istable(L, -1)) { // is_thrustspec()
-					size_t i = lua_tointeger(L, -2) - 1;
+				if (lua_istable(L, -1) && vs->nthruster < (DWORD)n) { // is_thrustspec()
+					size_t i = vs->nthruster;
 					lua_getfield(L, -1, "idx");
 					vs->thruster[i].idx = lua_tointeger(L, -1);
 					lua_pop(L, 1);
@@ -2071,6 +2079,7 @@ int Interpreter::vs2set(lua_State* L)
 				}
 				lua_pop(L, 1);
 			}
+			if (!vs->nthruster) { delete[] vs->thruster; vs->thruster = NULL; } // not upstream: no record kept, no list
 		}
 	}
 	lua_pop(L, 1);
@@ -2079,11 +2088,13 @@ int Interpreter::vs2set(lua_State* L)
 	if (lua_istable(L, -1)) {
 		int n = lua_objlen(L, -1);
 		if (n) {
+			if (vs->ndockinfo) delete[] vs->dockinfo; // not upstream: the list it replaces, freed as Orbiter's parser does
 			vs->dockinfo = new VESSELSTATUS2::DOCKINFOSPEC[n]();
+			vs->ndockinfo = 0; // not upstream: the count of this array, entries in table order (each carries its idx), never past n
 			lua_pushnil(L);
 			while (lua_next(L, -2)) {
-				if (lua_istable(L, -1)) { // is_dockinfospec()
-					size_t i = lua_tointeger(L, -2) - 1;
+				if (lua_istable(L, -1) && vs->ndockinfo < (DWORD)n) { // is_dockinfospec()
+					size_t i = vs->ndockinfo;
 					lua_getfield(L, -1, "idx");
 					vs->dockinfo[i].idx = lua_tointeger(L, -1);
 					lua_pop(L, 1);
@@ -2097,6 +2108,7 @@ int Interpreter::vs2set(lua_State* L)
 				}
 				lua_pop(L, 1);
 			}
+			if (!vs->ndockinfo) { delete[] vs->dockinfo; vs->dockinfo = NULL; } // not upstream: no record kept, no list
 		}
 	}
 	lua_pop(L, 1);
@@ -2226,13 +2238,14 @@ int Interpreter::v_defset_status (lua_State *L)
 			int n = lua_objlen(L, -1);
 			if (n) {
 				status.fuel = new VESSELSTATUS2::FUELSPEC[n]();
+				status.nfuel = 0; // not upstream: the count of this array, entries in table order (each carries its idx), never past n
 
 				lua_pushnil(L);
 				while (lua_next(L, -2)) {
 					// stack now contains: -1 => value; -2 => key; -3 => table (value is FUELSPEC)
-					if (lua_istable(L, -1)) // is_fuelspec() ?
+					if (lua_istable(L, -1) && status.nfuel < (DWORD)n) // is_fuelspec() ?
 					{
-						size_t i = lua_tointeger(L, -2) - 1; //lua_next() does not always iteerate in order :(
+						size_t i = status.nfuel;
 						lua_getfield(L, -1, "idx");
 						status.fuel[i].idx = lua_tointeger(L, -1);
 						lua_pop(L, 1);
@@ -2252,10 +2265,11 @@ int Interpreter::v_defset_status (lua_State *L)
 			int n = lua_objlen(L, -1);
 			if (n) {
 				status.thruster = new VESSELSTATUS2::THRUSTSPEC[n]();
+				status.nthruster = 0; // not upstream: the count of this array, entries in table order (each carries its idx), never past n
 				lua_pushnil(L);
 				while (lua_next(L, -2)) {
-					if (lua_istable(L, -1)) { // is_thrustspec()
-						size_t i = lua_tointeger(L, -2) - 1;
+					if (lua_istable(L, -1) && status.nthruster < (DWORD)n) { // is_thrustspec()
+						size_t i = status.nthruster;
 						lua_getfield(L, -1, "idx");
 						status.thruster[i].idx = lua_tointeger(L, -1);
 						lua_pop(L, 1);
@@ -2275,10 +2289,11 @@ int Interpreter::v_defset_status (lua_State *L)
 			int n = lua_objlen(L, -1);
 			if (n) {
 				status.dockinfo = new VESSELSTATUS2::DOCKINFOSPEC[n]();
+				status.ndockinfo = 0; // not upstream: the count of this array, entries in table order (each carries its idx), never past n
 				lua_pushnil(L);
 				while (lua_next(L, -2)) {
-					if (lua_istable(L, -1)) { // is_dockinfospec()
-						size_t i = lua_tointeger(L, -2) - 1;
+					if (lua_istable(L, -1) && status.ndockinfo < (DWORD)n) { // is_dockinfospec()
+						size_t i = status.ndockinfo;
 						lua_getfield(L, -1, "idx");
 						status.dockinfo[i].idx = lua_tointeger(L, -1);
 						lua_pop(L, 1);
@@ -2299,10 +2314,9 @@ int Interpreter::v_defset_status (lua_State *L)
 		// Apply changes
 		v->DefSetStateEx(&status);
 
-		// Who frees these resources?
-		//if (status.fuel) delete[] status.fuel;
-		//if (status.thruster) delete[] status.thruster;
-		//if (status.dockinfo) delete[] status.dockinfo;
+		delete[] status.fuel; // not upstream: the lists made from the table above, applied
+		delete[] status.thruster;
+		delete[] status.dockinfo;
 	}
 	return 0;
 }

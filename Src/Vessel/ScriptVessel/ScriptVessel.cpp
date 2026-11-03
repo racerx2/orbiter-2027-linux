@@ -439,9 +439,10 @@ void ScriptVessel::clbkLoadStateEx(FILEHANDLE scn, void* vs)
 		lua_getfield(L, LUA_GLOBALSINDEX, func);
 		luahandle::Push(L, scn, luahandle::FILE); // not upstream: the bindings take it during this call only
 		VESSELSTATUS2* status = (VESSELSTATUS2*)lua_newuserdata(L, sizeof(VESSELSTATUS2));
-		luaL_getmetatable(L, "VESSELSTATUS2.table");   // push metatable
+		*status = *(VESSELSTATUS2*)vs; // not upstream: filled before its metatable, so its __gc never sees garbage
+		luaL_getmetatable(L, "VESSELSTATUS2.own");   // not upstream: the script's own while it runs, then Orbiter's (design-lua-status)
 		lua_setmetatable(L, -2);              // set metatable for VESSELSTATUS2
-		*status = *(VESSELSTATUS2*)vs;
+		lua_pushvalue(L, -1); lua_insert(L, -4); // not upstream: held below the call until written back
 		int res = LuaCall(L, 2, 0);
 		luahandle::Drop(L, scn);
 		if(res !=0) {
@@ -449,10 +450,13 @@ void ScriptVessel::clbkLoadStateEx(FILEHANDLE scn, void* vs)
 			// We try to finish it anyway to prevent fatal errors later 
 			char *line;
 			while (oapiReadScenario_nextline (scn, line)) {
-				ParseScenarioLineEx (line, vs);
+				ParseScenarioLineEx (line, status); // not upstream: into the copy, which is written back
 			}
 		}
 		*(VESSELSTATUS2*)vs = *status;
+		status->fuel = NULL, status->thruster = NULL, status->dockinfo = NULL; // not upstream: Orbiter's lists now; a copy the script kept has none
+		status->nfuel = status->nthruster = status->ndockinfo = 0;
+		lua_pop(L, 1);
 	} else {
 		VESSEL2::clbkLoadStateEx(scn, vs);
 	}
