@@ -63,6 +63,18 @@ inline double CdiScale (int mode, double dis)
 // its needle, -1 (full left) to 1: the course is where it points, so left when the vessel is right of it
 inline double CdiNeedle (double xtk, double scale) { return std::fmax (-1.0, std::fmin (1.0, -xtk / scale)); }
 
+// the GPS satellites' altitude over Earth's mean radius, and how far below it a lost signal comes back
+constexpr double GPS_ALT = 20180e3, GPS_REACQ = 10e3;
+
+// a GPS fix: only on Earth (the one body with satellites), below them; had: the last answer, kept in the band between
+inline bool Signal (const std::string &body, double alt, bool had)
+{
+	const char *e = "earth";
+	if (body.size () != 5) return false;
+	for (int i = 0; i < 5; i++) if ((body[i] | 0x20) != e[i]) return false;
+	return alt < (had ? GPS_ALT : GPS_ALT - GPS_REACQ);
+}
+
 // GPS roll steering: the track to fly (onto the leg, an intercept that eases as the line nears, at most 45 degrees)
 inline double GpssTrack (double dtk, double xtk, double gs)
 {

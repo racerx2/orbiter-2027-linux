@@ -1,6 +1,6 @@
 # GPSNav
 
-A panel GPS navigator add-on for Orbiter on Linux: a moving map, Direct-To, flight plans, the nearest airports, bases and beacons, waypoint information and a glide path to a runway or pad, for any vessel on any body. It reads Orbiter's bases (built in or installed with add-ons), their pads and beacons, OurAirports' airports, runways and navaids for Earth, Earth's water and shores from the OpenStreetMap map, and your own airports and waypoints from simple CSV files.
+A panel GPS navigator add-on for Orbiter on Linux: a moving map, Direct-To, flight plans, the nearest airports, bases and beacons, waypoint information and a glide path to a runway or pad, for any vessel on Earth below the GPS satellites (above them, or at another body, it says out of range). It reads Orbiter's bases (built in or installed with add-ons), their pads and beacons, OurAirports' airports, runways and navaids for Earth, Earth's water and shores from the OpenStreetMap map, and your own airports and waypoints from simple CSV files.
 
 The manual is `Html/GPSNav.htm` (in Orbiter: the dialog's help button).
 

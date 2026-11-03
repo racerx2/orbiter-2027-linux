@@ -118,3 +118,21 @@ TEST_CASE("the desired track past the leg's end", "[nav]")
 	REQUIRE_THAT(past.dtk * DEG, WithinAbs (c, 0.5));   // not turned back to B
 	REQUIRE(past.past);
 }
+
+TEST_CASE("the GPS signal: Earth below the satellites", "[nav]")
+{
+	CHECK(Signal ("Earth", 0.0, true));
+	CHECK(Signal ("Earth", 20000e3, true));
+	CHECK_FALSE(Signal ("Earth", GPS_ALT, true)); // at the satellites: gone
+	CHECK_FALSE(Signal ("Earth", 36000e3, true));
+	CHECK(Signal ("earth", 400e3, false));
+	// back in range only 10 km below the line; going out, the line itself
+	CHECK_FALSE(Signal ("Earth", GPS_ALT - 5e3, false));
+	CHECK(Signal ("Earth", GPS_ALT - 5e3, true));
+	CHECK(Signal ("Earth", GPS_ALT - GPS_REACQ - 1.0, false));
+	for (const char *b : {"Moon", "Mars", "Venus", "Earth2", "Eart", ""}) {
+		INFO(b);
+		CHECK_FALSE(Signal (b, 0.0, true));
+		CHECK_FALSE(Signal (b, 0.0, false));
+	}
+}

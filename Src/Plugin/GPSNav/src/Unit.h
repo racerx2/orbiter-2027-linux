@@ -61,6 +61,7 @@ private:
 	void DrawEntry (ImDrawList *dl, const Ctx &c);
 	void DrawMenu (ImDrawList *dl, const Ctx &c);
 	void DrawTitle (ImDrawList *dl, const char *title);
+	void DrawNoSignal (ImDrawList *dl, const Ctx &c); // out of range: the notice in place of the pages
 
 	gps::Plan &PlanOf (Ctx &c);        // the vessel's, a new one if it was on another body
 	int Seed (const Ctx &c) const;     // the waypoint a Direct-To starts with: the cursor's, else the active one
@@ -115,6 +116,8 @@ private:
 	bool altMode = false;              // VNAV: a target altitude, not the glide path
 	double tgtAlt = 3000.0 * gps::FT;
 	int rwySel = -1;                   // VNAV: the runway end chosen, -1 the best aligned
+	bool sig = true;                   // a GPS fix (gps::Signal) at the last time step, for sigFor
+	std::string sigFor;                // the vessel it is for; empty: none yet
 	bool gpss = false;                 // GPS roll steering engaged, on this vessel
 	std::string gpssVessel, gpssPending;
 	double ail = 0.0, bank0 = 0.0, bankTgt = 0.0, gpssLog = 0.0;

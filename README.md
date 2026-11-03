@@ -26,7 +26,7 @@ optional Wine bridge that runs old Windows add-ons. Orbiter for Windows is [orbi
   rivers, and real airports with their runways painted on and lit up at night. No texture packs, no accounts.
 - **Land on the real Mars.** Valles Marineris, Olympus Mons and Jezero stream in from USGS maps, down to 6 m detail.
 - **Navigate like a pilot.** A GPS comes with it: moving map, flight plans, 80,000 airports and beacons, glide
-  paths and GPS steering, on any ship.
+  paths and GPS steering, on any ship below the GPS satellites.
 - **Keep your Windows add-ons.** Ships, MFDs and plugins made for Orbiter 2010, 2016 and 2024 fly from their zips,
   through Wine, with nothing to set up.
 - **Crash like it matters.** Hulls dent, tear and break into debris; buildings take the hit too.
@@ -92,7 +92,8 @@ MOLA terrain. Land in Valles Marineris, on Olympus Mons or at Jezero. The old Ma
 *The GPS navigator with a flight plan from Hobby to Bush Intercontinental, Houston.*
 
 It comes with Orbiter: turn on **GPSNav** in the Launchpad's **Modules** tab and click the GPS pin on the menu bar.
-A panel GPS unit for any ship on any planet or moon, laid out like the real thing:
+A panel GPS unit for any ship, laid out like the real thing. Like a real GPS it needs the satellites: it works on Earth
+below their orbits, and above them it says it is out of range until the signal comes back.
 
 - **Moving map** with the terrain in colour, airports, runways, beacons, Orbiter's bases and pads, north up or track up.
   On Earth, water, land and shores come from the OpenStreetMap map (OpenFreeMap), fetched as you fly and kept in
@@ -103,7 +104,7 @@ A panel GPS unit for any ship on any planet or moon, laid out like the real thin
   to follow the plan.
 - **On the HUD**: a magenta caret on the heading tape points to the active waypoint.
 - **Data**: about 80,000 airports and beacons and 35,000 runways on Earth from [OurAirports](https://ourairports.com/data/),
-  every base on every body, and your own airports and waypoints in simple CSV files (`GPSNav/User`).
+  Orbiter's bases and pads, and your own airports and waypoints in simple CSV files (`GPSNav/User`).
 
 The manual is the unit's help button. Source: [Src/Plugin/GPSNav](./Src/Plugin/GPSNav/README.md).
 

@@ -197,6 +197,7 @@ struct Unit::Ctx {
 	LatLon pos;
 	double alt = 0.0, hdg = 0.0, gE = 0.0, gN = 0.0, gU = 0.0;
 	bool ground = false;               // on the ground: no terrain warning colours
+	bool sig = true;                   // a GPS fix
 	Plan *plan = nullptr;              // the vessel's, when it is on this body
 	Guidance g;
 	double mjd = 0.0, sys = 0.0;
@@ -213,6 +214,7 @@ void Unit::Reset ()
 	ov = O_NONE, cursor = false, row = 0, found.clear (), wptBody = nullptr, wptIdx = -1, nrst.clear (), nrstFor = -1, seen = nullptr, rwySel = -1;
 	active = false; // the dialog manager went with the simulation
 	gpss = false, gpssPending.clear ();
+	sig = true, sigFor.clear ();
 	if (oapiSetHUDBearingTarget) oapiSetHUDBearingTarget (nullptr, nullptr, 0.0, 0.0);
 	terrain.Reset ();
 }
@@ -249,6 +251,7 @@ bool Unit::Frame (Ctx &c)
 	c.v->GetEquPos (lng, lat, rad);
 	c.pos = {lat, lng};
 	c.alt = c.v->GetAltitude ();
+	c.sig = sigFor == c.vname ? sig : Signal (c.body, c.alt, true); // Step's answer; a new focus while paused asks itself
 	c.hdg = c.v->GetYaw ();
 	c.ground = c.v->GroundContact ();
 	VECTOR3 gv;
@@ -273,8 +276,17 @@ void Unit::Step (double dt)
 	auto it = v ? plans.find (v->GetName ()) : plans.end ();
 	char n[256] = "";
 	if (v && v->GetSurfaceRef ()) oapiGetObjectName (v->GetSurfaceRef (), n, sizeof n);
+	if (v) { // the GPS signal; a message when it goes or comes back for the same vessel
+		bool same = sigFor == v->GetName (), now = Signal (n, v->GetAltitude (), same ? sig : true);
+		if (same && now != sig) {
+			Msg (now ? "GPS signal acquired" : "Out of range: no GPS signal");
+			oapiWriteLogV ("GPSNav: %s (%s at %.0f km)", now ? "GPS signal acquired" : "out of range, no GPS signal", sigFor.c_str (), v->GetAltitude () * 1e-3);
+		}
+		sig = now, sigFor = v->GetName ();
+	}
+	bool fix = v && sig;
 	Plan *p = it != plans.end () && it->second.body == n && it->second.HasLeg () ? &it->second : nullptr;
-	if (p) {
+	if (p && fix) {
 		double lng, lat, rad;
 		v->GetEquPos (lng, lat, rad);
 		if (Sequence (*p, {lat, lng}, oapiGetSize (v->GetSurfaceRef ()), v->GetGroundspeed ()) && p->active >= 0 && p->active < (int)p->wpts.size ())
@@ -282,11 +294,13 @@ void Unit::Step (double dt)
 	}
 	if (!gpss && !gpssPending.empty () && v && gpssPending == v->GetName ()) { // engaged when the scenario was saved
 		gpssPending.clear ();
-		if (p) GpssOn (v);
+		if (!fix) oapiWriteLogV ("GPSNav: GPSS from the scenario not resumed: no GPS signal (%s)", v->GetName ());
+		else if (p) GpssOn (v);
 	}
-	if (gpss) Steer (v, p, dt);
+	if (gpss && !fix) GpssOff ("GPSS off: no GPS signal");
+	else if (gpss) Steer (v, p, dt);
 	if (oapiSetHUDBearingTarget) { // the HUD's heading-tape caret toward the active waypoint
-		if (v && p && opt.marker) {
+		if (v && p && fix && opt.marker) {
 			const PlanWpt &w = p->direct ? p->dto : p->wpts[p->active];
 			oapiSetHUDBearingTarget (v->GetHandle (), v->GetSurfaceRef (), w.pos.lng, w.pos.lat);
 		} else oapiSetHUDBearingTarget (nullptr, nullptr, 0.0, 0.0);
@@ -510,6 +524,7 @@ void Unit::OnDraw ()
 
 	Ctx c;
 	bool ok = Frame (c);
+	if (ok && !c.sig && (ov == O_DTO || ov == O_INSERT || ov == O_IDENT)) ov = O_NONE; // no waypoint entry without a fix
 
 	DrawBezel (dl, o.x, o.y, W, H);
 	dl->PushClipRect (ImVec2 (sx0, sy0), ImVec2 (sx1, sy1), true);
@@ -517,7 +532,8 @@ void Unit::OnDraw ()
 	if (!ok) Text (dl, 0.5f * (sx0 + sx1), 0.5f * (sy0 + sy1), fs, C_AMBER, "NO VESSEL", 1);
 	else {
 		dl->PushClipRect (ImVec2 (sx0, cy0), ImVec2 (sx1, cy1), true);
-		if (!c.b) Text (dl, 0.5f * (sx0 + sx1), 0.5f * (cy0 + cy1) - fs, fs, C_CYAN, "LOADING DATABASE " + std::string ("|/-\\").substr ((int)(c.sys * 6.0) % 4, 1), 1);
+		if (!c.sig) DrawNoSignal (dl, c);
+		else if (!c.b) Text (dl, 0.5f * (sx0 + sx1), 0.5f * (cy0 + cy1) - fs, fs, C_CYAN, "LOADING DATABASE " + std::string ("|/-\\").substr ((int)(c.sys * 6.0) % 4, 1), 1);
 		else switch (group) {
 			case G_MAP: DrawMap (dl, c); break;
 			case G_WPT: DrawWpt (dl, c); break;
@@ -525,10 +541,10 @@ void Unit::OnDraw ()
 			case G_FPL: DrawFpl (dl, c); break;
 			case G_VNAV: DrawVnav (dl, c); break;
 		}
-		if (c.b && (ov == O_DTO || ov == O_INSERT || ov == O_IDENT)) DrawEntry (dl, c);
+		if (c.sig && c.b && (ov == O_DTO || ov == O_INSERT || ov == O_IDENT)) DrawEntry (dl, c);
 		if (ov == O_MENU) DrawMenu (dl, c);
 		// the page group: its name and its pages
-		{
+		if (c.sig) {
 			std::string t = GROUP[group];
 			float w = TextW (0.8f * fs, t) + (group == G_NRST ? 5 * 0.55f * fs : 0.0f) + 0.6f * fs;
 			ImVec2 a (sx1 - w - 0.2f * fs, cy1 - 1.2f * fs), b (sx1 - 0.2f * fs, cy1 - 0.15f * fs);
@@ -565,22 +581,25 @@ void Unit::OnDraw ()
 			if (dk <= kr1) k = K_PUSH;
 			else if (dk <= kr0) k = dx < 0.0f ? K_OUTL : K_OUTR;
 			else for (const Hit &h : keys) if (in (h)) k = h.id;
-			if (k != K_NONE) { lit = k, litTime = c.sys; Press (k, c); }
-			else for (const Hit &h : rows) if (in (h)) { Row (h.id, c); break; }
+			bool any = c.sig || (k != K_DTO && k != K_FPL && k != K_NRST && (ov == O_MENU || k == K_MENU || k == K_CLR || k == K_RNGUP || k == K_RNGDN)); // out of range: the menu, CLR and the range only
+			if (k != K_NONE) { lit = k, litTime = c.sys; if (any) Press (k, c); else Msg ("No GPS signal"); }
+			else for (const Hit &h : rows) if (in (h)) { if (c.sig || ov == O_MENU) Row (h.id, c); break; }
 		}
 		if (wheel != 0.0f) {
 			int d = wheel > 0.0f ? 1 : -1;
-			if (dk <= kr1) Inner (d, c);
+			bool knobs = c.sig || ov == O_MENU;
+			if (dk <= kr0 && !knobs) Msg ("No GPS signal");
+			else if (dk <= kr1) Inner (d, c);
 			else if (dk <= kr0) Outer (d, c);
 			else if (in (keys[6]) || in (keys[7])) opt.range = std::clamp (opt.range - d, 0, NRANGE - 1);
-			else if (m.x >= sx0 && m.x < sx1 && m.y >= cy0 && m.y < cy1) {
+			else if (m.x >= sx0 && m.x < sx1 && m.y >= cy0 && m.y < cy1 && knobs) {
 				if (ov == O_NONE && group == G_MAP) opt.range = std::clamp (opt.range - d, 0, NRANGE - 1);
 				else if (ov == O_MENU) Inner (-d, c);
 				else if (ov != O_NONE) fsel = std::clamp (fsel - d, 0, std::max (0, (int)found.size () - 1)); // the matches, not the letter
 				else if (group == G_NRST || group == G_FPL) cursor = true, Inner (-d, c);
 			}
 		}
-		if (ImGui::IsWindowFocused () && (ov == O_DTO || ov == O_INSERT || ov == O_IDENT)) {
+		if (c.sig && ImGui::IsWindowFocused () && (ov == O_DTO || ov == O_INSERT || ov == O_IDENT)) {
 			ImGui::SetNextFrameWantCaptureKeyboard (true); // the letters are the ident's, not Orbiter's keys
 			bool changed = false;
 			for (ImWchar ch : io.InputQueueCharacters) {
@@ -767,6 +786,7 @@ void Unit::Tune (const Wpt &w, Ctx &c)
 
 std::vector<std::string> Unit::SoftLabels (const Ctx &c) const
 {
+	if (!c.sig && ov != O_MENU) return {"", "", "", "", "", ""}; // out of range: no page keys
 	if (ov == O_DTO || ov == O_INSERT || ov == O_IDENT) return {"PREV", "NEXT", "", "", "", "CANCEL"};
 	if (ov == O_MENU) return {"", "", "", "", "", "EXIT"};
 	switch (group) {
@@ -931,6 +951,7 @@ void Unit::DrawStrip (ImDrawList *dl, const Ctx &c)
 		std::string l, v, u;
 		int f = opt.fields[i];
 		Field (f, c, l, v, u);
+		if (!c.sig) v = "---", u.clear (); // out of range: no position, no values
 		float x = sx0 + i * w;
 		if (i) dl->AddLine (ImVec2 (x, sy0 + 0.15f * h), ImVec2 (x, cy0 - 0.15f * h), C_GREY);
 		bool nav = f != F_GS && f != F_TRK && f != F_ALT && f != F_VS;
@@ -953,6 +974,14 @@ void Unit::DrawSoft (ImDrawList *dl, const Ctx &c)
 		dl->AddRectFilled (a, b, on ? C_SEL : IM_COL32 (45, 47, 55, 255), 3.0f);
 		Text (dl, 0.5f * (a.x + b.x), 0.5f * (a.y + b.y) - 0.38f * fs, 0.76f * fs, on ? C_BLACK : C_WHITE, Fit (l[i], 0.76f * fs, b.x - a.x), 1);
 	}
+}
+
+void Unit::DrawNoSignal (ImDrawList *dl, const Ctx &c)
+{
+	float x = 0.5f * (sx0 + sx1), y = 0.5f * (cy0 + cy1);
+	Text (dl, x, y - 2.4f * fs, 1.6f * fs, C_AMBER, "OUT OF RANGE", 1);
+	Text (dl, x, y - 0.3f * fs, fs, C_WHITE, "NO GPS SIGNAL", 1);
+	Text (dl, x, y + 1.2f * fs, 0.8f * fs, C_CYAN, Signal (c.body, 0.0, true) ? std::string ("ABOVE THE GPS SATELLITES") : "NO GPS AT " + Upper (c.body), 1); // Earth: the altitude, else the body
 }
 
 void Unit::DrawTitle (ImDrawList *dl, const char *title)
