@@ -75,6 +75,9 @@ endif()
 set_target_properties(WineBridge PROPERTIES PREFIX "" CXX_VISIBILITY_PRESET hidden)
 target_include_directories(WineBridge PRIVATE ${WB_GEN} ${CMAKE_SOURCE_DIR}/linux)
 target_compile_options(WineBridge PRIVATE -Wall -Wextra -Wno-unused-parameter)
+# hardened as Orbiter's own binaries (a project of its own: the top level's options don't reach it)
+target_compile_options(WineBridge PRIVATE -fstack-protector-strong -fstack-clash-protection -fcf-protection "$<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE;-D_FORTIFY_SOURCE=3>")
+target_link_options(WineBridge PRIVATE LINKER:-z,relro LINKER:-z,now LINKER:-z,noexecstack)
 target_link_libraries(WineBridge PRIVATE Orbiter::Orbitersdk Orbiter::XRSound Orbiter::lua Qt6::Gui ${CMAKE_DL_LIBS})
 set_target_properties(WineBridge PROPERTIES INSTALL_RPATH "$ORIGIN/..") # Orbiter's lua.so
 target_compile_definitions(WineBridge PRIVATE QT_NO_VERSION_TAGGING) # runs with the Qt an Orbiter package brings (6.8 in RC11), older than the headers

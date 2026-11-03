@@ -256,9 +256,9 @@ set_target_properties(D3D9Client
 	PREFIX ""
 	LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Modules/Plugin
 	COMPILE_DEFINITIONS D3D9CLIENT_EXPORTS
-	LINK_OPTIONS "-Wl,-soname,VulkanClient.so" # gcCore.h/gcGUI.h find the loaded client by it
 	FOLDER OVP
 )
+target_link_options(D3D9Client PRIVATE "-Wl,-soname,VulkanClient.so") # gcCore.h/gcGUI.h find the loaded client by it; added to the hardening options, not in place of them
 
 add_custom_command(
 	TARGET D3D9Client PRE_BUILD
