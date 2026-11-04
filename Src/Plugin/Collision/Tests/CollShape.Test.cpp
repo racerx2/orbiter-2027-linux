@@ -1421,6 +1421,40 @@ TEST_CASE("Clearance: Gap, PointGap and CollSweep through a bay with a sliding d
 	CHECK (sphere (Vector (0, 20, 0), 2.0, Vector (0, 0, 1), 30, 1.0, dist));
 }
 
+TEST_CASE("Dock cover: a closed door over a port covers it, a probe, cross or ring does not (design dock-cover)", "[collshape][clear]")
+{
+	const Vector pos (0, 0, 0), dir (0, 0, 1), rot (0, 1, 0); // the port at the origin, facing +z
+	auto of = [] (std::function<double (const Vector &)> d) { return [d] (const Vector &p, double cap) { return std::min (d (p), cap); }; };
+	auto disc = [] (double z, double r0, double r1) { return [=] (const Vector &p) { double q = std::hypot (p.x, p.y); return std::hypot (std::max ({r0 - q, q - r1, 0.0}), p.z - z); }; };
+	auto dome = [] (double cz, double R) { return [=] (const Vector &p) { return std::fabs ((p - Vector (0, 0, cz)).length () - R); }; };
+	auto rod = [] (const Vector &a, const Vector &b, double r) { return [=] (const Vector &p) {
+		Vector ab = b - a; double t = std::clamp (((p - a) & ab) / (ab & ab), 0.0, 1.0);
+		return std::max ((p - (a + ab * t)).length () - r, 0.0); }; };
+	auto cone = dome (0.0, 0.6);           // closed: a shell over the mouth, its top 0.6 m in front, as the DG's petals
+	auto folded = dome (-1.0, 0.6);        // the same shell swung behind the port
+	auto probe = rod (Vector (0, 0, 0), Vector (0, 0, 0.5), 0.05);
+	auto bar1 = rod (Vector (-0.3, 0, 0.3), Vector (0.3, 0, 0.3), 0.01), bar2 = rod (Vector (0, -0.3, 0.3), Vector (0, 0.3, 0.3), 0.01);
+	auto cross = [=] (const Vector &p) { return std::min (bar1 (p), bar2 (p)); };
+	auto ring = disc (0.0, 0.2, 0.5);      // a docking ring in the port plane
+	auto plate = disc (0.2, 0.0, 1.0);     // a door 0.2 m in front
+	auto half = [] (const Vector &p) { return std::hypot (std::max (-p.x, 0.0), p.z - 0.2); }; // a plate over half the mouth
+	CHECK (CollPortBlocked (of (cone), pos, dir, rot, COLL_DOCK_COVER_RADIUS) == COLL_DOCK_COVER_PATHS);
+	CHECK (CollPortCovered (of (cone), pos, dir, rot, COLL_DOCK_COVER_RADIUS));
+	CHECK (CollPortCovered (of (plate), pos, dir, rot, COLL_DOCK_COVER_RADIUS));
+	CHECK_FALSE (CollPortCovered (of (folded), pos, dir, rot, COLL_DOCK_COVER_RADIUS));
+	CHECK (CollPortBlocked (of (probe), pos, dir, rot, COLL_DOCK_COVER_RADIUS) == 0);
+	CHECK (CollPortBlocked (of (cross), pos, dir, rot, COLL_DOCK_COVER_RADIUS) == 0);
+	CHECK (CollPortBlocked (of (ring), pos, dir, rot, COLL_DOCK_COVER_RADIUS) == 0);
+	CHECK (CollPortBlocked (of (half), pos, dir, rot, COLL_DOCK_COVER_RADIUS) == COLL_DOCK_COVER_PATHS / 2);
+	CHECK_FALSE (CollPortCovered (of (half), pos, dir, rot, COLL_DOCK_COVER_RADIUS));
+	CHECK_FALSE (CollPortCovered (of (cone), pos, dir, rot, 0.0)); // DockCoverRadius 0: never covered
+	CHECK (CollPortCovered (of (cone), pos, dir, Vector (0, 0, 1), COLL_DOCK_COVER_RADIUS)); // a rotation reference along the axis: any axis across
+	const Vector p2 (1, 2, 3), d2 (0, 2, 0), r2 (1, 0, 0); // moved and turned: the same answers in any frame
+	auto shifted = [&] (std::function<double (const Vector &)> d) { return of ([=] (const Vector &p) { Vector q = p - p2; return d (Vector (q.x, -q.z, q.y)); }); };
+	CHECK (CollPortCovered (shifted (cone), p2, d2, r2, COLL_DOCK_COVER_RADIUS));
+	CHECK_FALSE (CollPortCovered (shifted (folded), p2, d2, r2, COLL_DOCK_COVER_RADIUS));
+}
+
 TEST_CASE("Clearance: CollSweep steps, stops, length 0 and bad input", "[collshape][clear]")
 {
 	int calls = 0;

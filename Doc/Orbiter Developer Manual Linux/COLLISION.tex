@@ -18,7 +18,7 @@ A vessel's collider is made from the triangles of its meshes that are shown in e
 \end{itemize}
 
 \noindent
-Docked and attached vessels respond as one body. Two free docking ports do not collide around each other while they are less than 3 m apart, face each other within 15°, are offset sideways by at most DockZoneRadius and close at less than 1 m/s, so that Orbiter can still dock them. The same holds for a free attachment point and a free child point less than 2.5 m apart, aligned within 15° and moving at less than 1 m/s relative to each other.
+Docked and attached vessels respond as one body. Two free docking ports do not collide around each other while they are less than 3 m apart, face each other within 15°, are offset sideways by at most DockZoneRadius and close at less than 1 m/s, so that Orbiter can still dock them. A port its own vessel covers (a closed nose cone, a shut bay door) has no such zone: of 8 paths parallel to its axis at DockCoverRadius from it, from 0.05 m in front of it and 1 m long, 6 or more meet the vessel's own collider as its doors are now. The covered port collides like any other surface until it is opened, and Orbiter.log names it once. The same holds for a free attachment point and a free child point less than 2.5 m apart, aligned within 15° and moving at less than 1 m/s relative to each other.
 
 
 \subsubsection{Vessel class configuration keys}
@@ -33,6 +33,8 @@ The module reads these optional keys from the vessel class configuration file (a
 	EnableCollider & Bool & If FALSE, the vessel has no collider and passes through vessels and buildings as before. Default: TRUE\\
 	\hline\rule{0pt}{2ex}
 	DockZoneRadius & Float & Largest sideways offset between two docking ports' axes at which a slow approach does not collide [m]. The larger value of the two vessels counts. Default: 1.5\\
+	\hline\rule{0pt}{2ex}
+	DockCoverRadius & Float & Distance from a docking port's axis of the paths that tell whether the vessel covers the port [m]: inside a door, outside a probe, a target cross or a ring at the port plane. 0: the class's ports are never covered. Default: 0.25\\
 	\hline\rule{0pt}{2ex}
 	DestroyEnergy & Float & Absorbed energy per kg of empty mass that destroys a vessel of this class [J/kg]. Default: DestroyEnergy of Config/Collision.cfg (1000)\\
 	\hline\rule{0pt}{2ex}

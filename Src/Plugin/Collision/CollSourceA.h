@@ -53,7 +53,7 @@ struct CollVesselGeom {
 struct CollAssembly { std::vector<uint32_t> member; uint32_t root; CollH sv; uint64_t memberHash; uint8_t flags; };
 struct CollPortRec { uint32_t vessel, port; Vector pos, dir, rot; CollH mate; int32_t matePort; };
 struct CollAttRec  { uint32_t vessel, index; bool toparent; Vector pos, dir, rot; char id[9]; CollH mate; int32_t mateIndex; };
-struct CollClassKeys { bool enableCollider = true; double dockZoneRadius = 1.5, destroyEnergy = -1; uint8_t meshProbe = 0; int8_t fixed = -1; double fixedClear = 0; }; // meshProbe 1 = ONCE; fixed: FixedStructure, -1 not set; fixedClear: FixedStructureClear [m] as read
+struct CollClassKeys { bool enableCollider = true; double dockZoneRadius = 1.5, dockCoverRadius = COLL_DOCK_COVER_RADIUS, destroyEnergy = -1; uint8_t meshProbe = 0; int8_t fixed = -1; double fixedClear = 0; }; // meshProbe 1 = ONCE; fixed: FixedStructure, -1 not set; fixedClear: FixedStructureClear [m] as read
 
 constexpr double COLL_FIXED_RHO = 1e-4; // [kg/m^3] a landed vessel lighter than this per m^3 of its size sphere has a placeholder mass (design fixed-structures)
 bool CollFixed (int key, bool landed, double mEmpty, double size); // landed and FixedStructure TRUE, or no key and a placeholder mass

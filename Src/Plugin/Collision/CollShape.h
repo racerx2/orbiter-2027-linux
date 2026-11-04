@@ -85,6 +85,17 @@ enum : uint32_t { COLLSH_NONE = 1, COLLSH_BUILT = 2, COLLSH_REBUILT = 4, COLLSH_
 constexpr double COLL_SWEEP_REACH = 50.0;          // longest advance per query [m]
 bool CollSweep (const std::function<double (double u, double cap)> &gap, double len, double clearance, double step, double &dist);
 
+// a docking port its own vessel covers, such as a closed nose cone or bay door (design dock-cover): its paths parallel to the axis at radius meet the collider
+constexpr double COLL_DOCK_COVER_RADIUS = 0.25; // DockCoverRadius default [m]; 0: never covered
+constexpr double COLL_DOCK_COVER_START  = 0.05; // [m] in front of the port: a ring at its plane is not in the way
+constexpr double COLL_DOCK_COVER_LEN    = 1.0;  // [m] each path's length
+constexpr double COLL_DOCK_COVER_PROBE  = 0.03; // [m] a path is blocked within this of the collider
+constexpr double COLL_DOCK_COVER_STEP   = 0.01; // [m] the sweep stops short of the collider by less than this
+constexpr int    COLL_DOCK_COVER_PATHS  = 8;    // about the axis, at 22.5 deg + k 45 deg: off the seams of a four-petal cone
+constexpr int    COLL_DOCK_COVER_BLOCKED = 6;   // this many blocked: a door, not a probe, cross or petal ring
+int  CollPortBlocked (const std::function<double (const Vector &p, double cap)> &gap, const Vector &pos, const Vector &dir, const Vector &rot, double radius); // paths blocked; gap (p, cap) = min(distance of p to the collider, cap), port frame of the vessel
+bool CollPortCovered (const std::function<double (const Vector &p, double cap)> &gap, const Vector &pos, const Vector &dir, const Vector &rot, double radius);
+
 // displacement field callback; D4 passes DentMath's field with the record as ctx (7.3)
 typedef Vector (*CollDisplaceFn) (const void *ctx, const Vector &rest);
 typedef Vector (*CollMapFn) (const void *ctx, const Vector &rest, const Vector &cur); // dmg3 tear: new position from rest and current

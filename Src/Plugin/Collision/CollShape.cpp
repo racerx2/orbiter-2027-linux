@@ -996,6 +996,29 @@ bool CollSweep (const std::function<double (double u, double cap)> &gap, double 
 	}
 }
 
+int CollPortBlocked (const std::function<double (const Vector &p, double cap)> &gap, const Vector &pos, const Vector &dir, const Vector &rot, double radius)
+{
+	double ld = dir.length ();
+	if (!(radius > 0.0) || !(ld > 0.0) || !std::isfinite (ld)) return 0;
+	Vector u = dir / ld, e1 = rot - u * (rot & u);
+	if (!(e1.length () > 1e-9)) e1 = crossp (u, std::fabs (u.x) < 0.9 ? Vector (1, 0, 0) : Vector (0, 1, 0)); // no usable rotation reference: any axis across
+	e1 = e1 / e1.length ();
+	Vector e2 = crossp (u, e1);
+	int blocked = 0;
+	for (int k = 0; k < COLL_DOCK_COVER_PATHS; k++) {
+		double a = (k + 0.5) * Pi2 / COLL_DOCK_COVER_PATHS;
+		Vector o = pos + (e1 * std::cos (a) + e2 * std::sin (a)) * radius + u * COLL_DOCK_COVER_START;
+		double dist = 0.0;
+		if (!CollSweep ([&](double s, double cap) { return gap (o + u * s, cap); }, COLL_DOCK_COVER_LEN, COLL_DOCK_COVER_PROBE, COLL_DOCK_COVER_STEP, dist)) blocked++;
+	}
+	return blocked;
+}
+
+bool CollPortCovered (const std::function<double (const Vector &p, double cap)> &gap, const Vector &pos, const Vector &dir, const Vector &rot, double radius)
+{
+	return CollPortBlocked (gap, pos, dir, rot, radius) >= COLL_DOCK_COVER_BLOCKED;
+}
+
 size_t CollShape::ApplyDent (uint32_t mesh, const uint32_t *grp, size_t ngrp, CollDisplaceFn fn, const void *ctx)
 {
 	if (!fn) return 0;

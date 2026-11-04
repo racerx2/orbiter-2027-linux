@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <unordered_set>
 #include "CollSession.h"
 #include "CollBaseA.h"
 #include "CollBldgA.h"
@@ -45,6 +46,7 @@ public:
 	std::vector<CollH> live;                       // this frame's vessels, for the base distance filter
 	struct PlanetV { CollH h; double t; Vector v, a; };
 	std::vector<PlanetV> pvel;                     // planet velocity at the last pre-step: its acceleration by difference (E1 4.3)
+	std::unordered_set<uint64_t> coverLogged;      // vessel and port: a covered port is logged once a session
 	bool Parts (uint32_t id, std::vector<CollPartRef> &fwd, std::vector<CollPartRef> &past, double &rmax) override
 	{
 		fwd.clear (); past.clear (); rmax = 0;
@@ -153,7 +155,7 @@ public:
 	{
 		out.clear ();
 		if (geom.cfg.dockZone) {
-		struct Port { int body; uint32_t id; CollPortAt at[2]; Vector cb; double rdz; };
+		struct Port { int body; uint32_t id, port; CollPortAt at[2]; Vector cb, pos, dir, rot; double rdz, rcov; int covered = -1; }; // covered: -1 not asked yet this step
 		std::vector<Port> ports;
 		const auto &pr = geom.Ports ();
 		for (int i = 0; i < (int)b.size (); i++) {
@@ -168,24 +170,36 @@ public:
 				Vector x, u; Matrix R;
 				sdk.GlobalState (h, x, u, R);
 				Port q;
-				q.body = i; q.id = p.vessel;
+				q.body = i; q.id = p.vessel; q.port = p.port; q.pos = p.pos; q.dir = p.dir; q.rot = p.rot;
 				Vector g = x + mul (R, p.pos);
 				q.cb = tmul (Rb, g - B.x);
 				q.at[0].g = g; q.at[0].d = mul (R, p.dir); q.at[0].r = mul (R, p.rot); q.at[0].v = B.v + crossp (g - B.x, wg);
 				q.at[1] = q.at[0];
 				q.at[1].g = g + q.at[0].v * hs;
 				q.rdz = geom.Keys (p.vessel).dockZoneRadius;
+				q.rcov = geom.Keys (p.vessel).dockCoverRadius;
 				ports.push_back (q);
 			}
 		}
+		auto covered = [&](Port &P) { // its own vessel over its mouth, as its doors are now (design dock-cover)
+			if (P.covered >= 0) return P.covered == 1;
+			const CollVesselGeom *vg = geom.Geom (P.id);
+			int n = vg && vg->shape ? CollPortBlocked ([&](const Vector &x, double cap) { return vg->shape->PointGap (x, cap); }, P.pos, P.dir, P.rot, P.rcov) : 0;
+			P.covered = n >= COLL_DOCK_COVER_BLOCKED ? 1 : 0;
+			if (P.covered && coverLogged.insert ((uint64_t (P.id) << 32) | P.port).second) {
+				CollH h = vessel (P.id);
+				CollLog (COLLLOG_INFO, "Collision: '%s' port %u is covered (%d of %d paths blocked): it docks once open", h ? sdk.Name (h).c_str () : "?", P.port, n, COLL_DOCK_COVER_PATHS);
+			}
+			return P.covered == 1;
+		};
 		for (size_t a = 0; a < ports.size (); a++)
 			for (size_t c = a + 1; c < ports.size (); c++) {
-				const Port &A = ports[a], &C = ports[c];
+				Port &A = ports[a], &C = ports[c];
 				if (A.body == C.body) continue;
 				double rdz = std::max (A.rdz, C.rdz);
 				bool on = false;
 				for (int t = 0; t < 2 && !on; t++) on = CollDockZoneActive (A.at[t], C.at[t], rdz, 15.0, 1.0);
-				if (!on) continue;
+				if (!on || covered (A) || covered (C)) continue;
 				out.push_back (CollZone { A.body, C.body, VKey (A.id), VKey (C.id), A.cb, C.cb, rdz, rdz });
 			}
 		}

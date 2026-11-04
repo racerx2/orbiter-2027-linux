@@ -108,6 +108,7 @@ void CollGeomSession::ReadKeys (CollVesselSrc &r)
 				if (sdk.ReadText (sdk.Resolve (CollCfgPath (dirs, base, ".cfg")), bt)) {
 					if (CollItemBool (bt, "EnableCollider", b)) k.enableCollider = b;
 					if (CollItemReal (bt, "DockZoneRadius", d)) k.dockZoneRadius = d;
+					if (CollItemReal (bt, "DockCoverRadius", d) && d >= 0.0) k.dockCoverRadius = d;
 					if (CollItemReal (bt, "DestroyEnergy", d)) k.destroyEnergy = d;
 					if (CollItemBool (bt, "FixedStructure", b)) k.fixed = b ? 1 : 0;
 					if (CollItemReal (bt, "FixedStructureClear", d)) k.fixedClear = d;
@@ -115,6 +116,7 @@ void CollGeomSession::ReadKeys (CollVesselSrc &r)
 			}
 			if (CollItemBool (text, "EnableCollider", b)) k.enableCollider = b;
 			if (CollItemReal (text, "DockZoneRadius", d)) k.dockZoneRadius = d;
+			if (CollItemReal (text, "DockCoverRadius", d) && d >= 0.0) k.dockCoverRadius = d;
 			if (CollItemReal (text, "DestroyEnergy", d)) k.destroyEnergy = d;
 			if (CollItemBool (text, "FixedStructure", b)) k.fixed = b ? 1 : 0;
 			if (CollItemReal (text, "FixedStructureClear", d)) k.fixedClear = d;

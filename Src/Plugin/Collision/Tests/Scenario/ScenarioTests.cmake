@@ -198,6 +198,9 @@ coll_scenario_test(Coll.Dmg3.SaveLoad SCN ${dg70} FRAMES 200 TIMEOUT 300 CHECK d
 coll_scenario_test(Coll.Dmg3.RecPlay SCN ${dg70} FRAMES 300 TIMEOUT 300 CHECK dmg3recplay LABELS slow
 	RUNS "rec|headless|on||||TESTRECORD 1 300" "play|headless|on||@scn=Playback/{stem}|rec|")
 coll_scenario_test(Coll.Dmg3.Fx SCN ${dg70} FRAMES 150 TIMEOUT 300 CHECK dmg3fx LABELS slow RUNS "main|headless|on||||")
+# dock-cover: DGs nose to nose, ports 1.5 m apart closing at 0.2 m/s; closed cones touch with the ports 1.2 m apart, open ones dock at 0.5 m
+coll_scenario_test(Coll.Dock.Cover SCN gen:pair:g0=15.652,vA=0.1,vB=-0.1,A=DeltaGlider,B=DeltaGlider FRAMES 400 TIMEOUT 300 CHECK dockcover LABELS slow
+	RUNS "closed|headless|on||||" "open|headless|on||||@PB-A:NOSECONE 1 1.0000,@PB-B:NOSECONE 1 1.0000")
 coll_scenario_test(Coll.Base.Crash70 SCN gen:crash:kind=base,u=70 FRAMES 150 TIMEOUT 300 CHECK groundcrash LABELS slow RUNS "main|headless|on||||") # blast: a DG into the KSC hangar breaks and throws debris
 coll_scenario_test(Coll.Ground.Crash70 SCN gen:crash:kind=ground,u=70 FRAMES 150 TIMEOUT 300 CHECK groundcrash LABELS slow RUNS "main|headless|on||||") # blast: a DG into open ground breaks and throws debris
 coll_scenario_test(Coll.Atlantis.ETSep SCN etsep.scn STEP 0.05 FRAMES 1400 EVERY 10 TIMEOUT 600 CHECK etsep CFG "ElevationMode = 0" LABELS slow RUNS "main|headless|on||@env:MALLOC_PERTURB_=165 @env:GLIBC_TUNABLES=glibc.malloc.perturb=165||") # etsep: the ascent AP separates the ET (state at MET 476 s); the tank leaves; a filled heap: unset AP state and exit-time frees fail it
