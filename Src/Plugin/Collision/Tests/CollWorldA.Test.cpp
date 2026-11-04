@@ -644,3 +644,20 @@ TEST_CASE ("collaSetExternal: an external box on a fixed pad never lands", "[Col
 	CHECK (S.Landed () == 0);
 	CHECK (S.W.sdk.LogCount ("Collision rest:") == 0);
 }
+
+TEST_CASE ("collaSetExternal: two external bodies pass through each other here: they meet where one is flown", "[CollWorldA]")
+{
+	for (int ext : { 0, 2 }) {
+		World W;
+		W.sdk.applyWrites = true;
+		W.Add ("A", Vector (-1.15, 0, 0), Vector (2, 0, 0));
+		W.Add ("B", Vector (1.15, 0, 0), Vector (-2, 0, 0));
+		if (ext == 2) W.ps->SetExternal ({ 1, 2 });
+		size_t events = 0;
+		W.Frame (0.0);
+		for (int f = 0; f < 120; f++) { W.Frame (1.0/60); events += W.ps->Events ().size (); }
+		CAPTURE (ext, events);
+		if (ext == 0) { CHECK (events > 0); CHECK_FALSE (W.sdk.wr.empty ()); }
+		else { CHECK (events == 0); CHECK (W.sdk.wr.empty ()); CHECK (W.v[0]->rd.x.x > 2.0); }
+	}
+}

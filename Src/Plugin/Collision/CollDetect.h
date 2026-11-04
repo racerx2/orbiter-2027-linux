@@ -199,6 +199,7 @@ struct CollBody {
 	uint16_t entry;         // entry-event bits (3.2)
 	bool jump1;             // in-step jump: entry check at t1 only, no results this frame (1.7)
 	int planet;             // planet index for bases and LANDED, else -1
+	bool ext = false;       // moved from outside (collaSetExternal): two such bodies meet where one is flown, not here
 };
 
 // pair store (6.1): sorted vector keyed by (CollOwnerKey A, CollOwnerKey B), kept across frames

@@ -276,7 +276,7 @@ if (sweep && sweep (hTarget, GetHandle (), &pos, &rot, &dir, 40.0, 1.0, &dist) =
 
 
 \subsection{Vessels moved from outside}
-A module that moves a vessel itself every frame, such as a multiplayer copy of a ship flown in another Orbiter, can tell the Collision module so. The module then gives that vessel no response and judges no damage on it, and the bodies it touches respond as against a body of its mass moving as it is moved. The vessel still gets its CONTACT notices, so the module that moves it can apply the response itself. Damage judged in another Orbiter is brought here as its DENT notice:
+A module that moves a vessel itself every frame, such as a multiplayer copy of a ship flown in another Orbiter, can tell the Collision module so. The module then gives that vessel no response and judges no damage on it, and the bodies it touches respond as against a body of its mass moving as it is moved. Two such vessels pass through each other: they meet where one of them is flown. The vessel still gets its CONTACT notices, so the module that moves it can apply the response itself. Damage judged in another Orbiter is brought here as its DENT notice:
 
 %\begin{table}[H]
 	%\centering

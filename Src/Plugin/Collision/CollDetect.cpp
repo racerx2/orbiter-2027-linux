@@ -1776,7 +1776,7 @@ struct CollDetect::Impl {
 
 	static bool Skip (const CollBody &A, const CollBody &B)
 	{
-		return A.parts.empty () || B.parts.empty () || (A.kind != COLLB_DYNAMIC && B.kind != COLLB_DYNAMIC);
+		return A.parts.empty () || B.parts.empty () || (A.kind != COLLB_DYNAMIC && B.kind != COLLB_DYNAMIC) || (A.ext && B.ext);
 	}
 
 	static bool Capsule (const CollDetect &d, int i, int j)

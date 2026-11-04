@@ -198,7 +198,7 @@ struct CollAddonFrame::Impl {
 	CollBody DetBody (int i, const CollMotion &m, const std::vector<CollPartRef> &parts, bool rigidNow) const
 	{
 		CollBody d {};
-		d.m = m; d.parts = parts; d.rmax = 0; d.id = b[i].id; d.kind = b[i].kind; d.entry = b[i].entry; d.jump1 = b[i].jump1; d.planet = b[i].planet;
+		d.m = m; d.parts = parts; d.rmax = 0; d.id = b[i].id; d.kind = b[i].kind; d.entry = b[i].entry; d.jump1 = b[i].jump1; d.planet = b[i].planet; d.ext = b[i].external;
 		if (rigidNow) for (CollPartRef &p : d.parts) p.P1 = p.P0;
 		return d;
 	}
