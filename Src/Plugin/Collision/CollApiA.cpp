@@ -12,7 +12,7 @@ Matrix M (const MATRIX3 &m) { return Matrix (m.m11, m.m12, m.m13, m.m21, m.m22, 
 
 void CollApiA::SetSession (SessionFn fn) { g_session = fn; }
 
-DLLCLBK int collaVersion () { return 2; }
+DLLCLBK int collaVersion () { return 3; }
 
 DLLCLBK int collaRepairVessel (OBJHANDLE hVessel)
 {
@@ -62,4 +62,14 @@ DLLCLBK int collaVesselRadius (OBJHANDLE hVessel, double *radius)
 		CollDmgSession *s = Cur ();
 		return s ? s->VesselRadius ((CollH)hVessel, *radius) : -1;
 	});
+}
+
+DLLCLBK int collaSetExternal (OBJHANDLE hVessel, int on)
+{
+	return CollGuard ("collaSetExternal", 0, [&] { CollDmgSession *s = Cur (); return s ? s->SetExternal ((CollH)hVessel, on != 0) : 0; });
+}
+
+DLLCLBK int collaApplyDamage (OBJHANDLE hVessel, const COLLA_DAMAGEINFO *info)
+{
+	return CollGuard ("collaApplyDamage", 0, [&] { CollDmgSession *s = Cur (); return s ? s->ApplyDamage ((CollH)hVessel, info) : 0; });
 }

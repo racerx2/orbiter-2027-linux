@@ -2295,7 +2295,7 @@ TEST_CASE ("clearance queries: the session and the exports (design autodock-clea
 	// exports: -1 without a session, the same answers with one
 	VECTOR3 pos = _V(0, 0, 3), dn = _V(0, 0, -1), cen = _V(0, 0, 4);
 	MATRIX3 R = _M(1, 0, 0, 0, 1, 0, 0, 0, 1);
-	CHECK (collaVersion () == 2);
+	CHECK (collaVersion () == 3);
 	CHECK (collaSweepVessel ((OBJHANDLE)ha, (OBJHANDLE)hb, &pos, &R, &dn, 10, 1.0, &d) == -1);
 	static CollDmgSession *cur = nullptr;
 	cur = &r.s;
@@ -2311,4 +2311,116 @@ TEST_CASE ("clearance queries: the session and the exports (design autodock-clea
 	CHECK (std::fabs (rad - std::sqrt (50.0)) < 1e-6);
 	CHECK (collaVesselRadius ((OBJHANDLE)ha, nullptr) == -1);
 	CollApiA::SetSession (nullptr);
+}
+
+extern "C" int collaSetExternal (OBJHANDLE, int);
+extern "C" int collaApplyDamage (OBJHANDLE, const COLLA_DAMAGEINFO *);
+
+TEST_CASE ("collaSetExternal, collaApplyDamage: a ship moved from outside takes no dent; its DENT notice dents it where it is flown, and destroys at the threshold")
+{
+	// where B flies: the impact dents both, and B's DENT notice carries the hit
+	Rig q;
+	q.cfg.dentModes = true;
+	uint32_t qa = q.Add ("PB-A"), qb = q.Add ("PB-B");
+	std::vector<COLLA_DAMAGEINFO> sent;
+	q.sdk.reply = [&] (CollH h, int prm, void *p) { if (h == q.B (qb).v && prm == COLLA_KIND_DENT) sent.push_back (*(const COLLA_DAMAGEINFO *)p); return 0; };
+	q.Begin ();
+	q.Frame ();
+	CollImpactEvent wide = Hit (qa, -1, qb, 10.0, 3.0e4);
+	wide.s[1].a = 1.5; // a patch wider than the energy's radius sets B's dent
+	wide.s[1].tdir = Vector (1, 0, 0), wide.vt = 2.0; // sliding along x
+	q.Frame ({ wide });
+	REQUIRE (sent.size () == 1);
+	const COLLA_DAMAGEINFO n = sent[0];
+	const VesselDamageA *judged = q.s.Damage (qb);
+	REQUIRE (judged);
+	CHECK (n.hdr.size == sizeof (COLLA_DAMAGEINFO));
+	CHECK (n.energy == judged->d.eabs);
+	CHECK (n.hitEnergy > 0);
+	CHECK (n.hitRadius == 1.5);
+	CHECK (judged->d.rec[0].p.R == 1.5);
+	CHECK ((Vector (n.hitPos.x, n.hitPos.y, n.hitPos.z) - Vector (0.1, 0.1, 0)).length () < 1e-12);
+	CHECK (n.hitNml.z == 1.0);
+	CHECK (n.hitVn == 10.0);
+	CHECK (n.hitVt == 2.0);
+	CHECK (n.hitSlip.x == 1.0);
+	CHECK ((n.hitFlags & COLLEV_FIRST));
+
+	// a copy of B moved from outside: B takes nothing, A is judged as before
+	Rig r;
+	r.cfg.dentModes = true;
+	uint32_t a = r.Add ("PB-A"), b = r.Add ("PB-B");
+	int notesB = 0;
+	r.sdk.reply = [&] (CollH h, int, void *) { notesB += h == r.B (b).v; return 0; };
+	r.Begin ();
+	r.Frame ();
+	CHECK (r.s.SetExternal (r.B (b).v, true) == 1);
+	CHECK (r.s.External (b));
+	CHECK (r.s.SetExternal ((CollH)&notesB, true) == 0);
+	r.Frame ({ wide });
+	CHECK (r.s.Damage (b) == nullptr);
+	CHECK (notesB == 0);
+	REQUIRE (r.s.Damage (a));
+	CHECK (r.s.Damage (a)->d.eabs == q.s.Damage (qa)->d.eabs);
+	CHECK (r.s.Damage (a)->d.rec.size () == q.s.Damage (qa)->d.rec.size ());
+
+	// where B is owned and moved from outside: the notice dents it as the impact did where it flew
+	Rig o;
+	o.cfg.dentModes = true;
+	uint32_t ob = o.Add ("PB-B");
+	std::vector<int> kinds;
+	o.sdk.reply = [&] (CollH h, int prm, void *) { if (h == o.B (ob).v) kinds.push_back (prm); return 0; };
+	o.Begin ();
+	o.Frame ();
+	CHECK (o.s.SetExternal (o.B (ob).v, true) == 1);
+	CHECK (o.s.ApplyDamage (o.B (ob).v, &n) == 1);
+	o.Frame ();
+	const VesselDamageA *got = o.s.Damage (ob);
+	REQUIRE (got);
+	CHECK (got->d.eabs == judged->d.eabs);
+	REQUIRE (got->d.rec.size () == judged->d.rec.size ());
+	for (size_t k = 0; k < got->d.rec.size (); k++) {
+		const DentParams &x = got->d.rec[k].p, &y = judged->d.rec[k].p;
+		CHECK ((x.c - y.c).length () < 1e-12);
+		CHECK ((x.n - y.n).length () < 1e-12);
+		CHECK (x.R == y.R);
+		CHECK (x.h == y.h);
+		CHECK ((x.t - y.t).length () < 1e-12);
+		CHECK (x.mode == y.mode);
+	}
+	CHECK (ColliderExact (o, ob));
+	REQUIRE (kinds.size () == 1);
+	CHECK (kinds[0] == COLLA_KIND_DENT);
+
+	// refused: another kind, a version-1 size, a non-finite field, not a vessel
+	COLLA_DAMAGEINFO bad = n;
+	bad.hdr.kind = COLLA_KIND_DESTROYED;
+	CHECK (o.s.ApplyDamage (o.B (ob).v, &bad) == 0);
+	bad = n, bad.hdr.size = 128;
+	CHECK (o.s.ApplyDamage (o.B (ob).v, &bad) == 0);
+	bad = n, bad.hitEnergy = std::numeric_limits<double>::quiet_NaN ();
+	CHECK (o.s.ApplyDamage (o.B (ob).v, &bad) == 0);
+	bad = n, bad.energy = -1;
+	CHECK (o.s.ApplyDamage (o.B (ob).v, &bad) == 0);
+	CHECK (o.s.ApplyDamage ((CollH)&bad, &n) == 0);
+	CHECK (o.s.ApplyDamage (o.B (ob).v, nullptr) == 0);
+	CHECK (o.s.Damage (ob)->d.eabs == judged->d.eabs);
+
+	// destroyed at the threshold: the second notice reaches it, DESTROYED after its DENT
+	o.cfg.destroyEnergy = 1.5 * judged->d.eabs / 500.0; // empty mass 500 kg
+	kinds.clear ();
+	static CollDmgSession *cur = nullptr;
+	cur = &o.s;
+	CollApiA::SetSession ([] () { return cur; });
+	CHECK (collaApplyDamage ((OBJHANDLE)o.B (ob).v, &n) == 1);
+	CHECK (collaSetExternal ((OBJHANDLE)o.B (ob).v, 0) == 1);
+	CollApiA::SetSession (nullptr);
+	CHECK (collaApplyDamage ((OBJHANDLE)o.B (ob).v, &n) == 0);
+	CHECK_FALSE (o.s.External (ob));
+	o.Frame ();
+	CHECK ((o.s.Damage (ob)->d.flags & XDMG_DESTROYED));
+	REQUIRE (kinds.size () == 2);
+	CHECK (kinds[0] == COLLA_KIND_DENT);
+	CHECK (kinds[1] == COLLA_KIND_DESTROYED);
+	CHECK (o.sdk.Logged ("Collision damage applied"));
 }

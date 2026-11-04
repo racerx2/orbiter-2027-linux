@@ -672,6 +672,7 @@ void CollDmgSession::Commit (const std::vector<CollImpactEvent> &ev, double simt
 		}
 		for (int i = 0; i < 2; i++) {
 			if (!ok[i] || pb[i] || !(ea[i] > 0)) continue;
+			if (isV[i] && External (e.s[i].owner.vesselId)) continue; // moved from outside: judged where it flies
 			int j = 1 - i;
 			if (isV[i]) {
 				uint32_t id = e.s[i].owner.vesselId;
@@ -1093,7 +1094,12 @@ void CollDmgSession::Dent (VesselDamageA &v, CollH h, const CollImpactSide &s0, 
 		}
 	}
 	MarkDirty (v.id, mesh, false); // the mirror is rebuilt once per slot at the end of the commit
-	if (p.h >= note.depth) note.depth = p.h, note.pos = cw, note.nml = nw, note.mesh = (int32_t)mesh, note.group = (int32_t)grp, note.simt = t;
+	if (p.h >= note.depth) {
+		note.depth = p.h, note.pos = cw, note.nml = nw, note.mesh = (int32_t)mesh, note.group = (int32_t)grp, note.simt = t;
+		note.hitPos = CollApply (P.pose[1], s0.c), note.hitNml = Unit (CollApplyDir (P.pose[1], s0.n)), note.hitE = E, note.hitA = s0.a, note.hitTri = s0.tri; // the hit as taken, before this vessel's records moved it
+		note.hitSlip = s0.tdir.length () > 0.0 ? Unit (CollApplyDir (P.pose[1], s0.tdir)) : Vector ();
+		if (ev) note.hitVn = ev->vn, note.hitVt = ev->vt, note.hitJn = ev->Jn, note.hitFlags = ev->flags;
+	}
 	double m = DmgMass (v.id, h);
 	if (cfg.logLevel >= 1)
 		Log ("Collision dent t=%.17g '%s' mesh=%u grp=%u E=%.6g R=%.6g h=%.6g T=%.6g mode=%u P=%.6g parts=%d copies=%u%s eabs=%.6g (%.6g J/kg)", t, v.name.c_str (), mesh, grp, E, p.R, p.h, p.T,
@@ -1153,6 +1159,10 @@ void CollDmgSession::SendNotices ()
 		info.simt = nt.simt;
 		info.pos = _V (nt.pos.x, nt.pos.y, nt.pos.z), info.nml = _V (nt.nml.x, nt.nml.y, nt.nml.z);
 		info.energy = nt.energy, info.energy_total = v ? v->d.eabs : 0, info.depth = nt.depth, info.destroyEnergy = Threshold (nt.id);
+		if (nt.kind == CDMG_KIND_DENT && nt.hitE > 0) {
+			info.hitPos = _V (nt.hitPos.x, nt.hitPos.y, nt.hitPos.z), info.hitNml = _V (nt.hitNml.x, nt.hitNml.y, nt.hitNml.z), info.hitSlip = _V (nt.hitSlip.x, nt.hitSlip.y, nt.hitSlip.z);
+			info.hitEnergy = nt.hitE, info.hitRadius = nt.hitA, info.hitVn = nt.hitVn, info.hitVt = nt.hitVt, info.hitJn = nt.hitJn, info.hitTri = nt.hitTri, info.hitFlags = nt.hitFlags;
+		} else info.hitTri = -1;
 		int reply = 0;
 		bool sent = sdk.Notify (h, nt.kind, &info, reply);
 		n.notices++;
@@ -1295,6 +1305,7 @@ void CollDmgSession::OnNewVessel (CollH) {}
 void CollDmgSession::OnDeleteVessel (uint32_t id)
 {
 	vessel.erase (id);
+	external.erase (id);
 	vis.DropVessel (id);
 	frameNote.erase (id);
 	dirty.erase (id);
@@ -1344,6 +1355,58 @@ int CollDmgSession::GetVesselDamage (CollH h, void *out)
 	}
 	if (sz < sizeof x.hdr) return 0;
 	std::memcpy (info, &x, sz);
+	return 1;
+}
+
+int CollDmgSession::SetExternal (CollH h, bool on)
+{
+	if (!h || !sdk.IsVessel (h)) return 0;
+	uint32_t id = host.IdOf (h);
+	if (on) external.insert (id);
+	else external.erase (id);
+	return 1;
+}
+
+int CollDmgSession::ApplyDamage (CollH h, const void *p)
+{
+	const COLLA_DAMAGEINFO *in = (const COLLA_DAMAGEINFO *)p;
+	if (!begun || inDent || !in || !h || !sdk.IsVessel (h) || sdk.Playback (h)) return 0;
+	if (in->hdr.magic != COLLA_MAGIC || in->hdr.kind != COLLA_KIND_DENT || in->hdr.size < sizeof (COLLA_DAMAGEINFO)) return 0;
+	auto fin = [] (const VECTOR3 &v) { return std::isfinite (v.x) && std::isfinite (v.y) && std::isfinite (v.z); };
+	if (!(in->energy >= 0) || !std::isfinite (in->energy) || !(in->hitEnergy >= 0) || !std::isfinite (in->hitEnergy) || !(in->hitRadius >= 0) || !std::isfinite (in->hitRadius)
+		|| !std::isfinite (in->simt) || !std::isfinite (in->hitVn) || !std::isfinite (in->hitVt) || !std::isfinite (in->hitJn) || !fin (in->hitPos) || !fin (in->hitNml) || !fin (in->hitSlip)) return 0;
+	if (!matched) MatchAll ();
+	frameT = sdk.SimTime ();
+	uint32_t id = host.IdOf (h);
+	VesselDamageA &v = Get (id);
+	v.d.eabs = std::min (v.d.eabs + in->energy, DENT_LIM_E);
+	if (IsDebris (h)) return 1; // debris: energy only (L6)
+	CollH other = in->hOther && sdk.IsVessel ((CollH)in->hOther) ? (CollH)in->hOther : nullptr;
+	NoticeA nt;
+	nt.id = id, nt.kind = CDMG_KIND_DENT, nt.simt = in->simt, nt.mesh = in->mesh, nt.group = in->group, nt.energy = in->energy, nt.hOther = other;
+	CollShape *sh = host.Shape (id);
+	int part = sh && in->mesh >= 0 && in->group >= 0 ? sh->PartOf ((uint32_t)in->mesh, (uint32_t)in->group) : -1;
+	Vector hn (in->hitNml.x, in->hitNml.y, in->hitNml.z);
+	if (in->hitEnergy > 0 && part >= 0 && hn.length () > 0.0) {
+		const CollPart &P = sh->Part ((uint32_t)part);
+		if (std::fabs (Det3 (P.pose[1].A)) > 1e-12) {
+			CollAffine Pi = CollInverse (P.pose[1]);
+			Vector slip (in->hitSlip.x, in->hitSlip.y, in->hitSlip.z);
+			CollImpactEvent e {};
+			CollImpactSide &s = e.s[0];
+			s.owner = CollOwnerRef { id, -1, -1, -1, -1 };
+			s.mesh = in->mesh, s.grp = in->group, s.tri = in->hitTri, s.a = in->hitRadius;
+			s.c = CollApply (Pi, Vector (in->hitPos.x, in->hitPos.y, in->hitPos.z)), s.n = Unit (CollApplyDir (Pi, hn));
+			s.tdir = slip.length () > 0.0 ? Unit (CollApplyDir (Pi, slip)) : Vector ();
+			e.t = in->simt, e.vn = in->hitVn, e.vt = in->hitVt, e.Jn = in->hitJn, e.flags = in->hitFlags;
+			Dent (v, h, s, in->hitEnergy, MaterialOf (sh->Material ((uint32_t)in->mesh, (uint32_t)in->group), -1), in->simt, nt, &e, other ? host.IdOf (other) : 0);
+		}
+	}
+	FlushDirty ();
+	if (rec.active) Side (CollSide::State (frameT - rec.t0, Alias (v, h), v.d.eabs, v.d.flags));
+	notices.push_back (nt);
+	DestroyedTest (v, h, in->hitEnergy, in->simt, 0); // DESTROYED after its DENT
+	if (cfg.logLevel >= 1) Log ("Collision damage applied t=%.17g '%s' E=%.6g eabs=%.6g", in->simt, v.name.c_str (), in->energy, v.d.eabs);
 	return 1;
 }
 

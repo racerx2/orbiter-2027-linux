@@ -31,6 +31,7 @@ struct CollABody {
 	std::vector<CollPartRef> parts;                // forward pass: P0 = pose[1] (t0), P1 = next (4.3)
 	std::vector<CollPartRef> pastParts;            // past check: P0 = pose[0], P1 = pose[1]
 	uint16_t entry = 0; bool jump1 = false;        // entry bits (1.5); in-step jump
+	bool external = false;                         // a member moved from outside (collaSetExternal): never written, landed or woken
 	int planet = -1;
 	// out
 	double dev = 0;                                // largest deviation from the mirror prediction (3.2)

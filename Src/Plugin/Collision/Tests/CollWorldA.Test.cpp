@@ -578,3 +578,69 @@ TEST_CASE ("coll-bounded 4: a takeoff right after landing allows no rest for 30 
 	for (int k = 0; k < 1500 && S.Landed () == 1; k++) S.W.Frame (1.0/60); // past the 30 s
 	CHECK (S.Landed () == 2);
 }
+
+TEST_CASE ("collaSetExternal: an external body is never written and meets its partner at its mass; a playback one meets it as a wall", "[CollWorldA]")
+{
+	auto run = [] (int mode, size_t &onB) { // 0 ordinary, 1 external, 2 playback
+		World W;
+		W.sdk.applyWrites = true;
+		CollFakeSdk::Ves *a = W.Add ("A", Vector (-1.15, 0, 0), Vector (2, 0, 0));
+		CollFakeSdk::Ves *b = W.Add ("B", Vector (1.15, 0, 0), Vector (-2, 0, 0));
+		b->rd.m = 3000;
+		if (mode == 1) W.ps->SetExternal ({ 2 });
+		if (mode == 2) b->rd.playback = true;
+		W.Frame (0.0);
+		W.Frame (0.1);
+		const double va = a->rd.v.x;
+		for (int f = 0; f < 10; f++) {
+			W.Frame (0.1);
+			for (const CollABody &x : W.ps->Bodies ()) if (mode == 1 && x.member[0] == 2) { CHECK (x.external); CHECK (x.jump); } // what a frame planned for it never happened
+		}
+		onB = 0;
+		for (const CollFakeSdk::Wr &w : W.sdk.wr) onB += w.h == (CollH)b;
+		if (mode == 1) { CHECK (b->rd.v.x == -2.0); CHECK (W.sdk.misuse == 0); }
+		return va;
+	};
+	size_t n0, n1, n2;
+	const double v0 = run (0, n0), v1 = run (1, n1), v2 = run (2, n2);
+	CAPTURE (v0, v1, v2, n0, n1, n2);
+	CHECK (v0 < 2.0 - 1e-3);              // the first frame turns A in both
+	CHECK (std::fabs (v1 - v0) < 1e-9);    // B at 3000 kg, as when it is an ordinary body
+	CHECK (std::fabs (v2 - v0) > 1e-3);    // a playback body is a wall
+	CHECK (n0 > 0);
+	CHECK (n1 == 0);
+}
+
+TEST_CASE ("collaSetExternal: a landed external body hit by a 1000 kg one stays kinematic", "[CollWorldA]")
+{
+	World W;
+	W.sdk.applyWrites = true;
+	W.sdk.bodies.push_back (CollFakeSdk::Body ());
+	CollFakeSdk::Body *earth = &W.sdk.bodies.back ();
+	CollFakeSdk::Ves *a = W.Add ("Pad", Vector (0, 6371010, 0), Vector ());
+	W.Add ("Stack", Vector (2.4, 6371010, 0), Vector (-2, 0, 0));
+	a->rd.status = 1; a->rd.gref = earth; a->rd.m = 2;
+	W.ps->SetExternal ({ 1 });
+	bool woke = false, landedSeen = false;
+	for (int f = 0; f < 30; f++) {
+		W.Frame (1.0/60);
+		for (const CollABody &x : W.ps->Bodies ()) {
+			woke = woke || x.woke;
+			if (x.kind == COLLB_LANDED) { landedSeen = true; CHECK_FALSE (x.wakeable); }
+		}
+	}
+	size_t onPad = 0;
+	for (const CollFakeSdk::Wr &w : W.sdk.wr) onPad += w.h == (CollH)a;
+	CHECK (landedSeen);
+	CHECK_FALSE (woke);
+	CHECK (onPad == 0);
+}
+
+TEST_CASE ("collaSetExternal: an external box on a fixed pad never lands", "[CollWorldA]")
+{
+	RestScene S (true, Vector (), true);
+	S.W.ps->SetExternal ({ 2 });
+	for (int f = 0; f < 300; f++) S.W.Frame (1.0/60);
+	CHECK (S.Landed () == 0);
+	CHECK (S.W.sdk.LogCount ("Collision rest:") == 0);
+}

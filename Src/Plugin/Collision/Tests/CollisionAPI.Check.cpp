@@ -5,6 +5,6 @@
 static_assert (sizeof (COLLA_HDR) == 12);
 static_assert (offsetof (COLLA_CONTACTINFO, hdr) == 0);
 static_assert (offsetof (COLLA_DAMAGEINFO, hdr) == 0);
-static_assert (sizeof (void *) != 8 || (sizeof (COLLA_CONTACTINFO) == 128 && sizeof (COLLA_DAMAGEINFO) == 128));
+static_assert (sizeof (void *) != 8 || (sizeof (COLLA_CONTACTINFO) == 128 && sizeof (COLLA_DAMAGEINFO) == 248 && offsetof (COLLA_DAMAGEINFO, hitPos) == 128)); // version 2 added the hit after the 128 bytes of version 1
 static_assert (sizeof (void *) != 8 || (offsetof (COLLA_CONTACTINFO, hOther) == 16 && offsetof (COLLA_CONTACTINFO, simt) == 40));
 static_assert (sizeof (void *) != 8 || (offsetof (COLLA_DAMAGEINFO, hOther) == 16 && offsetof (COLLA_DAMAGEINFO, simt) == 40));

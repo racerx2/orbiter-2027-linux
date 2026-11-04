@@ -479,6 +479,9 @@ void CollSession::PreStep (double simt, double simdt)
 	std::vector<uint32_t> rb;
 	dmg->BreakVessels (rb);
 	phys->SetRestBlock (rb);                                     // design coll-bounded 4: no rest while a building break is queued for it
+	std::vector<uint32_t> ex;
+	dmg->Externals (ex);
+	phys->SetExternal (ex);
 	phys->PS3Physics (*shost);
 	Clock::time_point f = Clock::now ();
 	// PS4 damage: the solver's events and the ground events (CA-ground)

@@ -171,6 +171,7 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 		B.pmi = B.m > 0 ? I/B.m : Vector (1, 1, 1);
 		if (!a.stack) B.pmi = rd.pmi;                             // attachment tree: Orbiter turns the root alone with its own PMI (6.6)
 		B.kind = a.mixed ? COLLB_FROZEN : rd.playback ? COLLB_PLAYBACK : (rd.status & 1) ? COLLB_LANDED : COLLB_DYNAMIC;
+		for (uint32_t id : a.member) B.external = B.external || std::binary_search (extIds.begin (), extIds.end (), id);
 		// gravity estimate of a state write (6.3): point mass of the gravity reference
 		if (rd.gref) {
 			Vector pr, vr; Matrix Rr;
@@ -202,7 +203,7 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 				sdk.GlobalState (rd.gref, pr, vr, Rp);
 				wg = std::fabs (T) > 0 ? mul (Rp, Vector (0, 1, 0))*(2.0*3.14159265358979323846/T) : Vector ();
 				a = B.aTot;
-				B.wakeable = !geom.Fixed (r->id); B.wakeV = B.v; B.wakeWb = B.wb; // a fixed structure stays kinematic, as a base
+				B.wakeable = !geom.Fixed (r->id) && !B.external; B.wakeV = B.v; B.wakeWb = B.wb; // a fixed structure stays kinematic, as a base
 			}
 			CollKinMotion (B, a, wg, simdt);
 		}
@@ -219,6 +220,7 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 			if (std::find (queuedNew.begin (), queuedNew.end (), id) != queuedNew.end ()) B.entry |= COLLE_NEW;
 			if (std::find (jumped.begin (), jumped.end (), id) != jumped.end ()) B.entry |= COLLE_JUMP;
 		}
+		if (B.external) B.entry |= COLLE_JUMP;                    // moved from outside: what this frame planned for it never happened
 		body.push_back (B);
 	}
 	std::vector<CollABody> bases;
@@ -269,6 +271,7 @@ void CollPhysSession::PS3Physics (CollSolveHost &host)
 	}
 	fwd.SetSplit (sp, spawned); ver.SetSplit (sp, spawned);
 	frame.Run (fwd, ver, mirror, body, zones, simdt, simt, host, wr, ev);
+	wr.erase (std::remove_if (wr.begin (), wr.end (), [&] (const CollAWrite &w) { return body[w.body].external; }), wr.end ()); // its response is kept outside
 	for (const CollContactRec &r : frame.contacts)                 // dmg3 L4: vessel sides in the vessel frame
 		for (int side = 0; side < 2; side++) {
 			const CollImpactSide &s = r.s[side], &o = r.s[1 - side];
@@ -353,7 +356,7 @@ void CollPhysSession::RestPass ()
 	const uint32_t fr = fwd.Frame ();
 	for (size_t i = 0; i < body.size (); i++) {
 		const CollABody &B = body[i];
-		if (B.kind != COLLB_DYNAMIC || B.stack || B.member.size () != 1) continue;
+		if (B.kind != COLLB_DYNAMIC || B.stack || B.member.size () != 1 || B.external) continue;
 		const uint32_t vid = B.member[0];
 		const Snap *s = SnapOf (vid);
 		if (!s || s->rd.playback || s->rd.thrust || s->rd.sv || (s->rd.status & 1)) continue;
@@ -432,7 +435,7 @@ void CollPhysSession::RestAfter ()
 		Rested &r = rested[k];
 		r.frames++;
 		const Snap *s = SnapOf (r.id);
-		if (!s) { rested.erase (rested.begin () + k); continue; }
+		if (!s || std::binary_search (extIds.begin (), extIds.end (), r.id)) { rested.erase (rested.begin () + k); continue; }
 		if (r.frames == 0) { k++; continue; }                     // landed this frame: checked from the next
 		bool woke = false;
 		for (const CollABody &B : body) if (B.woke && std::find (B.member.begin (), B.member.end (), r.id) != B.member.end ()) woke = true;

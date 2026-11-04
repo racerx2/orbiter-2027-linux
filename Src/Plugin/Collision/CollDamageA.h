@@ -49,6 +49,7 @@ struct NoticeA {                                              // one notice of t
 	uint32_t id = 0; int kind = 0; uint32_t flags = 0;
 	CollH hOther = nullptr; int32_t otherObj = -1, mesh = -1, group = -1;
 	double simt = 0, energy = 0, depth = 0; Vector pos, nml;
+	Vector hitPos, hitNml, hitSlip; double hitE = 0, hitA = 0, hitVn = 0, hitVt = 0, hitJn = 0; int32_t hitTri = -1; uint32_t hitFlags = 0; // the deepest dent's hit, vessel frame (COLLA_DAMAGEINFO version 2)
 };
 struct RepairReq { uint32_t id = 0; bool building = false; std::string planetBase; int obj = -1; };
 struct CollE3Counters { uint64_t dents = 0, coalesced = 0, repairs = 0, relinks = 0, remakes = 0, notices = 0, playback = 0, side = 0, replays = 0; }; // replays: collider meshes reset and replayed
@@ -94,6 +95,11 @@ public:
 	int SweepVessel (CollH hTarget, CollH hMover, const Vector &pos, const Matrix &rot, const Vector &dir, double len, double clearance, double &dist);
 	int SweepSphere (CollH hTarget, const Vector &centre, double radius, const Vector &dir, double len, double clearance, double &dist);
 	int VesselRadius (CollH h, double &radius);
+	// vessels moved from outside (collaVersion 3)
+	int SetExternal (CollH h, bool on);                                     // no damage judged on it; E1 reads Externals each frame
+	bool External (uint32_t id) const { return external.count (id) != 0; }
+	void Externals (std::vector<uint32_t> &out) const { out.assign (external.begin (), external.end ()); } // sorted
+	int ApplyDamage (CollH h, const void *info);                            // COLLA_DAMAGEINFO * of a DENT made elsewhere
 	// dialog content and the 2024 report
 	void Report (std::vector<std::string> &lines) const;
 	const VesselDamageA *Damage (uint32_t id) const { auto it = vessel.find (id); return it == vessel.end () ? nullptr : &it->second; }
@@ -193,6 +199,7 @@ private:
 	std::vector<std::vector<std::string>> dormantVessel;                     // raw sections
 	std::vector<DentBaseText> dormantBase;                                   // unmatched OBJ lines and ODENT lines
 	std::vector<NoticeA> notices;
+	std::set<uint32_t> external;                                             // vessel ids moved from outside
 	std::map<uint32_t, NoticeA> frameNote;                                   // DENT accumulation of this pre-step
 	std::map<uint32_t, std::map<uint32_t, bool>> dirty;                      // vessel -> mesh -> a record grew or was replaced (full collider replay)
 	std::vector<RepairReq> repairs;

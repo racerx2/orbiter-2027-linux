@@ -12,7 +12,7 @@
 
 #define COLLA_VMSG    0x4F434F4C   // clbkGeneric msgid of every addon notice ("OCOL"), above VMSG_USER
 #define COLLA_MAGIC   0x31414C43u  // COLLA_HDR::magic ("CLA1")
-#define COLLA_VERSION 1            // payload version written by this header
+#define COLLA_VERSION 2            // payload version written by this header (2: COLLA_DAMAGEINFO hit fields)
 #define COLLA_HANDLED 0x58464C43   // reply to DESTROYED or RESTORED: the module handles the destroyed effects ("CLFX")
 
 enum { COLLA_KIND_STATE = 0, COLLA_KIND_CONTACT = 1, COLLA_KIND_DENT = 16, COLLA_KIND_DESTROYED = 17,
@@ -63,6 +63,14 @@ typedef struct {
 	double energy_total;          // absorbed so far [J]
 	double depth;                 // max dent depth in this notice [m]
 	double destroyEnergy;         // threshold of this vessel [J/kg]
+	// version 2, DENT only (zero otherwise): the hit of the deepest dent as Collision took it, for collaApplyDamage
+	VECTOR3 hitPos, hitNml;       // contact point and outward normal, vessel frame
+	VECTOR3 hitSlip;              // unit slip direction of this vessel's surface, vessel frame; zero if none
+	double hitEnergy;             // its dent energy [J]
+	double hitRadius;             // contact patch radius [m]
+	double hitVn, hitVt, hitJn;   // approach and slip speed [m/s], normal impulse [N s]
+	int32_t hitTri;               // hit triangle of the group, -1 if unknown
+	uint32_t hitFlags;            // Collision's own event bits, passed back unchanged
 } COLLA_DAMAGEINFO;
 
 typedef int (*COLLA_PFN_VERSION) ();
@@ -78,8 +86,13 @@ typedef int (*COLLA_PFN_SWEEPVESSEL) (OBJHANDLE hTarget, OBJHANDLE hMover, const
 typedef int (*COLLA_PFN_SWEEPSPHERE) (OBJHANDLE hTarget, const VECTOR3 *centre, double radius,
 	const VECTOR3 *dir, double len, double clearance, double *dist);   // target frame
 typedef int (*COLLA_PFN_VESSELRADIUS) (OBJHANDLE hVessel, double *radius); // sphere about the vessel's origin holding its geometry
+
+// vessels moved from outside (collaVersion 3), as a multiplayer copy of a ship flown elsewhere; 1 done, 0 not
+typedef int (*COLLA_PFN_SETEXTERNAL) (OBJHANDLE hVessel, int on);  // no response and no damage on it; others meet it at its mass as it moves
+typedef int (*COLLA_PFN_APPLYDAMAGE) (OBJHANDLE hVessel, const COLLA_DAMAGEINFO *info); // a DENT notice made elsewhere, dented here as if hit here
 static const char *const COLLA_EXPORTS[] = { "collaVersion", "collaRepairVessel", "collaRepairBuilding",
-	"collaGetVesselDamage", "collaGetBuildingDamage", "collaSweepVessel", "collaSweepSphere", "collaVesselRadius" };
+	"collaGetVesselDamage", "collaGetBuildingDamage", "collaSweepVessel", "collaSweepSphere", "collaVesselRadius",
+	"collaSetExternal", "collaApplyDamage" };
 
 inline void *collaFind (const char *name)   // exported function of the loaded addon, NULL if not loaded
 {

@@ -190,7 +190,7 @@ Every notice has msgid = COLLA\_VMSG ("OCOL"), prm = the kind of notice and cont
 %\end{table}
 
 \noindent
-COLLA\_DAMAGEINFO holds the flags (COLLA\_DMG\_DESTROYED, \_MODULEFX, \_CATASTROPHIC for one impact above 40 kJ/kg, \_PLAYBACK, \_CUT), the other body of the deepest dent, its mesh, group, centre, normal and depth, the energy absorbed in this notice and in total [J], the number of dent records and the vessel's DestroyEnergy.\\
+COLLA\_DAMAGEINFO holds the flags (COLLA\_DMG\_DESTROYED, \_MODULEFX, \_CATASTROPHIC for one impact above 40 kJ/kg, \_PLAYBACK, \_CUT), the other body of the deepest dent, its mesh, group, centre, normal and depth, the energy absorbed in this notice and in total [J], the number of dent records and the vessel's DestroyEnergy. From payload version 2 a DENT notice also holds the hit that made its deepest dent (point, normal and slip direction in the vessel frame, dent energy, contact patch radius, approach and slip speed, normal impulse), which collaApplyDamage takes.\\
 A module that handles the destruction itself (its own wreck, its own failures) returns COLLA\_HANDLED from clbkGeneric for DESTROYED and RESTORED. The Collision module then leaves the vessel's engines alone and sets COLLA\_DMG\_MODULEFX. Otherwise the module cuts the vessel's thrust by linking its thrusters to an empty tank, sets its control-surface mode to off (SetADCtrlMode (0), the previous mode is restored by a repair) and locks the vessel with \texttt{oapiSetVesselControlLock}: a locked vessel's module receives no keys (clbkConsumeDirectKey, clbkConsumeBufferedKey) and no cockpit mouse events (clbkPanelMouseEvent, clbkVCMouseEvent), the core's thrust, RCS, trim and brake keys and the joystick do nothing, and navigation modes cannot be switched on; its MFDs take no input (Shift keys, panel and VC buttons, external MFD windows, which switch off), and the vessel has no cockpit view: the camera leaves its cockpit when it is locked, and F1, the camera dialog and \texttt{oapiCameraAttach} give its external view instead. The lock is not saved with the scenario: the module sets it again when it loads a destroyed vessel. \texttt{oapiGetVesselControlLock} reads the lock, and \texttt{OAPI\_VESSEL\_CONTROL\_LOCK} tests for both in OrbiterAPI.h. A repair removes the cut and the lock. This does not depend on Orbiter's \textit{Damage and failure simulation} option; CollisionThrustCut = FALSE turns it off.
 
 \begin{lstlisting}
@@ -221,7 +221,7 @@ The Collision module exports functions that any module can call while a simulati
 	\hline\rule{0pt}{2ex}
 	\textbf{Function} & \textbf{Description}\\
 	\hline\rule{0pt}{2ex}
-	int collaVersion () & 2 (1 before the clearance queries)\\
+	int collaVersion () & 3 (2 before the calls for vessels moved from outside, 1 before the clearance queries)\\
 	\hline\rule{0pt}{2ex}
 	int collaGetVesselDamage (OBJHANDLE hVessel, COLLA\_DAMAGEINFO *info) & Fills info (set info->hdr.size to the size of your structure first). Returns 1, or 0 if hVessel is not a vessel.\\
 	\hline\rule{0pt}{2ex}
@@ -273,6 +273,23 @@ double dist;
 if (sweep && sweep (hTarget, GetHandle (), &pos, &rot, &dir, 40.0, 1.0, &dist) == 1)
     StartApproach ();   // 40 m along dir with 1 m to spare
 \end{lstlisting}
+
+
+\subsection{Vessels moved from outside}
+A module that moves a vessel itself every frame, such as a multiplayer copy of a ship flown in another Orbiter, can tell the Collision module so. The module then gives that vessel no response and judges no damage on it, and the bodies it touches respond as against a body of its mass moving as it is moved. The vessel still gets its CONTACT notices, so the module that moves it can apply the response itself. Damage judged in another Orbiter is brought here as its DENT notice:
+
+%\begin{table}[H]
+	%\centering
+	\begin{longtable}{ |p{0.5\textwidth}|p{0.42\textwidth}| }
+	\hline\rule{0pt}{2ex}
+	\textbf{Function} & \textbf{Description}\\
+	\hline\rule{0pt}{2ex}
+	int collaSetExternal (OBJHANDLE hVessel, int on) & Marks the vessel as moved from outside (on = 1) or not (0). Returns 1, or 0 if hVessel is not a vessel or no simulation runs. The mark ends with the vessel or the simulation.\\
+	\hline\rule{0pt}{2ex}
+	int collaApplyDamage (OBJHANDLE hVessel, const COLLA\_DAMAGEINFO *info) & Applies a DENT notice of payload version 2 or later: its energy is added, its hit dents the vessel as if it had been hit here, the destroy threshold is checked, and the vessel's module gets its DENT and, at the threshold, DESTROYED notices. Returns 1, or 0 for another kind, an older payload or non-finite values.\\
+	\hline
+	\end{longtable}
+%\end{table}
 
 
 \subsection{Saved state}

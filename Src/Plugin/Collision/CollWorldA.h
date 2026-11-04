@@ -58,6 +58,7 @@ public:
 	const std::vector<Vector> &GExact () const { return gx; }      // gravity per body handed to Finish by the last WriteBack (tests)
 	uint64_t Notices () const { return nNotices; }
 	void SetRestBlock (const std::vector<uint32_t> &ids) { restBlock = ids; } // coll-bounded 4: vessel ids with a queued building break, no rest for them
+	void SetExternal (const std::vector<uint32_t> &ids) { extIds = ids; } // sorted vessel ids moved from outside (collaSetExternal)
 	void SetRestLines (const std::vector<std::pair<std::string, double>> &l) { restLoad = l; } // REST lines of a loaded scenario: name, CG radius
 	void RestLines (std::vector<std::pair<std::string, double>> &out) const; // the bodies the add-on landed that are still landed, for the save
 	uint64_t Rests () const { return nRest; }
@@ -93,6 +94,7 @@ private:
 	std::vector<Rested> rested;
 	std::vector<std::pair<uint32_t, double>> restBack;  // vessel id, sim time rest is allowed again
 	std::vector<uint32_t> restBlock;
+	std::vector<uint32_t> extIds;
 	std::vector<std::pair<std::string, double>> restLoad;
 	std::vector<LandNow> landNow;
 	uint64_t nRest = 0;
