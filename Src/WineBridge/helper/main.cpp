@@ -289,6 +289,57 @@ static __attribute__ ((noinline)) void MissingImports (const char *path, char *o
 	out[outlen - 1] = 0;
 }
 
+// not upstream (cape-log): a Visual C++ debug runtime (msvcr100d, vcruntime140d, ucrtbased...), which only Visual Studio installs
+static bool DebugRuntime (const char *dll)
+{
+	char n[64];
+	size_t l = strlen (dll);
+	if (l < 5 || l >= sizeof n || _stricmp (dll + l - 4, ".dll")) return false;
+	for (size_t i = 0; i < l - 4; i++) n[i] = (char)tolower ((unsigned char)dll[i]);
+	n[l - 4] = 0;
+	if (!strcmp (n, "ucrtbased")) return true;
+	if (n[l - 5] != 'd') return false;
+	for (const char *p : {"msvcr", "msvcp", "vcruntime", "concrt", "vcomp", "mfc"})
+		if (!strncmp (n, p, strlen (p))) return true;
+	return false;
+}
+
+// not upstream (cape-log): after error 126, the DLLs the module imports that don't load, named in out; false when they all load
+static __attribute__ ((noinline)) bool MissingDlls (const char *path, char *out, size_t outlen)
+{
+	wchar_t wp[MAX_PATH];
+	HMODULE m = Wide (path, wp, MAX_PATH) ? LoadLibraryExW (wp, 0, DONT_RESOLVE_DLL_REFERENCES) : 0;
+	if (!m) return false;
+	const BYTE *base = (const BYTE *)m;
+	const IMAGE_NT_HEADERS32 *nt = (const IMAGE_NT_HEADERS32 *)(base + ((const IMAGE_DOS_HEADER *)base)->e_lfanew);
+	const IMAGE_DATA_DIRECTORY &dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+	char list[1024] = "";
+	size_t used = 0;
+	int missing = 0;
+	bool debug = false;
+	if (dir.VirtualAddress)
+		for (const IMAGE_IMPORT_DESCRIPTOR *d = (const IMAGE_IMPORT_DESCRIPTOR *)(base + dir.VirtualAddress); d->Name; d++) {
+			const char *dll = (const char *)(base + d->Name);
+			if (!_stricmp (dll, "Orbiter.exe")) continue; // the helper itself
+			HMODULE h = LoadLibraryExA (dll, 0, DONT_RESOLVE_DLL_REFERENCES); // the search order the module's own load used
+			if (h) { FreeLibrary (h); continue; }
+			debug |= DebugRuntime (dll);
+			size_t n = strlen (dll);
+			if (used + n + 3 < sizeof list) {
+				if (used) { memcpy (list + used, ", ", 2); used += 2; }
+				memcpy (list + used, dll, n + 1);
+				used += n;
+			}
+			missing++;
+		}
+	FreeLibrary (m);
+	if (!missing) return false;
+	_snprintf (out, outlen, "it needs %s, which %s not found%s", list, missing > 1 ? "were" : "was",
+		debug ? " (a Visual C++ debug runtime: only Visual Studio installs it, so the module doesn't load on Windows without it either)" : "");
+	out[outlen - 1] = 0;
+	return true;
+}
+
 // H_LOAD's reply for module number m (0: failed, with err)
 static void LoadReply (WbWriter &w, int m, const char *err)
 {
@@ -355,7 +406,13 @@ static void Load (WbReader &r, WbWriter &w)
 	HMODULE h = LoadWide (path, slot, sdkMain, wide);
 	busy[slot] = false;
 	if (!wide) { LoadReply (w, 0, "the path isn't UTF-8 or is too long"); return; }
-	if (!h) { _snprintf (err, sizeof err, "LoadLibrary failed, Windows error %lu", GetLastError ()); LoadReply (w, 0, err); return; }
+	if (!h) {
+		DWORD e = GetLastError ();
+		if (e != ERROR_MOD_NOT_FOUND || !MissingDlls (path, err, sizeof err)) _snprintf (err, sizeof err, "LoadLibrary failed, Windows error %lu", e); // not upstream (cape-log): error 126 names what's missing
+		err[sizeof err - 1] = 0;
+		LoadReply (w, 0, err);
+		return;
+	}
 	Module &m = g_mod[slot];
 	memset (&m, 0, sizeof m);
 	m.h = h;
