@@ -16,7 +16,8 @@ NEVER_BUNDLE = re.compile(r'^lib(ssl|crypto|vulkan|stdc\+\+|gcc_s|c|GL|EGL)\.so'
 PLUGINS = {  # Qt plugin types and files the package needs (no sql drivers, print support, egl device integrations, gtk theme)
     'platforms': ['libqxcb.so', 'libqwayland.so', 'libqoffscreen.so', 'libqminimal.so'],  # Qt 6.12: one Wayland platform plugin
     'xcbglintegrations': None, 'wayland-decoration-client': None, 'wayland-graphics-integration-client': None,
-    'wayland-shell-integration': None, 'platforminputcontexts': None, 'imageformats': None, 'iconengines': None, 'tls': None,
+    'wayland-shell-integration': None, 'platforminputcontexts': None, 'iconengines': None, 'tls': None,
+    'imageformats': ['libqgif.so', 'libqico.so', 'libqjpeg.so', 'libqsvg.so', 'libqtiff.so'],  # tiff: the large cloud image (TileStream.cfg CLOUD)
     'networkinformation': None, 'platformthemes': ['libqxdgdesktopportal.so'],
 }
 QML_START = ['QtQml', 'QtQml/Models', 'QtQml/WorkerScript', 'QtQuick', 'QtQuick/Window', 'QtQuick/Layouts', 'QtQuick/Shapes', 'QtQuick/Effects', 'QtQuick/Particles']  # LauncherQml.cpp BuildAllowDir
