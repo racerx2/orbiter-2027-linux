@@ -368,6 +368,7 @@ struct TileStream::Impl {
 		std::deque<uint64_t> refetchQueue; // fed in slowly when nothing else waits
 		std::unordered_set<uint64_t> elevSeen, noElev; // this session: checked for an Elev file, Elev failed
 		std::unordered_set<uint64_t> classSeen;         // not upstream (cover-refetch): this session, checked for its Class file
+		std::unordered_set<uint64_t> refetchSeen;       // not upstream (cape-log): this session, put first in refetchQueue
 		std::unordered_map<uint64_t, int> coverTries;   // not upstream (cover-refetch): this session's rebuilds after a WorldCover failure
 		bool CoverLevel (int L) const { return !cfg.cover.kind.empty() && L >= cfg.cover.lmin && L <= cfg.cover.lmax; }
 		std::unordered_set<uint64_t> cloud, mod;        // earth-sky: Cloud and Elev_mod files this stream wrote
@@ -797,6 +798,7 @@ int TileStream::Impl::Want (const std::string &name, int L, int ilat, int ilng, 
 			}
 			if (!B.written.count (k)) return 1;
 		}
+		if (B.refetch.count (k) && B.refetchSeen.insert (k).second) B.refetchQueue.push_front (k); // not upstream (cape-log): the tiles drawn are rebuilt first
 		B.hits.push_back (k);
 		if (RwyOn (B, L) && B.elev.count (k) && !B.rwyChk.count (k) && !B.noCheck.count (k) && !jobs.count (id) && B.checkSeen.insert (k).second) { // not upstream (stream-rwyflat)
 			Job &J = NewJob (b, k, opt.now());
@@ -1488,6 +1490,11 @@ void TileStream::Impl::Build (Job J)
 				cls = TsCog::ClassImage (cv, n, 256);
 			} else {
 				coverRetry = got == TsCog::Cls::RETRY; // not upstream (cover-refetch): made again once WorldCover answers
+				if (coverRetry && quit) { // not upstream (cape-log): a read cut by the stream's stop leaves no tile; the next session wants it again
+					std::lock_guard<std::mutex> lk (mx);
+					jobs.erase (J.id);
+					return;
+				}
 				std::lock_guard<std::mutex> lk (mx);
 				if (coverFails++ % 50 == 0) Log (std::string ("TileStream: WorldCover ") + (coverRetry ? "read failed" : "cell unreadable") + ", GIBS water for " + Tile (B.dir, "Mask", J.key));
 			}

@@ -23,6 +23,10 @@
 #include <unistd.h>
 #include <fcntl.h> // not upstream: utimensat (design dropin-addons)
 #include <sys/stat.h> // not upstream: as above
+#include <arpa/inet.h> // not upstream (cape-log): a WorldCover host that never answers
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
 #include <zlib.h>
 
 namespace fs = std::filesystem;
@@ -1411,6 +1415,112 @@ TEST_CASE ("A tile over an unreadable WorldCover cell is written and not listed 
 	REQUIRE (WaitFor ([&] { ts.Want ("Earth", 12, 86, 142, 0); return fs::exists (surf); }, 25.0));
 	CHECK_FALSE (fs::exists (tex / "Class" / "12" / "000086" / "000142.dds"));
 	CHECK (Read (tex / "TileStream" / "refetch.idx").find ("12 86 142") == std::string::npos);
+}
+
+TEST_CASE ("A WorldCover read cut by the stream's stop leaves no tile, and the next session makes it", "[TileStream]") // not upstream (cape-log)
+{
+	App app;
+	for (const char *v : {"http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"}) unsetenv (v);
+	Tmp t;
+	Srv s (t.root);
+	s.Required (true);
+	s.Masks (12, 86, 142);
+	s.EoxTile (12, 86, 142, QColor (90, 80, 70));
+	WcCell (t.root / "wc" / "c_N27W081.tif");
+	fs::path tex = t.root / "Earth";
+	fs::path surf = tex / "Surf" / "12" / "000086" / "000142.dds", cls = tex / "Class" / "12" / "000086" / "000142.dds";
+	int dead = socket (AF_INET, SOCK_STREAM, 0); // listens and never accepts: the read waits until the stream stops
+	sockaddr_in a {};
+	a.sin_family = AF_INET;
+	a.sin_addr.s_addr = htonl (INADDR_LOOPBACK);
+	socklen_t l = sizeof a;
+	REQUIRE (bind (dead, (sockaddr *)&a, sizeof a) == 0);
+	REQUIRE (listen (dead, 8) == 0);
+	REQUIRE (getsockname (dead, (sockaddr *)&a, &l) == 0);
+	auto opt = [&] (const std::string &wc) {
+		TileStream::Options o;
+		o.cfgfile = CoverCfg (s, t.root / "ts.cfg", wc);
+		o.bodyDir = [&] (const std::string &) { return tex.string(); };
+		o.bodies = {"Earth"};
+		return o;
+	};
+	{
+		TileStream ts (opt ("http://127.0.0.1:" + std::to_string (ntohs (a.sin_port))));
+		pollfd p {dead, POLLIN, 0};
+		REQUIRE (WaitFor ([&] { ts.Want ("Earth", 12, 86, 142, 0); return poll (&p, 1, 0) > 0; }, 25.0)); // its WorldCover read has connected
+	} // the session ends during the read
+	CHECK_FALSE (fs::exists (surf));
+	CHECK (Read (tex / "TileStream" / "written.idx").find ("12 86 142") == std::string::npos);
+	CHECK (Read (tex / "TileStream" / "refetch.idx").find ("12 86 142") == std::string::npos);
+	{
+		TileStream ts (opt ("file://" + (t.root / "wc").string()));
+		REQUIRE (WaitFor ([&] { ts.Want ("Earth", 12, 86, 142, 0); return fs::exists (surf) && fs::exists (cls); }, 25.0));
+	}
+	close (dead);
+}
+
+TEST_CASE ("A refetch tile the client draws is rebuilt before the older ones", "[TileStream]") // not upstream (cape-log)
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	s.Required (true);
+	fs::path tex = t.root / "Earth";
+	const int N = 12;
+	for (int i = 0; i < N; i++) {
+		s.Masks (10, 0, i);
+		s.EoxTile (10, 0, i, QColor (90, 80, 70));
+	}
+	{
+		TileStream::Options o;
+		o.cfgfile = s.Cfg (t.root / "ts.cfg", s.url + "/eox");
+		o.bodyDir = [&] (const std::string &) { return tex.string(); };
+		o.bodies = {"Earth"};
+		TileStream ts (o);
+		REQUIRE (WaitFor ([&] {
+			bool all = true;
+			for (int i = 0; i < N; i++) all = ts.Want ("Earth", 10, 0, i, 0) == 1 && all;
+			return all;
+		}, 25.0)); // the stream's own tiles
+	}
+	{
+		std::ofstream r (tex / "TileStream" / "refetch.idx");
+		for (int i = 0; i < N; i++) r << "10 0 " << i << "\n";
+	}
+	struct Gate {
+		std::mutex m;
+		std::condition_variable c;
+		bool open = false;
+		std::vector<int> built;
+		void Open () { std::lock_guard<std::mutex> lk (m); open = true; c.notify_all(); }
+	} g;
+	TileStream::Options o;
+	o.cfgfile = s.Cfg (t.root / "ts.cfg", s.url + "/eox");
+	o.bodyDir = [&] (const std::string &) { return tex.string(); };
+	o.bodies = {"Earth"};
+	o.onBuild = [&g] (int L, int, int ln) {
+		if (L != 10) return;
+		std::unique_lock<std::mutex> lk (g.m);
+		g.built.push_back (ln);
+		g.c.notify_all();
+		g.c.wait (lk, [&g] { return g.open; }); // the first refetch held until the client has drawn another
+	};
+	TileStream ts (o);
+	struct Release { Gate &g; ~Release () { g.Open(); } } release {g}; // before the stream joins its workers
+	std::vector<int> drawn; // the two lowest keys the queue didn't start with, drawn in this order
+	{
+		std::unique_lock<std::mutex> lk (g.m);
+		REQUIRE (g.c.wait_for (lk, std::chrono::seconds (25), [&g] { return !g.built.empty(); }));
+		for (int i = 0; i < N && drawn.size() < 2; i++)
+			if (i != g.built[0]) drawn.push_back (i);
+	}
+	for (int d : drawn) CHECK (ts.Want ("Earth", 10, 0, d, 2) == 1);
+	CHECK (ts.Want ("Earth", 10, 0, drawn[0], 2) == 1); // drawn again: not moved again
+	g.Open();
+	std::unique_lock<std::mutex> lk (g.m);
+	REQUIRE (g.c.wait_for (lk, std::chrono::seconds (25), [&g] { return g.built.size() >= 3; }));
+	CHECK (g.built[1] == drawn[1]); // the last one drawn first
+	CHECK (g.built[2] == drawn[0]);
 }
 
 // ---- buildings (TileStreamMvt.cpp) ----
