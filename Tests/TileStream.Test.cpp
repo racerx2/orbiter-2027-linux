@@ -324,7 +324,8 @@ TEST_CASE ("The tile stream config reads its body and rejects bad lines", "[Tile
 	CHECK (cr[0].find ("EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2016 & 2017), CC BY 4.0") != std::string::npos);
 	CHECK (has ("Blue Marble: Next Generation"));
 	CHECK (has ("NASA Black Marble 2016"));
-	CHECK (has ("NASA Visible Earth"));
+	CHECK (has ("NASA Blue Marble clouds")); // not upstream (cloud-source): NASA's file, the large one via the Internet Archive
+	CHECK (has ("the large image via the Internet Archive https://web.archive.org"));
 	CHECK (count ("\xc2\xa9 OpenStreetMap contributors, available under the Open Database License https://www.openstreetmap.org/copyright") == 2); // water mask, buildings
 	CHECK (has ("\xc2\xa9 ESA WorldCover project 2021 / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium"));
 	CHECK (has ("OpenFreeMap https://openfreemap.org"));
