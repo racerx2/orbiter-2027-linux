@@ -372,6 +372,7 @@ public:
 					auto draggedItem = std::find_if(items.begin(), items.end(), [](const MenuItem &a){return a.dragging;});
 					if(draggedItem != items.end()) {
 						draggedItem->animStateScale = 1.0;
+						oapiAddNotification(OAPINOTIF_INFO, ("\"" + draggedItem->label + "\" removed from the menu bar").c_str(), "Right-click the menu bar and tick it on the Menu items tab to bring it back."); // not upstream: how it comes back
 					}
 				}
 			}
