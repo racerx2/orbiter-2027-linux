@@ -2609,7 +2609,7 @@ QByteArray TileStream::Impl::Fetch (const std::string &url, int sec, const Body 
 	return w->done && w->st == 200 ? w->body : QByteArray();
 }
 
-// a cloud source image: kept in TileStream/src once its header reads; a bad answer is asked again the next day
+// a cloud source image: kept in TileStream/src once its header reads; a bad answer, or none after a wait, is asked again the next day
 QByteArray TileStream::Impl::Source (Body &B, const std::string &url, const char *file, const char *fmt, int sec)
 {
 	if (!QImageReader::supportedImageFormats().contains (fmt)) {
@@ -2629,8 +2629,16 @@ QByteArray TileStream::Impl::Source (Body &B, const std::string &url, const char
 	long long day = -1;
 	std::ifstream (stamp) >> day;
 	if (day == Today()) return QByteArray(); // a bad answer today already
+	Clock::time_point t0 = Clock::now();
 	QByteArray d = Fetch (url, sec, &B);
-	if (d.isEmpty()) return d;
+	if (d.isEmpty()) {
+		if (!net || quit) return d;
+		Log ("TileStream: " + url + " did not answer");
+		if (Clock::now() - t0 < std::chrono::seconds (1)) return d; // not upstream (cloud-wait): a quick failure costs nothing and is asked again at the next start
+		fs::create_directories (B.dir + "/TileStream/src", ec);
+		std::ofstream (stamp, std::ios::trunc) << Today() << '\n'; // a host that is down costs one wait a day, not one each start
+		return d;
+	}
 	fs::create_directories (B.dir + "/TileStream/src", ec);
 	if (!ImageOk (d, fmt)) {
 		Log ("TileStream: " + url + " did not answer with an image");

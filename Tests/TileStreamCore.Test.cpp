@@ -520,6 +520,31 @@ TEST_CASE ("A cloud source that is no image is never kept, and is asked again th
 	CHECK_FALSE (fs::exists (day));
 }
 
+TEST_CASE ("A cloud source that fails at once is asked again at the next start", "[TileStreamCore]") // not upstream (cloud-wait)
+{
+	App app;
+	if (!QImageReader::supportedImageFormats().contains ("jpg")) SKIP ("no jpeg reader");
+	Tmp t;
+	Srv s (t.root);
+	fs::path img = s.root / "cloud.jpg", tex = t.root / "Earth", src = tex / "TileStream" / "src" / "cloud_small.jpg", day = src.string() + ".day";
+	fs::path l1 = tex / "Cloud" / Rel (1, 0, 0);
+	fs::create_directories (s.root);
+	TileStream::Options o = Opt (s.Cfg (t.root / "ts.cfg", s.url + "/eox", "CLOUD file://" + img.string() + " file://" + (s.root / "none.tif").string() + " 5\n"), tex);
+	o.sky = true;
+	o.maxActive = 0;
+	o.cloudWait = 5;
+	Base (tex);
+	{ TileStream a (o); } // a 404 at once
+	CHECK_FALSE (fs::exists (l1));
+	CHECK_FALSE (fs::exists (day));
+	QImage c (256, 128, QImage::Format_RGB888);
+	c.fill (QColor (200, 200, 200));
+	REQUIRE (c.save (QString::fromStdString (img.string()), "JPG"));
+	{ TileStream a (o); } // the same day
+	CHECK (fs::exists (l1));
+	CHECK_FALSE (fs::exists (day));
+}
+
 // an Archive/<Layer>.tree with nodes and no tile data, in ZTreeMgr's layout
 struct Node { int64_t pos; uint32_t size; uint32_t child[4]; };
 static_assert (sizeof (Node) == 32, "TreeNode");
@@ -790,6 +815,55 @@ TEST_CASE ("Answers past the size caps fail, and a range answer must be the rang
 	CHECK (get (h.Url(), -1, 0, b) == 0);
 	CHECK (get (h.Url(), -1, 0, b) == 200);
 	CHECK (b.size() == 500);
+}
+
+TEST_CASE ("A cloud source that keeps the start waiting without an answer is waited for once a day, not at each start", "[TileStreamCore]") // not upstream (cloud-wait)
+{
+	App app;
+	if (!QImageReader::supportedImageFormats().contains ("jpg")) SKIP ("no jpeg reader");
+	for (const char *v : {"http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"}) unsetenv (v);
+	Tmp t;
+	Srv s (t.root);
+	fs::path img = s.root / "cloud.jpg", tex = t.root / "Earth", src = tex / "TileStream" / "src" / "cloud_small.jpg", day = src.string() + ".day";
+	fs::path l1 = tex / "Cloud" / Rel (1, 0, 0);
+	fs::create_directories (s.root);
+	QImage c (256, 128, QImage::Format_RGB888);
+	c.fill (QColor (200, 200, 200));
+	REQUIRE (c.save (QString::fromStdString (img.string()), "JPG"));
+	std::ifstream f (img, std::ios::binary);
+	std::string jpg ((std::istreambuf_iterator<char> (f)), std::istreambuf_iterator<char>());
+	Http h ({Reply ("200 OK", "", jpg)});
+	int dead = socket (AF_INET, SOCK_STREAM, 0); // listens and never accepts: a connection waits in its backlog with no answer
+	sockaddr_in a {};
+	a.sin_family = AF_INET;
+	a.sin_addr.s_addr = htonl (INADDR_LOOPBACK);
+	socklen_t l = sizeof a;
+	REQUIRE (bind (dead, (sockaddr *)&a, sizeof a) == 0);
+	REQUIRE (listen (dead, 8) == 0);
+	REQUIRE (getsockname (dead, (sockaddr *)&a, &l) == 0);
+	auto opt = [&] (const std::string &url) {
+		TileStream::Options o = Opt (s.Cfg (t.root / "ts.cfg", s.url + "/eox", "CLOUD " + url + " file://" + (s.root / "none.tif").string() + " 5\n"), tex);
+		o.sky = true;
+		o.maxActive = 0;
+		o.cloudWait = 2;
+		return o;
+	};
+	Base (tex);
+	{ TileStream ts (opt ("http://127.0.0.1:" + std::to_string (ntohs (a.sin_port)) + "/f")); } // the wait runs out
+	CHECK_FALSE (fs::exists (l1));
+	CHECK (fs::exists (day));
+	{ TileStream ts (opt (h.Url())); } // the same day: not asked
+	CHECK_FALSE (fs::exists (l1));
+	{
+		std::lock_guard<std::mutex> lk (h.m);
+		CHECK (h.requests.empty());
+	}
+	std::ofstream (day, std::ios::trunc) << Today() - 1 << "\n";
+	{ TileStream ts (opt (h.Url())); }
+	CHECK (fs::exists (l1));
+	CHECK_FALSE (fs::exists (day));
+	CHECK (QImage (QString::fromStdString (src.string())).width() == 256);
+	close (dead);
 }
 
 TEST_CASE ("A stream that throws while it starts leaves the folder free, and a hostile archive TOC is refused before any allocation", "[TileStreamCore]")
