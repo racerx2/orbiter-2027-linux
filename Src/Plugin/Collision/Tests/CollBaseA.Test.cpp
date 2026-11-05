@@ -64,6 +64,37 @@ TEST_CASE ("E2-U10 matching and pose check", "[CollBaseA]")
 	REQUIRE (!b.rec[0]->checkedOk);
 }
 
+TEST_CASE ("base-height: the record and its objects stand where the core set the base, not on terrain a first visit hasn't got", "[CollBaseA]")
+{
+	CollFakeSdk s;
+	s.bodies.push_back ({}); auto &E = s.bodies.back (); E.name = "Mars"; E.type = 4;
+	s.bodies.push_back ({}); auto &B = s.bodies.back (); B.name = "Olympus"; B.type = 20; B.lng = 0.1; B.lat = 0.2;
+	E.base.push_back (&B); s.gbody.push_back (&E);
+	s.File (".\\Config\\Mars.cfg", "Name = Mars\n");
+	s.dirs[CollFakeSdk::Norm (".\\Config\\Mars\\Base\\")] = { "Olympus.cfg" };
+	s.File (".\\Config\\Mars\\Base\\Olympus.cfg", "BASE-V2.0\nName = Olympus\nBEGIN_OBJECTLIST\nBLOCK\n POS 100 0 0\n SCALE 10 10 10\nEND\nEND_OBJECTLIST\n");
+	s.elevG = [] (double, double) { return 0.0; };                                        // no heights on disk yet
+	s.baseElevG = [&] (double, double b) { return b < B.lat - 1e-6 ? -1000.0 : -1007.0; }; // the core's: the block's point 7 m up
+	CollBaseA b; CollDirs d;
+	b.Build (s, d, true);
+	REQUIRE (b.rec.size () == 1);
+	CHECK (b.rec[0]->elev == -1007.0);
+	CHECK (std::fabs (b.rec[0]->rposP.length () - (E.size - 1007.0)) < 1e-3);
+	std::vector<CollGroupData> g;
+	REQUIRE (b.Rest (s, d, 0, 0, 0, g));
+	float ymin = 1e9f;
+	for (auto &G : g) for (auto &v : G.vtx) ymin = std::min (ymin, v.y);
+	CHECK (std::fabs (ymin - 7.0f) < 1e-3f);
+	E.pos = Vector (2.2e11, 0, 0);
+	B.pos = E.pos + b.rec[0]->rposP; B.R = b.rec[0]->rrotP;
+	b.Poll (s, 0);
+	CHECK (b.rec[0]->checkedOk);
+	s.baseElevG = nullptr; // a core without oapiGetBaseElevation: the terrain, as before
+	CollBaseA t;
+	t.Build (s, d, true);
+	CHECK (t.rec[0]->elev == 0.0);
+}
+
 TEST_CASE ("E2-U9 stock bases, flat elevation", "[CollBaseA]")
 {
 	namespace fs = std::filesystem;

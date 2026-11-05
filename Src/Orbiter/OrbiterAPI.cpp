@@ -1400,6 +1400,11 @@ DLLEXPORT DWORD oapiBaseStructureSerial (OBJHANDLE hBase, DWORD mesh, bool after
 	return hBase ? ((Base*)hBase)->StructureSerial (mesh, after) : 0;
 }
 
+DLLEXPORT double oapiGetBaseElevation (OBJHANDLE hBase, double lng, double lat) // not upstream (base-height)
+{
+	return hBase ? ((Base*)hBase)->ElevAt (lng, lat) : 0.0;
+}
+
 DLLEXPORT DWORD oapiGetBasePadCount (OBJHANDLE hBase)
 {
 	return ((Base*)hBase)->nPad();

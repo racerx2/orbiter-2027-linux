@@ -409,6 +409,7 @@ private:
 	TileStream *m_pTileStream;             // not upstream: planet tile stream
 	void StartTileStream ();               // not upstream
 	void StopTileStream ();                // not upstream
+	void PlaceBases ();                    // not upstream (base-height): the streamed planets' bases, at the heights the stream has
 	void StreamPrefetch ();                // not upstream: ground-track tiles at high time acceleration
 	void StreamTrackStep ();               // not upstream
 	void StreamPathStep ();                // not upstream (design-preload): the path ahead below 10x

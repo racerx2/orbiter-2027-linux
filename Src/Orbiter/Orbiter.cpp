@@ -62,6 +62,8 @@
 #include "WlShortcuts.h"
 #include "SleepWatch.h"
 #include "TileStream.h" // not upstream
+#include "Planet.h" // not upstream (base-height): PlaceBases
+#include <future> // not upstream (base-height)
 #include "KernelInstall.h" // not upstream
 #include "HeadTrack.h" // not upstream (head-track)
 #include <filesystem>
@@ -875,6 +877,7 @@ QWindow *Orbiter::CreateRenderWindow (Config *pCfg, const char *scenario)
 	}
 	LOGOUT("Finished initialising world");
 	StartTileStream (); // not upstream: before the planet visuals check their tile folders
+	PlaceBases (); // not upstream (base-height): before the vessels, which may stand on them
 	time_prev = std::chrono::steady_clock::now() - std::chrono::milliseconds(1); // make sure SimDT > 0 for first frame
 
 	TsGroundWaitBegin (20.0); // not upstream (ground-first): landed vessels are placed on the ground the stream is writing
@@ -1991,6 +1994,25 @@ void Orbiter::StartTileStream ()
 		m_pTileStream = NULL;
 	}
 	if (m_pTileStream && !m_pStreamTrack) m_pStreamTrack = new StreamTrack;
+}
+
+// not upstream (base-height): a first visit's base heights fetched while loading, 15 s for all bodies, then the bases set on them
+void Orbiter::PlaceBases ()
+{
+	auto end = std::chrono::steady_clock::now() + std::chrono::seconds (15);
+	for (size_t i = 0; i < g_psys->nPlanet(); i++) {
+		Planet *p = g_psys->GetPlanet ((int)i);
+		if (!p->BasesWait()) continue;
+		int sec = (int)std::chrono::duration_cast<std::chrono::seconds> (end - std::chrono::steady_clock::now()).count();
+		if (m_pTileStream && sec > 0) {
+			OutputLoadStatus ((std::string ("Base heights: ") + p->Name()).c_str(), 1);
+			std::string body = p->Name();
+			std::future<void> f = std::async (std::launch::async, [this, body, sec] { m_pTileStream->BaseHeights (body, sec); });
+			while (f.wait_for (std::chrono::milliseconds (50)) != std::future_status::ready) ProcessLoadingEvents ();
+			f.get();
+		}
+		p->SetupBases (m_pTileStream);
+	}
 }
 
 void Orbiter::StopTileStream ()

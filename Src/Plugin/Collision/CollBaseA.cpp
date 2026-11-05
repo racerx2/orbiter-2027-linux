@@ -174,7 +174,7 @@ void CollBaseA::Build (CollSdk &sdk, const CollDirs &d, bool geometry, bool bldg
 			auto r = std::make_unique<CollBaseRec> ();
 			r->planetIdx = (int)pi; r->baseIdx = (int)bi; r->hPlanet = hp; r->hBase = hb;
 			r->planet = pname; r->base = bname; r->rPlanet = R; r->lng = lng; r->lat = lat;
-			r->elev = geometry ? sdk.Elevation (hp, lng, lat) : 0;
+			r->elev = geometry ? sdk.BaseElevation (hb, hp, lng, lat) : 0; // base-height: the height the core set the base on
 			double rr = R + r->elev, slng = sin (lng), clng = cos (lng), slat = sin (lat), clat = cos (lat);
 			r->rposP = Vector (rr * clat * clng, rr * slat, rr * clat * slng);
 			r->rrotP = Matrix (clng*slat, clng*clat, -slng, -clat, slat, 0, slng*slat, slng*clat, clng);
@@ -190,7 +190,7 @@ void CollBaseA::Build (CollSdk &sdk, const CollDirs &d, bool geometry, bool bldg
 						std::vector<std::string> warn;
 						CollBaseElev el;
 						el.lng = lng; el.lat = lat; el.elev = r->elev;
-						el.at = [&sdk, hp] (double l, double b) { return sdk.Elevation (hp, l, b); };
+						el.at = [&sdk, hb, hp] (double l, double b) { return sdk.BaseElevation (hb, hp, l, b); }; // base-height: as the core sets the objects
 						if (CollBaseObjGeometry (o, sdk, d, R, m->f.mapToSphere, warn, &el)) IndexGroups (*sidx, o.grp);
 						o.grp.clear ();
 					}
@@ -207,7 +207,7 @@ void CollBaseA::Build (CollSdk &sdk, const CollDirs &d, bool geometry, bool bldg
 					std::vector<std::string> warn;
 					CollBaseElev el;
 					el.lng = lng; el.lat = lat; el.elev = r->elev;
-					el.at = [&sdk, hp] (double l, double b) { return sdk.Elevation (hp, l, b); };
+					el.at = [&sdk, hb, hp] (double l, double b) { return sdk.BaseElevation (hb, hp, l, b); }; // base-height: as the core sets the objects
 					if (CollBaseObjGeometry (o, sdk, d, R, m->f.mapToSphere, warn, &el)) {
 #if COLL_HAVE_BLDGGEOM
 						if (sidx) IndexGroups (*sidx, o.grp);
@@ -294,8 +294,8 @@ bool CollBaseA::Rest (CollSdk &sdk, const CollDirs &d, int planet, int base, uin
 		std::vector<std::string> warn;
 		CollBaseElev el;
 		el.lng = r->lng; el.lat = r->lat; el.elev = r->elev;
-		CollH hp = r->hPlanet;
-		el.at = [&sdk, hp] (double l, double b) { return sdk.Elevation (hp, l, b); };
+		CollH hp = r->hPlanet, hb = r->hBase; // base-height: hb
+		el.at = [&sdk, hb, hp] (double l, double b) { return sdk.BaseElevation (hb, hp, l, b); }; // base-height: as the core sets the objects
 		if (!CollBaseObjGeometry (o, sdk, d, r->rPlanet, r->mapToSphere, warn, &el)) return false;
 		grp.swap (o.grp);
 		return !grp.empty ();

@@ -303,6 +303,8 @@ public: // ground area G
 	std::function<double (double lng, double lat)> elevG; // terrain by position; empty: the body's elev
 	double periodG = 86164;                    // PlanetPeriod of every body; 0: not rotating
 	double Elevation (CollH planet, double lng, double lat) override { elevCalls++; return elevG ? elevG (lng, lat) : ((const Body *)planet)->elev; }
+	std::function<double (double lng, double lat)> baseElevG; // base-height: oapiGetBaseElevation by position; empty: the terrain, as a core without it
+	double BaseElevation (CollH base, CollH planet, double lng, double lat) override { return baseElevG ? baseElevG (lng, lat) : CollSdk::BaseElevation (base, planet, lng, lat); }
 	double PlanetPeriod (CollH) override { return periodG; }
 public: // bldg area B: streamed building tiles "on disk" by planet, x, y
 	struct BldgT { std::vector<CollBldgRec> b; std::vector<float> vtx; std::vector<uint32_t> idx; int held = 0; };

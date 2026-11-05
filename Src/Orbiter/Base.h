@@ -52,7 +52,9 @@ public:
 
 	int Type () const { return OBJTP_SURFBASE; }
 
-	void Setup();
+	void Setup (double flat); // not upstream (base-height): flat, the height the stream lays the base flat at, NaN if not known
+
+	double ElevAt (double _lng, double _lat) const; // not upstream (base-height): the height base geometry is set on there
 
 	virtual void Update (bool force = false);
 
@@ -181,6 +183,7 @@ private:
 	//const Planet *planet;
 	double rad, lng, lat;          // equatorial coords of the base
 	double elev;                   // mean elevation of the base
+	double flatH;                  // not upstream (base-height): the stream's flat height, NaN if not known
 	Vector rpos;                   // base position in local planet frame
 	Matrix rrot;                   // rotation matrix in local planet frame
 	double objscale;               // size of "typical" base object (for camera-distance dependent render cutoff)

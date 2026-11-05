@@ -135,7 +135,7 @@ int BaseObject::Read (istream &is)
 void BaseObject::Setup ()
 {
 	base->Rel_EquPos (relpos, equpos.x, equpos.y);
-	elev = base->RefPlanet()->Elevation (equpos.x, equpos.y);
+	elev = base->ElevAt (equpos.x, equpos.y); // not upstream (base-height): ElevAt
 	yofs = elev - base->Elevation();
 	if (base->MapObjectsToSphere())
 		yofs += ElevCorrection (relpos.x, relpos.z);
@@ -170,7 +170,7 @@ void BaseObject::MapToAltitude (NTVERTEX *vtx, int nvtx)
 	double elev0 = base->Elevation();
 	for (int i = 0; i < nvtx; i++) {
 		base->Rel_EquPos (Vector (vtx[i].x, vtx[i].y, vtx[i].z), lng, lat);
-		vtx[i].y += (float)base->RefPlanet()->Elevation (lng, lat) - elev;
+		vtx[i].y += (float)base->ElevAt (lng, lat) - elev; // not upstream (base-height): ElevAt
 	}
 }
 
@@ -2600,9 +2600,9 @@ void Train::Setup ()
 {
 	double lng, lat;
 	base->Rel_EquPos (Vector(end1.x, end1.y, end1.z), lng, lat);
-	end1.y += base->RefPlanet()->Elevation (lng, lat)-base->Elevation();
+	end1.y += base->ElevAt (lng, lat)-base->Elevation(); // not upstream (base-height): ElevAt
 	base->Rel_EquPos (Vector(end2.x, end2.y, end2.z), lng, lat);
-	end2.y += base->RefPlanet()->Elevation (lng, lat)-base->Elevation();
+	end2.y += base->ElevAt (lng, lat)-base->Elevation(); // not upstream: ElevAt
 }
 
 void Train::SetCabin (DWORD nvtx, const NTVERTEX *ref, NTVERTEX *res, const oapi::FVECTOR3 &pos, const oapi::FVECTOR3 &ofs)

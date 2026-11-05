@@ -6451,6 +6451,10 @@ OAPIFUNC bool  oapiBaseSetDent (OBJHANDLE hBase, const BASEDENTSPEC *d);
 OAPIFUNC void  oapiBaseClearDents (OBJHANDLE hBase, DWORD obj);
 // change count of structure mesh 'mesh' of the before (after = false) or after shadow list of oapiGetBaseStructures; the client reloads a changed one
 OAPIFUNC DWORD oapiBaseStructureSerial (OBJHANDLE hBase, DWORD mesh, bool after);
+// not upstream (base-height): the height [m] the core sets the base's objects on at lng, lat [rad]: the terrain, or the base's flat height
+// where the planet tile stream's flattened levels aren't loaded yet (a first visit)
+#define OAPI_BASE_ELEVATION 1 // not upstream: feature test for add-ons
+OAPIFUNC double oapiGetBaseElevation (OBJHANDLE hBase, double lng, double lat);
 
 	/**
 	* \brief Writes the current simulation state to a scenario file.

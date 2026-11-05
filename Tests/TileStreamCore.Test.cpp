@@ -1065,3 +1065,56 @@ TEST_CASE ("A request sends only the headers the manual lists, no cookies, and f
 	CHECK (get (h.Url(), b, 20000) == 200);
 	CHECK (b == QByteArray (40, 'y'));
 }
+
+TEST_CASE ("A first visit's base heights come in one batch, go to bases.idx and are found by location; a known one isn't asked again", "[TileStreamCore]") // not upstream (base-height)
+{
+	App app;
+	Tmp t;
+	Srv s (t.root);
+	fs::path tex = t.root / "Earth", base = t.root / "Base", idx = tex / "TileStream" / "bases.idx";
+	Base (tex);
+	fs::create_directories (base);
+	std::ofstream (base / "Pad.cfg") << "BASE-V2.0\nName = Launch Pad\nLocation = -80.6 28.6\nBEGIN_OBJECTLIST\nEND_OBJECTLIST\n";
+	std::ofstream (base / "Far.cfg") << "BASE-V2.0\nName = Far\nLocation = 10.5 45.5\nBEGIN_OBJECTLIST\nEND_OBJECTLIST\n";
+	int row, col;
+	TsSky::TerrTile (-80.6, 28.6, 13, row, col);
+	Png (s.root / "terr" / "13" / std::to_string (col) / (std::to_string (row) + ".png"), 256, QColor (128, 100, 0)); // 100 m
+	Log lg;
+	TileStream::Options o = Opt (s.Cfg (t.root / "ts.cfg", s.url + "/eox", "ELEV terrarium " + s.url + "/terr/{z}/{col}/{row}.png 15 16\n"), tex);
+	o.sky = true;
+	o.maxActive = 0;
+	o.baseDir = [base] (const std::string &) { return base.string(); };
+	o.radius = [] (const std::string &) { return 6.371e6; };
+	o.log = lg.Fn ();
+	const double r = M_PI / 180.0;
+	auto H = [&r] (TileStream &a, const char *body, double lng, double lat) { double h = -1; return a.BaseHeight (body, lng * r, lat * r, h) ? h : -1.0; }; // -1: not its base
+	{
+		TileStream a (o);
+		CHECK (std::isnan (H (a, "Earth", -80.6, 28.6)));
+		a.BaseHeights ("Earth", 10);
+		CHECK (H (a, "Earth", -80.6, 28.6) == 100.0);
+		CHECK (H (a, "Earth", -80.6 + 360.0, 28.6) == 100.0); // the same meridian
+		CHECK (std::isnan (H (a, "Earth", 10.5, 45.5)));       // its tile isn't there
+		CHECK (H (a, "Earth", -80.6, 28.7) == -1.0);           // no base there
+		CHECK (H (a, "Mars", -80.6, 28.6) == -1.0);
+	}
+	CHECK (Read (idx) == "Pad 100\n");
+	CHECK (lg.Count ("1 of 2 base heights for Earth fetched") == 1);
+	fs::remove_all (s.root / "terr");
+	{
+		TileStream a (o);
+		CHECK (H (a, "Earth", -80.6, 28.6) == 100.0); // from bases.idx
+		a.BaseHeights ("Earth", 10);
+	}
+	CHECK (Read (idx) == "Pad 100\n");
+	CHECK (lg.Count ("0 of 1 base heights for Earth fetched") == 1); // only Far was asked for
+	fs::remove (idx);
+	o.offline = true;
+	{
+		TileStream a (o);
+		Clock::time_point t0 = Clock::now();
+		a.BaseHeights ("Earth", 10);
+		CHECK (Clock::now() - t0 < std::chrono::seconds (1));
+		CHECK (std::isnan (H (a, "Earth", -80.6, 28.6)));
+	}
+}

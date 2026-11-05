@@ -37,6 +37,10 @@ extern bool oapiBaseSetDent (OBJHANDLE hBase, const BASEDENTSPEC *d) __attribute
 extern void oapiBaseClearDents (OBJHANDLE hBase, DWORD obj) __attribute__ ((weak));
 #define COLL_BASE_DENT 1
 #endif
+#if defined (OAPI_BASE_ELEVATION) && !defined (_WIN32)
+extern double oapiGetBaseElevation (OBJHANDLE hBase, double lng, double lat) __attribute__ ((weak)); // not upstream (base-height): weak, a host without it gives the terrain
+#define COLL_BASE_ELEVATION 1
+#endif
 #if defined (OAPI_GLTF_DROPIN_MESH) && !defined (_WIN32)
 extern bool oapiHasGltfDropInMesh (const char *fname) __attribute__ ((weak));
 #endif
@@ -561,6 +565,12 @@ public: // bldg: streamed 3D buildings, only with a core that has them (as COLL_
 		return oapiBaseSetDent (H (base), &d);
 	}
 	void BaseClearDents (CollH base, uint32_t obj) override { if (oapiBaseClearDents && base) oapiBaseClearDents (H (base), obj == ~0u ? (DWORD)-1 : (DWORD)obj); }
+#endif
+#ifdef COLL_BASE_ELEVATION
+	double BaseElevation (CollH base, CollH planet, double lng, double lat) override // base-height
+	{
+		return oapiGetBaseElevation && base ? oapiGetBaseElevation (H (base), lng, lat) : oapiSurfaceElevation (H (planet), lng, lat);
+	}
 #endif
 #ifdef COLL_BASE_CLEARZONES
 	void BaseClearZones (CollH base, std::vector<CollClearZone> &out) override

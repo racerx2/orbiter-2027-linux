@@ -252,6 +252,7 @@ public: // bldg: streamed 3D buildings (OAPI_TILESTREAM_BLDG); the defaults are 
 	virtual bool   BaseDentOn () { return false; }                                  // coll-bounded 5.7: the core draws building dents (oapiBaseSetDent bound)
 	virtual bool   BaseSetDent (CollH base, uint32_t obj, uint32_t k, const struct DentRecord &r) { (void)base; (void)obj; (void)k; (void)r; return false; } // record k of object obj, drawn
 	virtual void   BaseClearDents (CollH base, uint32_t obj) { (void)base; (void)obj; } // obj ~0u: every object
+	virtual double BaseElevation (CollH base, CollH planet, double lng, double lat) { (void)base; return Elevation (planet, lng, lat); } // base-height: oapiGetBaseElevation, the terrain from a core without it
 private:
 	CollSdkCount cnt;
 	double noteUntil = -1;                                      // system time the annotation expires, -1 none

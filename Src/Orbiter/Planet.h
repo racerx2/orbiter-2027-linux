@@ -93,6 +93,9 @@ public:
 
 	void Setup ();
 
+	void SetupBases (class TileStream *ts); // not upstream (base-height): the bases Setup left for the stream, at the heights it has for them
+	bool BasesWait () const { return basesWait; } // not upstream (base-height)
+
 	int Type() const { return OBJTP_PLANET; }
 
 	const void *GetParam (DWORD paramtype) const;
@@ -278,6 +281,7 @@ private:
 	DWORD nbase;
 	Base **baselist;
 	// list of surface bases
+	bool basesWait = false; // not upstream (base-height): their Setup waits for the stream
 
 	int nnav;
 	NavManager navlist;

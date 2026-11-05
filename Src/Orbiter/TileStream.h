@@ -60,6 +60,7 @@ struct TsBase {
 	double h[2] = {0.0, 0.0};
 };
 bool TsReadBase (const std::string &file, TsBase &b);
+constexpr int TsModLevel = 11; // not upstream (base-height): Elev_mod lays the bases flat from this level up
 
 namespace TsSky {
 	QImage Cloud (const QImage &src, int L, int ilat, int ilng);  // RGBA white, alpha = density
@@ -282,6 +283,8 @@ public:
 	int Want (const std::string &body, int L, int ilat, int ilng, int flags);
 	int Done (const std::string &body, int *keys, int nmax); // (L, ilat, ilng) triples
 	int ElevChanged (const std::string &body, int *keys, int nmax); // not upstream (stream-rwyflat): Elev keys whose Elev_mod changed over an Elev already there
+	void BaseHeights (const std::string &body, int sec);           // not upstream (base-height): the flat heights of its bases not known yet, fetched now, at most sec seconds
+	bool BaseHeight (const std::string &body, double lng, double lat, double &h) const; // false: none of its bases is at lng, lat [rad]; h: its flat height, NaN while not known
 	// z14 building tiles: 1 the file is there, 0 wanted, -1 never
 	int WantBldg (const std::string &body, int x, int y);
 	std::string BldgPath (const std::string &body, int x, int y) const;

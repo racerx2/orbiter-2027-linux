@@ -591,6 +591,9 @@ struct TileStream::Impl {
 	void BaseSrcs (Body &B, Job &J);
 	void BaseHeights (Body &B, const Job &J, const std::vector<QImage> &et);
 	void BaseFlat (Body &B, size_t i, double h);
+	void TerrFlat (Body &B, size_t i, int z, int row, int col, const QImage &im); // not upstream (base-height): base i's height from its Terrain Tiles tile
+	bool CogFlat (Body &B, size_t i, int sec);                                   // not upstream (base-height): from the body's COG; false when a read failed
+	void FetchBaseHeights (Body &B, int sec);                                     // not upstream (base-height): the heights not known yet, fetched now
 	bool Mods (Body &B, uint64_t k, const std::string &elv);
 	std::mutex modMx; // elev-consistency: Elev_mod work, one key at a time; taken before mx
 	bool ModsAt (Body &B, uint64_t k, const std::string &elv, bool *changed);
@@ -2470,6 +2473,27 @@ int TileStream::Done (const std::string &body, int *keys, int nmax)
 	return n;
 }
 
+void TileStream::BaseHeights (const std::string &body, int sec) // not upstream (base-height)
+{
+	int b = d->FindBody (body);
+	if (b >= 0) d->FetchBaseHeights (*d->bodies[b], sec);
+}
+
+bool TileStream::BaseHeight (const std::string &body, double lng, double lat, double &h) const // not upstream (base-height): the core names it by its Name item, the stream by its file
+{
+	h = NAN;
+	int b = d->FindBody (body);
+	if (b < 0) return false;
+	std::lock_guard<std::mutex> lk (d->mx);
+	const Impl::Body &B = *d->bodies[b];
+	for (size_t i = 0; i < B.bases.size() && i < B.baseH.size(); i++)
+		if (std::fabs (B.bases[i].lat - lat) < 1e-6 && std::fabs (std::remainder (B.bases[i].lng - lng, 2.0 * M_PI)) < 1e-6) {
+			h = B.baseH[i];
+			return true;
+		}
+	return false;
+}
+
 int TileStream::ElevChanged (const std::string &body, int *keys, int nmax) // not upstream (stream-rwyflat)
 {
 	int b = d->FindBody (body);
@@ -2741,7 +2765,7 @@ void TileStream::Impl::BakeClouds (Body &B, const QImage &src, int l0, int l1)
 }
 
 namespace {
-const int ModLevel = 11;    // Elev_mod from this level up; below, a base is under a node or two
+const int ModLevel = TsModLevel; // Elev_mod from this level up; below, a base is under a node or two
 const double Blend = 150.0; // metres from flat to the terrain
 std::string ReadAll (const std::string &p)
 {
@@ -2875,13 +2899,73 @@ void TileStream::Impl::BaseHeights (Body &B, const Job &J, const std::vector<QIm
 	int z = std::min (13, B.cfg.elev.nmax);
 	for (size_t j = 0; j < J.baseIdx.size() && n0 + j < et.size(); j++) {
 		const TsBase &b = B.bases[(size_t)J.baseIdx[j]];
-		double lng = b.lng * 180.0 / M_PI, lat = b.lat * 180.0 / M_PI;
 		int row, col;
-		TsSky::TerrTile (lng, lat, z, row, col);
-		double h = TsSky::TerrAt (et[n0 + j], z, row, col, lng, lat);
-		if (std::isnan (h)) continue;
-		BaseFlat (B, (size_t)J.baseIdx[j], std::round (std::max (TsImg::FloorAt (B.cfg.floor, lng, lat), h) / B.cfg.elevScale) * B.cfg.elevScale);
+		TsSky::TerrTile (b.lng * 180.0 / M_PI, b.lat * 180.0 / M_PI, z, row, col);
+		TerrFlat (B, (size_t)J.baseIdx[j], z, row, col, et[n0 + j]); // not upstream (base-height): shared with FetchBaseHeights
 	}
+}
+
+// not upstream (base-height): base i's flat height from the Terrain Tiles tile at its point
+void TileStream::Impl::TerrFlat (Body &B, size_t i, int z, int row, int col, const QImage &im)
+{
+	const TsBase &b = B.bases[i];
+	double lng = b.lng * 180.0 / M_PI, lat = b.lat * 180.0 / M_PI;
+	double h = TsSky::TerrAt (im, z, row, col, lng, lat);
+	if (!std::isnan (h)) BaseFlat (B, i, std::round (std::max (TsImg::FloorAt (B.cfg.floor, lng, lat), h) / B.cfg.elevScale) * B.cfg.elevScale);
+}
+
+// not upstream (base-height): base i's flat height from the body's COG at its point; false when a read failed
+bool TileStream::Impl::CogFlat (Body &B, size_t i, int sec)
+{
+	auto fetch = [this, sec] (std::vector<TsCog::Req> &r) { FetchAll (r, USGS, sec); };
+	TsCog::Pts b {B.bases[i].lat * 180.0 / M_PI, B.bases[i].lng * 180.0 / M_PI, 0.0, 0.0, 1, 1, 0.0};
+	std::vector<float> bh;
+	std::vector<uint8_t> bv;
+	if (!TsCog::Sample (B.cfg.elev.url, b, fetch, bh, bv)) return false;
+	if (!bv.empty() && bv[0]) BaseFlat (B, i, std::round (bh[0] / B.cfg.elevScale) * B.cfg.elevScale);
+	return true;
+}
+
+// not upstream (base-height): a first visit's base heights, fetched while the session loads so the bases are set on them; at most sec seconds
+void TileStream::Impl::FetchBaseHeights (Body &B, int sec)
+{
+	std::vector<size_t> todo;
+	{
+		std::lock_guard<std::mutex> lk (mx);
+		for (size_t i = 0; i < B.baseH.size(); i++)
+			if (std::isnan (B.baseH[i])) todo.push_back (i);
+	}
+	if (todo.empty() || !net || B.cfg.elev.kind.empty()) return;
+	Clock::time_point t0 = Clock::now(), end = t0 + std::chrono::seconds (sec);
+	if (B.cfg.Cog()) {
+		for (size_t i : todo) {
+			int left = (int)std::chrono::duration_cast<std::chrono::seconds> (end - Clock::now()).count();
+			if (left <= 0 || quit) break;
+			CogFlat (B, i, left);
+		}
+	} else {
+		int z = std::min (13, B.cfg.elev.nmax);
+		std::vector<TsCog::Req> rq (todo.size());
+		std::vector<int> row (todo.size()), col (todo.size());
+		for (size_t j = 0; j < todo.size(); j++) {
+			const TsBase &b = B.bases[todo[j]];
+			TsSky::TerrTile (b.lng * 180.0 / M_PI, b.lat * 180.0 / M_PI, z, row[j], col[j]);
+			rq[j].url = TsImg::Url (B.cfg.elev.url, z, row[j], col[j]);
+		}
+		FetchAll (rq, TERR, sec);
+		for (size_t j = 0; j < todo.size(); j++) {
+			QImage im;
+			if (rq[j].status == 200 && rq[j].data && im.loadFromData (*rq[j].data) && !im.isNull()) TerrFlat (B, todo[j], z, row[j], col[j], im);
+		}
+	}
+	size_t got = 0;
+	{
+		std::lock_guard<std::mutex> lk (mx);
+		for (size_t i : todo) got += !std::isnan (B.baseH[i]);
+	}
+	char s[64];
+	snprintf (s, sizeof s, " in %.1f s", std::chrono::duration<double> (Clock::now() - t0).count());
+	Log ("TileStream: " + std::to_string (got) + " of " + std::to_string (todo.size()) + " base heights for " + B.cfg.name + " fetched" + s);
 }
 
 // a base's flat height, once, kept in bases.idx
@@ -2915,11 +2999,7 @@ bool TileStream::Impl::CogElev (Body &B, const Job &J, std::string &elv)
 			if (!std::isnan (B.baseH[i])) continue;
 		}
 		if (!TsSky::Hits (B.bases[i], B.radius, L, la, ln, Blend)) continue;
-		TsCog::Pts b {B.bases[i].lat * 180.0 / M_PI, B.bases[i].lng * 180.0 / M_PI, 0.0, 0.0, 1, 1, 0.0};
-		std::vector<float> bh;
-		std::vector<uint8_t> bv;
-		if (!TsCog::Sample (C.elev.url, b, fetch, bh, bv)) return false;
-		if (!bv.empty() && bv[0]) BaseFlat (B, i, std::round (bh[0] / C.elevScale) * C.elevScale);
+		if (!CogFlat (B, i, 90)) return false; // not upstream (base-height): shared with FetchBaseHeights
 	}
 	return true;
 }

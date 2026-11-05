@@ -19,6 +19,8 @@
 #include "Camera.h"
 #include "Log.h"
 #include "Util.h"
+#include "TileStream.h" // not upstream (base-height): TsSessionElev, BaseHeight
+#include <cmath> // not upstream (base-height)
 
 #define UPDMODE_ANALYTIC 0
 #define UPDMODE_DYNAMIC  1
@@ -702,8 +704,26 @@ void Planet::Setup ()
 
 	if (tmgr_version == 2)
 		emgr = new ElevationManager(this);
+	basesWait = nbase && emgr && TsSessionElev (name) > 0; // not upstream (base-height): set up once the stream has their heights
+	if (!basesWait) // not upstream
 	for (DWORD i = 0; i < nbase; i++)
-		baselist[i]->Setup();
+		baselist[i]->Setup(NAN); // not upstream: NAN, no flat height
+}
+
+// not upstream (base-height): a streamed planet's bases, set on the flat heights the stream has for them; Orbiter calls it once the stream
+// has started, before the vessels, with ts null when it didn't start
+void Planet::SetupBases (TileStream *ts)
+{
+	if (!basesWait) return;
+	basesWait = false;
+	for (DWORD i = 0; i < nbase; i++) {
+		double lng, lat;
+		baselist[i]->EquPos (lng, lat);
+		double h = NAN;
+		if (ts && ts->BaseHeight (name, lng, lat, h) && std::isnan (h))
+			LOGOUT ("Base %s: its height isn't known yet (offline?), set on the heights at hand", baselist[i]->Name());
+		baselist[i]->Setup (h);
+	}
 }
 
 const void *Planet::GetParam (DWORD paramtype) const

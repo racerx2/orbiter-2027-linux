@@ -15,6 +15,9 @@
 #include <fstream>
 #include <algorithm> // not upstream
 #include <cstring> // not upstream
+#include <cmath> // not upstream (base-height)
+#include "elevmgr.h" // not upstream (base-height)
+#include "TileStream.h" // not upstream (base-height): TsModLevel
 
 using namespace std;
 
@@ -307,9 +310,10 @@ void Base::DestroyDeviceObjects ()
 	Body::DestroyDeviceObjects ();
 }
 
-void Base::Setup ()
+void Base::Setup (double flat)
 {
-	elev = RefPlanet()->Elevation (lng, lat); 
+	flatH = flat; // not upstream (base-height)
+	elev = ElevAt (lng, lat); // not upstream: ElevAt
 	if (elev) {
 		rad += elev;
 		cbody->EquatorialToLocal (lng, lat, rad, rpos);
@@ -317,6 +321,16 @@ void Base::Setup ()
 
 	for (DWORD i = 0; i < nobj; i++)
 		obj[i]->Setup();
+}
+
+// not upstream (base-height): the terrain where the stream's flattened levels are loaded, else the stream's flat height when it has one, so a
+// first visit doesn't set the base on ground that has no heights yet
+double Base::ElevAt (double _lng, double _lat) const
+{
+	const ElevationManager *em = RefPlanet()->ElevMgr();
+	int lvl = 0;
+	double e = em ? em->Elevation (_lat, _lng, 0, 0, 0, &lvl) : 0.0;
+	return std::isnan (flatH) || lvl - 3 >= TsModLevel ? e : flatH; // lvl: the tile's level + 3 (elevmgr)
 }
 
 bool Base::InitSurfaceTiles () const
@@ -394,6 +408,7 @@ void Base::Attach (Planet *_parent)
 	double slat = sin(lat), clat = cos(lat);
 	rad = cbody->Size(); // dist from planet centre
 	elev = 0.0;
+	flatH = NAN; // not upstream (base-height)
 	cbody->EquatorialToLocal (slng, clng, slat, clat, rad, rpos);
 	s0->vel.Set (0,0,0);                         // base is fixed to ground
 	rrot.Set ( clng*slat, clng*clat, -slng,   // rotate from local
