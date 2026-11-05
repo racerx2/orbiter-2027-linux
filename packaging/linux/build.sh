@@ -5,7 +5,10 @@ set -euo pipefail
 SRC=$(readlink -f "$1"); OUT=$(readlink -f "$2"); VER=$3; MAN=${4:-}
 source /opt/rh/gcc-toolset-14/enable
 B=$OUT/build; STAGE=$OUT/stage; NAME=Orbiter2027-Linux-x86_64-$VER
+ID="Qt $QTDIR $(md5sum < "$QTDIR/lib/libQt6Core.so.6" | cut -c1-32), deps $DEPS, gcc $(gcc -dumpfullversion)" # a tree built with another Qt, deps or compiler keeps their paths in its cache: built again from scratch
+[ "$(cat "$B/toolchain.txt" 2>/dev/null)" = "$ID" ] || rm -rf "$B"
 rm -rf "$STAGE" "$OUT/src"; mkdir -p "$B" "$OUT/src"
+echo "$ID" > "$B/toolchain.txt"
 # a copy next to the build tree: the Html help step writes into the source tree and renames across
 if [ "${FROM_GIT:-0}" = 1 ]; then # the package: the commit's files only, never ignored or untracked ones
 	git -C "$SRC" -c safe.directory='*' archive --format=tar HEAD | tar -C "$OUT/src" -xf -

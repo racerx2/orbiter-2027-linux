@@ -96,7 +96,7 @@ check() { # $1 package name: unpacked with a temp HOME, so nothing lands in the 
 	export HOME=$T/home XDG_DATA_HOME=$T/home/.local/share XDG_CONFIG_HOME=$T/home/.config XDG_CACHE_HOME=$T/home/.cache
 	local l; l=$(OB_LAUNCHER_NO_EXEC=1 OB_LAUNCHER_DRY_RUN=1 ./OpenOrbiter < /dev/null 2>&1 | tail -1)
 	[ "$l" = "Orbiter is ready to start." ] || die "launcher: $l"
-	local B; B=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import collect; print("\n".join(collect.runpath_outside(sys.argv[2]) + collect.unhardened(sys.argv[2])))' "$H" "$T/$1") || die "checking the package's binaries"
+	local B; B=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import collect; print("\n".join(collect.runpath_outside(sys.argv[2]) + collect.unhardened(sys.argv[2]) + collect.qt_mismatch(sys.argv[2])))' "$H" "$T/$1") || die "checking the package's binaries"
 	[ -z "$B" ] || die "binaries: $(echo "$B" | head -5)"
 	QT_QPA_PLATFORM=offscreen timeout 120 ./Orbiter "--scenariox=Delta-glider/Smack!" --fixedstep=0.02 --maxframes=200 > "$T/headless.out" 2>&1 || die "headless flight failed: $T/headless.out"
 	cp Orbiter.log "$T/headless.log"

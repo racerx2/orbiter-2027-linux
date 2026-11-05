@@ -127,6 +127,21 @@ def unhardened(root):  # every ELF: position independent, no executable stack, f
     return out
 
 
+def qt_mismatch(root):  # every ELF built against the Qt the package ships: its qt_version_tag reference at the bundled QtCore's own version
+    core = os.path.join(root, 'lib', 'libQt6Core.so.6')
+    if not os.path.exists(core):
+        return ['lib/libQt6Core.so.6: not in the package, the Qt version is not checked']
+    have = re.search(r'^\S+\s+g\s+\S+\s+\S+\s+\S+\s+(Qt_6\.\d+)\s+qt_version_tag$', run('objdump', '-T', core), re.M)
+    if not have:
+        return ['lib/libQt6Core.so.6: no default qt_version_tag']
+    out = []
+    for p in elfs(root):
+        for v in re.findall(r'\*UND\*\s+\S+\s+\(?(Qt_6\.\d+)\)?\s+qt_version_tag$', run('objdump', '-T', p), re.M):
+            if v != have.group(1):
+                out.append('%s: built for %s, the package has %s' % (os.path.relpath(p, root), v.replace('_', ' '), have.group(1).replace('_', ' ')))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--root', required=True)
@@ -214,6 +229,7 @@ def main():
                 sys.exit('collect: patchelf %s: %s' % (p, r.stderr))
     bad += runpath_outside(R)
     bad += unhardened(R)
+    bad += qt_mismatch(R)
     if bad:
         sys.exit('collect:\n  ' + '\n  '.join(sorted(set(bad))[:40]))
     conf = '[Paths]\nPrefix=%s\nLibraries=%s\nPlugins=plugins\nQmlImports=qml\n'
